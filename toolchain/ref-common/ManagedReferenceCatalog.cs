@@ -50,7 +50,7 @@ sealed class ManagedReferenceCatalog
     /// <paramref name="runtimeSelection"/> distinguishes the two consumer classes:
     /// </para>
     /// <list type="bullet">
-    /// <item><b>false (compile set, from <c>@(ReferencePath)</c>)</b> — bir2cir/dll2klib/retarget. One
+    /// <item><b>false (compile set, from <c>@(ReferencePath)</c>)</b> — bir2cir/dll2klib/ilemit. One
     /// entry per identity, no RID variants; a repeated simple name is a genuine conflict → throw. Strict.</item>
     /// <item><b>true (runtime set, from <c>@(ReferenceCopyLocalPaths)</c>)</b> — ilemit. Copy-local
     /// legitimately carries BOTH <c>lib/&lt;tfm&gt;/Foo.dll</c> and <c>runtimes/&lt;rid&gt;/lib/&lt;tfm&gt;/Foo.dll</c>
@@ -96,7 +96,7 @@ sealed class ManagedReferenceCatalog
             if (!File.Exists(full)) throw new ArgumentException($"{toolName}: reference not found: {full}");
             // #52 — a load failure is CLASSIFIED, never swallowed as "native". A genuinely native PE (valid image, no
             // CLI/COR directory) is always a legitimate silent skip. A broken/truncated PE or an I/O error is FATAL for
-            // the COMPILE set (dll2klib/bir2cir/retarget consume `@(ReferencePath)` — pure managed reference assemblies,
+            // the COMPILE set (dll2klib/bir2cir/ilemit consume `@(ReferencePath)` — pure managed reference assemblies,
             // so a corrupt one is a real error that must name the file + stage instead of silently dropping a type). The
             // RUNTIME copy-local set (ilemit, runtimeSelection) legitimately mixes managed + foreign-OS native assets
             // named `*.dll`, so there a non-loadable image is a loud WARN + skip, not a hard fail.

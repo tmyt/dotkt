@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build the stdlib REFERENCE assembly (DotKt.Private.Stdlib.dll): compile the real pure-Kotlin stdlib
 # (libraries/stdlib/{common,src,unsigned}/src + the clr/ actuals) in ref mode (bir2cir/ilemit
-# `--build-stdlib=metadata`, no SUBSTITUTE — @Clr stays metadata) to BIR, then with --emit bir2cir -> ilemit -> retarget. The ref is
+# `--build-stdlib=metadata`, no SUBSTITUTE — @Clr stays metadata) to BIR, then with --emit bir2cir -> ilemit. The ref is
 # compile-time only (bir2cir's --compile-refs, sourcing the @ClrTypeAlias/@ClrIntrinsic labels), never loaded at
 # runtime — fully substituted away at app-emit; the shipping RUNTIME assembly is DotKt.Stdlib.dll
 # (build-stdlib-rt.sh). The 'Private' name marks it as an internal reference face, not an external
-# artifact. Inputs: libraries/stdlib sources + kotc + the bir2cir/ilemit/retarget dlls. Outputs:
+# artifact. Inputs: libraries/stdlib sources + kotc + the bir2cir/ilemit dlls. Outputs:
 # build/clr-stdlib/{bir,cir,dll} + *.err logs. NOTE: the pure-Kotlin stdlib is SELF-CONTAINED — it must
 # NOT reference any runtime assembly, so the kotc step takes no --ref on purpose.
 source "$(dirname "$0")/lib.sh"
@@ -13,7 +13,7 @@ source "$(dirname "$0")/lib.sh"
 usage() {
 	cat <<EOF
 usage: $SCRIPT_NAME [--emit]
-  --emit       also run bir2cir + ilemit + retarget to produce DotKt.Private.Stdlib.dll
+  --emit       also run bir2cir + ilemit to produce DotKt.Private.Stdlib.dll
                (default: frontend + BIR only, for fast triage)
   -h, --help   this help
 Exits nonzero if the frontend produced no BIR, or (with --emit) if the dll was not emitted.
@@ -56,15 +56,9 @@ if (( do_emit )); then
 	dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true
 	echo "CIR files: $(ls "$CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "ilemit(CIR) -> DotKt.Private.Stdlib.dll"
-	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Private.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --build-stdlib=metadata "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
+	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Private.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=metadata "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
 	grep -vE '^\s+at ' "$OUT/ilemit.err" | grep -iE 'exception|KeyNot|unresolved|no matching' | head -3 || true
 	[[ -f "$DLL/DotKt.Private.Stdlib.dll" ]] || die "DotKt.Private.Stdlib.dll was not emitted (see $OUT/ilemit.err)"
-	# Retarget: the emitted dll references the IMPLEMENTATION core (System.Private.CoreLib); repoint those refs at
-	# the REFERENCE assemblies (+ self) so downstream metadata readers and ILVerify
-	# can resolve its types. Self-contained (no DotKt.Runtime ref), so retarget against the BCL ref pack only.
-	need_tool retarget
-	info "retarget: repoint CoreLib refs (so metadata readers/ILVerify can read it back)"
-	dotnet "$RETARGET_DLL" "$DLL/DotKt.Private.Stdlib.dll" --compile-refs "$FRAMEWORK_COMPILE_REFS" 2>&1 | tail -1
 	ls -la "$DLL/DotKt.Private.Stdlib.dll"
 	info "*** DotKt.Private.Stdlib.dll emitted ***"
 fi

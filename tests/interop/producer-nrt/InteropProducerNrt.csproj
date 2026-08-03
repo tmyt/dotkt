@@ -5,7 +5,7 @@
      that dll2klib reads to surface the delegate's nullable Kotlin param/return. The SIBLING oblivious producer
      is deliberately NOT switched to NRT — flipping it would change every other case's reference-type nullability
      (platform-type behavior), so the NRT-dependent case gets its OWN assembly instead. Plain csc-emitted
-     (no DotKt.Metadata / no retarget); ../consumer <ProjectReference>s BOTH producers. -->
+     (no DotKt.Metadata); ../consumer <ProjectReference>s BOTH producers. -->
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>

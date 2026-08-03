@@ -15,7 +15,6 @@
     <DotKtDll2Klib Condition="'$(DotKtDll2Klib)' == ''">$(KotlinClrRoot)/build/dll2klib-bin/dll2klib.dll</DotKtDll2Klib>
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(KotlinClrRoot)/build/bir2cir-bin/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(KotlinClrRoot)/build/ilemit-bin/ilemit.dll</DotKtIlEmit>
-    <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(KotlinClrRoot)/build/retarget-bin/retarget.dll</DotKtRetargetTool>
     <!-- The CLR stdlib (canonical build, mirrors the NUnit runner + dotkt.sh): the RUNTIME
          assembly (real Kotlin bodies) is copy-local and ilemit's runtime ref; the @Clr-metadata REFERENCE assembly
          feeds bir2cir's @ClrTypeAlias/@ClrIntrinsic substitution (added as a non-copy Reference below, handed to
@@ -36,10 +35,10 @@
     <UpToDateCheckInput Include="@(KotlinCompile)" />
   </ItemGroup>
 
-  <!-- DotKt.Runtime is RETIRED: no runtime DLL is referenced. The [Kotlin*] round-trip metadata attribute types are
-       SYNTHESIZED per-assembly by ilemit (embedded internal / CompilerGenerated, see
-       toolchain/ilemit/Emitter.CompilerServices.cs), so round-tripping never depended on it; its pre-stdlib coroutine/
-       Result/Unit helpers are superseded by the real CLR stdlib (DotKt.Stdlib below). -->
+  <!-- DotKt.Runtime is RETIRED: no runtime DLL is referenced. bir2cir emits the DotKt-owned [Kotlin*] carrier
+       declarations into each assembly, while standard nullable attributes resolve from the target BCL; neither path
+       depends on a DotKt.Runtime assembly. Its pre-stdlib coroutine/Result/Unit helpers are superseded by the real CLR
+       stdlib (DotKt.Stdlib below). -->
 
   <!-- DotKt.Stdlib: real-Kotlin stdlib ops migrated off the COLLECTION_OPS lowering (see EnsureDotKtStdlib below).
        Referencing it puts it on the resolved assembly set consumed by dll2klib, bir2cir, and ilemit. -->
@@ -77,10 +76,6 @@
   <Target Name="EnsureBir2Cir" BeforeTargets="DotKtBir2Cir" Condition="!Exists('$(DotKtBir2Cir)')">
     <Message Importance="high" Text="kotlin/clr: building bir2cir (first run)..." />
     <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/bir2cir&quot; -c Release -o &quot;$(KotlinClrRoot)/build/bir2cir-bin&quot; -v q --nologo" />
-  </Target>
-  <Target Name="EnsureRetarget" BeforeTargets="DotKtRetarget" Condition="'$(DotKtRetarget)' != 'false' and !Exists('$(DotKtRetargetTool)')">
-    <Message Importance="high" Text="kotlin/clr: building retarget (first run)..." />
-    <Exec Command="dotnet build &quot;$(KotlinClrRoot)/toolchain/retarget&quot; -c Release -o &quot;$(KotlinClrRoot)/build/retarget-bin&quot; -v q --nologo" />
   </Target>
   <!-- The CLR frontend stdlib KLIB (kotc -classpath): build once from our CLR stdlib sources if missing. -->
   <Target Name="EnsureKotlinClrFrontendKlib" BeforeTargets="KotlinCompile"

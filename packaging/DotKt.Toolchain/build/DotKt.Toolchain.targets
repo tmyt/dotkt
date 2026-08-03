@@ -8,11 +8,8 @@
     <DotKtCirOut>$(BaseIntermediateOutputPath)dotkt-cir</DotKtCirOut>
     <!-- Incremental stamps for the back-half (#134). The BIR/CIR dirs are glob OUTPUTS (a variable file set), so
          each back-half target keys its Inputs/Outputs off a stable .stamp instead of the dir glob: KotlinCompile's
-         $(DotKtOut)/.stamp bumps ONLY on a real recompile, so the whole chain (bir2cir -> ilemit -> retarget)
-         cascades exactly when the frontend produced new BIR and no-ops otherwise. RetargetStamp lives outside the
-         wiped CIR/BIR dirs because retarget rewrites the emitted dll IN PLACE (output == input), so it needs its
-         own out-of-band completion marker. -->
-    <DotKtRetargetStamp>$(BaseIntermediateOutputPath)dotkt-retarget.stamp</DotKtRetargetStamp>
+         $(DotKtOut)/.stamp bumps ONLY on a real recompile, so the whole chain (bir2cir -> ilemit) cascades exactly
+         when the frontend produced new BIR and no-ops otherwise. -->
     <DotKtDll2KlibJobs Condition="'$(DotKtDll2KlibJobs)' == ''">$([System.Environment]::ProcessorCount)</DotKtDll2KlibJobs>
     <DotKtReferenceKlibDir>$(BaseIntermediateOutputPath)dotkt-reference-klibs</DotKtReferenceKlibDir>
     <DotKtReferenceKlibRsp>$(BaseIntermediateOutputPath)dotkt-reference-klibs.rsp</DotKtReferenceKlibRsp>
@@ -209,9 +206,9 @@
     <Touch Files="$(DotKtCirOut)/.stamp" AlwaysCreate="true" />
   </Target>
 
-  <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The
-       copy-local references (the project's package/project references, NOT the BCL, which ilemit resolves by runtime
-       reflection) are preloaded into ilemit as references. -->
+  <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The exact
+       compile reference set owns external metadata identities; copy-local refs only disambiguate runtime twins and
+       provide deployable implementations. -->
   <!-- Incremental (#134): re-emit ONLY when the CIR changed ($(DotKtCirOut)/.stamp), the ilemit tool changed, or a
        runtime reference dll changed (a cross-into dependency's new build). Output is the emitted assembly in obj/;
        on a no-op build CoreCompile leaves it untouched (the placeholder .cs is now WriteOnlyWhenDifferent) so it
@@ -223,18 +220,17 @@
           Outputs="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <ItemGroup>
       <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
-      <!-- ilemit's refs are the RUNTIME (implementation) assemblies from the copy-local set: the runtime stdlib
+      <!-- ilemit's runtime refs are the implementation assemblies from the copy-local set: the runtime stdlib
            (DotKt.Stdlib, real kotlin.* bodies — resolves kotlin.io.ConsoleKt.println etc.), plus every user
            PackageReference / ProjectReference / explicit <Reference> runtime dll a call may cross into. The
            @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib) is a compile-only <Reference Private=false>, so it is
-           never copy-local and never reaches ilemit — correct: its throw-stub bodies are a pure metadata surface for
-           bir2cir. Framework/targeting-pack assemblies (System.*) are never copy-local either — ilemit resolves the BCL
-           by runtime reflection. CopyLocalLockFileAssemblies=true (set above) makes this set complete for a Library. -->
-      <!-- The [Kotlin*] round-trip metadata attributes ilemit stamps so this library round-trips (is consumable AS
+           never copy-local. Framework contract assemblies come from @(_DotKtCompileReference), never the host runtime.
+           CopyLocalLockFileAssemblies=true (set above) makes the runtime set complete for a Library. -->
+      <!-- The [Kotlin*] round-trip metadata attributes bir2cir supplies and ilemit stamps so this library round-trips (is consumable AS
            KOTLIN by another .ktproj — [KotlinFileClass] restores a file facade's statics as top-level functions,
-           [KotlinFunction] restores infix/operator/suspend, etc.) are SYNTHESIZED PER-ASSEMBLY by ilemit (embedded
-           internal / CompilerGenerated) — added alongside the NRT System.Runtime.CompilerServices.Nullable*
-           attributes (the csc embedded-attribute model; see toolchain/ilemit/Emitter.CompilerServices.cs). So no
+           [KotlinFunction] restores infix/operator/suspend, etc.) use per-assembly DotKt-owned carrier definitions.
+           NRT System.Runtime.CompilerServices.Nullable* constructors resolve from
+           the target BCL rather than being embedded. So no
            DotKt.Runtime reference is needed (that pre-stdlib runtime DLL is retired). -->
     </ItemGroup>
     <Message Importance="high" Text="DotKt: emitting CIL from CIR -> $(TargetName)$(TargetExt)" />
@@ -244,29 +240,12 @@
          is empty for a framework-dependent (no-RID) build → ilemit defaults to the host RID (correct). Both properties
          are set by Microsoft.NET.Sdk before this AfterTargets=CoreCompile target runs; $(RuntimeIdentifierGraphPath)
          names the SDK's portable graph (or, under UseRidGraph, the full one — same schema). -->
-    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; --runtime-refs &quot;$(_DotKtRuntimeReferences)&quot; --target-rid &quot;$(RuntimeIdentifier)&quot; --rid-graph-path &quot;$(RuntimeIdentifierGraphPath)&quot; @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
-  </Target>
-
-  <!-- REVERSE interop (R-1): repoint the emitted dll's BCL TypeRefs off the single System.Private.CoreLib onto the
-       real contract assemblies (Object/Task->System.Runtime, List/Dictionary->System.Collections, …) so a C# project
-       can <ProjectReference>/<Reference> it at compile time (otherwise CS0012). Uses the same @(ReferencePath) the
-       forward path resolves from; runtime is unaffected. Opt out with <DotKtRetarget>false</DotKtRetarget>. -->
-  <!-- Incremental (#134): retarget rewrites the emitted dll IN PLACE, so its output can't be the dll (input == output).
-       Gate on the dll's timestamp vs an out-of-band $(DotKtRetargetStamp): when ilemit re-emits (dll mtime bumps) this
-       re-runs; on a no-op build the dll is untouched and the stamp (Touch'd last, after the in-place rewrite) stays
-       newer, so retarget skips and the shipping dll's timestamp is stable across no-op builds. -->
-  <Target Name="DotKtRetarget" AfterTargets="DotKtIlEmit"
-          Condition="'$(DotKtRetarget)' != 'false'"
-          Inputs="$(IntermediateOutputPath)$(TargetName)$(TargetExt);$(DotKtRetargetTool)"
-          Outputs="$(DotKtRetargetStamp)">
-    <Message Importance="high" Text="DotKt: retargeting BCL refs for compile-time &lt;Reference&gt; -> $(TargetName)$(TargetExt)" />
-    <Exec Command="dotnet &quot;$(DotKtRetargetTool)&quot; &quot;$(IntermediateOutputPath)$(TargetName)$(TargetExt)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot;" />
-    <Touch Files="$(DotKtRetargetStamp)" AlwaysCreate="true" />
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; --runtime-refs &quot;$(_DotKtRuntimeReferences)&quot; --target-framework-moniker &quot;$(TargetFrameworkMoniker)&quot; --target-rid &quot;$(RuntimeIdentifier)&quot; --rid-graph-path &quot;$(RuntimeIdentifierGraphPath)&quot; @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
   </Target>
 
   <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean">
     <RemoveDir Directories="$(DotKtOut);$(DotKtCirOut);$(DotKtReferenceKlibDir)" />
-    <Delete Files="$(DotKtReferenceKlibRsp);$(DotKtOptionsManifest);$(DotKtRetargetStamp)" />
+    <Delete Files="$(DotKtReferenceKlibRsp);$(DotKtOptionsManifest)" />
   </Target>
 </Project>

@@ -147,9 +147,9 @@ procedure in `docs/kotlin-frontend-bump-playbook.md`).
 
 ## Layers
 
-The three principles above fix kotc, bir2cir and ilemit. The remaining two: dll2klib projects each resolved
-.NET reference assembly into a standard metadata-only KLIB, and retarget repoints emitted BCL references so a C# project can reference the
-dll. `docs/architecture.md` owns the full table, including which reference artifact each stage reads.
+The three principles above fix kotc, bir2cir and ilemit. `dll2klib` projects each resolved .NET reference assembly
+into a standard metadata-only KLIB. `docs/architecture.md` owns the full table, including which reference artifact
+each stage reads; raw ilemit output is already consumable by ordinary CLR tooling.
 
 So "which layer?" is a lookup, not a design question — a fix that consults a ref dll, `@Clr*` labels or BCL
 shapes goes in bir2cir. Residual .NET resolution still living in ilemit is a principle violation carrying

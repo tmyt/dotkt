@@ -1,35 +1,35 @@
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 
-if (args.Length != 2)
+if (args.Length != 1)
 {
-    Console.Error.WriteLine("usage: MetadataProbe <raw.dll> <retargeted.dll>");
+    Console.Error.WriteLine("usage: MetadataProbe <raw.dll>");
     return 2;
 }
 
 var raw = Read(args[0]);
-var repaired = Read(args[1]);
 
 RequirePrimitiveSignature(raw);
 RequireEnumShape(raw, "TargetEnum");
 RequireGenericBaseShape(raw, "TargetList`1");
+RequireNoLocalType(raw, "System.Runtime.CompilerServices.NullableAttribute");
+RequireNoLocalType(raw, "System.Runtime.CompilerServices.NullableContextAttribute");
 RequireScope(raw, "System.Object", "System.Runtime");
 RequireScope(raw, "System.Collections.Generic.List`1", "System.Collections");
 RequireScope(raw, "System.Func`2", "System.Runtime");
 RequireScope(raw, "System.IDisposable", "System.Runtime");
 RequireScope(raw, "System.Reflection.AssemblyMetadataAttribute", "System.Runtime");
-
-RequireScope(repaired, "System.Object", "System.Runtime");
-RequireScope(repaired, "System.Collections.Generic.List`1", "System.Collections");
-RequireScope(repaired, "System.Func`2", "System.Runtime");
-RequireScope(repaired, "System.IDisposable", "System.Runtime");
-RequireScope(repaired, "System.Reflection.AssemblyMetadataAttribute", "System.Runtime");
+RequireScope(raw, "System.Runtime.Versioning.TargetFrameworkAttribute", "System.Runtime");
+RequireScope(raw, "System.Runtime.CompilerServices.NullableAttribute", "System.Runtime");
+RequireScope(raw, "System.Runtime.CompilerServices.NullableContextAttribute", "System.Runtime");
+RequireAppliedAttribute(raw, "System.Runtime.Versioning.TargetFrameworkAttribute");
+RequireAppliedAttribute(raw, "System.Runtime.CompilerServices.NullableAttribute");
+RequireAppliedAttribute(raw, "System.Runtime.CompilerServices.NullableContextAttribute");
 
 RejectScope(raw, "System.Private.CoreLib");
-RejectScope(repaired, "System.Private.CoreLib");
 
-Console.WriteLine("PASS  target-universe emission: raw and oracle scopes are target contracts " +
-                  "(primitive, generic, delegate, attribute, inheritance/interface, external signature)");
+Console.WriteLine("PASS  target-universe emission: raw scopes are target contracts; target framework and nullable " +
+                  "attributes are target-BCL references (primitive, generic, delegate, inheritance/interface, external signature)");
 return 0;
 
 static Snapshot Read(string path)
@@ -58,7 +58,7 @@ static Snapshot Read(string path)
     foreach (var handle in md.TypeDefinitions)
     {
         var type = md.GetTypeDefinition(handle);
-        var name = md.GetString(type.Name);
+        var name = FullTypeName(md, type.Namespace, type.Name);
         types[name] = new TypeShape(
             type.GetMethods().Select(h => md.GetString(md.GetMethodDefinition(h).Name)).ToArray(),
             type.BaseType.Kind,
@@ -66,7 +66,48 @@ static Snapshot Read(string path)
                 ? md.GetBlobBytes(md.GetTypeSpecification((TypeSpecificationHandle)type.BaseType).Signature)
                 : Array.Empty<byte>());
     }
-    return new Snapshot(scopes, methods, types);
+    var appliedAttributes = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var handle in md.CustomAttributes)
+    {
+        var attr = md.GetCustomAttribute(handle);
+        var owner = attr.Constructor.Kind switch
+        {
+            HandleKind.MemberReference => md.GetMemberReference((MemberReferenceHandle)attr.Constructor).Parent,
+            HandleKind.MethodDefinition => md.GetMethodDefinition((MethodDefinitionHandle)attr.Constructor).GetDeclaringType(),
+            _ => default,
+        };
+        var name = TypeName(md, owner);
+        if (name != null) appliedAttributes.Add(name);
+    }
+    return new Snapshot(scopes, methods, types, appliedAttributes);
+}
+
+static string? TypeName(MetadataReader md, EntityHandle handle)
+{
+    StringHandle ns;
+    StringHandle name;
+    switch (handle.Kind)
+    {
+        case HandleKind.TypeReference:
+            var reference = md.GetTypeReference((TypeReferenceHandle)handle);
+            ns = reference.Namespace;
+            name = reference.Name;
+            break;
+        case HandleKind.TypeDefinition:
+            var definition = md.GetTypeDefinition((TypeDefinitionHandle)handle);
+            ns = definition.Namespace;
+            name = definition.Name;
+            break;
+        default:
+            return null;
+    }
+    return FullTypeName(md, ns, name);
+}
+
+static string FullTypeName(MetadataReader md, StringHandle ns, StringHandle name)
+{
+    var prefix = md.GetString(ns);
+    return prefix.Length == 0 ? md.GetString(name) : prefix + "." + md.GetString(name);
 }
 
 static string ScopeName(MetadataReader md, EntityHandle scope) => scope.Kind switch
@@ -130,9 +171,22 @@ static void RequireGenericBaseShape(Snapshot snapshot, string name)
             Convert.ToHexString(type.BaseSignature));
 }
 
+static void RequireNoLocalType(Snapshot snapshot, string name)
+{
+    if (snapshot.Types.ContainsKey(name))
+        throw new InvalidOperationException($"output illegally defines target-BCL type {name}");
+}
+
+static void RequireAppliedAttribute(Snapshot snapshot, string name)
+{
+    if (!snapshot.AppliedAttributes.Contains(name))
+        throw new InvalidOperationException($"output does not apply target attribute {name}");
+}
+
 sealed record Snapshot(
     Dictionary<string, HashSet<string>> TypeScopes,
     Dictionary<string, byte[]> MethodSignatures,
-    Dictionary<string, TypeShape> Types);
+    Dictionary<string, TypeShape> Types,
+    HashSet<string> AppliedAttributes);
 
 sealed record TypeShape(string[] Methods, HandleKind BaseKind, byte[] BaseSignature);

@@ -3,8 +3,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
-    <!-- Capture raw ilemit output; #336 requires it to be target-scoped before the repair oracle runs. -->
-    <DotKtRetarget>false</DotKtRetarget>
+    <!-- #337: consume raw ilemit output directly; no post-emit metadata repair exists. -->
   </PropertyGroup>
   <Import Project="../../eng/KotlinClr.targets" />
 </Project>

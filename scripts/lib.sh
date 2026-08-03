@@ -22,11 +22,13 @@ KOTC="$ROOT/toolchain/kotc/build/install/kotc/bin/kotc"
 ILEMIT_DLL="$ROOT/build/ilemit-bin/ilemit.dll"
 BIR2CIR_DLL="$ROOT/build/bir2cir-bin/bir2cir.dll"
 DLL2KLIB_DLL="$ROOT/build/dll2klib-bin/dll2klib.dll"
-RETARGET_DLL="$ROOT/build/retarget-bin/retarget.dll"
 FE_KLIB="$ROOT/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 STDLIB_RT_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
 DOTKT_TFM="${DOTKT_TFM:-net10.0}"
+DOTKT_TARGET_FRAMEWORK_MONIKER="${DOTKT_TARGET_FRAMEWORK_MONIKER:-.NETCoreApp,Version=v10.0}"
+DOTKT_RUNTIME_FRAMEWORK_NAME="${DOTKT_RUNTIME_FRAMEWORK_NAME:-Microsoft.NETCore.App}"
+DOTKT_RUNTIME_FRAMEWORK_VERSION="${DOTKT_RUNTIME_FRAMEWORK_VERSION:-10.0.0}"
 
 # The direct-run scripts do not receive MSBuild's @(ReferencePath), so construct the equivalent framework compile
 # set from the installed Microsoft.NETCore.App.Ref targeting pack.  This is an authoritative pack enumeration, not
@@ -60,6 +62,15 @@ refset_join() { # <path-or-semicolon-set>... -> one normalized semicolon list
 		result+="${result:+;}$part"
 	done
 	printf '%s' "$result"
+}
+
+# Direct shell drivers own executable scaffolding explicitly. MSBuild generates its own runtimeconfig from the
+# project TFM; ilemit emits only the assembly and never infers a target from its host runtime.
+write_runtimeconfig() { # <output-dir> <assembly-name>
+	local output_dir="$1" assembly_name="$2"
+	printf '{"runtimeOptions":{"tfm":"%s","framework":{"name":"%s","version":"%s"}}}\n' \
+		"$DOTKT_TFM" "$DOTKT_RUNTIME_FRAMEWORK_NAME" "$DOTKT_RUNTIME_FRAMEWORK_VERSION" \
+		> "$output_dir/$assembly_name.runtimeconfig.json"
 }
 
 # --- logging ---------------------------------------------------------------------------------------
@@ -136,11 +147,11 @@ _toolstamp() {
 		| awk '{print $1}'
 }
 # Per-artifact input sets. klib: kotc + stdlib sources (a klib has no IL -> ilemit/bir2cir are irrelevant to
-# its bytes). ref: kotc + bir2cir + ilemit + retarget + targeting pack + sources. rt: the same plus the REF dll it
+# its bytes). ref: kotc + bir2cir + ilemit + targeting pack + sources. rt: the same plus the REF dll it
 # consumes through bir2cir's compile-reference set.
 _toolstamp_klib() { _toolstamp "$KOTC_INSTALL_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-klib.sh"; }
-_toolstamp_ref()  { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-ref.sh"; }
-_toolstamp_rt()   { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$RETARGET_DLL" "$STDLIB_REF_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-rt.sh"; }
+_toolstamp_ref()  { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-ref.sh"; }
+_toolstamp_rt()   { need_dotnet_reference_sets; _toolstamp "$KOTC_INSTALL_DIR" "$BIR2CIR_DLL" "$ILEMIT_DLL" "$STDLIB_REF_DLL" "$DOTNET_REFPACK_DIR" "$STDLIB_SRC_DIR" "$STDLIB_BUILD_LIB" "$ROOT/scripts/build-stdlib-rt.sh"; }
 # _stamp_fresh <artifact> <fingerprint>: true iff the artifact exists AND its sidecar records this fingerprint.
 _stamp_fresh() { [[ -e "$1" && -f "$1.toolstamp" && "$(cat "$1.toolstamp" 2>/dev/null)" == "$2" ]]; }
 

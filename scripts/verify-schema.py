@@ -64,6 +64,9 @@ STR_OK = {
                                                 # `attr` type is now a structured `{t:fqn}` node — #48; kotc flags an
                                                 # imported .NET attr with `attrClr:true`, which bir2cir AttrExternalNormalize
                                                 # consumes into the `attrExternal` bool. No `clr:` prefix, no attr string.)
+    "attrAssembly",                             # exact external custom-attribute declaration assembly identity;
+                                                # disambiguates private same-FQN compiler-synthesized lookalikes. This
+                                                # names a metadata scope, not a document value-type slot.
     "fileClass", "fileClassFQN", "pkg",         # file-class / package identifiers
     "f",                                        # #112 P2: the decl-level source-position FILE path (pos.{f,l,c});
                                                 # `l`/`c` are ints. A diagnostics-only breadcrumb, NOT a type slot.

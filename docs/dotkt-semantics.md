@@ -1168,11 +1168,10 @@ failing closed is the same shape Kotlin/JVM emits (`ACONST_NULL; ATHROW` after s
 
 ## 8. Reverse / cross-assembly interop
 
-- A DotKt assembly is a first-class .NET assembly; C# can reflection-load it. For **compile-time** `<Reference>`/
-  `<ProjectReference>`, the emitted BCL `TypeRef`s (all scoped to the single `System.Private.CoreLib` that
-  Reflection.Emit produces) are repointed to the real contract assemblies (`Object`/`Task`→`System.Runtime`,
-  `List`/`Dictionary`→`System.Collections`, …) by the build-time `retarget` (Mono.Cecil). See memory
-  `r1-reverse-projectreference-retargeter`.
+- A DotKt assembly is a first-class .NET assembly. `ilemit` encodes BCL `TypeRef`s directly against the exact target
+  contract assemblies selected by MSBuild (`Object`/`Task`→`System.Runtime`,
+  `List`/`Dictionary`→`System.Collections`, …), so C# can consume the raw output through `<Reference>` or
+  `<ProjectReference>` without a repair stage.
 - Forward (`Kotlin → .NET`): `dll2klib` projects every resolved reference assembly to a metadata-only KLIB, so
   `import System.X` and C# `<ProjectReference>` declarations resolve through the ordinary frontend classpath.
 

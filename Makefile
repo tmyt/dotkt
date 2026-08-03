@@ -5,7 +5,7 @@
 # The artifact DAG:
 #
 #   kotc ──┬────────────────────────────────► stdlib-klib (frontend KLIB, kotc -classpath)
-#          ├─ ilemit/bir2cir/dll2klib/retarget
+#          ├─ ilemit/bir2cir/dll2klib
 #          └────────────► stdlib-ref ──► stdlib-rt ──► pack (5 NuGet packages -> build/nuget-feed)
 #
 # Output paths are LOAD-BEARING (dotkt.sh, test runners, and eng/KotlinClr.targets hard-reference
@@ -21,7 +21,7 @@ SHELL := /bin/bash
 
 # ---- artifacts -----------------------------------------------------------------------------------
 KOTC       := toolchain/kotc/build/install/kotc/bin/kotc
-TOOLS      := ilemit bir2cir dll2klib retarget
+TOOLS      := ilemit bir2cir dll2klib
 TOOL_DLLS  := $(foreach t,$(TOOLS),build/$(t)-bin/$(t).dll)
 FE_KLIB    := build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib
 STDLIB_REF := build/clr-stdlib/dll/DotKt.Private.Stdlib.dll
@@ -32,7 +32,7 @@ FEED       := build/nuget-feed
 KOTC_SRC   := $(shell find toolchain/kotc/src -type f 2>/dev/null) toolchain/kotc/build.gradle.kts settings.gradle.kts
 STDLIB_SRC := $(shell find libraries/stdlib -name '*.kt' 2>/dev/null)
 # bir-common/TypeNode.cs is <Compile Link/>-shared into bir2cir/ilemit/dll2klib, so it is a source
-# prerequisite of every C# tool (harmless extra dep for retarget) — include it for incrementality.
+# prerequisite of every C# tool — include it for incrementality.
 tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -name '*.csproj' 2>/dev/null | grep -vE '/(obj|bin)/')
 
 # ==================================================================================================
@@ -76,8 +76,8 @@ $(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh scripts/lib.sh
 # slow builds: the verify scripts' internal `dotnet build` refreshes the dlls even when nothing changed.
 stdlib-ref: $(STDLIB_REF) ## DotKt.Private.Stdlib.dll (compile-time @Clr metadata; bir2cir's --ref)
 $(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh scripts/lib.sh \
-               $(call tool_src,bir2cir) $(call tool_src,ilemit) $(call tool_src,retarget) \
-               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll build/retarget-bin/retarget.dll
+               $(call tool_src,bir2cir) $(call tool_src,ilemit) \
+               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_stdlib_ref'
 	@touch "$@"
 	@test -f "$@" || { echo "make: stdlib-ref did not produce $@ (see build/clr-stdlib/*.err)"; exit 1; }
@@ -140,10 +140,10 @@ verify-xfail-policy: ## self-test the shared NEW/FIXED baseline verdict without 
 # ==================================================================================================
 # Dev conveniences
 # ==================================================================================================
-dev: ## compile (and run) one .kt: make dev SRC=Foo.kt [RUN=1 EXE=1 REF=x.dll NO_STDLIB=1 RETARGET=1 OUT=name DIR=dir]
-	@test -n "$(SRC)" || { echo "usage: make dev SRC=path/to/Foo.kt [RUN=1 EXE=1 REF=x.dll NO_STDLIB=1 RETARGET=1 OUT=name DIR=dir]"; exit 2; }
+dev: ## compile (and run) one .kt: make dev SRC=Foo.kt [RUN=1 EXE=1 REF=x.dll NO_STDLIB=1 OUT=name DIR=dir]
+	@test -n "$(SRC)" || { echo "usage: make dev SRC=path/to/Foo.kt [RUN=1 EXE=1 REF=x.dll NO_STDLIB=1 OUT=name DIR=dir]"; exit 2; }
 	bash scripts/dotkt.sh $(if $(RUN),--run) $(if $(EXE),--exe) $(if $(REF),--ref "$(REF)") \
-		$(if $(NO_STDLIB),--no-stdlib) $(if $(RETARGET),--retarget) \
+		$(if $(NO_STDLIB),--no-stdlib) \
 		$(if $(OUT),-o "$(OUT)") $(if $(DIR),-d "$(DIR)") $(SRC)
 
 dll2klib-e2e: ## CLR reference DLL -> standard metadata-only KLIB end-to-end regression
@@ -170,7 +170,7 @@ help: ## this help
 	@echo
 	@grep -hE '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk -F':.*## ' '{ printf "  \033[1m%-22s\033[0m %s\n", $$1, $$2 }'
-	@printf "  \033[1m%-22s\033[0m %s\n" "ilemit|bir2cir|dll2klib|retarget" "build one .NET tool -> build/<tool>-bin"
+	@printf "  \033[1m%-22s\033[0m %s\n" "ilemit|bir2cir|dll2klib" "build one .NET tool -> build/<tool>-bin"
 	@echo
 	@echo "Common flows:  make all   ·   make -j toolchain   ·   make stdlib   ·   make verify-tests"
 	@echo "               make dev SRC=path/to/Foo.kt RUN=1"

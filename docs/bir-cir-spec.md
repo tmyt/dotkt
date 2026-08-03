@@ -546,7 +546,7 @@ freshly-emitted BIR + CIR and reddens the gate on any drift.
 - **Types are nodes (§1) — the core invariant.** Enforced by an INVERSE allow-list: the finite set of keys that
   MAY carry a bare string (`STR_OK` — the format vocabulary `k`/`t`, object-language `name` payloads, enum
   entry/underlying/physical-value payloads, the enum keys `scope`/`op`/`vis`/`variance`/`kind`, and the documented
-  owner/member NAME islands §2.2.1) is
+  owner/member NAME islands §2.2.1 plus an external attribute's exact `attrAssembly` metadata scope) is
   fixed; a bare string at ANY other key is a type-token leak and reds. Array string elements red too, except the
   `typeParams` name-declaration shorthand (`STRARR_OK`). This fails closed across the whole tree — a future
   string type token anywhere reddens without the validator having to enumerate every type slot.

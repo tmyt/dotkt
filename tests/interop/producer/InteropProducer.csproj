@@ -6,7 +6,7 @@
 
      Each .cs here has its OWN namespace so the many colliding simple names
      (Item/Bag/Sink from clrasm/clriface/geninj) coexist in this single producer assembly — the same per-package
-     split the DotKt roundtrip producer uses. This is a plain csc-emitted assembly (no DotKt.Metadata / no retarget);
+     split the DotKt roundtrip producer uses. This is a plain csc-emitted assembly (no DotKt.Metadata);
      the round-trip is "consume a separately-compiled .NET dll AS façade-free Kotlin", the very cross-module shape
      these cases exist to prove. Nullable DISABLED (oblivious): required by Extlib.cs (ktproj-extlib) — its reference-
      type property must surface as the Kotlin PLATFORM type String! (ConeFlexibleType), which only an oblivious/

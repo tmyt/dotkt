@@ -11,7 +11,7 @@ using System.Text.Json;
 // The BIR `attr`-node -> ECMA-335 custom-attribute blob path (BuildAttribute/TryAttribute/ConstArgValue) + parameter
 // metadata. #71 S2:
 // ilemit no longer GENERATES any Kotlin round-trip metadata — bir2cir (RoundtripMetadata) emits every [Kotlin*]/
-// [Nullable]/[NullableContext] as an ordinary CIR `attrs` entry (and the attr-class DEFS as ordinary type decls);
+// [Nullable]/[NullableContext] as an ordinary CIR `attrs` entry (standard attrs resolve from the target BCL);
 // ilemit only STAMPS them dumbly through the generic BuildAttribute path below. No Kotlin-semantic decision remains.
 sealed partial class Emitter
 {
@@ -54,7 +54,9 @@ sealed partial class Emitter
         {
             // An EXTERNAL .NET attribute (#54/#48): its type lives in a referenced assembly, not this one. The carried
             // declared parameter vector must identify its constructor exactly; an ABI miss is not repaired by arity.
-            var at = ClrRef(attr);
+            var at = a.TryGetProperty("attrAssembly", out var attrAssembly)
+                ? _target.ResolveType(attr, attrAssembly.GetString())
+                : ClrRef(attr);
             var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
             var nctor = at.GetConstructor(argTypes);
             return TryAttribute(nctor, argTypes, args, attr);

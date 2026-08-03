@@ -26,13 +26,12 @@
 #                                          verify-schema + verify-sanity + target-universe
 #                                          (kotc unchanged: no installDist cost)
 #   toolchain/bir-common/**            -> FULL   (TypeNode/IrSanity are <Compile Link/>-shared into every tool)
-#   toolchain/retarget/**              -> FULL   (a stdlib-bake input + BCL-repoint used by roundtrip/ktproj)
 #   toolchain/kotc/** | libraries/stdlib/**  -> FULL + clean stdlib rebuild
 #   tests/{basic,interop,coroutines,roundtrip}/** -> compiler tests
 #   anything else                      -> FULL
 #
 # CLEAN STDLIB REBUILD (rm -rf build/clr-stdlib*) happens iff a stdlib-BAKING axis changed
-# (kotc / bir2cir / ilemit / retarget / stdlib sources / --full) — the exact axes the cache-masking
+# (kotc / bir2cir / ilemit / stdlib sources / --full) — the exact axes the cache-masking
 # landmine names. On every other selection the stdlib artifacts are reused (lib.sh need_* + the #13
 # toolstamp still rebuild them if their fingerprint drifted, so reuse is safe).
 source "$(dirname "$0")/lib.sh"
@@ -108,8 +107,6 @@ classify() { # <path>
 			reason "$p -> bir2cir/ilemit: clean stdlib emit + compiler tests + verify-schema + verify-sanity + target-universe" ;;
 		toolchain/bir-common/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL (bir-common is <Compile Link/>-shared into every tool)" ;;
-		toolchain/retarget/*)
-			NEED_FULL=1; CLEAN=1; reason "$p -> FULL (retarget is a stdlib-bake input + BCL-repoint for roundtrip/ktproj)" ;;
 		toolchain/kotc/*)
 			NEED_FULL=1; CLEAN=1; reason "$p -> FULL + clean stdlib (kotc frontend changed)" ;;
 		libraries/stdlib/*)

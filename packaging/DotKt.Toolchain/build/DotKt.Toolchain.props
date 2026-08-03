@@ -21,8 +21,6 @@
     <DotKtDll2Klib Condition="'$(DotKtDll2Klib)' == ''">$(DotKtToolchainDir)dll2klib/dll2klib.dll</DotKtDll2Klib>
     <!-- Worker-process concurrency for reference DLL -> KLIB projection. 0 means one worker per stale reference. -->
     <DotKtDll2KlibJobs Condition="'$(DotKtDll2KlibJobs)' == ''">$([System.Environment]::ProcessorCount)</DotKtDll2KlibJobs>
-    <!-- Repoints the emitted dll's BCL refs off System.Private.CoreLib so a C# project can <ProjectReference> it. -->
-    <DotKtRetargetTool Condition="'$(DotKtRetargetTool)' == ''">$(DotKtToolchainDir)retarget/retarget.dll</DotKtRetargetTool>
     <!-- The @Clr-metadata REFERENCE stdlib (DotKt.Private.Stdlib.dll): COMPILE-TIME ONLY — bir2cir reads its
          @ClrTypeAlias/@ClrIntrinsic labels to lower kotlin.* (never loaded at runtime, fully substituted away at
          app-emit), so it ships WITH the compiler here. DotKt.Sdk's Sdk.props turns this into a non-copy <Reference>;
