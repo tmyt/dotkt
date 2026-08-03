@@ -335,11 +335,21 @@ static class BirTypeLowering
         }
     }
 
+    // The widest Kotlin function arity that has a CLR delegate. `System.Func`/`Action` carry 0..16; the DotKt stdlib
+    // defines `KAction`17..22` / `KFunc`18..23` for 17..22 (#220). The cap is not a property of the frontend — it
+    // resolves `kotlin.FunctionN` for arbitrary N, because its builtin provider synthesizes the class on demand — it
+    // is a property of the REPRESENTATION: a delegate must be a real type in a real assembly, and an unbounded family
+    // cannot be pre-baked into the stdlib. Extending it means a variadic representation, not one more row.
+    const int MaxDelegateArity = 22;
+    const int MaxBclDelegateArity = 16;
+
     // A function type kept as a DELEGATE (a `funcType` slot, or a plain fn in a type slot): lower ret (a Unit
     // ret -> void, Action vs Func) + params + receiver; the suspend flag is folded to false (the delegate shape
     // is preserved — the sequence/iterator closure path needs a real Func/Action, not an object-erased SM value).
-    // The physical CLR delegate family is decided HERE and carried explicitly in CIR. ilemit must not change the
-    // nominal ABI based on whether one of the resolved types happens to still be a TypeBuilder.
+    // The physical CLR delegate family is decided HERE and carried explicitly in CIR — INCLUDING the decision that a
+    // given Kotlin function type has no CLR delegate at all, which is this layer's call to make and not ilemit's.
+    // ilemit must not change the nominal ABI based on whether one of the resolved types happens to still be a
+    // TypeBuilder.
     static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
     {
         var ret = (fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
@@ -347,10 +357,17 @@ static class BirTypeLowering
         var ps = fn.Params.Select(p => LowerType(p, refBuild, force, typeArg: false)).ToArray();
         var recv = fn.Recv == null ? null : LowerType(fn.Recv, refBuild, force, typeArg: false);
         int arity = ps.Length + (recv == null ? 0 : 1);
+        if (arity > MaxDelegateArity)
+            throw new InvalidOperationException(
+                $"bir2cir: {_file}: a function type of {arity} parameters has no CLR delegate. System.Func/Action "
+                + $"carry arities 0..{MaxBclDelegateArity} and the DotKt stdlib defines KFunc/KAction for "
+                + $"{MaxBclDelegateArity + 1}..{MaxDelegateArity}; the family cannot go further because each arity "
+                + "is a distinct pre-baked type in the stdlib and Kotlin's function types are unbounded. A receiver "
+                + "counts toward the arity. Group the parameters into a class, or pass them as a collection.");
         bool returnsVoid = ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
         string clr = returnsVoid
-            ? arity <= 16 ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
-            : arity <= 16 ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc";
+            ? arity <= MaxBclDelegateArity ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
+            : arity <= MaxBclDelegateArity ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc";
         return new TypeNode.Fn(false, ret, ps, recv, clr);
     }
 
@@ -366,11 +383,16 @@ static class BirTypeLowering
     static bool IsTypeObject(JsonNode n) =>
         n is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s != null;
 
+    // The source file being lowered, for the refusals this pass can raise. Set per `Lower` call alongside the other
+    // per-call statics; there is no finer location to give, because a type node carries no position of its own.
+    static string _file = "<unknown>";
+
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
-        Func<string, bool> isValueFqn = null)
+        Func<string, bool> isValueFqn = null, string file = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _isValueFqn = isValueFqn ?? (_ => false);
+        _file = string.IsNullOrEmpty(file) ? "<unknown>" : file;
         return LowerNode(root, refBuild, force: false);
     }
 

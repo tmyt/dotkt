@@ -1,0 +1,7 @@
+bir2cir:
+a function type of 23 parameters has no CLR delegate
+System.Func/Action carry arities 0..16
+KFunc/KAction for 17..22
+each arity is a distinct pre-baked type in the stdlib
+Kotlin's function types are unbounded
+Group the parameters into a class, or pass them as a collection.

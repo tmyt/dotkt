@@ -10,10 +10,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Function types of 17..22 parameters are now a real cross-assembly ABI (#220).** `System.Func`/`Action` stop at 16
   value parameters, and the wider shapes used to be minted per assembly, so one declared `(…17 Ints…) -> Int` was a
   different nominal type in every module that mentioned it. The six pairs `DotKt.Runtime.CompilerServices.KAction`17`
-  …`KAction`22` / `KFunc`18`…`KFunc`23` (Kotlin arities 17 through 22, the frontend's `BuiltInFunctionArity.BIG_ARITY`
-  being 23) are now emitted unconditionally into BOTH stdlib twins with identical signatures, and every other assembly
-  references them and defines nothing. A wide function type is therefore legal wherever a narrow one is: in a
-  parameter, in a return (which previously emitted an unverifiable `callvirt` through the consumer's own copy), and
+  …`KAction`22` / `KFunc`18`…`KFunc`23` (Kotlin arities 17 through 22) are now emitted unconditionally into BOTH
+  stdlib twins with identical signatures, and every other assembly references them and defines nothing. A wide
+  function type is therefore legal wherever a narrow one is: in a parameter, in a return (which previously emitted
+  an unverifiable `callvirt` through the consumer's own copy), and
   nested in a generic such as `List<(…) -> R>` (which previously aborted the emit with "no referenced method matches
   the resolved descriptor"). A single producer declaring two wide arities no longer breaks KLIB re-import through
   dll2klib's arity-clash rename, since producers declare no delegate to clash. `dll2klib` restores the canonical
@@ -27,10 +27,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   range: the on-demand synthesis path, the `EmitArg` rewrap exemption for TypeBuilder-backed delegates, and the
   unconditional structural comparison of function-type signature nodes are gone — every fully concrete function
   type, narrow or wide, is now matched by ordinary Reflection identity, and the stdlib is the sole definition site
-  with no exception. Kotlin function arities of 23 and above — which the frontend's `BuiltInFunctionArity.BIG_ARITY`
-  marks as the start of a variadic big-arity ABI — are **unsupported**: nothing is minted for them, and a program
-  that names one is refused with a diagnostic naming the arity instead of failing deeper in resolution. Arities
-  0..22 are the supported surface, recorded in `docs/dotkt-semantics.md` §8e-bis.
+  with no exception.
+
+  Kotlin function arities of **23 and above have no CLR delegate and are refused** by bir2cir, naming the source
+  file and the arity. The limit is the representation's, not the frontend's: the frontend resolves
+  `kotlin.FunctionN` for any N, but each arity is a distinct pre-baked type in the stdlib and Kotlin's function
+  types are unbounded, so the family cannot grow another row — going further needs a variadic representation.
+  Arities 0..22 are the supported surface, recorded in `docs/dotkt-semantics.md` §8e-bis.
 
 - **NRT-only fixed/`params` overload inversions now resolve like C# without compiler or library special cases (#367).**
   For a foreign CLR family whose fixed signature is exactly a `params` overload's physical prefix and whose Kotlin

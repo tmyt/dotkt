@@ -990,13 +990,11 @@ sealed partial class Emitter
         return false;
     }
 
-    static bool IsTypeBuilderBackedGeneric(Type t) =>
-        IsGenericInst(t) && t.GetGenericTypeDefinition() is TypeBuilder;
-
     // Is `t` a delegate type? A TypeBuilderInstantiation of a BAKED generic delegate (`Func<Res,int>`, Res a user
     // TypeBuilder) reports `Bcl("System.Delegate").IsAssignableFrom` UNRELIABLY (its base chain is not resolvable pre-bake),
-    // so fall back to testing its baked generic DEFINITION (`System.Func`2`). A synthetic (TypeBuilder-def) delegate
-    // stays on the direct assignability check (its own MulticastDelegate base is set at DefineType).
+    // so fall back to testing its baked generic DEFINITION (`System.Func`2`). A TypeBuilder-defined delegate (the
+    // stdlib's own canonical family, in the stdlib self-build) stays on the direct assignability check — its
+    // MulticastDelegate base is set at DefineType.
     bool IsDelegateType(Type t)
     {
         if (Bcl("System.Delegate").IsAssignableFrom(t)) return true;

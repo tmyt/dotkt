@@ -3715,8 +3715,9 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // Kotlin arities 17..22 (above System.Func/Action's 16-parameter ceiling); they are DEFINED once, in the stdlib,
     // which is deliberately never projected to a KLIB. So a referencing signature is restored from the ABI-fixed
     // NAME here — exactly as System.Func/Action are — rather than by decoding a delegate definition this projector
-    // can see. The family exists only in the stdlib, so the name it is matched against is the ordinary projected one
-    // and no part of the clash path knows about it.
+    // can see. Matching by an exact name holds because no DotKt-emitted assembly declares the family any more, so
+    // nothing in a freshly built reference set can put it in the arity-clash set that would rename it. An assembly
+    // produced by an older toolchain still defines it and would; such binaries are not supported — rebuild them.
     private const string CanonicalFunc = "DotKt.Runtime.CompilerServices.KFunc";
     private const string CanonicalAction = "DotKt.Runtime.CompilerServices.KAction";
 

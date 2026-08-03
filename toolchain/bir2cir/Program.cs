@@ -905,7 +905,7 @@ sealed class Pipeline
             // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
             // is a pass that changed a node's result type without carrying `sty` with it.
             CheckStySanity(outputName, substituted);
-            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
+            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through

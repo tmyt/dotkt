@@ -63,8 +63,8 @@ typedefs() { # <assembly> -> one SHAPE line per DEFINED KFunc`N/KAction`N (see d
 		|| die "delegate-typedefs.cs failed on $1"
 	printf '%s\n' "$out"
 }
-app_defs="$(typedefs "$OUT/il/Wide.dll" | grep . || true)"
-if [[ -n "$app_defs" ]]; then
+app_defs="$(typedefs "$OUT/il/Wide.dll")"
+if [[ -n "${app_defs//[[:space:]]/}" ]]; then
 	echo "FAIL  emitted assembly DEFINES a wide delegate instead of referencing the stdlib's:" >&2
 	printf '%s\n' "$app_defs" >&2
 	exit 1

@@ -200,7 +200,7 @@ sealed partial class Emitter
         // instantiation -> NotSupportedException. GetGenericArguments().Length is always populated, so this is robust.
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _canonicalDelegateCtors.TryGetValue(dtb, out var dctor))
             return AnchorConstructor(ft, dctor);
-        return (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
+        return (IsGenericInst(ft) && ContainsTypeBuilder(ft))
             ? AnchorConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
             : ft.GetConstructor(sig);
     }
@@ -217,7 +217,7 @@ sealed partial class Emitter
     {
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _canonicalDelegateInvokes.TryGetValue(dtb, out var invoke))
             return AnchorMethod(ft, invoke);
-        if (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
+        if (IsGenericInst(ft) && ContainsTypeBuilder(ft))
             return AnchorMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
         return ft.GetMethod("Invoke");
     }
@@ -249,12 +249,13 @@ sealed partial class Emitter
             ? fn.DelegateParams.Select(MapType).ToList()
             : throw new NotSupportedException("funcType is not a structured fn node");
 
-    // #220 — the CANONICAL wide delegate family. Kotlin function arities 17..22 (System.Func/Action stop at 16; 23 is
-    // the frontend's BuiltInFunctionArity.BIG_ARITY) have ONE definition for the whole platform, in the stdlib — so a
-    // `(…17 args…) -> R` in a public signature is the SAME Reflection type on both sides of a module boundary. The
-    // stdlib is the ONLY definition site, with no exception: the stdlib self-build emits the family unconditionally
-    // (DefineCanonicalDelegates) and every other assembly resolves it from the referenced stdlib. Arity 23 and above
-    // is UNSUPPORTED and refused — nothing is minted for it anywhere.
+    // #220 — the CANONICAL wide delegate family. Kotlin function arities 17..22 have ONE definition for the whole
+    // platform, in the stdlib, so a `(…17 args…) -> R` in a public signature is the SAME Reflection type on both
+    // sides of a module boundary. The stdlib is the ONLY definition site, with no exception: the stdlib self-build
+    // emits the family unconditionally (DefineCanonicalDelegates) and every other assembly resolves it from the
+    // referenced stdlib. Both ends of the range are bir2cir's to justify — System.Func/Action stop at 16 below it,
+    // and above it a function type has no CLR delegate at all (BirTypeLowering.LowerFnDelegate refuses there, so
+    // nothing is minted for it here or anywhere).
     internal const int CanonicalDelegateMinArity = 17;
     internal const int CanonicalDelegateMaxArity = 22;
 
@@ -275,12 +276,13 @@ sealed partial class Emitter
     // reference.
     Type CanonicalDelegateDef(string baseName, int genericArity, int kotlinArity)
     {
+        // An assert that cannot fire on valid CIR: whether a Kotlin function type HAS a CLR delegate is bir2cir's
+        // decision (BirTypeLowering.LowerFnDelegate refuses an arity above the family, with the source file), and a
+        // `clr` family only reaches here because that pass already chose it.
         if (kotlinArity > CanonicalDelegateMaxArity)
             throw new NotSupportedException(
-                $"a Kotlin function type of {kotlinArity} parameters is not supported: System.Func/Action carry " +
-                $"arities 0..{CanonicalDelegateMinArity - 1} and the DotKt stdlib's canonical KFunc/KAction family " +
-                $"carries {CanonicalDelegateMinArity}..{CanonicalDelegateMaxArity}. Arity " +
-                $"{CanonicalDelegateMaxArity + 1} and above awaits the variadic big-arity ABI (#220)");
+                $"CIR selected the canonical {baseName} family for arity {kotlinArity}, which it does not cover " +
+                $"({CanonicalDelegateMinArity}..{CanonicalDelegateMaxArity})");
         var name = CompilerServicesNs + baseName + "`" + genericArity;
         return _canonicalDelegates.TryGetValue(name, out var own) ? own : ResolveType(name);
     }
