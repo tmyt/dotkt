@@ -1377,7 +1377,10 @@ library-independent, so third-party assemblies receive the same treatment as the
 
 An **omitted** vararg is Kotlin's empty array, at every callee — same-module, cross-module, or a projected `params`
 member. `Path.Combine()` passes `new string[0]`, exactly as `f()` on `fun f(vararg xs: Int)` passes an empty
-`IntArray`.
+`IntArray`. It is ONE array: the call allocates it once and every reader of that argument reads the allocation, so
+for `fun f(vararg xs: Int, y: IntArray = xs)` the call `f()` satisfies `y === xs`. Kotlin's rule that each argument
+of a call is evaluated exactly once covers a synthesized value as much as a written one, and identity is the only
+observable that can tell two empty arrays apart.
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 
@@ -1409,6 +1412,13 @@ and byrefs are transparent. So `String.Compare(string?, string?, StringCompariso
 projects its enum parameter as `StringComparison`, and `Dictionary<int, string?>`'s `[Nullable(1,2)]` puts the `2` on
 the `string`. Reading a value type's position as an annotation does not merely mis-annotate it — every later byte in the
 same slot shifts with it. `bir2cir` writes the same flattening from the other side (`NullableFlags`).
+
+**Deviation: `kotlin.Unit` occupies no byte in this flattening, at any depth.** On the CLR `Unit` is a class, so C#'s
+own rule would give it one; DotKt does not, because `Unit` is also the type ECMA `void` projects to and a reader cannot
+tell the two apart by name. Both ends implement the same rule — `dll2klib` seeds `kotlin.Unit` into the set of names
+that hold no byte, `bir2cir` skips it when it writes the array — so `Pair<Unit, String?>` is `[1, 2]` and its `?`
+survives the round trip. Two consequences: a C# consumer reading such a signature counts one position too few, and a
+`Unit?` in a projected signature carries no nullability of its own (it re-imports as `Unit`).
 
 `T!` is a flexible type `(T..T?)` (`ConeFlexibleType`): the consumer may use it as `T` or `T?` and the compiler
 enforces neither — exactly how Kotlin/JVM treats un-annotated Java. This avoids the unsound alternative of forcing a

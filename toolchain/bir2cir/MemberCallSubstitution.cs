@@ -613,10 +613,14 @@ static class MemberCallSubstitution
                 };
             }
             // "vararg": arrayOf<T>(...) / intArrayOf(...) -> newArray. kotc emits the vararg as a single `newArray` arg
-            // (an EMPTY vararg is dropped -> args=[]). The elem source, in precedence: typeArgs[0] (the generic
-            // arrayOf<T>, reliable even when empty) -> the vararg wrapper's own elem (concrete primitive intArrayOf/…
-            // NON-empty) -> the ref.dll return-type hint (concrete primitive, EMPTY call). The elements come from the
-            // wrapper, or none when the vararg was dropped.
+            // whenever it was written as a list of elements — INCLUDING an empty list, since an omitted vararg is
+            // filled with the empty array of the element type. The elem source, in precedence: typeArgs[0] (the
+            // generic arrayOf<T>) -> the vararg wrapper's own elem (a concrete primitive factory declares no type
+            // parameter, so `intArrayOf(1,2)` and `intArrayOf()` are both answered here) -> the ref.dll return-type
+            // hint, which is left for the shapes that reach this arm with NO wrapper at all: a lone spread
+            // (`intArrayOf(*xs)`, which kotc forwards as the existing array) and a mixed `spreadConcat`
+            // (`intArrayOf(1, *xs)`). NOTE that both of those shapes are mis-lowered today for a reason this lookup
+            // does not reach: with no wrapper there are no elements to copy, so the substitution builds an EMPTY array.
             var wrapper = args.Count == 1 && args[0] is JsonObject w && (w["k"] as JsonValue)?.GetValue<string>() == "newArray" ? w : null;
             var arrElem = TypeArgAt(typeArgs, 0) ?? wrapper?["elem"]
                 ?? (refs.ArrayFactoryElemHint(fn) is string hint ? TypeJson.Fqn(hint) : null);

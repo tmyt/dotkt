@@ -52,6 +52,7 @@ import roundtrip.nrt.retNullable
 import roundtrip.nrt.takeNullable
 import roundtrip.nrt.retNullableInt
 import roundtrip.nrt.dotKtParamsChoice
+import roundtrip.nrt.UnitAheadHolder
 import roundtrip.nrt.NullableCtorHolder
 import roundtrip.nrt.NullableValueCtor
 import roundtrip.memext.Box
@@ -103,6 +104,7 @@ import roundtrip.nc.genDefaults as nonConstantDefaultGenDefaults
 import roundtrip.nc.genPairDefaults as nonConstantDefaultGenPairDefaults
 import roundtrip.nc.genMutable as nonConstantDefaultGenMutable
 import roundtrip.nc.bumps as nonConstantDefaultBumps
+import roundtrip.nc.varargAliased as nonConstantDefaultVarargAliased
 import roundtrip.nc.MemberDefaults as NonConstantDefaultMemberDefaults
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
@@ -305,7 +307,8 @@ class KotlinApiShapeRoundtripTests {
     }
 
     // roundtrip-nrt (#48): tri-state nullability — non-null (byte 1) + nullable (byte 2) reference via
-    // compile-dependency, + value Nullable<int> structural.
+    // compile-dependency, + value Nullable<int> structural, + the byte POSITION when a `Unit` node stands ahead of a
+    // nullable one in the same slot (writer and reader must agree that `Unit` occupies none).
     @TestAttribute
     fun triStateNullability() {
         ClassicAssert.AreEqual(1, retNonNull().length)              // 1   NO ?. — compiles only if the return restored non-null
@@ -320,6 +323,12 @@ class KotlinApiShapeRoundtripTests {
         val maybe: String? = "n"
         ClassicAssert.AreEqual("fixed:n", dotKtParamsChoice(maybe))
         ClassicAssert.AreEqual("params:1", dotKtParamsChoice("x", 1))
+        // A `Unit` node AHEAD of the nullable one in the SAME slot: `Unit` holds no byte in the flattened array, so
+        // writing one for it would shift the `String?` onto Unit's and re-import the pair as `Pair<Unit!, String>` —
+        // and then the `null` here would not compile.
+        val unitAhead: Pair<Unit, String?> = Pair(Unit, null)
+        ClassicAssert.AreEqual(-1, UnitAheadHolder().lengthOfSecond(unitAhead))       // -1  the second component really is nullable
+        ClassicAssert.AreEqual(3, UnitAheadHolder().lengthOfSecond(Pair(Unit, "abc"))) // 3   and carries a value
     }
 
     // #251: CONSTRUCTOR-parameter nullability. Every `null` below is the sharp signal — it compiles only if the
@@ -579,6 +588,11 @@ class PackageAndInlineRoundtripTests {
         val e = NonConstantDefaultEvalCounter()
         ClassicAssert.AreEqual(32, NonConstantDefaultRect(e.n()).area)                                  // 32   a ctor argument the default reads
         ClassicAssert.AreEqual(1, e.calls)
+
+        // An OMITTED VARARG the carrier's defaults read: the empty array the CALLER synthesizes is one value of the
+        // call, so both filled defaults receive that array rather than a clone of its allocation.
+        ClassicAssert.AreEqual(true, nonConstantDefaultVarargAliased())                                 // true one empty array, two readers
+        ClassicAssert.AreEqual(true, nonConstantDefaultVarargAliased(1, 2))                             // true and the supplied form is unchanged
 
         // A side-effecting DEFAULT that a later default reads: filled once, then read from the temp.
         val before = nonConstantDefaultBumps

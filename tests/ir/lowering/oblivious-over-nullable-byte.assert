@@ -1,0 +1,30 @@
+# NullableFlags: an OBLIVIOUS marker wraps whatever stands under it, INCLUDING a `{t:nullable}` — and oblivious wins.
+# `Head()` states that precedence once (0 beats 2: `T!` is the UN-annotated position), so both markers have to reach it.
+# The nullable arm forwarded only `nullableHere`, which re-decided the precedence by omission and wrote 2.
+#
+# This document is the witness rather than a fixture in the NUnit suites because no Kotlin source in the corpus
+# reaches the shape. The FRONTEND cannot emit it at all — kotc's one oblivious producer wraps `birType(t.makeNotNull())`
+# (BirEmitterTypes) and `birType` builds a `{t:nullable}` only for a MARKED-nullable type — but a bir2cir PASS can:
+# `Oblivious(Tv)` is an ordinary kotc shape, and the wrapper-preserving owner-tv substituters (SupertypeGraph and the
+# interface/covariant-return bridges) put the instantiation's argument under it, so a Kotlin type implementing an
+# un-annotated .NET generic member at `String?` builds one on paper. What was MEASURED is narrower and is all that is
+# claimed: zero occurrences of an oblivious-over-nullable node across the stdlib build and all five NUnit suites.
+# The bytes below are what the rule requires either way.
+#
+# `sequenced`'s parameter is `Pair<Oblivious(String?), String?>` — three byte positions, so the wrong byte is pinned in
+# the middle of a sequence and the two neighbours are pinned as unmoved (the reader's traversal comes from the
+# signature, so a wrong byte VALUE mis-annotates its own position and only its own). The flattening is
+# (Pair, a reference)=1, (oblivious over nullable)=0, (nullable String)=2, which RoundtripMetadata packs as the base64
+# `[Nullable(byte[])]` argument asserted below:
+#     [1,0,2] / AQAC   the rule
+#     [1,2,2] / AQIC   the nullable arm deciding it a second time
++"nullableFlags":[1,0,2]
++"name":"System.Runtime.CompilerServices.NullableAttribute"},"args":[{"bytes":"AQAC"}]
+-"nullableFlags":[1,2,2]
+-"bytes":"AQIC"
+# `alone`'s parameter is the same node with nothing after it: byte 0 is the whole walk, no position is nullable, and a
+# type with no nullable position writes NO attribute — the declaration's [NullableContext(1)] covers it (the second
+# KNOWN DIVERGENCE in NullableFlags' header). Under the old arm it wrote `[2]` and stamped the scalar [Nullable(2)],
+# which is the half showing the walk's RETURN value was untruthful too, not only the byte it appended.
+-"nullableFlags":[2]
+-"args":[{"value":2,"type":{"t":"fqn","name":"System.Byte"}}]

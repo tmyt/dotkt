@@ -30,3 +30,16 @@ class NullableCtorHolder(val s: String?) {
 class NullableValueCtor(val n: Int?, val label: String?) {
     fun sum(): Int = (n ?: -1) + (label?.length ?: -1)
 }
+
+// A `kotlin.Unit` node AHEAD of a nullable reference in ONE declaration slot. `Unit` occupies no byte in the flattened
+// array (it is the type ECMA `void` projects to, and the reader answers both with one rule — docs/dotkt-semantics.md
+// § 9), so the writer must skip it too: give it a byte and the `String?` behind it reads Unit's and re-imports non-null,
+// which is a consumer compile error at the `null` in the calling test rather than a runtime difference.
+//
+// A MEMBER rather than a top-level function on purpose: a cross-module call to a top-level function whose parameter
+// carries `Unit` as a TYPE ARGUMENT is refused at emission today, because the call-site descriptor lowers that argument
+// to `void` while the declaration keeps `kotlin.Pair<kotlin.Unit, String>` — a descriptor defect unrelated to these
+// bytes, and one the member path does not have.
+class UnitAheadHolder {
+    fun lengthOfSecond(p: Pair<Unit, String?>): Int = p.second?.length ?: -1
+}
