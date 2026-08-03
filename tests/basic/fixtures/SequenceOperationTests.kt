@@ -61,11 +61,8 @@ class SequenceOperationTests {
         assertTrue(bs.asSequence().single { it })                                 // true
         assertFalse(bs.asSequence().filter { !it }.first())                       // false
         assertEquals(2, bs.asSequence().filter { !it }.count())                   // 2
-        // `Sequence.mapNotNull` is deliberately NOT driven here: at a value element it throws
-        // EntryPointNotFoundException (and NullReferenceException on the all-null shape) today. A red case cannot
-        // live in this lane — it has no XFAIL mechanism — so that axis is driven in
-        // tests/roundtrip/scenarios/run.sh, where a documented red is machine-readable. The eager
-        // `Iterable.mapNotNull` twin IS green and lives in CollectionOperationsTests.
+        // `Sequence.mapNotNull` at a value element has a known bug. It remains issue-tracker state rather than a
+        // suite XFAIL; the eager `Iterable.mapNotNull` twin is green in CollectionOperationsTests.
     }
 
     // il-sort: sortedDescending / sortedBy / sortedByDescending -> LINQ ordering, materialized by joinToString.

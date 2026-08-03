@@ -13,7 +13,6 @@ The compiler regression suite is organized as subject-oriented NUnit projects. T
 | `tests/ir/` | BIR/CIR schema and sanity validation |
 | `tests/msbuild/` | Stateful MSBuild behavior that cannot be expressed inside one test process |
 | `tests/packaged-sdk/` | Local-feed restore and packaged SDK scenarios |
-| `tests/roundtrip/scenarios/` | Irreducible external-process roundtrip cases |
 | `tests/special/` | Specialized synthetic or platform-sensitive gates |
 | `tests/support/` | Shared Kotlin test support |
 

@@ -3,11 +3,9 @@
      dll (dll2klib re-import of DotKt.Metadata), NEVER its source — the producer sits in a SIBLING directory so
      this project's `**/*.kt` glob cannot capture it (the DLL-not-source invariant, design §3).
 
-     This single NUnit project replaces the hand-rolled compile-then-consume orchestration of
-     tests/roundtrip/scenarios/run.sh: the MSBuild build graph already does the "build producer dll -> put it on the
-     consumer's ReferencePath" step, and `dotnet test` discovers the @TestAttribute methods and runs them
-     in-process. Each method migrates ONE verify-roundtrip.sh section, preserving its golden values 1:1 as
-     ClassicAssert value asserts (design D1). Resolves the LOCALLY-BUILT SDK from build/nuget-feed via
+     The MSBuild build graph does the "build producer dll -> put it on the consumer's ReferencePath" step, and
+     `dotnet test` discovers the @TestAttribute methods and runs them in-process. Assertions use typed values rather
+     than a shell-owned stdout protocol (design D1). Resolves the LOCALLY-BUILT SDK from build/nuget-feed via
      tests/nuget.config (design D4); its version is pinned in the repository-root global.json; the gate entry lives
      in tests/run-nunit-tests.sh. -->
 <Project Sdk="DotKt.Sdk">
