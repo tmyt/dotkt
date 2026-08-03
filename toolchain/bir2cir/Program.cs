@@ -116,6 +116,10 @@ sealed class Pipeline
         // `{t:"fqn"}` type-reference NAME is rewritten (a type DECLARATION's own `name` sits under `kind`, not `t`, so real
         // kotlin.CharSequence declarations — if any — are untouched).
         foreach (var b in birFiles) SubstituteCharSeqIdentity(b.Root);
+        // A delegated CLR-event declaration and a subscription through that Kotlin wrapper may be in sibling source
+        // files. Snapshot the module-wide relation before any declaration-normalizing pass can consume or rebuild the
+        // kotc directive; ClrEventSubscriptionBinding later consumes this immutable physical-owner index per file.
+        var clrEventForwardedOwners = ClrEventSubscriptionBinding.CollectForwardedOwners(birFiles.Select(f => f.Root));
 
         // The top-level funs DEFINED in this compilation (every file-class's own static methods, across all input
         // files). A `callStatic owner=null` to one of these must stay owner-less (ilemit's FindStatic finds the
@@ -236,7 +240,6 @@ sealed class Pipeline
         var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(birFiles.Select(f => f.Root));
         var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(birFiles.Select(f => f.Root));
         var genericDowncastHierarchy = GenericDowncastRealignment.Collect(birFiles.Select(f => f.Root));
-
         // INLINE-BIR STASH (#71/#75 S1): BEFORE any lowering pass runs, capture every `mods.inline` method's RAW
         // pre-lowering body into an OPAQUE `inlineBir` base64 string (ilemit stamps it verbatim as the raw-BIR
         // [KotlinInline] carrier) + an in-memory `owner|name|pc|ga -> raw decl` index (dormant same-module infra).
@@ -549,7 +552,7 @@ sealed class Pipeline
             // the clrEventGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the synthetic
             // call — which has no ref.dll owner — is bound here. `subscribe` also constructs the stdlib close token with
             // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
-            hoisted = ClrEventSubscriptionBinding.Apply(hoisted, refs);
+            hoisted = ClrEventSubscriptionBinding.Apply(hoisted, refs, clrEventForwardedOwners);
             // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
             // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
             // these newly-created callback classes are assembled before the remaining whole-tree passes.

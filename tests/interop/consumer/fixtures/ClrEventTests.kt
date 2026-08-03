@@ -19,6 +19,7 @@ import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 import System.ComponentModel.INotifyPropertyChanged
 import System.ComponentModel.PropertyChangedEventArgs
+import EventDelegation.EventSource
 import kotlin.clr.clrEvent
 import kotlin.reflect.KProperty
 
@@ -109,5 +110,23 @@ class ClrEventTests {
         vm.name = "Solo"                                            // no subscriber -> no throw
         assertEquals("Solo", vm.name)
         assertTrue(true)
+    }
+
+    // #186: class delegation must forward a CLR interface event's add/remove accessors to the delegate field.
+    @TestAttribute
+    fun classDelegationForwardsEventSubscription() {
+        val source = EventSource<Int>()
+        val delegated = DerivedDelegatingEventSource<String, Int>(source)
+        var total = 0
+        assertEquals(42, delegated.add_Changed())
+        val subscription = delegated.Changed.subscribe { value -> total += value }
+
+        source.Fire(7)
+        assertEquals(7, total)
+        assertEquals(1, source.AddCount)
+        subscription.close()
+        assertEquals(1, source.RemoveCount)
+        source.Fire(11)
+        assertEquals(7, total)
     }
 }
