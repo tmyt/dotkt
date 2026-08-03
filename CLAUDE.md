@@ -114,10 +114,12 @@ bug; the only legitimate throw is an assert that cannot fire on valid IR.
 - Use Codex for design and investigation, and tell subagents to use it too:
   `codex exec -s read-only --skip-git-repo-check "<question>" </dev/null`. The `</dev/null` is required or it
   hangs. If it goes silent it may be stuck on an interactive update prompt — ask me.
-- Review before reporting done, by a fresh agent that has none of the implementation context: give it the
-  task, where to read the diff, and the applicable invariants — not your reasoning, which turns an
-  independent read into a confirmation pass. Then have Codex review the diff before the PR goes up, and hand
-  it the honest remainder rather than only the summary.
+- Before reporting done or opening a PR, complete the independent local review contract in `AGENTS.md`:
+  separate fresh Claude and Codex processes, both read-only and given the exact diff or commit range. Give
+  them the task, applicable invariants, and the honest remainder — known limitations, open questions and weak
+  points — but none of the implementation conversation or reasoning that would turn an independent read into
+  a confirmation pass. Validate both review results before handoff. For this review contract, `AGENTS.md` is
+  authoritative if this summary ever differs from it.
 - If the same fault keeps reappearing somewhere new instead of closing, stop fixing symptoms per layer and do
   one read-only pass that enumerates every manifestation and specs a single fix.
 
