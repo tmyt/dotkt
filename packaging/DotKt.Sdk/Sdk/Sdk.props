@@ -18,7 +18,7 @@
     <LanguageTargets Condition="'$(LanguageTargets)' == ''">$(MSBuildToolsPath)/Microsoft.CSharp.targets</LanguageTargets>
     <!-- The SDK's reference assembly (obj/ref) is built by csc from our placeholder .cs, so it holds the placeholder
          instead of the Kotlin types ilemit writes into the real dll — a downstream C# <ProjectReference> would bind
-         the empty ref assembly (CS0246). Disable it so consumers reference the real, retargeted output. -->
+         the empty ref assembly (CS0246). Disable it so consumers reference the real emitted output. -->
     <ProduceReferenceAssembly Condition="'$(ProduceReferenceAssembly)' == ''">false</ProduceReferenceAssembly>
   </PropertyGroup>
 

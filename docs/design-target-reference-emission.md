@@ -48,24 +48,23 @@ The largest mechanical clusters at the baseline are `Emitter.Operators.cs` (89 s
 `Emitter.Assembly.cs` (29). This is an inventory, not permission to migrate piecemeal: a partially mixed
 MetadataLoadContext/host graph is invalid.
 
-## Calibration oracle
+## Direct-emission gate
 
-`tests/target-universe` emits one representative assembly without the repair stage and then runs `retarget` over a
-copy. Its metadata assertions cover:
+`tests/target-universe` emits one representative assembly and inspects the raw artifact. Its assertions cover:
 
 - primitive parameter/return signature encoding;
 - constructed generic (`List<String>`) signatures;
 - delegate (`(String) -> String`) signatures;
-- a standard assembly custom attribute;
+- standard assembly and target-framework custom attributes;
+- absence of assembly-local nullable metadata TypeDefs;
 - external base/interface identities; and
 - external types in public member signatures.
 
-At the #335 baseline the raw TypeRefs were scoped through host `System.Private.CoreLib`; the repaired copy used target
-contracts such as `System.Runtime` and `System.Collections`. #336 now emits every external type/member from the target
-context. A target generic definition combined with an emit-time type parameter is represented by the CLR's
+At the #335 baseline the raw TypeRefs were scoped through host `System.Private.CoreLib` and required a post-emit
+repair. #336 emits every external type/member from the target context, and #337 removed that second authority. A
+target generic definition combined with an emit-time type parameter is represented by the CLR's
 `Type.MakeGenericSignatureType` adapter and mechanically re-anchored member wrappers; no overload selection occurs.
-Raw output already carries target scopes and `retarget` reports no metadata changes. #337 may delete the
-oracle only after that invariant is covered by ordinary SDK, reverse-interop, ILVerify, stdlib, coroutine, and
+Raw output carries target scopes directly and is covered by SDK, reverse-interop, ILVerify, stdlib, coroutine, and
 round-trip gates.
 
 ## Transitional CIR member identity

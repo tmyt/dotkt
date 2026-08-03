@@ -15,10 +15,9 @@ using DotKt.Bir;
 // retNullableFlags/nullableFlags (DeclNullableFlags), retSuspendFnType/suspendFnType (BirTypeLowering's suspend-fn-type
 // erasure records the pre-erasure shape as this fact), readOnly, and the S1 `inlineBir` carrier string.
 //
-// The embedded attribute-class defs (the DotKt.Runtime.CompilerServices.* set + System.Runtime.CompilerServices.Nullable{,Context})
-// are emitted ONCE per assembly as a DEDICATED synthetic CIR file (SynthDefsFile) — `internal sealed : System.Attribute`
-// with base-chaining ctors — so ilemit defines them like any type (no EnsureKotlinAttrs). NullableAttribute carries the
-// csc DUAL ctor: (byte) scalar + (byte[]) nested; the two overloads are disambiguated by BuildCab's runtime-type match.
+// The DotKt.Runtime.CompilerServices.* carrier defs are emitted ONCE per assembly as a DEDICATED synthetic CIR file
+// (SynthDefsFile). The standard NullableAttribute/NullableContextAttribute types are target-BCL declarations and each
+// application is marked external; duplicating those TypeDefs in every output would create a second CLR authority.
 //
 // ATTR ORDER (per emitted member) keeps the established order and inserts each newer carrier beside its slot peers:
 //   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
@@ -412,7 +411,16 @@ static class RoundtripMetadata
                 ? new JsonObject { ["t"] = "array", ["elem"] = Fqn("System.Byte") }
                 : a["type"]?.DeepClone());
         }
-        return new JsonObject { ["attr"] = TypeJson.Fqn(attr), ["argTypes"] = argTypes, ["args"] = arr };   // `attr` is a structured `{t:fqn}` node (#48)
+        var marker = new JsonObject { ["attr"] = TypeJson.Fqn(attr), ["argTypes"] = argTypes, ["args"] = arr };
+        if (attr is ANullable or ANullableCtx)
+        {
+            marker["attrExternal"] = true;
+            // A compile-reference set can contain private compiler-synthesized Nullable* lookalikes in arbitrary
+            // libraries. Carry the physical declaration owner so ilemit links the target BCL constructor rather than
+            // re-resolving a name that is not globally unique.
+            marker["attrAssembly"] = "System.Runtime";
+        }
+        return marker;   // `attr` is a structured `{t:fqn}` node (#48)
     }
 
     static JsonObject ByteMarker(string attr, int v) => Marker(attr, ByteArg(v));
@@ -483,10 +491,6 @@ static class RoundtripMetadata
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),         // compiler-synthesized CLR type -> original Kotlin TypeNode
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
-            // NullableAttribute — csc's DUAL ctor: (byte) FIRST, (byte[]) SECOND (declaration order preserved so the
-            // MethodDef rows and BuildCab's arity fallback stay deterministic).
-            AttrClass(ANullable, Ctor(Param("System.Byte")), Ctor(Param(ByteArrayType()))),
-            AttrClass(ANullableCtx, Ctor(Param("System.Byte"))),
         };
         return new JsonObject
         {

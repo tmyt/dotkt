@@ -19,13 +19,12 @@ Options:
   --ref <dll>     add a compile/emit reference   (repeatable; e.g. a NuGet/BCL dll or another DotKt assembly)
   --no-stdlib     do NOT reference DotKt.Stdlib
   --target-rid <rid>  select copy-local RID assets for this TARGET runtime (default: host RID)
-  --retarget      repoint BCL refs off System.Private.CoreLib (so a C# project can <Reference> the output)
   -h, --help      this help
 EOF
 }
 
 # --- args -------------------------------------------------------------------------------------------
-out_name=""; out_dir="$PWD/dotkt-out"; make_exe=0; do_run=0; use_stdlib=1; do_retarget=0; target_rid=""
+out_name=""; out_dir="$PWD/dotkt-out"; make_exe=0; do_run=0; use_stdlib=1; target_rid=""
 declare -a srcs=() extra_refs=()
 while (( $# )); do
 	case "$1" in
@@ -36,7 +35,6 @@ while (( $# )); do
 		--ref) extra_refs+=("$2"); shift 2 ;;
 		--no-stdlib) use_stdlib=0; shift ;;
 		--target-rid) target_rid="$2"; shift 2 ;;
-		--retarget) do_retarget=1; shift ;;
 		-h|--help) usage; exit 0 ;;
 		-*) usage_error "unknown option '$1'" ;;
 		*) srcs+=("$1"); shift ;;
@@ -64,7 +62,6 @@ if (( use_stdlib )); then
 	[[ -f "$STDLIB_REF_DLL" ]] || die "missing $STDLIB_REF_DLL — build it with: scripts/build-stdlib-ref.sh --emit (or pass --no-stdlib)"
 	[[ -f "$STDLIB_RT_DLL" ]]  || die "missing $STDLIB_RT_DLL — build it with: scripts/build-stdlib-rt.sh --emit (or pass --no-stdlib)"
 fi
-(( do_retarget )) && need_tool retarget
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 bir="$work/bir"; cir="$work/cir"; klibs="$work/reference-klibs"
@@ -72,19 +69,17 @@ mkdir -p "$bir" "$cir" "$klibs" "$out_dir"
 
 # Reference assemblies. Mirroring verify-tests, the two backend stages take DIFFERENT stdlib refs: bir2cir
 # reads the @Clr-metadata REFERENCE stdlib (for @ClrTypeAlias/@ClrIntrinsic substitution), ilemit gets
-# the RUNTIME stdlib (the real Kotlin bodies). The [Kotlin*] round-trip attributes are SYNTHESIZED
-# per-assembly by ilemit (no DotKt.Runtime). The targeting pack is the compile universe for dll2klib,
-# bir2cir, and retarget; ilemit resolves platform types from the runtime host and receives only implementation refs.
+# the RUNTIME stdlib (the real Kotlin bodies). CIR carries the per-assembly [Kotlin*] round-trip attributes and
+# ilemit stamps them mechanically (no DotKt.Runtime). The targeting pack is the sole compile universe for dll2klib,
+# bir2cir, and ilemit; runtime refs only disambiguate/copy implementation assets.
 need_dotnet_reference_sets
 extra_refset="$(refset_join "${extra_refs[@]}")"
 bir_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$extra_refset")"
 runtime_refs="$extra_refset"
-retarget_compile_refs="$bir_compile_refs"
 emit_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$extra_refset")"
 if (( use_stdlib )); then
 	bir_compile_refs="$(refset_join "$bir_compile_refs" "$STDLIB_REF_DLL")"
 	runtime_refs="$(refset_join "$runtime_refs" "$STDLIB_RT_DLL")"
-	retarget_compile_refs="$(refset_join "$retarget_compile_refs" "$STDLIB_RT_DLL")"
 	emit_compile_refs="$(refset_join "$emit_compile_refs" "$STDLIB_RT_DLL")"
 fi
 
@@ -114,18 +109,14 @@ dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$bir_compile_refs" "$bir"/*.bir.jso
 #    --target-rid (#51): when cross-targeting, pick the target runtime's runtimes/<rid>/lib copy-local asset instead of
 #    the build host's; empty (the default) makes ilemit fall back to the host RID. The SDK RID graph is auto-discovered.
 info "emitting $out_name.dll" >&2
-dotnet "$ILEMIT_DLL" "$out_dir" "$out_name" --compile-refs "$emit_compile_refs" --runtime-refs "$runtime_refs" --target-rid "$target_rid" "$cir"/*.cir.json
+dotnet "$ILEMIT_DLL" "$out_dir" "$out_name" --compile-refs "$emit_compile_refs" --runtime-refs "$runtime_refs" \
+	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --target-rid "$target_rid" "$cir"/*.cir.json
 
-# 5. optional retarget (for compile-time C# <Reference>).
-(( do_retarget )) && dotnet "$RETARGET_DLL" "$out_dir/$out_name.dll" --compile-refs "$retarget_compile_refs" >/dev/null
-
-# 6. exe scaffolding: copy copy-local refs + write a runtimeconfig so `dotnet <name>.dll` runs.
+# 5. exe scaffolding: copy copy-local refs + write a runtimeconfig from this driver's explicit target settings.
 if (( make_exe )); then
 	(( use_stdlib )) && cp "$STDLIB_RT_DLL" "$out_dir/" 2>/dev/null || true
 	for r in "${extra_refs[@]}"; do cp "$r" "$out_dir/" 2>/dev/null || true; done
-	cat > "$out_dir/$out_name.runtimeconfig.json" <<JSON
-{"runtimeOptions":{"tfm":"net10.0","framework":{"name":"Microsoft.NETCore.App","version":"10.0.0"}}}
-JSON
+	write_runtimeconfig "$out_dir" "$out_name"
 fi
 
 info "built $out_dir/$out_name.dll"

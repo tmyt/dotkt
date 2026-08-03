@@ -10,7 +10,6 @@ mkdir -p "$OUT"
 
 need_tool ilemit
 need_tool bir2cir
-need_tool retarget
 need_dotnet_reference_sets
 need_fe_klib
 need_stdlib_ref
@@ -35,16 +34,10 @@ dotnet build "$ROOT/tests/target-universe/TargetUniverseProbe.ktproj" \
 
 probe_dir="$OUT/bin/Release/net10.0"
 raw="$OUT/TargetUniverseProbe.raw.dll"
-repaired="$OUT/TargetUniverseProbe.retargeted.dll"
 cp "$probe_dir/TargetUniverseProbe.dll" "$raw"
 
 actual="$(dotnet "$probe_dir/TargetUniverseProbe.dll")"
 [[ "$actual" == "target-universe" ]] || die "raw emitted probe returned '$actual'"
 
-dotnet "$RETARGET_DLL" "$raw" --out "$repaired" \
-    --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")" -v >"$OUT/retarget.log"
-grep -qF 'no System.Private.CoreLib ref — already clean' "$OUT/retarget.log" \
-    || die "retarget oracle changed raw target-scoped metadata"
-
 dotnet run --project "$ROOT/tests/target-universe/MetadataProbe.csproj" -c Release -- \
-    "$raw" "$repaired"
+    "$raw"

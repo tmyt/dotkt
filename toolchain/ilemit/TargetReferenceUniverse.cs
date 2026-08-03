@@ -11,6 +11,7 @@ sealed class TargetReferenceUniverse : IDisposable
     readonly HashSet<Assembly> _assemblySet;
     readonly HashSet<string> _runtimeAssemblyIdentities;
     readonly Dictionary<string, Type> _types = new(StringComparer.Ordinal);
+    readonly Dictionary<(string type, string assembly), Type> _ownedTypes = new();
 
     public Assembly CoreAssembly => _context.CoreAssembly;
     public IReadOnlyList<Assembly> Assemblies => _assemblies;
@@ -104,6 +105,35 @@ sealed class TargetReferenceUniverse : IDisposable
         }
         _types[fullName] = matches[0];
         return matches[0];
+    }
+
+    // Resolve a CIR-carried physical owner exactly. This is required for declarations such as NullableAttribute:
+    // third-party assemblies commonly embed private compiler lookalikes with the same FQN, so a name-only search is
+    // intentionally ambiguous. The producer owns the assembly decision; ilemit merely links that stated identity.
+    public Type ResolveType(string fullName, string assemblyName)
+    {
+        if (string.IsNullOrWhiteSpace(assemblyName))
+            throw new InvalidOperationException($"target type '{fullName}' carries an empty assembly owner");
+        var key = (fullName, assemblyName);
+        if (_ownedTypes.TryGetValue(key, out var cached)) return cached;
+        var assemblies = _assemblies
+            .Where(a => string.Equals(a.GetName().Name, assemblyName, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (assemblies.Length != 1)
+            throw new InvalidOperationException(
+                $"target assembly owner '{assemblyName}' for type '{fullName}' matched {assemblies.Length} compile references");
+        Type type;
+        try { type = assemblies[0].GetType(fullName, throwOnError: false, ignoreCase: false); }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"target assembly '{assemblyName}' could not resolve owned type '{fullName}': {ex.Message}", ex);
+        }
+        if (type == null)
+            throw new InvalidOperationException(
+                $"target assembly '{assemblyName}' does not define owned type '{fullName}'");
+        _ownedTypes[key] = type;
+        return type;
     }
 
     // Guard used by the #336 migration: metadata-only target Type objects and host-runtime Type objects are not

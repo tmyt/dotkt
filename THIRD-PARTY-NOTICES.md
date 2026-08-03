@@ -14,8 +14,7 @@ pins in a given build.
 | Kotlin standard library (`kotlin-stdlib`, vendored jar) | `kotc` | Apache-2.0 | https://github.com/JetBrains/kotlin |
 | kotlinx.coroutines (bundled transitively with the Kotlin compiler) | `kotc` | Apache-2.0 | https://github.com/Kotlin/kotlinx.coroutines |
 | JetBrains Java annotations (`org.jetbrains:annotations`, bundled with the Kotlin compiler) | `kotc` | Apache-2.0 | https://github.com/JetBrains/java-annotations |
-| Mono.Cecil | `retarget` | MIT | https://github.com/jbevain/cecil |
-| System.Reflection.MetadataLoadContext | `bir2cir`, `ilemit`, `retarget` | MIT (.NET Foundation) | https://github.com/dotnet/runtime |
+| System.Reflection.MetadataLoadContext | `bir2cir`, `ilemit` | MIT (.NET Foundation) | https://github.com/dotnet/runtime |
 
 The full text of the Apache License 2.0 governing DotKt itself is in `LICENSE`. The Apache-2.0 and
 MIT licenses of the redistributed components are available from their respective project pages above.

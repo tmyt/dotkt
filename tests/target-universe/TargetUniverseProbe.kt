@@ -13,6 +13,8 @@ class TargetDerived(number: Int) : TargetBase(number)
 
 fun primitive(value: Int): Int = value
 
+fun nullableShape(values: List<String?>): String? = values[0]
+
 fun carry(
     values: List<String>,
     transform: (String) -> String,

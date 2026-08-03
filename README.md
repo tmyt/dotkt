@@ -143,7 +143,6 @@ generation step. See `docs/user/getting-started.md`.
 | `toolchain/dll2klib/` | CLR reference assembly → standard metadata-only KLIB for frontend resolution |
 | `toolchain/bir2cir/` | **BIR (JSON) → CIR (JSON)**: the Kotlin↔CLR lowering (reads the stdlib ref.dll bindings) |
 | `toolchain/ilemit/` | **CIR (JSON) → CIL** via `System.Reflection.Emit` |
-| `toolchain/retarget/` | repoint emitted BCL refs so a C# project can `<Reference>` the dll at compile time |
 | `libraries/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
 | `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |
 | `tests/` | categorized NUnit projects plus the few shell scenarios that require external process/build state |

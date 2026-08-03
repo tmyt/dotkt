@@ -241,10 +241,10 @@ compile_kt() {
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
 LAUNCHER="$KOTC"
 need_fe_klib
-build_tool ilemit; build_tool bir2cir; build_tool dll2klib; build_tool retarget
+build_tool ilemit; build_tool bir2cir; build_tool dll2klib
 need_dotnet_reference_sets
 # The RUNTIME stdlib joins the reference set: a suspend-carrying DotKt lib references the coroutine runtime
-# (DotKt.Stdlib's kotlin.coroutines.Continuation) in its emitted CPS signatures, so retarget/dll2klib must be
+# (DotKt.Stdlib's kotlin.coroutines.Continuation) in its emitted CPS signatures, so dll2klib must be
 # able to LOAD it to walk KLib's type surface (else dll2klib skips every seed type -> empty meta -> the
 # consumer can't resolve the library). Harmless for the non-suspend sections (they reference no stdlib type).
 REFS="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL");"
@@ -281,7 +281,7 @@ emit_il() {
 	local out="$1" asm="$2"; shift 2
 	local refs=() birs=() usrrefs=()
 	while (( $# )); do
-		# A user `--ref X` (a retargeted DotKt library) goes to ilemit AND — A2 (#61) — to bir2cir, which RESOLVES
+		# A user `--ref X` (a target-scoped DotKt library) goes to ilemit AND — A2 (#61) — to bir2cir, which RESOLVES
 		# the reference-KLIB-projected owner FQN against it to bind the .NET call SHAPE (clrStatic/clrInstance/…). Mirrors
 		# The compiler-test emit path uses the RUNTIME stdlib only for ilemit (bir2cir reads the REFERENCE stdlib).
 		if [[ "$1" == --ref ]]; then refs+=("$2"); usrrefs+=("$2"); shift 2; else birs+=("$1"); shift; fi
@@ -297,7 +297,8 @@ emit_il() {
 	# (`ilemit: … cannot resolve .NET type X`) produces no assembly, and the section then fails on empty
 	# stdout — indistinguishable from a crash unless the abort message survives.
 	evidence_add "$(dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "${birs[@]}" 2>&1 || true)"
-	evidence_add "$(dotnet "$ILEMIT_DLL" "$out" "$asm" --compile-refs "$emit_compile_refs" --runtime-refs "$(refset_join "${refs[@]}")" "$cir"/*.cir.json 2>&1 || true)"
+	evidence_add "$(dotnet "$ILEMIT_DLL" "$out" "$asm" --compile-refs "$emit_compile_refs" --runtime-refs "$(refset_join "${refs[@]}")" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" "$cir"/*.cir.json 2>&1 || true)"
+	[[ -f "$out/$asm.dll" ]] && write_runtimeconfig "$out" "$asm"
 	[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$out/" 2>/dev/null || true
 }
 
@@ -377,7 +378,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$M/lib" -no-stdlib -classpath "$CP" -d "$M/libbir" >/dev/null 2>&1 || true
 emit_il "$M/libil" MarkLib "$M/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$M/libil/MarkLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$M/libil/MarkLib.dll" "$M/MarkLib.klib"
 "$LAUNCHER" "$M/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$M/MarkLib.klib" -d "$M/appbir" >/dev/null 2>&1 || true
 emit_il "$M/appil" MarkApp --ref "$M/libil/MarkLib.dll" "$M/appbir"/*.bir.json
@@ -478,7 +478,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$AT/lib" -no-stdlib -classpath "$CP" -opt-in=kotlin.concurrent.atomics.ExperimentalAtomicApi -d "$AT/libbir" >/dev/null 2>&1 || true
 emit_il "$AT/libil" AtomicLib "$AT/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$AT/libil/AtomicLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$AT/libil/AtomicLib.dll" "$AT/AtomicLib.klib"
 "$LAUNCHER" "$AT/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$AT/AtomicLib.klib" -opt-in=kotlin.concurrent.atomics.ExperimentalAtomicApi -d "$AT/appbir" >/dev/null 2>&1 || true
 emit_il "$AT/appil" AtomicApp --ref "$AT/libil/AtomicLib.dll" "$AT/appbir"/*.bir.json
@@ -504,7 +503,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$NS/lib" -no-stdlib -classpath "$CP" -d "$NS/libbir" >/dev/null 2>&1 || true
 emit_il "$NS/libil" SNothingLib "$NS/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NS/libil/SNothingLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$NS/libil/SNothingLib.dll" "$NS/SNothingLib.klib"
 write_coharness "$NS/app"
 "$LAUNCHER" "$NS/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NS/SNothingLib.klib" -d "$NS/appbir" >/dev/null 2>&1 || true
@@ -541,10 +539,9 @@ fun main() {
 }
 EOF
 
-# 1. compile + emit + retarget the library (the emit stamps [KotlinFunction]/[KotlinFileClass]).
+# 1. compile + emit the library (the emit stamps [KotlinFunction]/[KotlinFileClass]).
 "$LAUNCHER" "$R/lib" -no-stdlib -classpath "$CP" -d "$R/libbir" >/dev/null 2>&1 || true
 emit_il "$R/libil" KLib "$R/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$R/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 # 2. dll2klib records the attributes in the reference KLIB.
 project_reference_klib "$R/libil/KLib.dll" "$R/KLib.klib"
 write_coharness "$R/app"
@@ -607,7 +604,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$GG/lib" -no-stdlib -classpath "$CP" -d "$GG/libbir" >/dev/null 2>&1 || true
 emit_il "$GG/libil" KLib "$GG/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$GG/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$GG/libil/KLib.dll" "$GG/KLib.klib"
 write_coharness "$GG/app"
 "$LAUNCHER" "$GG/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$GG/KLib.klib" -d "$GG/appbir" >/dev/null 2>&1 || true
@@ -649,7 +645,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$NV/lib" -no-stdlib -classpath "$CP" -d "$NV/libbir" >/dev/null 2>&1 || true
 emit_il "$NV/libil" NvLib "$NV/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$NV/libil/NvLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$NV/libil/NvLib.dll" "$NV/NvLib.klib"
 "$LAUNCHER" "$NV/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$NV/NvLib.klib" -d "$NV/appbir" >/dev/null 2>&1 || true
 emit_il "$NV/appil" NvApp --ref "$NV/libil/NvLib.dll" "$NV/appbir"/*.bir.json
@@ -771,7 +766,6 @@ ng_cross_flush() {
 	evidence_reset
 	compile_kt "$NG_CROSS/producer" "$NG_CROSS/producer-bir" "$CP"
 	emit_il "$NG_CROSS/producer-il" NgBatchLib "$NG_CROSS/producer-bir"/*.bir.json
-	dotnet "$RETARGET_DLL" "$lib" --compile-refs "$REFS" >/dev/null 2>&1 || true
 	project_reference_klib "$lib" "$klib"
 	producer_evidence="$RT_EVIDENCE"
 
@@ -1717,7 +1711,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$HF/lib" -no-stdlib -classpath "$CP" -d "$HF/libbir" >/dev/null 2>&1 || true
 emit_il "$HF/libil" KLib "$HF/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$HF/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$HF/libil/KLib.dll" "$HF/KLib.klib"
 "$LAUNCHER" "$HF/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$HF/KLib.klib" -d "$HF/appbir" >/dev/null 2>&1 || true
 emit_il "$HF/appil" KApp --ref "$HF/libil/KLib.dll" "$HF/appbir"/*.bir.json
@@ -1766,7 +1759,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$RL/lib" -no-stdlib -classpath "$CP" -d "$RL/libbir" >/dev/null 2>&1 || true
 emit_il "$RL/libil" UiLib "$RL/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$RL/libil/UiLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$RL/libil/UiLib.dll" "$RL/UiLib.klib"
 "$LAUNCHER" "$RL/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$RL/UiLib.klib" -d "$RL/appbir" >/dev/null 2>&1 || true
 emit_il "$RL/appil" UiApp --ref "$RL/libil/UiLib.dll" "$RL/appbir"/*.bir.json
@@ -1817,7 +1809,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$MP/lib" -no-stdlib -classpath "$CP" -d "$MP/libbir" >/dev/null 2>&1 || true
 emit_il "$MP/libil" KLib "$MP/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$MP/libil/KLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$MP/libil/KLib.dll" "$MP/KLib.klib"
 write_coharness "$MP/app"
 "$LAUNCHER" "$MP/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$MP/KLib.klib" -d "$MP/appbir" >/dev/null 2>&1 || true
@@ -1867,7 +1858,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$SF/lib" -no-stdlib -classpath "$CP" -d "$SF/libbir" >/dev/null 2>&1 || true
 emit_il "$SF/libil" HofLib "$SF/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$SF/libil/HofLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$SF/libil/HofLib.dll" "$SF/HofLib.klib"
 "$LAUNCHER" "$SF/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$SF/HofLib.klib" -d "$SF/appbir" >/dev/null 2>&1 || true
 emit_il "$SF/appil" HofApp --ref "$SF/libil/HofLib.dll" "$SF/appbir"/*.bir.json
@@ -1926,7 +1916,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$SR/lib" -no-stdlib -classpath "$CP" -d "$SR/libbir" >/dev/null 2>&1 || true
 emit_il "$SR/libil" Hof2Lib "$SR/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$SR/libil/Hof2Lib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$SR/libil/Hof2Lib.dll" "$SR/Hof2Lib.klib"
 "$LAUNCHER" "$SR/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$SR/Hof2Lib.klib" -d "$SR/appbir" >/dev/null 2>&1 || true
 emit_il "$SR/appil" Hof2App --ref "$SR/libil/Hof2Lib.dll" "$SR/appbir"/*.bir.json
@@ -1963,7 +1952,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$VD/lib" -no-stdlib -classpath "$CP" -d "$VD/libbir" >/dev/null 2>&1 || true
 emit_il "$VD/libil" AnimalLib "$VD/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$VD/libil/AnimalLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$VD/libil/AnimalLib.dll" "$VD/AnimalLib.klib"
 "$LAUNCHER" "$VD/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$VD/AnimalLib.klib" -d "$VD/appbir" >/dev/null 2>&1 || true
 # ROOT-fix guard: every callInstance on the reinjected dispatch.Animal owner carries a `virtual` flag (kotc #139).
@@ -2079,7 +2067,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$PR/lib" -no-stdlib -classpath "$CP" -d "$PR/libbir" >/dev/null 2>&1 || true
 emit_il "$PR/libil" PropLib "$PR/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$PR/libil/PropLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$PR/libil/PropLib.dll" "$PR/PropLib.klib"
 write_coharness "$PR/app"
 "$LAUNCHER" "$PR/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$PR/PropLib.klib" -d "$PR/appbir" >/dev/null 2>&1 || true
@@ -2121,7 +2108,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$IC/lib" -no-stdlib -classpath "$CP" -d "$IC/libbir" >/dev/null 2>&1 || true
 emit_il "$IC/libil" GreeterLib "$IC/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$IC/libil/GreeterLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$IC/libil/GreeterLib.dll" "$IC/GreeterLib.klib"
 "$LAUNCHER" "$IC/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$IC/GreeterLib.klib" -d "$IC/appbir" >/dev/null 2>&1 || true
 emit_il "$IC/appil" GreeterApp --ref "$IC/libil/GreeterLib.dll" "$IC/appbir"/*.bir.json
@@ -2157,7 +2143,6 @@ fun main() {
 EOF
 "$LAUNCHER" "$CM/lib" -no-stdlib -classpath "$CP" -d "$CM/libbir" >/dev/null 2>&1 || true
 emit_il "$CM/libil" VerLib "$CM/libbir"/*.bir.json
-dotnet "$RETARGET_DLL" "$CM/libil/VerLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
 project_reference_klib "$CM/libil/VerLib.dll" "$CM/VerLib.klib"
 "$LAUNCHER" "$CM/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$CM/VerLib.klib" -d "$CM/appbir" >/dev/null 2>&1 || true
 emit_il "$CM/appil" VerApp --ref "$CM/libil/VerLib.dll" "$CM/appbir"/*.bir.json

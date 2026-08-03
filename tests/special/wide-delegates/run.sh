@@ -29,7 +29,7 @@ rm -rf "$OUT"; mkdir -p "$OUT/bir" "$OUT/cir" "$OUT/il" "$OUT/consumer-bir" "$OU
 # the frontend KLIB is kotc's -classpath (kotlin.* comes from the klib, never dll2klib), the REFERENCE
 # dll feeds bir2cir's @Clr labels, the RUNTIME dll backs println at run time.
 "$ROOT/gradlew" -q :kotc:installDist >/dev/null 2>&1
-build_tool ilemit; build_tool bir2cir; build_tool dll2klib; build_tool retarget
+build_tool ilemit; build_tool bir2cir; build_tool dll2klib
 need_fe_klib; need_stdlib_ref; need_stdlib_rt
 need_dotnet_reference_sets
 
@@ -39,8 +39,10 @@ dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$(refset_join "$FRAMEWORK_COMPI
 	|| die "bir2cir failed"
 dotnet "$ILEMIT_DLL" "$OUT/il" Wide \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")" \
-	--runtime-refs "$STDLIB_RT_DLL" "$OUT/cir"/*.cir.json >/dev/null 2>&1 \
+	--runtime-refs "$STDLIB_RT_DLL" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
+	"$OUT/cir"/*.cir.json >/dev/null 2>&1 \
 	|| die "ilemit failed"
+write_runtimeconfig "$OUT/il" Wide
 cp "$STDLIB_RT_DLL" "$OUT/il/"
 
 expected="$(printf '17\n17\n17\n23\n29\n31')"
@@ -79,8 +81,6 @@ done
 # Compile and run a second module whose 17-argument lambda can only bind if the standard KLIB metadata
 # carries all 17 Int parameters and the Int return.
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL")"
-dotnet "$RETARGET_DLL" "$OUT/il/Wide.dll" --compile-refs "$compile_refs" >/dev/null 2>&1 \
-	|| die "retarget failed"
 printf '%s\n' "${FRAMEWORK_COMPILE_REF_PATHS[@]}" > "$OUT/references.rsp"
 dotnet "$DLL2KLIB_DLL" --out "$OUT/reference-klibs" \
 	--jobs "${DOTKT_DLL2KLIB_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '1')}" \
@@ -104,7 +104,9 @@ dotnet "$BIR2CIR_DLL" "$OUT/consumer-cir" \
 dotnet "$ILEMIT_DLL" "$OUT/consumer-il" WideConsumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$OUT/il/Wide.dll")" \
 	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$OUT/il/Wide.dll")" \
+	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
 	"$OUT/consumer-cir"/*.cir.json >/dev/null 2>&1 || die "consumer ilemit failed"
+write_runtimeconfig "$OUT/consumer-il" WideConsumer
 cp "$STDLIB_RT_DLL" "$OUT/il/Wide.dll" "$OUT/consumer-il/"
 consumer_actual="$(dotnet "$OUT/consumer-il/WideConsumer.dll" 2>/dev/null)" \
 	|| die "wide-delegate consumer failed at runtime"

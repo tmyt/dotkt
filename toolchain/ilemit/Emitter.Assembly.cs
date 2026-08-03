@@ -29,15 +29,23 @@ sealed partial class Emitter
         var assemblyMetadataCtor = Bcl("System.Reflection.AssemblyMetadataAttribute").GetConstructor(new[] { Bcl("System.String"), Bcl("System.String") });
         SetAttribute(ab.SetCustomAttribute, assemblyMetadataCtor,
             new[] { Bcl("System.String"), Bcl("System.String") }, dotKtMarkerKey, dotKtMarkerValue);
+        // The project/direct driver owns the target framework fact. Stamp it only when explicitly supplied; deriving
+        // it from ilemit's net10 host would make cross-target output lie about its contract.
+        if (_targetFrameworkMoniker != null)
+        {
+            var targetFrameworkCtor = Bcl("System.Runtime.Versioning.TargetFrameworkAttribute")
+                .GetConstructor(new[] { Bcl("System.String") });
+            SetAttribute(ab.SetCustomAttribute, targetFrameworkCtor,
+                new[] { Bcl("System.String") }, _targetFrameworkMoniker);
+        }
         // The frontend stdlib KLIB is the authoritative Kotlin declaration surface. Mark both CLR stdlib twins so
         // generic CLR-reference projectors can route them away from dll2klib without guessing from assembly names.
         if (_stdlibAssembly)
             SetAttribute(ab.SetCustomAttribute, assemblyMetadataCtor,
                 new[] { Bcl("System.String"), Bcl("System.String") }, "DotKt.LibraryKind", "stdlib");
         _mod = ab.DefineDynamicModule(_asmName);
-        // #71 S2: the DotKt.Runtime.CompilerServices.* + System.Runtime.CompilerServices.Nullable{,Context} attribute
-        // CLASSES are now ordinary CIR type decls (bir2cir's synthetic `000-dotkt-roundtrip-attrs` file); pass 1 below
-        // defines them like any type. No EnsureKotlinAttrs.
+        // #71 S2: DotKt.Runtime.CompilerServices.* carrier classes are ordinary CIR type declarations. Standard
+        // nullable metadata attributes resolve from the target BCL and are never redefined in user assemblies.
 
         // Pass 1: DefineType for every file-static-class and every user class.
         foreach (var file in files)
@@ -305,9 +313,28 @@ sealed partial class Emitter
                 if (ti.Def.TryGetProperty("properties", out var props))
                     foreach (var p in props.EnumerateArray())
                     {
-                        var pb = ti.TB.DefineProperty(p.GetProperty("name").GetString(), PropertyAttributes.None, MapType(p.GetProperty("type")), null);
-                        if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(g.GetString(), out var gm)) pb.SetGetMethod(gm);
-                        if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String && ti.Methods.TryGetValue(s.GetString(), out var sm)) pb.SetSetMethod(sm);
+                        MethodBuilder gm = null;
+                        MethodBuilder sm = null;
+                        if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String)
+                            ti.Methods.TryGetValue(g.GetString(), out gm);
+                        if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String)
+                            ti.Methods.TryGetValue(s.GetString(), out sm);
+                        // ECMA-335 requires the Property signature to describe the accessor's index parameters. Most
+                        // Kotlin properties have none, but a context/extension property's getter physically receives
+                        // those arguments. The CIR already links this Property row to its exact accessor methods; copy
+                        // their recorded physical signature instead of emitting an invalid parameterless Property row
+                        // and relying on a later metadata rewrite to repair it. A setter's final parameter is the value,
+                        // not an index parameter.
+                        var propertyParams = gm != null
+                            ? _mparams[gm]
+                            : sm != null ? _mparams[sm].SkipLast(1).ToArray() : Type.EmptyTypes;
+                        var pb = ti.TB.DefineProperty(
+                            p.GetProperty("name").GetString(),
+                            PropertyAttributes.None,
+                            MapType(p.GetProperty("type")),
+                            propertyParams);
+                        if (gm != null) pb.SetGetMethod(gm);
+                        if (sm != null) pb.SetSetMethod(sm);
                         StampMemberAttrs(pb.SetCustomAttribute, p);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
                     }
                 // Synthesized field-like .NET events (§4.2, #187): DefineEvent over the already-declared add_/remove_/raise_
@@ -1514,15 +1541,11 @@ sealed partial class Emitter
         var blob = new BlobBuilder();
         peBuilder.Serialize(blob);
         // #52 — write ATOMICALLY (temp + rename): FileMode.Create truncates-then-writes in place, so a concurrent
-        // reader (retarget/dll2klib/bir2cir loading this same dll) can observe a partial image and fail with a
+        // reader (dll2klib/bir2cir loading this same dll) can observe a partial image and fail with a
         // spurious "Format of the executable is invalid" / BadImageFormatException. A same-directory rename is atomic,
         // so a reader always sees either the whole old file or the whole new one — never a torn write.
         var dllPath = Path.Combine(_outDir, _asmName + ".dll");
         AtomicFile.Write(dllPath, fs => blob.WriteContentTo(fs));
-        var v = Environment.Version;
-        AtomicFile.WriteAllText(Path.Combine(_outDir, _asmName + ".runtimeconfig.json"),
-            "{\n  \"runtimeOptions\": {\n    \"tfm\": \"net10.0\",\n" +
-            "    \"framework\": { \"name\": \"Microsoft.NETCore.App\", \"version\": \"" + v.Major + "." + v.Minor + ".0\" }\n  }\n}\n");
         Console.WriteLine($"emitted {_asmName}.dll");
     }
 
