@@ -19,13 +19,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   dll2klib's arity-clash rename, since producers declare no delegate to clash. `dll2klib` restores the canonical
   family to `kotlin.FunctionN` from its ABI-fixed name, as it already did for `System.Func`/`Action`.
 
-  With one definition to link against, ilemit no longer chooses between a local and a referenced delegate: the
-  on-demand synthesis path for this range, the `EmitArg` rewrap exemption for TypeBuilder-backed delegates, and the
-  structural cross-assembly leniency in signature matching are gone, and ordinary Reflection identity decides.
-  Arity 23 and above keeps today's per-assembly behaviour pending a variadic big-arity ABI; the two cells that
-  leaves broken (return position unverifiable, nested-in-a-generic uncompilable) are now listed with their closing
-  condition in `tests/special/wide-delegates/run.sh` instead of being silent. The ABI is recorded in
-  `docs/dotkt-semantics.md` §8e-bis.
+  Each canonical delegate is declared variant exactly as its BCL sibling (`KFunc<in T1, …, out TResult>` /
+  `KAction<in T1, …>`), so `(Any, …) -> String` remains assignable to a `(String, …) -> Any` slot above arity 16 as
+  it is below. An assembly naming a 17..22 function type now requires the stdlib in its compile reference set, and
+  an ilemit invocation without one is refused by name rather than minting a local definition.
+
+  With one definition to link against, ilemit no longer chooses between a local and a referenced delegate for this
+  range: the on-demand synthesis path, the `EmitArg` rewrap exemption for TypeBuilder-backed delegates, and the
+  unconditional structural comparison of function-type signature nodes are gone — every fully concrete function
+  type, narrow or wide, is now matched by ordinary Reflection identity. Arity 23 and above keeps today's
+  per-assembly behaviour pending a variadic big-arity ABI, and is the sole remaining exception to that identity
+  rule; the three cells it leaves broken (return position unverifiable, nested-in-a-generic uncompilable, two
+  deferred arities in one producer breaking KLIB re-import) are listed with their closing condition in
+  `tests/special/wide-delegates/run.sh` instead of being silent. The ABI is recorded in `docs/dotkt-semantics.md`
+  §8e-bis.
 
 - **NRT-only fixed/`params` overload inversions now resolve like C# without compiler or library special cases (#367).**
   For a foreign CLR family whose fixed signature is exactly a `params` overload's physical prefix and whose Kotlin

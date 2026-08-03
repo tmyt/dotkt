@@ -508,10 +508,10 @@ sealed partial class Emitter
             // NOT a TypeBuilder instantiation (those go through the branches above / can't be reflected pre-bake).
             // ps==null => a REFERENCED method (an emitted MethodBuilder records its params in _mparams). Read the
             // concrete signature straight off the instantiation so paramTypes isn't left NULL — a null paramTypes makes
-            // EmitArgsTyped emit each arg RAW (no target), so a lambda arg to a stdlib method whose param is the
-            // synthetic `KFunc` delegate (a Kotlin function type over a stdlib TypeBuilder, e.g. MapsKt.mapValues's
-            // `(Map.Entry)->R`) is built as `System.Func` and never rewrapped -> ilverify StackUnexpected [found
-            // System.Func][expected KFunc]. Covers a generic static on a NON-generic file class (MapsKt) too — the
+            // EmitArgsTyped emit each arg RAW (no target), so a lambda arg to a stdlib method's DELEGATE parameter
+            // (e.g. MapsKt.mapValues's `(Map.Entry)->R`) is self-built from its own `funcType` and never rewrapped into
+            // the callee's declared delegate type -> ilverify StackUnexpected wherever the two instantiations differ.
+            // Covers a generic static on a NON-generic file class (MapsKt) too — the
             // prior `DeclaringType.IsGenericType` guard only caught external-generic owners (Result`1). Excludes a
             // MethodBuilderInstantiation owner (GetParameters throws pre-bake), which never reaches here (ps!=null).
             if (ps == null && inst is not MethodBuilder
@@ -521,8 +521,9 @@ sealed partial class Emitter
                 // TypeBuilder arg — `AutoCloseableKt.use<Res,R>`, Res a user class being emitted), its GetParameters()/
                 // ReturnType come back with the method's type params UNSUBSTITUTED (open `Func<T,R>`). Substitute them
                 // to the concrete `targs` so a nested delegate param (`Func<T,R>` -> `Func<Res,int>`) is a rewrap
-                // target — else the block arg is emitted against the open param and self-built as a mismatched KFunc
-                // (ilverify StackUnexpected). A runtime instantiation already yields concrete members -> no-op.
+                // target — else the block arg is emitted against the OPEN param and self-built into a delegate that
+                // does not match the callee's (ilverify StackUnexpected). A runtime instantiation already yields
+                // concrete members -> no-op.
                 // Substitute over the OPEN reflected method `m` — its param generic-params ARE reference-equal to
                 // `m.GetGenericArguments()`, so SubstituteMethodArgs matches them reliably. `inst.GetParameters()` may
                 // hand back normalized param objects with a null DeclaringMethod, defeating the positional fallback.

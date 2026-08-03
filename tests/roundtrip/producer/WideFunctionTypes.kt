@@ -32,3 +32,11 @@ fun action22(a: (Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int
 
 // `Int.(16 params) -> Int` — the extension receiver occupies a delegate slot, so this is arity 17.
 fun paramExt17(f: Int.(Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int): Int = 1.f(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+
+// Reference-typed slots at both ends of the delegate, so a consumer can exercise the family's VARIANCE: a Kotlin
+// function type is contravariant in its parameters and covariant in its result, and `System.Func`/`Action` declare
+// exactly that below arity 17. The canonical family has to declare it too, or the assignment the frontend accepts
+// becomes a store between unrelated invariant constructed types.
+fun acceptWidened(f: (String, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Any): Any = f("s", 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)
+
+fun narrowSource(): (Any, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> String = { a, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17 -> a.toString() + p17 }

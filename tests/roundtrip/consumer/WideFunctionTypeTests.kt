@@ -13,16 +13,21 @@
 //                            the consumer failed in the FRONTEND.
 //   * two producers, one arity  — a single function value must flow into both; and the two declared parameter types
 //                            must be the same Reflection type, owned by the stdlib assembly.
+//   * variance             — `(Any,…)->String` into a `(String,…)->Any` slot: the frontend accepts it and
+//                            `System.Func` supports it below arity 17, so the canonical family must declare the
+//                            same `in`/`out` flags or the store is StackUnexpected at exactly this boundary.
 //   * no local definition  — the consumer assembly must declare no KFunc/KAction TypeDef of its own.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNotNull as assertNotNull
 import System.Type
+import roundtrip.wide.acceptWidened
 import roundtrip.wide.action17
 import roundtrip.wide.action22
 import roundtrip.wide.applyNested17
 import roundtrip.wide.applyNested22
+import roundtrip.wide.narrowSource
 import roundtrip.wide.nested17
 import roundtrip.wide.nested22
 import roundtrip.wide.param17
@@ -103,15 +108,31 @@ class WideFunctionTypeTests {
         assertEquals("DotKt.Stdlib", wide22.Assembly.GetName().Name)
     }
 
+
+    // Variance. `(Any, …) -> String` IS a `(String, …) -> Any` in Kotlin, and `System.Func` carries the matching
+    // `in`/`out` flags below arity 17 — so the canonical family must too, or this store is StackUnexpected at
+    // exactly the arity where the family stops being the BCL's (this suite ilverifies, so that is a hard failure).
+    @TestAttribute
+    fun theCanonicalDelegateIsVariantLikeSystemFunc() {
+        val source: (Any, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> String = narrowSource()
+        val widened: (String, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Any = source
+        assertEquals("s17", widened("s", 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17))
+        assertEquals("s17", acceptWidened(source))
+    }
+
     // No assembly but the stdlib may DEFINE a type in the canonical family — that is the whole ABI claim, and it is
     // only checkable on the emitted metadata (a referenced name sits in the same string heap as a defined one).
     @TestAttribute
     fun theConsumerDefinesNoWideDelegate() {
         val self = Type.GetType("WideFunctionTypeAnchor")!!.Assembly
+        var seen = 0
         for (t in self.GetTypes()) {
+            seen++
             assertTrue(!t.Name.startsWith("KFunc`"))
             assertTrue(!t.Name.startsWith("KAction`"))
         }
+        // An empty enumeration would satisfy the loop vacuously; this assembly holds every fixture in the suite.
+        assertTrue(seen > 1)
     }
 }
 

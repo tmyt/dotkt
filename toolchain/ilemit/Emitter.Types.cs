@@ -170,19 +170,20 @@ sealed partial class Emitter
 
     // Realize bir2cir's nominal ABI decision 1:1. TypeBuilder-involving System.Func/Action instantiations stay BCL
     // delegates; their Reflection.Emit member references are handled by DelegateCtor/InvokeOf and must never alter
-    // the signature identity.
+    // the signature identity. The arity at which the BCL family runs out is `CanonicalDelegateMinArity` — the same
+    // constant the K family starts at, so the two halves cannot drift apart.
     Type BuildFuncType(Type[] args, Type ret, string clr)
     {
         return clr switch
         {
             "System.Action" when ret == Bcl("System.Void") && args.Length == 0 => Bcl("System.Action"),
-            "System.Action" when ret == Bcl("System.Void") && args.Length <= 16 =>
+            "System.Action" when ret == Bcl("System.Void") && args.Length < CanonicalDelegateMinArity =>
                 ConstructedType(ResolveType("System.Action`" + args.Length), args),
-            "System.Func" when ret != Bcl("System.Void") && args.Length <= 16 =>
+            "System.Func" when ret != Bcl("System.Void") && args.Length < CanonicalDelegateMinArity =>
                 ConstructedType(ResolveType("System.Func`" + (args.Length + 1)), args.Append(ret).ToArray()),
-            "DotKt.Runtime.CompilerServices.KAction" when ret == Bcl("System.Void") && args.Length > 16 =>
+            "DotKt.Runtime.CompilerServices.KAction" when ret == Bcl("System.Void") && args.Length >= CanonicalDelegateMinArity =>
                 SyntheticActionType(args),
-            "DotKt.Runtime.CompilerServices.KFunc" when ret != Bcl("System.Void") && args.Length > 16 =>
+            "DotKt.Runtime.CompilerServices.KFunc" when ret != Bcl("System.Void") && args.Length >= CanonicalDelegateMinArity =>
                 SyntheticFuncType(args, ret),
             _ => throw new NotSupportedException(
                 $"invalid CIR delegate family `{clr}` for arity {args.Length}, return {ret}")

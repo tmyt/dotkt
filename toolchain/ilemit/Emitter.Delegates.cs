@@ -181,9 +181,10 @@ sealed partial class Emitter
         return mb;
     }
 
-    // The wide delegate types THIS assembly defines, by metadata name. In a stdlib build that is the whole canonical
-    // 17..22 family (DefineCanonicalDelegates); in any other build it holds only deferred 23+ shapes this compilation
-    // actually used. A canonical name is therefore never both defined here and resolved from a reference.
+    // The wide delegate types THIS assembly defines, by metadata name. A stdlib build seeds it with the whole
+    // canonical 17..22 family (DefineCanonicalDelegates); any build may additionally add a deferred 23+ shape this
+    // compilation used. A CANONICAL name is therefore present here only in a stdlib build, and is resolved from the
+    // referenced stdlib in every other one — never both.
     readonly Dictionary<string, TypeBuilder> _syntheticDelegates = new();
 
     readonly Dictionary<TypeBuilder, ConstructorBuilder> _syntheticDelegateCtors = new();
@@ -206,8 +207,9 @@ sealed partial class Emitter
     }
 
     // A generic INSTANTIATION test that does NOT depend on `IsGenericType`, whose value for a TypeBuilderInstantiation is
-    // version-dependent and unreliable (SDK 10.0.101 empirically reports IsGenericType=TRUE for a synthetic KFunc`2<int,
-    // string>; older Reflection.Emit reported FALSE) — the generic-arg list, by contrast, is ALWAYS populated. All
+    // version-dependent and unreliable (SDK 10.0.101 empirically reports IsGenericType=TRUE for a TypeBuilder-defined
+    // generic delegate instantiated over concrete args; older Reflection.Emit reported FALSE — the measurement was
+    // taken on a wide `KFunc`) — the generic-arg list, by contrast, is ALWAYS populated. All
     // TypeBuilder-instantiation branching here keys on this, never on IsGenericType.
     static bool IsGenericInst(Type t) => !t.IsGenericParameter && t.GetGenericArguments().Length > 0;
 
@@ -271,12 +273,23 @@ sealed partial class Emitter
     // The delegate DEFINITION for a wide function type. In the canonical range this is a lookup, never a choice:
     // the stdlib build finds the family it just defined, and every other build resolves the stdlib's copy exactly
     // as it resolves any other referenced type. Only the deferred 23+ range still mints a definition here.
-    Type WideDelegateDef(string baseName, int genericArity, int kotlinArity, bool returnsValue) =>
-        kotlinArity > CanonicalDelegateMaxArity
-            ? SyntheticDelegateType(baseName, genericArity, returnsValue)
-            : _syntheticDelegates.TryGetValue(CompilerServicesNs + baseName + "`" + genericArity, out var own)
-                ? own
-                : ResolveType(CompilerServicesNs + baseName + "`" + genericArity);
+    Type WideDelegateDef(string baseName, int genericArity, int kotlinArity, bool returnsValue)
+    {
+        if (kotlinArity > CanonicalDelegateMaxArity) return SyntheticDelegateType(baseName, genericArity, returnsValue);
+        var name = CompilerServicesNs + baseName + "`" + genericArity;
+        if (_syntheticDelegates.TryGetValue(name, out var own)) return own;
+        try { return ResolveType(name); }
+        catch (NotSupportedException e)
+        {
+            // The compile-reference set has no stdlib (an ilemit invocation built without one). Minting a definition
+            // here instead is exactly the per-assembly ABI #220 removed, so this is a refusal — and it names the
+            // reason, because `target type '…KFunc`18' is absent` alone does not explain why a 17-parameter lambda
+            // needs the stdlib when a 16-parameter one does not.
+            throw new NotSupportedException(
+                $"a Kotlin function type of {kotlinArity} parameters is `{name}`, which is defined by the DotKt " +
+                "stdlib — the compile reference set must contain it (System.Func/Action only reach 16 parameters)", e);
+        }
+    }
 
     Type SyntheticFuncType(Type[] args, Type ret)
     {
@@ -302,6 +315,15 @@ sealed partial class Emitter
 
         var names = Enumerable.Range(1, arity).Select(i => i == arity && returnsValue ? "TResult" : "T" + i).ToArray();
         var gps = tb.DefineGenericParameters(names);
+        // VARIANCE, exactly as `System.Func<in T…, out TResult>` / `System.Action<in T…>` declare it. A Kotlin function
+        // type is contravariant in its parameters and covariant in its result, so `(Any, …) -> String` IS a
+        // `(String, …) -> Any` and the frontend accepts the assignment. Without these flags the two instantiations are
+        // unrelated invariant constructed types and the store is StackUnexpected — a break at exactly arity 17, where
+        // the family stops being the BCL's. Every parameter occurs only in the Invoke position its variance permits.
+        for (var i = 0; i < gps.Length; i++)
+            gps[i].SetGenericParameterAttributes(returnsValue && i == arity - 1
+                ? GenericParameterAttributes.Covariant
+                : GenericParameterAttributes.Contravariant);
         var invokeParams = returnsValue ? gps.Take(arity - 1).Cast<Type>().ToArray() : gps.Cast<Type>().ToArray();
         var invokeRet = returnsValue ? (Type)gps[^1] : Bcl("System.Void");
 

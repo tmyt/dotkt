@@ -117,7 +117,7 @@ static class StringCharSequenceBridge
         // (CharSeqStringLowering recorded these before it collapsed the CharSequence-return signal to `string`). Retype
         // its lifted `ret` back to the synthetic BEFORE the walk, so `Env.WithDecl` sees `RetType = dotkt$CharSequence`
         // and the existing WrapReturn adapter-wraps every String return — the lifted ldftn signature then matches the
-        // `KFunc<…,dotkt$CharSequence>` ilemit rewraps the literal into (else ilverify DelegateCtor). Point ① of the
+        // `Func<…,dotkt$CharSequence>` ilemit rewraps the literal into (else ilverify DelegateCtor). Point ① of the
         // 3-point sync; point ② is WrapReturn during the walk; point ③ is the funcType sync in Transform.
         if (retLambdas != null && root is JsonObject rootObj) RetypeLiftedRets(rootObj, retLambdas);
         // Seed the shared static-type resolver for THIS file so IsStaticString can recover a receiver's static type
@@ -536,7 +536,7 @@ static class StringCharSequenceBridge
 
     // #170 point ③ — sync a recorded delegate's `funcType` RETURN to the synthetic, so a self-build fallback
     // (ilemit's `DelegateCtor(MapType(funcType))` path, taken when the callee slot is an open/TypeBuilder generic)
-    // constructs a `KFunc<…,dotkt$CharSequence>` consistent with the now-CharSequence-returning lifted body.
+    // constructs a `Func<…,dotkt$CharSequence>` consistent with the now-CharSequence-returning lifted body.
     static void SyncDelegateFuncRet(JsonObject node)
     {
         if (_retLambdas == null) return;

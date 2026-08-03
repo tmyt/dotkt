@@ -1340,17 +1340,29 @@ occupies a delegate slot, so it counts toward that arity; a `suspend` function t
 twins** (`DotKt.Private.Stdlib.dll` and `DotKt.Stdlib.dll`, with identical signatures) whether or not the stdlib
 sources use them — the definition exists because the ABI says so. Every other assembly REFERENCES them and defines
 nothing, which is what makes a wide function type legal in a public signature: `fun f(g: (…17 Ints…) -> Int)` names
-the same Reflection type in the producer and in every consumer. They are marked `[CompilerGenerated]` and
-`[KotlinFunction(0)]`, and `dll2klib` restores a referencing signature to `kotlin.Function17`… by that ABI-fixed
-NAME (as it does for `System.Func`/`Action`) — the stdlib itself is never projected to a KLIB.
+the same Reflection type in the producer and in every consumer. Each is declared **variant exactly as its BCL
+sibling** — `KFunc<in T1, …, out TResult>` / `KAction<in T1, …>` — because a Kotlin function type is contravariant
+in its parameters and covariant in its result, so `(Any, …) -> String` is assignable to a `(String, …) -> Any` slot
+at every arity. All twelve carry `[CompilerGenerated]`; the reference twin additionally carries `[KotlinFunction(0)]`,
+which the runtime twin does not, because the runtime stdlib build emits no DotKt round-trip attribute classes at
+all. `dll2klib` restores a referencing signature to `kotlin.Function17`… by that ABI-fixed NAME (as it does for
+`System.Func`/`Action`) — the stdlib itself is never projected to a KLIB, so there is no definition to decode.
+Because the recognition is by name and not by the arity-suffixed metadata name, a referenced module that declares
+two *deferred* same-named arities (below) cannot drag the canonical family into dll2klib's arity-clash rename.
+
+An assembly that names a 17..22 function type therefore **requires the stdlib in its compile reference set**; an
+ilemit invocation without one is refused, naming the canonical type it could not resolve, rather than minting a
+local definition and re-splitting the ABI.
 
 **Arity 23 and above is deferred to a future variadic big-arity ABI and is NOT a valid cross-assembly signature.**
 There is no shared definition, so each assembly mints its own and the two sides of a module boundary hold different
 nominal types for one declared shape. Consequences, all real today: a value in *parameter* position still binds
 (ilemit falls back to a structural signature match, the one place it tolerates a nominal delegate difference); a
-value in *return* position produces IL that runs but does not formally verify; and one *nested in a generic*
-(`List<(…23 args…) -> R>`) fails to compile at the call site. The two broken cells are listed with their closing
-condition in `tests/special/wide-delegates/run.sh`'s `WIDE_XFAIL`. Within a single assembly every arity works.
+value in *return* position produces IL that runs but does not formally verify; one *nested in a generic*
+(`List<(…23 args…) -> R>`) fails to compile at the call site; and a producer declaring **two** deferred arities
+defines two same-named `KFunc`N`, which dll2klib's arity-clash rename restores as ordinary classes rather than
+function types, so the consumer fails in the frontend. Those three cells are listed with their closing condition in
+`tests/special/wide-delegates/run.sh`'s `WIDE_XFAIL`. Within a single assembly every arity works.
 
 ## 8f. A SOURCE declaration wins over a reference-KLIB-projected copy of the same identity (#15)
 
