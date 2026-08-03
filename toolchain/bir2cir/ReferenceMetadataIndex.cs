@@ -278,7 +278,8 @@ sealed partial class ReferenceMetadataIndex
     public string CollectionFactoryKind(string funName) => _collectionFactories.GetValueOrDefault(funName);
     // The @ClrArrayFactory kind ("vararg"/"sized") for a top-level fun NAME, or null when not an array factory.
     public string ArrayFactoryKind(string funName) => _arrayFactories.GetValueOrDefault(funName);
-    // The concrete element FQN for an array factory (empty-call fallback for `intArrayOf()`), or null.
+    // The concrete element FQN for an array factory (the fallback for a call whose vararg brought no `newArray`
+    // wrapper — a spread), or null.
     public string ArrayFactoryElemHint(string funName) => _arrayFactoryElemHints.GetValueOrDefault(funName);
 
     /// The `method` component of a CONSTRUCTOR's @KotlinDefault key (#235). `.ctor` is the CLR's own constructor name and
@@ -1802,11 +1803,13 @@ sealed partial class ReferenceMetadataIndex
                             if (AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrArrayFactory") is string af)
                             {
                                 metadata.ArrayFactories[method.Name] = af;
-                                // Element hint for an EMPTY concrete primitive factory (`intArrayOf()`): kotc drops the
-                                // empty vararg (args=[]) and these funs carry NO type argument, so neither typeArgs nor
-                                // the vararg wrapper yields the element. Capture it from the factory's array return type
-                                // (`kotlin.IntArray` -> element `kotlin.Int`); null for the generic `arrayOf<T>` (whose
-                                // element is a type variable — typeArgs[0] covers it there).
+                                // Element hint for a concrete primitive factory (`intArrayOf`), which carries NO type
+                                // argument of its own: it answers the call shapes whose vararg does not arrive as a
+                                // `newArray` wrapper for MemberCallSubstitution to read the element off — a lone
+                                // spread (`intArrayOf(*xs)`) or a mixed `spreadConcat`. An element LIST, empty or
+                                // not, brings its own wrapper. Captured from the factory's array return type
+                                // (`kotlin.IntArray` -> element `kotlin.Int`); null for the generic `arrayOf<T>`
+                                // (whose element is a type variable — typeArgs[0] covers it there).
                                 if (ArrayElemHint(method.ReturnType) is string ah)
                                     metadata.ArrayFactoryElemHints[method.Name] = ah;
                             }
@@ -1931,7 +1934,8 @@ sealed partial class ReferenceMetadataIndex
 
     // The element type FQN of an array factory's return type (`kotlin.IntArray` -> "kotlin.Int"), or null when the return
     // is not a concrete array (the generic `arrayOf<T>` returns `Array<T>` whose element is a type variable). Used only as
-    // a last-resort element source for an EMPTY concrete primitive factory call, where args + typeArgs are both empty.
+    // a last-resort element source for a concrete primitive factory call that carries neither a type argument nor a
+    // `newArray` vararg wrapper — i.e. one whose vararg was written as a spread.
     static string ArrayElemHint(Type retType)
     {
         try
@@ -2479,7 +2483,7 @@ sealed class ReferenceDotKtMetadata
     // alone: every overload of a factory name shares the kind, so no receiver disambiguation is needed.
     public readonly Dictionary<string, string> CollectionFactories = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ArrayFactories = new(StringComparer.Ordinal);
-    public readonly Dictionary<string, string> ArrayFactoryElemHints = new(StringComparer.Ordinal); // concrete-primitive elem (empty call)
+    public readonly Dictionary<string, string> ArrayFactoryElemHints = new(StringComparer.Ordinal); // concrete-primitive elem (spread call)
     // A defaulted parameter's default-value expression as BIR (from @KotlinDefault), for CROSS-MODULE splice of an
     // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> BIR-json string). The DefaultArgSplice
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default

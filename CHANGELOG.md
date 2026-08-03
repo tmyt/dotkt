@@ -51,6 +51,61 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   Kotlin refusal verdicts remain isolated because a compiler error may stop before later sources reach their
   owning phase.
 
+### Fixed
+
+- **kotc: an OMITTED `vararg` argument is now the empty array it always denoted.** A vararg is omissible without
+  being optional — Kotlin forbids it a default expression — so every argument-vector builder read the empty slot as
+  an omitted DEFAULT it had nothing to fill from: the two that key on `defaultValue` dropped the slot outright and
+  emitted a call one argument shorter than the declaration it named, and the inline splice left a `null` in it.
+  `f()` on `fun f(vararg xs: Int)` was refused at CIL emission ("CIR argument count mismatch"), the inline splice
+  failed loud on the same slot ("missing (non-defaulted) arg"), and the shape reached ordinary .NET interop
+  through `params`: `Console.WriteLine("x")` selects `WriteLine(format, vararg arg)` because a non-null `String` is
+  strictly more specific than the `String?` of `WriteLine(value)`, so the canonical console call did not compile.
+  All three builders — same-module, reference-KLIB, and the inline splice — now fill the slot with `newArray` of
+  the vararg's element type, rendered in the callee's type frame so `f<String>()` fills `Array<String>`. (An
+  annotation's argument vector was never affected: the frontend materializes an explicit empty vararg there, so
+  `@A()` on `annotation class A(vararg val xs: String)` already emitted one.) Not a regression of a previously
+  working call: the plain-Kotlin arm was refused for as long as the builders have keyed omission on `defaultValue`,
+  and the retired facade injection did project a `params` parameter as a `vararg` too, so the .NET arm's candidate
+  set is not what changed. `docs/dotkt-semantics.md` §8g records the resolution and its formatting
+  consequence. The fill is also one VALUE of the call rather than an expression in a slot: it is an allocation, and
+  an allocation is observable through its identity, so where the call carries an evaluation plan it becomes a
+  binding like every other argument. Left raw it was re-rendered per reader — a later default naming the vararg
+  (`fun f(vararg xs: Int, y: IntArray = xs)`, and the same shape cross-module, where the `@KotlinDefault` carrier
+  clones the slot) received a second and a third empty array, so `y === xs` was false where Kotlin's
+  evaluate-each-argument-once rule makes it true. Nothing but identity could see it: two empty arrays agree on
+  size and content.
+
+- **dll2klib: a .NET value type no longer takes an NRT annotation, or the wrong byte position.** The
+  `NullableAttribute`/`NullableContextAttribute` walk treated every named type outside a hardcoded Kotlin-primitive
+  list as a reference position, so a struct or enum both consumed a byte the emitting compiler never wrote and
+  inherited the declaration's context annotation. `String.Compare(string?, string?, StringComparison)` carries
+  `[NullableContext(2)]`, so its enum parameter projected as `StringComparison?`; the descriptor the frontend then
+  resolved named a member that does not exist and bir2cir refused the call. The same misalignment shifted every
+  later byte in the slot, so a signature putting a bare enum or struct ahead of another node lost or moved its `?`:
+  `Dictionary<Grade, string?>`, which csc writes as `[Nullable(1,2)]`, projected as `Dictionary<Grade?, String>`.
+  (A bare *primitive* was already excluded by name, so `Dictionary<int, string?>` was never affected.) The walk now
+  asks the ECMA signature's own `ELEMENT_TYPE_VALUETYPE`/`ELEMENT_TYPE_CLASS` kind: a bare value type holds no byte,
+  a constructed generic value type holds one that is always `0`, `System.Nullable<T>` and byrefs are transparent,
+  and a value type is never annotated. `kotlin.Unit` now holds no byte on BOTH ends: the reader had always skipped it
+  (it is the name ECMA `void` decodes to, and nothing in a signature tells the two apart) while bir2cir's writer gave
+  it one, so `Pair<Unit, String?>` re-imported as `Pair<Unit!, String>` — the writer now skips it too, and
+  `docs/dotkt-semantics.md` § 9 states the deviation from what csc would flatten for the `Unit` class.
+  `bir2cir`'s `NullableFlags` writes the same flattening from the other side, so an oblivious wrapper now delegates
+  to the same walk instead of re-deciding it (`T!` over an array or a byref stopped descending into the node it
+  wrapped). Measured against csc, two positions the decoder collapses to `kotlin.Any?` still shift the bytes after
+  them — a native `nint`/`nuint`, which the emitting compiler gives no byte at all, and a function pointer, which it
+  flattens node by node; an ordinary pointer and a `where T : struct` parameter hold exactly the one byte the walk
+  consumes for them. All are named at the predicate. That writer states one precedence for a position reached
+  through both markers — oblivious wins, because `T!` is the un-annotated position — and its nullable arm was
+  deciding it a second time by dropping the oblivious marker as it delegated, writing `2` where the rule says `0`.
+  Both markers now travel together and the rule is resolved in one place. Unlike the byte-COUNT faults above this one
+  moves nothing: the reader's traversal comes from the signature, so a wrong byte value mis-annotates its own position
+  and only its own. The shape is not reachable from the FRONTEND (its only oblivious producer wraps a made-not-null
+  type) but a pass can build it, by substituting a nullable type argument under an `Oblivious(T)` an un-annotated .NET
+  generic member left behind; it does not occur anywhere in the current corpus, which is why the witness is
+  `tests/ir/lowering/oblivious-over-nullable-byte` — that lane exists for a rule the corpus does not instantiate.
+
 ## 0.9.8 (2026-08-02)
 
 ### Added

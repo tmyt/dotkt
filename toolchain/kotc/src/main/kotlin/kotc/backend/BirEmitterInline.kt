@@ -189,10 +189,19 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
  *  evaluated exactly once at the call site, whatever number of times the spliced body reads it (N times, zero times,
  *  or inside a loop), so it is a plan binding. An OMITTED default is `null`: it is not supplied by this call, and
  *  bir2cir fills it from the callee's own carrier INSIDE the splice — which is where Kotlin evaluates it, after every
- *  supplied value. */
-private fun BirEmitter.inlineArgJson(call: IrCall, arg: IrExpression?, param: IrValueParameter, label: String): String =
+ *  supplied value.
+ *
+ *  An omitted VARARG is not that: it has no default for the splice to fill from, and its value — Kotlin's empty array
+ *  of the element type — is a fact of the CALL, so it is supplied here like any other argument ([omittedVararg]), and
+ *  BOUND like one: the spliced body may read its slot any number of times, and the rule above admits no exception for
+ *  a value this pass synthesized. bir2cir's splice would also bind an unbound slot to a local of its own, so what this
+ *  fixes is the PROTOCOL and not a live duplication — kotc does not hand over a value with two readers unbound.
+ *  Leaving it null made the splice fail loud on a non-defaulted null slot. */
+private fun BirEmitter.inlineArgJson(
+	call: IrCall, callee: IrFunction, arg: IrExpression?, param: IrValueParameter, label: String,
+): String =
 	when {
-		arg == null -> "null"
+		arg == null -> omittedVararg(call, callee, param, callPlan(call)) ?: "null"
 		arg is IrFunctionExpression && !param.isNoinline -> emitInlineLambdaCarrier(arg)
 		isForwardedInlineParam(arg) -> expr(arg)
 		else -> callPlan(call).bindValue(arg, "arg", "argument '${param.name.asString()}' of '$label'")
@@ -272,7 +281,7 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	val recvs = inlineReceiverParts(callee, extJson, dispatchJson, dispatchArg)
 	// One entry per POSITIONAL param, in order: a spliced lambda -> an `inlineLambda` carrier (or the forwarded
 	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
-	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, args.getOrNull(i), params[i], label) }
+	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, callee, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
 	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
 }
@@ -408,7 +417,7 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
 	// One entry per POSITIONAL param, in order: a spliced lambda -> an `inlineLambda` carrier (or the forwarded
 	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
-	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, args.getOrNull(i), params[i], label) }
+	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, callee, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
 	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
 }
@@ -552,7 +561,7 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 		if (needsPlanBinding(it)) callPlan(call).bindValue(it, "recv", "extension receiver of '$label'") else expr(it)
 	}
 	val recvs = if (extRecvJson != null) """{"extension":$extRecvJson}""" else "{}"
-	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, args.getOrNull(i), params[i], label) }
+	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, callee, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
 	// The §4.2 overload disambiguator (see `paramSigOf`): one TYPE NODE per callee declared param (extension receiver as
 	// element 0), in the callee's OWN un-instantiated frame. bir2cir keys the ref.dll payload by owner(null)|name|pc|ga

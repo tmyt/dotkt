@@ -5,7 +5,7 @@
 # it — not because they are unimportant, but because the producer has been fixed so the shape they guard no longer
 # reaches them. A rule with no witness quietly stops being a rule; these documents are the witness.
 #
-# Three rules are covered today.
+# Four rules are covered today.
 #
 #   docs/bir-cir-spec.md §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. bir2cir
 #   checks this on the fully-passed BIR, just before BirTypeLowering strips the stamp, so the emitted CIR corpus
@@ -16,6 +16,11 @@
 #   evaluating it is genuinely unobservable (bir-common/ValueStability.cs, Q2). Two fixtures are the same plan either
 #   side of that line — a `staticField` read (its declaring type's initializer can print, throw, mutate) and a `const`
 #   — and they must lower differently.
+#
+#   bir2cir/NullableFlags.cs — the NRT byte walk carries a NULLABLE and an OBLIVIOUS marker, and states once that
+#   oblivious wins. A position reached through both is `Oblivious(Nullable(T))`, which the FRONTEND cannot emit (its
+#   oblivious wrapper always wraps a made-not-null type) and which no input in the corpus has yet produced through a
+#   pass. `oblivious-over-nullable-byte` pins the bytes so the precedence cannot be re-decided arm by arm.
 #
 #   docs/dotkt-semantics.md §7b — a slot whose type cannot be derived is a REFUSAL, never `kotlin.Any`. Those
 #   refusals are invariant asserts: they cannot fire on the BIR the frontend produces, which is exactly why no
