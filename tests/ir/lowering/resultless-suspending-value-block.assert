@@ -1,2 +1,4 @@
 +},{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"void"},"value":null}},{"k":"return"
 -},{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}},{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}}
++},{"k":"return","value":{"k":"default","type":{"t":"fqn","name":"System.Int32"}}}
+-"value":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":null}

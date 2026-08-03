@@ -1916,9 +1916,7 @@ static partial class SuspendColdLowering
                     if (o["body"] is JsonArray vbBody) foreach (var s in vbBody) EmitStmt(s, outp);
                     return o["result"] != null
                         ? Rewrite(o["result"], outp, expectedType)
-                        : NullConst(expectedType ?? throw new NotSupportedException(
-                            $"bir2cir: suspend-lowering: a result-less suspension-bearing valueBlock in "
-                            + $"`{DiagOwner}` has no enclosing expected type."));
+                        : MissingValuePlaceholder(expectedType);
                 }
                 // #10 REVERSE bridge — a call to dll2klib's metadata-only
                 // @ClrAwaitBridge declaration. The exact declaration marker,
@@ -4110,6 +4108,13 @@ static partial class SuspendColdLowering
         static JsonObject IntConst(int v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(IntTn), ["value"] = v };
         static JsonObject BoolConst(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(BoolTn), ["value"] = v };
         static JsonObject NullConst(TypeNode type) => new() { ["k"] = "const", ["type"] = TypeJson.Write(type), ["value"] = null };
+        JsonObject MissingValuePlaceholder(TypeNode expectedType)
+        {
+            var type = expectedType ?? throw new NotSupportedException(
+                $"bir2cir: suspend-lowering: a result-less suspension-bearing valueBlock in "
+                + $"`{DiagOwner}` has no enclosing expected type.");
+            return IsUnitTn(type) ? NullConst(type) : DefaultOf(type);
+        }
         // The zero value of a type (ldnull for a ref, initobj for a value type) — the correct init-less-`var` default,
         // unlike NullConst which emits a null literal that ilemit rejects for a value type.
         static JsonObject DefaultOf(TypeNode type) => new() { ["k"] = "default", ["type"] = TypeJson.Write(type) };
