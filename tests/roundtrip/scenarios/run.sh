@@ -68,26 +68,15 @@ declare -A RT_XFAIL=(
 	# too, and a LAMBDA into the same slot is fine because the compiler owns the lifted target. Closing it needs a
 	# FORWARDER synthesized at the reference — a static one for `::fn`, a capture class for `expr::member` — which is
 	# the same missing piece the concrete delegate parameter is scoped out for (docs/dotkt-semantics.md §9c-bis).
-	# Two same-name members of one referenced interface differing ONLY in method generic arity: `put(T?)` and
-	# `<U> put(T?)`. The SLOTS are right — arity is part of the bridge identity and of the MethodImpl descriptor, so
-	# the type loads and a call through the class's own type picks correctly — but a call on the INTERFACE receiver
-	# binds by name and parameter vector alone and runs the arity-0 body. That is call-site overload resolution on a
-	# referenced member, a different subject from filling the slot, and pre-existing: arity has never been part of
-	# that selection. Closing it means carrying the call's generic arity into the referenced-member lookup, the same
-	# key ilemit's own overload table already uses.
+	# PRUNED by #336 exact member carry: calls on referenced interfaces now include method generic arity in the
+	# bir2cir-resolved descriptor, so `put(T?)` and `<U> put(T?)` no longer collapse at the ilemit boundary.
 	# PINNED, NOT FIXED — two remaining reachable failures that no gate saw. One was entirely silent; the other existed
 	# only as a prose comment in an NUnit fixture saying "NOT asserted", which is exactly what a machine-readable
 	# fail-set replaces: prose cannot flip to FIXED and nothing tells you when the cause closes. Each entry names
 	# its cause and the condition that closes it, and each has a control beside it fixing what the variable is not.
 	[roundtrip-nullable-vt-generic-objectish-constraint-value]="#86: a generic constrained by Sink<Int?> emits a constrained call whose argument is never widened to the constraint's SUBSTITUTED form, and the CLR rejects the body with System.InvalidProgramException. MEASURED, against the expectation that any objectish constraint does this: the Sink<Any?> twin beside it RUNS (A:a), so the variable is the nullable-VALUE argument specifically and not objectish-ness in general — Sink<Any?> is objectish too and is fine. Closes when the constrained call widens its argument to Subst(Erase(constraint)); the passing Any? section beside it is the control that keeps the claim honest."
 	[roundtrip-nullable-vt-generic-comparable-typed-dispatch]="#86 PRE-EXISTING, and previously recorded ONLY as prose in tests/basic/fixtures/NullableTests.kt saying 'NOT asserted' — the rule violation this entry fixes. Dispatch through a Comparable<Int?>-TYPED reference dies with System.EntryPointNotFoundException: Comparable<X> at an objectish X collapses onto the NON-generic System.IComparable in the type's supertype list, while a value slot of that type keeps IComparable<object>, so the call resolves a member the receiver does not have. Measured identically on Comparable<Any?>, objectish long before #86. Closes when the collapse and the slot agree on one physical interface for an objectish argument."
-	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]="#86 D3: a call on a REFERENCED-interface receiver selects between two same-name, same-parameter-vector members by name and parameters alone, ignoring method generic arity, so a.put<String>(2) runs the arity-0 body and prints a0:2. The SLOTS are correct — the type loads and both arities dispatch correctly through the class's own declared type — so this is call-site overload resolution on a referenced member, not slot filling. Needs the call's generic arity carried into the referenced-member lookup."
-	[roundtrip-nullable-vt-generic-open-slot-callable-ref]="#86: a NON-GENERIC ::fn / expr::member reference bound into an OPEN (T?) -> R slot reads the boxed reference's bits as a Nullable<int32> and yields a garbage value. The slot is Func<object, string> at every instantiation and the referenced member's parameter is the author's own Nullable<int32>, which a use of it may not move; a lambda into the same slot is correct. PRE-EXISTING (the open slot demanded object before this erasure too). Needs a forwarder synthesized at the reference — static for ::fn, a capture class for expr::member — the same piece the concrete delegate parameter is scoped out for. A GENERIC target fails EARLIER and for another reason entirely; that is roundtrip-generic-target-callable-ref, not this."
-	# NOT #86, and listed beside it only because it is the same syntax: a GENERIC ::fn has no typeArgs on its
-	# newDelegate, so ilemit ldftn's the open generic-method DEFINITION and the CLR refuses to execute it. The
-	# NON-NULLABLE twin in the same section fails identically, which is what proves the nullability axis is not
-	# involved — and what keeps this cause out of the entry above, where a forwarder at the reference is the fix.
-	[roundtrip-generic-target-callable-ref]="PRE-EXISTING and NOT #86: a ::fn naming a GENERIC function, bound into a generic function-type slot, is emitted as a ldftn of the open generic-method definition (the newDelegate carries no typeArgs for ilemit to MakeGenericMethod with), so the CLR refuses it with 'not fully instantiated' before any argument is converted. Measured identically on the non-nullable twin (T instead of T?), so no nullable-generic erasure is involved. Closes when the reference carries the instantiation its call site resolved."
+	[roundtrip-nullable-vt-generic-open-slot-callable-ref]="#86: a NON-GENERIC ::fn / expr::member reference bound into an OPEN (T?) -> R slot reads the boxed reference's bits as a Nullable<int32> and yields a garbage value. The slot is Func<object, string> at every instantiation and the referenced member's parameter is the author's own Nullable<int32>, which a use of it may not move; a lambda into the same slot is correct. PRE-EXISTING (the open slot demanded object before this erasure too). Needs a forwarder synthesized at the reference — static for ::fn, a capture class for expr::member — the same piece the concrete delegate parameter is scoped out for. The generic-target control beside it is green because kotc can close that reference through an explicit adapter."
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
 	# PRUNED by the OVERRIDE-SLOT BRIDGE (#86 D3): the narrowed override called through its OWN declared type. The
 	# override now keeps its own physical `accept(Nullable<int32>)`, so the re-imported surface and the assembly name
@@ -124,8 +113,6 @@ declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]='System.EntryPointNotFoundException'
 	# The wrong value is a pointer and differs every run, so the app prints a VERDICT and the shape is that verdict.
 	[roundtrip-nullable-vt-generic-open-slot-callable-ref]='wrong'
-	[roundtrip-generic-target-callable-ref]='not fully instantiated'
-	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]='a0:2'
 	# The PINNED entries. Each shape is the CLR's own exception name, which is what distinguishes these three from
 	# one another and from any unrelated break that would otherwise satisfy a name-only entry.
 	[roundtrip-nullable-vt-generic-objectish-constraint-value]='System.InvalidProgramException'
@@ -1949,9 +1936,9 @@ run_app sractual "$SR/appil/Hof2App.dll"
 check_output roundtrip-suspendfn-ret "$srexpected" "$sractual" "a suspend (…) -> T VALUE round-trips in RETURN + PROPERTY + FIELD position: bir2cir lowers a value-position suspendLambdaNew to a SuspendLambda SM, the consumer drives it"
 
 # ----- VIRTUAL DISPATCH: an open/override instance method of a DotKt lib consumed AS KOTLIN dispatches virtually (#139) -----
-# A projected external owner must preserve virtual dispatch. This section guards both the normal clrInstance
-# binding and the raw callInstance fallback when bir2cir is deliberately not given the DotKt reference.
-VD="$ROOT/build/roundtrip-virtual-dispatch"; rm -rf "$VD"; mkdir -p "$VD/lib" "$VD/app" "$VD/libbir" "$VD/libil" "$VD/appbir" "$VD/appil" "$VD/appil2"
+# A projected external owner must preserve virtual dispatch. The exact referenced declaration is resolved by
+# bir2cir and carried in CIR; ilemit only links that descriptor and consumes the carried virtual-dispatch fact.
+VD="$ROOT/build/roundtrip-virtual-dispatch"; rm -rf "$VD"; mkdir -p "$VD/lib" "$VD/app" "$VD/libbir" "$VD/libil" "$VD/appbir" "$VD/appil"
 cat > "$VD/lib/lib.kt" <<'EOF'
 package dispatch
 open class Animal(val name: String) {
@@ -1985,35 +1972,25 @@ project_reference_klib "$VD/libil/AnimalLib.dll" "$VD/AnimalLib.klib"
 vd_has_virtual=$( { grep -oh '"k":"callInstance","virtual":[a-z]*,"ownerType":{"t":"fqn","name":"dispatch.Animal"}' "$VD/appbir"/*.bir.json 2>/dev/null || true; } | wc -l)
 vd_missing_virtual=$( { grep -oh '"k":"callInstance","ownerType":{"t":"fqn","name":"dispatch.Animal"}' "$VD/appbir"/*.bir.json 2>/dev/null || true; } | wc -l)
 vd_bir_ok=0; [[ "$vd_has_virtual" -ge 1 && "$vd_missing_virtual" -eq 0 ]] && vd_bir_ok=1
-# (1) NORMAL path: bir2cir WITH the DotKt --ref -> callInstance reshaped to clrInstance.
+# NORMAL path: bir2cir WITH the DotKt --ref resolves the exact target declaration.
 emit_il "$VD/appil" AnimalApp --ref "$VD/libil/AnimalLib.dll" "$VD/appbir"/*.bir.json
 cp "$VD/libil/AnimalLib.dll" "$VD/appil/" 2>/dev/null || true
 vdexpected="$(printf 'generic\nwoof\na:generic\nd:woof')"
 run_app vdactual1 "$VD/appil/AnimalApp.dll"
-# (2) FALLBACK path: bir2cir NOT given the DotKt --ref, so it CANNOT reshape the callInstance -> the raw node reaches
-# ilemit (which still resolves the owner off its own --ref). This is the exact #139 crash path, now correct via `virtual`.
-cir2="$VD/appil2.cir"; rm -rf "$cir2"; mkdir -p "$cir2"
-dotnet "$BIR2CIR_DLL" "$cir2" --compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")" "$VD/appbir"/*.bir.json >/dev/null 2>&1 || true
-dotnet "$ILEMIT_DLL" "$VD/appil2" AnimalApp \
-	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$VD/libil/AnimalLib.dll")" \
-	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$VD/libil/AnimalLib.dll")" "$cir2"/*.cir.json >/dev/null 2>&1 || true
-[[ -f "$STDLIB_RT_DLL" ]] && cp "$STDLIB_RT_DLL" "$VD/appil2/" 2>/dev/null || true
-cp "$VD/libil/AnimalLib.dll" "$VD/appil2/" 2>/dev/null || true
-run_app vdactual2 "$VD/appil2/AnimalApp.dll"
-# ilverify both emitted assemblies (formal call/callvirt-selection verification).
+# ILVerify the emitted assembly (formal call/callvirt-selection verification).
 vd_ilv_ok=1
 VD_ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
 VD_REFDIR="$DOTNET_RUNTIME_DIR"
 if [[ -n "$VD_ILV" && -d "$VD_REFDIR" ]]; then
-	for dll in "$VD/appil/AnimalApp.dll" "$VD/appil2/AnimalApp.dll"; do
+	for dll in "$VD/appil/AnimalApp.dll"; do
 		[[ -f "$dll" ]] || { vd_ilv_ok=0; continue; }
 		dotnet "$VD_ILV" "$dll" -r "$VD_REFDIR/*.dll" -r "$STDLIB_RT_DLL" -r "$VD/libil/AnimalLib.dll" 2>&1 | grep -qi 'Verified\.' || vd_ilv_ok=0
 	done
 fi
 vd_ok=0
-[[ "$vd_bir_ok" == 1 && "$vdactual1" == "$vdexpected" && "$vdactual2" == "$vdexpected" && "$vd_ilv_ok" == 1 ]] && vd_ok=1
-section_result roundtrip-virtual-dispatch "$vd_ok" "open/override instance method of a DotKt lib dispatches virtually as Kotlin; BIR carries virtual; reshaped + raw-callInstance paths; ilverify (#139)" \
-	"$(printf -- 'bir_ok=%s (has=%s missing=%s) ilv_ok=%s\n--- expected ---\n%s\n--- reshaped(clrInstance) ---\n%s\n--- raw callInstance->ilemit ---\n%s' "$vd_bir_ok" "$vd_has_virtual" "$vd_missing_virtual" "$vd_ilv_ok" "$vdexpected" "$vdactual1" "$vdactual2")"
+[[ "$vd_bir_ok" == 1 && "$vdactual1" == "$vdexpected" && "$vd_ilv_ok" == 1 ]] && vd_ok=1
+section_result roundtrip-virtual-dispatch "$vd_ok" "open/override instance method of a DotKt lib dispatches virtually as Kotlin; BIR carries virtual; resolved-CIR path; ilverify (#139)" \
+	"$(printf -- 'bir_ok=%s (has=%s missing=%s) ilv_ok=%s\n--- expected ---\n%s\n--- resolved CIR ---\n%s' "$vd_bir_ok" "$vd_has_virtual" "$vd_missing_virtual" "$vd_ilv_ok" "$vdexpected" "$vdactual1")"
 
 # ----- PROPERTY-TYPE round-trip (#47): a property's nullability + suspend-fn-type restored on re-import -----
 # The OLD gate drove stored values through internal harness fns and NEVER re-imported the PROPERTY TYPE itself, so

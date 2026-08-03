@@ -595,6 +595,7 @@ static class FBoundStarProjectionErasure
             call["virtual"] = true; // erased owner is an interface; CIR must carry callvirt explicitly
             if (ContainsOwnerTvInSignature(declaration) || !IsPublic(declaration))
                 call["method"] = StarMethodName(declaring, declaration);
+            call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
             return;
         }
 
@@ -604,6 +605,7 @@ static class FBoundStarProjectionErasure
             var (bridgeOwner, declaringName, declaration) = baseFound;
             call["ownerType"] = TypeJson.Write(new TypeNode.Fqn(bridgeOwner.ErasedName));
             call["method"] = BaseStarMethodName(declaringName, defs[declaringName], declaration);
+            call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
             call["virtual"] = true;
             return;
         }
@@ -624,6 +626,12 @@ static class FBoundStarProjectionErasure
         // it will select the unique nearest declaration after all synthetic types exist.
         if (pc == 0 && call["sig"] == null) call["sig"] = new JsonArray();
     }
+
+    static JsonArray ErasedPhysicalSignature(JsonObject declaration,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs) =>
+        new((declaration["params"] as JsonArray)?.OfType<JsonObject>()
+            .Select(p => TypeJson.Write(EraseOwnerTv(TypeJson.Read(p["type"]), owners, refs)))
+            .ToArray() ?? Array.Empty<JsonNode>());
 
     static (Owner Owner, JsonObject Method)? FindDeclaringOwner(Owner start, string method, int pc, int ga,
         IReadOnlyDictionary<string, Owner> owners)

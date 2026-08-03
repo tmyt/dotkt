@@ -135,9 +135,9 @@ rm -rf "$incr"
 # can cover the cross-target half, so it lives in this process-boundary gate.
 #
 # The probe package's RID-neutral placeholder deliberately OMITS the marker method that its `ref/` compile surface
-# declares, so choosing the placeholder is an ilemit ABI-mismatch error (a RED build) rather than a silently
-# different program: a foreign-RID output cannot be executed on the build host, so the assertion has to be a
-# build/emit outcome plus the emitted metadata. Two probe assemblies cover both selection paths —
+# declares. #336 requires emission to remain contract-shaped regardless of that runtime implementation difference;
+# the target-RID selection is observed through the runtime-catalog diagnostic, plus the emitted metadata is checked
+# against the compile surface. Two probe assemblies cover both selection paths —
 # DotKt.Tests.Rid.Exact ships an EXACT target-RID asset, DotKt.Tests.Rid.Family ships only the RID FAMILY asset
 # (win / unix), which is reachable ONLY by walking the RID fallback chain (win-x64 -> win; linux-x64 -> unix).
 #
@@ -258,17 +258,16 @@ rid_asm="$rid/app/bin/Debug/net10.0/$rid_target/app.dll"
 rid_msg=""
 if (( rid_rc != 0 )); then
 	rid_msg="the -r $rid_target build failed (exit $rid_rc)"
-elif ! grep -qF "ilemit: 'DotKt.Tests.Rid.Exact' has 2 RID builds; selected runtimes/$rid_target/lib asset for target $rid_target" "$rid/build.log"; then
+elif ! grep -qF "ilemit runtime: 'DotKt.Tests.Rid.Exact' has 2 RID builds; selected runtimes/$rid_target/lib asset for target $rid_target" "$rid/build.log"; then
 	# Also guards the fixture itself: a group that degenerated to one candidate would let the build pass vacuously.
 	rid_msg="ilemit did not report selecting the runtimes/$rid_target/lib asset of DotKt.Tests.Rid.Exact out of 2 candidates"
-elif ! grep -qF "ilemit: 'DotKt.Tests.Rid.Family' has 2 RID builds; selected runtimes/$rid_family/lib asset for target $rid_target" "$rid/build.log"; then
+elif ! grep -qF "ilemit runtime: 'DotKt.Tests.Rid.Family' has 2 RID builds; selected runtimes/$rid_family/lib asset for target $rid_target" "$rid/build.log"; then
 	rid_msg="ilemit did not fall back through the RID graph to the runtimes/$rid_family/lib asset of DotKt.Tests.Rid.Family for target $rid_target"
 elif [[ ! -f "$rid_asm" ]]; then
 	rid_msg="no emitted assembly at ${rid_asm#$ROOT/}"
 elif ! LC_ALL=C grep -qa 'TargetOnlyMarker' "$rid_asm" || ! LC_ALL=C grep -qa 'FamilyOnlyMarker' "$rid_asm"; then
 	# Confirm in the OUTPUT, not just in the build's exit status, that the emit linked both RID-asset-only members.
-	# A wrong selection already fails the build above, so this cannot be the first assertion to notice a regression;
-	# it exists so the gate names the artifact-level fact instead of trusting the exit status alone.
+	# The member identities come from the compile contract; runtime selection is asserted independently above.
 	rid_msg="the emitted assembly does not reference the RID-asset-only marker members"
 fi
 
@@ -317,17 +316,18 @@ if [[ -z "$rid_msg" ]]; then
 	fi
 fi
 
-# REPLAY 2 — NEGATIVE CONTROL: the same emit at the HOST RID (what a lost target-RID flow degrades to). Both groups
-# must then resolve to the RID-neutral placeholder, whose missing markers make the emit FAIL — which is what proves
-# the assertions above are discriminating rather than vacuous.
+# REPLAY 2 — NEGATIVE CONTROL: the same emit at the HOST RID (what a lost target-RID flow degrades to). Both runtime
+# groups must then select the RID-neutral placeholder. Emission still SUCCEEDS because #336 makes the compile contract
+# the sole source of type/member meaning; a runtime implementation may not remove a member from that universe. The
+# changed selection diagnostic is therefore the discriminating fact, while the output remains contract-shaped.
 if [[ -z "$rid_msg" ]]; then
 	rid_neg_rc="$(rid_replay negative "--target-rid \"$rid_target\"" "--target-rid \"$rid_host\"")"
 	if [[ "$rid_neg_rc" == "substitution-failed" ]]; then
 		rid_msg="the ilemit invocation no longer carries --target-rid \"$rid_target\" — the MSBuild target-RID plumbing is gone"
-	elif [[ "$rid_neg_rc" == "0" ]]; then
-		rid_msg="negative control PASSED the emit at host RID $rid_host — asset selection is not target-RID driven"
+	elif [[ "$rid_neg_rc" != "0" ]]; then
+		rid_msg="negative control failed to emit against the unchanged compile contract at host RID $rid_host (exit $rid_neg_rc)"
 	elif ! grep -qF "selected RID-neutral lib asset for target $rid_host" "$rid/negative.log"; then
-		rid_msg="negative control failed for an unrelated reason (expected the RID-neutral placeholder to be selected)"
+		rid_msg="negative control did not select the RID-neutral runtime placeholder for host RID $rid_host"
 	fi
 fi
 

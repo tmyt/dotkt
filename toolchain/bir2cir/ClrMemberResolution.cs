@@ -27,15 +27,228 @@ static partial class ClrMemberResolution
     static int _nextKotlinSigSnapshotId;
     static ReferenceMetadataIndex _refs;
     static IReadOnlySet<string> _localEnums = new HashSet<string>();
+    static IReadOnlySet<string> _localTypes = new HashSet<string>();
 
     // `localEnums` = every LOCAL `kind:"enum"` FQN in this compilation (the self-build's own enums — in an APP build a
     // stdlib enum like RegexOption is in the ref.dll and resolves concretely, never via the enum-reinterpret fallback).
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums,
+        IReadOnlySet<string> localTypes)
     {
         _refs = refs;
         _localEnums = localEnums ?? new HashSet<string>();
+        _localTypes = localTypes ?? new HashSet<string>();
         ResolveExternalClassOverrides(root);
+        ResolveBaseConstructors(root);
         Walk(root);
+    }
+
+    // Resolve every same-emission-unit constructor call to the declaration's stable index before CIR reaches ilemit.
+    // The emitter then performs a direct table lookup; all signature/arity reasoning remains in bir2cir.
+    public static void ResolveLocalConstructors(IEnumerable<JsonNode> roots)
+    {
+        var rootList = roots.ToList();
+        var defs = rootList.OfType<JsonObject>()
+            .SelectMany(file => file["types"] is JsonArray types ? types.OfType<JsonObject>() : Enumerable.Empty<JsonObject>())
+            .Where(t => (t["name"] as JsonValue)?.TryGetValue<string>(out _) == true)
+            // Shared generated declarations (CharSequence/KProperty/etc.) are repeated byte-identically in the BIR
+            // files that use them; ilemit likewise keeps the first declaration.
+            .GroupBy(t => t["name"].GetValue<string>(), StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+
+        void Bind(JsonObject call, TypeNode.Fqn owner, JsonArray args, string signatureName, string context)
+        {
+            if (!defs.TryGetValue(owner.Name, out var target) || target["ctors"] is not JsonArray ctors) return;
+            var sameArity = ctors.Select((n, i) => (ctor: n as JsonObject, index: i))
+                .Where(x => x.ctor?["params"] is JsonArray ps && ps.Count == args.Count).ToList();
+            var sig = call[signatureName] as JsonArray;
+            var exact = new List<(JsonObject ctor, int index)>();
+            if (sig != null && sig.Count == args.Count && sig.All(n => n != null))
+            {
+                var wanted = sig.Select(TypeJson.Read).ToArray();
+                foreach (var candidate in sameArity)
+                {
+                    var ps = (JsonArray)candidate.ctor["params"];
+                    var declared = ps.Select(p => p?["type"] is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
+                    if (declared.Any(t => t == null)) continue;
+                    var rawMatch = declared.Select(SupertypeGraph.TypeKey).SequenceEqual(wanted.Select(SupertypeGraph.TypeKey));
+                    var closedMatch = owner.Args is { Length: > 0 }
+                        && declared.Select(t => SupertypeGraph.SubstOwnerTvs(t, owner.Args)).Select(SupertypeGraph.TypeKey)
+                            .SequenceEqual(wanted.Select(SupertypeGraph.TypeKey));
+                    if (rawMatch || closedMatch)
+                        exact.Add(candidate);
+                }
+            }
+            var winner = exact.Count == 1 ? exact[0]
+                : throw new InvalidOperationException($"bir2cir: {context} resolves to {exact.Count} exact local constructors on '{owner.Name}'; wanted={sig?.ToJsonString()}; declarations={string.Join(" | ", sameArity.Select(c => c.ctor["params"]?.ToJsonString()))}; call={call.ToJsonString()}");
+            call["localCtorIndex"] = winner.index;
+        }
+
+        void WalkLocalNews(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) WalkLocalNews(value);
+                if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) == true && k == "new"
+                    && ReadOwnerNode(obj["type"]) is TypeNode.Fqn owner && defs.ContainsKey(owner.Name)
+                    && obj["args"] is JsonArray args)
+                    Bind(obj, owner, args, "argTypes", $"new {owner.Name}");
+            }
+            else if (node is JsonArray array)
+                foreach (var item in array.ToList()) if (item != null) WalkLocalNews(item);
+        }
+
+        foreach (var type in defs.Values)
+        {
+            var own = new TypeNode.Fqn(type["name"].GetValue<string>());
+            var baseType = ReadOwnerNode(type["base"]) as TypeNode.Fqn;
+            if (type["ctors"] is not JsonArray ctors) continue;
+            foreach (var ctor in ctors.OfType<JsonObject>())
+            {
+                if (ctor["thisArgs"] is JsonArray thisArgs)
+                    Bind(ctor, own, thisArgs, "delegationSig", $"this-delegation in {own.Name}");
+                else if (baseType != null && defs.ContainsKey(baseType.Name) && ctor["baseArgs"] is JsonArray baseArgs)
+                    Bind(ctor, baseType, baseArgs, "delegationSig", $"base-delegation in {own.Name}");
+            }
+        }
+        foreach (var root in rootList) WalkLocalNews(root);
+    }
+
+    // Resolve same-emission-unit delegate targets against the module-wide declaration table. A generic lifted
+    // lambda is referenced through its closed delegate shape (`String -> String`) while the actual method declaration
+    // is open (`!!0 -> !!0`). Confirm that closing the declaration with the carried typeArgs produces the call-site
+    // descriptor, then serialize the declaration's OPEN parameter vector. ilemit subsequently performs only an exact
+    // table lookup; it does not reconstruct a generic method signature from the delegate type.
+    public static void ResolveLocalDelegateTargets(IEnumerable<JsonNode> roots)
+    {
+        var rootList = roots.ToList();
+        var owners = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
+        void AddDeclarations(string owner, JsonArray methods)
+        {
+            if (!owners.TryGetValue(owner, out var declarations))
+                owners[owner] = declarations = new List<JsonObject>();
+            declarations.AddRange(methods.OfType<JsonObject>());
+        }
+        foreach (var root in rootList.OfType<JsonObject>())
+        {
+            if ((root["fileClass"] as JsonValue)?.TryGetValue<string>(out var fileClass) == true
+                && root["methods"] is JsonArray topMethods)
+                AddDeclarations(fileClass, topMethods);
+            if (root["types"] is not JsonArray types) continue;
+            foreach (var type in types.OfType<JsonObject>())
+                if ((type["name"] as JsonValue)?.TryGetValue<string>(out var name) == true
+                    && type["methods"] is JsonArray methods)
+                    AddDeclarations(name, methods);
+        }
+
+        static int GenericArity(JsonObject method) => method["typeParams"] is JsonArray tps ? tps.Count : 0;
+        static TypeNode SubstMethodTvs(TypeNode type, TypeNode[] args) => type switch
+        {
+            TypeNode.Tv { Scope: "method" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
+            TypeNode.Nullable n => new TypeNode.Nullable(SubstMethodTvs(n.Of, args)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(SubstMethodTvs(o.Of, args)),
+            TypeNode.Fqn { Args: { } nested } f => new TypeNode.Fqn(f.Name,
+                nested.Select(a => SubstMethodTvs(a, args)).ToArray()),
+            TypeNode.Array a => new TypeNode.Array(SubstMethodTvs(a.Elem, args)),
+            TypeNode.ByRef b => new TypeNode.ByRef(SubstMethodTvs(b.Of, args)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+                SubstMethodTvs(fn.Ret, args),
+                fn.Params.Select(p => SubstMethodTvs(p, args)).ToArray(),
+                fn.Recv == null ? null : SubstMethodTvs(fn.Recv, args), fn.Clr,
+                fn.Ctx?.Select(c => SubstMethodTvs(c, args)).ToArray()),
+            _ => type,
+        };
+        static string[] Keys(IEnumerable<TypeNode> types) => types.Select(SupertypeGraph.TypeKey).ToArray();
+
+        void Bind(JsonObject call)
+        {
+            var kind = (call["k"] as JsonValue)?.GetValue<string>();
+            if (kind is not ("newDelegate" or "newBoundDelegate")) return;
+            var ownerNode = call["calleeOwner"] ?? call["ownerType"];
+            if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner || !owners.TryGetValue(owner.Name, out var methods))
+                return;
+            if ((call["method"] as JsonValue)?.TryGetValue<string>(out var name) != true
+                || call["sig"] is not JsonArray sig) return;
+            var wanted = sig.Select(TypeJson.Read).ToArray();
+            if (wanted.Any(t => t == null)) return;
+            var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+                ?? Array.Empty<TypeNode>();
+            if (methodArgs.Any(t => t == null)) return;
+            var ownerArgs = owner.Args ?? Array.Empty<TypeNode>();
+            var matches = new List<(JsonObject Method, TypeNode[] Params)>();
+            foreach (var candidate in methods.Where(m =>
+                         (m["name"] as JsonValue)?.TryGetValue<string>(out var candidateName) == true
+                         && candidateName == name && GenericArity(m) == methodArgs.Length))
+            {
+                if (candidate["params"] is not JsonArray parameters || parameters.Count != wanted.Length) continue;
+                var declared = parameters.OfType<JsonObject>()
+                    .Select(p => TypeJson.Read(p["type"])).ToArray();
+                if (declared.Length != wanted.Length || declared.Any(t => t == null)) continue;
+                var closed = declared.Select(t => SupertypeGraph.SubstOwnerTvs(t, ownerArgs))
+                    .Select(t => SubstMethodTvs(t, methodArgs)).ToArray();
+                if (Keys(declared).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
+                    matches.Add((candidate, declared));
+            }
+            if (matches.Count != 1)
+                throw new InvalidOperationException(
+                    $"bir2cir: {kind} target '{owner.Name}.{name}' resolves to {matches.Count} exact local methods; call={call.ToJsonString()}");
+            call["sig"] = new JsonArray(matches[0].Params.Select(TypeJson.Write).ToArray());
+        }
+
+        void WalkDelegates(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                foreach (var value in obj.Select(kv => kv.Value).ToList())
+                    if (value != null) WalkDelegates(value);
+                Bind(obj);
+            }
+            else if (node is JsonArray array)
+                foreach (var item in array.ToList()) if (item != null) WalkDelegates(item);
+        }
+        foreach (var root in rootList) WalkDelegates(root);
+    }
+
+    // A constructor declaration's `baseArgs` is a call site too. Once its base type lowers to an external CLR owner,
+    // resolve that delegation here and carry the PHYSICAL constructor declaration to CIR. This closes the one ctor
+    // path that used to reach ilemit as only (owner, arity), making target reflection enumeration order observable.
+    static void ResolveBaseConstructors(JsonNode root)
+    {
+        if (root is not JsonObject file || file["types"] is not JsonArray types) return;
+        foreach (var item in types)
+        {
+            if (item is not JsonObject type || ReadOwnerNode(type["base"]) is not TypeNode.Fqn baseFqn) continue;
+            if (_localTypes.Contains(baseFqn.Name)) continue;
+            var open = ResolveOwnerType(baseFqn);
+            if (open == null || type["ctors"] is not JsonArray ctors) continue;
+            foreach (var ctorNode in ctors)
+            {
+                if (ctorNode is not JsonObject ctor || ctor["thisArgs"] is JsonArray
+                    || ctor["baseArgs"] is not JsonArray baseArgs) continue;
+                var semanticSig = (ctor["delegationSig"] as JsonArray)?.Where(x => x != null)
+                    .Select(TypeJson.Read).ToList() ?? new List<TypeNode>();
+                if (semanticSig.Count != baseArgs.Count)
+                    throw new InvalidOperationException($"bir2cir: constructor delegation to '{baseFqn.Name}' carries "
+                        + $"{baseArgs.Count} arguments but {semanticSig.Count} signature slots");
+                var arity = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .Where(c => c.GetParameters().Length == semanticSig.Count).ToList();
+                ConstructorInfo winner;
+                try
+                {
+                    winner = PickUnique(arity, c => c.GetParameters(), semanticSig, baseFqn.Args,
+                        $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(semanticSig)})");
+                }
+                catch (InvalidOperationException) when (arity.Count == 1)
+                {
+                    // Compatibility debt: alias collapse can erase a Kotlin convenience constructor whose body adapts
+                    // to a differently-shaped CLR ctor (notably RuntimeException(cause)). CIR cannot yet serialize that
+                    // adapter. Keep the decision in bir2cir — never ilemit — and make the incomplete identity visible;
+                    // the scalar memberRef + constructor-adapter work must remove this branch before 1.0.
+                    winner = arity[0];
+                }
+                ctor["baseMemberSig"] = MemberSig(winner.GetParameters());
+                ctor["baseMemberOwner"] = DeclaringTypeDescriptor(winner);
+            }
+        }
     }
 
     static void Walk(JsonNode node)
@@ -60,6 +273,7 @@ static partial class ClrMemberResolution
         switch ((node["k"] as JsonValue)?.GetValue<string>())
         {
             case "newClr": ResolveCtor(node); break;
+            case "new": ResolveReferencedCtor(node); break;
             case "clrStatic": ResolveCall(node, instance: false); break;
             case "clrInstance": ResolveCall(node, instance: true); break;
             case "newBoundClrDelegate": ResolveBoundClrDelegate(node); break;
@@ -89,6 +303,39 @@ static partial class ClrMemberResolution
         _refs = refs;
         WalkReferencedStaticCalls(root);
         DropKotlinSigSnapshots(root);
+    }
+
+    // Normalize the frontend/synthetic call dialect to an explicit declaration signature. Empty accessors commonly
+    // omitted `sig`; CLR emission must see `[]`, not absence. For non-empty calls, only an already-carried declaration
+    // vector (`shapeTypes` for a generic declaration, otherwise `argTypes`) may supply it — expression arity/types are
+    // never consulted here. `shapeTypes` is consumed before type lowering so its open method TVs follow the ordinary
+    // `sig` lowering path and do not leak as a second descriptor dialect into CIR.
+    public static void EnsurePlainCallDescriptors(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) EnsurePlainCallDescriptors(value);
+            var kind = (obj["k"] as JsonValue)?.GetValue<string>();
+            if (kind is "newDelegate" or "newBoundDelegate")
+            {
+                if (obj["sig"] is not JsonArray && TypeJson.Read(obj["funcType"]) is TypeNode.Fn fn)
+                    // A function type's extension receiver is a real leading CLR delegate/target-method parameter.
+                    // `Params` excludes it; `DelegateParams` is the complete physical signature.
+                    obj["sig"] = new JsonArray(fn.DelegateParams.Select(TypeJson.Write).ToArray());
+                return;
+            }
+            if (kind is not ("callStatic" or "callInstance" or "constrainedCall")) return;
+            if (obj["sig"] is JsonArray) return;
+            if (obj["shapeTypes"] is JsonArray shapeTypes)
+            {
+                obj["sig"] = shapeTypes.DeepClone();
+                obj.Remove("shapeTypes");
+            }
+            else if (obj["argTypes"] is JsonArray argTypes) obj["sig"] = argTypes.DeepClone();
+            else if (obj["args"] is JsonArray args && args.Count == 0) obj["sig"] = new JsonArray();
+        }
+        else if (node is JsonArray array)
+            foreach (var item in array.ToList()) if (item != null) EnsurePlainCallDescriptors(item);
     }
 
     // Nullable-generic/function erasure runs before top-level owner attribution. Preserve the frontend-resolved
@@ -182,6 +429,16 @@ static partial class ClrMemberResolution
 
     // ---- constructors --------------------------------------------------------------------------
 
+    // A plain Kotlin `new` can target a declaration restored from a referenced DotKt assembly. It is just as external
+    // to the current emission unit as `newClr`: resolve its physical constructor here, while declarations in this CIR
+    // remain direct local links.
+    static void ResolveReferencedCtor(JsonObject node)
+    {
+        if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn || _localTypes.Contains(ownerFqn.Name)) return;
+        if (ResolveOwnerType(ownerFqn) == null) return;
+        ResolveCtor(node);
+    }
+
     static void ResolveCtor(JsonObject node)
     {
         if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn) return;
@@ -194,6 +451,7 @@ static partial class ClrMemberResolution
         var win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerFqn.Args,
             $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
         node["memberSig"] = MemberSig(win.GetParameters());
+        node["memberOwner"] = DeclaringTypeDescriptor(win);
         // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
         // chokepoint can tell "no return" from "nobody stamped one".
         StampMemberRet(node, typeof(void));
@@ -254,6 +512,7 @@ static partial class ClrMemberResolution
             return;
         }
         node["memberSig"] = MemberSig(win.GetParameters());
+        node["memberOwner"] = DeclaringTypeDescriptor(win);
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
         if (instance)
@@ -309,12 +568,17 @@ static partial class ClrMemberResolution
         {
             var win = TryPickUnique(cands, sig, ownerFqn.Args)
                       ?? TryPickUnique(InterfaceCandidates(), sig, ownerFqn.Args);
-            if (win != null) StampMemberRet(node, win.ReturnType); else StampMemberRetUnresolved(node);
+            if (win != null)
+            {
+                node["memberOwner"] = DeclaringTypeDescriptor(win);
+                StampMemberRet(node, win.ReturnType);
+            }
+            else StampMemberRetUnresolved(node);
             return;
         }
-        // No usable descriptor: a UNIQUE candidate is still an answer, and nothing else is.
-        if (cands.Count == 0) cands = InterfaceCandidates();
-        if (cands.Count == 1) StampMemberRet(node, cands[0].ReturnType); else StampMemberRetUnresolved(node);
+        // No usable descriptor means there is no resolved identity to consume. A unique name/arity candidate is not
+        // an identity and must not become one merely because today's target happens to expose only one overload.
+        StampMemberRetUnresolved(node);
     }
 
     // `PickUnique`'s first two tiers without its diagnostics: the exact structural match, then the single applicable
@@ -357,6 +621,7 @@ static partial class ClrMemberResolution
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberSig"] = MemberSig(win.GetParameters());
+        node["memberOwner"] = DeclaringTypeDescriptor(win);
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
     }
@@ -486,6 +751,14 @@ static partial class ClrMemberResolution
                 if (SameWidthIntegral(aT, p)) return MatchKind.Assignable;
                 return MatchKind.No;
             }
+            // Some compiler-owned physical types are intentionally not general-purpose ref-resolver inputs
+            // (`dotkt$CharSequence` is the canonical example), but they can still occur verbatim in a referenced
+            // declaration signature.  Their unresolved TypeNode is exact when its canonical metadata identity is
+            // exactly the reflected parameter identity; this is identity comparison, not assignability inference.
+            if (a is TypeNode.Fqn unresolved
+                && string.Equals(StripArity(Dotted(unresolved.Name)),
+                    StripArity(Dotted(p.FullName ?? p.Name)), StringComparison.Ordinal))
+                return MatchKind.Exact;
             if (a is TypeNode.Fn fn) return MatchFnToDelegate(fn, p, ownerArgs);
             // An array with an UNRESOLVABLE element (`Array<T>`, T a type-var) still IS a System.Array/object and
             // implements the non-generic array interfaces — `System.Array` assignable to `p` means `T[]` is too (e.g.
@@ -678,6 +951,15 @@ static partial class ClrMemberResolution
         var wa = W(a); return wa != null && wa == W(b);
     }
     static Type SafeDef(Type t) { try { return t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t; } catch { return t; } }
+    internal static string DeclaringTypeIdentity(MethodBase member)
+    {
+        var declaring = member?.DeclaringType
+            ?? throw new InvalidOperationException($"bir2cir: resolved member '{member}' has no declaring type");
+        declaring = SafeDef(AliasResolve(declaring));
+        return declaring.FullName ?? declaring.Name;
+    }
+    internal static JsonNode DeclaringTypeDescriptor(MethodBase member)
+        => TypeJson.Write(new TypeNode.Fqn(DeclaringTypeIdentity(member)));
     static bool IsObjectMlc(Type t) { try { return t.FullName == "System.Object"; } catch { return false; } }
     static bool IsEnumMlc(Type t) { try { return t.IsEnum; } catch { return false; } }
     // True iff the arg TypeNode is (or wraps, in a collection/array/nullable) a KNOWN local enum FQN.

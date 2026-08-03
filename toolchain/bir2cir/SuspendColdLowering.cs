@@ -97,6 +97,8 @@ static partial class SuspendColdLowering
     static readonly TypeNode VoidTn = new TypeNode.Fqn("void");
     static readonly TypeNode UnitTn = new TypeNode.Fqn("kotlin.Unit");
     static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
+    static readonly TypeNode NullableContAnyTn = new TypeNode.Nullable(new TypeNode.Fqn(
+        "kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) }));
     static readonly TypeNode ContUnitTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Unit") });
     // Physical existential view synthesized by FBoundStarProjectionErasure for Continuation<*>. BaseContinuationImpl's
     // create overloads use this CLR slot; their Kotlin surface remains Continuation<*> via [KotlinType].
@@ -104,6 +106,7 @@ static partial class SuspendColdLowering
     static JsonNode Tn(string fqn) => TypeJson.Fqn(fqn);
     static JsonNode Tw(TypeNode t) => TypeJson.Write(t);
     static JsonNode ContAny() => TypeJson.Write(ContAnyTn);
+    static JsonNode NullableContAny() => TypeJson.Write(NullableContAnyTn);
     static JsonNode ContUnit() => TypeJson.Write(ContUnitTn);
     static JsonNode ContStar() => TypeJson.Write(ContStarTn);
     static bool IsUnitTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "kotlin.Unit" };
@@ -1272,6 +1275,21 @@ static partial class SuspendColdLowering
         // The first `n` type-scope generic params by flattened index (Tv{type,0..n-1}).
         static TypeNode[] TypeTvs(int n) => Enumerable.Range(0, n).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();
 
+        // `_smTypeInst` is the SM as seen from inside the synthesized type, where all of its generic parameters are
+        // type-scope (`!i`).  The cold entry is still the original generic method, however, so its own parameters
+        // remain method-scope (`!!i`) while any enclosing-class parameters remain type-scope.  Keeping those two
+        // lexical views distinct is essential now that local constructor linkage is an exact descriptor match:
+        // spelling the cold entry's `new SM<T>` with `!i` made its owner disagree with its `!!i` argument signature
+        // and previously survived only because ilemit selected a constructor by arity.
+        TypeNode ColdEntrySmTypeInst()
+        {
+            if (_smAllTps.Count == 0) return new TypeNode.Fqn(_smType);
+            var args = new List<TypeNode>();
+            for (var i = 0; i < _ownerTypeParams.Count; i++) args.Add(new TypeNode.Tv("type", i));
+            for (var i = 0; i < _typeParams.Count; i++) args.Add(new TypeNode.Tv("method", i));
+            return new TypeNode.Fqn(_smType, args.ToArray());
+        }
+
         // A named suspend method's executable body moves from a generic METHOD into a synthesized generic TYPE.
         // Every lexical `!!i` in that moved declaration (including nested newSam/newClosure type arguments) must
         // therefore become the SM's `!ownerArity+i`. The same move applies to the method type-parameter constraints:
@@ -1289,12 +1307,18 @@ static partial class SuspendColdLowering
                         o["i"] = ownerArity + index;
                         return;
                     }
+                    var kind = Str(o["k"]);
                     foreach (var kv in o)
                     {
                         // These arrays describe the CALLEE's generic signature (`!!i` belongs to the called method),
                         // not a lexical type used by the moved caller body. Re-scoping them would make overload tokens
                         // refer to an unrelated SM type parameter and also defeat later type-argument substitution.
-                        if (kv.Key is "sig" or "argTypes" or "memberSig" or "clrOverrideSig") continue;
+                        // A constructor cannot declare method generic parameters, however, so a `new` node's
+                        // `argTypes` method variables necessarily belong to the caller's lexical scope and move with
+                        // the body. This matters for a nested generic suspend lambda: its construction is inserted
+                        // into the outer SM before this walk rebases the outer method variables.
+                        if (kv.Key is "sig" or "memberSig" or "clrOverrideSig"
+                            || (kv.Key == "argTypes" && kind != "new")) continue;
                         if (kv.Value != null) RebindMethodTypeVariablesToSm(kv.Value, ownerArity);
                     }
                     break;
@@ -2176,6 +2200,7 @@ static partial class SuspendColdLowering
                 outp.Add(SetField(safeField, new JsonObject
                 {
                     ["k"] = "callStatic", ["owner"] = Tn(ThrowOnFailureOwner), ["method"] = "newSafeContinuation",
+                    ["sig"] = new JsonArray { ContAny() },
                     ["args"] = new JsonArray
                     {
                         new JsonObject { ["k"] = "cast", ["type"] = ContAny(), ["e"] = new JsonObject { ["k"] = "this" } },
@@ -2187,6 +2212,7 @@ static partial class SuspendColdLowering
                 tail = new JsonObject
                 {
                     ["k"] = "callStatic", ["owner"] = Tn(ThrowOnFailureOwner), ["method"] = "safeGetOrThrow",
+                    ["sig"] = new JsonArray { ContAny() },
                     ["args"] = new JsonArray { SmSelfField(safeField, ContAnyTn) }, ["ret"] = Tw(AnyTn),
                 };
             }
@@ -2739,6 +2765,7 @@ static partial class SuspendColdLowering
                     {
                         ["k"] = "callStatic", ["owner"] = Tn("kotlin.Result"), ["method"] = "success",
                         ["typeArgs"] = new JsonArray { Tn("kotlin.Any") },
+                        ["sig"] = new JsonArray { Tw(new TypeNode.Tv("method", 0)) },
                         ["args"] = new JsonArray { NullConst(AnyTn) },
                         ["ret"] = Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })),
                     },
@@ -3172,6 +3199,7 @@ static partial class SuspendColdLowering
                         {
                             new JsonObject { ["k"] = "local", ["name"] = "completion" },
                         },
+                        ["delegationSig"] = new JsonArray { NullableContAny() },
                         ["thisArgs"] = null,
                         ["vis"] = "public",
                         ["body"] = ctorBody,
@@ -3191,7 +3219,7 @@ static partial class SuspendColdLowering
                     tp.Add(declaration?.DeepClone());
                 type["typeParams"] = tp;
             }
-            RebindMethodTypeVariablesToSm(type, _ownerTypeParams.Count);
+            RebindMethodTypeVariablesToSm(type, ownerArity: 0);
             return type;
         }
 
@@ -3256,6 +3284,7 @@ static partial class SuspendColdLowering
                             IntConst(_arity),
                             new JsonObject { ["k"] = "local", ["name"] = "completion" },
                         },
+                        ["delegationSig"] = new JsonArray { Tn("kotlin.Int"), NullableContAny() },
                         ["thisArgs"] = null,
                         ["vis"] = "public",
                         ["body"] = ctorBody,
@@ -3272,7 +3301,7 @@ static partial class SuspendColdLowering
                     tp.Add(declaration?.DeepClone());
                 type["typeParams"] = tp;
             }
-            RebindMethodTypeVariablesToSm(type, ownerArity: 0);
+            RebindMethodTypeVariablesToSm(type, _ownerTypeParams.Count);
             return type;
         }
 
@@ -3383,7 +3412,13 @@ static partial class SuspendColdLowering
             // reader can parse and which makes any full-document write of this BIR throw. It went unnoticed because
             // these entries are dropped again before the CIR is written; the #305 chokepoint, which serializes the
             // post-pass BIR, is the first thing that had to write one.
-            foreach (var (n, t) in _captures) { args.Add(FieldOf(n, t)); argTypes.Add(Tw(t)); }
+            foreach (var (n, t) in _captures)
+            {
+                args.Add(FieldOf(n, t));
+                var declarationType = Tw(t);
+                RebindMethodTypeVariablesToSm(declarationType, ownerArity: 0);
+                argTypes.Add(declarationType);
+            }
             // The create ABI accepts the existential Continuation<*> view, while every generated SM/base ctor stores
             // the uniform erased Continuation<Any>. Compiled coroutine completions are BaseContinuationImpl/root
             // continuations and implement that physical slot; make the representation narrowing explicit in CIR.
@@ -3420,6 +3455,7 @@ static partial class SuspendColdLowering
         //   val sm = new SM[<tp>]([this,] params..., completion); return sm.invokeSuspend(null) }
         JsonObject ColdEntrySm()
         {
+            var coldSmType = ColdEntrySmTypeInst();
             var ctorArgs = new JsonArray();
             if (_isMember) ctorArgs.Add(new JsonObject { ["k"] = "this" });
             foreach (var p in _params) ctorArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
@@ -3435,13 +3471,13 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "var",
                     ["name"] = "__sm",
-                    ["type"] = Tw(_smTypeInst),
-                    ["init"] = new JsonObject { ["k"] = "new", ["type"] = Tw(_smTypeInst), ["argTypes"] = argTypes, ["args"] = ctorArgs },
+                    ["type"] = Tw(coldSmType),
+                    ["init"] = new JsonObject { ["k"] = "new", ["type"] = Tw(coldSmType), ["argTypes"] = argTypes, ["args"] = ctorArgs },
                 },
                 Ret(new JsonObject
                 {
                     ["k"] = "callInstance",
-                    ["ownerType"] = Tw(_smTypeInst),
+                    ["ownerType"] = Tw(coldSmType),
                     ["virtual"] = true,
                     ["recv"] = new JsonObject { ["k"] = "local", ["name"] = "__sm" },
                     ["method"] = "invokeSuspend",
@@ -3592,10 +3628,6 @@ static partial class SuspendColdLowering
             var awaiterType = CloseAwaitTemplate(
                 taskPlan.AwaiterTemplate, taskType as TypeNode.Fqn, System.Array.Empty<TypeNode>());
 
-            var coldArgs = new JsonArray();
-            foreach (var p in _params) coldArgs.Add(new JsonObject { ["k"] = "local", ["name"] = Str(p["name"]) });
-            coldArgs.Add(new JsonObject { ["k"] = "cast", ["type"] = ContAny(), ["e"] = Local("__root") });
-
             var body = new JsonArray
             {
                 new JsonObject
@@ -3616,13 +3648,9 @@ static partial class SuspendColdLowering
                 new JsonObject
                 {
                     ["k"] = "var", ["name"] = "__r", ["type"] = Tw(AnyTn),
-                    ["init"] = new JsonObject
-                    {
-                        // #199 Design B: the cold entry is a top-level static in THIS file class (owner:null); stamp the
-                        // file-class dispatch hint so ilemit resolves `main$dotkt_suspend` in the right same-name package.
-                        ["k"] = "callStatic", ["owner"] = null, ["calleeOwner"] = Tn(_fileClass), ["method"] = _coldName,
-                        ["args"] = coldArgs, ["ret"] = Tw(AnyTn),
-                    },
+                    // Use the same resolved cold-entry descriptor as the public Task bridge. Hand-authoring this call
+                    // used to omit `sig`, leaving ilemit to rediscover the local overload for suspend-main alone.
+                    ["init"] = BridgeColdCall(),
                 },
             };
             // if (r !== COROUTINE_SUSPENDED) return;
@@ -3884,6 +3912,9 @@ static partial class SuspendColdLowering
             var args = new JsonArray();
             foreach (var p in _params) args.Add(Local(Str(p["name"])));
             args.Add(new JsonObject { ["k"] = "cast", ["type"] = ContAny(), ["e"] = Local("__root") });
+            var sig = new JsonArray();
+            foreach (var p in _params) sig.Add(p["type"]?.DeepClone());
+            sig.Add(ContAny());
 
             // On a GENERIC enclosing class the callee's declaring type is the CONSTRUCTED self `Box[!0..]` (matching
             // `this`), never the open `Box` — else verification rejects the recv type. `_selfType` is exactly that
@@ -3898,6 +3929,7 @@ static partial class SuspendColdLowering
                     ["virtual"] = false,
                     ["recv"] = new JsonObject { ["k"] = "this" },
                     ["method"] = _coldName,
+                    ["sig"] = sig.DeepClone(),
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
                 };
@@ -3912,6 +3944,7 @@ static partial class SuspendColdLowering
                     // static member already names its owner and needs none).
                     ["calleeOwner"] = _staticMember && _ownerClass != null ? null : Tn(_fileClass),
                     ["method"] = _coldName,
+                    ["sig"] = sig.DeepClone(),
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
                 };
@@ -3952,6 +3985,7 @@ static partial class SuspendColdLowering
                 {
                     ["k"] = "callStatic", ["owner"] = Tn("kotlin.Result"), ["method"] = "failure",
                     ["typeArgs"] = new JsonArray { Tn("kotlin.Any") },
+                    ["sig"] = new JsonArray { Tn("kotlin.Throwable") },
                     ["args"] = new JsonArray { Local("__e") },
                     ["ret"] = Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })),
                 },
@@ -4050,6 +4084,7 @@ static partial class SuspendColdLowering
             ["k"] = "callStatic",
             ["owner"] = Tn(ThrowOnFailureOwner),
             ["method"] = "throwOnFailure",
+            ["sig"] = new JsonArray { Tw(new TypeNode.Nullable(AnyTn)) },
             ["args"] = new JsonArray { new JsonObject { ["k"] = "local", ["name"] = "result" } },
             ["ret"] = Tw(VoidTn),
         };

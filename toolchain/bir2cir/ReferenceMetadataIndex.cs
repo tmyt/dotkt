@@ -476,11 +476,16 @@ sealed partial class ReferenceMetadataIndex
     // does NOT apply to ClrMemberResolution, which runs AFTER substitution and only reflects a member's DECLARED sig).
     // Used for a clr* node IteratorConsumerNormalization deliberately keeps on its `kotlin.collections.Iterator` owner for
     // the rt-stdlib link. Still honors the local-emitted skip (a self-build's own kotlin.* type is authored, not reflected)
-    // + the dotkt-synthetic skip (dotkt$CharSequence has no ref.dll type). Null when the type is not in the ref universe.
+    // + the dotkt-synthetic skip (dotkt$CharSequence has no ref.dll type).  One synthetic family is deliberately a
+    // real referenced declaration: `dotkt$obj*` anonymous-object classes captured in inline bodies.  When such a body
+    // is spliced into a consumer, its constructor still belongs to the referenced assembly and must be resolved like
+    // every other external member; excluding it leaves ilemit to rediscover the constructor from the runtime DLL.
+    // Null when the type is not in the ref universe.
     public Type ResolveRefType(string fqn, int genericArity = 0)
     {
         if (string.IsNullOrEmpty(fqn)) return null;
-        if (fqn.StartsWith("dotkt$", StringComparison.Ordinal)) return null;
+        if (fqn.StartsWith("dotkt$", StringComparison.Ordinal)
+            && !fqn.StartsWith("dotkt$obj", StringComparison.Ordinal)) return null;
         if (_localEmittedTypes.Contains(BareOwnerFqn(fqn))) return null;
         return ProbeNetType(fqn, genericArity);
     }

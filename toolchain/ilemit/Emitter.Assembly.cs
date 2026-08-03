@@ -17,28 +17,23 @@ sealed partial class Emitter
         // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
         // See Emitter.Sanity.cs. Pure fail-fast validation — no IL effect (a valid CIR is byte-identical after it).
         CheckCir(files);
-        // NOTE (R-1, reverse-interop): the emitted assembly's core type refs point at System.Private.CoreLib (the
-        // impl assembly) because BCL types resolve via runtime reflection (typeof/Type.GetType, ~176 sites). A
-        // standalone exe runs fine and any .NET host can reflection-load it (samples/il-revinterop), but a C# project
-        // that <Reference>s it at COMPILE time hits CS0012 (Object lives in the unreferenced System.Private.CoreLib).
-        // Investigated 2026-06-21: adding a consumer <Reference> to System.Private.CoreLib does NOT work either
-        // (CS0433 — attributes exist in both it and System.Runtime). The proper fix is to resolve ALL BCL types
-        // through a MetadataLoadContext over the REFERENCE assemblies and pass that core to PersistedAssemblyBuilder,
-        // so refs become System.Runtime — a large, contained refactor (every typeof(Bcl) -> mlc lookup). Tracked #50.
-        var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), typeof(object).Assembly);
+        // #336: PersistedAssemblyBuilder and every external type/member below share one target
+        // MetadataLoadContext. The compiler host still supplies Reflection.Emit's implementation, never an emitted
+        // identity. Mixing a host Type with this graph is invalid even when its FullName matches a target Type.
+        var ab = new PersistedAssemblyBuilder(new AssemblyName(_asmName), _target.CoreAssembly);
         // Assembly provenance: the emitter owns the final assembly in BOTH SDK and direct-CLI flows, so it stamps an
         // explicit, versioned DotKt protocol marker here (not in MSBuild-only SDK plumbing). dll2klib requires this
         // signal together with compiler-generated embedded metadata carriers before applying Kotlin-only reverse maps.
         const string dotKtMarkerKey = "DotKt.Compiler";
         const string dotKtMarkerValue = "metadata-v1";
-        var assemblyMetadataCtor = typeof(AssemblyMetadataAttribute).GetConstructor(new[] { typeof(string), typeof(string) });
-        ab.SetCustomAttribute(new CustomAttributeBuilder(
-            assemblyMetadataCtor, new object[] { dotKtMarkerKey, dotKtMarkerValue }));
+        var assemblyMetadataCtor = Bcl("System.Reflection.AssemblyMetadataAttribute").GetConstructor(new[] { Bcl("System.String"), Bcl("System.String") });
+        SetAttribute(ab.SetCustomAttribute, assemblyMetadataCtor,
+            new[] { Bcl("System.String"), Bcl("System.String") }, dotKtMarkerKey, dotKtMarkerValue);
         // The frontend stdlib KLIB is the authoritative Kotlin declaration surface. Mark both CLR stdlib twins so
         // generic CLR-reference projectors can route them away from dll2klib without guessing from assembly names.
         if (_stdlibAssembly)
-            ab.SetCustomAttribute(new CustomAttributeBuilder(
-                assemblyMetadataCtor, new object[] { "DotKt.LibraryKind", "stdlib" }));
+            SetAttribute(ab.SetCustomAttribute, assemblyMetadataCtor,
+                new[] { Bcl("System.String"), Bcl("System.String") }, "DotKt.LibraryKind", "stdlib");
         _mod = ab.DefineDynamicModule(_asmName);
         // #71 S2: the DotKt.Runtime.CompilerServices.* + System.Runtime.CompilerServices.Nullable{,Context} attribute
         // CLASSES are now ordinary CIR type decls (bir2cir's synthetic `000-dotkt-roundtrip-attrs` file); pass 1 below
@@ -87,11 +82,23 @@ sealed partial class Emitter
                     if (kind == "enum")
                     {
                         // A real .NET enum: each entry is a literal field of the int-backed enum.
-                        var eb = _mod.DefineEnum(name, TypeAttributes.Public, typeof(int));
-                        var eti = new TypeInfo { EB = eb, Def = t, IsEnum = true };
+                        // DefineEnum asks host Reflection helpers to classify its underlying Type. A target-MLC
+                        // System.Int32 is metadata-only, so that helper misclassifies it and PAB synthesizes an illegal
+                        // enum .ctor. Spell the ECMA enum shape directly from target types: sealed : System.Enum, one
+                        // special instance value__ field, and static literal fields. No semantic decision is involved.
+                        var enumTb = _mod.DefineType(name, TypeAttributes.Public | TypeAttributes.Sealed,
+                            Bcl("System.Enum"));
+                        var eti = new TypeInfo { TB = enumTb, Def = t, IsEnum = true };
+                        eti.Fields["value__"] = enumTb.DefineField("value__", Bcl("System.Int32"),
+                            FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName);
                         foreach (var en in t.GetProperty("entries").EnumerateArray())
-                            eti.Fields[en.GetProperty("name").GetString()] =
-                                (FieldBuilder)eb.DefineLiteral(en.GetProperty("name").GetString(), en.GetProperty("ordinal").GetInt32());
+                        {
+                            var entryName = en.GetProperty("name").GetString();
+                            var field = enumTb.DefineField(entryName, enumTb,
+                                FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal);
+                            field.SetConstant(en.GetProperty("ordinal").GetInt32());
+                            eti.Fields[entryName] = field;
+                        }
                         _types[name] = eti;
                         continue;
                     }
@@ -155,7 +162,7 @@ sealed partial class Emitter
         // Bake enums up front: their literals are fully defined in pass 1, and baking now gives a real metadata
         // token usable in other types' IL (box/castclass/ldtoken) — an un-baked EnumBuilder token breaks the PE.
         foreach (var ti in _types.Values)
-            if (ti.IsEnum) ti.Created = ti.EB.CreateType();
+            if (ti.IsEnum) ti.Created = ti.TB.CreateType();
 
         // Pass 2: set parents and interface implementations (DefineGenericParameters already ran in pass 1, so a
         // generic base/interface that references the type's own params resolves).
@@ -169,7 +176,11 @@ sealed partial class Emitter
             {
                 // A `.NET` base (`clr:System.Exception` / `clrg:...[..]`) is resolved by reflection; a Kotlin-user
                 // base is another TypeBuilder in `_types`.
-                if (ti.BaseName.StartsWith("clr:") || ti.BaseName.StartsWith("clrg:")) ti.TB.SetParent(ti.ClrBase = MapType(ti.BaseName));
+                if (ti.BaseName.StartsWith("clr:") || ti.BaseName.StartsWith("clrg:"))
+                {
+                    ti.ClrBase = MapType(ti.BaseName);
+                    ti.TB.SetParent(ParentType(ti.ClrBase));
+                }
                 else
                 {
                     // A constructed user base (`AbstractList[tv E]` / `AbstractCoroutineContextKey[..concrete..]`) carries its
@@ -180,7 +191,7 @@ sealed partial class Emitter
                     var (bopen, bconstructed) = ti.BaseFqn != null ? ParseOwnerT(ti.BaseFqn) : ParseOwner(ti.BaseName);
                     if (bconstructed != null)
                     {
-                        ti.TB.SetParent(bconstructed);
+                        ti.TB.SetParent(ParentType(bconstructed));
                         // An external referenced generic base (open name not emitted here) is a REFERENCED .NET base —
                         // record it as ClrBase so the base-ctor emission calls its ctor, not object's.
                         if (!_types.ContainsKey(bopen)) ti.ClrBase = bconstructed;
@@ -426,7 +437,7 @@ sealed partial class Emitter
                             foreach (var bim in baseMs)
                                 if (FindExternalInterfaceBridge(ti, baseIface, bim.Name,
                                         bim.GetGenericArguments().Length,
-                                        bim.GetParameters().Select(p => p.ParameterType).ToArray())
+                                        ParametersOf(bim).Select(p => p.ParameterType).ToArray())
                                     is MethodBuilder baseBridge)
                                     ti.TB.DefineMethodOverride(baseBridge, bim);
                         }
@@ -439,7 +450,7 @@ sealed partial class Emitter
                             // (instantiation-substituted) parameter types against each overload's recorded params.
                             // The interface method's (instantiation-substituted) param + return types — used both to
                             // disambiguate an overloaded body AND to decide whether the body needs a return-adapting bridge.
-                            var ips = im.GetParameters().Select(p => reanchor
+                            var ips = ParametersOf(im).Select(p => reanchor
                                 ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
                                 : p.ParameterType).ToArray();
                             var methodArity = im.GetGenericArguments().Length;
@@ -448,7 +459,7 @@ sealed partial class Emitter
                             // bridge — it is deliberately not named after the slot.
                             if (FindExternalInterfaceBridge(ti, itype, im.Name, methodArity, ips) is MethodBuilder directiveBridge)
                             {
-                                ti.TB.DefineMethodOverride(directiveBridge, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
+                                ti.TB.DefineMethodOverride(directiveBridge, reanchor ? AnchorMethod(itype, im) : im);
                                 continue;
                             }
                             var cands = ti.MethodsBySig
@@ -461,7 +472,7 @@ sealed partial class Emitter
                                 .ToList();
                             if (cands.Count != 1) continue;   // no unique exact CLR identity -> skip, never mis-wire
                             var body = cands[0];
-                            var ifaceM = reanchor ? TypeBuilder.GetMethod(itype, im) : im;
+                            var ifaceM = reanchor ? AnchorMethod(itype, im) : im;
                             // A @ClrTypeAlias'd (referenced) interface slot whose return type the Kotlin body DROPS: the
                             // Kotlin member returns a value but the BCL slot is void (MutableCollection.add():Boolean ->
                             // ICollection.Add():void; MutableList.set/removeAt:E -> IList.set_Item/RemoveAt():void). A DIRECT
@@ -474,7 +485,7 @@ sealed partial class Emitter
                             // generic slot (never a bridge), and same-return slots keep the direct, byte-identical override.
                             // `void` is substitution-invariant, so the slot's return needs no SubstituteIfaceArgs re-anchor.
                             bool bodyIsGeneric = body is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
-                            if (!bodyIsGeneric && im.ReturnType == typeof(void) && body.ReturnType != typeof(void))
+                            if (!bodyIsGeneric && ReturnTypeOf(im) == Bcl("System.Void") && body.ReturnType != Bcl("System.Void"))
                                 EmitVoidDropBridge(ti, im.Name, ips, body, ifaceM);
                             else
                                 ti.TB.DefineMethodOverride(body, ifaceM);
@@ -510,7 +521,7 @@ sealed partial class Emitter
                             var subSig = SigKey(imName, DeclaredMethodArity(imDef),
                                 imDef.GetProperty("params").EnumerateArray()
                                     .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)));
-                            var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
+                            var ifaceMethod = constructed != null ? AnchorMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
                             // A bir2cir-resolved exact MethodImpl bridge. The decision and exact slot signature are
                             // already CIR facts; this is mechanical consumption only. In particular, do not also wire
                             // the narrow Kotlin declaration, whose covariant return is not a byte-exact CLR MethodImpl.
@@ -553,8 +564,8 @@ sealed partial class Emitter
                             // is unreliable on an un-baked builder).
                             var bodyIsGeneric = bodyMethod is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
                             if (!bodyIsGeneric && ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
-                                ((bodyMethod.ReturnType.Name != ifaceRet.Name && !bodyMethod.ReturnType.IsValueType && !ifaceRet.IsValueType)   // covariant reference narrowing
-                                 || (ifaceRet == typeof(void) && bodyMethod.ReturnType != typeof(void))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
+                                ((bodyMethod.ReturnType.Name != ifaceRet.Name && !IsValueType(bodyMethod.ReturnType) && !IsValueType(ifaceRet))   // covariant reference narrowing
+                                 || (ifaceRet == Bcl("System.Void") && bodyMethod.ReturnType != Bcl("System.Void"))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
                                 EmitCovariantBridge(ti, imName, imDef, specArgs, bodyMethod, ifaceMethod, ifaceRet);
                             else
                                 ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
@@ -602,7 +613,7 @@ sealed partial class Emitter
                 catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
                 foreach (var im in ifaceMs)
                 {
-                    var ips = im.GetParameters().Select(p => reanchor
+                    var ips = ParametersOf(im).Select(p => reanchor
                         ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
                         : p.ParameterType).ToArray();
                     // Match the complete CLR method identity, including method generic arity. A same-name/same-param
@@ -618,7 +629,8 @@ sealed partial class Emitter
                         .ToList();
                     if (cands.Count != 1) continue;   // no unique exact DIM -> skip rather than mis-wire
                     var dim = cands[0];
-                    var iret = reanchor ? SubstituteIfaceArgs(im.ReturnType, itype.GetGenericArguments()) : im.ReturnType;
+                    var reflectedReturn = ReturnTypeOf(im);
+                    var iret = reanchor ? SubstituteIfaceArgs(reflectedReturn, itype.GetGenericArguments()) : reflectedReturn;
                     var bridge = ti.TB.DefineMethod("dotkt$dimimpl$" + im.Name + "$" + (_covarBridge++),
                         MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig);
                     // A GENERIC slot's signature names the SLOT's own method type parameters, and the CLI encodes each
@@ -644,9 +656,9 @@ sealed partial class Emitter
                             var gp = (GenericTypeParameterBuilder)bridgeTps[gi];
                             gp.SetGenericParameterAttributes(slotTps[gi].GenericParameterAttributes);
                             var cs = slotTps[gi].GetGenericParameterConstraints().Select(Rebase).ToArray();
-                            var baseC = cs.FirstOrDefault(c => !c.IsInterface);
+                            var baseC = cs.FirstOrDefault(c => !IsInterfaceType(c));
                             if (baseC != null) gp.SetBaseTypeConstraint(baseC);
-                            var ifaceC = cs.Where(c => c.IsInterface).ToArray();
+                            var ifaceC = cs.Where(IsInterfaceType).ToArray();
                             if (ifaceC.Length > 0) gp.SetInterfaceConstraints(ifaceC);
                         }
                         ips = ips.Select(t => SubstituteMethodArgs(t, slotTps, bridgeTps)).ToArray();
@@ -658,11 +670,11 @@ sealed partial class Emitter
                     var bil = bridge.GetILGenerator();
                     bil.Emit(OpCodes.Ldarg_0);
                     for (int i = 0; i < ips.Length; i++) bil.Emit(OpCodes.Ldarg, i + 1);
-                    var dimCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), dim) : (MethodInfo)dim;
-                    if (methodArity > 0) dimCall = dimCall.MakeGenericMethod(bridgeTps);
+                    var dimCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), dim) : (MethodInfo)dim;
+                    if (methodArity > 0) dimCall = ConstructedMethod(dimCall, bridgeTps);
                     bil.Emit(OpCodes.Callvirt, dimCall);
                     bil.Emit(OpCodes.Ret);
-                    ti.TB.DefineMethodOverride(bridge, reanchor ? TypeBuilder.GetMethod(itype, im) : im);
+                    ti.TB.DefineMethodOverride(bridge, reanchor ? AnchorMethod(itype, im) : im);
                 }
             }
         }
@@ -752,7 +764,7 @@ sealed partial class Emitter
                             + "which that type declares no member for at any instantiation — bir2cir resolved a base-class "
                             + "MethodImpl against a missing slot");
                     ti.TB.DefineMethodOverride(bridge,
-                        constructed != null ? TypeBuilder.GetMethod(constructed, slot) : (MethodInfo)slot);
+                        constructed != null ? AnchorMethod(constructed, slot) : (MethodInfo)slot);
                 }
                 _curMethodParams = null;
             }
@@ -780,11 +792,11 @@ sealed partial class Emitter
             // #71 S2: EVERY attribute here — user annotations AND the Kotlin round-trip metadata ([NullableContext]/
             // [KotlinFileClass]/[KotlinFunInterface]/[KotlinSealed] on the type; [KotlinFunction]/[KotlinInline] on
             // methods; [Nullable]/[KotlinSuspendFunctionType] in return position) — is an ordinary CIR `attrs`/`retAttrs`
-            // entry that bir2cir (RoundtripMetadata) generated. ilemit only STAMPS them dumbly through BuildCab; the
+            // entry that bir2cir (RoundtripMetadata) generated. ilemit only STAMPS them dumbly through BuildAttribute; the
             // Kotlin-semantic DECISION (which modifier -> which attribute) lives in bir2cir. A runtime-build CIR carries
             // none (the pass is skipped there), so there is nothing to strip.
             if (ti.TB != null && ti.Def.TryGetProperty("attrs", out var tattrs))
-                foreach (var a in tattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) ti.TB.SetCustomAttribute(cab); }
+                foreach (var a in tattrs.EnumerateArray()) { var encoded = BuildAttribute(a); if (encoded != null) ti.TB.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
             if (ti.Def.TryGetProperty("methods", out var ms))
                 foreach (var m in ms.EnumerateArray())
                 {
@@ -799,12 +811,12 @@ sealed partial class Emitter
                     var mname = m.GetProperty("name").GetString();
                     if (!ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var mb) && !ti.Methods.TryGetValue(mname, out mb)) continue;
                     if (hasA)
-                        foreach (var a in mattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) mb.SetCustomAttribute(cab); }
+                        foreach (var a in mattrs.EnumerateArray()) { var encoded = BuildAttribute(a); if (encoded != null) mb.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
                     // Return-position attrs ride the return parameter (position 0), defined once.
                     if (hasR)
                     {
                         var retPb = mb.DefineParameter(0, ParameterAttributes.None, null);
-                        foreach (var a in rattrs.EnumerateArray()) { var cab = BuildCab(a); if (cab != null) retPb.SetCustomAttribute(cab); }
+                        foreach (var a in rattrs.EnumerateArray()) { var encoded = BuildAttribute(a); if (encoded != null) retPb.SetCustomAttribute(encoded.Constructor, encoded.Blob); }
                     }
                 }
         }
@@ -822,7 +834,7 @@ sealed partial class Emitter
             var inits = fs.EnumerateArray().Where(f => f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null && f.TryGetProperty("static", out var s) && s.GetBoolean()).ToList();
             if (inits.Count == 0) continue;
             _il = ti.TB.DefineTypeInitializer().GetILGenerator();
-            _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = typeof(void);
+            _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = Bcl("System.Void");
             // A field initializer can contain CFG control flow (a `while`/`when` lowered to label/goto), so its labels
             // must be pre-defined just like a method body — otherwise MarkLabel/Br throws "key not in _cfgLabels".
             // Coerce the init value to the field's declared type (box a value-type/enum RHS stored into an
@@ -846,7 +858,7 @@ sealed partial class Emitter
         foreach (var ti in _types.Values)
             if (ti.IsFileClass && ti.FileElem.Value.GetProperty("hasMain").GetBoolean() && ti.Methods.ContainsKey("main"))
             {
-                entry = ti.TB.DefineMethod("Main", MethodAttributes.Public | MethodAttributes.Static, typeof(void), new[] { typeof(string[]) });
+                entry = ti.TB.DefineMethod("Main", MethodAttributes.Public | MethodAttributes.Static, Bcl("System.Void"), new[] { Bcl("System.String").MakeArrayType() });
                 var il = entry.GetILGenerator();
                 var mainMb = ti.Methods["main"];
                 // `fun main(args: Array<String>)` -> forward the CLR args; `fun main()` -> call with none.
@@ -899,17 +911,17 @@ sealed partial class Emitter
     // only the mutable face can be castclass'd into a readonly slot: IList<T>->IReadOnlyList<T>,
     // ICollection<T>/ISet<T>->IReadOnlyCollection<T>. (IReadOnlyList<T> derives from IReadOnlyCollection<T>, so listing
     // the former is enough for a list.) All members are satisfied implicitly by the mutable face's methods.
-    static IEnumerable<Type> ReadonlyCollectionSiblings(Type itype)
+    IEnumerable<Type> ReadonlyCollectionSiblings(Type itype)
     {
         if (itype == null || !itype.IsGenericType || itype.IsGenericTypeDefinition) yield break;
         var args = itype.GetGenericArguments();
         if (args.Length != 1) yield break;
         var t = args[0];
         var gd = itype.GetGenericTypeDefinition();
-        if (gd == typeof(System.Collections.Generic.IList<>))
-            yield return typeof(System.Collections.Generic.IReadOnlyList<>).MakeGenericType(t);
-        else if (gd == typeof(System.Collections.Generic.ICollection<>) || gd == typeof(System.Collections.Generic.ISet<>))
-            yield return typeof(System.Collections.Generic.IReadOnlyCollection<>).MakeGenericType(t);
+        if (gd == Bcl("System.Collections.Generic.IList`1"))
+            yield return ConstructedType(Bcl("System.Collections.Generic.IReadOnlyList`1"), t);
+        else if (gd == Bcl("System.Collections.Generic.ICollection`1") || gd == Bcl("System.Collections.Generic.ISet`1"))
+            yield return ConstructedType(Bcl("System.Collections.Generic.IReadOnlyCollection`1"), t);
     }
 
     IEnumerable<TypeInfo> Ordered()
@@ -1074,9 +1086,9 @@ sealed partial class Emitter
         {
             var objM = name switch
             {
-                "ToString" => typeof(object).GetMethod("ToString", Type.EmptyTypes),
-                "GetHashCode" => typeof(object).GetMethod("GetHashCode", Type.EmptyTypes),
-                "Equals" => typeof(object).GetMethod("Equals", new[] { typeof(object) }),
+                "ToString" => Bcl("System.Object").GetMethod("ToString", Type.EmptyTypes),
+                "GetHashCode" => Bcl("System.Object").GetMethod("GetHashCode", Type.EmptyTypes),
+                "Equals" => Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }),
                 _ => null,
             };
             if (objM != null) ti.TB.DefineMethodOverride(mb, objM);
@@ -1098,10 +1110,10 @@ sealed partial class Emitter
             mb.SetImplementationFlags(mb.GetMethodImplementationFlags() | MethodImplAttributes.AggressiveInlining);
     }
 
-    // Define a type's constructors from its CIR (idempotent). Normally runs in pass 3, but BuildCab pulls it EARLY when
+    // Define a type's constructors from its CIR (idempotent). Normally runs in pass 3, but BuildAttribute pulls it EARLY when
     // stamping a param/method attribute whose attribute type is emitted in THIS assembly (e.g. `@kotlin.clr.KotlinDefault
     // (index, bir)` on a defaulted stdlib parameter): pass 3 declares members type-by-type, so a `@KotlinDefault`
-    // application on an EARLIER type's method would otherwise reach BuildCab before KotlinDefault's own `(int,string)`
+    // application on an EARLIER type's method would otherwise reach BuildAttribute before KotlinDefault's own `(int,string)`
     // ctor was defined — the old `ti.Ctors[0] ?? DefineDefaultConstructor()` then minted a bogus parameterless ctor per
     // application and every stamp failed "Parameter count does not match". Defining ctors on demand (guarded) makes the
     // real ctor available whenever it is first needed. Interfaces/enums/file classes have no CIR ctors.
@@ -1203,11 +1215,7 @@ sealed partial class Emitter
         }
 
         Type open = null;
-        try
-        {
-            open = RuntimeReferences.ResolveType(name + "`" + arity)
-                ?? RuntimeReferences.ResolveFromHostFramework(name + "`" + arity);
-        }
+        try { open = ResolveType(name + "`" + arity); }
         catch { }
         if (open == null || !open.IsGenericTypeDefinition) return 0;
         var gps = open.GetGenericArguments();
@@ -1259,8 +1267,8 @@ sealed partial class Emitter
             if (x.TryGetProperty("constraints", out var cs))
             {
                 var types = cs.EnumerateArray().Select(c => MapType(c)).ToList();
-                var ifaces = types.Where(t => t.IsInterface).ToArray();
-                var baseT = types.FirstOrDefault(t => !t.IsInterface);
+                var ifaces = types.Where(IsInterfaceType).ToArray();
+                var baseT = types.FirstOrDefault(t => !IsInterfaceType(t));
                 if (baseT != null) gp.SetBaseTypeConstraint(baseT);
                 if (ifaces.Length > 0) gp.SetInterfaceConstraints(ifaces);
             }
@@ -1282,12 +1290,12 @@ sealed partial class Emitter
     {
         var bridge = ti.TB.DefineMethod("dotkt$covar$" + name + "$" + (_covarBridge++),
             MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
-            typeof(void), paramTypes);
+            Bcl("System.Void"), paramTypes);
         StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
         var il = bridge.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
         for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
-        var bodyCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
+        var bodyCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
         il.Emit(OpCodes.Callvirt, bodyCall);
         il.Emit(OpCodes.Pop);   // the BCL slot drops the Kotlin return
         il.Emit(OpCodes.Ret);
@@ -1307,11 +1315,11 @@ sealed partial class Emitter
         var il = bridge.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
         for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
-        var bodyCall = ti.IsGeneric ? TypeBuilder.GetMethod(ti.TB.MakeGenericType(ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
+        var bodyCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
         il.Emit(OpCodes.Callvirt, bodyCall);
         // ifaceRet==void but the body returns a value (add():Boolean -> ICollection.Add():void): the BCL slot drops the
         // Kotlin return -> pop it so the void bridge leaves an empty stack. Else the (reference) narrow return upcasts.
-        if (ifaceRet == typeof(void) && body.ReturnType != typeof(void)) il.Emit(OpCodes.Pop);
+        if (ifaceRet == Bcl("System.Void") && body.ReturnType != Bcl("System.Void")) il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ret);
         ti.TB.DefineMethodOverride(bridge, ifaceMethod);
     }
@@ -1368,7 +1376,7 @@ sealed partial class Emitter
                             : (diTi.Methods.TryGetValue(cn.GetString(), out var byName) ? byName : null);
                     if (raw == null || raw.Attributes.HasFlag(MethodAttributes.Abstract)) continue;
                     dimBuilder = raw;
-                    dimTarget = dconstructed != null ? TypeBuilder.GetMethod(dconstructed, raw) : raw;
+                    dimTarget = dconstructed != null ? AnchorMethod(dconstructed, raw) : raw;
                     break;
                 }
             }
@@ -1397,7 +1405,7 @@ sealed partial class Emitter
                         var openExt = ext.GetGenericTypeDefinition();
                         var openMethod = FindReflectedMethodBySig(
                             openExt, imDef.GetProperty("name").GetString(), slotSig, DeclaredMethodArity(imDef));
-                        if (openMethod != null) reflected = TypeBuilder.GetMethod(ext, openMethod);
+                        if (openMethod != null) reflected = AnchorMethod(ext, openMethod);
                     }
                     catch (NotSupportedException) { }
                 }
@@ -1445,7 +1453,7 @@ sealed partial class Emitter
                 ApplyConstraints(genTps.Value, map, false);
                 try
                 {
-                    ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
+                    ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : Bcl("System.Void");
                     paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
                 }
                 catch (Exception ex)
@@ -1457,7 +1465,7 @@ sealed partial class Emitter
                 bridge.SetReturnType(ifaceRet);
                 bridge.SetParameters(paramTypes);
                 _curMethodParams = savedMp;
-                dimCall = dimTarget.MakeGenericMethod(gps.Cast<Type>().ToArray());
+                dimCall = ConstructedMethod(dimTarget, gps.Cast<Type>().ToArray());
             }
             else
             {
@@ -1465,7 +1473,7 @@ sealed partial class Emitter
                 // skip (no orphan bodyless method to crash the bake).
                 try
                 {
-                    ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : typeof(void);
+                    ifaceRet = imDef.TryGetProperty("ret", out var rt) ? MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)) : Bcl("System.Void");
                     paramTypes = imDef.GetProperty("params").EnumerateArray().Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
                 }
                 catch { return; }
@@ -1480,7 +1488,7 @@ sealed partial class Emitter
             for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
             il.Emit(OpCodes.Callvirt, dimCall);   // dispatches to the DIM inherited by `this`
             il.Emit(OpCodes.Ret);
-            var ifaceMethod = constructed != null ? TypeBuilder.GetMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
+            var ifaceMethod = constructed != null ? AnchorMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
             ti.TB.DefineMethodOverride(bridge, ifaceMethod);
     }
 
@@ -1490,9 +1498,9 @@ sealed partial class Emitter
     (string open, Type constructed) ParseOwnerT(DotKt.Bir.TypeNode.Fqn f)
     {
         if (f.Args == null) return (f.Name, null);
-        var args = f.Args.Select(a => { var r = MapType(a); return r == typeof(void) ? typeof(object) : r; }).ToArray();
-        if (_types.TryGetValue(f.Name, out var ti)) return (f.Name, ti.TB.MakeGenericType(args));
-        return (f.Name, ResolveType(f.Name + "`" + args.Length).MakeGenericType(args));
+        var args = f.Args.Select(a => { var r = MapType(a); return r == Bcl("System.Void") ? Bcl("System.Object") : r; }).ToArray();
+        if (_types.TryGetValue(f.Name, out var ti)) return (f.Name, ConstructedType(ti.TB, args));
+        return (f.Name, ConstructedType(ResolveType(f.Name + "`" + args.Length), args));
     }
 
     void Save(PersistedAssemblyBuilder ab, MethodBuilder entry)

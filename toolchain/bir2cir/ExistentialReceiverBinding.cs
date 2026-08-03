@@ -21,7 +21,10 @@ static class ExistentialReceiverBinding
         internal readonly Dictionary<string, List<Member>> Members = new(StringComparer.Ordinal);
     }
 
-    internal sealed record Member(string Name, int ParamCount, int GenericArity);
+    internal sealed record Member(string Name, TypeNode[] Parameters, int GenericArity)
+    {
+        public int ParamCount => Parameters.Length;
+    }
 
     public static Index Collect(IEnumerable<JsonNode> roots)
     {
@@ -44,7 +47,9 @@ static class ExistentialReceiverBinding
                     if (!Bool(method["static"]) && Str(method["name"]) is string mn)
                         slots.Add(new Member(
                             mn,
-                            (method["params"] as JsonArray)?.Count ?? 0,
+                            (method["params"] as JsonArray)?.OfType<JsonObject>()
+                                .Select(p => TypeJson.Read(p["type"]))
+                                .Where(t => t != null).ToArray() ?? Array.Empty<TypeNode>(),
                             (method["typeParams"] as JsonArray)?.Count ?? 0));
                 index.Members[name] = slots;
             }
@@ -124,6 +129,7 @@ static class ExistentialReceiverBinding
             ?? (call["args"] as JsonArray)?.Count ?? 0;
         var ga = (call["typeArgs"] as JsonArray)?.Count ?? 0;
         string physicalMethod = null;
+        TypeNode[] physicalParameters = null;
 
         if (index.Members.TryGetValue(receiverType.Name, out var members))
         {
@@ -131,10 +137,14 @@ static class ExistentialReceiverBinding
             var candidates = members
                 .Where(m => m.ParamCount == pc && m.GenericArity == ga
                     && (m.Name == sourceMethod || m.Name.StartsWith(prefix, StringComparison.Ordinal)))
-                .Select(m => m.Name)
-                .Distinct(StringComparer.Ordinal)
+                .GroupBy(m => m.Name, StringComparer.Ordinal)
+                .Select(g => g.First())
                 .ToList();
-            if (candidates.Count == 1) physicalMethod = candidates[0];
+            if (candidates.Count == 1)
+            {
+                physicalMethod = candidates[0].Name;
+                physicalParameters = candidates[0].Parameters;
+            }
         }
         else
         {
@@ -147,6 +157,8 @@ static class ExistentialReceiverBinding
         if (physicalMethod == null) return; // ambiguous or absent: never guess a physical slot
         call["ownerType"] = TypeJson.Write(receiverType);
         call["method"] = physicalMethod;
+        if (physicalParameters != null)
+            call["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray());
         call["virtual"] = true;
     }
 

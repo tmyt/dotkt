@@ -145,7 +145,8 @@ static class SupertypeGraph
         TypeNode.ByRef r => new TypeNode.ByRef(SubstOwnerTvs(r.Of, args)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstOwnerTvs(fn.Ret, args),
             fn.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
-            fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args)),
+            fn.Recv == null ? null : SubstOwnerTvs(fn.Recv, args), fn.Clr,
+            fn.Ctx?.Select(p => SubstOwnerTvs(p, args)).ToArray()),
         _ => type,
     };
 

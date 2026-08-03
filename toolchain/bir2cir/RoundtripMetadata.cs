@@ -404,8 +404,15 @@ static class RoundtripMetadata
     static JsonObject Marker(string attr, params JsonObject[] args)
     {
         var arr = new JsonArray();
-        foreach (var a in args) arr.Add(a);
-        return new JsonObject { ["attr"] = TypeJson.Fqn(attr), ["args"] = arr };   // `attr` is a structured `{t:fqn}` node (#48)
+        var argTypes = new JsonArray();
+        foreach (var a in args)
+        {
+            arr.Add(a);
+            argTypes.Add(a["bytes"] != null
+                ? new JsonObject { ["t"] = "array", ["elem"] = Fqn("System.Byte") }
+                : a["type"]?.DeepClone());
+        }
+        return new JsonObject { ["attr"] = TypeJson.Fqn(attr), ["argTypes"] = argTypes, ["args"] = arr };   // `attr` is a structured `{t:fqn}` node (#48)
     }
 
     static JsonObject ByteMarker(string attr, int v) => Marker(attr, ByteArg(v));
@@ -514,7 +521,15 @@ static class RoundtripMetadata
     {
         var ps = new JsonArray();
         foreach (var t in paramTypes) ps.Add(t);
-        return new JsonObject { ["vis"] = "public", ["params"] = ps, ["body"] = new JsonArray() };
+        return new JsonObject
+        {
+            ["vis"] = "public",
+            ["params"] = ps,
+            ["baseArgs"] = new JsonArray(),
+            ["baseMemberSig"] = new JsonArray(),
+            ["baseMemberOwner"] = Fqn("System.Attribute"),
+            ["body"] = new JsonArray(),
+        };
     }
 
     // A ctor param with a bare CLR type and NO name (byte-equivalence: no Param table row).

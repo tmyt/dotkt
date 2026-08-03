@@ -243,14 +243,15 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
 			val args = (listOfNotNull(outerArg) + capArgs + ctorArgs).joinToString(",")
-			// The resolved ctor's regular-parameter STATIC TYPES, as pure Kotlin FQNs (bir2cir/ilemit derive the CLR
-			// forms — kotc emits identity, not resolution). This lets a `new` of a type with overloaded constructors
-			// resolve by SIGNATURE, not by arg count alone (mirrors the .NET-owner `new` branch above, which carries `argTypes`). Only the ctor's
-			// OWN params are described — prepended enclosing/capture args are not — so a consumer uses these only when
-			// their count lines up with the emitted args (in-assembly types stay arity-resolved).
-			val ctorArgTypes = node.symbol.owner.parameters
-				.filter { it.kind == IrParameterKind.Regular }
-				.joinToString(",") { birType(it.type).toJson() }
+			// Carry the complete selected declaration shape, including kotc-authored enclosing/capture slots. These entries
+			// correspond index-for-index with `args`; bir2cir links the exact local constructor and never chooses by arity.
+			val outerType = if ((node.symbol.owner.parent as? IrClass)?.isInner == true)
+				dispatchReceiver(node)?.let { birType(it.type).toJson() } else null
+			val capTypes = klass?.let { localClassCaptures[it] }.orEmpty()
+				.map { str(captureFieldType(it)) }
+			val regularTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
+				.map { birType(it.type).toJson() }
+			val ctorArgTypes = (listOfNotNull(outerType) + capTypes + regularTypes).joinToString(",")
 			// `ownerSpec` names a lifted generic-capturing LOCAL CLASS as its CONSTRUCTED `L<T>` (own args from
 			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a
 			// `fun <T> f(){ class L{ val x:T=t }; L() }` instantiates `L<T>` at each `new` site. A non-generic local

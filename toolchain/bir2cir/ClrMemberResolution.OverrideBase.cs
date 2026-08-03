@@ -42,6 +42,7 @@ static partial class ClrMemberResolution
         try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == name && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
         var win = PickOverrideBase(cands, argNodes, $"override base={owner}.{name}({DescArgs(argNodes)})");
         node["clrOverrideSig"] = MemberSig(win.GetParameters());
+        node["clrOverrideOwner"] = DeclaringTypeDescriptor(win);
     }
 
     // Pick the UNIQUE base virtual to override. An override's DECLARED params ARE the base slot's params (that is what

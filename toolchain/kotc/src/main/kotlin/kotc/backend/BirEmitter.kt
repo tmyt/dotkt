@@ -741,7 +741,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	 *  (exception-map-to-clrtypealias, USER 2026-07-01.) `msgJson` is an already-quoted JSON string, or
 	 *  null for the no-arg ctor. */
 	internal fun newExc(type: String, msgJson: String?): String =
-		if (msgJson != null) """{"k":"new","type":${fqnJson(type)},"argTypes":[${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":$msgJson}]}"""
+		if (msgJson != null) """{"k":"new","type":${fqnJson(type)},"argTypes":[{"t":"nullable","of":${fqnJson("kotlin.String")}}],"args":[{"k":"const","type":${fqnJson("kotlin.String")},"value":$msgJson}]}"""
 		else """{"k":"new","type":${fqnJson(type)},"argTypes":[],"args":[]}"""
 
 	internal fun throwExpr(exc: String): String = """{"k":"throwExpr","value":$exc}"""

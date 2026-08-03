@@ -71,6 +71,13 @@ static class RangeConstructionLowering
         foreach (var key in new System.Collections.Generic.List<string>(((System.Collections.Generic.IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
         o["k"] = "new";
         o["type"] = TypeJson.Fqn(rangeType);
+        var endpointType = TypeJson.Fqn(rangeType switch
+        {
+            "kotlin.ranges.LongRange" => "kotlin.Long",
+            "kotlin.ranges.CharRange" => "kotlin.Char",
+            _ => "kotlin.Int",
+        });
+        o["argTypes"] = new JsonArray { endpointType.DeepClone(), endpointType };
         o["args"] = new JsonArray { recvClone, endExpr };
     }
 

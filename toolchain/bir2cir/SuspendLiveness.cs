@@ -109,8 +109,8 @@ static class SuspendLiveness
     // walk cheap; none of them can contain a `{k:local}`.
     static readonly HashSet<string> NonOperandKeys = new(StringComparer.Ordinal)
     {
-        "k", "type", "ret", "sty", "dynRet", "owner", "ownerType", "sig", "argTypes", "memberSig",
-        "clrOverrideSig", "typeArgs", "shapeTypes", "elem", "excType", "closureType", "funcType",
+        "k", "type", "ret", "sty", "dynRet", "owner", "ownerType", "sig", "argTypes", "memberSig", "memberOwner",
+        "baseMemberSig", "baseMemberOwner", "clrOverrideSig", "clrOverrideOwner", "typeArgs", "shapeTypes", "elem", "excType", "closureType", "funcType",
         "calleeOwner", "method", "name", "op", "member", "accessor", "dispatch", "pos", "mods",
         "keyType", "valType", "local",
     };

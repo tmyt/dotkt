@@ -99,8 +99,10 @@ static class FaithfulHints
     // (2 type-args) for Map. `op` is DeepCloned; key order = k,owner,method,args,typeArgs (byte-identical to kotc).
     public static JsonObject CollToString(JsonNode op, CollKind kind, TypeNode[] args) =>
         kind == CollKind.Map
-            ? Helper(MapDefaults, "clrMapToString", new JsonArray { op.DeepClone() }, CollTypeArgs(kind, args))
-            : Helper(CollDefaults, "clrCollToString", new JsonArray { op.DeepClone() }, CollTypeArgs(kind, args));
+            ? Helper(MapDefaults, "clrMapToString", new JsonArray { op.DeepClone() },
+                new JsonArray { TypeJson.Fqn("kotlin.Any") }, CollTypeArgs(kind, args))
+            : Helper(CollDefaults, "clrCollToString", new JsonArray { op.DeepClone() },
+                new JsonArray { CollectionMethodTv() }, CollTypeArgs(kind, args));
 
     // Kotlin STRUCTURAL `==` on the SAME collection kind: clrCollStructEquals / clrSetStructEquals / clrMapStructEquals.
     // type-args come from the LEFT operand's kind/args.
@@ -112,25 +114,34 @@ static class FaithfulHints
             CollKind.Set => (CollDefaults, "clrSetStructEquals"),
             _ => (CollDefaults, "clrCollStructEquals"),
         };
-        return Helper(owner, method, new JsonArray { lu.DeepClone(), ru.DeepClone() }, CollTypeArgs(kind, leftArgs));
+        JsonNode slot = kind == CollKind.Map ? Nullable(TypeJson.Fqn("kotlin.Any")) : Nullable(CollectionMethodTv());
+        return Helper(owner, method, new JsonArray { lu.DeepClone(), ru.DeepClone() },
+            new JsonArray { slot.DeepClone(), slot }, CollTypeArgs(kind, leftArgs));
     }
 
     // Double/Float total-order helpers on kotlin.NumbersKt (NO type-args). `method` = clrDoubleCompare/clrFloatCompare
     // (compareTo) or clrDoubleEquals/clrFloatEquals (boxed `==` / explicit `.equals`).
     public static JsonObject FloatCall(string method, JsonNode a, JsonNode b) =>
-        Helper(Numbers, method, new JsonArray { a.DeepClone(), b.DeepClone() }, null);
+        Helper(Numbers, method, new JsonArray { a.DeepClone(), b.DeepClone() },
+            new JsonArray
+            {
+                TypeJson.Fqn(method.Contains("Float", StringComparison.Ordinal) ? "kotlin.Float" : "kotlin.Double"),
+                TypeJson.Fqn(method.Contains("Float", StringComparison.Ordinal) ? "kotlin.Float" : "kotlin.Double"),
+            }, null);
 
     // Null-safe `Any?.toString()` (renders null as "null") on kotlin.LibraryKt (NO type-args).
     public static JsonObject LibraryToString(JsonNode op) =>
-        Helper(Library, "toString", new JsonArray { op.DeepClone() }, null);
+        Helper(Library, "toString", new JsonArray { op.DeepClone() },
+            new JsonArray { Nullable(TypeJson.Fqn("kotlin.Any")) }, null);
 
     // Runtime-erased Kotlin renderer `clrElemToString(x: Any?)`: detects a collection/map at RUNTIME via the non-generic
     // BCL facades (ICollection/IDictionary) and renders `[a, b]` / `{k=v}`, else plain `toString()`. The star-projected /
     // `Any`-erased path (a value-type dict smart-cast to `Map<*,*>`) has no bindable generic helper, so it routes here.
     public static JsonObject ElemToString(JsonNode op) =>
-        Helper(NestedToString, "clrElemToString", new JsonArray { op.DeepClone() }, null);
+        Helper(NestedToString, "clrElemToString", new JsonArray { op.DeepClone() },
+            new JsonArray { Nullable(TypeJson.Fqn("kotlin.Any")) }, null);
 
-    static JsonObject Helper(string owner, string method, JsonArray args, JsonArray typeArgs)
+    static JsonObject Helper(string owner, string method, JsonArray args, JsonArray sig, JsonArray typeArgs)
     {
         // Fixed key insertion order: k, owner, method, args, typeArgs (typeArgs omitted when null).
         var o = new JsonObject
@@ -138,11 +149,16 @@ static class FaithfulHints
             ["k"] = "callStatic",
             ["owner"] = TypeJson.Fqn(owner),
             ["method"] = method,
+            ["sig"] = sig,
             ["args"] = args,
         };
         if (typeArgs != null) o["typeArgs"] = typeArgs;
         return o;
     }
+
+    static JsonNode Nullable(JsonNode of) => new JsonObject { ["t"] = "nullable", ["of"] = of };
+    static JsonNode CollectionMethodTv() => TypeJson.Write(new TypeNode.Fqn(
+        "kotlin.collections.Collection", new TypeNode[] { new TypeNode.Tv("method", 0) }));
 
     static JsonArray CollTypeArgs(CollKind kind, TypeNode[] args)
     {

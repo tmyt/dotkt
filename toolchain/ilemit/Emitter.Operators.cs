@@ -16,26 +16,26 @@ sealed partial class Emitter
         switch (t)
         {
             case "string":
-                if (v.ValueKind == JsonValueKind.Null) { _il.Emit(OpCodes.Ldnull); return typeof(string); }
-                _il.Emit(OpCodes.Ldstr, v.GetString()); return typeof(string);
-            case "int": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(int);
-            case "long": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return typeof(long);
+                if (v.ValueKind == JsonValueKind.Null) { _il.Emit(OpCodes.Ldnull); return Bcl("System.String"); }
+                _il.Emit(OpCodes.Ldstr, v.GetString()); return Bcl("System.String");
+            case "int": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.Int32");
+            case "long": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return Bcl("System.Int64");
             // Unsigned consts carry the SIGNED bit-pattern (e.g. 4000000000u stored as -294967296); the same
             // ldc opcode loads the right bits, only the stack TYPE differs (so add/print are unsigned).
-            case "uint": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(uint);
-            case "ulong": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return typeof(ulong);
-            case "byte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(byte);
-            case "ushort": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(ushort);
+            case "uint": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.UInt32");
+            case "ulong": _il.Emit(OpCodes.Ldc_I8, v.GetInt64()); return Bcl("System.UInt64");
+            case "byte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.Byte");
+            case "ushort": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.UInt16");
             // Signed Byte/Short (Kotlin Byte = sbyte token, Short = Int16). Without these a `const sbyte`/`const short`
             // fell to default -> Ldnull -> InvalidProgramException when passed to an sbyte/short parameter.
-            case "sbyte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(sbyte);
-            case "short": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return typeof(short);
+            case "sbyte": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.SByte");
+            case "short": _il.Emit(OpCodes.Ldc_I4, v.GetInt32()); return Bcl("System.Int16");
             // NaN / ±Infinity are emitted as a JSON STRING (not a number token, which JSON forbids) — parse them back.
-            case "double": _il.Emit(OpCodes.Ldc_R8, v.ValueKind == JsonValueKind.String ? double.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetDouble()); return typeof(double);
-            case "float": _il.Emit(OpCodes.Ldc_R4, v.ValueKind == JsonValueKind.String ? float.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetSingle()); return typeof(float);
-            case "bool": _il.Emit(v.GetBoolean() ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return typeof(bool);
-            case "char": _il.Emit(OpCodes.Ldc_I4, (int)v.GetString()[0]); return typeof(char);
-            default: _il.Emit(OpCodes.Ldnull); return typeof(object);
+            case "double": _il.Emit(OpCodes.Ldc_R8, v.ValueKind == JsonValueKind.String ? double.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetDouble()); return Bcl("System.Double");
+            case "float": _il.Emit(OpCodes.Ldc_R4, v.ValueKind == JsonValueKind.String ? float.Parse(v.GetString(), System.Globalization.CultureInfo.InvariantCulture) : v.GetSingle()); return Bcl("System.Single");
+            case "bool": _il.Emit(v.GetBoolean() ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return Bcl("System.Boolean");
+            case "char": _il.Emit(OpCodes.Ldc_I4, (int)v.GetString()[0]); return Bcl("System.Char");
+            default: _il.Emit(OpCodes.Ldnull); return Bcl("System.Object");
         }
     }
 
@@ -45,26 +45,26 @@ sealed partial class Emitter
     {
         var ut = ft.IsEnum ? Enum.GetUnderlyingType(ft) : ft;
         if (cv == null) { _il.Emit(OpCodes.Ldnull); return ft; }
-        if (ut == typeof(string)) { _il.Emit(OpCodes.Ldstr, (string)cv); return ft; }
-        if (ut == typeof(bool)) { _il.Emit((bool)cv ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return ft; }
-        if (ut == typeof(float)) { _il.Emit(OpCodes.Ldc_R4, Convert.ToSingle(cv)); return ft; }
-        if (ut == typeof(double)) { _il.Emit(OpCodes.Ldc_R8, Convert.ToDouble(cv)); return ft; }
-        if (ut == typeof(long) || ut == typeof(ulong)) { _il.Emit(OpCodes.Ldc_I8, unchecked((long)Convert.ToUInt64(cv))); return ft; }
+        if (ut == Bcl("System.String")) { _il.Emit(OpCodes.Ldstr, (string)cv); return ft; }
+        if (ut == Bcl("System.Boolean")) { _il.Emit((bool)cv ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0); return ft; }
+        if (ut == Bcl("System.Single")) { _il.Emit(OpCodes.Ldc_R4, Convert.ToSingle(cv)); return ft; }
+        if (ut == Bcl("System.Double")) { _il.Emit(OpCodes.Ldc_R8, Convert.ToDouble(cv)); return ft; }
+        if (ut == Bcl("System.Int64") || ut == Bcl("System.UInt64")) { _il.Emit(OpCodes.Ldc_I8, unchecked((long)Convert.ToUInt64(cv))); return ft; }
         // char and every <=32-bit integer load via ldc.i4 (the bit pattern).
-        if (ut == typeof(char)) { _il.Emit(OpCodes.Ldc_I4, (int)(char)cv); return ft; }
-        if (ut == typeof(uint)) { _il.Emit(OpCodes.Ldc_I4, unchecked((int)Convert.ToUInt32(cv))); return ft; }
+        if (ut == Bcl("System.Char")) { _il.Emit(OpCodes.Ldc_I4, (int)(char)cv); return ft; }
+        if (ut == Bcl("System.UInt32")) { _il.Emit(OpCodes.Ldc_I4, unchecked((int)Convert.ToUInt32(cv))); return ft; }
         _il.Emit(OpCodes.Ldc_I4, Convert.ToInt32(cv)); return ft;   // sbyte/byte/short/ushort/int
     }
 
-    static int NumRank(Type t) =>
-        t == typeof(double) ? 5 : t == typeof(float) ? 4 :
-        (t == typeof(long) || t == typeof(ulong)) ? 3 :
-        (t == typeof(int) || t == typeof(uint)) ? 2 :
-        (t == typeof(short) || t == typeof(ushort) || t == typeof(char)) ? 1 :
-        (t == typeof(byte) || t == typeof(sbyte)) ? 0 : -1;
+    int NumRank(Type t) =>
+        t == Bcl("System.Double") ? 5 : t == Bcl("System.Single") ? 4 :
+        (t == Bcl("System.Int64") || t == Bcl("System.UInt64")) ? 3 :
+        (t == Bcl("System.Int32") || t == Bcl("System.UInt32")) ? 2 :
+        (t == Bcl("System.Int16") || t == Bcl("System.UInt16") || t == Bcl("System.Char")) ? 1 :
+        (t == Bcl("System.Byte") || t == Bcl("System.SByte")) ? 0 : -1;
 
     // The common numeric type of two operands (the wider), or null if no coercion is needed / they're not numeric.
-    static Type NumericCommon(Type a, Type b)
+    Type NumericCommon(Type a, Type b)
     {
         if (a == b) return null;
         int ra = NumRank(a), rb = NumRank(b);
@@ -74,12 +74,12 @@ sealed partial class Emitter
 
     void ConvTo(Type t)
     {
-        if (t == typeof(double)) _il.Emit(OpCodes.Conv_R8);
-        else if (t == typeof(float)) _il.Emit(OpCodes.Conv_R4);
-        else if (t == typeof(long)) _il.Emit(OpCodes.Conv_I8);
-        else if (t == typeof(ulong)) _il.Emit(OpCodes.Conv_U8);
-        else if (t == typeof(int)) _il.Emit(OpCodes.Conv_I4);
-        else if (t == typeof(uint)) _il.Emit(OpCodes.Conv_U4);
+        if (t == Bcl("System.Double")) _il.Emit(OpCodes.Conv_R8);
+        else if (t == Bcl("System.Single")) _il.Emit(OpCodes.Conv_R4);
+        else if (t == Bcl("System.Int64")) _il.Emit(OpCodes.Conv_I8);
+        else if (t == Bcl("System.UInt64")) _il.Emit(OpCodes.Conv_U8);
+        else if (t == Bcl("System.Int32")) _il.Emit(OpCodes.Conv_I4);
+        else if (t == Bcl("System.UInt32")) _il.Emit(OpCodes.Conv_U4);
     }
 
     Type EmitBin(JsonElement e)
@@ -109,13 +109,13 @@ sealed partial class Emitter
         // NOTE: ordered compares are NOT here -- Kotlin lowers `a > b` on UInt to `a.compareTo(b) > 0`, where
         // compareTo does the UNSIGNED compare and the outer `> 0` is a plain signed int compare. (`byte`/`ushort`
         // arithmetic promotes to UInt, so only uint/ulong reach a direct unsigned div here.)
-        bool isUns = lt == typeof(uint) || lt == typeof(ulong);
+        bool isUns = lt == Bcl("System.UInt32") || lt == Bcl("System.UInt64");
         // Float/double `<=`/`>=` need the UNORDERED-inverted compare (C#'s shape): `a <= b` == !(a > b treating
         // unordered as TRUE) -> `cgt.un; ldc.i4.0; ceq` (resp. `>=` -> `clt.un; ...`). The plain signed cgt/clt
         // inversion returns TRUE for a NaN operand (`NaN <= 1.0` was True) because cgt/clt yield 0 on unordered
         // and the inversion flips it. `<`/`>` stay ordered clt/cgt (0 on unordered = correct false), and integer
         // paths keep the signed opcodes (unsigned compares never reach a direct bin — see the note above).
-        bool isFloat = lt == typeof(float) || lt == typeof(double);
+        bool isFloat = lt == Bcl("System.Single") || lt == Bcl("System.Double");
         switch (op)
         {
             case "+": _il.Emit(OpCodes.Add); return lt;
@@ -126,10 +126,10 @@ sealed partial class Emitter
             // Guard the divisor==-1 case with identities that also cover MinValue: `x / -1 == -x` (CIL `neg` wraps
             // MinValue, no overflow) and `x % -1 == 0` for every x. Unsigned/float never overflow here — raw opcode.
             case "/":
-                if (!isUns && (lt == typeof(int) || lt == typeof(long))) { EmitDivRemGuarded(isRem: false, lt); return lt; }
+                if (!isUns && (lt == Bcl("System.Int32") || lt == Bcl("System.Int64"))) { EmitDivRemGuarded(isRem: false, lt); return lt; }
                 _il.Emit(isUns ? OpCodes.Div_Un : OpCodes.Div); return lt;
             case "%":
-                if (!isUns && (lt == typeof(int) || lt == typeof(long))) { EmitDivRemGuarded(isRem: true, lt); return lt; }
+                if (!isUns && (lt == Bcl("System.Int32") || lt == Bcl("System.Int64"))) { EmitDivRemGuarded(isRem: true, lt); return lt; }
                 _il.Emit(isUns ? OpCodes.Rem_Un : OpCodes.Rem); return lt;
             case "&": _il.Emit(OpCodes.And); return lt;
             case "|": _il.Emit(OpCodes.Or); return lt;
@@ -137,12 +137,12 @@ sealed partial class Emitter
             case "<<": _il.Emit(OpCodes.Shl); return lt;
             case ">>": _il.Emit(OpCodes.Shr); return lt;
             case ">>>": _il.Emit(OpCodes.Shr_Un); return lt;
-            case "==": _il.Emit(OpCodes.Ceq); return typeof(bool);
-            case "!=": _il.Emit(OpCodes.Ceq); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
-            case "<": _il.Emit(OpCodes.Clt); return typeof(bool);
-            case ">": _il.Emit(OpCodes.Cgt); return typeof(bool);
-            case "<=": _il.Emit(isFloat ? OpCodes.Cgt_Un : OpCodes.Cgt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
-            case ">=": _il.Emit(isFloat ? OpCodes.Clt_Un : OpCodes.Clt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
+            case "==": _il.Emit(OpCodes.Ceq); return Bcl("System.Boolean");
+            case "!=": _il.Emit(OpCodes.Ceq); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return Bcl("System.Boolean");
+            case "<": _il.Emit(OpCodes.Clt); return Bcl("System.Boolean");
+            case ">": _il.Emit(OpCodes.Cgt); return Bcl("System.Boolean");
+            case "<=": _il.Emit(isFloat ? OpCodes.Cgt_Un : OpCodes.Cgt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return Bcl("System.Boolean");
+            case ">=": _il.Emit(isFloat ? OpCodes.Clt_Un : OpCodes.Clt); _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return Bcl("System.Boolean");
             default: throw new NotSupportedException("bin " + op);
         }
     }
@@ -159,10 +159,10 @@ sealed partial class Emitter
         var done = _il.DefineLabel();
         _il.Emit(OpCodes.Ldloc, divisor);
         _il.Emit(OpCodes.Ldc_I4_M1);
-        if (t == typeof(long)) _il.Emit(OpCodes.Conv_I8);
+        if (t == Bcl("System.Int64")) _il.Emit(OpCodes.Conv_I8);
         _il.Emit(OpCodes.Bne_Un, normal);       // divisor != -1 -> normal path (stack: [dividend])
         // divisor == -1: result is -dividend (div) or 0 (rem)
-        if (isRem) { _il.Emit(OpCodes.Pop); _il.Emit(OpCodes.Ldc_I4_0); if (t == typeof(long)) _il.Emit(OpCodes.Conv_I8); }
+        if (isRem) { _il.Emit(OpCodes.Pop); _il.Emit(OpCodes.Ldc_I4_0); if (t == Bcl("System.Int64")) _il.Emit(OpCodes.Conv_I8); }
         else _il.Emit(OpCodes.Neg);
         _il.Emit(OpCodes.Br, done);
         _il.MarkLabel(normal);                  // stack: [dividend]
@@ -180,7 +180,7 @@ sealed partial class Emitter
             case "-": _il.Emit(OpCodes.Neg); return t;
             case "+": return t;
             case "~": _il.Emit(OpCodes.Not); return t;
-            case "!": _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return typeof(bool);
+            case "!": _il.Emit(OpCodes.Ldc_I4_0); _il.Emit(OpCodes.Ceq); return Bcl("System.Boolean");
             default: throw new NotSupportedException("un " + op);
         }
     }
@@ -193,20 +193,20 @@ sealed partial class Emitter
         var to = PrimShorthandName(SlotName(e.GetProperty("to")));
         switch (to)
         {
-            case "int" or "kotlin.Int": _il.Emit(OpCodes.Conv_I4); return typeof(int);
-            case "long" or "kotlin.Long": _il.Emit(OpCodes.Conv_I8); return typeof(long);
-            case "double" or "kotlin.Double": _il.Emit(OpCodes.Conv_R8); return typeof(double);
-            case "float" or "kotlin.Float": _il.Emit(OpCodes.Conv_R4); return typeof(float);
-            case "short" or "kotlin.Short": _il.Emit(OpCodes.Conv_I2); return typeof(short);
-            case "sbyte" or "kotlin.Byte": _il.Emit(OpCodes.Conv_I1); return typeof(sbyte);
-            case "char" or "kotlin.Char": _il.Emit(OpCodes.Conv_U2); return typeof(char);
+            case "int" or "kotlin.Int": _il.Emit(OpCodes.Conv_I4); return Bcl("System.Int32");
+            case "long" or "kotlin.Long": _il.Emit(OpCodes.Conv_I8); return Bcl("System.Int64");
+            case "double" or "kotlin.Double": _il.Emit(OpCodes.Conv_R8); return Bcl("System.Double");
+            case "float" or "kotlin.Float": _il.Emit(OpCodes.Conv_R4); return Bcl("System.Single");
+            case "short" or "kotlin.Short": _il.Emit(OpCodes.Conv_I2); return Bcl("System.Int16");
+            case "sbyte" or "kotlin.Byte": _il.Emit(OpCodes.Conv_I1); return Bcl("System.SByte");
+            case "char" or "kotlin.Char": _il.Emit(OpCodes.Conv_U2); return Bcl("System.Char");
             // Unsigned targets (#71): zero-extending/truncating conversions. `byte` = Kotlin UByte (System.Byte),
             // `ushort` = UShort, `uint` = UInt, `ulong` = ULong — the shorthand/alias split is PrimShorthandName's.
             // Needed by the #93 narrow-widening conv (UByte/UShort arith -> UInt) and any `.toUByte()/.toUInt()`.
-            case "byte" or "kotlin.UByte": _il.Emit(OpCodes.Conv_U1); return typeof(byte);
-            case "ushort" or "kotlin.UShort": _il.Emit(OpCodes.Conv_U2); return typeof(ushort);
-            case "uint" or "kotlin.UInt": _il.Emit(OpCodes.Conv_U4); return typeof(uint);
-            case "ulong" or "kotlin.ULong": _il.Emit(OpCodes.Conv_U8); return typeof(ulong);
+            case "byte" or "kotlin.UByte": _il.Emit(OpCodes.Conv_U1); return Bcl("System.Byte");
+            case "ushort" or "kotlin.UShort": _il.Emit(OpCodes.Conv_U2); return Bcl("System.UInt16");
+            case "uint" or "kotlin.UInt": _il.Emit(OpCodes.Conv_U4); return Bcl("System.UInt32");
+            case "ulong" or "kotlin.ULong": _il.Emit(OpCodes.Conv_U8); return Bcl("System.UInt64");
             default: throw new NotSupportedException("conv " + to);
         }
     }
@@ -238,16 +238,16 @@ sealed partial class Emitter
     // spuriously unbox.any an object element into the `gp:T` slot (regressed the collection/map stdlib emit).
     void EmitArrayElemCoerced(JsonElement value, Type elem)
     {
-        if (elem.IsGenericType && elem.GetGenericTypeDefinition() == typeof(Nullable<>)) { EmitNullableCoerced(value, elem); return; }
+        if (elem.IsGenericType && elem.GetGenericTypeDefinition() == Bcl("System.Nullable`1")) { EmitNullableCoerced(value, elem); return; }
         var et = EmitExpr(value);
-        if (et != null && NeedsBoxToRef(et) && !elem.IsValueType && !elem.IsGenericParameter) _il.Emit(OpCodes.Box, et);
+        if (et != null && NeedsBoxToRef(et) && !IsValueType(elem) && !elem.IsGenericParameter) _il.Emit(OpCodes.Box, et);
     }
 
     Type EmitConcat(JsonElement e)
     {
         var parts = e.GetProperty("parts").EnumerateArray().ToList();
         _il.Emit(OpCodes.Ldc_I4, parts.Count);
-        _il.Emit(OpCodes.Newarr, typeof(object));
+        _il.Emit(OpCodes.Newarr, Bcl("System.Object"));
         for (int i = 0; i < parts.Count; i++)
         {
             _il.Emit(OpCodes.Dup);
@@ -256,15 +256,15 @@ sealed partial class Emitter
             if (NeedsBoxToRef(t)) _il.Emit(OpCodes.Box, t);
             _il.Emit(OpCodes.Stelem_Ref);
         }
-        _il.Emit(OpCodes.Call, typeof(string).GetMethod("Concat", new[] { typeof(object[]) }));
-        return typeof(string);
+        _il.Emit(OpCodes.Call, Bcl("System.String").GetMethod("Concat", new[] { Bcl("System.Object").MakeArrayType() }));
+        return Bcl("System.String");
     }
 
     // Emit an expression, coercing a bare `T` (or a null literal) to `Nullable<T>` when `want` is a Nullable<T>.
     // Shared by EmitArg and EmitCond so value-type `T?` flows correctly through args and if/when branches.
     Type EmitNullableCoerced(JsonElement node, Type want)
     {
-        bool wantNullable = want != null && want.IsGenericType && want.GetGenericTypeDefinition() == typeof(Nullable<>);
+        bool wantNullable = want != null && want.IsGenericType && want.GetGenericTypeDefinition() == Bcl("System.Nullable`1");
         if (wantNullable && node.TryGetProperty("k", out var k) && k.GetString() is "const" or "clr.const"
             && node.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.Null)
         {
@@ -278,7 +278,7 @@ sealed partial class Emitter
             // want = Nullable<got>. When got is an EMITTED value type (a TypeBuilder), Reflection.Emit can't resolve
             // the ctor on the MakeGenericType — use TypeBuilder.GetConstructor(constructed, open Nullable<>'s ctor).
             var ctor = ContainsTypeBuilder(want)
-                ? TypeBuilder.GetConstructor(want, typeof(Nullable<>).GetConstructors()[0])
+                ? AnchorConstructor(want, Bcl("System.Nullable`1").GetConstructors()[0])
                 : want.GetConstructor(new[] { got });
             _il.Emit(OpCodes.Newobj, ctor);
             return want;
@@ -286,7 +286,7 @@ sealed partial class Emitter
         // A value-type / generic-param branch flowing into an `object` want (an erased generic `T?` return whose
         // branch type-tag was retyped to object by bir2cir's NullableGenericErasure) must box; a `null` branch
         // already left a real null ref (EmitExpr(null-const) is a reference), so it is unaffected.
-        if (want == typeof(object) && got != null && NeedsBoxToRef(got)) { _il.Emit(OpCodes.Box, got); return want; }
+        if (want == Bcl("System.Object") && got != null && NeedsBoxToRef(got)) { _il.Emit(OpCodes.Box, got); return want; }
         return got;
     }
 
@@ -306,15 +306,15 @@ sealed partial class Emitter
         // PathStackDepth / StackUnderflow; InvalidProgramException at JIT). Push a default of `want` so every path
         // leaves exactly one value. Pure stack-depth reconciliation — no Kotlin semantics (Unit resolves to a plain
         // reference type here, and sibling Unit arms already push an uninitialized-local reference).
-        if (got == typeof(void) && want != null && want != typeof(void))
+        if (got == Bcl("System.Void") && want != null && want != Bcl("System.Void"))
         {
-            if (want.IsValueType || want.IsGenericParameter)
+            if (IsValueType(want) || want.IsGenericParameter)
             { var d = _il.DeclareLocal(want); _il.Emit(OpCodes.Ldloca, d); _il.Emit(OpCodes.Initobj, want); _il.Emit(OpCodes.Ldloc, d); }
             else _il.Emit(OpCodes.Ldnull);
             return want;
         }
-        if (want != null && got != null && !got.IsValueType && !got.IsGenericParameter && got != want
-            && (want.IsValueType || want.IsGenericParameter)) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
+        if (want != null && got != null && !IsValueType(got) && !got.IsGenericParameter && got != want
+            && (IsValueType(want) || want.IsGenericParameter)) { _il.Emit(OpCodes.Unbox_Any, want); return want; }
         return got;
     }
 
@@ -340,15 +340,15 @@ sealed partial class Emitter
         if (NeedsBoxToRef(rt)) _il.Emit(OpCodes.Box, rt);
         switch (e.GetProperty("method").GetString())
         {
-            case "GetHashCode": _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("GetHashCode")); return typeof(int);
-            case "ToString": _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("ToString")); return typeof(string);
+            case "GetHashCode": _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetHashCode")); return Bcl("System.Int32");
+            case "ToString": _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("ToString")); return Bcl("System.String");
             case "Equals":
                 var at = EmitExpr(e.GetProperty("arg"));
                 if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);
-                _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("Equals", new[] { typeof(object) }));
-                return typeof(bool);
+                _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
+                return Bcl("System.Boolean");
         }
-        return typeof(object);
+        return Bcl("System.Object");
     }
 
     Type EmitObjEq(JsonElement e)
@@ -368,9 +368,9 @@ sealed partial class Emitter
         _il.MarkLabel(nonNull);                                  // a non-null -> a.Equals((object)b)
         var rt2 = EmitExpr(e.GetProperty("rhs"));
         if (NeedsBoxToRef(rt2)) _il.Emit(OpCodes.Box, rt2);
-        _il.Emit(OpCodes.Callvirt, typeof(object).GetMethod("Equals", new[] { typeof(object) }));
+        _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
         _il.MarkLabel(done);
-        return typeof(bool);
+        return Bcl("System.Boolean");
     }
 
 }

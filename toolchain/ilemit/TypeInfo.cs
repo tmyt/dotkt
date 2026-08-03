@@ -43,13 +43,12 @@ sealed class TypeInfo
     public JsonElement CtorDef;
     public readonly List<ConstructorBuilder> Ctors = new();   // all ctors (primary + secondary)
     public readonly List<JsonElement> CtorDefs = new();
-    public bool CtorsDefined;              // guards EnsureCtorsDefined (may run early from BuildCab, then again in pass 3)
+    public bool CtorsDefined;              // guards EnsureCtorsDefined (may run early from BuildAttribute, then again in pass 3)
     public bool IsInterface;
     public bool IsEnum;
-    public EnumBuilder EB;                 // set for enums (EnumBuilder is not a TypeBuilder)
     public Type Created;                   // baked enum Type (created early so its tokens are valid in other IL)
     // Generic type parameters (`class Box<T>`): name -> the GenericTypeParameterBuilder defined in pass 1.
     public readonly Dictionary<string, GenericTypeParameterBuilder> TypeParams = new();
     public bool IsGeneric => TypeParams.Count > 0;
-    public Type AsType => Created ?? (EB != null ? (Type)EB : TB);
+    public Type AsType => Created ?? TB;
 }

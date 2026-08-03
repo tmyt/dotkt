@@ -14,9 +14,8 @@ using DotKt.Bir;
 //   arraySet               the flowed array's element type — and the `stelem` token is restamped with it
 //   return                 the enclosing method's own (already-erased) return type
 //   cond                   the join slot's `type`, against BOTH branch values
-//   call / ctor arguments  `Subst(Erase(declared param), owner args, method args)` — the `sig`/`argTypes`
-//                          descriptor is realigned WITH the value, because a stale descriptor makes ilemit
-//                          resolve a member that does not exist (EntryPointNotFound), not merely mistype a stack slot
+//   call / ctor arguments  `Subst(Erase(declared param), owner args, method args)` for the VALUE conversion; the
+//                          `sig`/`argTypes` descriptor remains the OPEN declaration identity used for exact linking
 //
 // THE ONLY CASTABLE SEAM IS `object`. `box` carries a value or a `Nullable<V>` into `object` (an empty
 // `Nullable<V>` boxes to a genuine null), and `unbox.any`/`castclass` carries it back. A difference sitting INSIDE a
@@ -29,9 +28,9 @@ static partial class NullableTvErasureCallRealign
     //
     // With the callee's DECLARATION in hand the target is `Subst(Erase(p), ownerArgs, methodArgs)` — never
     // `Erase(Subst(...))`, which is the distinction the whole family turns on: substituting first destroys the `Tv`
-    // that tells `Erase` this position was erased at all. The signature DESCRIPTOR is corrected to the same type,
-    // because it is what the emitter resolves the member by: leave it substituted and the emitter looks for a member
-    // that does not exist.
+    // that tells `Erase` this position was erased at all. The signature DESCRIPTOR remains the callee's OPEN
+    // declaration identity. Only the value target is substituted; replacing `Array<!!0>` with `Array<object>` would
+    // make exact linking search for a declaration that does not exist.
     //
     // With no declaration — a callee whose owner names no indexed declaration, or an ambiguous overload set the
     // reference index refuses to guess at — the descriptor is the only statement of the slot there is, and it is
@@ -143,12 +142,6 @@ static partial class NullableTvErasureCallRealign
                 && !dft.Equals(target) && IsObjectErasureOf(target, dft))
                 dl["funcType"] = TypeJson.Write(target);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
-            if (target != null)
-            {
-                if (descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode stamped
-                    && !stamped.Equals(target) && IsObjectErasureOf(target, stamped))
-                    descriptor[i] = TypeJson.Write(target);
-            }
             // THE DESCRIPTOR IS OPEN; THE TARGET MUST BE CLOSED. A descriptor states the callee's DECLARED parameter
             // vector, so a generic callee's slot is still `!!0` there — and `.NET`-bound calls (`memberSig`) keep it
             // that way deliberately, because that open form is what the emitter matches the member by. Converting a
@@ -168,7 +161,7 @@ static partial class NullableTvErasureCallRealign
             // is the call's own substituted view rather than a resolved CLR signature, so an unrestricted reference
             // cast there would be typed by something that may not be the callee's slot at all. Widening those needs
             // its own evidence, and there is none yet.
-            else if (!refused && descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
+            if (target == null && !refused && descriptor != null && TypeJson.Read(descriptor[i]) is TypeNode slot
                      && IsBareObject(argTypes[i])
                      && Subst(slot, ownerArgs, methodArgs) is TypeNode closed
                      && (clrBound || NeedsObjectSeam(closed)))

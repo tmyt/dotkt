@@ -3100,7 +3100,11 @@ static class InlineSplice
             var arg = init != null ? init.DeepClone() : new JsonObject { ["k"] = "default", ["type"] = elem.DeepClone() };
             BoxVarInBody(arg, x, refName, elem);   // an init that itself reads X (rare) still routes through the cell
             o["type"] = TypeJson.Fqn(refName);
-            o["init"] = new JsonObject { ["k"] = "new", ["type"] = TypeJson.Fqn(refName), ["args"] = new JsonArray { arg } };
+            o["init"] = new JsonObject
+            {
+                ["k"] = "new", ["type"] = TypeJson.Fqn(refName),
+                ["argTypes"] = new JsonArray { elem.DeepClone() }, ["args"] = new JsonArray { arg },
+            };
             return;
         }
         bool nested = Str(o["k"]) is "inlineLambda" or "newClosure" or "newDelegate" or "newSuspendLambda" or "newSam";

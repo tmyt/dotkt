@@ -156,6 +156,8 @@ static class CollectionBclSlotSynthesis
                 ["init"] = new JsonObject
                 {
                     ["k"] = "callStatic", ["owner"] = TypeJson.Fqn(IteratorBridge), ["method"] = "iteratorOverEnumerable",
+                    ["sig"] = new JsonArray { TypeJson.Write(new TypeNode.Fqn("System.Collections.Generic.IEnumerable",
+                        new TypeNode[] { new TypeNode.Tv("method", 0) })) },
                     ["args"] = new JsonArray(This()), ["typeArgs"] = new JsonArray(Clone(elem)),
                 },
             },
