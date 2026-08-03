@@ -68,7 +68,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   working call: the plain-Kotlin arm was refused for as long as the builders have keyed omission on `defaultValue`,
   and the retired facade injection did project a `params` parameter as a `vararg` too, so the .NET arm's candidate
   set is not what changed. `docs/dotkt-semantics.md` §8g records the resolution and its formatting
-  consequence.
+  consequence. The fill is also one VALUE of the call rather than an expression in a slot: it is an allocation, and
+  an allocation is observable through its identity, so where the call carries an evaluation plan it becomes a
+  binding like every other argument. Left raw it was re-rendered per reader — a later default naming the vararg
+  (`fun f(vararg xs: Int, y: IntArray = xs)`, and the same shape cross-module, where the `@KotlinDefault` carrier
+  clones the slot) received a second and a third empty array, so `y === xs` was false where Kotlin's
+  evaluate-each-argument-once rule makes it true. Nothing but identity could see it: two empty arrays agree on
+  size and content.
 
 - **dll2klib: a .NET value type no longer takes an NRT annotation, or the wrong byte position.** The
   `NullableAttribute`/`NullableContextAttribute` walk treated every named type outside a hardcoded Kotlin-primitive
@@ -90,7 +96,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   wrapped). Measured against csc, two positions the decoder collapses to `kotlin.Any?` still shift the bytes after
   them — a native `nint`/`nuint`, which the emitting compiler gives no byte at all, and a function pointer, which it
   flattens node by node; an ordinary pointer and a `where T : struct` parameter hold exactly the one byte the walk
-  consumes for them. All are named at the predicate.
+  consumes for them. All are named at the predicate. That writer states one precedence for a position reached
+  through both markers — oblivious wins, because `T!` is the un-annotated position — and its nullable arm was
+  deciding it a second time by dropping the oblivious marker as it delegated, writing `2` where the rule says `0`.
+  Both markers now travel together and the rule is resolved in one place. Unlike the byte-COUNT faults above this one
+  moves nothing: the reader's traversal comes from the signature, so a wrong byte value mis-annotates its own position
+  and only its own. The shape is not reachable from the FRONTEND (its only oblivious producer wraps a made-not-null
+  type) but a pass can build it, by substituting a nullable type argument under an `Oblivious(T)` an un-annotated .NET
+  generic member left behind; it does not occur anywhere in the current corpus, which is why the witness is
+  `tests/ir/lowering/oblivious-over-nullable-byte` — that lane exists for a rule the corpus does not instantiate.
 
 ## 0.9.8 (2026-08-02)
 

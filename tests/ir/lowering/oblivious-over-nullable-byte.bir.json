@@ -1,0 +1,47 @@
+{
+  "fileClass": "ObliviousOverNullableProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "sequenced",
+      "params": [
+        {
+          "name": "p",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.Pair",
+            "args": [
+              {
+                "t": "oblivious",
+                "of": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.String" } }
+              },
+              {
+                "t": "nullable",
+                "of": { "t": "fqn", "name": "kotlin.String" }
+              }
+            ]
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": []
+    },
+    {
+      "name": "alone",
+      "params": [
+        {
+          "name": "q",
+          "type": {
+            "t": "oblivious",
+            "of": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.String" } }
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": []
+    }
+  ]
+}

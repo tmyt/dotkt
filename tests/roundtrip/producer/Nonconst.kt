@@ -79,6 +79,11 @@ fun <T> genMutable(xs: MutableList<T> = mutableListOf()): MutableList<T> = xs
 var bumps: Int = 0
 fun bump(): Int { bumps++; return 3 }
 fun chain(a: Int, b: Int = bump(), c: Int = b * 10): Int = b * 1000 + c
+// An OMITTED VARARG is a value of the CALL — Kotlin's empty array of the element type — and it is filled by the caller,
+// not carried. A carrier that names it (`{defaultArgParam 0}`) therefore CLONES whatever the omitting call site put in
+// that slot, so the slot has to hold a binding: a raw allocation there is duplicated per naming default and the caller
+// passes three DIFFERENT empty arrays. Only identity sees that, which is what this returns.
+fun varargAliased(vararg xs: Int, a: IntArray = xs, b: IntArray = xs): Boolean = a === xs && b === xs
 
 // #34/#42: every receiver named by a carried default stays distinct across the module boundary. The same carrier
 // serves ordinary and inline calls, and self-carries the raw ingredients for capturing, SAM and suspend lambdas.

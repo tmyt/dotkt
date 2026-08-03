@@ -103,6 +103,7 @@ import roundtrip.nc.genDefaults as nonConstantDefaultGenDefaults
 import roundtrip.nc.genPairDefaults as nonConstantDefaultGenPairDefaults
 import roundtrip.nc.genMutable as nonConstantDefaultGenMutable
 import roundtrip.nc.bumps as nonConstantDefaultBumps
+import roundtrip.nc.varargAliased as nonConstantDefaultVarargAliased
 import roundtrip.nc.MemberDefaults as NonConstantDefaultMemberDefaults
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
@@ -582,6 +583,11 @@ class PackageAndInlineRoundtripTests {
         val e = NonConstantDefaultEvalCounter()
         ClassicAssert.AreEqual(32, NonConstantDefaultRect(e.n()).area)                                  // 32   a ctor argument the default reads
         ClassicAssert.AreEqual(1, e.calls)
+
+        // An OMITTED VARARG the carrier's defaults read: the empty array the CALLER synthesizes is one value of the
+        // call, so both filled defaults receive that array rather than a clone of its allocation.
+        ClassicAssert.AreEqual(true, nonConstantDefaultVarargAliased())                                 // true one empty array, two readers
+        ClassicAssert.AreEqual(true, nonConstantDefaultVarargAliased(1, 2))                             // true and the supplied form is unchanged
 
         // A side-effecting DEFAULT that a later default reads: filled once, then read from the temp.
         val before = nonConstantDefaultBumps

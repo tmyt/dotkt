@@ -1367,7 +1367,10 @@ projection incomplete, and re-ranking candidates would make DotKt's resolution d
 
 An **omitted** vararg is Kotlin's empty array, at every callee — same-module, cross-module, or a projected `params`
 member. `Path.Combine()` passes `new string[0]`, exactly as `f()` on `fun f(vararg xs: Int)` passes an empty
-`IntArray`.
+`IntArray`. It is ONE array: the call allocates it once and every reader of that argument reads the allocation, so
+for `fun f(vararg xs: Int, y: IntArray = xs)` the call `f()` satisfies `y === xs`. Kotlin's rule that each argument
+of a call is evaluated exactly once covers a synthesized value as much as a written one, and identity is the only
+observable that can tell two empty arrays apart.
 
 ## 9. Reference-type nullability ⇔ .NET NRT; un-annotated .NET types are PLATFORM types
 

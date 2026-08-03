@@ -44,16 +44,33 @@ static class NullableFlags
     // `obliviousHere` that it was reached through an `{t:oblivious}` one (byte 0). Both wrappers are markers on the node
     // BELOW them, not nodes of their own, so each delegates rather than emitting a byte and re-deciding the traversal —
     // which is what let `Oblivious(Array)` and `Oblivious(byref)` stop walking their children.
+    //   Both markers therefore travel TOGETHER through every delegating arm, and [Head] resolves them in one place. An
+    // arm that forwarded only one of them decided the precedence a second time, by omission: dropping `obliviousHere`
+    // at the nullable wrapper wrote 2 where the rule says 0. That is one position's nullability, not a shift — the
+    // reader's traversal is driven by the signature, so a wrong byte VALUE leaves every other position where it was;
+    // it is a wrong byte COUNT (the value-type rule above) that moves them.
     static bool Walk(TypeNode t, bool nullableHere, List<int> flags, Func<string, bool> isValue, bool obliviousHere = false)
     {
         // The head byte for a node that HOLDS one. Oblivious wins over nullable: `T!` is the un-annotated position.
         int Head() => obliviousHere ? 0 : nullableHere ? 2 : 1;
+        // Did the head byte come out NULLABLE? The return value of every byte-holding arm — `Compute` emits an
+        // attribute only when some position really is 2, and an oblivious-suppressed position is 0, not 2.
+        bool HeadIsNullable() => Head() == 2;
         switch (t)
         {
             case TypeNode.Nullable n:
-                return Walk(n.Of, nullableHere: true, flags, isValue);
+                return Walk(n.Of, nullableHere: true, flags, isValue, obliviousHere);
             case TypeNode.Oblivious o:
-                // NRT-oblivious position (NullableAttribute = 0). kotc never emits this; dll2klib META round-trip only.
+                // NRT-oblivious position (NullableAttribute = 0). kotc emits it for every FLEXIBLE/platform type —
+                // `{t:oblivious}` wrapping the NOT-NULL core (BirEmitterTypes) — so the FRONTEND cannot hand over an
+                // `Oblivious(Nullable(..))`: `birType` builds a `{t:nullable}` only for a MARKED-nullable type, and the
+                // oblivious arm wraps `birType(t.makeNotNull())`. A PASS here can: `Oblivious(Tv)` is an ordinary kotc
+                // shape (a .NET generic's un-annotated member), and the owner-tv substituters that preserve this
+                // wrapper (SupertypeGraph, InheritedClassInterfaceBridge, CovariantInterfaceReturnBridge, …) put the
+                // instantiation's argument under it — a nullable one for a Kotlin type implementing such a member at
+                // `String?`, whose bridge shape KotlinOverrideSlotBridge feeds straight back into `Compute`. Not
+                // observed in the current corpus (see tests/ir/lowering/oblivious-over-nullable-byte, which is the
+                // witness and records the measurement); nothing makes it unreachable.
                 return Walk(o.Of, nullableHere: false, flags, isValue, obliviousHere: true);
             case TypeNode.Fqn f:
                 // `kotlin.Unit` holds NO byte and takes no annotation, wherever it stands. It is the type ECMA `void`
@@ -77,13 +94,13 @@ static class NullableFlags
                     return anyV;
                 }
                 flags.Add(Head());
-                var any = nullableHere;
+                var any = HeadIsNullable();
                 if (f.Args != null)
                     foreach (var a in f.Args) any |= Walk(a, nullableHere: false, flags, isValue);
                 return any;
             case TypeNode.Array a:
                 flags.Add(Head());
-                var anyA = nullableHere;
+                var anyA = HeadIsNullable();
                 anyA |= Walk(a.Elem, nullableHere: false, flags, isValue);
                 return anyA;
             case TypeNode.Fn:
@@ -91,12 +108,12 @@ static class NullableFlags
                 // for NRT. See the FUNCTION-TYPE note in the header: the reader DOES walk the delegate's type arguments,
                 // so a function-typed slot must reach it through its `[KotlinType]` carrier, not through these bytes.
                 flags.Add(Head());
-                return nullableHere;
+                return HeadIsNullable();
             case TypeNode.Tv:
                 // A type variable is treated as a reference position (bare + NRT byte); a struct-constrained tv would be
                 // a value `Nullable<T>` but is resolved to a value elsewhere / erased by the object-erasure lifelines.
                 flags.Add(Head());
-                return nullableHere;
+                return HeadIsNullable();
             case TypeNode.ByRef b:
                 // `ref T` is transparent for nullability — the referent's nullability is what matters.
                 return Walk(b.Of, nullableHere, flags, isValue, obliviousHere);

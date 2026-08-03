@@ -6,9 +6,10 @@
 // refused at CIL emission, not at run time.
 //
 // One case per arm that can fail on its own: the plain fill, the fill whose element type is the callee's open type
-// parameter (a different type frame), the fill's POSITION among supplied arguments, and the inline splice (a separate
-// emitter, which failed with its own diagnostic). Every method also asserts the SUPPLIED form of the same call so a
-// fix that swallowed real arguments would not pass.
+// parameter (a different type frame), the fill's POSITION among supplied arguments, the inline splice (a separate
+// emitter, which failed with its own diagnostic), and the fill's SINGLE EVALUATION — the array is one value of the
+// call, so a later default that names the vararg receives THAT array.
+// Every method also asserts the SUPPLIED form of the same call so a fix that swallowed real arguments would not pass.
 //
 // The .NET half of the same family (a projected `params` parameter, and the overload the frontend selects for
 // `Console.WriteLine("x")` because of one) lives in tests/interop/consumer/fixtures/BclConsoleWriteTests.kt.
@@ -24,6 +25,14 @@ fun <T> varargOmissionCountOf(vararg xs: T): Int = xs.size
 // while a LATER slot is supplied — the fill has to land in its own position, not at the end of the vector.
 fun varargOmissionBeforeNamed(vararg head: Int, tail: String): String = "${head.size}:$tail"
 inline fun varargOmissionInline(vararg xs: String, transform: (Int) -> Int): Int = transform(xs.size)
+// The fill is ONE value of this call, so a later default that reads it reads THAT array. Two distinct empty arrays
+// agree on every observable except IDENTITY, which is why these compare with `===`: a fill re-rendered per reader is
+// invisible to `size`, `contentEquals` and everything else.
+fun varargOmissionAliased(vararg xs: Int, a: IntArray = xs, b: IntArray = xs): Boolean = a === xs && b === xs
+// The same, with the element type OPEN: this is the only shape that puts a generic fill under a plan, so it is the
+// only one where the BINDING's declared type — the parameter's `Array<out T>`, not just the `newArray`'s element —
+// has to be closed against the call site too. Left open, the binding declares a local in a frame that has no `T`.
+fun <T> varargOmissionAliasedGeneric(vararg xs: T, a: Array<out T> = xs): Boolean = a === xs
 
 class VarargOmissionTests {
     // The plain fill, in both physical array forms: a primitive element gives the specialized `IntArray`, a reference
@@ -58,5 +67,23 @@ class VarargOmissionTests {
     fun inlineSpliceFillsTheOmittedVararg() {
         assertEquals(0, varargOmissionInline { it })
         assertEquals(4, varargOmissionInline("a", "b") { it * 2 })
+    }
+
+    // ONE array, however many readers. The fill is a value of the call like any other, so it is allocated once and
+    // every later reader — here two omitted defaults that name the vararg — reads that allocation. A fill left as a
+    // raw expression is re-rendered per reader instead, which allocates a second and a third empty array; only
+    // identity can see the difference, and `size`-shaped assertions cannot.
+    @TestAttribute
+    fun omittedVarargIsEvaluatedOnce() {
+        assertEquals(true, varargOmissionAliased())
+        assertEquals(true, varargOmissionAliased(1, 2))
+    }
+
+    // The same rule where the element type is the callee's own type parameter — the fill and the binding it becomes
+    // are both written in the callee's frame, and both have to be closed against this call site.
+    @TestAttribute
+    fun genericOmittedVarargIsEvaluatedOnce() {
+        assertEquals(true, varargOmissionAliasedGeneric<String>())
+        assertEquals(true, varargOmissionAliasedGeneric("a", "b"))
     }
 }

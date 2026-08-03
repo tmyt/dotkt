@@ -192,13 +192,16 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
  *  supplied value.
  *
  *  An omitted VARARG is not that: it has no default for the splice to fill from, and its value — Kotlin's empty array
- *  of the element type — is a fact of the CALL, so it is supplied here like any other argument ([omittedVararg]).
+ *  of the element type — is a fact of the CALL, so it is supplied here like any other argument ([omittedVararg]), and
+ *  BOUND like one: the spliced body may read its slot any number of times, and the rule above admits no exception for
+ *  a value this pass synthesized. bir2cir's splice would also bind an unbound slot to a local of its own, so what this
+ *  fixes is the PROTOCOL and not a live duplication — kotc does not hand over a value with two readers unbound.
  *  Leaving it null made the splice fail loud on a non-defaulted null slot. */
 private fun BirEmitter.inlineArgJson(
 	call: IrCall, callee: IrFunction, arg: IrExpression?, param: IrValueParameter, label: String,
 ): String =
 	when {
-		arg == null -> omittedVararg(call, callee, param) ?: "null"
+		arg == null -> omittedVararg(call, callee, param, callPlan(call)) ?: "null"
 		arg is IrFunctionExpression && !param.isNoinline -> emitInlineLambdaCarrier(arg)
 		isForwardedInlineParam(arg) -> expr(arg)
 		else -> callPlan(call).bindValue(arg, "arg", "argument '${param.name.asString()}' of '$label'")
