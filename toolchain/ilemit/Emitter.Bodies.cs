@@ -43,7 +43,7 @@ sealed partial class Emitter
             // (the `: base(...)` branches ~lines 918-920 / 894-898); do not "simplify" this away.
             if (ti.TB is TypeBuilder stb && stb.IsGenericTypeDefinition)
                 sibling = AnchorConstructor(ConstructedType(stb, stb.GetGenericArguments()), (ConstructorBuilder)sibling);
-            _il.Emit(OpCodes.Call, sibling);
+            EmitConstructor(_il, OpCodes.Call, sibling);
         }
         else if (ti.ClrBase != null)
         {
@@ -56,7 +56,7 @@ sealed partial class Emitter
             var ctor = LinkClrCtor(ti.ClrBase, c, out var reanchorBaseCtor, "baseMemberSig", includeNonPublic: true);
             if (reanchorBaseCtor) ctor = AnchorConstructor(ti.ClrBase, ctor);
             if (ba.ValueKind == JsonValueKind.Array) EmitArgs(ba, ParametersOf(ctor));
-            _il.Emit(OpCodes.Call, ctor);
+            EmitConstructor(_il, OpCodes.Call, ctor);
         }
         else if (ti.BaseName != null && _types.ContainsKey(ti.BaseName) && c.TryGetProperty("baseArgs", out var ba2) && ba2.ValueKind == JsonValueKind.Array)
         {
@@ -72,11 +72,11 @@ sealed partial class Emitter
             if (baseType != null && baseType.IsGenericType && !baseType.IsGenericTypeDefinition)
                 bctor = AnchorConstructor(baseType, bctor);
             foreach (var a in ba2.EnumerateArray()) EmitExpr(a);
-            _il.Emit(OpCodes.Call, bctor);
+            EmitConstructor(_il, OpCodes.Call, bctor);
         }
         else
         {
-            _il.Emit(OpCodes.Call, Bcl("System.Object").GetConstructor(Type.EmptyTypes));
+            EmitConstructor(_il, OpCodes.Call, Bcl("System.Object").GetConstructor(Type.EmptyTypes));
         }
         foreach (var s in c.GetProperty("body").EnumerateArray()) EmitStmt(s);
         _il.Emit(OpCodes.Ret);
@@ -329,16 +329,16 @@ sealed partial class Emitter
         var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elemT);
         var ienumrT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elemT);
         EmitExpr(src);
-        _il.Emit(OpCodes.Callvirt, ienumT.GetMethod("GetEnumerator"));
+        EmitMethod(_il, OpCodes.Callvirt, ienumT.GetMethod("GetEnumerator"));
         var en = _il.DeclareLocal(ienumrT); _il.Emit(OpCodes.Stloc, en);
         var x = _il.DeclareLocal(elemT);
         var start = _il.DefineLabel(); var end = _il.DefineLabel();
         _il.MarkLabel(start);
         _il.Emit(OpCodes.Ldloc, en);
-        _il.Emit(OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
+        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
         _il.Emit(OpCodes.Brfalse, end);
         _il.Emit(OpCodes.Ldloc, en);
-        _il.Emit(OpCodes.Callvirt, ienumrT.GetMethod("get_Current"));
+        EmitMethod(_il, OpCodes.Callvirt, ienumrT.GetMethod("get_Current"));
         _il.Emit(OpCodes.Stloc, x);
         body(x);
         _il.Emit(OpCodes.Br, start);
@@ -471,7 +471,7 @@ sealed partial class Emitter
     {
         var il = mb.GetILGenerator();
         il.Emit(OpCodes.Ldstr, "DOTKT-STDLIB stub: " + feature + " not yet supported by the .NET backend");
-        il.Emit(OpCodes.Newobj, Bcl("System.NotSupportedException").GetConstructor(new[] { Bcl("System.String") }));
+        EmitConstructor(il, OpCodes.Newobj, Bcl("System.NotSupportedException").GetConstructor(new[] { Bcl("System.String") }));
         il.Emit(OpCodes.Throw);
     }
 
@@ -642,10 +642,10 @@ sealed partial class Emitter
                 // the private cross-assembly field. Only a genuine direct-field node takes the Ldflda fast path here.
                 if (e.TryGetProperty("member", out var fam) && fam.ValueKind == JsonValueKind.String && fam.GetString() == "accessor") break;
                 EmitExpr(e.GetProperty("recv"));
-                _il.Emit(OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                EmitField(_il, OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
             case "staticField":
-                _il.Emit(OpCodes.Ldsflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                EmitField(_il, OpCodes.Ldsflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
             case "arrayGet":
                 EmitExpr(e.GetProperty("array"));
@@ -687,7 +687,7 @@ sealed partial class Emitter
         var ok = _il.DefineLabel();
         _il.Emit(OpCodes.Blt_Un, ok);
         _il.Emit(OpCodes.Ldstr, "StackBuffer index out of bounds");
-        _il.Emit(OpCodes.Newobj, Bcl("System.IndexOutOfRangeException").GetConstructor(new[] { Bcl("System.String") }));
+        EmitConstructor(_il, OpCodes.Newobj, Bcl("System.IndexOutOfRangeException").GetConstructor(new[] { Bcl("System.String") }));
         _il.Emit(OpCodes.Throw);
         _il.MarkLabel(ok);
 
@@ -813,7 +813,7 @@ sealed partial class Emitter
         if (got == null) return;
         if (_methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == Bcl("System.Nullable`1")
             && _methodRetType.GetGenericArguments()[0] == got)
-            _il.Emit(OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
+            EmitConstructor(_il, OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
         // A value type / `gp:T` returned where the method declares ANY reference type must BOX (C2: the
         // `compareBy { it }` selector lambda returns `it: Int` declared `kotlin.Comparable[object]` = System.IComparable
         // — the boxed Int IS an IComparable). `box` alone yields the tracked type `O`; when the return is a NON-object

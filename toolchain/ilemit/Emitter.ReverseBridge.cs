@@ -54,8 +54,8 @@ partial class Emitter
         var ctor = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new Type[] { iterClosed });
         var cil = ctor.GetILGenerator();
         cil.Emit(OpCodes.Ldarg_0);
-        cil.Emit(OpCodes.Call, Bcl("System.Object").GetConstructor(Type.EmptyTypes));
-        cil.Emit(OpCodes.Ldarg_0); cil.Emit(OpCodes.Ldarg_1); cil.Emit(OpCodes.Stfld, fIt);
+        EmitConstructor(cil, OpCodes.Call, Bcl("System.Object").GetConstructor(Type.EmptyTypes));
+        cil.Emit(OpCodes.Ldarg_0); cil.Emit(OpCodes.Ldarg_1); EmitField(cil, OpCodes.Stfld, fIt);
         cil.Emit(OpCodes.Ret);
 
         var hasNextC = AnchorMethod(iterClosed, openHasNext);
@@ -67,21 +67,21 @@ partial class Emitter
         var mMove = tb.DefineMethod("MoveNext", ifaceImpl, Bcl("System.Boolean"), Type.EmptyTypes);
         var mil = mMove.GetILGenerator();
         var lblFalse = mil.DefineLabel();
-        mil.Emit(OpCodes.Ldarg_0); mil.Emit(OpCodes.Ldfld, fIt); mil.Emit(OpCodes.Callvirt, hasNextC);
+        mil.Emit(OpCodes.Ldarg_0); EmitField(mil, OpCodes.Ldfld, fIt); EmitMethod(mil, OpCodes.Callvirt, hasNextC);
         mil.Emit(OpCodes.Brfalse, lblFalse);
         mil.Emit(OpCodes.Ldarg_0);                                                       // this (for stfld _cur)
-        mil.Emit(OpCodes.Ldarg_0); mil.Emit(OpCodes.Ldfld, fIt); mil.Emit(OpCodes.Callvirt, nextC);
-        mil.Emit(OpCodes.Stfld, fCur);
+        mil.Emit(OpCodes.Ldarg_0); EmitField(mil, OpCodes.Ldfld, fIt); EmitMethod(mil, OpCodes.Callvirt, nextC);
+        EmitField(mil, OpCodes.Stfld, fCur);
         mil.Emit(OpCodes.Ldc_I4_1); mil.Emit(OpCodes.Ret);
         mil.MarkLabel(lblFalse);
         mil.Emit(OpCodes.Ldc_I4_0); mil.Emit(OpCodes.Ret);
-        tb.DefineMethodOverride(mMove, ienum.GetMethod("MoveNext"));
+        WireMethodOverride(tb, mMove, ienum.GetMethod("MoveNext"));
 
         // T get_Current()  -- the generic IEnumerator<T>.Current slot
         var mCurG = tb.DefineMethod("get_Current", ifaceImpl | MethodAttributes.SpecialName, T, Type.EmptyTypes);
         var cgi = mCurG.GetILGenerator();
-        cgi.Emit(OpCodes.Ldarg_0); cgi.Emit(OpCodes.Ldfld, fCur); cgi.Emit(OpCodes.Ret);
-        tb.DefineMethodOverride(mCurG, AnchorMethod(ienumT, ienumGenDef.GetMethod("get_Current")));
+        cgi.Emit(OpCodes.Ldarg_0); EmitField(cgi, OpCodes.Ldfld, fCur); cgi.Emit(OpCodes.Ret);
+        WireMethodOverride(tb, mCurG, AnchorMethod(ienumT, ienumGenDef.GetMethod("get_Current")));
 
         // object System.Collections.IEnumerator.get_Current()  -- the non-generic slot (boxes a value T)
         var mCurO = tb.DefineMethod("dotkt$NonGenericCurrent",
@@ -89,20 +89,20 @@ partial class Emitter
             Bcl("System.Object"), Type.EmptyTypes);
         StampCompilerGenerated(mCurO);   // #68: ilemit-authored generated member
         var coi = mCurO.GetILGenerator();
-        coi.Emit(OpCodes.Ldarg_0); coi.Emit(OpCodes.Ldfld, fCur); coi.Emit(OpCodes.Box, T); coi.Emit(OpCodes.Ret);
-        tb.DefineMethodOverride(mCurO, ienum.GetMethod("get_Current"));
+        coi.Emit(OpCodes.Ldarg_0); EmitField(coi, OpCodes.Ldfld, fCur); coi.Emit(OpCodes.Box, T); coi.Emit(OpCodes.Ret);
+        WireMethodOverride(tb, mCurO, ienum.GetMethod("get_Current"));
 
         // void Reset() => throw new NotSupportedException();  (Kotlin iterators are not resettable)
         var mReset = tb.DefineMethod("Reset", ifaceImpl, Bcl("System.Void"), Type.EmptyTypes);
         var ri = mReset.GetILGenerator();
-        ri.Emit(OpCodes.Newobj, Bcl("System.NotSupportedException").GetConstructor(Type.EmptyTypes));
+        EmitConstructor(ri, OpCodes.Newobj, Bcl("System.NotSupportedException").GetConstructor(Type.EmptyTypes));
         ri.Emit(OpCodes.Throw);
-        tb.DefineMethodOverride(mReset, ienum.GetMethod("Reset"));
+        WireMethodOverride(tb, mReset, ienum.GetMethod("Reset"));
 
         // void Dispose() {}
         var mDisp = tb.DefineMethod("Dispose", ifaceImpl, Bcl("System.Void"), Type.EmptyTypes);
         mDisp.GetILGenerator().Emit(OpCodes.Ret);
-        tb.DefineMethodOverride(mDisp, idisp.GetMethod("Dispose"));
+        WireMethodOverride(tb, mDisp, idisp.GetMethod("Dispose"));
 
         _enumAdapterTB = tb;
         _enumAdapterCtor = ctor;
@@ -173,15 +173,15 @@ partial class Emitter
         var gGen = ti.TB.DefineMethod("GetEnumerator", ifaceImpl, ienumElem, Type.EmptyTypes);
         var gi = gGen.GetILGenerator();
         gi.Emit(OpCodes.Ldarg_0);
-        gi.Emit(OpCodes.Callvirt, iterCall);
-        gi.Emit(OpCodes.Newobj, adapterCtor);
+        EmitMethod(gi, OpCodes.Callvirt, iterCall);
+        EmitConstructor(gi, OpCodes.Newobj, adapterCtor);
         gi.Emit(OpCodes.Ret);
         // Re-anchor only when the element type involves a TypeBuilder (a class type param); for a CONCRETE element type
         // IEnumerable<int> is a pure runtime type, so TypeBuilder.GetMethod would throw — use normal reflection.
         var getEnumIfaceM = ContainsTypeBuilder(elemType)
             ? AnchorMethod(ienumerableElem, ienumerableGenDef.GetMethod("GetEnumerator"))
             : ienumerableElem.GetMethod("GetEnumerator");
-        ti.TB.DefineMethodOverride(gGen, getEnumIfaceM);
+        WireMethodOverride(ti.TB, gGen, getEnumIfaceM);
         ti.Methods["GetEnumerator"] = gGen;
 
         // IEnumerator System.Collections.IEnumerable.GetEnumerator() { return this.GetEnumerator(); } (explicit, non-generic)
@@ -192,9 +192,9 @@ partial class Emitter
         StampCompilerGenerated(gNon);   // #68: ilemit-authored generated member
         var ni = gNon.GetILGenerator();
         ni.Emit(OpCodes.Ldarg_0);
-        ni.Emit(OpCodes.Callvirt, gGenSelf);
+        EmitMethod(ni, OpCodes.Callvirt, gGenSelf);
         ni.Emit(OpCodes.Ret);
-        ti.TB.DefineMethodOverride(gNon, Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
+        WireMethodOverride(ti.TB, gNon, Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
         return true;
     }
 }

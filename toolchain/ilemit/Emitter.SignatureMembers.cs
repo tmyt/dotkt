@@ -56,6 +56,71 @@ sealed partial class Emitter
         protected override TypeAttributes GetAttributeFlagsImpl() => _definition.Attributes;
     }
 
+    // PAB 10.0.10 normally replaces a member on a constructed owner with the open declaration by calling
+    // GetMemberWithSameMetadataDefinitionAs. A signature adapter is intentionally not a runtime reflection member, so
+    // that lookup would discard it (or reject it) before its modifier-aware ParameterInfo graph is read. Suppress only
+    // that normalization predicate; GetTypeHandle immediately unwraps UnderlyingSystemType and still encodes the real
+    // constructed owner as a TypeSpec.
+    sealed class PersistableMemberOwnerType : TypeDelegator
+    {
+        readonly Type _owner;
+        public PersistableMemberOwnerType(Type owner) : base(owner) { _owner = owner; }
+        public override Type UnderlyingSystemType => _owner;
+        public override bool IsGenericType => _owner.IsGenericType;
+        public override bool IsGenericTypeDefinition => _owner.IsGenericTypeDefinition;
+        public override bool IsConstructedGenericType => false;
+        public override bool ContainsGenericParameters => _owner.ContainsGenericParameters;
+        public override Type GetGenericTypeDefinition() => _owner.GetGenericTypeDefinition();
+        public override Type[] GetGenericArguments() => _owner.GetGenericArguments();
+    }
+
+    // Mirror PAB's own exemption for members whose owner contains a builder from this emission module. Those owners
+    // must retain their SignatureType/TypeBuilderInstantiation identity; all other constructed owners are normalized
+    // by PAB and therefore need the transparent owner view above to keep our modifier-aware member adapter intact.
+    static bool NeedsPersistableMemberOwner(Type owner) =>
+        owner.IsConstructedGenericType && owner.GetGenericTypeDefinition() is not TypeBuilder
+        && !owner.GetGenericArguments().Any(ContainsEmissionBuilder);
+
+    static bool ContainsEmissionBuilder(Type type)
+    {
+        if (type is TypeBuilder || type is GenericTypeParameterBuilder) return true;
+        if (type.HasElementType) return ContainsEmissionBuilder(type.GetElementType());
+        return type.IsConstructedGenericType
+            && (type.GetGenericTypeDefinition() is TypeBuilder
+                || type.GetGenericArguments().Any(ContainsEmissionBuilder));
+    }
+
+    static MethodInfo MethodDeclaration(MethodInfo method)
+    {
+        if (method.IsConstructedGenericMethod) method = method.GetGenericMethodDefinition();
+        var owner = method.DeclaringType;
+        if (owner is not { IsConstructedGenericType: true }) return method;
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        return owner.GetGenericTypeDefinition().GetMethods(flags)
+            .Single(candidate => candidate.Module == method.Module && candidate.MetadataToken == method.MetadataToken);
+    }
+
+    static ConstructorInfo ConstructorDeclaration(ConstructorInfo constructor)
+    {
+        var owner = constructor.DeclaringType;
+        if (owner is not { IsConstructedGenericType: true }) return constructor;
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        return owner.GetGenericTypeDefinition().GetConstructors(flags)
+            .Single(candidate => candidate.Module == constructor.Module && candidate.MetadataToken == constructor.MetadataToken);
+    }
+
+    static FieldInfo FieldDeclaration(FieldInfo field)
+    {
+        var owner = field.DeclaringType;
+        if (owner is not { IsConstructedGenericType: true }) return field;
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
+            | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        return owner.GetGenericTypeDefinition().GetFields(flags)
+            .Single(candidate => candidate.Module == field.Module && candidate.MetadataToken == field.MetadataToken);
+    }
+
     static MethodInfo AnchorMethod(Type type, MethodInfo method) =>
         IsTargetSignatureInstantiation(type)
             ? new SignatureMethod(type, method)
@@ -88,6 +153,55 @@ sealed partial class Emitter
     static Type FieldTypeOf(FieldInfo field) =>
         field is SignatureField signature ? signature.MappedFieldType : field.FieldType;
 
+    // Runtime 10.0.10's PersistedAssemblyBuilder consumes modifier-aware Types from
+    // ParameterInfo.GetModifiedParameterType/FieldInfo.GetModifiedFieldType. MetadataLoadContext represents those as
+    // RoModifiedType nodes: they preserve the modifier tree, but deliberately throw from shape APIs such as
+    // GetGenericTypeDefinition. PAB needs both surfaces at once. This adapter retains every modifier-bearing child
+    // while sourcing the few unsupported structural queries from each node's unmodified identity.
+    static Type AdaptModifiedType(Type type) =>
+        ReferenceEquals(type, type.UnderlyingSystemType) ? type : new PersistableModifiedType(type);
+
+    sealed class PersistableModifiedType : TypeDelegator
+    {
+        readonly Type _modified;
+        readonly Type _unmodified;
+
+        public PersistableModifiedType(Type modified) : base(modified)
+        {
+            _modified = modified;
+            _unmodified = modified.UnderlyingSystemType;
+        }
+
+        public override Type UnderlyingSystemType => _unmodified;
+        public override bool IsGenericType => _modified.IsGenericType;
+        public override bool IsGenericTypeDefinition => _modified.IsGenericTypeDefinition;
+        public override bool IsConstructedGenericType => _modified.IsConstructedGenericType;
+        public override bool IsGenericParameter => _modified.IsGenericParameter;
+        public override bool IsGenericTypeParameter => _modified.IsGenericTypeParameter;
+        public override bool IsGenericMethodParameter => _modified.IsGenericMethodParameter;
+        public override bool IsFunctionPointer => _modified.IsFunctionPointer;
+        public override bool IsUnmanagedFunctionPointer => _modified.IsUnmanagedFunctionPointer;
+        public override bool ContainsGenericParameters => _modified.ContainsGenericParameters;
+        public override int GenericParameterPosition => _modified.GenericParameterPosition;
+        public override MethodBase DeclaringMethod => _modified.DeclaringMethod;
+        public override int GetArrayRank() => _modified.GetArrayRank();
+        protected override bool HasElementTypeImpl() => _modified.HasElementType;
+        protected override bool IsArrayImpl() => _modified.IsArray;
+        protected override bool IsByRefImpl() => _modified.IsByRef;
+        protected override bool IsPointerImpl() => _modified.IsPointer;
+        protected override bool IsValueTypeImpl() => _modified.IsValueType;
+        public override Type GetGenericTypeDefinition() => _unmodified.GetGenericTypeDefinition();
+        public override Type[] GetGenericArguments() => _modified.GetGenericArguments().Select(AdaptModifiedType).ToArray();
+        public override Type GetElementType()
+        {
+            var element = _modified.GetElementType();
+            return element == null ? null : AdaptModifiedType(element);
+        }
+        public override Type GetFunctionPointerReturnType() => AdaptModifiedType(_modified.GetFunctionPointerReturnType());
+        public override Type[] GetFunctionPointerParameterTypes() =>
+            _modified.GetFunctionPointerParameterTypes().Select(AdaptModifiedType).ToArray();
+    }
+
     // MetadataLoadContext likewise refuses MakeGenericMethod when an argument is a local builder parameter. Represent
     // the MethodSpec as a signature-only MethodInfo; PersistedAssemblyBuilder consumes that description directly.
     static MethodInfo ConstructedMethod(MethodInfo definition, params Type[] arguments) =>
@@ -96,6 +210,62 @@ sealed partial class Emitter
             : definition.Module is not ModuleBuilder && arguments.Any(ContainsTypeBuilder)
                 ? new SignatureMethod(definition.DeclaringType, definition, arguments)
                 : definition.MakeGenericMethod(arguments);
+
+    // PersistedAssemblyBuilder 10.0.10 reads modifier-aware Types from every declaration member handed to
+    // DefineMethodOverride. Normalize that final emission boundary so raw MetadataLoadContext members never leak their
+    // intentionally partial RoModifiedType reflection surface into PAB. The member has already been selected; this is
+    // a one-to-one metadata view, not member resolution.
+    static MethodInfo PersistableMethod(MethodInfo method)
+    {
+        if (method is SignatureMethod signature) return signature.AsPersistable();
+        if (method is MethodBuilder || method.Module is ModuleBuilder) return method;
+        var methodArguments = method.IsConstructedGenericMethod ? method.GetGenericArguments() : null;
+        var owner = method.DeclaringType;
+        if (NeedsPersistableMemberOwner(owner))
+        {
+            method = MethodDeclaration(method);
+            owner = new PersistableMemberOwnerType(owner);
+        }
+        return new SignatureMethod(owner, method, methodArguments);
+    }
+
+    static void WireMethodOverride(TypeBuilder owner, MethodInfo body, MethodInfo declaration) =>
+        owner.DefineMethodOverride(body, PersistableMethod(declaration));
+
+    static void EmitMethod(ILGenerator il, OpCode opcode, MethodInfo method) =>
+        il.Emit(opcode, PersistableMethod(method));
+
+    static ConstructorInfo PersistableConstructor(ConstructorInfo constructor)
+    {
+        if (constructor is SignatureConstructor signature) return signature.AsPersistable();
+        if (constructor is ConstructorBuilder || constructor.Module is ModuleBuilder) return constructor;
+        var owner = constructor.DeclaringType;
+        if (NeedsPersistableMemberOwner(owner))
+        {
+            constructor = ConstructorDeclaration(constructor);
+            owner = new PersistableMemberOwnerType(owner);
+        }
+        return new SignatureConstructor(owner, constructor);
+    }
+
+    static void EmitConstructor(ILGenerator il, OpCode opcode, ConstructorInfo constructor) =>
+        il.Emit(opcode, PersistableConstructor(constructor));
+
+    static FieldInfo PersistableField(FieldInfo field)
+    {
+        if (field is SignatureField signature) return signature.AsPersistable();
+        if (field is FieldBuilder || field.Module is ModuleBuilder) return field;
+        var owner = field.DeclaringType;
+        if (NeedsPersistableMemberOwner(owner))
+        {
+            field = FieldDeclaration(field);
+            owner = new PersistableMemberOwnerType(owner);
+        }
+        return new SignatureField(owner, field);
+    }
+
+    static void EmitField(ILGenerator il, OpCode opcode, FieldInfo field) =>
+        il.Emit(opcode, PersistableField(field));
 
     static Type SubstituteSignatureType(Type type, Type declaringType, Type[] ownerArguments,
         Type[] methodParameters = null, Type[] methodArguments = null)
@@ -144,6 +314,10 @@ sealed partial class Emitter
         public override object DefaultValue => _source.DefaultValue;
         public override object RawDefaultValue => _source.RawDefaultValue;
         public override MemberInfo Member => _member;
+        // .NET 10.0.10's PersistedAssemblyBuilder reads the modifier-aware parameter type when it serializes a
+        // MemberRef. ParameterInfo's base implementation throws, so a signature-only wrapper must forward the
+        // declaration view explicitly just as it forwards the custom-modifier arrays below.
+        public override Type GetModifiedParameterType() => AdaptModifiedType(_source.GetModifiedParameterType());
         public override Type[] GetRequiredCustomModifiers() => _source.GetRequiredCustomModifiers();
         public override Type[] GetOptionalCustomModifiers() => _source.GetOptionalCustomModifiers();
         public override object[] GetCustomAttributes(bool inherit) => throw new NotSupportedException();
@@ -165,6 +339,11 @@ sealed partial class Emitter
             _ownerArguments = declaringType.GetGenericArguments();
             _methodArguments = methodArguments;
         }
+
+        internal SignatureMethod AsPersistable() =>
+            NeedsPersistableMemberOwner(_declaringType)
+                ? new SignatureMethod(new PersistableMemberOwnerType(_declaringType), MethodDeclaration(_definition), _methodArguments)
+                : this;
 
         Type Map(Type type) => SubstituteSignatureType(type, _definition.DeclaringType, _ownerArguments,
             _definition.GetGenericArguments(), _methodArguments);
@@ -215,6 +394,11 @@ sealed partial class Emitter
             _ownerArguments = declaringType.GetGenericArguments();
         }
 
+        internal SignatureConstructor AsPersistable() =>
+            NeedsPersistableMemberOwner(_declaringType)
+                ? new SignatureConstructor(new PersistableMemberOwnerType(_declaringType), ConstructorDeclaration(_definition))
+                : this;
+
         Type Map(Type type) => SubstituteSignatureType(type, _definition.DeclaringType, _ownerArguments);
         internal ParameterInfo[] MappedParameters => _definition.GetParameters()
             .Select(p => (ParameterInfo)new SignatureParameter(p, this, Map(p.ParameterType))).ToArray();
@@ -250,6 +434,11 @@ sealed partial class Emitter
             _ownerArguments = declaringType.GetGenericArguments();
         }
 
+        internal SignatureField AsPersistable() =>
+            NeedsPersistableMemberOwner(_declaringType)
+                ? new SignatureField(new PersistableMemberOwnerType(_declaringType), FieldDeclaration(_definition))
+                : this;
+
         public override string Name => _definition.Name;
         public override Type DeclaringType => _declaringType;
         public override Type ReflectedType => _declaringType;
@@ -259,6 +448,7 @@ sealed partial class Emitter
         internal Type MappedFieldType => SubstituteSignatureType(_definition.FieldType,
             _definition.DeclaringType, _ownerArguments);
         public override Type FieldType => _definition.FieldType;
+        public override Type GetModifiedFieldType() => AdaptModifiedType(_definition.GetModifiedFieldType());
         public override Type[] GetRequiredCustomModifiers() => _definition.GetRequiredCustomModifiers();
         public override Type[] GetOptionalCustomModifiers() => _definition.GetOptionalCustomModifiers();
         public override object GetValue(object obj) => throw new NotSupportedException();

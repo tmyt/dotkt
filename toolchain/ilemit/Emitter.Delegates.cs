@@ -102,7 +102,7 @@ sealed partial class Emitter
             mb.SetParameters(new[] { delegateType }.Concat(invokeParams).ToArray());
             var il = mb.GetILGenerator();
             for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
-            il.Emit(OpCodes.Callvirt, AnchorMethod(delegateType, def.GetMethod("Invoke")));
+            EmitMethod(il, OpCodes.Callvirt, AnchorMethod(delegateType, def.GetMethod("Invoke")));
             il.Emit(OpCodes.Ret);
             _delegateInvokeAdapters[key] = mb;
         }
@@ -111,8 +111,8 @@ sealed partial class Emitter
 
     void EmitDelegateInvoke(ILGenerator il, Type ft)
     {
-        if (NeedsDelegateInvokeAdapter(ft)) il.Emit(OpCodes.Call, DelegateInvokeAdapter(ft));
-        else il.Emit(OpCodes.Callvirt, InvokeOf(ft));
+        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateInvokeAdapter(ft));
+        else EmitMethod(il, OpCodes.Callvirt, InvokeOf(ft));
     }
 
     // The same PersistedAssemblyBuilder limitation applies to the delegate `.ctor`: it cannot map
@@ -143,7 +143,7 @@ sealed partial class Emitter
             var il = mb.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Newobj, AnchorConstructor(delegateType,
+            EmitConstructor(il, OpCodes.Newobj, AnchorConstructor(delegateType,
                 def.GetConstructor(new[] { Bcl("System.Object"), Bcl("System.IntPtr") })));
             il.Emit(OpCodes.Ret);
             _delegateCtorAdapters[key] = mb;
@@ -153,8 +153,8 @@ sealed partial class Emitter
 
     void EmitDelegateCtor(ILGenerator il, Type ft)
     {
-        if (NeedsDelegateInvokeAdapter(ft)) il.Emit(OpCodes.Call, DelegateCtorAdapter(ft));
-        else il.Emit(OpCodes.Newobj, DelegateCtor(ft));
+        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateCtorAdapter(ft));
+        else EmitConstructor(il, OpCodes.Newobj, DelegateCtor(ft));
     }
 
     // `static Unit A(<voidDelegate> d, <params>) { d.Invoke(<params>); return Unit.INSTANCE; }` — the void delegate `ft`
@@ -176,7 +176,7 @@ sealed partial class Emitter
         var il = mb.GetILGenerator();
         for (int i = 0; i < pTypes.Length; i++) il.Emit(OpCodes.Ldarg, i);
         EmitDelegateInvoke(il, ft);
-        il.Emit(OpCodes.Ldsfld, instF);
+        EmitField(il, OpCodes.Ldsfld, instF);
         il.Emit(OpCodes.Ret);
         return mb;
     }

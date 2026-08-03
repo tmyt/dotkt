@@ -114,10 +114,10 @@ sealed partial class Emitter
                 var il = bridge.GetILGenerator();
                 il.Emit(OpCodes.Ldarg_0);
                 for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
-                il.Emit(OpCodes.Callvirt, dimCall);   // `this`'s most-specific DIM (a class override still wins); base slot != this slot, so no recursion
+                EmitMethod(il, OpCodes.Callvirt, dimCall);   // `this`'s most-specific DIM (a class override still wins); base slot != this slot, so no recursion
                 il.Emit(OpCodes.Ret);
                 var declSlot = constructed != null ? AnchorMethod(constructed, baseSlot) : (MethodInfo)baseSlot;
-                ti.TB.DefineMethodOverride(bridge, declSlot);
+                WireMethodOverride(ti.TB, bridge, declSlot);
             }
         }
     }

@@ -256,7 +256,7 @@ sealed partial class Emitter
             if (NeedsBoxToRef(t)) _il.Emit(OpCodes.Box, t);
             _il.Emit(OpCodes.Stelem_Ref);
         }
-        _il.Emit(OpCodes.Call, Bcl("System.String").GetMethod("Concat", new[] { Bcl("System.Object").MakeArrayType() }));
+        EmitMethod(_il, OpCodes.Call, Bcl("System.String").GetMethod("Concat", new[] { Bcl("System.Object").MakeArrayType() }));
         return Bcl("System.String");
     }
 
@@ -280,7 +280,7 @@ sealed partial class Emitter
             var ctor = ContainsTypeBuilder(want)
                 ? AnchorConstructor(want, Bcl("System.Nullable`1").GetConstructors()[0])
                 : want.GetConstructor(new[] { got });
-            _il.Emit(OpCodes.Newobj, ctor);
+            EmitConstructor(_il, OpCodes.Newobj, ctor);
             return want;
         }
         // A value-type / generic-param branch flowing into an `object` want (an erased generic `T?` return whose
@@ -340,12 +340,12 @@ sealed partial class Emitter
         if (NeedsBoxToRef(rt)) _il.Emit(OpCodes.Box, rt);
         switch (e.GetProperty("method").GetString())
         {
-            case "GetHashCode": _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetHashCode")); return Bcl("System.Int32");
-            case "ToString": _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("ToString")); return Bcl("System.String");
+            case "GetHashCode": EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetHashCode")); return Bcl("System.Int32");
+            case "ToString": EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("ToString")); return Bcl("System.String");
             case "Equals":
                 var at = EmitExpr(e.GetProperty("arg"));
                 if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);
-                _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
+                EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
                 return Bcl("System.Boolean");
         }
         return Bcl("System.Object");
@@ -368,7 +368,7 @@ sealed partial class Emitter
         _il.MarkLabel(nonNull);                                  // a non-null -> a.Equals((object)b)
         var rt2 = EmitExpr(e.GetProperty("rhs"));
         if (NeedsBoxToRef(rt2)) _il.Emit(OpCodes.Box, rt2);
-        _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
+        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
         _il.MarkLabel(done);
         return Bcl("System.Boolean");
     }

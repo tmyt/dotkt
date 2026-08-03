@@ -1,4 +1,5 @@
 // AUTO-SPLIT from Program.cs — part of the `Emitter` partial class (see Program.cs for the overview).
+#nullable enable annotations
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
@@ -45,7 +46,7 @@ sealed partial class Emitter
     // skips it). kotc emits EVERY annotation verbatim (it is just metadata to the frontend); the CLR layer decides
     // what is encodable. The blob is encoded here instead of through CustomAttributeBuilder: CAB validates target-MLC
     // parameter Types against host-runtime argument Types, which would reintroduce the mixed-universe bug #336 removes.
-    EncodedAttribute BuildAttribute(JsonElement a)
+    EncodedAttribute? BuildAttribute(JsonElement a)
     {
         var attr = SlotName(a.GetProperty("attr"));   // `attr` is a structured `{t:fqn}` identity node (#48)
         var args = a.GetProperty("args").EnumerateArray().Select(ConstArgValue).ToArray();
@@ -106,7 +107,7 @@ sealed partial class Emitter
         }
     }
 
-    EncodedAttribute TryAttribute(ConstructorInfo ctor, Type[] parameterTypes, object[] args, string attr)
+    EncodedAttribute? TryAttribute(ConstructorInfo? ctor, Type[] parameterTypes, object[] args, string attr)
     {
         try
         {

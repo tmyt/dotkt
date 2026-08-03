@@ -47,9 +47,9 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Stloc, recvLocal);
         // mi = recv.GetType().GetMethod(name)   (this for Invoke)
         _il.Emit(OpCodes.Ldloc, recvLocal);
-        _il.Emit(OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetType"));
+        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetType"));
         _il.Emit(OpCodes.Ldstr, name);
-        _il.Emit(OpCodes.Callvirt, Bcl("System.Type").GetMethod("GetMethod", new[] { Bcl("System.String") }));
+        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Type").GetMethod("GetMethod", new[] { Bcl("System.String") }));
         // Invoke(target=recv, object[] args)
         _il.Emit(OpCodes.Ldloc, recvLocal);
         _il.Emit(OpCodes.Ldc_I4, args.Length);
@@ -62,7 +62,7 @@ sealed partial class Emitter
             if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);   // box a value-type OR a `gp:T` arg before stelem_ref into object[]
             _il.Emit(OpCodes.Stelem_Ref);
         }
-        _il.Emit(OpCodes.Callvirt, Bcl("System.Reflection.MethodInfo").GetMethod("Invoke", new[] { Bcl("System.Object"), Bcl("System.Object").MakeArrayType() }));
+        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Reflection.MethodInfo").GetMethod("Invoke", new[] { Bcl("System.Object"), Bcl("System.Object").MakeArrayType() }));
         // result: pop a dropped void return, else unbox/cast to the CIR-declared dynRet. The spec is a CLR spelling —
         // bir2cir derives Unit->void upstream, so ilemit never sees a Kotlin `unit`/`kotlin.Unit` here (if it did, that
         // would be a bir2cir lowering defect, not something ilemit should silently absorb). The slot is a structured
@@ -127,7 +127,7 @@ sealed partial class Emitter
                 if (IsValueType(ClrRef(e.GetProperty("ownerType")))) EmitAddr(e.GetProperty("recv"));
                 else EmitExpr(e.GetProperty("recv"));
                 MaybeVolatile(fb);                       // `volatile.` prefix on a @Volatile field (pairs with modreq)
-                _il.Emit(OpCodes.Ldfld, fb);
+                EmitField(_il, OpCodes.Ldfld, fb);
                 return RetOr(e, ft);
             }
             case "setFieldExpr":
@@ -148,7 +148,7 @@ sealed partial class Emitter
                 else EmitExpr(e.GetProperty("recv"));
                 EmitStoreCoerced(e.GetProperty("value"), sfet);
                 MaybeVolatile(sfefld);
-                _il.Emit(OpCodes.Stfld, sfefld);
+                EmitField(_il, OpCodes.Stfld, sfefld);
                 return Bcl("System.Void");
             }
             case "lateinitGet":
@@ -156,13 +156,13 @@ sealed partial class Emitter
                 // `lateinit var` read: load the field; if still null (uninitialized), throw.
                 EmitExpr(e.GetProperty("recv"));
                 var fld = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
-                _il.Emit(OpCodes.Ldfld, fld);
+                EmitField(_il, OpCodes.Ldfld, fld);
                 _il.Emit(OpCodes.Dup);
                 var ok = _il.DefineLabel();
                 _il.Emit(OpCodes.Brtrue, ok);
                 _il.Emit(OpCodes.Pop);
                 _il.Emit(OpCodes.Ldstr, "lateinit property " + e.GetProperty("name").GetString() + " has not been initialized");
-                _il.Emit(OpCodes.Newobj, Bcl("System.InvalidOperationException").GetConstructor(new[] { Bcl("System.String") }));
+                EmitConstructor(_il, OpCodes.Newobj, Bcl("System.InvalidOperationException").GetConstructor(new[] { Bcl("System.String") }));
                 _il.Emit(OpCodes.Throw);
                 _il.MarkLabel(ok);
                 return FieldTypeOf(fld);
@@ -189,7 +189,7 @@ sealed partial class Emitter
                         ctorE = AnchorConstructor(ext, ctorE);
                     }
                     else EmitArgs(nargs, ParametersOf(ctorE));
-                    _il.Emit(OpCodes.Newobj, ctorE);
+                    EmitConstructor(_il, OpCodes.Newobj, ctorE);
                     return ext;
                 }
                 var ctor = LinkLocalCtor(ti, e);
@@ -197,7 +197,7 @@ sealed partial class Emitter
                 // type (`Box<int>::.ctor(int)`), not boxed to the ResolveTv `object` fallback in a non-generic caller.
                 EmitNewArgs(e, nargs, constructed is { IsGenericType: true } ? constructed.GetGenericArguments() : null);
                 // Constructed user generic `Box<int>` -> resolve the ctor onto the instantiation (static helper).
-                _il.Emit(OpCodes.Newobj, constructed != null ? AnchorConstructor(constructed, ctor) : (ConstructorInfo)ctor);
+                EmitConstructor(_il, OpCodes.Newobj, constructed != null ? AnchorConstructor(constructed, ctor) : (ConstructorInfo)ctor);
                 return constructed ?? (Type)ti.TB;
             }
             case "callInstance":
@@ -230,7 +230,7 @@ sealed partial class Emitter
                         $"callInstance receiver is a value-type declaring type '{m.DeclaringType}' (method '{m.Name}'): this emit path pushes a plain receiver with no address/unbox/constrained., which is unverifiable IL — such an instance call must be lowered to 'constrainedCall' in bir2cir", null);
                 EmitExpr(e.GetProperty("recv"));
                 if (m == m0) EmitCallArgs(e.GetProperty("args"), m); else EmitArgsTyped(e.GetProperty("args"), mps, m);
-                _il.Emit(IsVirtual(e) ? OpCodes.Callvirt : OpCodes.Call, m);
+                EmitMethod(_il, IsVirtual(e) ? OpCodes.Callvirt : OpCodes.Call, m);
                 return CoerceReturn(e, m == m0 ? rt : mrt);
             }
             case "constrainedCall":
@@ -268,7 +268,7 @@ sealed partial class Emitter
                     // fallback, for a referenced owner that has no recorded vector.
                     if (ccPs != null) EmitArgsTyped(ccArgs, ccPs, mi2); else EmitArgs(ccArgs, ParametersOf(mi2));
                     _il.Emit(OpCodes.Constrained, rt2);
-                    _il.Emit(OpCodes.Callvirt, mi2);
+                    EmitMethod(_il, OpCodes.Callvirt, mi2);
                     // …and the declared call-RESULT view still has to be reconciled with the resolved return type —
                     // the object-erasure unbox/castclass and the collapsed-variance collection seam are properties of
                     // the CALL, not of how its receiver was addressed.
@@ -297,7 +297,7 @@ sealed partial class Emitter
                 EmitExpr(e.GetProperty("arg"));
                 if (brokenGeneric) _il.Emit(OpCodes.Box, recvType);   // arg (type T) -> object for CompareTo(object)
                 _il.Emit(OpCodes.Constrained, recvType);
-                _il.Emit(OpCodes.Callvirt, mi);
+                EmitMethod(_il, OpCodes.Callvirt, mi);
                 return ReturnTypeOf(mi);
             }
             case "callStatic":
@@ -318,7 +318,7 @@ sealed partial class Emitter
                 var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(resolved), e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
-                _il.Emit(OpCodes.Call, mb);
+                EmitMethod(_il, OpCodes.Call, mb);
                 return CoerceReturn(e, srt);
             }
             case "staticField":
@@ -328,14 +328,14 @@ sealed partial class Emitter
                 // `G<object>` with the open `G<!0>` and manufacture invalid IL in a non-generic caller.
                 var f = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out var ft);
                 MaybeVolatile(f);
-                _il.Emit(OpCodes.Ldsfld, f);
+                EmitField(_il, OpCodes.Ldsfld, f);
                 return ft;
             }
             case "clrStaticField":   // a static field on a .NET (reflected) type, e.g. EmptyCoroutineContext.Instance
             {
                 var ct = ClrRef(e.GetProperty("type"));
                 var cf = ct.GetField(e.GetProperty("name").GetString(), BindingFlags.Public | BindingFlags.Static);
-                _il.Emit(OpCodes.Ldsfld, cf);
+                EmitField(_il, OpCodes.Ldsfld, cf);
                 return FieldTypeOf(cf);
             }
             case "staticFieldSet":
@@ -346,7 +346,7 @@ sealed partial class Emitter
                     ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out var sfsft);
                 EmitStoreCoerced(e.GetProperty("value"), sfsft);
                 MaybeVolatile(sfsf);
-                _il.Emit(OpCodes.Stsfld, sfsf);
+                EmitField(_il, OpCodes.Stsfld, sfsf);
                 return Bcl("System.Void");
             }
             // NOTE: the `console` op (println/print -> System.Console.Write/WriteLine) was RETIRED (2026-07-02, bundle 1):
@@ -367,13 +367,13 @@ sealed partial class Emitter
                 // `listOf(...)` -> new List<elem> { ... } via repeated Add.
                 var elem = MapType(e.GetProperty("elem"));
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
-                _il.Emit(OpCodes.Newobj, GenericCtor(listT));
+                EmitConstructor(_il, OpCodes.Newobj, GenericCtor(listT));
                 var add = GenericMethod(listT, "Add");
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
                     EmitArg(item, elem);
-                    _il.Emit(OpCodes.Callvirt, add);
+                    EmitMethod(_il, OpCodes.Callvirt, add);
                 }
                 return listT;
             }
@@ -388,7 +388,7 @@ sealed partial class Emitter
                 var ps = ParametersOf(mi);
                 for (int i = 0; i < argEls.Count; i++) EmitArg(argEls[i], ps[i].ParameterType);
                 RequireArgCount(argEls.Count, ps.Length, mi.ToString());
-                _il.Emit(OpCodes.Call, mi);
+                EmitMethod(_il, OpCodes.Call, mi);
                 return ReturnTypeOf(mi);
             }
             case "clrGenericInstance":
@@ -406,7 +406,7 @@ sealed partial class Emitter
                 // A `super.M<T>(...)` to a CLR-bound base (issue #14) forces a non-virtual `call` to the base slot on the
                 // (reference) `this` receiver — else the callvirt re-dispatches to THIS class's override -> recursion.
                 var genSuper = e.TryGetProperty("super", out var supGi) && supGi.GetBoolean() && !IsValueType(type);
-                _il.Emit(mi.IsVirtual && !genSuper ? OpCodes.Callvirt : OpCodes.Call, mi);
+                EmitMethod(_il, mi.IsVirtual && !genSuper ? OpCodes.Callvirt : OpCodes.Call, mi);
                 return ReturnTypeOf(mi);
             }
             case "newArray": return EmitNewArray(e);
@@ -465,18 +465,18 @@ sealed partial class Emitter
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
                 var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elem);
                 var loc = _il.DeclareLocal(listT);
-                _il.Emit(OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes));
+                EmitConstructor(_il, OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes));
                 _il.Emit(OpCodes.Stloc, loc);
                 foreach (var p in e.GetProperty("parts").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Ldloc, loc);
                     EmitExpr(p.GetProperty("e"));
-                    _il.Emit(OpCodes.Callvirt, p.GetProperty("spread").GetBoolean()
+                    EmitMethod(_il, OpCodes.Callvirt, p.GetProperty("spread").GetBoolean()
                         ? listT.GetMethod("AddRange", new[] { ienumT })
                         : listT.GetMethod("Add", new[] { elem }));
                 }
                 _il.Emit(OpCodes.Ldloc, loc);
-                _il.Emit(OpCodes.Callvirt, listT.GetMethod("ToArray", Type.EmptyTypes));
+                EmitMethod(_il, OpCodes.Callvirt, listT.GetMethod("ToArray", Type.EmptyTypes));
                 return elem.MakeArrayType();
             }
             case "arrayGet":
@@ -515,12 +515,12 @@ sealed partial class Emitter
                 Type enT;
                 if (viaNonGeneric)
                 {
-                    _il.Emit(OpCodes.Callvirt, Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
+                    EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
                     enT = Bcl("System.Collections.IEnumerator");
                 }
                 else
                 {
-                    _il.Emit(OpCodes.Callvirt, GenericMethod(ienumT, "GetEnumerator"));
+                    EmitMethod(_il, OpCodes.Callvirt, GenericMethod(ienumT, "GetEnumerator"));
                     enT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elem);
                 }
                 var en = _il.DeclareLocal(enT); _il.Emit(OpCodes.Stloc, en);
@@ -529,17 +529,17 @@ sealed partial class Emitter
                 _loops.Add((LoopLabel(e), start, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, en);
-                _il.Emit(OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
+                EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
                 _il.Emit(OpCodes.Brfalse, end);
                 _il.Emit(OpCodes.Ldloc, en);
                 if (viaNonGeneric)
                 {
-                    _il.Emit(OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("get_Current"));
+                    EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("get_Current"));
                     _il.Emit(OpCodes.Unbox_Any, elem);
                 }
                 else
                 {
-                    _il.Emit(OpCodes.Callvirt, GenericMethod(enT, "get_Current"));
+                    EmitMethod(_il, OpCodes.Callvirt, GenericMethod(enT, "get_Current"));
                 }
                 _il.Emit(OpCodes.Stloc, lv);
                 foreach (var b in e.GetProperty("body").EnumerateArray()) EmitStmt(b);
@@ -677,14 +677,14 @@ sealed partial class Emitter
                 var kt = MapType(e.GetProperty("keyType"));
                 var vt = MapType(e.GetProperty("valType"));
                 var dt = ConstructedType(Bcl("System.Collections.Generic.Dictionary`2"), kt, vt);
-                _il.Emit(OpCodes.Newobj, GenericCtor(dt));
+                EmitConstructor(_il, OpCodes.Newobj, GenericCtor(dt));
                 var setItem = GenericMethod(dt, "set_Item");
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
                     EmitArg(en.GetProperty("key"), kt);
                     EmitArg(en.GetProperty("value"), vt);
-                    _il.Emit(OpCodes.Callvirt, setItem);
+                    EmitMethod(_il, OpCodes.Callvirt, setItem);
                 }
                 return dt;
             }
@@ -693,13 +693,13 @@ sealed partial class Emitter
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem"));
                 var setT = ConstructedType(Bcl("System.Collections.Generic.HashSet`1"), elem);
-                _il.Emit(OpCodes.Newobj, GenericCtor(setT));
+                EmitConstructor(_il, OpCodes.Newobj, GenericCtor(setT));
                 var add = GenericMethod(setT, "Add");
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
                     EmitArg(item, elem);
-                    _il.Emit(OpCodes.Callvirt, add);
+                    EmitMethod(_il, OpCodes.Callvirt, add);
                     _il.Emit(OpCodes.Pop);
                 }
                 return setT;
@@ -749,7 +749,7 @@ sealed partial class Emitter
                     ? ConstructedMethod(mb, dta.EnumerateArray().Select(x => MapType(x)).ToArray())
                     : mb;
                 _il.Emit(OpCodes.Ldnull);
-                _il.Emit(OpCodes.Ldftn, target);
+                EmitMethod(_il, OpCodes.Ldftn, target);
                 EmitDelegateCtor(_il, ft);
                 return ft;
             }
@@ -772,8 +772,8 @@ sealed partial class Emitter
                 // struct value. Box gives a valid object target; the CLR delegate machinery routes it through the value
                 // type's unboxing stub for a non-virtual `ldftn` target and virtual dispatch for `ldvirtftn`.
                 if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);
-                if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mb); }
-                else _il.Emit(OpCodes.Ldftn, mb);
+                if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, mb); }
+                else EmitMethod(_il, OpCodes.Ldftn, mb);
                 EmitDelegateCtor(_il, ft);
                 return ft;
             }
@@ -790,8 +790,8 @@ sealed partial class Emitter
                 // Same value-type-receiver rule as newBoundDelegate: a struct .NET receiver (e.g. `kvp::method`) must be
                 // boxed so the delegate ctor's `object` target and `ldvirtftn` see an object reference, not a raw struct.
                 if (NeedsBoxToRef(recvTc)) _il.Emit(OpCodes.Box, recvTc);
-                if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); _il.Emit(OpCodes.Ldvirtftn, mi); }
-                else _il.Emit(OpCodes.Ldftn, mi);
+                if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, mi); }
+                else EmitMethod(_il, OpCodes.Ldftn, mi);
                 EmitDelegateCtor(_il, ft);
                 return ft;
             }
@@ -827,8 +827,8 @@ sealed partial class Emitter
                 // closure left open -> a TypeLoadException at the newobj); shared with the delegate-arg binding path.
                 var (ctor, invoke) = ResolveClosure(e);
                 foreach (var c in e.GetProperty("captures").EnumerateArray()) EmitExpr(c);
-                _il.Emit(OpCodes.Newobj, ctor);              // closure instance is the delegate target
-                _il.Emit(OpCodes.Ldftn, invoke);
+                EmitConstructor(_il, OpCodes.Newobj, ctor);  // closure instance is the delegate target
+                EmitMethod(_il, OpCodes.Ldftn, invoke);
                 var ft = MapType(e.GetProperty("funcType"));
                 EmitDelegateCtor(_il, ft);
                 return ft;
@@ -847,7 +847,7 @@ sealed partial class Emitter
                     ctor = AnchorConstructor(result, ct.Ctor);
                 }
                 foreach (var c in e.GetProperty("captures").EnumerateArray()) EmitExpr(c);
-                _il.Emit(OpCodes.Newobj, ctor);
+                EmitConstructor(_il, OpCodes.Newobj, ctor);
                 return result;
             }
             case "concat": return EmitConcat(e);
@@ -912,7 +912,7 @@ sealed partial class Emitter
                 var ctor = spanT.GetConstructor(new[] { Bcl("System.Void").MakePointerType(), Bcl("System.Int32") });
                 EmitExpr(e.GetProperty("ptr"));
                 EmitExpr(e.GetProperty("len"));
-                _il.Emit(OpCodes.Newobj, ctor);
+                EmitConstructor(_il, OpCodes.Newobj, ctor);
                 return spanT;
             }
             case "byrefLoad":

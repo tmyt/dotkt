@@ -439,7 +439,7 @@ sealed partial class Emitter
                                         bim.GetGenericArguments().Length,
                                         ParametersOf(bim).Select(p => p.ParameterType).ToArray())
                                     is MethodBuilder baseBridge)
-                                    ti.TB.DefineMethodOverride(baseBridge, bim);
+                                    WireMethodOverride(ti.TB, baseBridge, bim);
                         }
                         foreach (var im in ifaceMs)
                         {
@@ -459,7 +459,7 @@ sealed partial class Emitter
                             // bridge — it is deliberately not named after the slot.
                             if (FindExternalInterfaceBridge(ti, itype, im.Name, methodArity, ips) is MethodBuilder directiveBridge)
                             {
-                                ti.TB.DefineMethodOverride(directiveBridge, reanchor ? AnchorMethod(itype, im) : im);
+                                WireMethodOverride(ti.TB, directiveBridge, reanchor ? AnchorMethod(itype, im) : im);
                                 continue;
                             }
                             var cands = ti.MethodsBySig
@@ -488,7 +488,7 @@ sealed partial class Emitter
                             if (!bodyIsGeneric && ReturnTypeOf(im) == Bcl("System.Void") && body.ReturnType != Bcl("System.Void"))
                                 EmitVoidDropBridge(ti, im.Name, ips, body, ifaceM);
                             else
-                                ti.TB.DefineMethodOverride(body, ifaceM);
+                                WireMethodOverride(ti.TB, body, ifaceM);
                         }
                         continue;
                     }
@@ -528,7 +528,7 @@ sealed partial class Emitter
                             var explicitBridge = FindExplicitInterfaceBridge(ti, specFqn, imName, subSig);
                             if (explicitBridge != null)
                             {
-                                ti.TB.DefineMethodOverride(explicitBridge, ifaceMethod);
+                                WireMethodOverride(ti.TB, explicitBridge, ifaceMethod);
                                 continue;
                             }
                             // Only wire an EXACT signature match. A miss means the class doesn't override this exact
@@ -568,7 +568,7 @@ sealed partial class Emitter
                                  || (ifaceRet == Bcl("System.Void") && bodyMethod.ReturnType != Bcl("System.Void"))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
                                 EmitCovariantBridge(ti, imName, imDef, specArgs, bodyMethod, ifaceMethod, ifaceRet);
                             else
-                                ti.TB.DefineMethodOverride(bodyMethod, ifaceMethod);
+                                WireMethodOverride(ti.TB, bodyMethod, ifaceMethod);
                         }
                 }
             }
@@ -672,9 +672,9 @@ sealed partial class Emitter
                     for (int i = 0; i < ips.Length; i++) bil.Emit(OpCodes.Ldarg, i + 1);
                     var dimCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), dim) : (MethodInfo)dim;
                     if (methodArity > 0) dimCall = ConstructedMethod(dimCall, bridgeTps);
-                    bil.Emit(OpCodes.Callvirt, dimCall);
+                    EmitMethod(bil, OpCodes.Callvirt, dimCall);
                     bil.Emit(OpCodes.Ret);
-                    ti.TB.DefineMethodOverride(bridge, reanchor ? AnchorMethod(itype, im) : im);
+                    WireMethodOverride(ti.TB, bridge, reanchor ? AnchorMethod(itype, im) : im);
                 }
             }
         }
@@ -724,7 +724,7 @@ sealed partial class Emitter
                                 + $"'{memberNode.GetString()}' on the referenced base '{open}', which does not resolve "
                                 + "to exactly one method of that signature — bir2cir resolved a base-class MethodImpl "
                                 + "this layer cannot link");
-                        ti.TB.DefineMethodOverride(bridge, externalSlot);
+                        WireMethodOverride(ti.TB, bridge, externalSlot);
                         continue;
                     }
                     // A RESOLVED DESCRIPTOR THIS LAYER CANNOT BIND IS AN EARLIER-LAYER DROP, and dropping it here
@@ -763,7 +763,7 @@ sealed partial class Emitter
                             $"ilemit: {ti.TB.Name}.{bridgeName.GetString()}: clrBaseImpls names {open}.{slotSig}, "
                             + "which that type declares no member for at any instantiation — bir2cir resolved a base-class "
                             + "MethodImpl against a missing slot");
-                    ti.TB.DefineMethodOverride(bridge,
+                    WireMethodOverride(ti.TB, bridge,
                         constructed != null ? AnchorMethod(constructed, slot) : (MethodInfo)slot);
                 }
                 _curMethodParams = null;
@@ -848,7 +848,7 @@ sealed partial class Emitter
                 var fname = f.GetProperty("name").GetString();
                 _ctxMethod = ".cctor(" + fname + ")";
                 var fb = ti.Fields[fname];
-                GuardBody(() => { PrescanCfgLabels(f.GetProperty("init")); EmitStoreCoerced(f.GetProperty("init"), fb.FieldType); MaybeVolatile(fb); _il.Emit(OpCodes.Stsfld, fb); });
+                GuardBody(() => { PrescanCfgLabels(f.GetProperty("init")); EmitStoreCoerced(f.GetProperty("init"), fb.FieldType); MaybeVolatile(fb); EmitField(_il, OpCodes.Stsfld, fb); });
             }
             _il.Emit(OpCodes.Ret);
         }
@@ -863,7 +863,7 @@ sealed partial class Emitter
                 var mainMb = ti.Methods["main"];
                 // `fun main(args: Array<String>)` -> forward the CLR args; `fun main()` -> call with none.
                 if (_mparams.TryGetValue(mainMb, out var mp) && mp.Length > 0) il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Call, mainMb);
+                EmitMethod(il, OpCodes.Call, mainMb);
                 il.Emit(OpCodes.Ret);
             }
 
@@ -1091,7 +1091,7 @@ sealed partial class Emitter
                 "Equals" => Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }),
                 _ => null,
             };
-            if (objM != null) ti.TB.DefineMethodOverride(mb, objM);
+            if (objM != null) WireMethodOverride(ti.TB, mb, objM);
         }
         if (clrOverride != null)
         {
@@ -1100,7 +1100,7 @@ sealed partial class Emitter
             // and carried its param signature as `clrOverrideSig` (#46/#183 W1-S4) — LinkOverrideBase links the unique
             // slot (0 = hard ABI error), replacing the former name-only first-pick fallback.
             var baseT = ResolveType(clrOverride);
-            ti.TB.DefineMethodOverride(mb, LinkOverrideBase(baseT, name, m, ti.TB));
+            WireMethodOverride(ti.TB, mb, LinkOverrideBase(baseT, name, m, ti.TB));
         }
         // Kotlin's `@kotlin.internal.InlineOnly` says "this fn is meant to be inlined, not called as a method". The direct
         // CLR translation is a [MethodImpl(AggressiveInlining)] hint on the emitted method. kotc reads the annotation and
@@ -1296,10 +1296,10 @@ sealed partial class Emitter
         il.Emit(OpCodes.Ldarg_0);
         for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
         var bodyCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
-        il.Emit(OpCodes.Callvirt, bodyCall);
+        EmitMethod(il, OpCodes.Callvirt, bodyCall);
         il.Emit(OpCodes.Pop);   // the BCL slot drops the Kotlin return
         il.Emit(OpCodes.Ret);
-        ti.TB.DefineMethodOverride(bridge, ifaceMethod);
+        WireMethodOverride(ti.TB, bridge, ifaceMethod);
     }
 
     // Emit a covariant-return bridge: a private explicit-interface-impl method with the iface's (base) return type +
@@ -1316,12 +1316,12 @@ sealed partial class Emitter
         il.Emit(OpCodes.Ldarg_0);
         for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
         var bodyCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
-        il.Emit(OpCodes.Callvirt, bodyCall);
+        EmitMethod(il, OpCodes.Callvirt, bodyCall);
         // ifaceRet==void but the body returns a value (add():Boolean -> ICollection.Add():void): the BCL slot drops the
         // Kotlin return -> pop it so the void bridge leaves an empty stack. Else the (reference) narrow return upcasts.
         if (ifaceRet == Bcl("System.Void") && body.ReturnType != Bcl("System.Void")) il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ret);
-        ti.TB.DefineMethodOverride(bridge, ifaceMethod);
+        WireMethodOverride(ti.TB, bridge, ifaceMethod);
     }
 
     // A class implements an interface method (Comparable.compareTo) for which it has no own body, but one of its
@@ -1486,10 +1486,10 @@ sealed partial class Emitter
             var il = bridge.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0);
             for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
-            il.Emit(OpCodes.Callvirt, dimCall);   // dispatches to the DIM inherited by `this`
+            EmitMethod(il, OpCodes.Callvirt, dimCall);   // dispatches to the DIM inherited by `this`
             il.Emit(OpCodes.Ret);
             var ifaceMethod = constructed != null ? AnchorMethod(constructed, ifaceBuilder) : (MethodInfo)ifaceBuilder;
-            ti.TB.DefineMethodOverride(bridge, ifaceMethod);
+            WireMethodOverride(ti.TB, bridge, ifaceMethod);
     }
 
 

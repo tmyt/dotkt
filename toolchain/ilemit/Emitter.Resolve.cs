@@ -204,7 +204,10 @@ sealed partial class Emitter
     static MethodInfo GenericMethod(Type constructed, string name) =>
         IsTbInstantiation(constructed)
             ? AnchorMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
-            : constructed.GetMethod(name);
+            // Runtime 10.0.10's PAB asks the returned ParameterInfo graph for modifier-aware Types. MLC's raw
+            // RoModifiedType deliberately leaves several structural reflection APIs unsupported, so route the
+            // already-selected member through the same signature adapter used for TypeSpec anchoring.
+            : PersistableMethod(constructed.GetMethod(name));
 
     // Substitute an open TYPE's own generic parameters (positionally = `typeArgs`) throughout a member reference as
     // declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with

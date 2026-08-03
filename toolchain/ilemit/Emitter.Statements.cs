@@ -63,7 +63,7 @@ sealed partial class Emitter
                 else EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);
                 MaybeVolatile(sfld);
-                _il.Emit(OpCodes.Stfld, sfld);
+                EmitField(_il, OpCodes.Stfld, sfld);
                 break;
             }
             case "return":
@@ -276,9 +276,9 @@ sealed partial class Emitter
                     throw new NotSupportedException($"forRange: {accessOwner} not emitted in this assembly");
                 var i = _il.DeclareLocal(Bcl("System.Int32")); _locals[s.GetProperty("var").GetString()] = i;
                 var last = _il.DeclareLocal(Bcl("System.Int32")); var step = _il.DeclareLocal(Bcl("System.Int32"));
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("firstM").GetString()]); _il.Emit(OpCodes.Stloc, i);
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("lastM").GetString()]); _il.Emit(OpCodes.Stloc, last);
-                _il.Emit(OpCodes.Ldloc, rngLocal); _il.Emit(OpCodes.Callvirt, prog.Methods[s.GetProperty("stepM").GetString()]); _il.Emit(OpCodes.Stloc, step);
+                _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.GetProperty("firstM").GetString()]); _il.Emit(OpCodes.Stloc, i);
+                _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.GetProperty("lastM").GetString()]); _il.Emit(OpCodes.Stloc, last);
+                _il.Emit(OpCodes.Ldloc, rngLocal); EmitMethod(_il, OpCodes.Callvirt, prog.Methods[s.GetProperty("stepM").GetString()]); _il.Emit(OpCodes.Stloc, step);
                 var start = _il.DefineLabel(); var cont = _il.DefineLabel(); var end = _il.DefineLabel();
                 var neg = _il.DefineLabel(); var bodyL = _il.DefineLabel();
                 _loops.Add((LoopLabel(s), cont, end));
