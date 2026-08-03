@@ -19,7 +19,8 @@
 #     [1,0,2] / AQAC   the rule
 #     [1,2,2] / AQIC   the nullable arm deciding it a second time
 +"nullableFlags":[1,0,2]
-+"name":"System.Runtime.CompilerServices.NullableAttribute"},"args":[{"bytes":"AQAC"}]
++"name":"System.Runtime.CompilerServices.NullableAttribute"
++"bytes":"AQAC"
 -"nullableFlags":[1,2,2]
 -"bytes":"AQIC"
 # `alone`'s parameter is the same node with nothing after it: byte 0 is the whole walk, no position is nullable, and a
