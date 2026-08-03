@@ -32,8 +32,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   Kotlin function arities of **23 and above have no CLR delegate and are refused** by bir2cir, naming the source
   file and the arity. The limit is the representation's, not the frontend's: the frontend resolves
   `kotlin.FunctionN` for any N, but each arity is a distinct pre-baked type in the stdlib and Kotlin's function
-  types are unbounded, so the family cannot grow another row — going further needs a variadic representation.
-  Arities 0..22 are the supported surface, recorded in `docs/dotkt-semantics.md` §8e-bis.
+  types are unbounded, so the family cannot grow another row — going further needs a variadic representation. The
+  bound is on DELEGATES, so a `suspend` function type is unaffected at any arity: it is an object carrier, not a
+  delegate, and 23 suspend parameters compile and run exactly as 2 do. Arities 0..22 are the supported surface,
+  recorded in `docs/dotkt-semantics.md` §8e-bis.
 
 - **NRT-only fixed/`params` overload inversions now resolve like C# without compiler or library special cases (#367).**
   For a foreign CLR family whose fixed signature is exactly a `params` overload's physical prefix and whose Kotlin

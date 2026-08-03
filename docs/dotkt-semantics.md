@@ -1334,6 +1334,7 @@ occupies a delegate slot, so it counts toward that arity; a `suspend` function t
 | 17..22, returns `Unit` | `DotKt.Runtime.CompilerServices.KAction\`17` … `KAction\`22` | **the DotKt stdlib** |
 | 17..22, returns a value | `DotKt.Runtime.CompilerServices.KFunc\`18` … `KFunc\`23` (the return type is the last type argument) | **the DotKt stdlib** |
 | 23 and above | — | **unsupported — refused by bir2cir** (see below) |
+| any arity, `suspend` | not a delegate — an object carrier (§4) | **no arity limit applies** |
 
 `System.Func`/`Action` stop at 16 value parameters, so 17..22 is the band that needs a DotKt type — and 22 is where
 it stops, because each arity is one more pre-baked type in the stdlib (see the refusal below). Those six pairs are
@@ -1362,6 +1363,20 @@ another row. Going further needs a variadic representation, which is a separate 
 where it decides the representation, naming the source file and the arity; nothing is minted for it anywhere.
 Arities 0..22 are the supported surface, and every one of them has exactly one definition site. A receiver counts
 toward the arity, so the practical remedy is to group parameters into a class or pass them as a collection.
+
+**The limit is on delegates, so a `suspend` function type has no arity limit at all.** A suspend type is not a
+delegate: it lowers to an object carrier plus `[KotlinSuspendFunctionType]` (§4), which costs nothing per arity, so
+`suspend (…23 params…) -> R` — and `suspend R.(…22 params…) -> R`, receiver included — compiles, emits and
+runs exactly as a two-parameter one does, same-module and across a module boundary. Measured rather than
+assumed: across
+the entire stdlib build, every suspend function type that reaches the delegate path at all has arity **1** (the
+`sequence {}` / `iterator {}` receiver lambda, whose arity the stdlib's own signature fixes), and an application's
+own suspend lambda is replaced by its state machine before type lowering runs. Coverage:
+`tests/coroutines/fixtures/WideSuspendFunctionTypeTests.kt`.
+
+Two positions of a suspend function type do not survive a module boundary — a **return** and one **nested in a
+generic** (`List<suspend (…) -> R>`) are not restored by the consumer's frontend. That is a property of the carrier,
+not of arity: it is identical at arity 2 and 23, and is unrelated to this section.
 
 ## 8f. A SOURCE declaration wins over a reference-KLIB-projected copy of the same identity (#15)
 
@@ -1907,7 +1922,7 @@ Current deliberate limits are:
 - A function type of 17..22 parameters is not `System.Func`/`Action` (they stop at 16) but the stdlib's canonical
   `KFunc`/`KAction` — one definition for the whole platform. An extension receiver counts toward the arity, and
   23 and above has no CLR delegate at all and is refused — the frontend accepts it, the representation cannot.
-  §8e-bis.
+  A `suspend` function type is not a delegate, so no arity limit applies to it. §8e-bis.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
 - A value a call supplies that the emitted CLR shape has no slot for is still evaluated (a static-field read runs a type initializer; a field read can throw) — only a literal/local/`this`-class load is dropped. §7a.
 - A value-type `x?.suspendFoo()` across a suspension is no longer boxed: the conditional's slot is typed from its live branch, and a slot the backend cannot type is a compile-time refusal rather than a `kotlin.Any` box. §7b.

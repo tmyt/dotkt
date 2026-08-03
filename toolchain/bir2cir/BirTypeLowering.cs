@@ -300,6 +300,13 @@ static class BirTypeLowering
             case TypeNode.Fn fn:
                 // A suspend-fn VALUE in a general TYPE slot is a Continuation state-machine OBJECT (not a delegate)
                 // -> erase to object; a plain fn is a delegate (Func/Action) with lowered ret/params.
+                // This erasure is also why LowerFnDelegate's arity ceiling does not reach a suspend function type,
+                // and why it must NOT be hoisted in front of this branch: a suspend type never becomes a delegate,
+                // so its arity costs nothing. MEASURED, not assumed — across the whole stdlib build every suspend fn
+                // that does reach the delegate path (LowerFuncTypeValued) has arity 1, the sequence/iterator receiver
+                // lambda whose arity the stdlib's own signature fixes; an app's suspend lambda is replaced by its
+                // state machine before this pass runs. Coverage:
+                // tests/coroutines/fixtures/WideSuspendFunctionTypeTests.kt.
                 return fn.Suspend ? ObjectType : LowerFnDelegate(fn, refBuild, force);
             case TypeNode.Nullable n:
             {
@@ -340,6 +347,10 @@ static class BirTypeLowering
     // resolves `kotlin.FunctionN` for arbitrary N, because its builtin provider synthesizes the class on demand — it
     // is a property of the REPRESENTATION: a delegate must be a real type in a real assembly, and an unbounded family
     // cannot be pre-baked into the stdlib. Extending it means a variadic representation, not one more row.
+    //
+    // It bounds DELEGATES, so it bounds non-suspend function types only. A `suspend` function type is erased to an
+    // object carrier before it could arrive here (LowerType's Fn case) and has NO arity limit: 23 suspend parameters
+    // compile, emit and run exactly as 2 do, same-module and across a module boundary.
     const int MaxDelegateArity = 22;
     const int MaxBclDelegateArity = 16;
 
