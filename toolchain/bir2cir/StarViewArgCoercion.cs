@@ -37,9 +37,22 @@ static class StarViewArgCoercion
     {
         "kotlin.collections.List",
         "kotlin.collections.Collection",
+    };
+
+    // The LAZY arm. `Iterable<T>` and `Sequence<T>` both lower to `IEnumerable<T>`, which is exactly what
+    // `System.Linq.Enumerable.Cast<object>` produces from the non-generic `IEnumerable` every enumerable carries —
+    // so these two need no snapshot at all. That matters beyond cost: a `Sequence` may be INFINITE, and
+    // materializing one to fill a `Sequence<Any?>` parameter turns `generateSequence(1) { it + 1 }.first()` from
+    // an immediate answer into a hang. It is also the same conversion StarArrayMemberLowering uses for a
+    // star-projected `for`-loop subject, which is the same question asked at the same seam.
+    static readonly HashSet<string> LazyFillable = new(StringComparer.Ordinal)
+    {
         "kotlin.collections.Iterable",
         "kotlin.sequences.Sequence",
     };
+
+    static readonly TypeNode CastResult =
+        new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { new TypeNode.Fqn("object") });
 
     public static void Apply(JsonNode root) => Walk(root);
 
@@ -71,6 +84,20 @@ static class StarViewArgCoercion
             if (args[i] is not JsonObject arg || !Abandons(TypeJson.Read(arg["sty"]))) continue;
             if (TypeJson.Read(sig[i]) is not TypeNode declared) continue;
             var want = Substitute(declared, typeArgs);
+            if (IsLazyFillable(want))
+            {
+                args[i] = new JsonObject
+                {
+                    ["k"] = "clrGenericStatic",
+                    ["type"] = TypeJson.Fqn("System.Linq.Enumerable"),
+                    ["method"] = "Cast",
+                    ["typeArgs"] = new JsonArray { TypeJson.Fqn("object") },
+                    ["memberSig"] = new JsonArray { TypeJson.Fqn("System.Collections.IEnumerable") },
+                    ["args"] = new JsonArray { arg.DeepClone() },
+                    ["sty"] = TypeJson.Write(CastResult),
+                };
+                continue;
+            }
             if (Helper(want) is not (string method, TypeNode result)) continue;
             args[i] = new JsonObject
             {
@@ -82,6 +109,9 @@ static class StarViewArgCoercion
             };
         }
     }
+
+    static bool IsLazyFillable(TypeNode want) =>
+        want is TypeNode.Fqn { Args: { Length: 1 } a } f && LazyFillable.Contains(f.Name) && IsObjectish(a[0]);
 
     // The materializing helper for a parameter the projection cannot inhabit, plus the type it produces (which
     // becomes the wrapper's own `sty`). Null when the parameter is not one of the two shapes a boxed snapshot

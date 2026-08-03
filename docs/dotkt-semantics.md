@@ -101,11 +101,19 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
     at `object` that the value does not inhabit either. Read-only `List`/`Collection`/`Iterable`/`Sequence`
     receivers and `Array` parameters get a **boxing materialization** at the call (`clrStarToList` /
     `clrStarToArray`); enumeration into a `Sequence` stays lazy (`Enumerable.Cast<object>`). The snapshot is
-    observationally identical for a read-only receiver EXCEPT for REFERENCE IDENTITY: `f(l)` inside such a call
-    receives a copy, so `x === l` inside the callee is false and a later mutation of the original is not seen by
-    the value the callee kept. The mutable aliases and `Map` are deliberately NOT converted, so a projection
-    meeting a mutable generic parameter keeps today's behavior (it still faults for a value element) rather than
-    silently swallowing a write.
+    observationally identical for a read-only receiver EXCEPT for REFERENCE IDENTITY. **This is a deviation, and
+    for a REFERENCE-element collection it is a behavior change on code that worked**: the callee receives a copy,
+    so `x === l` inside it is false and a later mutation of the original is not seen by the value it kept. A
+    reference-element collection needs no conversion at all — covariance already makes it inhabit the parameter —
+    but the distinction exists only at run time (the star abandoned the element type) and Kotlin cannot spell the
+    test: `is List<Any?>` is the star-equivalent upper bound, so it answers true for a `List<Int>` too and would
+    skip precisely the copy that is required, and `is Array<Any?>` is rejected outright as an erased check.
+    Closing condition: a test for the reified `IReadOnlyList<object>` / `object[]` instantiation, expressible only
+    below the Kotlin surface. `Iterable`/`Sequence` parameters do NOT pay this — they are filled lazily with
+    `Enumerable.Cast<object>`, which both preserves laziness (a `Sequence` may be infinite, and materializing one
+    would hang) and allocates no copy. The mutable aliases and `Map` are deliberately NOT converted, so a
+    projection meeting a mutable generic parameter keeps today's behavior (it still faults for a value element)
+    rather than silently swallowing a write.
   - `MutableSet<*>.clear()` throws `UnsupportedOperationException` by name: `Clear()` exists on the non-generic
     `IList` and `IDictionary` but not on the non-generic `ICollection`, and a `HashSet<T>` carries neither — its
     `Clear` lives only on the generic `ICollection<T>`, which an abandoned element type cannot name. It closes with
@@ -123,7 +131,17 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
     today: `AbstractCollection<E>`'s forwarding bridge then calls through a `TypeBuilder` generic instantiation,
     which Reflection.Emit cannot resolve members on. Closing condition: ilemit re-anchors a self-instantiation call
     through `TypeBuilder.GetMethod`, after which `FBoundStarProjectionErasure` marks every public generic needed.
-    The previous behavior was worse and silent — the read returned the value of a DIFFERENT field.
+    The previous behavior was worse and silent — the read returned the value of a DIFFERENT field, which is why
+    this is MEASURED rather than described: the `RT_XFAIL` entry `roundtrip-starprojection-referenced-generic`
+    drives the two-module repro and pins the emit diagnostic, so it flips to FIXED when the cause closes and
+    reddens if the symptom drifts again.
+  - **A projected concrete collection CLASS (`HashSet<*>`, `LinkedHashMap<*,*>`) and the `inline` extensions
+    (`List<*>.map/forEach/filter/any`) are refused at compile time.** Both are the same seam: the SLOT takes the
+    non-generic view for any constructed type carrying a star, while the erased MEMBER routing is gated on an
+    interface owner (and runs after `InlineSplice` has already substituted the owner to `Iterable<Any?>`), so the
+    two disagree — `bir2cir: no readable/writable property … 'Count' on .NET type 'System.Object'`. Closing
+    condition: the member routing keys on the same fact the slot does. Carried by the `RT_XFAIL` entry
+    `roundtrip-starprojection-referenced-generic`.
   - The `is`/`as` CLASSIFIER is a separate question and takes the TIGHTEST non-generic identity, not the loosest:
     `is Map<*,*>` lowered to the physical view would answer true of a `List` and of a `String`. It keeps
     `IDictionary`/`IList`/`ICollection`/`IEnumerable`.

@@ -88,6 +88,15 @@ declare -A RT_XFAIL=(
 	# NON-NULLABLE twin in the same section fails identically, which is what proves the nullability axis is not
 	# involved — and what keeps this cause out of the entry above, where a forwarder at the reference is the fix.
 	[roundtrip-generic-target-callable-ref]="PRE-EXISTING and NOT #86: a ::fn naming a GENERIC function, bound into a generic function-type slot, is emitted as a ldftn of the open generic-method definition (the newDelegate carries no typeArgs for ilemit to MakeGenericMethod with), so the CLR refuses it with 'not fully instantiated' before any argument is converted. Measured identically on the non-nullable twin (T instead of T?), so no nullable-generic erasure is involved. Closes when the reference carries the instantiation its call site resolved."
+	# WIDER THAN ITS NAME: this entry carries the whole "the projection has no usable physical form" cell. Besides
+	# the cross-module case its section drives, two same-module shapes share the cause and are open with it:
+	# (a) a projected concrete collection CLASS (`HashSet<*>`, `LinkedHashMap<*,*>`) takes the non-generic view on
+	# its SLOT while its members keep the reified binding, because the erased member routing is gated on an
+	# INTERFACE owner — `bir2cir: no readable/writable property … 'Count' on .NET type 'System.Object'`; and
+	# (b) `List<*>.map/forEach/filter/any` are `inline`, so InlineSplice substitutes the owner to `Iterable<Any?>`
+	# long before the routing runs and the spliced `iterator()` binds the reified bridge. Both close by making the
+	# member routing key on the same fact the slot does, which is one measurement pass, not one edit.
+	[roundtrip-starprojection-referenced-generic]="#368: a PUBLIC generic declared in a REFERENCED DotKt module that never star-projects itself has no existential view, so a downstream 'Crate<*>' keeps the REIFIED 'Crate<object>' form its member call binds against — an instantiation the value is not, so the receiver reads as null and the first use throws NullReferenceException. The view is really part of a public generic's ABI (a consumer cannot add an interface to an already-emitted 'Crate<Int>'), but FBoundStarProjectionErasure cannot synthesize it unconditionally today: 'AbstractCollection<E>'s forwarding bridge then calls through a TypeBuilder generic instantiation, which Reflection.Emit cannot resolve members on ('Use TypeBuilder.GetMethod instead') and the stdlib emit dies. Closes when ilemit re-anchors a self-instantiation call through TypeBuilder.GetMethod, after which every public generic is marked needed. NOTE the symptom has already drifted TWICE under this entry — a silent wrong-field read before #368, an emit refusal at an intermediate state, and the run-time fault it pins now — each time caught by the shape rather than absorbed, which is exactly why it pins the shape and not the name."
 	[roundtrip-nullable-vt-generic-seq-mapnotnull]="#86: NOT the cross-module carrier read (measured) — the defect is same-module, inside the stdlib's lazy path. Sequence.mapNotNull builds TransformingSequence<T, object> (its (T) -> R? transform erases R? to object) and hands it to filterNotNull, whose body unchecked-casts a lazily-wrapped object-elemented sequence to Sequence<T>; on the CLR that IS a reified IEnumerable<T>, so at T=Int the wrapper does not implement IEnumerable<int32> and the terminal toList's GetEnumerator is not found — System.EntryPointNotFoundException. The eager Iterable.mapNotNull twin is green because it materializes a fresh typed list instead of wrapping. Needs an element-converting adapter on the lazy sequence path, stdlib-side."
 	# PRUNED by the OVERRIDE-SLOT BRIDGE (#86 D3): the narrowed override called through its OWN declared type. The
 	# override now keeps its own physical `accept(Nullable<int32>)`, so the re-imported surface and the assembly name
@@ -126,6 +135,12 @@ declare -A RT_XFAIL_SHAPE=(
 	[roundtrip-nullable-vt-generic-open-slot-callable-ref]='wrong'
 	[roundtrip-generic-target-callable-ref]='not fully instantiated'
 	[roundtrip-nullable-vt-generic-referenced-arity-dispatch]='a0:2'
+	# The projection has no existential view, so its slot keeps the REIFIED `Crate<object>` form and the member
+	# call binds against an instantiation the value is not — the receiver reads as null and the first use throws.
+	# This shape has already been REVISED once by this very mechanism: an intermediate state resolved the missing
+	# view to `object` and refused at emit instead, the entry reddened as a SHAPE MISMATCH rather than absorbing
+	# it, and the reason above was corrected to match. That is the entry earning its keep.
+	[roundtrip-starprojection-referenced-generic]='System.NullReferenceException'
 	# The PINNED entries. Each shape is the CLR's own exception name, which is what distinguishes these three from
 	# one another and from any unrelated break that would otherwise satisfy a name-only entry.
 	[roundtrip-nullable-vt-generic-objectish-constraint-value]='System.InvalidProgramException'
@@ -2186,6 +2201,59 @@ cmexpected="$(printf 'True\nTrue\nTrue\nFalse\n1\n3')"
 run_app cmactual "$CM/appil/VerApp.dll"
 check_output roundtrip-comparable-meta "$cmexpected" "$cmactual" \
 	"reference KLIB restores operator compareTo + kotlin.Comparable<Ver>; comparison operators and sorted() compile and run #179"
+
+# ----- STAR-PROJECTING a generic declared in a REFERENCED module (#368) ------------------------------
+# A star projection abandons a type argument, so its physical form must be a type EVERY instantiation inhabits
+# (docs/dotkt-semantics.md §2). For a DotKt generic that form is the SYNTHESIZED `Crate$dotkt_star` existential
+# interface — and only the DEFINING module can add it, because a consumer cannot make an already-emitted
+# `Crate<Int>` implement anything. FBoundStarProjectionErasure synthesizes it on demand, so a library that never
+# star-projects its own generic ships without one and the consumer's `Crate<*>` has no physical form at all.
+#
+# THIS LANE, not NUnit: the consumer does not fail a test, it fails to EMIT — an ilemit refusal produces no
+# assembly, which in a ProjectReference suite breaks the build instead of producing a test result. Compile-ERROR
+# verification is what this shell lane is for. Its two DotKt modules also rule out the same-module reading: the
+# `Box<*>` half of this behavior is covered in-process by StarProjectionTests.starProjectedUserGeneric and is
+# green, so a failure here is the MODULE BOUNDARY and nothing else.
+SP="$ROOT/build/roundtrip-starprojection"; rm -rf "$SP"; mkdir -p "$SP/lib" "$SP/app" "$SP/libbir" "$SP/libil" "$SP/appbir" "$SP/appil"
+cat > "$SP/lib/lib.kt" <<'EOF'
+package crates
+// A public generic that never star-projects ITSELF — the whole point: nothing here makes the library synthesize
+// the existential view, so whether the consumer gets one is a question about the ABI, not about this file.
+class Crate<T>(val v: T) {
+    fun raw(): Any? = v
+    fun label(): String = "crate"
+}
+fun makeIntCrate(): Crate<Int> = Crate(41)
+fun makeStrCrate(): Crate<String> = Crate("s")
+EOF
+cat > "$SP/app/app.kt" <<'EOF'
+import crates.Crate
+import crates.makeIntCrate
+import crates.makeStrCrate
+
+// Every member a star receiver can still name: one returning the abandoned T (as Any?), one naming it nowhere.
+fun starRaw(c: Crate<*>): Any? = c.raw()
+fun starField(c: Crate<*>): Any? = c.v
+fun starLabel(c: Crate<*>): String = c.label()
+
+fun main() {
+    println(starRaw(makeIntCrate()))     // 41     a VALUE element: the instantiation the reified view excludes
+    println(starRaw(makeStrCrate()))     // s      a REFERENCE element, which covariance would rescue on its own
+    println(starField(makeIntCrate()))   // 41     the same abandoned T read through a property
+    println(starLabel(makeIntCrate()))   // crate  a member naming T nowhere still needs an owner to dispatch on
+}
+EOF
+"$LAUNCHER" "$SP/lib" -no-stdlib -classpath "$CP" -d "$SP/libbir" >/dev/null 2>&1 || true
+emit_il "$SP/libil" CrateLib "$SP/libbir"/*.bir.json
+dotnet "$RETARGET_DLL" "$SP/libil/CrateLib.dll" --compile-refs "$REFS" >/dev/null 2>&1 || true
+project_reference_klib "$SP/libil/CrateLib.dll" "$SP/CrateLib.klib"
+"$LAUNCHER" "$SP/app" -no-stdlib -classpath "$CP$KLIB_CP_SEP$SP/CrateLib.klib" -d "$SP/appbir" >/dev/null 2>&1 || true
+emit_il "$SP/appil" CrateApp --ref "$SP/libil/CrateLib.dll" "$SP/appbir"/*.bir.json
+cp "$SP/libil/CrateLib.dll" "$SP/appil/" 2>/dev/null || true
+spexpected="$(printf '41\ns\n41\ncrate')"
+run_app spactual "$SP/appil/CrateApp.dll"
+check_output roundtrip-starprojection-referenced-generic "$spexpected" "$spactual" \
+	"a star-projected generic from a REFERENCED DotKt module resolves its existential view cross-module #368"
 
 # ---- verdict --------------------------------------------------------------------------------------
 echo "------------------------------------"

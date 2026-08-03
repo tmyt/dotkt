@@ -62,7 +62,9 @@ static class FBoundStarProjectionErasure
         // instantiation, which Reflection.Emit cannot resolve members on ("Use TypeBuilder.GetMethod instead").
         // Closing condition: ilemit re-anchors a self-instantiation call through TypeBuilder.GetMethod, after
         // which this becomes `foreach (var owner in owners.Values) if (IsPublic(owner.Def)) owner.Needed = true;`.
-        // Tracked by the RT_XFAIL entry `starprojection-referenced-generic`.
+        // MEASURED, not merely described: the RT_XFAIL entry `roundtrip-starprojection-referenced-generic`
+        // (tests/roundtrip/scenarios/run.sh) drives the two-module repro and pins the emit diagnostic, so this
+        // flips to FIXED the day the cause closes and reddens the day the symptom changes instead.
         MarkNeededClosure(owners);
 
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);

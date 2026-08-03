@@ -45,6 +45,12 @@ sealed class Pipeline
 
         var birFiles = LoadBirFiles(_options.Inputs);
         var refs = ReferenceMetadataIndex.Build(_options.CompileReferences);
+        // The projection-view oracle, bound ONCE for the whole run. It is bound HERE rather than at type lowering
+        // because the SLOT and the MEMBER must be decided by the same fact: MemberCallSubstitution asks whether a
+        // receiver's slot took a view long before BirTypeLowering gives it one, and two predicates that can
+        // disagree is exactly how a receiver ends up typed as a view whose members nothing routed.
+        StarProjectionView.Bind(refs.ResolveNetType,
+            fqn => refs.Aliases.TryGetValue(fqn, out var bcl) ? bcl : null);
         // Fail-loud: a ref.dll scan swallows load/type failures into Diagnostics (so ONE malformed type never aborts the
         // whole scan). Surface them here — a silent ref-scan miss otherwise surfaces as a distant EntryPointNotFound/NRE
         // with no "ref scan failed" signal. An empty Diagnostics stays silent (the happy path prints nothing).
@@ -895,8 +901,7 @@ sealed class Pipeline
             // `sig`/`typeArgs`/`sty` are all still Kotlin facts here.
             if (!_options.RefBuild) StarViewArgCoercion.Apply(substituted);
             CheckStySanity(outputName, substituted);
-            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn,
-                refs.ResolveRefType);
+            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through

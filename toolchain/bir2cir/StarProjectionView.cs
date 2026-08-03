@@ -32,18 +32,30 @@ using DotKt.Bir;
 // implement it. Three providers, one rule.
 //
 // Members are NOT the view's problem: a non-generic view exposes only erased members, so a star-projected
-// member call is routed by StarProjectionLowering to an `Any`-taking CLR-stdlib helper (the established
+// member call is routed by MemberCallSubstitution to an `Any`-taking CLR-stdlib helper (the established
 // ClrMapDefaults idiom) that reads the value through the non-generic BCL facades. That keeps the physical view
 // free to be the loosest sound type instead of the tightest guessable one.
 //
 // The `is`/`as` CLASSIFIER is a different question and is not decided here: a runtime shape test wants the
 // TIGHTEST sound classifier (`IList`/`IDictionary`/`ICollection`), while a slot wants the LOOSEST sound type.
-// StarProjectionLowering owns the classifier table; this class owns the slot.
+// StarProjectionClassifier owns the classifier table; this class owns the slot.
 static class StarProjectionView
 {
     public const string RawEnumerable = "System.Collections.IEnumerable";
     public const string ArrayView = "System.Array";
-    public const string ObjectView = "object";
+
+    // The non-generic BCL collection facades. A view that is one of these can SERVE the members a projected
+    // collection still names (Count / get_Item / GetEnumerator, erased to object), which is what lets
+    // MemberCallSubstitution route them; any other view is a slot type only. This is a property of the DERIVED
+    // view, not a list of Kotlin type names — `HashSet<*>` and a projected .NET `List<T>` reach it by derivation.
+    static readonly HashSet<string> RawCollectionFacades = new(StringComparer.Ordinal)
+    {
+        "System.Collections.IEnumerable", "System.Collections.ICollection",
+        "System.Collections.IList", "System.Collections.IDictionary",
+    };
+
+    public static bool IsRawCollectionFacade(TypeNode t) =>
+        t is TypeNode.Fqn { Args: null } f && RawCollectionFacades.Contains(f.Name);
 
     // The CLR type resolver (ReferenceMetadataIndex.ResolveNetType), bound per bir2cir run. Single-threaded, so a
     // static binding is sufficient — the same shape BirTypeLowering's `_aliases`/`_isValueFqn` oracles use.
@@ -74,7 +86,12 @@ static class StarProjectionView
     }
 
     /// The physical view of a Kotlin type whose CLR form is the constructed generic `clrFqn<args>`: the
-    /// most-derived non-generic ancestor of that CLR type, or `object` when it has none. Cached per CLR name.
+    /// most-derived non-generic ancestor of that CLR type, or NULL when it has none. Cached per CLR name.
+    ///
+    /// NULL IS A REAL ANSWER, and `object` is not. A projection with no non-generic ancestor has no form that
+    /// improves on the reified `G<object>` the lowering already produced: `object` would strip every member the
+    /// receiver still names and turn a working (or merely wrong) program into a backend abort. The caller falls
+    /// back to the reified form, which is what this type did before the view existed.
     public static string ViewOfClrGeneric(string clrFqn, int arity)
     {
         var key = clrFqn + "`" + arity;
@@ -86,22 +103,32 @@ static class StarProjectionView
 
     static string ComputeView(string clrFqn, int arity)
     {
+        // NOTE the resolver: ResolveNetType, which excludes `kotlin.*`, DotKt-metadata owners and this
+        // compilation's own emitted types. That exclusion is load-bearing, not incidental. A DotKt type's
+        // REFERENCE assembly carries the pure-Kotlin surface — `LinkedHashSet<E>` there implements
+        // `kotlin.collections.MutableSet<E>`, not the `ICollection<E>` it physically becomes — so deriving an
+        // ancestor from it reads the wrong artifact and answers "none" for a type that has one. A DotKt generic's
+        // view is the SYNTHESIZED `$dotkt_star` interface FBoundStarProjectionErasure attaches before this pass;
+        // where that does not exist, there is no view, and null says so.
         var t = _resolveClr(clrFqn, arity);
-        if (t == null) return ObjectView;
+        if (t == null) return null;
         // A non-generic ancestor is assignment-compatible with EVERY instantiation, so any of them satisfies the
-        // rule; prefer the most derived one so the view keeps as much of the surface as it soundly can.
+        // rule; prefer the most derived one so the view keeps as much of the surface as it soundly can. The BASE
+        // chain is searched FIRST: a base class is more derived than any interface it implements, and reading the
+        // interfaces first would answer `IEnumerable` for a type whose base already states more.
+        for (var b = t.BaseType; b != null && b != typeof(object); b = b.BaseType)
+            if (!b.IsGenericType && b != typeof(ValueType)) return b.FullName;
         Type best = null;
         foreach (var i in t.GetInterfaces())
         {
             if (i.IsGenericType || i.IsGenericTypeDefinition) continue;
-            if (best == null || best.IsAssignableFrom(i)) best = i;
+            // `IsAssignableFrom` is a partial order, so ties are possible; break them on the NAME so the answer
+            // does not depend on the unspecified order GetInterfaces() returns.
+            if (best == null || best.IsAssignableFrom(i)
+                || (!i.IsAssignableFrom(best) && string.CompareOrdinal(i.FullName, best.FullName) < 0))
+                best = i;
         }
-        if (best != null) return best.FullName;
-        // A generic CLASS (a projected .NET `List<T>`, a DotKt generic that reached here) may still have a
-        // non-generic BASE. Walk it before giving up on `object`.
-        for (var b = t.BaseType; b != null; b = b.BaseType)
-            if (!b.IsGenericType && b != typeof(object)) return b.FullName;
-        return ObjectView;
+        return best?.FullName;
     }
 
     /// The physical view of an abandoning projection over `f`, or null when `f` is not one. `f` is in BIR
@@ -115,7 +142,7 @@ static class StarProjectionView
         // ancestor, yet every boxed value DOES implement the non-generic `System.IComparable`, so the derivation's
         // `object` fallback would throw away a real, sound identity.
         if (clr == "System.IComparable") return new TypeNode.Fqn("System.IComparable");
-        return new TypeNode.Fqn(ViewOfClrGeneric(clr, f.Args.Length));
+        return ViewOfClrGeneric(clr, f.Args.Length) is string view ? new TypeNode.Fqn(view) : null;
     }
 
     public static bool IsObjectish(TypeNode t) => t switch

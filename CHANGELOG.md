@@ -26,7 +26,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (`kotlin.collections.ClrStarProjection`) that read the value through the non-generic BCL facades, and a
   projection meeting a generic callee's `object`-instantiated parameter is materialized as a boxing conversion.
   `StarProjectionCountLowering` and `StarProjectionLowering`'s member path were special cases of this rule and are
-  deleted; the `is`/`as` classifier that remains is unchanged in behavior and now runs in the stdlib self-build too.
+  deleted. The `is`/`as` classifier that remains keeps the same non-generic identities, now runs in the stdlib
+  self-build too, and answers for a PARTIAL projection it used to miss — it required every argument to be erased,
+  so `x as Map<String, Any>` fell through to the reified test; one abandoned argument is enough.
+
+  One cell stays open and is now MEASURED rather than described: a public generic declared in a REFERENCED DotKt
+  module that never star-projects itself still has no existential view, because synthesizing one for every public
+  generic breaks the stdlib emit (`AbstractCollection<E>`'s forwarding bridge then calls through a `TypeBuilder`
+  generic instantiation Reflection.Emit cannot resolve members on). The `RT_XFAIL` entry
+  `roundtrip-starprojection-referenced-generic` drives the two-module repro and pins the emit diagnostic, so it
+  flips to FIXED when ilemit re-anchors that call and reddens if the symptom drifts — as it already did once here,
+  from a silent wrong field read to an explicit emit refusal.
 
 ### Changed
 

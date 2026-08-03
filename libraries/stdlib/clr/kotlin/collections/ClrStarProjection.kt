@@ -107,6 +107,13 @@ public fun clrStarIterator(c: Any): Iterator<Any?> = iteratorOverRawEnumerable(c
  * observationally identical for them, and it is the only representation a reified `IReadOnlyList<object>` can take.
  */
 public fun clrStarToList(c: Any): List<Any?> {
+    // THIS COPIES UNCONDITIONALLY, and that costs reference identity — see docs/dotkt-semantics.md §2. A
+    // REFERENCE-element collection already IS an `IReadOnlyList<object>` (covariance works for references) and
+    // would need no copy, but the distinction lives only at run time — the star abandoned the element type — and
+    // Kotlin cannot spell the test: `is List<Any?>` is the star-equivalent upper bound, so it answers TRUE for a
+    // `List<Int>` as well and would skip exactly the copy that is required. Narrowing this needs a test for the
+    // reified `IReadOnlyList<object>` instantiation, which no Kotlin `is` expresses. The `Iterable`/`Sequence`
+    // seam does not pay this: StarViewArgCoercion fills those lazily with `Enumerable.Cast<object>`, no copy.
     val out = ArrayList<Any?>()
     val e = (c as ClrRawEnumerable).GetEnumerator()
     while (e.MoveNext()) out.add(e.current())
@@ -120,6 +127,9 @@ public fun clrStarToList(c: Any): List<Any?> {
  * so copying is the only sound answer.
  */
 public fun clrStarToArray(c: Any): Array<Any?> {
+    // Copies unconditionally, for the same reason [clrStarToList] does: a `String[]` IS an `object[]` and would
+    // need no copy, but Kotlin rejects `is Array<Any?>` outright ("cannot check for instance of erased type"), so
+    // the run-time distinction cannot be spelled here at all.
     val out = arrayOfNulls<Any?>(clrStarSize(c))
     val e = (c as ClrRawEnumerable).GetEnumerator()
     var i = 0
@@ -138,11 +148,18 @@ public fun clrStarSubList(c: Any, fromIndex: Int, toIndex: Int): List<Any?> =
 public fun clrStarListIterator(c: Any, index: Int): ListIterator<Any?> =
     clrListListIterator(clrStarToList(c), index)
 
-/** `MutableList.removeAt(i)` — Kotlin returns the removed element; the non-generic `IList.RemoveAt` is void. */
+/**
+ * `MutableList.removeAt(i)` — Kotlin returns the removed element; the non-generic `IList.RemoveAt` is void.
+ * A `by`-delegating or otherwise user-written `MutableList` implements only the GENERIC `IList<E>`, which an
+ * abandoned element type cannot name, so the non-generic slot is absent and the cast would throw
+ * InvalidCastException with nothing said about why. Refuse by name instead; it closes when a Kotlin collection
+ * implementation is given the non-generic BCL faces (the CollectionBclSlotSynthesis question).
+ */
 public fun clrStarRemoveAt(c: Any, index: Int): Any? {
-    val l = c as ClrRawList
-    val old = l.rawGet(index)
-    l.rawRemoveAt(index)
+    if (c !is ClrRawList) throw UnsupportedOperationException(
+        "removeAt() on a star-projected list whose runtime type carries no non-generic IList slot")
+    val old = c.rawGet(index)
+    c.rawRemoveAt(index)
     return old
 }
 

@@ -981,7 +981,7 @@ static class MemberCallSubstitution
         // which take `Any` for the same reason, and their `get` is by KEY where a list's is by INDEX.
         if (instance && kind == "interface"
             && ownerFqn is not ("kotlin.collections.Map" or "kotlin.collections.MutableMap")
-            && FaithfulHints.HasStarArgument(ownerFqnNode))
+            && TakesCollectionProjectionView(ownerFqnNode, node["recv"]))
         {
             // `listIterator()` and `listIterator(i)` are one erased helper; give the nullary form its index.
             var starArgs = member == "listIterator" && args.Count == 0
@@ -1432,6 +1432,39 @@ static class MemberCallSubstitution
         [("clear", 0)] = "clrStarClear",
         [("Clear", 0)] = "clrStarClear",
     };
+
+    // KNOWN HOLE, and the slot/member seam is where it lives. This branch is gated on `kind == "interface"`, but
+    // BirTypeLowering gives the SLOT its view for any constructed type carrying a star — so a projected concrete
+    // collection CLASS (`HashSet<*>`, `LinkedHashMap<*,*>`) gets the non-generic view on its parameter while its
+    // members keep their reified binding, and the two disagree: `bir2cir: no readable/writable property … 'Count'
+    // on .NET type 'System.Object'`. Widening this guard to classes is the fix and is NOT taken here because it
+    // was not verifiable within one change: with the guard removed the same abort persisted on other receivers,
+    // so the widening needs its own measurement pass rather than a hopeful edit. Tracked by the RT_XFAIL entry
+    // `roundtrip-starprojection-referenced-generic`, whose reason carries this cell too.
+    //
+    // Does this call's receiver sit in a slot that took a projection VIEW which can serve collection members?
+    // Keyed on StarProjectionView's own answer — the same fact BirTypeLowering will use to type the slot — never
+    // on a table of Kotlin type names: `HashSet<*>` and a projected .NET `List<T>` reach a non-generic facade by
+    // derivation, and a name list silently omits them (their `size` then binds `Count` on a facade without one).
+    // A projection with NO view is deliberately false here: its slot keeps the reified form, so its members keep
+    // their ordinary generic binding.
+    //
+    // The DECLARED OWNER is the only fact asked. The receiver's `sty` stamp is deliberately NOT consulted: after an
+    // INLINE SPLICE the spliced body of `List<*>.map { }` carries an owner already substituted to `Iterable<Any?>`
+    // while the receiver still stamps `List<*>`, so reading the stamp would route those too — but a spliced body
+    // also carries receivers whose stamp has been retyped to `Any` by the splice itself, and routing on those
+    // emits a member against `System.Object`. That is why `List<*>.map/forEach/filter/any` remain broken (they are
+    // `inline`, and InlineSplice runs long before any of this); closing them needs the splice to preserve the
+    // projection, not a second predicate here that cannot tell the two receivers apart.
+    static bool TakesCollectionProjectionView(TypeNode ownerFqnNode, JsonNode recv) =>
+        HasCollectionView(ownerFqnNode);
+
+    static bool HasCollectionView(TypeNode t)
+    {
+        while (t is TypeNode.Nullable n) t = n.Of;
+        return t is TypeNode.Fqn { Args: { } args } f && args.Any(a => a is TypeNode.Star)
+            && StarProjectionView.IsRawCollectionFacade(StarProjectionView.ViewOf(f));
+    }
 
     // `callStatic ClrStarProjectionKt.<helper>(recv, args...)` — NO type arguments: the helpers are non-generic
     // precisely because there is no instantiation left to name.

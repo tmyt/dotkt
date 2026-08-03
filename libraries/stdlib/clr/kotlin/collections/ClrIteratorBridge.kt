@@ -46,7 +46,7 @@ public fun <T> iteratorOverEnumerable(self: ClrEnumerable<T>): Iterator<T> =
 /** The RAW (non-generic `System.Collections.IEnumerator`) twin of [KotlinIteratorOverEnumerator] — #74b(ii): a
  *  star-projected/erased collection (`Collection<*>`/`Map<*,*>`) only implements the NON-generic BCL enumerable
  *  facade (`ClrRawEnumerable`/`ClrRawEnumerator`, ClrNestedToString.kt), never a reified `IEnumerable<object>` —
- *  so StarProjectionLowering's `.iterator()` binding must wrap THIS enumerator, not the generic one above, while
+ *  so the erased `.iterator()` binding (MemberCallSubstitution) must wrap THIS enumerator, not the generic one above, while
  *  still producing a genuine `Iterator<Any?>` (so the ordinary hasNext/next consumer dispatch — which re-points
  *  at the REAL referenced `kotlin.collections.Iterator<E>` — resolves against an object that actually implements it). */
 internal class KotlinIteratorOverRawEnumerator(private val e: ClrRawEnumerator) : Iterator<Any?> {

@@ -399,13 +399,10 @@ static class BirTypeLowering
         n is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s != null;
 
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
-        Func<string, bool> isValueFqn = null, Func<string, int, Type> resolveClrType = null)
+        Func<string, bool> isValueFqn = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _isValueFqn = isValueFqn ?? (_ => false);
-        // The projection-view derivation reads the CLR ancestry of an aliased/projected generic; bind its oracles
-        // to the same reference index the alias map came from.
-        StarProjectionView.Bind(resolveClrType, AliasBcl);
         return LowerNode(root, refBuild, force: false);
     }
 

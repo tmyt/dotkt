@@ -10,7 +10,8 @@ using DotKt.Bir;
 // `IEnumerable<object>` at runtime. The typed `IEnumerable<string>::GetEnumerator` slot the app then dispatches is
 // therefore absent -> System.EntryPointNotFoundException (cases/il-seqforin).
 //
-// The variance-immune fix (the same non-generic escape hatch StarProjectionCountLowering / StarProjectionLowering use
+// The variance-immune fix (the same non-generic escape hatch StarProjectionClassifier and the erased member
+// routing in MemberCallSubstitution use
 // for reification/variance mismatches): dispatch the enumeration through the NON-generic `System.Collections.IEnumerable`
 // / `IEnumerator` — which EVERY `IEnumerable<T>` implements regardless of the erased element — and cast each
 // `get_Current` (object) to the loop element type. This keeps `elem` for the yielded-value cast (object -> string /
@@ -101,7 +102,7 @@ static class SequenceForEachLowering
         fe["body"] = new JsonArray { enumVar, whileStmt };
     }
 
-    // The non-generic BCL interfaces StarProjectionLowering rewrites a star-projected/erased collection `cast` onto
+    // The non-generic BCL interfaces StarProjectionClassifier rewrites a star-projected/erased collection `cast` onto
     // (#74b) — a `for`-loop source landing here already wearing one of these needs the SAME non-generic dispatch a
     // Sequence does (its underlying runtime value, e.g. a `List<int>`, has no typed `IEnumerable<object>` slot).
     static readonly HashSet<string> NonGenericIfaces = new(System.StringComparer.Ordinal)
@@ -112,7 +113,7 @@ static class SequenceForEachLowering
 
     // True iff the src expression's static type is `kotlin.sequences.Sequence` (the erased-anon-object Sequence
     // case), OR (#74b) it is a `cast` to a star-projected/erased collection — either ALREADY rewritten to a
-    // non-generic BCL interface by StarProjectionLowering (Phase 1, runs BEFORE this pass — #74b(i)) or
+    // non-generic BCL interface by StarProjectionClassifier (runs BEFORE this pass — #74b(i)) or
     // (defensively, in case ordering ever changes) still the raw star-projected `kotlin.collections.*` alias.
     static bool IsSequenceTyped(JsonObject src)
     {

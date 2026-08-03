@@ -9,7 +9,7 @@
  * recurses. Two constraints force the non-generic BCL facades below rather than a re-dispatch to the generic helpers:
  *   1. Re-dispatching an erased element to `clrCollToString<Any?>` would infer `Collection<object>` = `IReadOnlyCollection
  *      <object>`, which a runtime `List<Int>` is NOT assignable to (no value-type covariance on the CLR) -> InvalidCast.
- *   2. `StarProjectionLowering` (which rewrites `is Collection<*>` / star-member-calls to the non-generic BCL interface)
+ *   2. `StarProjectionClassifier` (which rewrites `is Collection<*>` to the non-generic BCL interface)
  *      runs ONLY in app builds, NOT this stdlib self-build — so `is Collection<*>` here would isinst the *generic*
  *      `IReadOnlyCollection<object>` and MISS a `List<Int>`.
  * Every substituted BCL collection (`List<T>`/`HashSet<T>`) implements the non-generic `System.Collections.ICollection`

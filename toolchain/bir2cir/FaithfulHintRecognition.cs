@@ -315,7 +315,7 @@ static class FaithfulHintRecognition
                 // (cast-target) type is the collection, but its VALUE peels to the erased `Any` local — so the generic
                 // clrCollToString/clrMapToString below can't bind (no value-type covariance on the CLR). Route to
                 // clrElemToString(Any?), which detects the collection at runtime via the non-generic BCL facades. The
-                // cast node is kept (StarProjectionLowering re-points it to the non-generic interface, assignable to Any?).
+                // cast node is kept (StarProjectionClassifier re-points it to the non-generic interface, assignable to Any?).
                 if (FaithfulHints.IsStarProjectedColl(StaticType.Surface(args[i], scope)))
                     args[i] = FaithfulHints.ElemToString(args[i]);
                 else if (StaticType.Value(args[i], scope) is TypeNode t && FaithfulHints.ClassifyColl(t) is { } c)
