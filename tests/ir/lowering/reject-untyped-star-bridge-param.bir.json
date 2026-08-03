@@ -1,0 +1,40 @@
+{
+  "fileClass": "RejectUntypedStarBridgeParamKt",
+  "hasMain": false,
+  "fields": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "consume",
+      "static": true,
+      "params": [
+        { "name": "g", "type": { "t": "fqn", "name": "G", "args": [{ "t": "star" }] } }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": []
+    }
+  ],
+  "types": [
+    {
+      "name": "G",
+      "kind": "class",
+      "typeParams": ["T"],
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "attrs": [],
+      "methods": [
+        {
+          "name": "put",
+          "static": false,
+          "vis": "public",
+          "params": [{ "name": "value" }],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "body": []
+        }
+      ]
+    }
+  ]
+}
