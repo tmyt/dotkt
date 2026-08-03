@@ -905,7 +905,7 @@ sealed class Pipeline
             // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
             // is a pass that changed a node's result type without carrying `sty` with it.
             CheckStySanity(outputName, substituted);
-            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
+            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through
@@ -1022,6 +1022,20 @@ sealed class Pipeline
             // static type in the assembly). Skips only when types AND methods AND fields are all empty; never in ref.
             if (!_options.RefBuild && IsEmptyCir(lowered)) continue;
             files.Add(new CirFile(outputName, lowered.ToJsonString(JsonOptions.Indented)));
+        }
+
+        // #220: both stdlib twins define the canonical wide-delegate family. This is a physical CLR declaration,
+        // authored directly as CIR after all source-semantic passes have completed; it is not a Kotlin source type
+        // and must not be fed back through those passes. The fixed synthetic file also makes the ownership visible in
+        // captured CIR instead of letting ilemit manufacture an undeclared ABI from a build-mode switch.
+        if (_options.StdlibMode != BuildStdlibMode.App)
+        {
+            if (files.Any(f => f.OutputName == CanonicalDelegateSynthesis.OutputName))
+                throw new InvalidOperationException(
+                    $"bir2cir: reserved synthetic CIR name '{CanonicalDelegateSynthesis.OutputName}' collides with an input file");
+            files.Insert(0, new CirFile(
+                CanonicalDelegateSynthesis.OutputName,
+                CanonicalDelegateSynthesis.SynthDefsFile().ToJsonString(JsonOptions.Indented)));
         }
 
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR

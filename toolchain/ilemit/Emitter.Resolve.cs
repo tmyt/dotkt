@@ -508,10 +508,10 @@ sealed partial class Emitter
             // NOT a TypeBuilder instantiation (those go through the branches above / can't be reflected pre-bake).
             // ps==null => a REFERENCED method (an emitted MethodBuilder records its params in _mparams). Read the
             // concrete signature straight off the instantiation so paramTypes isn't left NULL — a null paramTypes makes
-            // EmitArgsTyped emit each arg RAW (no target), so a lambda arg to a stdlib method whose param is the
-            // synthetic `KFunc` delegate (a Kotlin function type over a stdlib TypeBuilder, e.g. MapsKt.mapValues's
-            // `(Map.Entry)->R`) is built as `System.Func` and never rewrapped -> ilverify StackUnexpected [found
-            // System.Func][expected KFunc]. Covers a generic static on a NON-generic file class (MapsKt) too — the
+            // EmitArgsTyped emit each arg RAW (no target), so a lambda arg to a stdlib method's DELEGATE parameter
+            // (e.g. MapsKt.mapValues's `(Map.Entry)->R`) is self-built from its own `funcType` and never rewrapped into
+            // the callee's declared delegate type -> ilverify StackUnexpected wherever the two instantiations differ.
+            // Covers a generic static on a NON-generic file class (MapsKt) too — the
             // prior `DeclaringType.IsGenericType` guard only caught external-generic owners (Result`1). Excludes a
             // MethodBuilderInstantiation owner (GetParameters throws pre-bake), which never reaches here (ps!=null).
             if (ps == null && inst is not MethodBuilder
@@ -521,8 +521,9 @@ sealed partial class Emitter
                 // TypeBuilder arg — `AutoCloseableKt.use<Res,R>`, Res a user class being emitted), its GetParameters()/
                 // ReturnType come back with the method's type params UNSUBSTITUTED (open `Func<T,R>`). Substitute them
                 // to the concrete `targs` so a nested delegate param (`Func<T,R>` -> `Func<Res,int>`) is a rewrap
-                // target — else the block arg is emitted against the open param and self-built as a mismatched KFunc
-                // (ilverify StackUnexpected). A runtime instantiation already yields concrete members -> no-op.
+                // target — else the block arg is emitted against the OPEN param and self-built into a delegate that
+                // does not match the callee's (ilverify StackUnexpected). A runtime instantiation already yields
+                // concrete members -> no-op.
                 // Substitute over the OPEN reflected method `m` — its param generic-params ARE reference-equal to
                 // `m.GetGenericArguments()`, so SubstituteMethodArgs matches them reliably. `inst.GetParameters()` may
                 // hand back normalized param objects with a null DeclaringMethod, defeating the positional fallback.
@@ -874,13 +875,6 @@ sealed partial class Emitter
     // return, `IEnumerable[Double]` vs `[Tv]`) stays discriminating instead of collapsing onto the loose shape.
     bool Matches(DotKt.Bir.TypeNode t, Type p)
     {
-        // A CIR function type already carries bir2cir's exact nominal delegate
-        // family (`System.Func`/`Action` or module-local `KFunc`/`KAction`).
-        // Compare that descriptor structurally: a referenced assembly's KFunc
-        // and the equivalent local synthetic TypeBuilder are intentionally
-        // different Reflection Type identities but the same declared ABI.
-        if (t is DotKt.Bir.TypeNode.Fn)
-            return MatchesOpen(t, p);
         // A node mentioning a type variable is inherently OPEN — compare by SHAPE (MapType would resolve a `Tv` to a
         // placeholder that never ReferenceEquals the candidate's actual generic parameter, wrongly rejecting the right
         // overload). A suspend fn likewise routes to the structural path (-> false). Only a fully-concrete node uses MapType.
@@ -996,13 +990,11 @@ sealed partial class Emitter
         return false;
     }
 
-    static bool IsTypeBuilderBackedGeneric(Type t) =>
-        IsGenericInst(t) && t.GetGenericTypeDefinition() is TypeBuilder;
-
     // Is `t` a delegate type? A TypeBuilderInstantiation of a BAKED generic delegate (`Func<Res,int>`, Res a user
     // TypeBuilder) reports `Bcl("System.Delegate").IsAssignableFrom` UNRELIABLY (its base chain is not resolvable pre-bake),
-    // so fall back to testing its baked generic DEFINITION (`System.Func`2`). A synthetic (TypeBuilder-def) delegate
-    // stays on the direct assignability check (its own MulticastDelegate base is set at DefineType).
+    // so fall back to testing its baked generic DEFINITION (`System.Func`2`). A TypeBuilder-defined delegate (the
+    // stdlib's own canonical family, in the stdlib self-build) stays on the direct assignability check — its
+    // MulticastDelegate base is set at DefineType.
     bool IsDelegateType(Type t)
     {
         if (Bcl("System.Delegate").IsAssignableFrom(t)) return true;
@@ -1142,8 +1134,6 @@ sealed partial class Emitter
     // `{t:tv,scope:type,i}` matches whatever those args substituted into the candidate's param at that position.
     bool GenericParamMatches(DotKt.Bir.TypeNode node, Type p, Type[] ownerArgs)
     {
-        // A function-type node matches structurally within the exact CIR-selected nominal delegate family.
-        if (node is DotKt.Bir.TypeNode.Fn fnNode) return GenericDelegateMatches(fnNode, p, ownerArgs);
         if (!ContainsTv(node))
         {
             try { return MapType(node) == p; } catch { return false; }
@@ -1189,9 +1179,11 @@ sealed partial class Emitter
         try { return ResolveType(name.Contains('`') ? name : name + "`" + arity); } catch { return null; }
     }
 
-    // A function-type declared param against the candidate's delegate param. CIR carries the exact nominal family;
-    // matching a same-shaped KFunc against System.Func would reintroduce the cross-assembly ABI ambiguity that bir2cir
-    // is responsible for eliminating.
+    // A type-variable-bearing function-type declared param against the candidate's delegate param — the shape path,
+    // reached only from the switch above (a fully-concrete function type resolves through MapType and requires exact
+    // Reflection identity, since #220 gave every supported function-type arity a single definition site). CIR carries
+    // the exact nominal family; matching a same-shaped KFunc against System.Func would reintroduce the ABI ambiguity
+    // bir2cir is responsible for eliminating.
     bool GenericDelegateMatches(DotKt.Bir.TypeNode.Fn fn, Type p, Type[] ownerArgs)
     {
         var dp = fn.DelegateParams;

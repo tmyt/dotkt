@@ -727,16 +727,13 @@ sealed partial class Emitter
         // Mirrors the event path; covers custom delegates (ApplicationInitializationCallback, ThreadStart) and BCL
         // Func/Action alike. Scoped to literal lambdas (newDelegate/newClosure) so stored delegate/Func values keep
         // their existing pass-through path.
-        // Skip the rewrap only for a target the rewrap CANNOT build: (a) a synthetic assembly-local delegate
-        // (`KFunc`/`KAction`, whose generic DEFINITION is a TypeBuilder) — the lambda's own self-build from `funcType`
-        // already yields the identical type, so a rewrap is redundant; (b) a `want` still mentioning an OPEN generic
-        // PARAMETER (no concrete ctor to bind). A BAKED-definition delegate (BCL `Func`/`Action`, a referenced .NET
-        // delegate) whose only builder-ness is a TypeBuilder CLASS type-arg (`Func<Res,int>`, Res a user class being
-        // emitted) IS rewrappable — DelegateCtor/InvokeOf bridge it via TypeBuilder.GetX — so it must rewrap, else the
-        // self-built `KFunc` mismatches the callee's BCL `Func` (ilverify StackUnexpected — the S4a `use { it.read() }`).
-        // A concrete `want` (e.g. MapsKt.mapValues's KFunc over referenced Map.Entry/int) also still rewraps.
+        // Skip the rewrap only for a `want` still mentioning an OPEN generic PARAMETER — there is no concrete ctor to
+        // bind. Everything else rewraps, including a delegate whose only builder-ness is a TypeBuilder type-arg
+        // (`Func<Res,int>`, Res a user class being emitted): DelegateCtor/InvokeOf bridge those via TypeBuilder.GetX.
+        // (#220 removed the old assembly-local `KFunc`/`KAction` exemption: a wide delegate in a signature is now the
+        // stdlib's canonical baked type, identical on both sides, so there is nothing left to exempt.)
         if (IsDelegateType(want) && want != Bcl("System.Delegate") && want != Bcl("System.MulticastDelegate")
-            && !IsTypeBuilderBackedGeneric(want) && !ContainsGenericParameter(want)
+            && !ContainsGenericParameter(want)
             && a.TryGetProperty("k", out var dk) && (dk.GetString() == "newDelegate" || dk.GetString() == "newClosure"))
         {
             EmitHandlerAsDelegate(a, want);

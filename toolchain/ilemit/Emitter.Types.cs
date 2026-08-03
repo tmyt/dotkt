@@ -168,22 +168,21 @@ sealed partial class Emitter
             ?? throw new NotSupportedException("CIR function type is missing bir2cir-resolved `clr` delegate family"));
     }
 
-    // Realize bir2cir's nominal ABI decision 1:1. TypeBuilder-involving System.Func/Action instantiations stay BCL
-    // delegates; their Reflection.Emit member references are handled by DelegateCtor/InvokeOf and must never alter
-    // the signature identity.
+    // Realize bir2cir's nominal ABI decision 1:1. TypeBuilder-involving delegate instantiations are handled by
+    // DelegateCtor/InvokeOf and never alter signature identity. Family validity and arity range were decided before CIR.
     Type BuildFuncType(Type[] args, Type ret, string clr)
     {
         return clr switch
         {
             "System.Action" when ret == Bcl("System.Void") && args.Length == 0 => Bcl("System.Action"),
-            "System.Action" when ret == Bcl("System.Void") && args.Length <= 16 =>
+            "System.Action" when ret == Bcl("System.Void") =>
                 ConstructedType(ResolveType("System.Action`" + args.Length), args),
-            "System.Func" when ret != Bcl("System.Void") && args.Length <= 16 =>
+            "System.Func" when ret != Bcl("System.Void") =>
                 ConstructedType(ResolveType("System.Func`" + (args.Length + 1)), args.Append(ret).ToArray()),
-            "DotKt.Runtime.CompilerServices.KAction" when ret == Bcl("System.Void") && args.Length > 16 =>
-                SyntheticActionType(args),
-            "DotKt.Runtime.CompilerServices.KFunc" when ret != Bcl("System.Void") && args.Length > 16 =>
-                SyntheticFuncType(args, ret),
+            "DotKt.Runtime.CompilerServices.KAction" when ret == Bcl("System.Void") =>
+                CanonicalActionType(args),
+            "DotKt.Runtime.CompilerServices.KFunc" when ret != Bcl("System.Void") =>
+                CanonicalFuncType(args, ret),
             _ => throw new NotSupportedException(
                 $"invalid CIR delegate family `{clr}` for arity {args.Length}, return {ret}")
         };

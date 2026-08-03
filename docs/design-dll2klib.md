@@ -318,7 +318,9 @@ dll2klib <reference.dll> <output.klib>
 dll2klib --out <directory> [--jobs <N>] @<references.rsp>
 ```
 
-Direct mode processes one DLL and writes one KLIB.
+The two-path direct form is the internal worker protocol used by the batch launcher. The launcher supplies its
+resolved naming and delegate catalogs through the worker environment; invoking that form standalone is rejected,
+because one DLL cannot resolve the identity and `Invoke` shape of delegates defined in referenced assemblies.
 
 Batch mode:
 
@@ -441,7 +443,11 @@ A compiler upgrade must validate:
 Current deliberate limits are:
 
 - pointer and function-pointer types fall back to `Any?`;
-- high-arity function/delegate ABI is deferred to issue #220;
+- Kotlin function arities 17..22 use the stdlib's canonical
+  `DotKt.Runtime.CompilerServices.KFunc`/`KAction`. The stdlib produces no projected KLIB, but remains in the
+  resolved delegate catalog so references are restored from the actual TypeDef/`Invoke` shape and assembly identity,
+  exactly like any other external delegate. Kotlin function arities of 23 and above have no CLR delegate and are
+  refused before this stage (dotkt-semantics §8e-bis);
 - arbitrary CLR custom-attribute applications are not round-tripped; and
 - explicit Kotlin companion-object reconstruction is not part of CLR static
   projection.

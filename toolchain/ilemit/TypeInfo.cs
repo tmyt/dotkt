@@ -45,6 +45,7 @@ sealed class TypeInfo
     public readonly List<JsonElement> CtorDefs = new();
     public bool CtorsDefined;              // guards EnsureCtorsDefined (may run early from BuildAttribute, then again in pass 3)
     public bool IsInterface;
+    public bool IsDelegate;
     public bool IsEnum;
     public Type Created;                   // baked enum Type (created early so its tokens are valid in other IL)
     // Generic type parameters (`class Box<T>`): name -> the GenericTypeParameterBuilder defined in pass 1.

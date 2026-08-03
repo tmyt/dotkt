@@ -6,25 +6,11 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
 
-// Synthetic delegate types + Kotlin function-type (FunctionN/Action) resolution.
+// The canonical wide delegate family + Kotlin function-type (FunctionN/Action) resolution.
 sealed partial class Emitter
 {
-    // The embedded round-trip attribute namespace (#71 S2: the attribute CLASSES are now ordinary CIR type decls
-    // emitted by bir2cir; this const only names the synthetic-delegate metadata namespace below).
+    // The physical namespace of CIR-selected canonical delegate references.
     const string CompilerServicesNs = "DotKt.Runtime.CompilerServices.";
-
-    // ilemit AUTHORS its own synthetic high-arity delegate types; mark each [KotlinFunction(0)] (a plain function
-    // type — no infix/operator/suspend) so dll2klib restores it as a Kotlin function type. This is ilemit stamping
-    // its OWN emitted member (analogous to StampCompilerGenerated), NOT round-trip generation over user code: the
-    // attribute CLASS is the ordinary CIR-defined `KotlinFunctionAttribute` in `_types` (bir2cir emits it, #71 S2),
-    // whose (int) ctor is resolved generically. Absent (a --no-stdlib or runtime build that emits no attr class) -> skip.
-    void StampKotlinFunctionZero(TypeBuilder tb)
-    {
-        if (!_types.TryGetValue(CompilerServicesNs + "KotlinFunctionAttribute", out var ti)) return;
-        EnsureCtorsDefined(ti);
-        if (ti.Ctors.Count == 0) return;
-        SetAttribute(tb.SetCustomAttribute, ti.Ctors[0], new[] { Bcl("System.Int32") }, 0);
-    }
 
     // --- Unit-return delegate adapters (task #75 S4a) ---
     // A lifted lambda for a `() -> Unit` / `(T) -> Unit` body is emitted returning `void` (a Unit result maps to
@@ -181,39 +167,39 @@ sealed partial class Emitter
         return mb;
     }
 
-    readonly Dictionary<string, TypeBuilder> _syntheticDelegates = new();
-
-    readonly Dictionary<TypeBuilder, ConstructorBuilder> _syntheticDelegateCtors = new();
-
-    readonly Dictionary<TypeBuilder, MethodBuilder> _syntheticDelegateInvokes = new();
+    // Runtime members of delegate TypeBuilders declared by CIR. Reflection.Emit cannot reflect members from an
+    // unbaked generic TypeBuilder instantiation, so construction/invocation anchors through these declared handles.
+    readonly Dictionary<TypeBuilder, ConstructorBuilder> _declaredDelegateCtors = new();
+    readonly Dictionary<TypeBuilder, MethodBuilder> _declaredDelegateInvokes = new();
 
     ConstructorInfo DelegateCtor(Type ft)
     {
         var sig = new[] { Bcl("System.Object"), Bcl("System.IntPtr") };
-        // #150: key the synthetic-delegate ctor fast-path on IsGenericInst (GetGenericArguments-based), SYMMETRIC with
+        // #150: key the self-defined-delegate ctor fast-path on IsGenericInst (GetGenericArguments-based), SYMMETRIC with
         // InvokeOf/ContainsTypeBuilder. `IsGenericType` is UNRELIABLE for a TypeBuilderInstantiation across Reflection.Emit
         // versions (see IsGenericInst) — was `ft.IsGenericType`, which only fires because this SDK happens to report True;
         // a version reporting False would skip this branch and hit `ft.GetConstructor(sig)` on the un-baked builder
         // instantiation -> NotSupportedException. GetGenericArguments().Length is always populated, so this is robust.
-        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateCtors.TryGetValue(dtb, out var dctor))
+        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateCtors.TryGetValue(dtb, out var dctor))
             return AnchorConstructor(ft, dctor);
-        return (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
+        return (IsGenericInst(ft) && ContainsTypeBuilder(ft))
             ? AnchorConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
             : ft.GetConstructor(sig);
     }
 
     // A generic INSTANTIATION test that does NOT depend on `IsGenericType`, whose value for a TypeBuilderInstantiation is
-    // version-dependent and unreliable (SDK 10.0.101 empirically reports IsGenericType=TRUE for a synthetic KFunc`2<int,
-    // string>; older Reflection.Emit reported FALSE) — the generic-arg list, by contrast, is ALWAYS populated. All
+    // version-dependent and unreliable (SDK 10.0.101 empirically reports IsGenericType=TRUE for a TypeBuilder-defined
+    // generic delegate instantiated over concrete args; older Reflection.Emit reported FALSE — the measurement was
+    // taken on a wide `KFunc`) — the generic-arg list, by contrast, is ALWAYS populated. All
     // TypeBuilder-instantiation branching here keys on this, never on IsGenericType.
     static bool IsGenericInst(Type t) => !t.IsGenericParameter && t.GetGenericArguments().Length > 0;
 
     // The delegate's `Invoke` method, bridged via TypeBuilder.GetMethod for a TypeBuilder-involving instantiation.
     MethodInfo InvokeOf(Type ft)
     {
-        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateInvokes.TryGetValue(dtb, out var invoke))
+        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var invoke))
             return AnchorMethod(ft, invoke);
-        if (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
+        if (IsGenericInst(ft) && ContainsTypeBuilder(ft))
             return AnchorMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
         return ft.GetMethod("Invoke");
     }
@@ -228,7 +214,10 @@ sealed partial class Emitter
     Type InvokeRetOf(Type ft)
     {
         if (!IsGenericInst(ft)) return ft.GetMethod("Invoke")?.ReturnType ?? Bcl("System.Void");
-        var r = ft.GetGenericTypeDefinition().GetMethod("Invoke").ReturnType;
+        var def = ft.GetGenericTypeDefinition();
+        var r = def is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var declared)
+            ? declared.ReturnType
+            : def.GetMethod("Invoke").ReturnType;
         return r.IsGenericParameter && r.GenericParameterPosition < ft.GetGenericArguments().Length
             ? ft.GetGenericArguments()[r.GenericParameterPosition] : r;
     }
@@ -245,48 +234,41 @@ sealed partial class Emitter
             ? fn.DelegateParams.Select(MapType).ToList()
             : throw new NotSupportedException("funcType is not a structured fn node");
 
-    Type SyntheticFuncType(Type[] args, Type ret) =>
-        ConstructedType(SyntheticDelegateType("KFunc", args.Append(ret).ToArray(), returnsValue: true), args.Append(ret).ToArray());
-
-    Type SyntheticActionType(Type[] args) =>
-        ConstructedType(SyntheticDelegateType("KAction", args, returnsValue: false), args);
-
-    TypeBuilder SyntheticDelegateType(string baseName, Type[] genericArgs, bool returnsValue)
+    // Resolve the exact physical family selected in CIR. In a stdlib self-build the matching kind:"delegate"
+    // declaration is in `_types`; every app resolves the same metadata identity from its stdlib reference.
+    Type CanonicalDelegateDef(string baseName, int genericArity)
     {
-        var arity = genericArgs.Length;
-        var metadataName = CompilerServicesNs + baseName + "`" + arity;
-        if (_syntheticDelegates.TryGetValue(metadataName, out var cached))
-            return cached;
+        var name = CompilerServicesNs + baseName + "`" + genericArity;
+        return _types.TryGetValue(name, out var own) ? own.AsType : ResolveType(name);
+    }
 
-        var tb = _mod.DefineType(metadataName,
-            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Class,
-            Bcl("System.MulticastDelegate"));
-        SetAttribute(tb.SetCustomAttribute,
-            Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
-        StampKotlinFunctionZero(tb);
+    Type CanonicalFuncType(Type[] args, Type ret)
+    {
+        var all = args.Append(ret).ToArray();
+        return ConstructedType(CanonicalDelegateDef("KFunc", all.Length), all);
+    }
 
-        var names = Enumerable.Range(1, arity).Select(i => i == arity && returnsValue ? "TResult" : "T" + i).ToArray();
-        var gps = tb.DefineGenericParameters(names);
-        var invokeParams = returnsValue ? gps.Take(arity - 1).Cast<Type>().ToArray() : gps.Cast<Type>().ToArray();
-        var invokeRet = returnsValue ? (Type)gps[^1] : Bcl("System.Void");
+    Type CanonicalActionType(Type[] args) =>
+        ConstructedType(CanonicalDelegateDef("KAction", args.Length), args);
 
-        var ctor = tb.DefineConstructor(
+    void DefineDelegateMembers(TypeInfo ti)
+    {
+        var invokeParams = ti.Def.GetProperty("params").EnumerateArray()
+            .Select(p => MapType(p.GetProperty("type"))).ToArray();
+        var invokeRet = MapType(ti.Def.GetProperty("ret"));
+        var ctor = ti.TB.DefineConstructor(
             MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.RTSpecialName | MethodAttributes.SpecialName,
             CallingConventions.Standard,
             new[] { Bcl("System.Object"), Bcl("System.IntPtr") });
         ctor.SetImplementationFlags(MethodImplAttributes.Runtime | MethodImplAttributes.Managed);
-
-        var invoke = tb.DefineMethod(
+        var invoke = ti.TB.DefineMethod(
             "Invoke",
             MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.NewSlot | MethodAttributes.Virtual,
             invokeRet,
             invokeParams);
         invoke.SetImplementationFlags(MethodImplAttributes.Runtime | MethodImplAttributes.Managed);
-
-        _syntheticDelegates[metadataName] = tb;
-        _syntheticDelegateCtors[tb] = ctor;
-        _syntheticDelegateInvokes[tb] = invoke;
-        return tb;
+        _declaredDelegateCtors[ti.TB] = ctor;
+        _declaredDelegateInvokes[ti.TB] = invoke;
     }
 
 }
