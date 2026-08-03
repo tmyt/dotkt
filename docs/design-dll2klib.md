@@ -443,8 +443,8 @@ Current deliberate limits are:
 - pointer and function-pointer types fall back to `Any?`;
 - Kotlin function arities 17..22 restore from the stdlib's canonical
   `DotKt.Runtime.CompilerServices.KFunc`/`KAction` by that ABI-fixed NAME, exactly as `System.Func`/`Action` do —
-  the stdlib is never projected, so there is no delegate definition here to decode. Arity 23 and above has no
-  shared definition and is not a valid cross-assembly signature (dotkt-semantics §8e-bis);
+  the stdlib is never projected, so there is no delegate definition here to decode. Kotlin function arities of 23
+  and above are unsupported (dotkt-semantics §8e-bis);
 - arbitrary CLR custom-attribute applications are not round-tripped; and
 - explicit Kotlin companion-object reconstruction is not part of CLR static
   projection.

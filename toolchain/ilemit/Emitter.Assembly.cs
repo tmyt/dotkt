@@ -903,7 +903,7 @@ sealed partial class Emitter
         foreach (var ti in Ordered()) { if (!ti.IsEnum) { T($"pass6 createType: {ti.TB?.Name}"); ti.TB.CreateType(); } }
         // The reverse-bridge adapter references the (now-baked) Kotlin Iterator type, so bake it after the user types.
         if (_enumAdapterTB != null && !_enumAdapterTB.IsCreated()) _enumAdapterTB.CreateType();
-        foreach (var tb in _syntheticDelegates.Values)
+        foreach (var tb in _canonicalDelegates.Values)
             if (!tb.IsCreated())
                 tb.CreateType();
         // The Unit-return delegate adapters forward to a void delegate type `ft` (a BCL Action or a synthetic

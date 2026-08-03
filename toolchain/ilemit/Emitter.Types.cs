@@ -182,9 +182,9 @@ sealed partial class Emitter
             "System.Func" when ret != Bcl("System.Void") && args.Length < CanonicalDelegateMinArity =>
                 ConstructedType(ResolveType("System.Func`" + (args.Length + 1)), args.Append(ret).ToArray()),
             "DotKt.Runtime.CompilerServices.KAction" when ret == Bcl("System.Void") && args.Length >= CanonicalDelegateMinArity =>
-                SyntheticActionType(args),
+                CanonicalActionType(args),
             "DotKt.Runtime.CompilerServices.KFunc" when ret != Bcl("System.Void") && args.Length >= CanonicalDelegateMinArity =>
-                SyntheticFuncType(args, ret),
+                CanonicalFuncType(args, ret),
             _ => throw new NotSupportedException(
                 $"invalid CIR delegate family `{clr}` for arity {args.Length}, return {ret}")
         };

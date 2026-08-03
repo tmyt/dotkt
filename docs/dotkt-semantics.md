@@ -1322,7 +1322,7 @@ resolves. (Previously such a delegate collapsed to a bare `Any?`, and the overri
   equally-preferred delegates tie and neither is deprioritized. Coverage:
   `tests/interop/consumer/fixtures/ThreadingInteropTests.kt` and `DelegateOverloadTests.kt`.
 
-## 8e-bis. A function type is a delegate: `System.Func`/`Action` to arity 16, the stdlib's canonical `KFunc`/`KAction` for 17..22 (#220)
+## 8e-bis. A function type is a delegate: `System.Func`/`Action` to arity 16, the stdlib's canonical `KFunc`/`KAction` for 17..22; arity 23+ is unsupported (#220)
 
 Every non-suspend Kotlin function type is one CLR delegate type, chosen by ARITY. An extension or context receiver
 occupies a delegate slot, so it counts toward that arity; a `suspend` function type is not a delegate at all (§4).
@@ -1333,7 +1333,7 @@ occupies a delegate slot, so it counts toward that arity; a `suspend` function t
 | 0..16, returns a value | `System.Func\`N+1` | the BCL |
 | 17..22, returns `Unit` | `DotKt.Runtime.CompilerServices.KAction\`17` … `KAction\`22` | **the DotKt stdlib** |
 | 17..22, returns a value | `DotKt.Runtime.CompilerServices.KFunc\`18` … `KFunc\`23` (the return type is the last type argument) | **the DotKt stdlib** |
-| 23 and above | `KAction\`23+` / `KFunc\`24+` | **each assembly, for itself — deferred** |
+| 23 and above | — | **unsupported — refused** (see below) |
 
 `System.Func`/`Action` stop at 16 value parameters, and the frontend's `BuiltInFunctionArity.BIG_ARITY` is 23, so
 17..22 is exactly the band that needs a DotKt type. Those six pairs are emitted **unconditionally into both stdlib
@@ -1347,22 +1347,15 @@ at every arity. All twelve carry `[CompilerGenerated]`; the reference twin addit
 which the runtime twin does not, because the runtime stdlib build emits no DotKt round-trip attribute classes at
 all. `dll2klib` restores a referencing signature to `kotlin.Function17`… by that ABI-fixed NAME (as it does for
 `System.Func`/`Action`) — the stdlib itself is never projected to a KLIB, so there is no definition to decode.
-Because the recognition is by name and not by the arity-suffixed metadata name, a referenced module that declares
-two *deferred* same-named arities (below) cannot drag the canonical family into dll2klib's arity-clash rename.
+The family exists only there, so nothing else in a reference universe declares it.
 
-An assembly that names a 17..22 function type therefore **requires the stdlib in its compile reference set**; an
-ilemit invocation without one is refused, naming the canonical type it could not resolve, rather than minting a
-local definition and re-splitting the ABI.
+An assembly that names a 17..22 function type therefore needs the stdlib in its compile reference set, which every
+ordinary build has.
 
-**Arity 23 and above is deferred to a future variadic big-arity ABI and is NOT a valid cross-assembly signature.**
-There is no shared definition, so each assembly mints its own and the two sides of a module boundary hold different
-nominal types for one declared shape. Consequences, all real today: a value in *parameter* position still binds
-(ilemit falls back to a structural signature match, the one place it tolerates a nominal delegate difference); a
-value in *return* position produces IL that runs but does not formally verify; one *nested in a generic*
-(`List<(…23 args…) -> R>`) fails to compile at the call site; and a producer declaring **two** deferred arities
-defines two same-named `KFunc`N`, which dll2klib's arity-clash rename restores as ordinary classes rather than
-function types, so the consumer fails in the frontend. Those three cells are listed with their closing condition in
-`tests/special/wide-delegates/run.sh`'s `WIDE_XFAIL`. Within a single assembly every arity works.
+**Kotlin function arities of 23 and above are UNSUPPORTED and refused**, pending the variadic big-arity ABI the
+Kotlin frontend's `BuiltInFunctionArity.BIG_ARITY` marks. No delegate is minted for them anywhere; a program that
+names one is rejected with a diagnostic saying which arity it used and that the range awaits that ABI. Arities
+0..22 are the supported surface, and every one of them has exactly one definition site.
 
 ## 8f. A SOURCE declaration wins over a reference-KLIB-projected copy of the same identity (#15)
 
@@ -1880,8 +1873,7 @@ function shapes, inline payloads, collection identity, and Kotlin nullability.
 Current deliberate limits are:
 
 - pointer and function-pointer types project as `Any?`;
-- function types of Kotlin arity 23 and above have no shared delegate definition, so they are not a valid
-  cross-assembly signature (§8e-bis); arities 0..22 round-trip exactly;
+- Kotlin function arities 0..22 round-trip exactly; arities of 23 and above are unsupported (§8e-bis);
 - arbitrary CLR custom-attribute applications are not reproduced as Kotlin annotation applications;
 - explicit Kotlin companion-object reconstruction is not part of CLR static projection;
 - SOURCE-retained annotations and compile-time-only facts such as contracts are not present in CLR metadata; and
@@ -1907,8 +1899,8 @@ Current deliberate limits are:
 - A `CharSequence` parameter surfaces to C# as `string`; a `StringBuilder` passed as `CharSequence` is **snapshotted** by an implicit `.toString()` — no live view. §5b.
 - A Kotlin `Map` surfaces to C# as a *mutable* `IDictionary<K,V>`; `keys`/`values`/`entries` are snapshots. §5c.
 - A function type of 17..22 parameters is not `System.Func`/`Action` (they stop at 16) but the stdlib's canonical
-  `KFunc`/`KAction` — one definition for the whole platform. 23 and above has no shared definition and is not a valid
-  cross-assembly signature. An extension receiver counts toward the arity. §8e-bis.
+  `KFunc`/`KAction` — one definition for the whole platform. An extension receiver counts toward the arity, and
+  arities of 23 and above are refused. §8e-bis.
 - A `value class` is a real (reference) class on the CLR — never erased, never a struct. §5f.
 - A value a call supplies that the emitted CLR shape has no slot for is still evaluated (a static-field read runs a type initializer; a field read can throw) — only a literal/local/`this`-class load is dropped. §7a.
 - A value-type `x?.suspendFoo()` across a suspension is no longer boxed: the conditional's slot is typed from its live branch, and a slot the backend cannot type is a compile-time refusal rather than a `kotlin.Any` box. §7b.

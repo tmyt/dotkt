@@ -6,15 +6,15 @@ using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
 
-// Synthetic delegate types + Kotlin function-type (FunctionN/Action) resolution.
+// The canonical wide delegate family + Kotlin function-type (FunctionN/Action) resolution.
 sealed partial class Emitter
 {
     // The embedded round-trip attribute namespace (#71 S2: the attribute CLASSES are now ordinary CIR type decls
-    // emitted by bir2cir; this const only names the synthetic-delegate metadata namespace below).
+    // emitted by bir2cir; this const only names the metadata namespace the canonical delegate family lives in).
     const string CompilerServicesNs = "DotKt.Runtime.CompilerServices.";
 
-    // A wide delegate type this assembly DEFINES is marked [KotlinFunction(0)] (a plain function type — no
-    // infix/operator/suspend) so dll2klib restores it as a Kotlin function type. This is ilemit stamping
+    // The canonical delegate types are marked [KotlinFunction(0)] (a plain function type — no infix/operator/suspend)
+    // so dll2klib restores one as a Kotlin function type. This is ilemit stamping
     // its OWN emitted member (analogous to StampCompilerGenerated), NOT round-trip generation over user code: the
     // attribute CLASS is the ordinary CIR-defined `KotlinFunctionAttribute` in `_types` (bir2cir emits it, #71 S2),
     // whose (int) ctor is resolved generically. Absent (a --no-stdlib or runtime build that emits no attr class) -> skip.
@@ -181,25 +181,24 @@ sealed partial class Emitter
         return mb;
     }
 
-    // The wide delegate types THIS assembly defines, by metadata name. A stdlib build seeds it with the whole
-    // canonical 17..22 family (DefineCanonicalDelegates); any build may additionally add a deferred 23+ shape this
-    // compilation used. A CANONICAL name is therefore present here only in a stdlib build, and is resolved from the
-    // referenced stdlib in every other one — never both.
-    readonly Dictionary<string, TypeBuilder> _syntheticDelegates = new();
+    // The canonical delegate types THIS assembly defines, by metadata name. Only a stdlib build ever populates it,
+    // with the whole 17..22 family (DefineCanonicalDelegates); in every other build it stays empty and the family is
+    // resolved from the referenced stdlib.
+    readonly Dictionary<string, TypeBuilder> _canonicalDelegates = new();
 
-    readonly Dictionary<TypeBuilder, ConstructorBuilder> _syntheticDelegateCtors = new();
+    readonly Dictionary<TypeBuilder, ConstructorBuilder> _canonicalDelegateCtors = new();
 
-    readonly Dictionary<TypeBuilder, MethodBuilder> _syntheticDelegateInvokes = new();
+    readonly Dictionary<TypeBuilder, MethodBuilder> _canonicalDelegateInvokes = new();
 
     ConstructorInfo DelegateCtor(Type ft)
     {
         var sig = new[] { Bcl("System.Object"), Bcl("System.IntPtr") };
-        // #150: key the synthetic-delegate ctor fast-path on IsGenericInst (GetGenericArguments-based), SYMMETRIC with
+        // #150: key the self-defined-delegate ctor fast-path on IsGenericInst (GetGenericArguments-based), SYMMETRIC with
         // InvokeOf/ContainsTypeBuilder. `IsGenericType` is UNRELIABLE for a TypeBuilderInstantiation across Reflection.Emit
         // versions (see IsGenericInst) — was `ft.IsGenericType`, which only fires because this SDK happens to report True;
         // a version reporting False would skip this branch and hit `ft.GetConstructor(sig)` on the un-baked builder
         // instantiation -> NotSupportedException. GetGenericArguments().Length is always populated, so this is robust.
-        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateCtors.TryGetValue(dtb, out var dctor))
+        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _canonicalDelegateCtors.TryGetValue(dtb, out var dctor))
             return AnchorConstructor(ft, dctor);
         return (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
             ? AnchorConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
@@ -216,7 +215,7 @@ sealed partial class Emitter
     // The delegate's `Invoke` method, bridged via TypeBuilder.GetMethod for a TypeBuilder-involving instantiation.
     MethodInfo InvokeOf(Type ft)
     {
-        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _syntheticDelegateInvokes.TryGetValue(dtb, out var invoke))
+        if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _canonicalDelegateInvokes.TryGetValue(dtb, out var invoke))
             return AnchorMethod(ft, invoke);
         if (IsGenericInst(ft) && (ContainsTypeBuilder(ft) || IsTypeBuilderBackedGeneric(ft)))
             return AnchorMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
@@ -250,12 +249,12 @@ sealed partial class Emitter
             ? fn.DelegateParams.Select(MapType).ToList()
             : throw new NotSupportedException("funcType is not a structured fn node");
 
-    // #220 — the CANONICAL high-arity delegate family. Kotlin function arities 17..22 (System.Func/Action stop at 16;
-    // 23 is the frontend's BuiltInFunctionArity.BIG_ARITY) have ONE definition for the whole platform, in the stdlib
-    // — so a `(…17 args…) -> R` in a public signature is the SAME Reflection type on both sides of a module boundary.
-    // The stdlib self-build emits the family unconditionally (DefineCanonicalDelegates); every other assembly
-    // RESOLVES it out of the referenced stdlib and defines nothing. Arity 23 and above is still minted per assembly
-    // pending the variadic big-arity ABI, so it is nominally module-local and not a valid cross-assembly signature.
+    // #220 — the CANONICAL wide delegate family. Kotlin function arities 17..22 (System.Func/Action stop at 16; 23 is
+    // the frontend's BuiltInFunctionArity.BIG_ARITY) have ONE definition for the whole platform, in the stdlib — so a
+    // `(…17 args…) -> R` in a public signature is the SAME Reflection type on both sides of a module boundary. The
+    // stdlib is the ONLY definition site, with no exception: the stdlib self-build emits the family unconditionally
+    // (DefineCanonicalDelegates) and every other assembly resolves it from the referenced stdlib. Arity 23 and above
+    // is UNSUPPORTED and refused — nothing is minted for it anywhere.
     internal const int CanonicalDelegateMinArity = 17;
     internal const int CanonicalDelegateMaxArity = 22;
 
@@ -265,45 +264,40 @@ sealed partial class Emitter
     {
         for (var arity = CanonicalDelegateMinArity; arity <= CanonicalDelegateMaxArity; arity++)
         {
-            SyntheticDelegateType("KAction", arity, returnsValue: false);
-            SyntheticDelegateType("KFunc", arity + 1, returnsValue: true);
+            CanonicalDelegateType("KAction", arity, returnsValue: false);
+            CanonicalDelegateType("KFunc", arity + 1, returnsValue: true);
         }
     }
 
-    // The delegate DEFINITION for a wide function type. In the canonical range this is a lookup, never a choice:
-    // the stdlib build finds the family it just defined, and every other build resolves the stdlib's copy exactly
-    // as it resolves any other referenced type. Only the deferred 23+ range still mints a definition here.
-    Type WideDelegateDef(string baseName, int genericArity, int kotlinArity, bool returnsValue)
+    // The delegate DEFINITION for a wide function type. There is no local-vs-referenced choice to make: the type has
+    // exactly one definition site. The dictionary lookup is the ordinary "is this a type I am emitting" question every
+    // emitted type answers — it can only hit in the stdlib self-build, which IS that one site and has no stdlib to
+    // reference.
+    Type CanonicalDelegateDef(string baseName, int genericArity, int kotlinArity)
     {
-        if (kotlinArity > CanonicalDelegateMaxArity) return SyntheticDelegateType(baseName, genericArity, returnsValue);
-        var name = CompilerServicesNs + baseName + "`" + genericArity;
-        if (_syntheticDelegates.TryGetValue(name, out var own)) return own;
-        try { return ResolveType(name); }
-        catch (NotSupportedException e)
-        {
-            // The compile-reference set has no stdlib (an ilemit invocation built without one). Minting a definition
-            // here instead is exactly the per-assembly ABI #220 removed, so this is a refusal — and it names the
-            // reason, because `target type '…KFunc`18' is absent` alone does not explain why a 17-parameter lambda
-            // needs the stdlib when a 16-parameter one does not.
+        if (kotlinArity > CanonicalDelegateMaxArity)
             throw new NotSupportedException(
-                $"a Kotlin function type of {kotlinArity} parameters is `{name}`, which is defined by the DotKt " +
-                "stdlib — the compile reference set must contain it (System.Func/Action only reach 16 parameters)", e);
-        }
+                $"a Kotlin function type of {kotlinArity} parameters is not supported: System.Func/Action carry " +
+                $"arities 0..{CanonicalDelegateMinArity - 1} and the DotKt stdlib's canonical KFunc/KAction family " +
+                $"carries {CanonicalDelegateMinArity}..{CanonicalDelegateMaxArity}. Arity " +
+                $"{CanonicalDelegateMaxArity + 1} and above awaits the variadic big-arity ABI (#220)");
+        var name = CompilerServicesNs + baseName + "`" + genericArity;
+        return _canonicalDelegates.TryGetValue(name, out var own) ? own : ResolveType(name);
     }
 
-    Type SyntheticFuncType(Type[] args, Type ret)
+    Type CanonicalFuncType(Type[] args, Type ret)
     {
         var all = args.Append(ret).ToArray();
-        return ConstructedType(WideDelegateDef("KFunc", all.Length, args.Length, returnsValue: true), all);
+        return ConstructedType(CanonicalDelegateDef("KFunc", all.Length, args.Length), all);
     }
 
-    Type SyntheticActionType(Type[] args) =>
-        ConstructedType(WideDelegateDef("KAction", args.Length, args.Length, returnsValue: false), args);
+    Type CanonicalActionType(Type[] args) =>
+        ConstructedType(CanonicalDelegateDef("KAction", args.Length, args.Length), args);
 
-    TypeBuilder SyntheticDelegateType(string baseName, int arity, bool returnsValue)
+    TypeBuilder CanonicalDelegateType(string baseName, int arity, bool returnsValue)
     {
         var metadataName = CompilerServicesNs + baseName + "`" + arity;
-        if (_syntheticDelegates.TryGetValue(metadataName, out var cached))
+        if (_canonicalDelegates.TryGetValue(metadataName, out var cached))
             return cached;
 
         var tb = _mod.DefineType(metadataName,
@@ -340,9 +334,9 @@ sealed partial class Emitter
             invokeParams);
         invoke.SetImplementationFlags(MethodImplAttributes.Runtime | MethodImplAttributes.Managed);
 
-        _syntheticDelegates[metadataName] = tb;
-        _syntheticDelegateCtors[tb] = ctor;
-        _syntheticDelegateInvokes[tb] = invoke;
+        _canonicalDelegates[metadataName] = tb;
+        _canonicalDelegateCtors[tb] = ctor;
+        _canonicalDelegateInvokes[tb] = invoke;
         return tb;
     }
 

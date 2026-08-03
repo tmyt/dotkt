@@ -3266,13 +3266,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var metadataFull = string.IsNullOrEmpty(ns)
             ? StripArity(metadataName)
             : ns + "." + StripArity(metadataName);
-        // #220 — the canonical wide family is recognized by its UNRENAMED metadata name, BEFORE the arity-clash
-        // rename. `full` may already read `KFunc18`: the clash set is a union over the WHOLE reference universe
-        // (ArityNames.Create's `inherited`), so one referenced module declaring two deferred 23+ arities of the same
-        // bare name renames every KFunc occurrence — including the stdlib's canonical ones, which belong to no
-        // module's clash. Carrying the bare name here keeps GetGenericInstantiation's name test arity-independent.
-        if (metadataFull is CanonicalFunc or CanonicalAction && metadataName.Contains('`'))
-            return rawTypeKind == (byte)SignatureTypeKind.Class ? Platform(metadataFull) : Named(metadataFull);
         if (_delegateCatalog.TryResolve(reader, handle, out var externalDelegate))
         {
             if (!metadataName.Contains('`'))
@@ -3722,9 +3715,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // Kotlin arities 17..22 (above System.Func/Action's 16-parameter ceiling); they are DEFINED once, in the stdlib,
     // which is deliberately never projected to a KLIB. So a referencing signature is restored from the ABI-fixed
     // NAME here — exactly as System.Func/Action are — rather than by decoding a delegate definition this projector
-    // can see. The name is ARITY-STRIPPED and compared before the arity-clash rename (GetTypeFromReference), so a
-    // referenced module carrying two DEFERRED 23+ arities of the same bare name cannot rename the canonical family
-    // out of recognition. A per-assembly 23+ shape is not canonical and still routes through _delegateDefinitions.
+    // can see. The family exists only in the stdlib, so the name it is matched against is the ordinary projected one
+    // and no part of the clash path knows about it.
     private const string CanonicalFunc = "DotKt.Runtime.CompilerServices.KFunc";
     private const string CanonicalAction = "DotKt.Runtime.CompilerServices.KAction";
 
