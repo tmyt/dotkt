@@ -124,6 +124,8 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	if (t.classFqName?.asString() == "kotlin.clr.Span")
 		return TypeNode.Fqn("kotlin.clr.Span", listOf(argType(t, 0) ?: OBJ))
 	// A reference array `kotlin.Array<E>` -> `TypeNode.Array(<E>)` (the element rides its own faithful identity).
+	// `Array<*>` keeps its STAR element: the projection is Kotlin vocabulary and bir2cir authors the CLR view.
+	// Substituting `Any` here would hand the backend `object[]`, which no value-element array inhabits.
 	if (t.isBoxedArray) return TypeNode.Array(arrayElemType(t))
 	// A SIGNED primitive array (`kotlin.IntArray`/…) OR an unsigned specialized array (`kotlin.UByteArray`/…, #76)
 	// -> the FAITHFUL FQN identity (the type's OWN FQN, read from the IR — not a kotlin.* table); deciding
@@ -229,8 +231,11 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		// A projected .NET / stdlib type identity: emit its Kotlin FQN (`netName`) as an `fqn`. bir2cir/ilemit
 		// resolve whether it is a referenced .NET type / generic (the old `clr:`/`clrg:` decision). A nested
 		// nullable type-parameter arg keeps its `nullable(tv)` marker (bir2cir erases it).
-		val args = (t as? IrSimpleType)?.arguments?.mapNotNull { arg ->
-			(arg as? IrTypeProjection)?.type?.let { argElemNullable(it) }
+		// A STAR projection stays `star` (Kotlin vocabulary) — `mapNotNull` used to DROP it, which both lost the
+		// arity and told the backend the argument was known. bir2cir authors the CLR view off the projected type's
+		// own shape; dropping the fact here forced it to guess.
+		val args = (t as? IrSimpleType)?.arguments?.map { arg ->
+			(arg as? IrTypeProjection)?.type?.let { argElemNullable(it) } ?: TypeNode.Star
 		}
 		return when {
 			!args.isNullOrEmpty() -> TypeNode.Fqn(netName, args)
@@ -362,11 +367,16 @@ internal fun BirEmitter.isArrayType(t: IrType): Boolean =
 internal fun IrType.isPrimitiveOrUnsigned(): Boolean = makeNotNull().let { it.isPrimitiveType() || it.isUnsignedType() }
 
 /** The element type of a REFERENCE `Array<T>`. NOT called for a signed OR unsigned specialized primitive array —
- *  bir2cir DERIVES that element off the faithful `kotlin.IntArray`/`kotlin.UByteArray`/… identity. */
+ *  bir2cir DERIVES that element off the faithful `kotlin.IntArray`/`kotlin.UByteArray`/… identity.
+ *  An `Array<*>` element is a STAR projection: preserve it (Kotlin vocabulary) rather than folding it to `Any` —
+ *  bir2cir decides the physical view (`System.Array`), because `object[]` admits no value-element array. */
 internal fun BirEmitter.arrayElemType(t: IrType): TypeNode {
 	val fq = t.classFqName?.asString()
-	if (fq == "kotlin.Array")
-		return (t as? IrSimpleType)?.arguments?.firstOrNull()?.let { (it as? IrTypeProjection)?.type?.let(::birType) } ?: OBJ
+	if (fq == "kotlin.Array") {
+		val arg = (t as? IrSimpleType)?.arguments?.firstOrNull() ?: return OBJ
+		val at = (arg as? IrTypeProjection)?.type ?: return TypeNode.Star
+		return birType(at)
+	}
 	return OBJ
 }
 

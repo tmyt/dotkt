@@ -5,6 +5,29 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **A member call on a star-projected receiver no longer faults at run time (#368).** `List<*>`, `Collection<*>`,
+  `Set<*>`, `Iterable<*>`, `Sequence<*>`, `MutableList<*>`, `Map<*,*>` (and the partial `Map<String,*>` /
+  `Map<*,Int>`), `Array<*>`, and a star-projected DotKt generic of ANY arity all lowered to a reified construction
+  at `object` — `IReadOnlyList<object>`, `IList<object>`, `object[]` — that no value-element instantiation
+  inhabits. ECMA-335 §I.8.7.1 gives a value type no reference conversion to `object`, so the slot was unverifiable
+  IL and its first member dispatch threw `EntryPointNotFoundException` (read-only collections), threw
+  `InvalidCastException` (the invariant `MutableList<*>`), or — for `Array<*>` read as `object[]`, a raw
+  reinterpret of element storage rather than a failed cast — raised an `AccessViolationException` that killed the
+  process. A two-parameter generic got no existential view at all and returned the value of a DIFFERENT field.
+
+  The physical form of an argument-abandoning projection is now decided in one place (`StarProjectionView`) by one
+  rule: it must be a type EVERY admitted instantiation is assignment-compatible with. Three providers answer it —
+  the most-derived non-generic ancestor of a `@ClrTypeAlias`'d or projected .NET generic (`IEnumerable` for the
+  collection aliases, `IList`/`IDictionary` for a projected `List<T>`/`Dictionary<K,V>`), `System.Array` for an
+  array, and the synthesized `$dotkt_star` interface for a DotKt generic, now built for any arity rather than only
+  for one type parameter. Members on such a receiver route to `Any`-taking CLR-stdlib helpers
+  (`kotlin.collections.ClrStarProjection`) that read the value through the non-generic BCL facades, and a
+  projection meeting a generic callee's `object`-instantiated parameter is materialized as a boxing conversion.
+  `StarProjectionCountLowering` and `StarProjectionLowering`'s member path were special cases of this rule and are
+  deleted; the `is`/`as` classifier that remains is unchanged in behavior and now runs in the stdlib self-build too.
+
 ### Changed
 
 - **Tests: #227 consolidates eleven redundant NUnit cases into their existing feature owners.** Numeric parsing,

@@ -534,13 +534,13 @@ sealed class Pipeline
             // IDEMPOTENT (reproduces the name annClr already set) -> CIR byte-identical. Never in ref (there annClr is null
             // and members keep their plain Kotlin names — renaming would corrupt the pure-Kotlin ref shapes).
             if (!_options.RefBuild) DeclarationRename.Apply(hoisted, refs);
-            // STAR-PROJECTION LOWERING (bundle-6 `iscoll`): `x is Collection<*>` + the guarded smart-cast member access
-            // (`.size`/`.iterator()`/`[i]`/…) -> the non-generic BCL interface (ICollection/IList/IEnumerable/IDictionary),
-            // which a value-type collection implements regardless of element type (reified generics have no value-type
-            // covariance). App build only — the ref/rt stdlib keeps the reified form, so collectionSizeOrDefault's harmless
-            // capacity-hint default is preserved and map/filter do not regress. Runs before MemberCallSubstitution so it
-            // sees the raw `callInstance` on the kotlin.collections.* alias.
-            if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted);
+            // STAR-PROJECTION CLASSIFIER: `x is Collection<*>` / `x as Map<*,*>` -> the non-generic BCL interface
+            // (ICollection/IList/IEnumerable/IDictionary), which a value-element collection carries regardless of its
+            // type argument (reified generics have no value-type covariance). Every NON-reference build: the member
+            // half of the projection is routed uniformly by MemberCallSubstitution now, so the stdlib self-build no
+            // longer needs the reified form to keep collectionSizeOrDefault's `.size` path working — it answers the
+            // is-test truthfully and the size read is served by the erased helper.
+            if (!_options.RefBuild) StarProjectionClassifier.Apply(hoisted);
             // .NET EVENT `subscribe` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
             // `w.Changed.subscribe(h)` as the PLAIN call `callInstance(kotlin.clr.ClrEvent.subscribe,
             // recv = <clrEventGet w Changed>, [h])`. This pass BINDS that to the .NET add/remove accessor — the existing
@@ -885,8 +885,18 @@ sealed class Pipeline
             // #305 §2.7 CHOKEPOINT — every pass that can retype a node has now run, and BirTypeLowering below STRIPS
             // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
             // is a pass that changed a node's result type without carrying `sty` with it.
+            // ARRAY MEMBERS ON AN `Array<*>` RECEIVER: the array intrinsics cannot address an erased element, so
+            // route them to the same ClrStarProjection statics the collection projection uses (System.Array carries
+            // the non-generic IList/ICollection). Must run while the `sty` stamp still identifies the receiver.
+            if (!_options.RefBuild) StarArrayMemberLowering.Apply(substituted);
+            // AN ABANDONING VALUE MEETING A CONSTRUCTED GENERIC PARAMETER (`List<*>.firstOrNull()`): the callee's
+            // type argument is `Any?`, so its parameter is a reified `IReadOnlyList<object>` the value does not
+            // inhabit. Materialize the boxing conversion at the seam. Same stage as above, for the same reason —
+            // `sig`/`typeArgs`/`sty` are all still Kotlin facts here.
+            if (!_options.RefBuild) StarViewArgCoercion.Apply(substituted);
             CheckStySanity(outputName, substituted);
-            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn);
+            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn,
+                refs.ResolveRefType);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through
@@ -902,12 +912,6 @@ sealed class Pipeline
             // never the Kotlin FQN/member names. ALL builds; on the lowered tree (the Iterator FQN + type names survive
             // lowering) so ref/rt/app mark the same nodes. Additive CIR hint — never a .NET attribute, emit is unchanged.
             IteratorBridgeMarking.Apply(lowered);
-            // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already
-            // re-pointed the receiver `cast` at a non-generic BCL collection interface, but MemberCallSubstitution bound
-            // Count to the GENERIC `IReadOnly*<object>.Count`, absent on a value-type-arg collection (`List<int>`)
-            // -> EntryPointNotFound. Re-point such Count reads at the VARIANCE-IMMUNE non-generic
-            // `System.Collections.ICollection.Count`. App build only; runs AFTER MemberCallSubstitution so Count is bound.
-            if (attributeTopLevelOwner) StarProjectionCountLowering.Apply(lowered);
             // Non-generic `System.IComparable` bridge (non-ref builds): a Kotlin `class C : Comparable<C>` lowers to
             // `C : System.IComparable<C>` ONLY, but the CLR dispatch spine for natural ordering goes through the
             // NON-generic `System.IComparable` (compareValues' `as IComparable` + ilemit's constrained-compareTo

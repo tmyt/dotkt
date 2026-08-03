@@ -72,17 +72,57 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   - Dropping it *removes* the JVM constraint: a consumer can pass a **non-reified** type parameter
     (`fun <U> bar() = foo<U>()` is fine on the CLR, an error on the JVM).
   - There is **no `@Metadata`/reified attribute** to round-trip.
-- **Corollary — a star-projected collection (`Map<*,*>` / `List<*>` / `Iterable<*>` / `Collection<*>`) binds to the
-  NON-generic BCL interface, because reified generics are INVARIANT.** On the JVM `x is Map<*,*>` and a subsequent
-  `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
-  erases to `Map<Any?,Any?>` = the generic `IDictionary<object,object>`, which a `Dictionary<int,int>` does **not**
-  implement (no value-type covariance) — a naive `castclass`/`isinst` to it fails. So DotKt lowers a star-projected
-  `is`/`as` (and `.size`/`[i]`) to the **non-generic** `System.Collections.IDictionary`/`IList`/`ICollection`/
-  `IEnumerable`, which every value-type-arg BCL collection implements; `println` of such an erased value renders via
-  the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
-  invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
-  **`List<*>` and `Map<*,*>` are exact** — `IList`/`IDictionary` are their non-generic twins. **`Collection<*>` and
-  `Set<*>` are NOT, and answer wrongly today.** A `Set` has no distinct CLR identity at all: it is aliased to the same
+- **Corollary — a projection that ABANDONS a type argument takes a NON-GENERIC physical form, because reified
+  generics are INVARIANT.** The rule: *wherever the set of instantiations Kotlin's subtyping admits for a slot
+  differs from the set its physical CLR type admits under assignment compatibility, the lowering is wrong; the
+  physical form of an argument-abandoning projection must be a type EVERY admitted instantiation is
+  assignment-compatible with.* ECMA-335 §I.8.7.1 rule 8 is the authority — a covariant argument requires
+  *compatible-with*, and a value type reaches `object` only by BOXING, never by a reference conversion. So `List<*>`
+  must NOT lower to `IReadOnlyList<object>`: a `List<int32>` does not inhabit it, the slot is unverifiable IL, and
+  the first member dispatch on it throws `EntryPointNotFoundException`. C# agrees — its spelling for "collection of
+  unknown element type" is the non-generic `System.Collections.IList`/`ICollection`/`IDictionary`, and `csc`
+  *refuses* (CS0266) the `IReadOnlyCollection<object>` spelling for a value-element list. #368, #60.
+  - The form is DERIVED, not tabulated: it is the most-derived **non-generic ancestor** of the projected type's CLR
+    shape. Every Kotlin collection alias (`List`/`Collection`/`Set`/`Iterable`/`Sequence`/`Map` and the mutable
+    siblings) reaches `System.Collections.IEnumerable`; a projected .NET `List<T>`/`Dictionary<K,V>` reaches
+    `System.Collections.IList`/`IDictionary`; `Array<*>` reaches `System.Array` (the base class of every array
+    type — `object[]` is NOT it, and reading an `int32[]` through `object[]` is a raw storage reinterpret that
+    raises an `AccessViolationException`). A DotKt generic has no such ancestor, so one is SYNTHESIZED: the
+    `G$dotkt_star` existential interface that every closed `G<X>` implements, for a generic of any arity.
+  - ANY abandoned argument is enough. `Map<String,*>` admits `Map<String,Int>` exactly as `Map<*,*>` does, so it
+    takes the same non-generic form; the still-known `String` is not retained.
+  - Members on such a receiver route to `Any`-taking CLR-stdlib helpers (`kotlin.collections.ClrStarProjection`,
+    `ClrMapDefaults`) that read through the non-generic BCL facades — `size` via `ICollection.Count` when the value
+    has it and by enumeration otherwise, `[i]` via `IList.get_Item`, iteration via the raw enumerator. `println` of
+    an erased value renders via the runtime-detecting `clrElemToString`. This is the same invariance that forces
+    §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`).
+  - A projection passed to a GENERIC callee (`List<*>.firstOrNull()`, `Array<*>.firstOrNull()`) is a different
+    seam: the type argument inferred from the captured star is `Any?`, so the parameter is a reified construction
+    at `object` that the value does not inhabit either. Read-only `List`/`Collection`/`Iterable`/`Sequence`
+    receivers and `Array` parameters get a **boxing materialization** at the call (`clrStarToList` /
+    `clrStarToArray`); enumeration into a `Sequence` stays lazy (`Enumerable.Cast<object>`). The snapshot is
+    observationally identical for a read-only receiver — the mutable aliases and `Map` are deliberately NOT
+    converted, so a projection meeting a mutable generic parameter keeps today's behavior.
+  - **`List<Any?>` / `List<Any>` / `List<out Any?>` still lower to `IReadOnlyList<object>` and still fault for a
+    value element.** For a covariant parameter these ARE the star projection in Kotlin, so the rule condemns them
+    too — but deciding it needs the DECLARATION-SITE VARIANCE of a `@ClrTypeAlias`'d type, which is present in no
+    artifact bir2cir reads (the aliased Kotlin interface is not emitted; the BCL alias target's own variance is a
+    different fact). Closing condition: carry the Kotlin variance across, then treat an objectish argument at an
+    `out` parameter as abandoned.
+  - **A star-projected generic declared in a REFERENCED DotKt module is refused at emit** (`ilemit: no referenced
+    method matches the resolved descriptor System.Object.<member>()`) when that module never star-projected the
+    type itself. The existential view is really part of a public generic's ABI — a consumer cannot add an
+    interface to an already-emitted `G<X>` — but synthesizing it for every public generic breaks the stdlib emit
+    today: `AbstractCollection<E>`'s forwarding bridge then calls through a `TypeBuilder` generic instantiation,
+    which Reflection.Emit cannot resolve members on. Closing condition: ilemit re-anchors a self-instantiation call
+    through `TypeBuilder.GetMethod`, after which `FBoundStarProjectionErasure` marks every public generic needed.
+    The previous behavior was worse and silent — the read returned the value of a DIFFERENT field.
+  - The `is`/`as` CLASSIFIER is a separate question and takes the TIGHTEST non-generic identity, not the loosest:
+    `is Map<*,*>` lowered to the physical view would answer true of a `List` and of a `String`. It keeps
+    `IDictionary`/`IList`/`ICollection`/`IEnumerable`.
+  **`List<*>` and `Map<*,*>` classify exactly** — `IList`/`IDictionary` are their non-generic twins.
+  **`Collection<*>` and `Set<*>` do NOT, and their `is`-test answers wrongly today.** A `Set` has no distinct CLR
+  identity at all: it is aliased to the same
   `IReadOnlyCollection<T>` as `Collection` (and `MutableSet` to the same `ICollection<T>` as `MutableCollection`), so
   the two Kotlin types are ONE CLR type and no runtime test — reflection included, for a user implementation as much
   as for a `HashSet` — can separate them. Concretely: `setOf(1) is Collection<*>` is **false** (a `HashSet<T>`

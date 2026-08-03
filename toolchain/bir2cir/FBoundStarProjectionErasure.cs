@@ -25,8 +25,26 @@ static class FBoundStarProjectionErasure
         public string ErasedName;
         public JsonObject Def;
         public JsonObject Root;
-        public bool Bounded;
+        // Per type PARAMETER: does it carry a non-Any declared bound? An objectish argument at such a parameter is
+        // not valid Kotlin, so it can only be the legacy star spelling (see the header). Length == the arity.
+        public bool[] BoundedAt;
         public bool Needed;
+
+        // The argument at index `i` abandons the instantiation: an explicit `*`, or the legacy `G<Any>` spelling a
+        // bounded parameter admits no other way.
+        public bool Abandons(TypeNode arg, int i) =>
+            arg is TypeNode.Star || (i < BoundedAt.Length && BoundedAt[i] && IsObjectish(arg));
+    }
+
+    // True when ANY argument of a constructed `owner` type abandons its instantiation. Arity is irrelevant to the
+    // rule: `Duo<*, *>`, `Duo<Int, *>` and `Box<*>` all admit instantiations the reified construction does not, and
+    // the existential view is the answer to every one of them. (`Duo<Int, *>` loses the `Int` it still knew; a
+    // per-parameter mask would be a second, narrower mechanism and no measured program needs it.)
+    static bool AbandonsAny(Owner owner, TypeNode[] args)
+    {
+        for (var i = 0; i < args.Length; i++)
+            if (owner.Abandons(args[i], i)) return true;
+        return false;
     }
 
     public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
@@ -36,6 +54,15 @@ static class FBoundStarProjectionErasure
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
         foreach (var root in rootList) MarkNeeded(root, owners);
+        // DEMAND-DRIVEN, AND THAT IS A KNOWN HOLE. The existential view is really part of a public generic's ABI:
+        // a consumer module cannot add an interface to an already-emitted `G<X>`, so when the DEFINING module does
+        // not star-project the type itself, a downstream `G<*>` has no physical form and its member call cannot be
+        // bound. Marking every public generic Needed here is the fix, and it is NOT taken yet because it breaks
+        // the stdlib emit: `AbstractCollection<E>`'s forwarding bridge then calls through a TypeBuilder generic
+        // instantiation, which Reflection.Emit cannot resolve members on ("Use TypeBuilder.GetMethod instead").
+        // Closing condition: ilemit re-anchors a self-instantiation call through TypeBuilder.GetMethod, after
+        // which this becomes `foreach (var owner in owners.Values) if (IsPublic(owner.Def)) owner.Needed = true;`.
+        // Tracked by the RT_XFAIL entry `starprojection-referenced-generic`.
         MarkNeededClosure(owners);
 
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
@@ -69,12 +96,9 @@ static class FBoundStarProjectionErasure
     {
         switch (type)
         {
-            case TypeNode.Fqn { Args: { Length: 1 } args } f:
-                if (ContainsOwnerTv(args[0]) && owners.TryGetValue(f.Name, out var nested))
+            case TypeNode.Fqn { Args: { } args } f:
+                if (args.Any(ContainsOwnerTv) && owners.TryGetValue(f.Name, out var nested))
                     nested.Needed = true;
-                foreach (var arg in args) MarkDependentResult(arg, owners);
-                break;
-            case TypeNode.Fqn { Args: { } args }:
                 foreach (var arg in args) MarkDependentResult(arg, owners);
                 break;
             case TypeNode.Nullable n: MarkDependentResult(n.Of, owners); break;
@@ -121,23 +145,25 @@ static class FBoundStarProjectionErasure
         {
             var name = Str(def["name"]);
             if (name != null) defs.TryAdd(name, def);
-            if (name != null && IsSingleGeneric(def))
+            if (name != null && IsViewableGeneric(def))
                 owners.TryAdd(name, new Owner
                 {
                     Name = name, ErasedName = name + Suffix, Def = def, Root = root,
-                    Bounded = IsSingleBounded(def),
+                    BoundedAt = BoundedParams(def),
                 });
             Collect(root, def, owners, defs);
         }
     }
 
-    static bool IsSingleGeneric(JsonObject def)
+    static bool IsViewableGeneric(JsonObject def)
     {
         // Lifted/local compiler artifacts are not part of the Kotlin ABI and cannot be named by a
         // downstream star-projected use.  Attaching an existential interface to them also turns
         // their implementation-detail type variables into public CLR MethodImpl signatures.
+        // A @ClrTypeAlias type has a CLR shape of its own, so its projection view is DERIVED from that shape
+        // (StarProjectionView) rather than synthesized here.
         if (Bool(def["generated"]) || HasClrTypeAlias(def)) return false;
-        return def["typeParams"] is JsonArray { Count: 1 };
+        return def["typeParams"] is JsonArray { Count: > 0 };
     }
 
     static bool HasClrTypeAlias(JsonObject def)
@@ -148,11 +174,14 @@ static class FBoundStarProjectionErasure
         return false;
     }
 
-    static bool IsSingleBounded(JsonObject def)
+    static bool[] BoundedParams(JsonObject def)
     {
-        if (def["typeParams"] is not JsonArray tps || tps.Count != 1 || tps[0] is not JsonObject tp
-            || tp["constraints"] is not JsonArray constraints) return false;
-        return constraints.Any(c => TypeJson.Read(c) is TypeNode t && !IsObjectish(t));
+        if (def["typeParams"] is not JsonArray tps) return System.Array.Empty<bool>();
+        var bounded = new bool[tps.Count];
+        for (var i = 0; i < tps.Count; i++)
+            bounded[i] = tps[i] is JsonObject tp && tp["constraints"] is JsonArray constraints
+                && constraints.Any(c => TypeJson.Read(c) is TypeNode t && !IsObjectish(t));
+        return bounded;
     }
 
     static void MarkNeeded(JsonNode node, IReadOnlyDictionary<string, Owner> owners)
@@ -186,14 +215,10 @@ static class FBoundStarProjectionErasure
     {
         switch (type)
         {
-            case TypeNode.Fqn { Args: { Length: 1 } args } f:
+            case TypeNode.Fqn { Args: { } args } f:
                 if (owners.TryGetValue(f.Name, out var owner)
-                    && (runtimeClassifier || args[0] is TypeNode.Star
-                        || (owner.Bounded && IsObjectish(args[0]))))
+                    && (runtimeClassifier || AbandonsAny(owner, args)))
                     owner.Needed = true;
-                foreach (var a in args) MarkNeededType(a, owners, false);
-                break;
-            case TypeNode.Fqn { Args: { } args }:
                 foreach (var a in args) MarkNeededType(a, owners, false);
                 break;
             case TypeNode.Nullable n: MarkNeededType(n.Of, owners, false); break;
@@ -271,7 +296,8 @@ static class FBoundStarProjectionErasure
             // downstream dll2klib restores G<*> for the frontend instead of exposing this synthetic interface or
             // degrading the whole signature to Any?. The ordinary FIR -> IR path erases the captured star before BIR.
             ["kotlinType"] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
-                new TypeNode[] { new TypeNode.Star() })).ToJsonString(),
+                Enumerable.Repeat((TypeNode)new TypeNode.Star(), Math.Max(1, owner.BoundedAt.Length))
+                    .ToArray())).ToJsonString(),
             ["base"] = null,
             ["interfaces"] = inherited,
             ["fields"] = new JsonArray(),
@@ -331,6 +357,12 @@ static class FBoundStarProjectionErasure
         // participate in the same later SuspendColdLowering as the generic declaration; dropping
         // mods here would cold-lower the call while leaving only an unlowered interface member.
         if (method["mods"] != null) slot["mods"] = method["mods"].DeepClone();
+        // `suspendRet` (the T of the member's Continuation<T>) travels WITH the suspend modifier: kotc stamps it on
+        // every `isSuspend` declaration, and SuspendColdLowering refuses a suspend declaration that lacks it. It is
+        // erased exactly like `ret`, whose value it mirrors.
+        if (method["suspendRet"] != null)
+            slot["suspendRet"] = TypeJson.Write(EraseOwnerTv(
+                TypeJson.Read(method["suspendRet"]) ?? new TypeNode.Fqn("kotlin.Unit"), owners, refs));
         return slot;
     }
 
@@ -366,8 +398,11 @@ static class FBoundStarProjectionErasure
         var call = new JsonObject
         {
             ["k"] = "callInstance",
+            // The forwarding bridge lives ON the generic declaration, so its `this` is the SELF-instantiation:
+            // every one of the owner's own type parameters, in order (`Duo<!0,!1>`), not just the first.
             ["ownerType"] = TypeJson.Write(callOwner
-                ?? new TypeNode.Fqn(owner.Name, new TypeNode[] { new TypeNode.Tv("type", 0) })),
+                ?? new TypeNode.Fqn(owner.Name, Enumerable.Range(0, owner.BoundedAt.Length)
+                    .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray())),
             ["virtual"] = Bool(method["virtual"]) || Bool(method["abstract"]),
             ["recv"] = new JsonObject { ["k"] = "this" },
             ["method"] = method["name"]?.DeepClone(),
@@ -399,6 +434,10 @@ static class FBoundStarProjectionErasure
         // The forwarding bridge is a real declaration consumed by later lowering passes. Preserve
         // Kotlin modifiers rather than manufacturing a non-suspend body that calls a suspend slot.
         if (method["mods"] != null) bridge["mods"] = method["mods"].DeepClone();
+        // See InterfaceSlot: `suspendRet` is part of what makes a declaration a valid suspend declaration.
+        if (method["suspendRet"] != null)
+            bridge["suspendRet"] = TypeJson.Write(EraseOwnerTv(
+                TypeJson.Read(method["suspendRet"]) ?? new TypeNode.Fqn("kotlin.Unit"), owners, refs));
         return bridge;
     }
 
@@ -529,10 +568,10 @@ static class FBoundStarProjectionErasure
                 // a valid `as G<Unit>; g.consume(Unit)` into an impossible existential call.
                 var runtimeKind = Str(obj["k"]);
                 if (!Bool(obj["_exactBridgeCast"]) && runtimeKind is "isInst" or "cast"
-                    && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { Length: 1 } runtimeArgs } runtimeF
+                    && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } runtimeArgs } runtimeF
                     && owners.TryGetValue(runtimeF.Name, out var runtimeOwner) && runtimeOwner.Needed
-                    && (runtimeKind == "isInst" || ContainsStarOrTypeVariable(runtimeArgs[0])
-                        || (runtimeOwner.Bounded && IsObjectish(runtimeArgs[0]))))
+                    && (runtimeKind == "isInst" || runtimeArgs.Any(ContainsStarOrTypeVariable)
+                        || AbandonsAny(runtimeOwner, runtimeArgs)))
                     obj["type"] = TypeJson.Write(new TypeNode.Fqn(runtimeOwner.ErasedName));
                 obj.Remove("_exactBridgeCast");
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
@@ -572,16 +611,15 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         if (Str(call["k"]) != "callInstance"
-            || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn { Args: { Length: 1 } args } f
+            || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn { Args: { } args } f
             || Str(call["method"]) is not string method) return;
 
         owners.TryGetValue(f.Name, out var start);
-        var starOwner = args[0] is TypeNode.Star || (start != null && start.Bounded && IsObjectish(args[0]));
-        var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
-            && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { Length: 1 } castArgs } castF
+        var starOwner = start != null && AbandonsAny(start, args);
+        var erasedSmartCast = start != null && call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
+            && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
             && castF.Name == f.Name
-            && (ContainsStarOrTypeVariable(castArgs[0])
-                || (start != null && start.Bounded && IsObjectish(castArgs[0])));
+            && (castArgs.Any(ContainsStarOrTypeVariable) || AbandonsAny(start, castArgs));
         if (!starOwner && !erasedSmartCast) return;
 
         var pc = (call["sig"] as JsonArray)?.Count
@@ -702,20 +740,22 @@ static class FBoundStarProjectionErasure
     {
         switch (type)
         {
-            case TypeNode.Fqn { Args: { Length: 1 } args } f
-                when args[0] is TypeNode.Star
-                    || (owners.TryGetValue(f.Name, out var oldOwner)
-                        && oldOwner.Bounded && IsObjectish(args[0])):
+            case TypeNode.Fqn { Args: { } args } f
+                when args.Any(a => a is TypeNode.Star)
+                    || (owners.TryGetValue(f.Name, out var oldOwner) && AbandonsAny(oldOwner, args)):
             {
                 var erased = owners.TryGetValue(f.Name, out var local) ? local.ErasedName : f.Name + Suffix;
                 if ((local != null && local.Needed) || refs.HasDotKtOwner(erased)) return new TypeNode.Fqn(erased);
+                // No DotKt existential view exists for this owner — it is a @ClrTypeAlias'd or projected .NET
+                // generic whose view is DERIVED from its CLR shape. Leave the star intact for BirTypeLowering
+                // (StarProjectionView); erasing it to `kotlin.Any` here is exactly the fold that produced
+                // `IReadOnlyList<object>` and the faulting slot.
                 return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(a, owners, refs)).ToArray());
             }
             case TypeNode.Star:
-                // A residual star belongs to an unsupported shape (multi-parameter mask / external CLR generic).
-                // Keep CIR well-formed with the explicit erasure; supported local/reference one-parameter owners
-                // have already become their existential view above.
-                return new TypeNode.Fqn("kotlin.Any");
+                // Carried through untouched: an abandoned type ARGUMENT is resolved by whichever provider owns the
+                // constructed type (this pass for a DotKt generic, BirTypeLowering for a CLR-shaped one).
+                return type;
             case TypeNode.Fqn { Args: { } args } f:
                 return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(a, owners, refs)).ToArray());
             case TypeNode.Nullable n: return new TypeNode.Nullable(RewriteType(n.Of, owners, refs));
@@ -759,8 +799,8 @@ static class FBoundStarProjectionErasure
         ReferenceMetadataIndex refs) => t switch
     {
         TypeNode.Tv { Scope: "type" } => new TypeNode.Fqn("kotlin.Any"),
-        TypeNode.Fqn { Args: { Length: 1 } args } f
-            when ContainsOwnerTv(args[0])
+        TypeNode.Fqn { Args: { } args } f
+            when args.Any(ContainsOwnerTv)
                  && ((owners.TryGetValue(f.Name, out var nested) && nested.Needed)
                      || refs.HasDotKtOwner(f.Name + Suffix))
             => new TypeNode.Fqn(f.Name + Suffix),

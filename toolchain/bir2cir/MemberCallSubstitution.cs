@@ -753,7 +753,18 @@ static class MemberCallSubstitution
                     ["method"] = fn == "get" ? "get_Item" : "Contains",
                     ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
                     ["ret"] = TypeJson.Fqn(fn == "get" ? "System.Object" : "System.Boolean"),
-                    ["recv"] = args0[0]?.DeepClone(), ["args"] = new JsonArray { args0[1]?.DeepClone() },
+                    // The receiver arrives in the projection's physical view (`System.Collections.IEnumerable`, the
+                    // type every map instantiation is compatible with), which is a strict SUPER-interface of
+                    // `IDictionary`. State the narrowing explicitly — ilemit emits what CIR says, and an implicit
+                    // one is unverifiable (StackUnexpected). Every map value carries the non-generic `IDictionary`,
+                    // so the castclass cannot fail.
+                    ["recv"] = new JsonObject
+                    {
+                        ["k"] = "cast",
+                        ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
+                        ["e"] = args0[0]?.DeepClone(),
+                    },
+                    ["args"] = new JsonArray { args0[1]?.DeepClone() },
                 };
             // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full
             // ParamKey signature first (sqrt/abs/pow -> System.Math.* for Double/Int/Long but System.MathF.* for
@@ -957,6 +968,29 @@ static class MemberCallSubstitution
         if (staticPropMarker is "get" or "set" && !refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out _))
             node["method"] = member = (staticPropMarker == "set" ? "set_" : "get_") + member;
 
+        // PRE-Rule-2 semantic override: AN ARGUMENT-ABANDONING RECEIVER (`List<*>.size`, `Collection<*>.isEmpty()`,
+        // `Set<*>.contains(x)`, `Array`-free collection projections generally). The @ClrIntrinsic binding a
+        // collection member carries names a slot on the REIFIED `IReadOnly*<T>` face — `get_Count`, `get_Item` —
+        // and at this receiver there is no such face: a `List<int32>` is not an `IReadOnlyCollection<object>`, so
+        // the dispatch throws EntryPointNotFound. The generic ClrCollectionDefaults helpers are no better: their
+        // formal parameter IS that face. Route to the ClrStarProjection statics, which take the receiver as `Any`
+        // (universally assignable, so the call boundary needs no conversion) and read it through the non-generic
+        // BCL facades. This is the member half of the rule StarProjectionView states for the slot; the two must
+        // agree or a receiver and its callee disagree about what the value physically is.
+        // Map/MutableMap are excluded: their erased members are already served by Rule 5m's ClrMapDefaults statics,
+        // which take `Any` for the same reason, and their `get` is by KEY where a list's is by INDEX.
+        if (instance && kind == "interface"
+            && ownerFqn is not ("kotlin.collections.Map" or "kotlin.collections.MutableMap")
+            && FaithfulHints.HasStarArgument(ownerFqnNode))
+        {
+            // `listIterator()` and `listIterator(i)` are one erased helper; give the nullary form its index.
+            var starArgs = member == "listIterator" && args.Count == 0
+                ? new JsonArray { new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("int"), ["value"] = 0 } }
+                : args;
+            if (StarCollectionDefaults.TryGetValue((member, starArgs.Count), out var starHelper))
+                return StarDefaultCall(node, starHelper, starArgs);
+        }
+
         // PRE-Rule-2 semantic override: MutableCollection.add is @ClrIntrinsic("Add") (the binding drives the
         // implementor-side DeclarationRename), but the CALL semantics diverge — Kotlin `add` returns the
         // changed-Boolean while `ICollection<T>.Add` is VOID (a brIf on the phantom result was a stack underflow),
@@ -1063,7 +1097,18 @@ static class MemberCallSubstitution
                     ["method"] = member == "get" ? "get_Item" : "Contains",
                     ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
                     ["ret"] = TypeJson.Fqn(member == "get" ? "System.Object" : "System.Boolean"),
-                    ["recv"] = node["recv"]?.DeepClone(), ["args"] = new JsonArray { args[0].DeepClone() },
+                    // The receiver's SLOT is the projection's physical view — `System.Collections.IEnumerable`,
+                    // the type every instantiation is compatible with — which is a strict SUPER-interface of
+                    // `IDictionary`. CIR must state the narrowing: ilemit emits exactly what it is told, and an
+                    // implicit one is unverifiable IL (StackUnexpected). Every map value carries the non-generic
+                    // `IDictionary`, so the castclass never fails.
+                    ["recv"] = new JsonObject
+                    {
+                        ["k"] = "cast",
+                        ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
+                        ["e"] = node["recv"]?.DeepClone(),
+                    },
+                    ["args"] = new JsonArray { args[0].DeepClone() },
                 };
             var mutable = ownerFqn == "kotlin.collections.MutableMap";
             var helper = (member, args.Count, mutable) switch
@@ -1354,6 +1399,55 @@ static class MemberCallSubstitution
         ["lastIndexOf"] = "clrListLastIndexOf",
         ["subList"] = "clrListSubList",
     };
+
+    // The ARGUMENT-ABANDONING twin of CollectionDefaults: every Kotlin collection member a star-projected receiver
+    // can still name, keyed by (member, arity) because the erased view collapses overloads that the element type
+    // used to separate (`listIterator()` / `listIterator(i)`). The targets are the ClrStarProjection statics —
+    // `Any`-taking and non-generic-facade-backed, so no instantiation is assumed of the receiver.
+    // `size`/`get`/`iterator` are here too although they DO have a BCL slot: that slot lives on the reified
+    // `IReadOnly*<object>` the receiver is not, which is the whole fault this closes.
+    // Members naming the element in an IN position (`add`, `set`, ...) are absent because the FRONTEND rejects them
+    // on a star receiver — they cannot reach this table.
+    // Both spellings of every @ClrIntrinsic-bound member are listed: DeclarationRename has already rewritten
+    // `size`->`get_Count`, `get`->`get_Item`, `removeAt`->`RemoveAt`, `clear`->`Clear` by the time a call reaches
+    // here in a non-reference build, while the reference build keeps the Kotlin names.
+    static readonly Dictionary<(string Member, int Arity), string> StarCollectionDefaults = new()
+    {
+        [("get_size", 0)] = "clrStarSize",
+        [("get_Count", 0)] = "clrStarSize",
+        [("isEmpty", 0)] = "clrStarIsEmpty",
+        [("contains", 1)] = "clrStarContains",
+        [("Contains", 1)] = "clrStarContains",
+        [("containsAll", 1)] = "clrStarContainsAll",
+        [("get", 1)] = "clrStarGet",
+        [("get_Item", 1)] = "clrStarGet",
+        [("indexOf", 1)] = "clrStarIndexOf",
+        [("IndexOf", 1)] = "clrStarIndexOf",
+        [("lastIndexOf", 1)] = "clrStarLastIndexOf",
+        [("iterator", 0)] = "clrStarIterator",
+        [("subList", 2)] = "clrStarSubList",
+        [("listIterator", 1)] = "clrStarListIterator",
+        [("removeAt", 1)] = "clrStarRemoveAt",
+        [("RemoveAt", 1)] = "clrStarRemoveAt",
+        [("clear", 0)] = "clrStarClear",
+        [("Clear", 0)] = "clrStarClear",
+    };
+
+    // `callStatic ClrStarProjectionKt.<helper>(recv, args...)` — NO type arguments: the helpers are non-generic
+    // precisely because there is no instantiation left to name.
+    static JsonNode StarDefaultCall(JsonObject node, string helperMethod, JsonArray args)
+    {
+        var hargs = new JsonArray();
+        if (node["recv"] != null) hargs.Add(node["recv"].DeepClone());
+        foreach (var a in args) hargs.Add(a?.DeepClone());
+        return new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Fqn("kotlin.collections.ClrStarProjectionKt"),
+            ["method"] = helperMethod,
+            ["args"] = hargs,
+        };
+    }
 
     // A `callStatic <helperOwner>.<helperMethod>(recv, args...)` typed over the collection's element. Mirrors kotc's
     // collDefault emission shape (owner=ClrCollectionDefaultsKt / ClrIteratorBridgeKt, recv prepended, typeArgs=[elem]).

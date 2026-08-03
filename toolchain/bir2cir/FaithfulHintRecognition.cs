@@ -40,19 +40,37 @@ static class FaithfulHints
         "kotlin.collections.Set", "kotlin.collections.MutableSet",
         "kotlin.collections.Iterable", "kotlin.collections.MutableIterable",
         "kotlin.collections.Map", "kotlin.collections.MutableMap",
+        // A Sequence is the same alias face (IEnumerable<T>) with the same single member, so a `Sequence<*>`
+        // receiver needs the same erased routing its collection siblings do.
+        "kotlin.sequences.Sequence",
     };
 
-    // True for a star-projected / `Any(?)`-erased collection SURFACE type (`Map<*,*>` / `List<*>` / an explicit
-    // `as Map<Any?,Any?>`): a known collection alias whose every type-arg is `object`/`Any` (possibly nullable-wrapped).
-    // Such a value can only be rendered non-generically — route it to clrElemToString(Any?), not the generic helpers.
+    // True for an ARGUMENT-ABANDONING collection SURFACE type (`List<*>` / `Map<*,*>` / `Map<String,*>` / an
+    // explicit `as Map<Any?,Any?>`): a known collection alias with at least one abandoned type argument. ANY
+    // abandoned argument is enough — `Map<String,*>` admits `Map<String,Int>` exactly as `Map<*,*>` does, and the
+    // reified `IDictionary<string,object>` admits neither — so the whole value can only be read non-generically.
+    // (`Map<*,Int>` likewise.) The `object`/`Any` spelling is kept alongside the `*` one because kotc used to fold
+    // a projection to `Any` and a hand-written `as Map<Any?,Any?>` still says the same thing.
     public static bool IsStarProjectedColl(TypeNode t)
     {
         if (Unwrap(t) is not TypeNode.Fqn f || f.Args is not { } args || args.Length == 0) return false;
-        return StarProjectableColls.Contains(f.Name) && args.All(IsObjectArg);
+        return StarProjectableColls.Contains(f.Name) && args.Any(IsObjectArg);
+    }
+
+    // The STRICT form: a collection alias with a genuine `*` argument. kotc carries the projection faithfully, so
+    // this is what a real star projection looks like, and it is what MEMBER ROUTING must key on — the `object`
+    // spelling [IsStarProjectedColl] also accepts is a different type for an INVARIANT alias. `MutableList<Any?>`
+    // admits exactly one instantiation, which its reified `IList<object>` admits exactly, so its members must keep
+    // their ordinary generic binding (its `iterator()` is a live MutableIterator, which no erased view can be).
+    public static bool HasStarArgument(TypeNode t)
+    {
+        if (Unwrap(t) is not TypeNode.Fqn f || f.Args is not { } args || args.Length == 0) return false;
+        return StarProjectableColls.Contains(f.Name) && args.Any(a => Unwrap(a) is TypeNode.Star);
     }
 
     static bool IsObjectArg(TypeNode a) => a switch
     {
+        TypeNode.Star => true,
         TypeNode.Nullable n => IsObjectArg(n.Of),
         TypeNode.Oblivious o => IsObjectArg(o.Of),
         TypeNode.Fqn { Args: null, Name: "object" or "kotlin.Any" } => true,

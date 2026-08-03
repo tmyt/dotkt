@@ -225,6 +225,9 @@ static class BirTypeLowering
     //   an in-assembly/user/stdlib FQN -> unchanged, a `tv` -> unchanged (ilemit maps scope+i to !i/!!i).
     static readonly TypeNode VoidType = new TypeNode.Fqn("void");
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
+    // The pure-Kotlin top type — what an abandoned type ARGUMENT folds to in the reference build, where every
+    // kotlin.* token stays verbatim and no CLR view may appear.
+    static readonly TypeNode AnyKotlinType = new TypeNode.Fqn("kotlin.Any");
 
     static bool IsObjectish(TypeNode t) =>
         t is TypeNode.Fqn f && f.Args == null &&
@@ -252,9 +255,25 @@ static class BirTypeLowering
                 // (which emitted `System.Span` unconditionally); the element lowers like any generic type-arg.
                 if (f.Name == SpanIntrinsicFqn && f.Args != null)
                     return new TypeNode.Fqn(SpanClrFqn, f.Args.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray());
+                // AN ARGUMENT-ABANDONING PROJECTION (`List<*>`, `Map<*,*>`, `Map<String,*>`) -> its PHYSICAL VIEW.
+                // StarProjectionView owns the rule and the derivation; this is the one place a slot consults it.
+                // Substituting `object` for the abandoned argument would manufacture `IReadOnlyList<object>`, which
+                // a `List<int32>` does not inhabit — the store is unverifiable and the first dispatch on the slot
+                // faults. The REFERENCE build keeps the pure-Kotlin surface instead: it is frontend metadata, never
+                // a dispatch target, and RoundtripMetadata carries the exact pre-lowering Kotlin type across.
+                if (f.Args != null && f.Args.Any(a => a is TypeNode.Star))
+                {
+                    if (refBuild && !force)
+                        return new TypeNode.Fqn(f.Name, f.Args.Select(a => a is TypeNode.Star ? AnyKotlinType : a).ToArray());
+                    if (StarProjectionView.ViewOf(f) is TypeNode view) return view;
+                }
                 // The reference build keeps the pure-Kotlin surface verbatim (no recursion) unless an attribute
-                // blob forces a concrete System.* type.
-                if (!force && refBuild) return f;
+                // blob forces a concrete System.* type. The one thing it may NOT keep is an abandoned type
+                // argument: `star` is BIR-only vocabulary that must not reach CIR, and since this returns without
+                // recursing, a star nested anywhere below (`Foo<Array<*>>`) would ride out unlowered. Fold the
+                // whole subtree's abandoned arguments to the Kotlin top type — the pure-Kotlin surface's own
+                // spelling for them, and what the reference metadata carried before any physical view existed.
+                if (!force && refBuild) return DeStar(f);
                 // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
                 // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
                 if (f.Name == "kotlin.Enum" && f.Args != null) return new TypeNode.Fqn("System.Enum");
@@ -315,8 +334,21 @@ static class BirTypeLowering
                 var lowered = LowerType(n.Of, refBuild, force, typeArg: false);
                 return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
             }
+            case TypeNode.Array { Elem: TypeNode.Star }:
+                // `Array<*>` — the array mirror of the projection rule. `object[]` is NOT it: an `int32[]` reaches
+                // `object[]` by no reference conversion (ECMA-335 §I.8.7.1 array covariance is reference-element
+                // only), and reading one through the other is a raw reinterpret — the measured AccessViolation.
+                // `System.Array` is the BASE CLASS of every array type, so every element instantiation is
+                // assignment-compatible with it, and it carries the erased surface (`Length`, `GetValue`) plus the
+                // non-generic `IEnumerable` a star-projected member call needs.
+                return refBuild && !force ? new TypeNode.Array(AnyKotlinType) : new TypeNode.Fqn(StarProjectionView.ArrayView);
             case TypeNode.Array a:
                 return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
+            case TypeNode.Star:
+                // A residual star in a VALUE position (not a type argument, which the Fqn case above already
+                // viewed). Kotlin cannot write one; it only arises from a synthesized node, and `object` is the
+                // one type every instantiation boxes into.
+                return refBuild && !force ? AnyKotlinType : ObjectType;
             case TypeNode.ByRef b:
                 return new TypeNode.ByRef(LowerType(b.Of, refBuild, force, typeArg: false));
             case TypeNode.Oblivious ob:
@@ -367,10 +399,13 @@ static class BirTypeLowering
         n is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s != null;
 
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
-        Func<string, bool> isValueFqn = null)
+        Func<string, bool> isValueFqn = null, Func<string, int, Type> resolveClrType = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _isValueFqn = isValueFqn ?? (_ => false);
+        // The projection-view derivation reads the CLR ancestry of an aliased/projected generic; bind its oracles
+        // to the same reference index the alias map came from.
+        StarProjectionView.Bind(resolveClrType, AliasBcl);
         return LowerNode(root, refBuild, force: false);
     }
 
@@ -412,6 +447,16 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
                 else if (kv.Key == "ownerType" || kv.Key == "owner")
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
+                // A RUNTIME CLASSIFIER slot is not a value slot, and the projection rule does not apply to it: an
+                // `is`/`as` asks whether a value carries an identity, so it wants the TIGHTEST sound classifier,
+                // while a slot wants the LOOSEST sound type (StarProjectionView). StarProjectionClassifier and
+                // FBoundStarProjectionErasure have already given every projection that HAS a non-generic identity
+                // its own token here; what still carries a star is a projection with none (`Set<*>` — see
+                // docs/dotkt-semantics.md §2), and folding the abandoned argument to `Any` keeps its reified test
+                // exactly as it was. Taking the physical view instead would test `IEnumerable` and answer true of
+                // a `String`.
+                else if (kv.Key == "type" && nodeK is "isInst" or "isInstRef" or "cast")
+                    copy[kv.Key] = LowerTypeValued(DeStar(kv.Value), refBuild, here);
                 else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
                 else if (TypeKeys.Contains(kv.Key))
@@ -490,6 +535,27 @@ static class BirTypeLowering
     // fields / property accessors must carry concrete CLR types so the attribute is emittable — hence the force path.
     // Structured declaration modifier (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
     static bool ModFlag(JsonObject obj, string name) => obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
+
+    // Replace every abandoned type ARGUMENT with the Kotlin top type, leaving the rest of the node untouched. Used
+    // only on a runtime-classifier slot (see the call site): the reified `G<object>` test is what the star meant
+    // before any physical view existed, and it is the behavior the classifier keeps.
+    static JsonNode DeStar(JsonNode value)
+    {
+        if (!IsTypeObject(value)) return value;
+        var tn = TypeNode.Parse(value.ToJsonString());
+        return TypeNode.Write(DeStar(tn));
+    }
+
+    static TypeNode DeStar(TypeNode t) => t switch
+    {
+        TypeNode.Star => AnyKotlinType,
+        TypeNode.Fqn f when f.Args is not null => new TypeNode.Fqn(f.Name, f.Args.Select(DeStar).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(DeStar(n.Of)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(DeStar(o.Of)),
+        TypeNode.Array a => new TypeNode.Array(DeStar(a.Elem)),
+        TypeNode.ByRef b => new TypeNode.ByRef(DeStar(b.Of)),
+        _ => t,
+    };
 
     static bool IsAttributeClass(JsonObject obj) =>
         ModFlag(obj, "annotation") ||
