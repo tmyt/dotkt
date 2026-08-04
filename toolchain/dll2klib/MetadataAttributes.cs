@@ -14,6 +14,7 @@ internal sealed class MetadataAttributes
     private readonly bool _dotKtAssembly;
     private readonly bool _standardLibrary;
     private readonly HashSet<string> _trustedCarriers = new(StringComparer.Ordinal);
+    private readonly HashSet<TypeDefinitionHandle> _trustedCarrierDefinitions = new();
 
     public MetadataAttributes(MetadataReader md)
     {
@@ -28,7 +29,10 @@ internal sealed class MetadataAttributes
                 var name = FullName(def.Namespace, def.Name);
                 if (name.StartsWith(DotKtNs, StringComparison.Ordinal) &&
                     Has(handle, "System.Runtime.CompilerServices.CompilerGeneratedAttribute", requireTrust: false))
+                {
                     _trustedCarriers.Add(name);
+                    _trustedCarrierDefinitions.Add(handle);
+                }
             }
         }
     }
@@ -55,10 +59,19 @@ internal sealed class MetadataAttributes
     // carrier; only the shape inside differs, which is why it is decoded here rather than through `CarrierType`.
     public System.Text.Json.JsonDocument? CarrierDocument(EntityHandle owner, string name)
     {
-        var attr = Find(owner, name);
-        if (attr?.StringValue is not { } version || attr.BytesValue is not { } bytes) return null;
+        if (owner.IsNil) return null;
+        var exact = _md.GetCustomAttributes(owner)
+            .Select(_md.GetCustomAttribute)
+            .Where(ca => IsExactTrustedCarrier(ca, name))
+            .ToArray();
+        if (exact.Length == 0) return null;
+        if (exact.Length != 1)
+            throw new InvalidDataException($"duplicate trusted [{name}] carriers");
         try
         {
+            var attr = Decode(name, exact[0].Value);
+            if (attr.StringValue is not { } version || attr.BytesValue is not { } bytes)
+                throw new BadImageFormatException("expected (version, byte[]) carrier arguments");
             var body = BirCarrier.DecodeBody(version, bytes);
             return System.Text.Json.JsonDocument.Parse(body.ToJsonString(), DotKt.Bir.BirJson.DocOptions);
         }
@@ -99,7 +112,7 @@ internal sealed class MetadataAttributes
             var name = AttributeTypeName(ca.Constructor);
             if (name is null) continue;
             if (requireTrust && name.StartsWith(DotKtNs, StringComparison.Ordinal) &&
-                (!IsDotKtAssembly || !_trustedCarriers.Contains(name)))
+                !IsExactTrustedCarrier(ca, name))
                 continue;
             Attr? decoded = null;
             try { decoded = Decode(name, ca.Value); }
@@ -148,7 +161,10 @@ internal sealed class MetadataAttributes
             var count = reader.ReadInt32();
             if (version is null || count < 0 || count > reader.RemainingBytes - 2)
                 throw new BadImageFormatException("carrier");
-            return new(name, StringValue: version, BytesValue: reader.ReadBytes(count));
+            var bytes = reader.ReadBytes(count);
+            if (reader.ReadUInt16() != 0 || reader.RemainingBytes != 0)
+                throw new BadImageFormatException("carrier named arguments");
+            return new(name, StringValue: version, BytesValue: bytes);
         }
         return new(name);
     }
@@ -181,6 +197,25 @@ internal sealed class MetadataAttributes
         HandleKind.MethodDefinition => DefinitionName(_md.GetMethodDefinition((MethodDefinitionHandle)constructor).GetDeclaringType()),
         _ => null,
     };
+
+    private bool IsExactTrustedCarrier(CustomAttribute attribute, string expectedName)
+    {
+        if (!_dotKtAssembly || !_trustedCarriers.Contains(expectedName)) return false;
+        var definition = AttributeTypeDefinition(attribute.Constructor);
+        return !definition.IsNil && _trustedCarrierDefinitions.Contains(definition) &&
+            DefinitionName(definition) == expectedName;
+    }
+
+    private TypeDefinitionHandle AttributeTypeDefinition(EntityHandle constructor)
+    {
+        if (constructor.Kind == HandleKind.MethodDefinition)
+            return _md.GetMethodDefinition((MethodDefinitionHandle)constructor).GetDeclaringType();
+        if (constructor.Kind != HandleKind.MemberReference) return default;
+        var parent = _md.GetMemberReference((MemberReferenceHandle)constructor).Parent;
+        return parent.Kind == HandleKind.TypeDefinition
+            ? (TypeDefinitionHandle)parent
+            : default;
+    }
 
     private string? ParentTypeName(EntityHandle parent) => parent.Kind switch
     {

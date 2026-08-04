@@ -185,6 +185,18 @@
         "base":       { "$ref": "#/$defs/type", "description": "superclass; absent = none/Object" },
         "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "nestedIn":   { "type": "string" },
+        "kotlinCompanion": {
+          "type": "object",
+          "description": "#275 BIR semantic fact on a companion declaration. bir2cir consumes it when selecting the ordinary nested CLR carrier and emits explicit round-trip metadata.",
+          "properties": {
+            "owner": { "type": "string" },
+            "name": { "type": "string" },
+            "visibility": { "enum": ["public", "private", "protected", "internal"] }
+          },
+          "required": ["owner", "name", "visibility"],
+          "additionalProperties": false
+        },
+        "capturedTypeParams": { "type": "array", "items": { "type": "string" }, "description": "#275 CIR-only names of enclosing CLR generic slots physically captured by a nested companion carrier. Declaration names, not Type usages." },
         "fields":     { "type": "array", "items": { "$ref": "#/$defs/fieldDecl" } },
         "ctors":      { "type": "array", "items": { "$ref": "#/$defs/ctorDecl" } },
         "methods":    { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
@@ -272,6 +284,7 @@
         "field", "setField", "staticField",
         "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
         "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
+        "newClrStaticDelegate", "companionValue",
         "enumValue", "enumOrdinal", "default", "defaultArg", "callEval", "bindRef",
         "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
         "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
@@ -308,6 +321,8 @@
         { "properties": { "k": { "const": "newArrayInit" }, "elem": { "$ref": "#/$defs/type" }, "items": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["elem", "items"] },
         { "properties": { "k": { "const": "newClosure" }, "closureType": { "$ref": "#/$defs/type" }, "funcType": { "$ref": "#/$defs/type" }, "captures": { "type": "array" }, "synthClass": { "type": "object", "$comment": "#52 BIR-ONLY transient: the ingredient bag for bir2cir's ClosureSynthesis to ASSEMBLE the closure class (name + capture fields{name,type} + invoke params/ret/body + optional generic typeParams). STRIPPED in CIR — the lean node (closureType+captures values+funcType+typeArgs) is what ilemit consumes for the `new`." } }, "required": ["closureType"] },
         { "properties": { "k": { "const": "newSuspendLambda" }, "arity": { "type": "integer" }, "captures": { "type": "array" }, "params": { "type": "array" }, "suspendRet": { "$ref": "#/$defs/type" }, "typeParams": { "type": "array", "$comment": "the SM's own generic-param NAME declarations (the enclosing free type params it is generic over) — a type-param DECL name list (the `typeParams` name-shorthand, §2.5), NOT a type-USAGE slot; renamed from `typeArgs` in m6" }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "OPTIONAL construction channel (#75 Batch B, 2A): the ORIGINAL enclosing tvs (type-USAGE nodes, any scope/index) the open SM is INSTANTIATED with — `new smName<typeArgs…>(…)`. Distinct from `typeParams` (the SM's DECL names). Emitted by InlineSplice.MaterializeSuspendCarrier when it renumbers a carrier's enclosing tvs to a dense SM param space; ABSENT on kotc's own source-lambda emission (positional `smName<tv{type,0..N-1}>` fallback)." }, "capValues": { "type": "array", "items": { "$ref": "#/$defs/node" }, "$comment": "OPTIONAL per-capture construction-value overrides (positional, aligned with `captures`; a null slot falls back to the descriptor-name synthesis). Set by SuspendColdLowering (GAP 2, an SM-vocabulary spill) and by InlineSplice 2B (an `__outer` rebound to the splice's receiver temp)." }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "funcType": { "$ref": "#/$defs/type", "$comment": "Canonical Kotlin function type. An extension receiver is carried only in fn.recv; fn.params contains regular parameters. The physical node params array remains receiver-first because it supplies SM field names/create arguments." } }, "required": ["arity", "funcType"], "$comment": "suspendRet = the T of Continuation<T> (was `resultType`)" },
+        { "properties": { "k": { "const": "companionValue" }, "ownerType": { "$ref": "#/$defs/type" }, "companionType": { "$ref": "#/$defs/type" }, "name": { "type": "string" } }, "required": ["ownerType", "companionType", "name"], "$comment": "#275 BIR-only semantic companion singleton access; bir2cir binds it to the trusted nested CLR carrier and no instance survives to CIR." },
+        { "properties": { "k": { "const": "newClrStaticDelegate" }, "clrType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "memberSig": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "memberOwner": { "$ref": "#/$defs/type" }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "funcType": { "$ref": "#/$defs/type" } }, "required": ["clrType", "method", "memberSig", "memberOwner", "funcType"], "$comment": "CIR-only CLR-static callable-reference construction. bir2cir has already resolved the physical memberSig/memberOwner descriptors that ilemit consumes one-to-one." },
         { "properties": { "k": { "const": "enumValue" }, "type": { "$ref": "#/$defs/type" }, "name": { "type": "string" } }, "required": ["type", "name"] },
         { "properties": { "k": { "const": "default" }, "type": { "$ref": "#/$defs/type" } }, "required": ["type"] },
         { "properties": { "k": { "const": "nullableWrap" }, "e": { "$ref": "#/$defs/node" }, "elem": { "$ref": "#/$defs/type" } }, "required": ["e", "elem"], "$comment": "value-type nullable wrap; operand `e`, element type `elem` (shared with nullableValue/nullableHasValue/nullableNull)" },

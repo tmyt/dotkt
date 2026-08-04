@@ -175,9 +175,8 @@ internal fun BirEmitter.filledArgs(
 	//   Under a plan both are bound EAGERLY and dispatch-first, because Kotlin evaluates a receiver before every
 	// argument and the binding order IS the evaluation order. Without a plan they stay lazy: rendering a receiver has
 	// synthesis side effects (a lifted method appended to the file class for a non-capturing lambda, a consumed synth
-	// index), so an unread one must not be forced for a rendering that is then discarded. A receiver naming an object
-	// this backend gives NO INSTANCE (a flattened plain companion, a projected static holder) is neither bound nor
-	// forced; a real `object` and a super-typed companion are bound like anything else — see [needsPlanBinding].
+	// index), so an unread one must not be forced for a rendering that is then discarded. A projected static holder has
+	// no receiver to bind; a real `object` or companion is bound like anything else — see [needsPlanBinding].
 	val dispatchRecv: Lazy<String?> = lazy {
 		dispatchReceiver(call)?.let { r ->
 			(if (needsPlanBinding(r)) plan else null)?.bindValue(r, "recv", "receiver of '$label'") ?: expr(r)
@@ -514,7 +513,7 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 	// The receivers, bound FIRST and dispatch-first — Kotlin evaluates them before every argument, and the binding
 	// order IS the evaluation order. The caller reads them back through the ordinary `expr()`. A receiver naming an
 	// object this backend gives NO INSTANCE is not bound (see [needsPlanBinding]) and the caller's `expr()` renders it
-	// in place; a real `object` and a super-typed companion are bound, because loading their `INSTANCE` is an
+	// in place; a real `object` and a lifted companion are bound, because loading their `INSTANCE` is an
 	// evaluation whose position matters.
 	if (plan != null) {
 		dispatchReceiver(call)?.let { if (needsPlanBinding(it)) plan.bindValue(it, "recv", "receiver of '$label'") }
@@ -634,9 +633,9 @@ internal fun BirEmitter.regularArgs(call: org.jetbrains.kotlin.ir.expressions.Ir
  *  to drop unread pure-looking loads; it is the producer's job not to mint it. Nothing is lost: there is no value
  *  there to evaluate.
  *
- *  A REAL `object`, and a SUPER-TYPED companion (lifted to its own `<Outer>.<N>CompanionObject` singleton, see
- *  [superTypedCompanion]), are the opposite case and stay bound. Their `INSTANCE` exists, and loading it RUNS THE
- *  TYPE INITIALIZER — the object's own body — which can print, throw, or mutate. That is an observable evaluation
+ *  A real `object` stays bound because loading its `INSTANCE` runs its type initializer. A semantic companion stays
+ *  bound until bir2cir chooses its representation and can preserve or remove that evaluation deliberately. This is
+ *  observable evaluation
  *  (docs/dotkt-semantics.md §7a), and Kotlin evaluates the receiver BEFORE every argument, so it needs a binding to
  *  hold that position: without one, `O.f(side())` lets `side()` run first, and if `O`'s initializer throws it must
  *  not have run at all.
@@ -645,8 +644,7 @@ internal fun BirEmitter.regularArgs(call: org.jetbrains.kotlin.ir.expressions.Ir
  *  BirEmitterInline): the rule is about what the value IS, not about which emitter reached it. */
 internal fun BirEmitter.needsPlanBinding(receiver: IrExpression): Boolean {
 	val obj = (receiver as? IrGetObjectValue)?.symbol?.owner ?: return true
-	val enclosing = obj.parent as? IrClass ?: return true
-	return !(obj.isCompanion && superTypedCompanion(enclosing) == null)
+	return true
 }
 
 internal fun BirEmitter.dispatchReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
@@ -1230,9 +1228,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// `object`, however, is an instance singleton: keep its IrGetObjectValue receiver in BIR (`Owner.INSTANCE`) and
 		// let bir2cir decide whether the referenced owner is actually a CLR static class or an emitted Kotlin object.
 		// Treating every object receiver as CLR static here erased the receiver of cross-module `Dispatchers.Default`.
-		val externalStaticCompanion = declaringClass?.isCompanion == true &&
-			(declaringClass.parent as? IrClass)?.let { clrName(it) } != null
-		val isStatic = recv == null || externalStaticCompanion
+		val isExternalCompanion = declaringClass?.isCompanion == true && clrName(declaringClass) != null
+		val companionCallTag = if (isExternalCompanion) ""","companionCall":true""" else ""
+		val isStatic = recv == null
 		// A NON-static callInstance emitted here is normally reshaped to a `clrInstance` by bir2cir's
 		// NetInteropBinding (which resolves the owner off the .NET refs) — where `virtual` is irrelevant. But a
 		// DotKt library consumed AS KOTLIN whose owner bir2cir cannot resolve (netType == null -> left un-reshaped)
@@ -1294,9 +1292,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 				// bir2cir's NetInteropBinding resolves the owner off the .NET refs and shapes it to clrGenericStatic/
 				// clrGenericInstance (the `typeArgs` presence is the generic signal).
 				return if (isStatic)
-					"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag}"""
+					"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag$companionCallTag}"""
 				else
-					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag${superTag(call)}}"""
+					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"recv":${expr(recv!!)},"args":[$argsJson]${suspendCallTag(callee)}$anySlotTag${superTag(call)}$companionCallTag}"""
 			}
 		}
 		val prop = callee.correspondingPropertySymbol?.owner
@@ -1310,15 +1308,15 @@ internal fun BirEmitter.call(call: IrCall): String {
 				val ownerType = memberType!!.toJson()
 				return if (isStatic) {
 					if (callee === prop.setter)
-						"""{"k":"staticFieldSet","ownerType":$ownerType,"name":$fieldName,"value":${expr(regularArgs(call).first())}}"""
+						"""{"k":"staticFieldSet","ownerType":$ownerType,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
 					else
-						"""{"k":"staticField","ownerType":$ownerType,"name":$fieldName${retHint((memberType as? TypeNode.Fqn)?.args != null, call.type)}}"""
+						"""{"k":"staticField","ownerType":$ownerType,"name":$fieldName${retHint((memberType as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
 				} else {
 					val receiver = expr(recv!!)
 					if (callee === prop.setter)
-						"""{"k":"setFieldExpr","ownerType":$ownerType,"recv":$receiver,"name":$fieldName,"value":${expr(regularArgs(call).first())}}"""
+						"""{"k":"setFieldExpr","ownerType":$ownerType,"recv":$receiver,"name":$fieldName,"value":${expr(regularArgs(call).first())}$companionCallTag}"""
 					else
-						"""{"k":"field","ownerType":$ownerType,"recv":$receiver,"name":$fieldName${retHint((memberType as? TypeNode.Fqn)?.args != null, call.type)}}"""
+						"""{"k":"field","ownerType":$ownerType,"recv":$receiver,"name":$fieldName${retHint((memberType as? TypeNode.Fqn)?.args != null, call.type)}$companionCallTag}"""
 				}
 			}
 			// A `kotlin.clr.ClrEvent<T>` property read is legal ONLY as the receiver of `.subscribe(h)`, where
@@ -1352,8 +1350,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 				val accArgTypes = accArgIrs.joinToString(",") { birType(it.type).toJson() }
 				val accArgs = accArgIrs.joinToString(",") { expr(it) }
 				return if (callee === prop.setter)
-					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set"${overloadSigField(callee)},"argTypes":[$accArgTypes],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[$accArgs]${superTag(call)}}"""
-				else """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get"${overloadSigField(callee)},"argTypes":[$accArgTypes],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[$accArgs]${superTag(call)}}"""
+					"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set"${overloadSigField(callee)},"argTypes":[$accArgTypes],"ret":${fqnJson("kotlin.Unit")},"recv":$recvJson,"args":[$accArgs]${superTag(call)}$companionCallTag}"""
+				else """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get"${overloadSigField(callee)},"argTypes":[$accArgTypes],"ret":${birType(callee.returnType).toJson()},"recv":$recvJson,"args":[$accArgs]${superTag(call)}$companionCallTag}"""
 			}
 			// A2 (#61): a `kotlin.clr.ClrEvent<T>` read is CLR-ONLY vocabulary — a .NET event has no plain-Kotlin
 			// call form (it exposes add_/remove_, not a get_); dll2klib projects it purely to typecheck, so kotc
@@ -1364,7 +1362,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// OTHER property is a plain Kotlin-shaped access -> emit the get_/set_ accessor CALL by identity;
 			// NetInteropBinding shapes it to clrPropGet/clrPropSet (a .NET property OR field) off the refs.
 			if (callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent") {
-				return """{"k":"clrEventGet","type":${memberType!!.toJson()},"name":${str(pn)},"static":$isStatic,"recv":$recvJson}"""
+				return """{"k":"clrEventGet","type":${memberType!!.toJson()},"name":${str(pn)},"static":$isStatic,"recv":$recvJson$companionCallTag}"""
 			}
 			val propCallKind = if (isStatic) "callStatic" else "callInstance"
 			val propRecvField = if (isStatic) "" else ""","recv":$recvJson"""
@@ -1375,8 +1373,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 			val plainAccArgTypes = plainAccArgIrs.joinToString(",") { birType(it.type).toJson() }
 			val plainAccArgs = plainAccArgIrs.joinToString(",") { expr(it) }
 			return if (callee === prop.setter)
-				"""{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set"${overloadSigField(callee)},"argTypes":[$plainAccArgTypes]$propRecvField,"args":[$plainAccArgs]${superTag(call)}}"""
-			else """{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get"${overloadSigField(callee)},"argTypes":[$plainAccArgTypes],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[$plainAccArgs]${superTag(call)}}"""
+				"""{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"set"${overloadSigField(callee)},"argTypes":[$plainAccArgTypes]$propRecvField,"args":[$plainAccArgs]${superTag(call)}$companionCallTag}"""
+			else """{"k":"$propCallKind"$propVirtualField,"ownerType":${memberType!!.toJson()},"method":${str(pn)},"prop":"get"${overloadSigField(callee)},"argTypes":[$plainAccArgTypes],"ret":${birType(callee.returnType).toJson()}$propRecvField,"args":[$plainAccArgs]${superTag(call)}$companionCallTag}"""
 		}
 		val member = name
 		val anySlotTag = if (isAnySlotMethod(callee)) ""","anySlot":true""" else ""
@@ -1394,73 +1392,21 @@ internal fun BirEmitter.call(call: IrCall): String {
 		val extRecv = extensionReceiver(call)
 		if (isStatic && extRecv != null) {
 			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
-			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag}"""
+			return """{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"args":[$allArgs]$suspendTag$anySlotTag$companionCallTag}"""
 		}
 		// A restored MEMBER extension function (`class C { fun T.f() }`): an INSTANCE method on the dispatch receiver
 		// (C) whose first .NET param `__self` is the extension receiver -> dispatch on `recv`, prepend the receiver.
 		if (!isStatic && extRecv != null && recv != null) {
 			val (allArgs, allArgTypes) = clrCallArgsWithRecv(call, callee, extRecv)
-			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}}"""
+			return """{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$allArgTypes],"ret":$ret,"recv":${expr(recv)},"args":[$allArgs]$suspendTag$anySlotTag${superTag(call)}$companionCallTag}"""
 		}
 		// A2 (#61): a PLAIN static/instance call by the .NET owner's FQN identity; bir2cir's NetInteropBinding
 		// resolves the owner off the .NET refs and shapes it (clrStatic/clrInstance). No .NET-shape decision here.
 		val (cArgs, cArgTypes) = clrCallArgs(call, callee)
 		return if (isStatic)
-			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag}"""
+			"""{"k":"callStatic","ownerType":${clrType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"args":[$cArgs]$suspendTag$anySlotTag$companionCallTag}"""
 		else
-			"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag${superTag(call)}}"""
-	}
-
-	// Companion-object member -> a static member of the enclosing class (precedes user-property field access).
-	// A super-typed companion is a real singleton (<Outer>.InstanceClass) instead: its members are NOT static on the
-	// parent, so fall through to the normal instance-call path (receiver = the companion-as-value -> INSTANCE).
-	(callee.parent as? IrClass)?.takeIf { it.isCompanion && superTypedCompanion(it.parent as IrClass) == null }?.let { comp ->
-		val enclosing = typeName(comp.parent as IrClass)
-		val prop = callee.correspondingPropertySymbol?.owner
-		if (prop != null) {
-			// A companion EXTENSION property (`val Int.seconds` on Duration.Companion) is NEVER a static field —
-			// extension properties have no backing field (a cross-module deserialized stub may claim one; trusting
-			// it dropped the receiver entirely: `2.seconds` emitted a bare `staticField Duration.seconds`, and the
-			// in-module getter path emitted `get_milliseconds` with `"args":[]`). Emit a static call by the
-			// property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81) on the enclosing class
-			// with the receiver as the leading arg; `sig` picks the right overload (seconds(Int|Long|Double)).
-			// bir2cir shapes the .NET accessor from the stdlib @ClrProperty/@ClrIntrinsic metadata, falling back to
-			// kotc's own get_/set_<name> declaration convention when no binding exists.
-			val ext = extensionReceiver(call)
-			if (ext != null) return if (callee === prop.setter) {
-				val args = listOf(ext) + regularArgs(call)
-				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[${args.joinToString(",") { expr(it) }}]}"""
-			} else
-				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${(listOf(ext) + regularArgs(call)).joinToString(",") { expr(it) }}]${retHint(false, call.type)}}"""
-			// A companion COMPUTED property (`val X.Companion.foo: T get() = ...`, no backing field) OR one with a
-			// backing field (initializer) but a CUSTOM accessor (`val foo = 7; get() = field + 100`, #89) -> a
-			// static call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78; the SAME
-			// A2 convention already used for the restored top-level property, `pn`/`"prop"` above) — NOT the baked
-			// `get_`/`set_` slot name and NOT a raw static-field load (that would skip the custom accessor).
-			// kotc does not know whether the enclosing class is CLR-bound (a
-			// stdlib @ClrTypeAlias owner) or plain Kotlin; bir2cir's MemberCallSubstitution reads the stdlib
-			// @ClrProperty/@ClrIntrinsic metadata off the ref.dll by this bare name and shapes the .NET
-			// accessor, falling back to kotc's own get_/set_<name> declaration convention when no binding exists.
-			return if (callee === prop.setter)
-				if (!writesAsStaticField(prop))
-					"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
-				else
-					"""{"k":"staticFieldSet","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())},"value":${expr(regularArgs(call).first())}}"""
-			else if (!readsAsStaticField(prop))
-				"""{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(prop.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]${retHint(false, call.type)}}"""
-			else """{"k":"staticField","ownerType":${fqnJson(enclosing)},"name":${str(prop.name.asString())}}"""
-		}
-		// A generic companion fun (`Result.Companion.success<T>`) carries its resolved type args — without them
-		// the emitted call references the uninstantiated generic method (invalid IL on a generic enclosing class).
-		// A companion EXTENSION fun (`fun String.f()` inside a companion object) lowers to a static method whose
-		// first param `__self` is the extension receiver (BirEmitterDeclarations extRecv path). The call must pass
-		// that receiver as the LEADING arg — matching the declaration signature — else the receiver is dropped and
-		// the call arity mismatches the method (#177). Mirrors the member extension-fun path above (~line 903).
-		val compExt = extensionReceiver(call)
-		// FILL FIRST, then read the extension receiver (see [filledArgs]: the fill is what binds it under a plan).
-		val compRegArgs = filledArgs(call)
-		val compArgs = (if (compExt != null) listOf(expr(compExt)) else emptyList()) + compRegArgs
-		return """{"k":"callStatic","owner":${fqnJson(enclosing)},"method":${str(name)}${overloadSigField(callee)}${typeArgsJson(call)},"args":[${compArgs.joinToString(",")}]}"""
+			"""{"k":"callInstance","virtual":$clrCallVirtual,"ownerType":${memberType!!.toJson()},"method":${str(member)}${overloadSigField(callee)},"argTypes":[$cArgTypes],"ret":$ret,"recv":${expr(recv!!)},"args":[$cArgs]$suspendTag$anySlotTag${superTag(call)}$companionCallTag}"""
 	}
 
 		// An EXTERNAL top-level property (from a DotKt assembly) -> the referenced .NET file class holds it. An

@@ -61,9 +61,29 @@ sealed partial class Emitter
                     TB = _mod.DefineType(fileClass, TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract),
                     Def = file, IsFileClass = true, FileElem = file,
                 };
-            if (file.TryGetProperty("types", out var ts))
-                foreach (var t in ts.EnumerateArray())
-                {
+        }
+
+        // CIR nesting is declarative: a child may precede its enclosing declaration (for example when kotc emits a
+        // rich-enum companion before the rich enum class). Define enclosing builders first so `nestedIn` is honored
+        // independently of source/file order instead of silently degrading the child to a dotted top-level type.
+        var pendingTypes = files
+            .Where(file => file.TryGetProperty("types", out _))
+            .SelectMany(file => file.GetProperty("types").EnumerateArray())
+            .ToList();
+        while (pendingTypes.Count > 0)
+        {
+            var progressed = false;
+            foreach (var t in pendingTypes.ToArray())
+            {
+                if (t.TryGetProperty("nestedIn", out var pendingParent) &&
+                    !_types.ContainsKey(pendingParent.GetString()) &&
+                    // The runtime stdlib substitutes several Kotlin owners with BCL types, so their declarations are
+                    // intentionally absent from this emission unit. Preserve that pre-#275 stdlib-only dotted TypeDef
+                    // shape explicitly; application/reference-library emission must always realize declared nesting.
+                    !_stdlibRuntime)
+                    continue;
+                pendingTypes.Remove(t);
+                progressed = true;
                     var name = t.GetProperty("name").GetString();
                     var kind = t.GetProperty("kind").GetString();
                     // #68: `generated:true` is the STRUCTURAL compiler-generated flag (a #37-freeze win over the retired
@@ -113,8 +133,29 @@ sealed partial class Emitter
                         // System.Int32 is metadata-only, so that helper misclassifies it and PAB synthesizes an illegal
                         // enum .ctor. Spell the ECMA enum shape directly from target types: sealed : System.Enum, one
                         // special instance value__ field, and static literal fields. No semantic decision is involved.
-                        var enumTb = _mod.DefineType(name, TypeAttributes.Public | TypeAttributes.Sealed,
-                            Bcl("System.Enum"));
+                        var enumVisibility = t.TryGetProperty("vis", out var enumVis)
+                            ? enumVis.GetString()
+                            : "public";
+                        TypeInfo enumParent = null;
+                        var nestedEnum = t.TryGetProperty("nestedIn", out var enumParentName) &&
+                            _types.TryGetValue(enumParentName.GetString(), out enumParent);
+                        var enumAccess = nestedEnum
+                            ? enumVisibility switch
+                            {
+                                "internal" => TypeAttributes.NestedAssembly,
+                                "protected" => TypeAttributes.NestedFamily,
+                                "protectedInternal" => TypeAttributes.NestedFamORAssem,
+                                "private" => TypeAttributes.NestedPrivate,
+                                _ => TypeAttributes.NestedPublic,
+                            }
+                            : (enumVisibility == "public" ? TypeAttributes.Public : TypeAttributes.NotPublic);
+                        var enumSimpleName = nestedEnum && name.Contains('.')
+                            ? name[(name.LastIndexOf('.') + 1)..]
+                            : name;
+                        var enumTb = nestedEnum
+                            ? enumParent.TB.DefineNestedType(enumSimpleName,
+                                enumAccess | TypeAttributes.Sealed, Bcl("System.Enum"))
+                            : _mod.DefineType(name, enumAccess | TypeAttributes.Sealed, Bcl("System.Enum"));
                         var eti = new TypeInfo { TB = enumTb, Def = t, IsEnum = true };
                         eti.Fields["value__"] = enumTb.DefineField("value__", Bcl("System.Int32"),
                             FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName);
@@ -153,9 +194,9 @@ sealed partial class Emitter
                     // `final:true` -> TypeAttributes.Sealed (CLR-final, not Kotlin `sealed`). bir2cir sets it on the
                     // round-trip attribute-class defs (#71 S2), matching the old embedded `NotPublic | Sealed | Class`.
                     if (!isIface && t.TryGetProperty("final", out var clsFin) && clsFin.GetBoolean()) attrs |= TypeAttributes.Sealed;
-                    // A generic type's CLR metadata name carries its arity (`Box`1`) — Reflection.Emit does NOT append
-                    // it, and a cross-assembly consumer resolves the type by that standard name (`GetType("Box`1")`).
-                    // The `_types` registry key stays the bare BIR name (`Box`), so same-assembly references are intact.
+                    // Only SOURCE-declared parameters contribute to the metadata-name suffix. A nested companion can
+                    // carry the enclosing type's flattened CLR generic slots in `capturedTypeParams` without declaring
+                    // Kotlin parameters of its own: `Foo`1+$Companion`, not `...$Companion`1`.
                     var arity = t.TryGetProperty("typeParams", out var tpArity) ? tpArity.GetArrayLength() : 0;
                     var simpleName = nested && name.Contains('.') ? name[(name.LastIndexOf('.') + 1)..] : name;
                     var metaName = arity > 0 ? simpleName + "`" + arity : simpleName;
@@ -174,16 +215,28 @@ sealed partial class Emitter
                         BaseName = t.TryGetProperty("base", out var b2)
                             ? (b2.ValueKind == JsonValueKind.String ? b2.GetString() : SlotName(b2)) : null,
                     };
-                    // Generic type `class Box<T>`: define its type parameters now so member signatures (pass 3) resolve.
-                    // (Constraints are applied in pass 2, once every type — possibly referenced by a bound — exists.)
-                    if (t.TryGetProperty("typeParams", out var tps) && tps.GetArrayLength() > 0)
+                    // A physical nested capture is deliberately distinct from a Kotlin-declared parameter. It is
+                    // unconstrained, allowing Kotlin's canonical object closure even when Foo<T> constrains T, while
+                    // Roslyn still substitutes a valid closed Foo<Concrete> argument into the nested metadata slot.
+                    var capturedNames = t.TryGetProperty("capturedTypeParams", out var capturedTps)
+                        ? TpNames(capturedTps) : [];
+                    var declaredNames = t.TryGetProperty("typeParams", out var tps)
+                        ? TpNames(tps) : [];
+                    var allTypeParamNames = capturedNames.Concat(declaredNames).ToArray();
+                    if (allTypeParamNames.Length > 0)
                     {
-                        var names = TpNames(tps);
-                        var gps = tb.DefineGenericParameters(names);
-                        for (int gi = 0; gi < names.Length; gi++) nti.TypeParams[names[gi]] = gps[gi];
+                        var gps = tb.DefineGenericParameters(allTypeParamNames);
+                        for (int gi = 0; gi < allTypeParamNames.Length; gi++)
+                            nti.TypeParams[allTypeParamNames[gi]] = gps[gi];
                     }
                     _types[name] = nti;
-                }
+            }
+            if (!progressed)
+            {
+                var unresolved = string.Join(", ", pendingTypes.Select(t =>
+                    $"{t.GetProperty("name").GetString()} -> {t.GetProperty("nestedIn").GetString()}"));
+                throw new InvalidOperationException($"nested CIR types have missing or cyclic owners: {unresolved}");
+            }
         }
 
         // Bake enums up front: their literals are fully defined in pass 1, and baking now gives a real metadata
@@ -874,8 +927,7 @@ sealed partial class Emitter
                 }
         }
 
-        // Pass 4b: static-field initializers (companion `val`s) -> a type initializer (.cctor). An INTERFACE with a
-        // flattened companion (#83) also gets a .cctor for its static fields — a CLR interface legally has one.
+        // Pass 4b: static-field initializers -> a type initializer (.cctor). A CLR interface may legally have one.
         foreach (var ti in _types.Values)
         {
             if (!ti.Def.TryGetProperty("fields", out var fs)) continue;
@@ -886,6 +938,11 @@ sealed partial class Emitter
             // only fields with a NON-null init value get a type-initializer store.
             var inits = fs.EnumerateArray().Where(f => f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null && f.TryGetProperty("static", out var s) && s.GetBoolean()).ToList();
             if (inits.Count == 0) continue;
+            // A synthesized .cctor is a type method with no method-generic scope. Carry the declaring type's generic
+            // parameters and clear whatever method scope pass 4 last visited; otherwise a generic nested singleton
+            // initializer can encode `new ...<!!0>` and produce a BadImageFormatException at type initialization.
+            _curTypeParams = EffectiveTps(ti);
+            _curMethodParams = null;
             _il = ti.TB.DefineTypeInitializer().GetILGenerator();
             _args.Clear(); _argTypes.Clear(); _locals.Clear(); _methodRetType = Bcl("System.Void");
             // A field initializer can contain CFG control flow (a `while`/`when` lowered to label/goto), so its labels
@@ -905,6 +962,7 @@ sealed partial class Emitter
             }
             _il.Emit(OpCodes.Ret);
         }
+        _curTypeParams = null;
 
         // Pass 5: synthesize entry point on the file class that has `main`.
         MethodBuilder entry = null;
@@ -997,7 +1055,7 @@ sealed partial class Emitter
             var myName = ti.IsFileClass ? null : (ti.Def.TryGetProperty("name", out var nm) ? nm.GetString() : null);
             if (myName != null)
                 foreach (var child in _types.Values)
-                    if (!child.IsFileClass && !child.IsEnum && child.Def.TryGetProperty("nestedIn", out var cni) && cni.GetString() == myName)
+                    if (!child.IsFileClass && child.Def.TryGetProperty("nestedIn", out var cni) && cni.GetString() == myName)
                         Visit(child);
             result.Add(ti);
         }
@@ -1061,9 +1119,9 @@ sealed partial class Emitter
         // An interface method with a DEFAULT body -> a CLR default interface method (Virtual|NewSlot, real IL body in
         // Pass 4); a bare slot (no body) stays Virtual|Abstract|NewSlot. (A Kotlin interface default impl, e.g.
         // CoroutineContext.plus, must carry its body so non-overriding implementers inherit it instead of failing load.)
-        // A flattened companion method on an interface (#83) is STATIC — it takes no slot, so it must NOT be marked
-        // Virtual/NewSlot/Abstract (a static abstract interface method would demand an implementer). Only genuine
-        // instance interface members become virtual slots / abstract DIMs.
+        // A compiler-authored static interface helper takes no slot, so it must NOT be marked Virtual/NewSlot/Abstract
+        // (a static abstract interface method would demand an implementer). Only genuine instance interface members
+        // become virtual slots / abstract DIMs.
         if (ti.IsInterface && !isStatic)
         {
             attrs |= MethodAttributes.Virtual | MethodAttributes.NewSlot;
@@ -1550,7 +1608,10 @@ sealed partial class Emitter
         if (f.Args == null) return (f.Name, null);
         var args = f.Args.Select(a => { var r = MapType(a); return r == Bcl("System.Void") ? Bcl("System.Object") : r; }).ToArray();
         if (_types.TryGetValue(f.Name, out var ti)) return (f.Name, ConstructedType(ti.TB, args));
-        return (f.Name, ConstructedType(ResolveType(f.Name + "`" + args.Length), args));
+        // bir2cir may carry an exact nested generic TypeDef token whose outer segment already owns the CLR arity
+        // (`Outer`1+Nested`). Appending another suffix would name a different, absent TypeDef.
+        var reflectedName = f.Name.Contains('`') ? f.Name : f.Name + "`" + args.Length;
+        return (f.Name, ConstructedType(ResolveType(reflectedName), args));
     }
 
     void Save(PersistedAssemblyBuilder ab, MethodBuilder entry)

@@ -8,8 +8,10 @@ using DotKt.Bir;
 // @ClrTypeAlias class whose concrete intrinsic-less members carry real bodies — the alias-only files (kotlin.String's
 // subSequence, plus kotlin.Boolean/kotlin.Char operator stubs) AND the MIXED files (StringBuilder/UInt/collections/
 // Regex). kotc emits each such alias class as a PLAIN BIR type; this pass reads the ref.dll @ClrTypeAlias index, hoists
-// those rule-3 members into the static helper (the dispatch `this` becomes a leading `__self` param), and DROPS the
-// original alias type def — it must NEVER reach ilemit as a real CLR type (its equals(Any?)/toString()/length members
+// those rule-3 members into the static helper (the dispatch `this` becomes a leading `__self` param), and drops the
+// original alias implementation. Only a compiler-generated ownership shell may remain when a physical nested
+// companion requires a CLR enclosing type; the alias implementation itself must NEVER reach ilemit (its
+// equals(Any?)/toString()/length members
 // would clash with System.String/System.Object). The rule-3 CALL routing in MemberCallSubstitution already targets
 // `dotkt$ClrH_<owner>.<member>(recv, ..)` by name, so emitting the helper here closes the loop. This is the SOLE home
 // of rule-3 helper synthesis. Runs only in substitute/app builds (never ref).
@@ -24,7 +26,13 @@ static class AliasHelperHoist
         {
             if (t is JsonObject td && IsAliasTypeDef(td, refs, out var fqn))
             {
-                changed = true;                                  // alias type def -> dropped (and possibly hoisted)
+                changed = true;                                  // alias implementation -> dropped (and possibly hoisted)
+                // A physical nested companion still needs its declaring TypeDef after the alias implementation is
+                // substituted to the BCL type. Retain only a compiler-generated ownership shell plus the companion
+                // value field; no ordinary alias member/backing state survives. Without the shell, ilemit necessarily
+                // emits the carrier as a top-level dotted type, while the reference twin advertises an actual nested
+                // `Outer+$Companion`; an app then links that value to the compile-only metadata assembly.
+                if (BuildCompanionHost(td, types) is { } host) rebuilt.Add(host);
                 var helper = BuildHelper(td, fqn, refs);
                 if (helper != null) rebuilt.Add(helper);         // null = no rule-3 members (e.g. kotlin.Any) -> just dropped
             }
@@ -46,6 +54,43 @@ static class AliasHelperHoist
         if (!refs.Aliases.ContainsKey(bare)) return false;
         fqn = bare;
         return true;
+    }
+
+    static JsonObject BuildCompanionHost(JsonObject owner, JsonArray types)
+    {
+        var ownerName = (owner["name"] as JsonValue)?.GetValue<string>();
+        if (ownerName == null) return null;
+        var carrierNames = types.OfType<JsonObject>()
+            .Where(t => (t["nestedIn"] as JsonValue)?.GetValue<string>() == ownerName &&
+                t["companionCarrier"] is JsonObject)
+            .Select(t => (t["name"] as JsonValue)?.GetValue<string>())
+            .Where(n => n != null)
+            .ToHashSet(StringComparer.Ordinal);
+        if (carrierNames.Count == 0) return null;
+
+        var fields = new JsonArray();
+        foreach (var field in owner["fields"] as JsonArray ?? [])
+            if (field is JsonObject f && (f["static"] as JsonValue)?.GetValue<bool>() == true &&
+                TypeJson.Read(f["type"]) is TypeNode.Fqn ft && carrierNames.Contains(ft.Name))
+                fields.Add(f.DeepClone());
+
+        var host = new JsonObject
+        {
+            ["name"] = ownerName,
+            ["kind"] = "class",
+            ["generated"] = true,
+            ["abstract"] = false,
+            ["vis"] = owner["vis"]?.DeepClone() ?? "public",
+            ["base"] = null,
+            ["interfaces"] = new JsonArray(),
+            ["fields"] = fields,
+            ["ctors"] = new JsonArray(),
+            ["methods"] = new JsonArray(),
+            ["properties"] = new JsonArray(),
+        };
+        foreach (var key in new[] { "typeParams", "capturedTypeParams", "nestedIn" })
+            if (owner[key] is JsonNode value) host[key] = value.DeepClone();
+        return host;
     }
 
     static JsonObject BuildHelper(JsonObject td, string fqn, ReferenceMetadataIndex refs)
@@ -186,4 +231,3 @@ static class AliasHelperHoist
         return n?.DeepClone();
     }
 }
-

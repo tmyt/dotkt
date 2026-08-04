@@ -269,7 +269,8 @@ sealed partial class Emitter
             throw new InvalidOperationException($"ilemit: clr{(instance ? "Instance" : "Static")} call to {type?.FullName}.{name} is missing its `memberSig` descriptor (bir2cir must carry the FIR-resolved parameter signature — W1-S2 #46)");
         var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
         var declaredOwner = ResolvedOwnerIdentity(e, "memberOwner", $"call to {type?.FullName}.{name}");
-        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        var flags = BindingFlags.Public | BindingFlags.NonPublic |
+            (instance ? BindingFlags.Instance : BindingFlags.Static);
         Type[] ownerArgs = type.IsGenericType ? type.GetGenericArguments() : null;
         // A TypeBuilderInstantiation (constructed over an EMITTED arg — `IEnumerator<T>`, T a user class) can't reflect
         // its members; resolve on the OPEN def and re-anchor the winner via TypeBuilder.GetMethod. Its type-args are
@@ -286,7 +287,9 @@ sealed partial class Emitter
             && (hasTypeArgs || !m.IsGenericMethodDefinition)
             && m.GetParameters().Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, ownerArgs)).All(x => x))
             .GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
-        MethodInfo[] Named(Type t) { try { return t.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == declParams.Length).ToArray(); } catch { return Array.Empty<MethodInfo>(); } }
+        MethodInfo[] Named(Type t) { try { return t.GetMethods(flags).Where(m =>
+            IsPublicOrProtected(m) && m.Name == name && m.GetParameters().Length == declParams.Length).ToArray(); }
+            catch { return Array.Empty<MethodInfo>(); } }
         var own = Named(searchType);
         var all = own.AsEnumerable();
         if (instance) all = all.Concat(SafeInterfaces(searchType).SelectMany(Named));
@@ -328,6 +331,9 @@ sealed partial class Emitter
             ?? throw new InvalidOperationException($"ilemit: member '{member}' has no declaring type");
         return TypeIdentity(declaring);
     }
+
+    static bool IsPublicOrProtected(MethodBase member) =>
+        member.IsPublic || member.IsFamily || member.IsFamilyOrAssembly;
 
     static string TypeIdentity(Type declaring)
     {

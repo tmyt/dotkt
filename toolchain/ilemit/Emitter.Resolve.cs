@@ -1082,9 +1082,10 @@ sealed partial class Emitter
         // already SUBSTITUTED on each candidate param (`Func<Int32,R>`), while memberSig carries the OPEN `tv(type,i)`.
         // Resolve a type-scope tv against the constructed owner's type args so the two line up.
         var ownerArgs = type != null && type.IsGenericType ? type.GetGenericArguments() : null;
-        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
+        var flags = BindingFlags.Public | BindingFlags.NonPublic |
+            (instance ? BindingFlags.Instance : BindingFlags.Static);
         List<MethodInfo> Candidates(Type owner) => owner.GetMethods(flags)
-            .Where(m => m.Name == name && m.IsGenericMethodDefinition
+            .Where(m => IsPublicOrProtected(m) && m.Name == name && m.IsGenericMethodDefinition
                      && m.GetGenericArguments().Length == typeArgs.Length
                      && m.GetParameters().Length == declParams.Length)
             .ToList();

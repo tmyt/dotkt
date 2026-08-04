@@ -199,7 +199,7 @@ public static class NodeType
                 // use (kotc BirEmitterInline).
                 return new TypeNode.Fqn("dotkt$stackptr");
             case "newClosure": case "newDelegate": case "newSam": case "newSuspendLambda":
-            case "newBoundDelegate": case "newBoundClrDelegate":
+            case "newBoundDelegate": case "newBoundClrDelegate": case "newClrStaticDelegate":
                 // The FUNCTION type when the producer knew one; else the synthesized class the node constructs,
                 // which each of these names in its own slot — `newSam` the SAM implementation it lifted
                 // (`samType`), the others the closure class (`closureType`). The value IS an instance of that

@@ -835,6 +835,47 @@ static class MemberCallSubstitution
             return null;
         }
 
+        // A BOUND companion member physically belongs to the nested carrier, while its CLR binding belongs to the
+        // semantic outer alias and represents a CLR static. Recover the outer owner only from the validated
+        // [KotlinCompanion] association and require an actual @ClrIntrinsic/@ClrProperty/@ClrConv member record.
+        // Intrinsic-less companion methods retain their ordinary carrier instance body; mapping the whole companion
+        // would incorrectly route e.g. Regex.Companion.fromLiteral to a nonexistent BCL/helper static.
+        var memberOwnerToken = ownerToken;
+        var companionMember = (node["method"] as JsonValue)?.GetValue<string>();
+        var companionArgs = node["args"] as JsonArray ?? new JsonArray();
+        var companionMethodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+        var companionDeclarationArgs = node["argTypes"] as JsonArray
+            ?? node["shapeTypes"] as JsonArray ?? node["sig"] as JsonArray;
+        IReadOnlyList<TypeNode> companionSignature = null;
+        if (companionDeclarationArgs != null)
+        {
+            var parsed = companionDeclarationArgs.Select(TypeJson.Read).ToList();
+            if (parsed.All(t => t != null)) companionSignature = parsed;
+        }
+        // A zero-parameter declaration's empty vector is fully identifying even when an older producer omitted the
+        // redundant descriptor. A non-empty call without a declaration vector is not exact and must fail closed.
+        if (companionSignature == null && companionArgs.Count == 0)
+            companionSignature = Array.Empty<TypeNode>();
+        // Calls imported from KLIB still name the representation-neutral semantic companion here. Member attributes,
+        // however, live on the validated physical carrier. Cross that boundary only through the explicit metadata map.
+        var companionCarrierToken = refs.TryCompanionPhysicalOwner(memberOwnerToken, out var mappedCompanionCarrier)
+            ? mappedCompanionCarrier
+            : memberOwnerToken;
+        var companionOwnerFqn = ReferenceMetadataIndex.BareOwnerFqn(companionCarrierToken);
+        var companionHasClrBinding = refs.TryExactMemberClrBinding(
+            companionOwnerFqn, companionMember, companionMethodArity, companionSignature,
+            out var exactCompanionBinding);
+        JsonNode mappedCompanionRecv = null;
+        if (instance && companionHasClrBinding &&
+            refs.TryCompanionSemanticOwner(companionCarrierToken, out var companionSemanticOwner) &&
+            refs.TryResolveClrOwner(companionSemanticOwner, out _, out _))
+        {
+            mappedCompanionRecv = node["recv"]?.DeepClone();
+            ownerToken = companionSemanticOwner;
+            ownerFqnNode = new TypeNode.Fqn(companionSemanticOwner, ownerFqnNode.Args);
+            instance = false;
+        }
+
         // #76 EDIT 2 (defensive) — a `get_storage()` accessor call on an unsigned-array value class, should kotc emit
         // the backing-field read as a property getter callInstance rather than a raw `{k:field}`. Same erasure as
         // TransformStorageField: reinterpret the receiver to the SIGNED array. Handled BEFORE the CLR-owner gate below
@@ -862,7 +903,7 @@ static class MemberCallSubstitution
             var pargs = node["args"] as JsonArray ?? new JsonArray();
             var directHasProp = instance && !string.IsNullOrEmpty(pmember)
                 && refs.TryResolveClrOwner(ownerToken, out _, out _)
-                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(ownerToken), pmember, pargs.Count, out _, out _);
+                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(memberOwnerToken), pmember, pargs.Count, out _, out _);
             if (instance && !directHasProp && !string.IsNullOrEmpty(pmember) && node["overrides"] is JsonArray povChain)
                 foreach (var o in povChain)
                     if (o is JsonObject oo && TypeJson.OwnerName(oo["owner"]) is string ovOwner
@@ -919,7 +960,7 @@ static class MemberCallSubstitution
 
         var member = (node["method"] as JsonValue)?.GetValue<string>();
         if (string.IsNullOrEmpty(member)) return null;
-        var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
+        var ownerFqn = ReferenceMetadataIndex.BareOwnerFqn(memberOwnerToken);
         var args = node["args"] as JsonArray ?? new JsonArray();
         // #78: the STATIC property-accessor marker for a call whose owner IS CLR-bound — carried down to Rule 2p
         // (below) so the explicit @ClrProperty binding is tried on the static axis too, not just instance.
@@ -946,6 +987,29 @@ static class MemberCallSubstitution
         // The CLR owner TYPE the call addresses (a ClrRef-resolvable BCL token; see ClrOwnerType).
         TypeNode clrOwner = ClrOwnerType(refs, ownerFqnNode) ?? new TypeNode.Fqn(bcl);
 
+        // The alias-companion gate selected one declaration by its complete signature. Consume that SAME binding;
+        // re-querying by name+argument-count here would allow a same-arity sibling to change the CLR member or byref
+        // shape after the exact decision had already succeeded.
+        if (mappedCompanionRecv != null && exactCompanionBinding.PropertyName != null)
+        {
+            // A source property carries prop:get/set. A standalone function annotated @ClrProperty does not, so derive
+            // its direction from the exact binding's access bits/member shape. Passing the resulting marker also says
+            // that this alias-companion property is static; the mapped carrier receiver is preserved separately below.
+            var exactPropMarker = staticPropMarker;
+            if (exactPropMarker == null)
+            {
+                var canRead = (exactCompanionBinding.PropertyAccess & ClrPropRead) != 0;
+                var canWrite = (exactCompanionBinding.PropertyAccess & ClrPropWrite) != 0;
+                var writes = canWrite && (!canRead
+                    || member.StartsWith("set_", StringComparison.Ordinal) || args.Count == 1);
+                exactPropMarker = writes ? "set" : "get";
+            }
+            var exactProp = (JsonObject)ClrPropNode(node, clrOwner, exactCompanionBinding.PropertyName,
+                exactCompanionBinding.PropertyAccess, member, args, exactPropMarker);
+            return CallEvalLowering.PreserveUnreadValueBefore(mappedCompanionRecv, exactProp,
+                $"mapped companion property '{companionOwnerFqn}.{member}'");
+        }
+
         // Rule 2p (explicit PROPERTY accessor): the member carries @ClrProperty(access, name) -> route EXPLICITLY to
         // clrPropGet(name) [READ] / clrPropSet(name) [WRITE] on the BCL owner, from the stated access role — NOT the old
         // get_/set_ intrinsic-string-prefix sniff. Handled before Rule 2/3 so a @ClrProperty stub (setLength/capacity/
@@ -953,7 +1017,11 @@ static class MemberCallSubstitution
         // (a companion computed property carrying the `"prop":"get"/"set"` marker) — a @ClrProperty binding is keyed
         // purely by owner+bare-name+argcount, with no instance/static distinction of its own.
         if ((instance || staticPropMarker is "get" or "set") && refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
-            return ClrPropNode(node, clrOwner, pName, pAccess, member, args, staticPropMarker);
+        {
+            var prop = (JsonObject)ClrPropNode(node, clrOwner, pName, pAccess, member, args, staticPropMarker);
+            return CallEvalLowering.PreserveUnreadValueBefore(
+                mappedCompanionRecv, prop, $"mapped companion property '{companionOwnerFqn}.{member}'");
+        }
         // #78: the static-axis marker found no @ClrProperty binding — probe a bare @ClrIntrinsic under the SAME bare
         // name (Rule 2, reached again unconditionally below) before Rule 3/4 ever see this bare name; when NEITHER
         // binds, reconstruct kotc's own get_/set_<name> declaration-side convention (byte-identical to the pre-#78
@@ -1012,8 +1080,24 @@ static class MemberCallSubstitution
             };
 
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
+        if (mappedCompanionRecv != null && exactCompanionBinding.Intrinsic != null)
+        {
+            var exactIntrinsicCall = Constrainify(ClrCallNode(node, clrOwner, exactCompanionBinding.Intrinsic,
+                member, args, instance: false, exactCompanionBinding.ByrefPositions), node, refs, ctx, ownerToken);
+            return exactIntrinsicCall is JsonObject exactIntrinsicObject
+                ? CallEvalLowering.PreserveUnreadValueBefore(mappedCompanionRecv, exactIntrinsicObject,
+                    $"mapped companion intrinsic '{companionOwnerFqn}.{member}'")
+                : exactIntrinsicCall;
+        }
         if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
-            return Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance, refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
+        {
+            var intrinsicCall = Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance,
+                refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
+            return intrinsicCall is JsonObject intrinsicObject
+                ? CallEvalLowering.PreserveUnreadValueBefore(mappedCompanionRecv, intrinsicObject,
+                    $"mapped companion intrinsic '{companionOwnerFqn}.{member}'")
+                : intrinsicCall;
+        }
 
         // Rule 3: a concrete member of a CLR-bound CLASS with NO @ClrIntrinsic carries a real Kotlin body, which
         // AliasHelperHoist lifts to the static helper `dotkt$ClrH_<owner>` (driven by the SAME class binding that brought us here).

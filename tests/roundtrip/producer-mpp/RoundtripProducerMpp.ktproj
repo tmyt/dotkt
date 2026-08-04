@@ -16,4 +16,7 @@
     <OutputType>Library</OutputType>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../producer/RoundtripProducer.ktproj" />
+  </ItemGroup>
 </Project>

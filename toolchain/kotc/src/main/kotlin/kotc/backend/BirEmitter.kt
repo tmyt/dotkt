@@ -289,11 +289,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		return fileClassName(f)
 	}
 	// #89: the owning .NET type name of a STATIC backing field — a top-level property's field lives on the file
-	// class (parent is the IrFile, isStatic); a PLAIN companion property's field is emitted static on the ENCLOSING
-	// class (statFields), matching how kotc flattens companion members to enclosing statics. Returns null for a
-	// plain-instance backing field (a normal class or `object` property field — accessed via `this`/INSTANCE) and
-	// for a SUPER-TYPED companion (a lifted concrete singleton whose members stay instance fields, not enclosing
-	// statics). Reached when a property's own custom accessor body reads/writes `field` (an IrGet/SetField).
+	// class (parent is the IrFile, isStatic). Returns null for an instance backing field, including an `object` or
+	// companion property accessed through its semantic receiver. Reached when a property's own custom accessor body
+	// reads/writes `field` (an IrGet/SetField).
 	internal fun staticBackingFieldOwner(fld: org.jetbrains.kotlin.ir.declarations.IrField): String? {
 		// A `lateinit` field keeps its own null-checked read/write path (lateinitGet) — never shadow it with a plain
 		// staticField load, even for a top-level/companion lateinit (defensive: its default accessors aren't emitted,
@@ -302,8 +300,6 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val parent = fld.parent
 		return when {
 			parent is IrFile && fld.isStatic -> fileClassName(parent)
-			parent is IrClass && parent.isCompanion && superTypedCompanion(parent.parent as IrClass) == null ->
-				typeName(parent.parent as IrClass)
 			else -> null
 		}
 	}
@@ -416,13 +412,10 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// unique. Root-package types are unchanged (fqName has no dot), so existing code is unaffected. birType references
 	// user types through here, so the def name and every reference stay consistent.
 	internal fun typeName(k: IrClass): String =
-		// A companion: a PLAIN one flattens to the outer class's name (its members are the outer's statics); a
-		// super-typed one (`companion object X : Base()`) is a lifted singleton `<Outer>.InstanceClass`. This must be a
-		// rule in typeName (not just an anonNames entry) so a CROSS-FILE reference to the companion-as-value resolves to
-		// the same lifted name everywhere, not only in the file that declares it.
+		// A companion keeps a deliberately non-CLR semantic identity in BIR. CompanionRepresentationLowering consumes
+		// this name before CIR and chooses the physical owner/static or singleton representation.
 		anonNames[k] ?: if (k.isCompanion && k.parent is IrClass)
-			(if (k.superTypes.any { st -> val sk = st.classifierOrNull?.owner as? IrClass; sk != null && sk.fqNameWhenAvailable?.asString() != "kotlin.Any" })
-				companionObjectTypeName(k) else typeName(k.parent as IrClass))
+			typeName(k.parent as IrClass) + ".<companion:" + k.name.asString() + ">"
 		else if (k.parent is IrClass) {
 			val p = k.parent as IrClass
 			val owner = if (p.isCompanion) p.parent as? IrClass else p
@@ -440,23 +433,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		return if (p.isCompanion) p.parent as? IrClass else p
 	}
 
-	/** A `companion object X : Base()` whose companion has a real supertype (a class base or interface, not just `Any`).
-	 *  Such a companion can't flatten to its (often abstract) parent's statics — its overrides would land on the
-	 *  abstract parent. It is instead emitted as a concrete lifted singleton `<Outer>.InstanceClass` (an object, so it
-	 *  carries its own static `INSTANCE`); the parent keeps none of its members. A plain companion (no supertype) still
-	 *  flattens to the parent's statics. Returns the companion, or null. */
-	internal fun superTypedCompanion(klass: IrClass): IrClass? =
-		klass.declarations.filterIsInstance<IrClass>().firstOrNull { c ->
-			c.isCompanion && c.superTypes.any { st ->
-				val k = st.classifierOrNull?.owner as? IrClass
-				k != null && k.fqNameWhenAvailable?.asString() != "kotlin.Any"
-			}
-		}
-
-	/** The lifted singleton type name for a super-typed companion: `<Outer>.<CompanionName>CompanionObject`
-	 *  (e.g. `kotlin.random.Random.DefaultCompanionObject`). */
-	internal fun companionObjectTypeName(comp: IrClass): String =
-		typeName(comp.parent as IrClass) + "." + comp.name.asString() + "CompanionObject"
+	/** The source companion declaration, without choosing any CLR representation. */
+	internal fun semanticCompanion(klass: IrClass): IrClass? =
+		klass.declarations.filterIsInstance<IrClass>().firstOrNull { it.isCompanion }
 
 	// #70: `kotlin.reflect.KProperty*` is a REAL emitted stdlib interface (KPropertyClr.kt), not a kotc synthetic —
 	// `kPropertyStub`/`propertyRef` below materialize real implementations of it directly (no bir2cir-synthesized
@@ -660,13 +639,11 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
 			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$ro${volatileFieldFlag(p)}}"""
 		}
-		// Super-typed companions (`companion object X : Base()`) -> lifted concrete singletons `<Outer>.InstanceClass`
-		// (registered in anonNames so typeName resolves them consistently). Must run BEFORE any body emission so a
-		// reference to the companion-as-value resolves to the lifted name everywhere.
-		val superCompanions = (classes + objects + interfaces + enums + annClasses)
-			.flatMap { listOf(it) + nestedClasses(it) + nestedObjects(it) }
-			.mapNotNull { superTypedCompanion(it) }.distinct()
-		superCompanions.forEach { c -> anonNames[c] = companionObjectTypeName(c) }
+		// Preserve every companion as a separate semantic declaration. Must run BEFORE body emission so every value/type
+		// use resolves to the same representation-neutral identity.
+		val semanticCompanions = (classes + objects + interfaces + enums + annClasses)
+			.flatMap { listOf(it) + nestedClasses(it) + nestedObjects(it) + nestedInterfaces(it) + nestedEnums(it) }
+			.mapNotNull { semanticCompanion(it) }.distinct()
 		// Emit functions and types first (this lifts lambdas into liftedMethods/liftedTypes), then append them.
 		val fnMethods = functions.map { method(it, static = true) }
 		// A top-level property's get_/set_<name> as STATIC methods (the receiver, if any, rides `__self`) — emitted
@@ -696,7 +673,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val nestedIfaces = nestedParents.flatMap { nestedInterfaces(it) }
 		val typeDefs = (basicEnums + nestedBasicEnums).map { enumDef(it) } + (interfaces + nestedIfaces).map { interfaceDef(it) } +
 			classes.map { typeDef(it) } + (objects + nestedObjects).map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
-			superCompanions.map { typeDef(it, isObject = true) } +
+			semanticCompanions.map { typeDef(it, isObject = true) } +
 			(richEnums + nestedRichEnums).map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
 		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
 		// #52 (kotc-purity): the CLR-representation synthetic TYPE definitions are no longer synthesized here — kotc emits

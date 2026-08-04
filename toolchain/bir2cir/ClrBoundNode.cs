@@ -22,7 +22,7 @@ static class ClrBoundNode
     // its target's declared parameter vector exactly as a call does.
     public static bool IsCall(string k) =>
         k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance" or "newClr"
-          or "newBoundClrDelegate";
+          or "newBoundClrDelegate" or "newClrStaticDelegate";
 
     // A .NET member ACCESS: a property/field read or write, or an event add/remove. Each names a member and a type
     // and carries the ACCESSOR's declared signature, which is why the argument axis does not list these and the

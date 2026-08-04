@@ -1,5 +1,6 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
+import mpp.app.passNamedCompanion
 import roundtrip.atomictwin.atomic
 import roundtrip.classnature.Circle
 import roundtrip.classnature.Handler
@@ -9,6 +10,17 @@ import roundtrip.classnature.runHandler
 import roundtrip.dispatchsurface.Animal
 import roundtrip.dispatchsurface.Dog
 import roundtrip.dispatchsurface.Greeter
+import roundtrip.dispatchsurface.ConstrainedGenericOwnerCompanionHost
+import roundtrip.dispatchsurface.CompanionMarker
+import roundtrip.dispatchsurface.DefaultCompanionHost
+import roundtrip.dispatchsurface.EnumCompanionHost
+import roundtrip.dispatchsurface.NamedCompanionHost
+import roundtrip.dispatchsurface.NestedCompanionOwners
+import roundtrip.dispatchsurface.PrivateCompanionHost
+import roundtrip.dispatchsurface.ProtectedCompanionHost
+import roundtrip.dispatchsurface.localDefaultCompanionUse
+import roundtrip.dispatchsurface.markerValue
+import roundtrip.dispatchsurface.passGenericCompanion
 import roundtrip.higherorder.Box
 import roundtrip.higherorder.Router
 import roundtrip.higherorder.alsoMap
@@ -29,6 +41,25 @@ import roundtrip.suspendvalues.invokeWideSuspend23
 import roundtrip.suspendvalues.makeBlock
 import roundtrip.suspendvalues.storedBlock
 import roundtrip.suspendnothing.fail as suspendFail
+
+private class ProtectedCompanionConsumer : ProtectedCompanionHost() {
+    fun revealProtectedCompanion(): Int = marker() + token
+
+    fun revealMethodReference(): Int {
+        val reference: () -> Int = Shield::marker
+        return reference()
+    }
+
+    fun revealPropertyReference(): Int {
+        val reference = Shield::token
+        return reference.get()
+    }
+
+    fun suspendReference(): suspend (Int) -> Int {
+        val reference: suspend (Int) -> Int = Shield::suspendMarker
+        return reference
+    }
+}
 
 class RoundtripSurfaceTests {
     @TestAttribute
@@ -135,5 +166,43 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreEqual("Anon", Greeter.Companion.DEFAULT)
         ClassicAssert.AreEqual("Hi, Vec", Greeter.Companion.create().greet("Vec"))
         ClassicAssert.AreEqual("Hi, Anon", Greeter.Companion.create().greet(Greeter.Companion.DEFAULT))
+    }
+
+    @TestAttribute
+    fun companionIdentityAndSourceNamesRoundTrip() {
+        ClassicAssert.AreEqual(42, NamedCompanionHost.Key.marker())
+        ClassicAssert.AreEqual(6, NamedCompanionHost.Key.token)
+        val namedRef: (String) -> String = NamedCompanionHost.Key::id
+        ClassicAssert.AreEqual("named", namedRef("named"))
+        val namedSuspendRef: suspend (Int) -> Int = NamedCompanionHost.Key::suspendMarker
+        ClassicAssert.AreEqual(42, runCrossModuleSuspend { namedSuspendRef(1) })
+        val named: CompanionMarker = NamedCompanionHost.Key
+        ClassicAssert.AreSame(named, NamedCompanionHost.Key)
+        ClassicAssert.AreEqual(42, markerValue(named))
+        ClassicAssert.AreSame(named, passNamedCompanion(NamedCompanionHost.Key))
+
+        val default = DefaultCompanionHost.Companion
+        ClassicAssert.AreSame(default, DefaultCompanionHost.Companion)
+        ClassicAssert.AreEqual(24, default.marker())
+        ClassicAssert.AreEqual(38, localDefaultCompanionUse())
+
+        ClassicAssert.AreEqual(73, EnumCompanionHost.Key.marker())
+        ClassicAssert.AreSame(EnumCompanionHost.Key, EnumCompanionHost.Key)
+        ClassicAssert.AreEqual(EnumCompanionHost.ENTRY, enumValues<EnumCompanionHost>().single())
+
+        val generic = ConstrainedGenericOwnerCompanionHost.Companion
+        ClassicAssert.AreSame(generic, ConstrainedGenericOwnerCompanionHost.Companion)
+        ClassicAssert.AreEqual(91, generic.marker())
+        ClassicAssert.AreSame(generic, passGenericCompanion(generic))
+
+        ClassicAssert.AreEqual(101, NestedCompanionOwners.NestedInterface.marker())
+        ClassicAssert.AreEqual(102, NestedCompanionOwners.NestedEnum.marker())
+
+        ClassicAssert.AreEqual(5, PrivateCompanionHost().reveal())
+        val protected = ProtectedCompanionConsumer()
+        ClassicAssert.AreEqual(21, protected.revealProtectedCompanion())
+        ClassicAssert.AreEqual(10, protected.revealMethodReference())
+        ClassicAssert.AreEqual(11, protected.revealPropertyReference())
+        ClassicAssert.AreEqual(20, runCrossModuleSuspend { protected.suspendReference()(1) })
     }
 }

@@ -414,7 +414,8 @@ sealed partial class Emitter
         // Owner not emitted in THIS assembly -> a REFERENCED generic type (e.g. `kotlin.Result[int]` from
         // DotKt.Stdlib.dll): construct it by reflection so ResolveMethod/ResolveField can reflect against the
         // instantiation (its members carry substituted signatures).
-        return (open, ConstructedType(ResolveType(open + "`" + args.Length), args));
+        var reflectedName = open.Contains('`') ? open : open + "`" + args.Length;
+        return (open, ConstructedType(ResolveType(reflectedName), args));
     }
 
     // The constructed type's GetX helpers return members whose declared types are still the OPEN params (`!0`);

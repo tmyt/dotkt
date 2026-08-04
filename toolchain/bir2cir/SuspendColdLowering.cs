@@ -109,6 +109,53 @@ static partial class SuspendColdLowering
     static JsonNode NullableContAny() => TypeJson.Write(NullableContAnyTn);
     static JsonNode ContUnit() => TypeJson.Write(ContUnitTn);
     static JsonNode ContStar() => TypeJson.Write(ContStarTn);
+    // This pass runs after NetInteropBinding and can still synthesize calls to companion factories. Shape such a call
+    // from the same validated association oracle used for referenced source calls: a singleton carrier gets its exact
+    // INSTANCE receiver; a projected CLR-static association keeps its authored owner-static ABI. The semantic owner never implies
+    // a carrier name, so an absent trusted mapping cannot manufacture one from a suffix convention.
+    static JsonObject CompanionFactoryCall(
+        string semanticOwner,
+        string method,
+        JsonArray typeArgs,
+        JsonArray sig,
+        JsonArray args,
+        JsonNode ret)
+    {
+        var call = new JsonObject
+        {
+            ["method"] = method,
+            ["typeArgs"] = typeArgs,
+            ["sig"] = sig,
+            ["args"] = args,
+            ["ret"] = ret,
+        };
+        if (_refs?.TrySingletonCompanionCarrier(semanticOwner, out var carrier) == true)
+        {
+            var carrierArity = _refs.OwnerArity(carrier);
+            var carrierType = Tw(carrierArity == 0
+                ? new TypeNode.Fqn(carrier)
+                : new TypeNode.Fqn(
+                    carrier,
+                    Enumerable.Range(0, carrierArity)
+                        .Select(_ => (TypeNode)new TypeNode.Fqn("object"))
+                        .ToArray()));
+            call["k"] = "callInstance";
+            call["ownerType"] = carrierType.DeepClone();
+            call["virtual"] = false;
+            call["recv"] = new JsonObject
+            {
+                ["k"] = "staticField",
+                ["ownerType"] = carrierType,
+                ["name"] = "$INSTANCE",
+            };
+        }
+        else
+        {
+            call["k"] = "callStatic";
+            call["owner"] = Tn(semanticOwner);
+        }
+        return call;
+    }
     static bool IsUnitTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "kotlin.Unit" };
     static bool IsAnyTn(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "kotlin.Any" };
     // #151 — the suspend RESULT type is `kotlin.Nothing` (`suspend fun f(): Nothing`, incl. `Nothing?` — the outer `?`
@@ -2761,14 +2808,13 @@ static partial class SuspendColdLowering
                     // Result.success(null): the PUBLIC static companion factory (the internal `Result(value)` ctor is
                     // inaccessible cross-assembly, so an app SM cannot `new kotlin.Result`). typeArgs erased to Any by
                     // ContinuationErasure to hit the Result<object> resumeWith slot.
-                    new JsonObject
-                    {
-                        ["k"] = "callStatic", ["owner"] = Tn("kotlin.Result"), ["method"] = "success",
-                        ["typeArgs"] = new JsonArray { Tn("kotlin.Any") },
-                        ["sig"] = new JsonArray { Tw(new TypeNode.Tv("method", 0)) },
-                        ["args"] = new JsonArray { NullConst(AnyTn) },
-                        ["ret"] = Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })),
-                    },
+                    CompanionFactoryCall(
+                        "kotlin.Result",
+                        "success",
+                        new JsonArray { Tn("kotlin.Any") },
+                        new JsonArray { Tw(new TypeNode.Tv("method", 0)) },
+                        new JsonArray { NullConst(AnyTn) },
+                        Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn }))),
                 },
             };
             return new JsonObject
@@ -3981,14 +4027,13 @@ static partial class SuspendColdLowering
             ["ret"] = Tw(VoidTn),
             ["args"] = new JsonArray
             {
-                new JsonObject
-                {
-                    ["k"] = "callStatic", ["owner"] = Tn("kotlin.Result"), ["method"] = "failure",
-                    ["typeArgs"] = new JsonArray { Tn("kotlin.Any") },
-                    ["sig"] = new JsonArray { Tn("kotlin.Throwable") },
-                    ["args"] = new JsonArray { Local("__e") },
-                    ["ret"] = Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn })),
-                },
+                CompanionFactoryCall(
+                    "kotlin.Result",
+                    "failure",
+                    new JsonArray { Tn("kotlin.Any") },
+                    new JsonArray { Tn("kotlin.Throwable") },
+                    new JsonArray { Local("__e") },
+                    Tw(new TypeNode.Fqn("kotlin.Result", new TypeNode[] { AnyTn }))),
             },
         };
 

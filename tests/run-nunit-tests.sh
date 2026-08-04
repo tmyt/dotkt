@@ -49,7 +49,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=379
 	["tests/coroutines"]=157
-	["tests/roundtrip/consumer"]=56
+	["tests/roundtrip/consumer"]=57
 	["tests/roundtrip/bidirectional/consumer"]=3
 	["tests/interop/consumer"]=129
 )
@@ -108,6 +108,31 @@ for proj in "${PROJECTS[@]}"; do
 	# Build (restore from the local feed via tests/nuget.config). A build failure is a red gate.
 	if ! dotnet build "$dir" --no-incremental -m:1 -v q --nologo >"$ROOT/build/nunit-$name.build.log" 2>&1; then
 		echo "  BUILD FAIL — see build/nunit-$name.build.log"; tail -25 "$ROOT/build/nunit-$name.build.log"; rc=1; continue
+	fi
+	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer
+	# DLL must carry an explicit trusted owner/name/representation record, and dll2klib must wire that record into the
+	# standard KLIB companion_object_name + nested class graph. Inspect both artifacts so a mutually-compatible
+	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
+	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
+		producer_dll="$ROOT/tests/roundtrip/producer/bin/Debug/net10.0/RoundtripProducer.dll"
+		producer_klib="$dir/obj/dotkt-reference-klibs/RoundtripProducer.klib"
+		producer_bir="$ROOT/tests/roundtrip/producer/obj/dotkt-bir/DispatchAndCompanion.bir.json"
+		producer_cir="$ROOT/tests/roundtrip/producer/obj/dotkt-cir/DispatchAndCompanion.cir.json"
+		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
+			-- "$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" \
+			>"$ROOT/build/nunit-$name.metadata.log" 2>&1; then
+			echo "  companion semantic BIR + physical CIR + DLL carrier + KLIB linkage OK"
+		else
+			echo "  COMPANION METADATA FAIL — see build/nunit-$name.metadata.log"
+			tail -25 "$ROOT/build/nunit-$name.metadata.log"; rc=1
+		fi
+		if bash "$ROOT/tests/roundtrip/run-companion-metadata-negative-tests.sh" \
+			>"$ROOT/build/nunit-$name.metadata-negative.log" 2>&1; then
+			echo "  malformed companion carriers rejected by dll2klib + bir2cir OK"
+		else
+			echo "  COMPANION METADATA NEGATIVE FAIL — see build/nunit-$name.metadata-negative.log"
+			tail -25 "$ROOT/build/nunit-$name.metadata-negative.log"; rc=1
+		fi
 	fi
 	# The emitted assembly is named after the .ktproj (e.g. DotKt.Tests.Basic.ktproj -> DotKt.Tests.Basic.dll).
 	proj_file="$(find "$dir" -maxdepth 1 \( -name '*.ktproj' -o -name '*.csproj' \) | head -1)"

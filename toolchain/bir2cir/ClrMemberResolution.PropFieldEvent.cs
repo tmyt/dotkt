@@ -36,7 +36,8 @@ static partial class ClrMemberResolution
         var superCall = (node["super"] as JsonValue)?.GetValue<bool>() ?? false;
         // FlattenHierarchy surfaces a base-class STATIC accessor/field accessed through the derived owner (a static
         // property has no inherited-instance auto-flatten). Harmless for the instance flavor (instance already flattens).
-        var flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy |
+            (isStatic ? BindingFlags.Static : BindingFlags.Instance);
 
         var acc = FindPropAccessor(open, name, write, flags);
         if (acc != null)
@@ -73,8 +74,8 @@ static partial class ClrMemberResolution
         try
         {
             var pi = open.GetProperty(name, flags);
-            var m = write ? pi?.GetSetMethod() : pi?.GetGetMethod();
-            if (m != null) return m;
+            var m = write ? pi?.GetSetMethod(nonPublic: true) : pi?.GetGetMethod(nonPublic: true);
+            if (m != null && IsPublicOrProtected(m)) return m;
         }
         catch { }
         return FindAccessorMethod(open, (write ? "set_" : "get_") + name, write ? 1 : 0, flags);
@@ -87,7 +88,9 @@ static partial class ClrMemberResolution
     // the pass charter). null when absent.
     static MethodInfo FindAccessorMethod(Type open, string accName, int argc, BindingFlags flags)
     {
-        MethodInfo[] Named(Type t) { try { return t.GetMethods(flags).Where(m => m.Name == accName && m.GetParameters().Length == argc).ToArray(); } catch { return Array.Empty<MethodInfo>(); } }
+        MethodInfo[] Named(Type t) { try { return t.GetMethods(flags).Where(m =>
+            m.Name == accName && m.GetParameters().Length == argc && IsPublicOrProtected(m)).ToArray(); }
+            catch { return Array.Empty<MethodInfo>(); } }
         var own = MostDerived(Named(open).ToList());
         if (own.Count > 0) return UniqueAccessor(own, open, accName);
         if ((flags & BindingFlags.Instance) == 0) return null;
@@ -105,8 +108,16 @@ static partial class ClrMemberResolution
     // GetField walks base classes. null when absent.
     static FieldInfo FindFieldMember(Type open, string name, BindingFlags flags)
     {
-        try { return open.GetField(name, flags); } catch { return null; }
+        try
+        {
+            var field = open.GetField(name, flags);
+            return field != null && (field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly) ? field : null;
+        }
+        catch { return null; }
     }
+
+    static bool IsPublicOrProtected(MethodBase method) =>
+        method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly;
 
     // When the resolved accessor lives on a GENERIC base INTERFACE of the owner (`IReadOnlyCollection<T>.get_Count`
     // accessed on `IReadOnlyList<T>`), retarget the node's owner slot to that constructed base interface, exactly as the
@@ -197,6 +208,10 @@ static partial class ClrMemberResolution
     static void ResolveFieldAccess(JsonObject node, bool write)
     {
         if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn ownerFqn) return;
+        // A generated support type may have a reference twin from an earlier ProjectReference while also being
+        // re-emitted in this compilation unit. Same-emission ownership wins: its internal/private storage is legal
+        // local IL and must not be rejected by inspecting the stale external twin.
+        if (_localTypes.Contains(ownerFqn.Name)) return;
         var open = ResolveOwnerType(ownerFqn);
         if (open == null) return;   // LOCAL emitted owner (ref.dll returns null) -> direct backing-field access in ilemit
         var name = (node["name"] as JsonValue)?.GetValue<string>();

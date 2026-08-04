@@ -82,6 +82,12 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import java.io.File
 
+private fun BirEmitter.kotlinCompanionFact(owner: IrClass, companion: IrClass): String {
+	val ownerName = owner.fqNameWhenAvailable?.asString()
+		?: error("companion owner '${owner.name}' has no Kotlin qualified name")
+	return ""","kotlinCompanion":{"owner":${str(ownerName)},"name":${str(companion.name.asString())},"visibility":${str(visOf(companion))}}"""
+}
+
 internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 		// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection).
@@ -146,32 +152,9 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		.map { ifaceMethod(it) }
 	val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 		.flatMap { p -> listOfNotNull(p.getter?.let { ifaceMethod(it, p) }, p.setter?.let { ifaceMethod(it, p) }) }
-	// An interface's PLAIN companion object flattens to the interface's own statics — identical to the class path
-	// (BirEmitter.kt companionObjectTypeName / classDef statFields). A CLR interface legally carries static fields
-	// (run in the interface's .cctor) and static methods, so `interface I { companion object { val X = f() } }` and
-	// its access `I.X` (a staticField on I) resolve, instead of the companion members being silently dropped (#83:
-	// SharingStarted.Eagerly). A SUPER-TYPED companion is a separate lifted singleton, not flattened here.
-	val companion = if (superTypedCompanion(iface) != null) null
-		else iface.declarations.filterIsInstance<IrClass>().firstOrNull { it.isCompanion }
-	// Companion non-const `val`/`var` -> static fields (initializer run in the .cctor); `const` is inlined at use.
-	val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
-		val bf = p.backingField ?: return@mapNotNull null
-		if (p.isConst) return@mapNotNull null
-		val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
-		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init${volatileFieldFlag(p)}}"""
-	}.orEmpty()
-	// Companion methods -> static methods of the interface; a companion property's CUSTOM accessor -> a static
-	// get_/set_ on the interface (both mirror classDef's statMethods/companionAccessors).
-	val statMethods = companion?.declarations?.filterIsInstance<IrSimpleFunction>()
-		?.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && it.body != null }
-		?.map { method(it, static = true) }.orEmpty()
-	val companionAccessors = companion?.declarations?.filterIsInstance<IrProperty>()
-		?.flatMap { p ->
-			listOfNotNull(
-				p.getter?.takeIf { fieldRoutedProperty(p) && !hasDefaultGetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
-				p.setter?.takeIf { fieldRoutedProperty(p) && !hasDefaultSetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
-		}.orEmpty()
-	val methods = (funMethods + propMethods + statMethods + companionAccessors).distinct().joinToString(",")
+	// Companion declarations are separate representation-neutral types; bir2cir later materializes their nested CLR
+	// carriers, including for an interface owner.
+	val methods = (funMethods + propMethods).distinct().joinToString(",")
 	// 2B layer 1: a Kotlin interface property -> a REAL CLR property (PropertyBuilder over its get_/set_ interface
 	// methods), so a consumer (dll2klib projecting the ref assembly) sees `size` as a PROPERTY, not a bare get_size
 	// method. The accessor methods are already emitted (propMethods) named get_<n>/set_<n>; wire the property over them.
@@ -199,7 +182,8 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	// `sealed` — carried so a re-consuming Kotlin module can restore them (ilemit stamps [KotlinFunInterface]/
 	// [KotlinSealed]; a plain CLR interface loses both).
 	val funSealed = classModsJson(fnIface = iface.isFun, sealed = iface.modality == Modality.SEALED)
-	return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn$funSealed${typeParamsJson(iface.typeParameters)},"base":null,"interfaces":[$ifaces],"fields":[${statFields.joinToString(",")}],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
+	val kotlinCompanion = ""
+	return """{"name":${str(typeName(iface))},"kind":"interface"$nestedIn$funSealed${typeParamsJson(iface.typeParameters)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[],"ctors":[],"methods":[$methods],"properties":[$ifaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
 }
 
 /** A Kotlin `enum class` -> a real .NET enum (ilemit DefineEnum + literals). */
@@ -208,7 +192,9 @@ internal fun BirEmitter.enumDef(e: IrClass): String {
 		.mapIndexed { i, ent -> """{"name":${str(ent.name.asString())},"ordinal":$i}""" }
 	val nestedIn = emittedNestedParent(e)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && !isExternalNetType(it) }
 		?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
-	return """{"name":${str(typeName(e))},"kind":"enum"$nestedIn,"entries":[${entries.joinToString(",")}]}"""
+	// The companion is emitted as its own semantic declaration; enumDef must not manufacture a duplicate association.
+	val kotlinCompanion = ""
+	return """{"name":${str(typeName(e))},"kind":"enum"$nestedIn$kotlinCompanion,"entries":[${entries.joinToString(",")}]}"""
 }
 
 /** A "rich" enum has ctor params, user instance methods, or per-entry bodies -> can't be a CLR enum. */
@@ -326,7 +312,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// `enumRich:true` — a FAITHFUL "this class originated from a Kotlin enum" fact (not a CLR-shape decision), so
 	// bir2cir's EnumIntrinsicLowering can lower `enumValues<ThisEnum>()` to the synthesized static values()/valueOf()
 	// rather than the System.Enum-reflection semantic node (a rich enum is a plain class, invisible to that reflection).
-	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(visOf(ec))},"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$propsList]}"""
+	// richEnumDef likewise does not flatten a companion's declarations into the enum class.
+	val kotlinCompanion = ""
+	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(visOf(ec))}$kotlinCompanion,"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$propsList]}"""
 	// Emit the base enum class first, then each per-entry subclass.
 	return (listOf(baseDef) + subDefs).joinToString(",")
 }
@@ -773,10 +761,9 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	}
 	liftedTypeArgParams[klass] = capturedTpParams.toList()
 	liftedTypeArgNames[klass] = capturedTpParams.map { it.name.asString() }
-	// A super-typed companion is emitted as a separate lifted singleton (<Outer>.InstanceClass), NOT flattened into
-	// this (often abstract) parent's statics. Only a plain companion (no supertype) flattens here.
-	val companion = if (superTypedCompanion(klass) != null) null
-		else klass.declarations.filterIsInstance<IrClass>().firstOrNull { it.isCompanion }
+	// A companion reaches BIR as its own representation-neutral semantic type. Its declaration visibility belongs
+	// to that type; each member retains its own Kotlin visibility. The CLR nested TypeDef therefore gates the whole
+	// companion without incorrectly turning a source-public member into a Family member of the carrier itself.
 	// #187: a class DIRECTLY implementing a .NET interface event must `override val E by clrEvent()` (else invalid type).
 	checkUnimplementedClrEvents(klass)
 	// `override val E by clrEvent()` synthesis (§4.2): the field-like event impl (backing directive + add_/remove_/raise_).
@@ -792,7 +779,9 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		// (CLR property model), yet it stays reachable IN-MODULE so a `byref(obj.prop)` can ldflda it (Phase 5) while a
 		// cross-assembly consumer sees only the property. Only @ClrField / const / lateinit / delegated keep a plain field.
 		val routed = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
-		val v = if (routed) "internal" else visOf(p); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
+		val declaredVisibility = if (routed) "internal" else visOf(p)
+		val v = declaredVisibility
+		val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
 		// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
 		// backing field read-only so a consuming Kotlin module restores it as `val` (rejecting external writes).
 		val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
@@ -810,42 +799,20 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 			val ro = if (f.isFinal) ""","readOnly":true""" else ""
 			"""{"name":${str(f.name.asString())},"type":${birType(f.type).toJson()}$visJson$ro}"""
 		}
-	// Companion non-const `val`/`var` -> static fields (with initializer run in a static ctor); const is inlined.
-	val statFields = companion?.declarations?.filterIsInstance<IrProperty>()?.mapNotNull { p ->
-		val bf = p.backingField ?: return@mapNotNull null
-		if (p.isConst) return@mapNotNull null
-		val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
-		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init${volatileFieldFlag(p)}}"""
-	}.orEmpty()
 	// A capturing object literal carries its captured outer values as extra instance fields.
 	val capFields = captures.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
 	// `object` singleton: a static `INSTANCE` field initialized to `new Foo()` (run in the .cctor) — same shape
 	// as an enum entry. `IrGetObjectValue` loads it; member access then routes as normal instance access.
-	val instanceField = if (isObject)
+	val instanceField = if (isObject && !klass.isCompanion)
 		listOf("""{"name":"INSTANCE","type":${fqnJson(typeName(klass))},"static":true,"init":{"k":"new","type":${fqnJson(typeName(klass))},"argTypes":[],"args":[]}}""")
 	else emptyList()
-	val fields = (instFields + synthFields + statFields + capFields + instanceField).joinToString(",")
+	val fields = (instFields + synthFields + capFields + instanceField).joinToString(",")
 	val ctors = klass.declarations.filterIsInstance<IrConstructor>().joinToString(",") { ctor(klass, it, captures) }
 	val instMethods = klass.declarations.filterIsInstance<IrSimpleFunction>()
 		// Include `abstract fun`s (body == null): they emit as CLR abstract methods so subclass overrides bind
 		// and a base-typed call (`shape.area()`) resolves to the slot.
 		.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && (it.body != null || it.modality == Modality.ABSTRACT) }
 		.map { method(it, static = false) }
-	// Companion methods -> static methods of the enclosing class.
-	val statMethods = companion?.declarations?.filterIsInstance<IrSimpleFunction>()
-		?.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && it.body != null }
-		?.map { method(it, static = true) }.orEmpty()
-	// A companion property's CUSTOM accessor -> a STATIC get_/set_<name> method on the enclosing class. Emitted
-	// only when the accessor is CUSTOM (not the trivial `field` passthrough): covers a no-backing-field computed
-	// property AND a backing-field property with a custom `get()/set()` (`val kProp = 7; get() = field + 100`,
-	// #89), whose read/write must route through the accessor instead of a raw static-field load. Getter and
-	// setter are decided independently (a `var` may pair a default getter with a custom setter).
-	val companionAccessors = companion?.declarations?.filterIsInstance<IrProperty>()
-		?.flatMap { p ->
-			listOfNotNull(
-				p.getter?.takeIf { fieldRoutedProperty(p) && !hasDefaultGetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
-				p.setter?.takeIf { fieldRoutedProperty(p) && !hasDefaultSetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
-		}.orEmpty()
 	// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
 	// A property optimizes to a plain field; but one implementing a KOTLIN INTERFACE property must emit a get_/set_
 	// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
@@ -881,7 +848,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		val setName = if (emitsSet(p)) str("set_" + p.name.asString()) else "null"
 		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str(getName)},"set":$setName${overridesJson(p.getter!!)}}"""
 	}
-	val methods = (instMethods + statMethods + companionAccessors + userAccessors + clrEventMethods).joinToString(",")
+	val methods = (instMethods + userAccessors + clrEventMethods).joinToString(",")
 	// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`
 	// type spec (via birType) that ilemit resolves by reflection; a Kotlin-user base emits its bare FQN identity
 	// carrying its ACTUAL constructed type arguments.
@@ -920,8 +887,10 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 			}
 		}
 		.joinToString(",")
-	// Anonymous objects (lifted, tracked in anonNames) are synthetic -> keep public.
-	val vis = if (anonNames.containsKey(klass)) "public" else visOf(klass)
+	// Anonymous objects are synthetic implementation types and remain public. Lifted companions also use anonNames
+	// for their physical name, but their source visibility is authoritative: widening a private companion here makes
+	// its carrier an ordinary public CLR/KLIB type on re-import.
+	val vis = if (anonNames.containsKey(klass) && !klass.isCompanion) "public" else visOf(klass)
 	val isAbstract = klass.modality == Modality.ABSTRACT || klass.modality == Modality.SEALED
 	// A `nested`/`inner` class is emitted as a true CLR nested type of its enclosing user class (`Outer+Inner`),
 	// so it retains Kotlin's access to the enclosing class's private members (instead of flattening to a separate
@@ -930,7 +899,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// nested type lives inside a generic enclosing TypeBuilder, and the nested type's signatures reference the
 	// enclosing params via the enclosing builder. Inner classes already re-declare those params (innerEnclosing-
 	// TypeParams), so flattening loses nothing; the type keeps its dotted name so references still resolve.
-	val nestedIn = emittedNestedParent(klass)?.takeIf { (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && !isExternalNetType(it) && !anonNames.containsKey(klass) && it.typeParameters.isEmpty() }
+	val nestedIn = emittedNestedParent(klass)?.takeIf { !klass.isCompanion && (it.kind == ClassKind.CLASS || it.kind == ClassKind.INTERFACE || it.kind == ClassKind.OBJECT || it.kind == ClassKind.ANNOTATION_CLASS) && !isExternalNetType(it) && !anonNames.containsKey(klass) && it.typeParameters.isEmpty() }
 		?.let { ""","nestedIn":${str(typeName(it))}""" } ?: ""
 	// Round-trip: a Kotlin `sealed` class lowers to a CLR abstract class (loses the sealed modality) — carry the fact
 	// so a re-consuming Kotlin module restores `sealed` (ilemit stamps [KotlinSealed]). `value` (inline class) is
@@ -939,7 +908,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val sealedFlag = classModsJson(
 		sealed = klass.modality == Modality.SEALED,
 		value = klass.isValue,
-		objectSingleton = isObject
+		objectSingleton = isObject && !klass.isCompanion
 	)
 	// typeParams = the anon/class's own params PLUS the captured enclosing params (scanned + installed at the top).
 	// The captured ones go through the SAME renderer as the class's own, so they keep their BOUNDS: emitting them as
@@ -954,10 +923,21 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// #68: a compiler-generated synthetic (a lifted anon-object / local class) carries `generated:true` — a STRUCTURAL
 	// fact (no `<>` CLR-unspeakability marker; that is ilemit's concern). ilemit reads it to stamp [CompilerGenerated].
 	val generatedFlag = if (generated) ""","generated":true""" else ""
+	// #275: preserve the KOTLIN companion association independently of its CLR representation.
+	// bir2cir owns turning this semantic fact into the physical round-trip metadata carrier. In particular, no consumer
+	// may infer either the association or the source name from the `<Name>CompanionObject` CLR spelling.
+	val kotlinCompanion = when {
+		klass.isCompanion -> {
+			val outer = (klass.parent as? IrClass)
+				?: error("companion '${klass.name}' has no Kotlin class owner")
+			kotlinCompanionFact(outer, klass)
+		}
+		else -> ""
+	}
 	// `clrEvents` (§4.2): per-event backing directives for the `by clrEvent()` synthesis — bir2cir's ClrEventImplBinding
 	// turns each into a real `<E>$delegate : D` field + a type-level `clrEventDecl` (the `.event` metadata record).
 	val clrEventsJson = if (clrEventBackings.isEmpty()) "" else ""","clrEvents":[${clrEventBackings.joinToString(",")}]"""
-	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag$tpJson$generatedFlag,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$clrEventsJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
+	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$nestedIn$sealedFlag$tpJson$generatedFlag$kotlinCompanion,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$clrEventsJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
 	// Restore the captured-param remap installed at the top.
 	savedCaptureSubst.forEach { (tp, prev) -> if (prev != null) typeArgSubst[tp] = prev else typeArgSubst.remove(tp) }
 	return result
@@ -1136,8 +1116,9 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean): String {
 	// calling the helper threw MethodAccessException at run (Duration..cctor -> DurationKt.durationOfMillis).
 	// Emit `internal` — the tightest CLR visibility that preserves same-file access (the same reasoning that
 	// makes routed property backing fields internal). Class members keep their real visibility.
-	val vis = if (isAnySlot) "public"
+	val declaredVis = if (isAnySlot) "public"
 		else visOf(fn).let { if (it == "private" && fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) "internal" else it }
+	val vis = declaredVis
 	val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
 	// Kotlin modifiers with no .NET analog -> stamped as [KotlinFunction] by ilemit so a consuming Kotlin module
 	// can restore them (infix/operator call resolution). `final/open/abstract` ride .NET virtual-ness already.

@@ -4,15 +4,16 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// INLINE-BIR STASH (#71/#75 S1). Runs FIRST — before EVERY lowering pass — over every input file. For each `mods.inline`
-// method it deep-clones the RAW pre-lowering facts {v,fqn,owner,recv,typeParams,params,ret,body,lifted} and stores them as ONE
+// INLINE-BIR STASH (#71/#75 S1). Runs after module-wide companion representation selection but before the ordinary
+// per-file lowering passes. For each `mods.inline` method it deep-clones the representation-selected, otherwise raw BIR
+// facts {v,fqn,owner,recv,typeParams,params,ret,body,lifted} and stores them as ONE
 // OPAQUE STRING field `"inlineBir"` = base64(BirCarrier.EncodeBody(JsonV1, payload)). Encoding AT STASH TIME is load-
 // bearing: every downstream walker (BirTypeLowering, RefBodySquash, …) then sees an inert JsonValue string and cannot
 // descend into / rewrite the captured body. ilemit later stamps that string VERBATIM as the [KotlinInline] carrier
-// (base64-decode -> the (version, byte[]) ctor args) — the payload is now RAW BIR (re-lowerable in the app context),
+// (base64-decode -> the (version, byte[]) ctor args) — the payload remains re-lowerable BIR in the app context,
 // not the post-lowering/post-squash CIR the old ilemit ApplyKotlinInline built from `params`+`body`.
 //
-// Also feeds the in-memory index `owner|name|pc|ga -> [raw decl facts]` for SAME-module splices (InlineSplice reads it once
+// Also feeds the in-memory index `owner|name|pc|ga -> [decl facts]` for SAME-module splices (InlineSplice reads it once
 // kotc emits `inlineSpliceCallSameModule` in #75 S4b). RefBodySquash is UNTOUCHED: it squashes `body` to the throw sentinel;
 // the opaque `inlineBir` string rides through unmodified (the [KotlinInline] carrier survives on the squashed ref decl).
 //
@@ -28,7 +29,7 @@ using DotKt.Bir;
 // (ReferenceMetadataIndex) keys + disambiguates identically.
 static class InlineBirStash
 {
-    // owner|name|pc|ga -> candidate raw-decl-fact payloads (one per overload sharing that key). Spans all files of ONE run.
+    // owner|name|pc|ga -> candidate decl-fact payloads (one per overload sharing that key). Spans all files of ONE run.
     public static readonly Dictionary<string, List<JsonObject>> Index = new(StringComparer.Ordinal);
 
     // OWNER-LESS same-module index: "name|pc|ga" -> the `kotlin.*` candidate payloads across owners (the SAME-MODULE twin of
@@ -88,11 +89,11 @@ static class InlineBirStash
         string recv = firstParam == "__self" ? "extensionParam"
                     : (!isStatic ? "dispatch" : "none");
 
-        // #23: carry the emitted `static` flag. For a member-EXTENSION (recv==extensionParam) the single-valued `recv`
-        // cannot express the enclosing dispatch receiver, so InlineSplice reads THIS flag to decide whether a body-read
-        // dispatch `{k:this}` can be CO-BOUND: a REAL-INSTANCE member (!static) binds recvs.dispatch alongside `__self`;
-        // a FLATTENED-companion / top-level (static) extension's recvs.dispatch would be a dangling `Owner.INSTANCE`, so
-        // a dispatch-reading body there stays a hard error. Rides the [KotlinInline] carrier to the cross-module reader.
+        // #23: carry the post-representation `static` flag. For a member-EXTENSION (recv==extensionParam) the
+        // single-valued `recv` cannot express the enclosing dispatch receiver, so InlineSplice reads THIS flag to decide
+        // whether a surviving payload `{k:this}` must be co-bound. CompanionRepresentationLowering runs before this
+        // stash: every companion self-use retains the nested carrier receiver and arrives here non-static. Rides the
+        // [KotlinInline] carrier to the cross-module reader.
         var payload = new JsonObject
         {
             ["v"] = 1,

@@ -154,9 +154,14 @@ sealed partial class Emitter
             case "lateinitGet":
             {
                 // `lateinit var` read: load the field; if still null (uninitialized), throw.
-                EmitExpr(e.GetProperty("recv"));
                 var fld = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
-                EmitField(_il, OpCodes.Ldfld, fld);
+                if (e.TryGetProperty("static", out var lgs) && lgs.ValueKind == JsonValueKind.True)
+                    EmitField(_il, OpCodes.Ldsfld, fld);
+                else
+                {
+                    EmitExpr(e.GetProperty("recv"));
+                    EmitField(_il, OpCodes.Ldfld, fld);
+                }
                 _il.Emit(OpCodes.Dup);
                 var ok = _il.DefineLabel();
                 _il.Emit(OpCodes.Brtrue, ok);
@@ -766,14 +771,18 @@ sealed partial class Emitter
                     throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' is missing or mismatches required calleeOwner");
                 var mb = FindMethod(boundOwner, boundName, SigNodes(e), CalledMethodArity(e))
                     ?? throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' was not found");
+                MethodInfo boundTarget = e.TryGetProperty("typeArgs", out var boundTypeArgs)
+                    && boundTypeArgs.GetArrayLength() > 0 && mb.IsGenericMethodDefinition
+                        ? ConstructedMethod(mb, boundTypeArgs.EnumerateArray().Select(x => MapType(x)).ToArray())
+                        : mb;
                 var recvT = EmitExpr(e.GetProperty("recv"));
                 // A value-type (or `gp:T`) receiver must be BOXED before it can back the delegate: the delegate ctor's
                 // first arg is `object` and `ldvirtftn` dispatches on an object reference, but EmitExpr pushed the raw
                 // struct value. Box gives a valid object target; the CLR delegate machinery routes it through the value
                 // type's unboxing stub for a non-virtual `ldftn` target and virtual dispatch for `ldvirtftn`.
                 if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);
-                if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, mb); }
-                else EmitMethod(_il, OpCodes.Ldftn, mb);
+                if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, boundTarget); }
+                else EmitMethod(_il, OpCodes.Ldftn, boundTarget);
                 EmitDelegateCtor(_il, ft);
                 return ft;
             }
@@ -786,12 +795,30 @@ sealed partial class Emitter
                 // `clrType` is a STRUCTURED TypeNode post type-flip (was a bare string); ClrRef(JsonElement) dispatches both.
                 var type = ClrRef(e.GetProperty("clrType"));
                 var mi = LinkClrMethod(type, e.GetProperty("method").GetString(), e, instance: true);
+                if (e.TryGetProperty("typeArgs", out var clrBoundTypeArgs) &&
+                    clrBoundTypeArgs.GetArrayLength() > 0 && mi.IsGenericMethodDefinition)
+                    mi = ConstructedMethod(mi,
+                        clrBoundTypeArgs.EnumerateArray().Select(x => MapType(x)).ToArray());
                 var recvTc = EmitExpr(e.GetProperty("recv"));
                 // Same value-type-receiver rule as newBoundDelegate: a struct .NET receiver (e.g. `kvp::method`) must be
                 // boxed so the delegate ctor's `object` target and `ldvirtftn` see an object reference, not a raw struct.
                 if (NeedsBoxToRef(recvTc)) _il.Emit(OpCodes.Box, recvTc);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, mi); }
                 else EmitMethod(_il, OpCodes.Ldftn, mi);
+                EmitDelegateCtor(_il, ft);
+                return ft;
+            }
+            case "newClrStaticDelegate":
+            {
+                var ft = MapType(e.GetProperty("funcType"));
+                var type = ClrRef(e.GetProperty("clrType"));
+                var mi = LinkClrMethod(type, e.GetProperty("method").GetString(), e, instance: false);
+                if (e.TryGetProperty("typeArgs", out var clrStaticTypeArgs) &&
+                    clrStaticTypeArgs.GetArrayLength() > 0 && mi.IsGenericMethodDefinition)
+                    mi = ConstructedMethod(mi,
+                        clrStaticTypeArgs.EnumerateArray().Select(x => MapType(x)).ToArray());
+                _il.Emit(OpCodes.Ldnull);
+                EmitMethod(_il, OpCodes.Ldftn, mi);
                 EmitDelegateCtor(_il, ft);
                 return ft;
             }

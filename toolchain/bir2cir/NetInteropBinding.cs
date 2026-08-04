@@ -71,13 +71,23 @@ static class NetInteropBinding
         // const field (unlike the plain-field external Ldfld/Callvirt route) — matching the old kotc clrPropGet parity,
         // which reshaped unconditionally. A member the refs can't see (a non-.NET owner, or a name absent from the .NET
         // type) never resolves here -> the plain `field`/`setField` is left for ilemit's own handler.
-        if (k == "field" || k == "setField") { ReshapeField(node, write: k == "setField"); return; }
+        if (k is "field" or "setField" or "setFieldExpr")
+        {
+            ReshapeField(node, write: k != "field");
+            return;
+        }
+        if (k == "clrEventGet" && node["companionCall"]?.GetValue<bool>() == true)
+        {
+            NormalizeCompanionEvent(node);
+            return;
+        }
         // #73 M4.4: a BOUND method reference `netObj::m`. kotc emits a NEUTRAL `newBoundDelegate` (the same kind it uses
         // for a Kotlin-owner bound ref) carrying the owner FQN identity + argTypes; bir2cir decides the SHAPE. When the
         // owner resolves to a .NET type off the refs -> the CLR bound-delegate dialect node `newBoundClrDelegate` (ilemit
         // binds the target by reflection). A Kotlin/local owner never resolves here -> the plain `newBoundDelegate` is
         // left for ilemit's own FindMethod-based handler. Byte-identical to kotc's former newBoundClrDelegate emit.
         if (k == "newBoundDelegate") { ReshapeBoundDelegate(node); return; }
+        if (k == "newSuspendLambda") { NormalizeSuspendCompanionCapture(node); return; }
         // #178: the options-taking `kotlin.text.Regex` constructors. A plain `new` on a @ClrTypeAlias owner is bound to
         // newClr by MemberCallSubstitution — but `Regex(String, RegexOption)` / `Regex(String, Set<RegexOption>)` map to
         // the BCL `Regex(String, RegexOptions)`, and the DotKt enum / set neither RESOLVES to nor carries the numeric
@@ -97,11 +107,52 @@ static class NetInteropBinding
         var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
         if (ownerFqnNode == null) return;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
+        var reflectedOwner = _refs.TryCompanionMetadataCarrier(bare, out var metadataCarrier)
+            ? metadataCarrier
+            : bare;
         var method = Str(node["method"]);
+        var companionCall = node["companionCall"]?.GetValue<bool>() == true;
+        bool? companionStatic = null;
+        if (companionCall)
+        {
+            if (_refs.TryCompanionIsStatic(bare, out var resolvedStatic))
+                companionStatic = resolvedStatic;
+        }
         var netType = _refs.ResolveNetType(bare, ownerFqnNode.Args?.Length ?? 0);
         Type dotKtEmittedType = null;
-        if (netType == null && _refs.HasDotKtOwner(bare))
-            dotKtEmittedType = _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0);
+        // Compiler-generated companion carriers are deliberately absent from the ordinary source-visible DotKt owner
+        // index. A validated companion association is its own, narrower authority to resolve that exact physical type.
+        if (netType == null && companionStatic != null)
+            dotKtEmittedType = _refs.ResolveCompanionMetadataCarrier(bare, ownerFqnNode.Args?.Length ?? 0);
+        else if (netType == null && _refs.HasDotKtOwner(bare))
+            dotKtEmittedType = _refs.ResolveRefType(reflectedOwner, ownerFqnNode.Args?.Length ?? 0);
+        // Rich-enum values()/valueOf() are synthetic enum-owner statics, not companion declarations. The frontend
+        // nevertheless marks their Kotlin call shape as companionCall. Admit only those two exact, structurally
+        // verified signatures when no association carrier exists; arbitrary carrier-less DotKt calls still fail.
+        var carrierlessRichEnumApi = companionCall && companionStatic == null && method != null &&
+            _refs.HasDotKtOwner(bare) &&
+            _refs.IsKotlinRichEnumStaticApi(bare, method, DeclarationArgs(node).Count);
+        if (carrierlessRichEnumApi) companionStatic = true;
+        if (companionCall && companionStatic == null && _refs.HasDotKtOwner(bare))
+            throw new InvalidOperationException(
+                $"DotKt companion call owner '{bare}' has no trusted companion carrier");
+        // An ordinary nested companion is a Kotlin declaration carrier, not an arbitrary CLR interop owner. Preserve
+        // its call in Kotlin form so MemberCallSubstitution can either consume an authored CLR binding on the member
+        // or leave an intrinsic-less method targeting the carrier's real Kotlin body. Reclassifying the entire carrier
+        // as clrInstance here loses that distinction (an alias companion may contain both kinds).
+        if (companionStatic == false) return;
+        if (companionStatic != null)
+        {
+            netType = dotKtEmittedType ?? netType ??
+                _refs.ResolveRefType(reflectedOwner, ownerFqnNode.Args?.Length ?? 0)
+                ?? throw new InvalidOperationException(
+                    $"companion call owner '{bare}' is absent from the selected references");
+            // CIR must carry the exact nested TypeDef identity that bir2cir resolved. In particular,
+            // `Outer<T>.$Companion<Capture>` is reflected as `Outer`1+$Companion`1`; ilemit cannot reconstruct the
+            // outer segment's arity by appending a suffix to the source-style carrier token.
+            if (metadataCarrier != null && ownerJson is JsonObject companionOwnerJson)
+                companionOwnerJson["name"] = metadataCarrier;
+        }
         // A basic Kotlin enum is emitted as a real CLR value-type enum. Its constants, inherited System.Enum/Object
         // members, value receiver address-taking, and constrained dispatch are therefore ordinary CLR ABI facts even
         // though the declaration came from Kotlin. Route that entire owner shape through this binder; rich Kotlin enums
@@ -131,10 +182,17 @@ static class NetInteropBinding
         // (notably a referenced Kotlin enum constant is a CLR static field). Static classes remain the member-method
         // counterpart. A DotKt-emitted Kotlin object does not enter this .NET binder, so its INSTANCE receiver remains.
         var propertyKind = Str(node["prop"]);
-        var isStatic = k == "callStatic"
+        var fallbackCompanionMethodStatic = companionCall && companionStatic == null
+            && propertyKind is not "get" and not "set"
+            ? ClrMemberResolution.ResolveCompanionMethodStatic(_refs, netType, node["ownerType"], method,
+                DeclarationArgs(node), (node["typeArgs"] as JsonArray)?.Count ?? 0,
+                $"synthetic companion call '{bare}.{method}'")
+            : false;
+        var isStatic = companionStatic ?? (k == "callStatic"
             || (k == "callInstance" && netType.IsAbstract && netType.IsSealed)
+            || (k == "callInstance" && fallbackCompanionMethodStatic)
             || (k == "callInstance" && propertyKind is "get" or "set"
-                && MemberIsStaticPropertyOrField(netType, method));
+                && MemberIsStaticPropertyOrField(netType, method)));
         var hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
 
         // A declaration loaded from a standard reference KLIB surfaces a CLR event as an ordinary read-only
@@ -390,8 +448,32 @@ static class NetInteropBinding
         var ownerJson = node["ownerType"];
         var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
         if (ownerFqnNode == null) return;
-        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name), ownerFqnNode.Args?.Length ?? 0);
-        if (netType == null) return;
+        var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
+        var companionCall = node["companionCall"]?.GetValue<bool>() == true;
+        bool? companionStatic = null;
+        if (companionCall)
+        {
+            if (_refs.TryCompanionIsStatic(bare, out var resolvedStatic))
+                companionStatic = resolvedStatic;
+        }
+        var netType = companionStatic != null
+            ? _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0)
+            : _refs.ResolveNetType(bare, ownerFqnNode.Args?.Length ?? 0);
+        if (netType == null && companionCall && _refs.HasDotKtOwner(bare))
+        {
+            netType = _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0);
+            var fieldName = Str(node["name"]);
+            if (!_refs.IsKotlinRichEnumOwner(bare) || !IsPublicStaticSelfField(netType, fieldName))
+                throw new InvalidOperationException(
+                    $"DotKt companion field owner '{bare}' has no trusted companion carrier");
+        }
+        if (netType == null)
+        {
+            if (companionCall)
+                throw new InvalidOperationException(
+                    $"companion field owner '{bare}' is absent from the selected references");
+            return;
+        }
         var name = Str(node["name"]);
         if (name == null || !MemberIsPropertyOrField(netType, name)) return;
         var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
@@ -400,8 +482,10 @@ static class NetInteropBinding
         node["k"] = write ? "clrPropSet" : "clrPropGet";
         node["type"] = Take("ownerType");
         node["name"] = Take("name");
-        node["static"] = false;
-        node["recv"] = Take("recv");
+        var isStatic = companionStatic ??
+            (netType.IsAbstract && netType.IsSealed || MemberIsStaticPropertyOrField(netType, name));
+        node["static"] = isStatic;
+        if (!isStatic) node["recv"] = Take("recv");
         if (write) node["value"] = Take("value");
         // A READ produces the field's value, so the plain `field` node's result stamps are still true of the
         // clrPropGet and travel with it (RESULT STAMPS at the top of this file). Without them a `.NET` field read is a
@@ -412,6 +496,30 @@ static class NetInteropBinding
         if (Take("ret") is JsonNode fieldRet) node["ret"] = fieldRet;
     }
 
+    static void NormalizeCompanionEvent(JsonObject node)
+    {
+        var owner = TypeJson.Read(node["type"]) as TypeNode.Fqn;
+        var bare = owner == null ? null : ReferenceMetadataIndex.BareOwnerFqn(owner.Name);
+        if (bare == null) throw new InvalidOperationException("companion event has no owner");
+        bool isStatic;
+        if (!_refs.TryCompanionIsStatic(bare, out isStatic))
+        {
+            var netType = _refs.ResolveNetType(bare, owner.Args?.Length ?? 0)
+                ?? (_refs.HasDotKtOwner(bare) ? _refs.ResolveRefType(bare, owner.Args?.Length ?? 0) : null)
+                ?? throw new InvalidOperationException($"companion event owner '{bare}' is absent");
+            if (_refs.HasDotKtOwner(bare))
+                throw new InvalidOperationException(
+                    $"DotKt companion event owner '{bare}' has no trusted companion carrier");
+            var eventName = Str(node["name"]);
+            if (!_refs.TryClrEventIsStatic(bare, eventName, out isStatic))
+                throw new InvalidOperationException(
+                    $"companion event '{bare}.{eventName}' has no unique reference declaration");
+        }
+        node.Remove("companionCall");
+        node["static"] = isStatic;
+        if (isStatic) node.Remove("recv");
+    }
+
     // #73 M4.4 — reshape a BOUND method-ref `newBoundDelegate` on a reference-KLIB-projected .NET owner to the CLR
     // `newBoundClrDelegate` dialect node (ilemit resolves the target by reflection over the .NET type). Resolves the
     // owner off the refs (skips kotlin.*/local owners — those stay a plain newBoundDelegate ilemit binds via FindMethod).
@@ -419,27 +527,128 @@ static class NetInteropBinding
     // method/argTypes/virtual/recv/funcType carried verbatim — including the method already Object-slot-renamed upstream).
     static void ReshapeBoundDelegate(JsonObject node)
     {
+        var companionCall = node["companionCall"]?.GetValue<bool>() == true;
         // Only the .NET-bound producer (BirEmitter method-ref, clrOwner branch) carries `argTypes`; the Kotlin-owner
         // bound ref emits NONE. Gate on it so a cross-module Kotlin owner (a ProjectReference lib loaded via --ref,
         // which ResolveNetType WOULD resolve) is never mis-reshaped into a newBoundClrDelegate claiming `argTypes:[]`
-        // — it stays the plain newBoundDelegate ilemit binds by FindMethod, exactly as before Wave 8.
-        if (node["argTypes"] == null) return;
+        // — it stays the plain newBoundDelegate ilemit binds by FindMethod, exactly as before Wave 8. A validated
+        // companion reference is the one additional admitted source: BindExternalUses marks it explicitly and its
+        // ordinary Kotlin declaration vector lives in `sig`, which is enough for the exact member-level decision below.
+        if (node["argTypes"] == null && !companionCall) return;
         var ownerJson = node["ownerType"];
         var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
         if (ownerFqnNode == null) return;
-        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name), ownerFqnNode.Args?.Length ?? 0);
-        if (netType == null) return;   // a Kotlin/local owner -> leave the plain newBoundDelegate for ilemit's handler
+        var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
+        var declarationArgs = DeclarationArgs(node);
+        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+        bool? companionStatic = null;
+        if (companionCall)
+        {
+            if (_refs.TryCompanionIsStatic(bare, out var resolvedStatic))
+                companionStatic = resolvedStatic;
+        }
+        var netType = companionStatic != null
+            ? _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0)
+            : _refs.ResolveNetType(bare, ownerFqnNode.Args?.Length ?? 0);
+        if (netType == null && companionCall && _refs.HasDotKtOwner(bare))
+        {
+            netType = _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0);
+            if (netType != null && _refs.IsKotlinRichEnumStaticApi(
+                    bare, Str(node["method"]), declarationArgs.Count))
+                companionStatic = true;
+            else
+                throw new InvalidOperationException(
+                    $"DotKt companion callable-reference owner '{bare}' has no trusted companion carrier");
+        }
+        if (netType == null)
+        {
+            if (companionCall)
+                throw new InvalidOperationException(
+                    $"companion callable-reference owner '{bare}' is absent from the selected references");
+            return;   // a Kotlin/local owner -> leave the plain newBoundDelegate for ilemit's handler
+        }
+        // A nested companion can mix real Kotlin carrier bodies with members explicitly bound to the semantic
+        // outer's CLR alias. Callable references do not pass through MemberCallSubstitution, so resolve that one
+        // member here by the complete declaration identity. Never classify the carrier as a whole by its name.
+        var companionCarrier = _refs.TryCompanionPhysicalOwner(bare, out var mappedCarrier)
+            ? mappedCarrier
+            : bare;
+        var declarationSignature = declarationArgs?.Select(TypeJson.Read).ToList();
+        string companionIntrinsic = null;
+        string companionSemanticOwner = null;
+        var exactBoundCompanion = companionCall && declarationSignature != null
+            && declarationSignature.All(t => t != null)
+            && _refs.TryExactMemberIntrinsic(
+                ReferenceMetadataIndex.BareOwnerFqn(companionCarrier), Str(node["method"]), methodArity,
+                declarationSignature, out companionIntrinsic)
+            && _refs.TryCompanionSemanticOwner(companionCarrier, out companionSemanticOwner)
+            && _refs.TryResolveClrOwner(companionSemanticOwner, out _, out _);
         var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
         foreach (var key in node.Select(kv => kv.Key).ToList()) { var val = node[key]; node.Remove(key); v[key] = val; }
         JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;
-        node["k"] = "newBoundClrDelegate";
-        node["clrType"] = Take("ownerType");
-        node["method"] = Take("method");
-        node["argTypes"] = Take("argTypes") ?? new JsonArray();
+        var isStatic = exactBoundCompanion || (companionStatic ?? (companionCall
+            && ClrMemberResolution.ResolveCompanionMethodStatic(_refs, netType, v["ownerType"],
+                Str(v["method"]), declarationArgs,
+                v.TryGetValue("typeArgs", out var genericArgs) && genericArgs is JsonArray genericArgArray
+                    ? genericArgArray.Count
+                    : 0,
+                $"synthetic companion callable reference '{bare}.{Str(v["method"])}'")));
+        node["k"] = isStatic ? "newClrStaticDelegate" : "newBoundClrDelegate";
+        node["clrType"] = exactBoundCompanion
+            ? TypeJson.Write(new TypeNode.Fqn(companionSemanticOwner, ownerFqnNode.Args))
+            : Take("ownerType");
+        var sourceMethod = Take("method");
+        node["method"] = exactBoundCompanion ? companionIntrinsic : sourceMethod;
+        node["argTypes"] = Take("argTypes") ?? Take("shapeTypes") ?? Take("sig") ?? new JsonArray();
+        var typeArgs = Take("typeArgs");
+        if (typeArgs != null) node["typeArgs"] = typeArgs;
         node["virtual"] = Take("virtual");
-        node["recv"] = Take("recv");
+        var recv = Take("recv");
+        if (!isStatic) node["recv"] = recv;
         node["funcType"] = Take("funcType");
+        // Preserve evaluation only when a real trusted nested companion member is explicitly authored as a CLR
+        // static binding. A legacy dll2klib synthetic companion over an ordinary CLR static API has no receiver value
+        // at all: its companionValue is projection scaffolding and must disappear with the rewritten static delegate.
+        if (isStatic && recv != null && exactBoundCompanion)
+        {
+            var lowered = node.DeepClone() as JsonObject;
+            var preserved = CallEvalLowering.PreserveUnreadValueBefore(
+                recv, lowered, $"static companion callable reference '{bare}.{Str(sourceMethod)}'");
+            if (preserved is JsonObject wrapped)
+            {
+                node.Clear();
+                foreach (var kv in wrapped) node[kv.Key] = kv.Value?.DeepClone();
+            }
+        }
     }
+
+    static void NormalizeSuspendCompanionCapture(JsonObject node)
+    {
+        var physicalOwner = Str(node["externalCompanionOwner"]);
+        if (physicalOwner == null) return;
+        node.Remove("externalCompanionOwner");
+        // A validated external companion is an ordinary nested Kotlin object with a real $INSTANCE value. Keep the
+        // bound receiver capture even when the referenced member is authored as a CLR static binding: evaluating and
+        // storing that value at reference construction preserves Kotlin's bound-reference evaluation order, and an
+        // unused capture is a valid (if deliberately unoptimized) state-machine field. Inferring static/instance from
+        // the adapted wrapper body is unsound once inline/default expansion or inherited dispatch changes that body.
+        // A historical dll2klib synthetic companion over an ordinary CLR static API has no trusted carrier or value;
+        // discard only that synthetic capture. The validated association, rather than a name or body-shape guess,
+        // distinguishes the two representations.
+        if (_refs.TryCompanionIsStatic(physicalOwner, out var isStatic) && !isStatic) return;
+        if (node["captures"] is not JsonArray captures || captures.Count != 1 ||
+            node["capValues"] is not JsonArray values || values.Count != 1)
+            throw new InvalidOperationException(
+                "CLR-static companion callable reference has an unexpected synthetic capture shape");
+        captures.Clear();
+        values.Clear();
+    }
+
+    // The frontend's resolved declaration vector has three spellings depending on call family:
+    // ordinary external calls carry argTypes, generic calls carry shapeTypes, and Kotlin ABI calls carry sig.
+    // Keep that order so static/instance classification and the later CLR member resolver see the same descriptor.
+    static JsonArray DeclarationArgs(JsonObject node) =>
+        node["argTypes"] as JsonArray ?? node["shapeTypes"] as JsonArray ?? node["sig"] as JsonArray;
 
     // W1-S1 (#46): the clrGeneric* `memberSig` = the callee's declared param types, matched STRUCTURALLY by ilemit
     // against the reflected .NET method DEFINITION. Normalize each entry to how reflection presents the OPEN param:
@@ -508,6 +717,17 @@ static class NetInteropBinding
     static bool DeclaresPublicStaticMethod(Type type, string name)
     {
         try { return type.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(m => m.Name == name); }
+        catch { return false; }
+    }
+
+    static bool IsPublicStaticSelfField(Type type, string name)
+    {
+        if (type == null || name == null) return false;
+        try
+        {
+            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly);
+            return field != null && field.FieldType == type;
+        }
         catch { return false; }
     }
 

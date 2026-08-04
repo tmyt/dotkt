@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -39,6 +41,7 @@ static class RoundtripMetadata
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
     const string AKObject       = Ns + "KotlinObjectAttribute";
+    const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
@@ -69,7 +72,39 @@ static class RoundtripMetadata
         // stamped only [KotlinSuspendFunctionType]; a `val`'s read-only-ness rode the CLR property, not the field).
         StampFields(o["fields"], topLevel: true);
         if (o["types"] is JsonArray types)
+        {
+            MaterializeCompanionCarriers(types);
             foreach (var t in types) if (t is JsonObject to) StampType(to);
+        }
+    }
+
+    // CompanionRepresentationLowering has already selected and materialized the physical representation. Metadata
+    // emission consumes only that explicit hand-off; declaration counts and object flags are not representation facts.
+    static void MaterializeCompanionCarriers(JsonArray roots)
+    {
+        var types = new List<JsonObject>();
+        void Collect(JsonArray declarations)
+        {
+            foreach (var node in declarations)
+                if (node is JsonObject type)
+                {
+                    types.Add(type);
+                    if (type["types"] is JsonArray nested) Collect(nested);
+                }
+        }
+        Collect(roots);
+
+        foreach (var type in types)
+            if (type["companionCarrier"] is JsonObject carrier)
+            {
+                if (type["kotlinCompanion"] is not null)
+                    throw new InvalidOperationException("companion carrier has an unconsumed semantic association");
+                type["kotlinCompanion"] = carrier.DeepClone();
+                type.Remove("companionCarrier");
+            }
+        foreach (var type in types)
+            if (type["kotlinCompanion"] is JsonObject fact && fact["kind"] is null)
+                throw new InvalidOperationException("semantic companion reached metadata emission without representation lowering");
     }
 
     static void StampType(JsonObject to)
@@ -85,6 +120,13 @@ static class RoundtripMetadata
         // reads back off the ref/rt DLL to drive the single-field erase-to-underlying lowering.
         if (ModFlag(to, "value")) Append(to, Marker(AKValue));       // `value` class (@JvmInline)
         if (ModFlag(to, "object")) Append(to, Marker(AKObject));     // `object` singleton
+        // [KotlinCompanion(version, bytes)] (#275) — the association, source name, and bir2cir-resolved physical
+        // representation. MaterializeCompanionCarriers above consumes kotc's semantic-only {owner,name} fact.
+        if (to["kotlinCompanion"] is JsonObject companion)
+        {
+            Append(to, JsonCarrierAttr(AKCompanion, companion));
+            to.Remove("kotlinCompanion");
+        }
         // [KotlinType(version, bytes)] — a compiler-synthesized CLR type whose Kotlin surface is a different TypeNode.
         // FBoundStarProjectionErasure uses this on its non-generic existential interface so a downstream reader restores
         // the original G<*> projection rather than exposing the CLR implementation type or degrading it to Any?.
@@ -299,6 +341,7 @@ static class RoundtripMetadata
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
         o.Remove(NullableGenericErasure.SupertypesPre);
+        o.Remove("kotlinCompanion");
         StripAttrs(o, "attrs");
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
@@ -400,6 +443,12 @@ static class RoundtripMetadata
         return Marker(AKType, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
 
+    static JsonObject JsonCarrierAttr(string attr, JsonNode body)
+    {
+        byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, body.DeepClone());
+        return Marker(attr, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
+    }
+
     static JsonObject Marker(string attr, params JsonObject[] args)
     {
         var arr = new JsonArray();
@@ -482,6 +531,7 @@ static class RoundtripMetadata
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),
             AttrClass(AKObject, Ctor()),
+            AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKCtxParam, Ctor()),  // bare marker: a Kotlin `context(...)` parameter (physically positional)

@@ -107,6 +107,7 @@ sealed class Pipeline
 
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
+        var companionRepresentations = CompanionRepresentationLowering.Apply(birFiles.Select(b => b.Root));
         // #68 (PART 2): kotc emits the PLAIN Kotlin identity `kotlin.CharSequence` at every CharSequence use site (no CLR
         // synthetic name — kotc knows nothing of the synthetic). Recognizing `kotlin.CharSequence` as a synthesize-target is
         // a bir2cir concern (the Kotlin<->CLR layer), so SUBSTITUTE it here — as a one-type hardcode, exactly like the ref.dll
@@ -237,9 +238,10 @@ sealed class Pipeline
         var inlineDispatchHierarchy = InlineSplice.CollectDispatchHierarchy(birFiles.Select(f => f.Root));
         var genericDowncastHierarchy = GenericDowncastRealignment.Collect(birFiles.Select(f => f.Root));
 
-        // INLINE-BIR STASH (#71/#75 S1): BEFORE any lowering pass runs, capture every `mods.inline` method's RAW
-        // pre-lowering body into an OPAQUE `inlineBir` base64 string (ilemit stamps it verbatim as the raw-BIR
-        // [KotlinInline] carrier) + an in-memory `owner|name|pc|ga -> raw decl` index (dormant same-module infra).
+        // INLINE-BIR STASH (#71/#75 S1): after module-wide companion representation selection and before ordinary
+        // per-file lowering, capture every `mods.inline` method's representation-selected BIR body into an OPAQUE
+        // `inlineBir` base64 string (ilemit stamps it verbatim as the [KotlinInline] carrier) plus an in-memory
+        // `owner|name|pc|ga -> decl` index (dormant same-module infra).
         // Runs across ALL files here so the index spans the compilation, and so every downstream walker sees the
         // captured body already inert (a JsonValue string) — RefBodySquash then squashes only the executable `body`.
         InlineBirStash.Reset();
@@ -286,6 +288,8 @@ sealed class Pipeline
             // same-module index) and SPLICES it (positional tv-subst, temp-bound params, lambda-invoke splicing, routed
             // returns, hygiene) into a value-producing valueBlock — which then re-lowers IN THIS app's context. Runs here
             // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
+            if (_options.StdlibMode == BuildStdlibMode.App)
+                CompanionRepresentationLowering.BindSpliceUses(bir.Root, refs);
             InlineSplice.Apply(bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy);
             // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
             // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
@@ -306,6 +310,11 @@ sealed class Pipeline
             // external callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
             // self-build would also disturb its byte-stable RefBodySquash/RoundtripMetadata decl set for zero benefit.
             if (attributeTopLevelOwner) DefaultArgSplice.Apply(bir.Root, refs);
+            // Bind local and ProjectReference companion values after every raw-BIR splice and before an evaluation
+            // plan can materialize a representation-less flat receiver as a CLR local.
+            CompanionRepresentationLowering.BindUses(
+                bir.Root, companionRepresentations, refs,
+                bindExternal: _options.StdlibMode == BuildStdlibMode.App);
             // CALL-EVALUATION PLAN LOWERING (§2.7). EVERY splice that can add a reader to one of a call's values has
             // now run, so each plan's readers are final and its bindings lower to locals in Kotlin order: a
             // single-reader binding back into its own slot, a shared one into a `var`, a constructor delegation's into
@@ -414,6 +423,7 @@ sealed class Pipeline
             // kotc lowers itself (ClrEvent<T>/ClrRef<T>/byref — they don't exist in any ref, so they never resolve here).
             // Non-ref only (the stdlib self-build injects no dll2klib .NET interop).
             if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
+            if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
             // #11 — VALUE-TYPE PLATFORM SLOT WRITE COERCION: a `Nullable<V>`/`null` source assigned to a bare value-type
             // platform property/field slot (`ThreadLocal<Int>.Value = someIntQ`) — the WRITE twin of #8's oblivious read.
             // Unwrap a `Nullable<V>` source to the bare `V` the setter expects (`nullableValue`), and fail loud on a

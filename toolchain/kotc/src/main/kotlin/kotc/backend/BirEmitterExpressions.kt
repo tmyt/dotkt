@@ -169,9 +169,15 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	// like Math are static call sites handled at the call site; only user singletons reach here as a value.)
 	// The `Unit` object as a VALUE (e.g. `Result.success(Unit)`) is just another singleton: the stdlib's own
 	// `kotlin.Unit` object INSTANCE (this-assembly under stdlib-compile, else resolved against the referenced
-	// stdlib) — no DotKt.Runtime.
-	is IrGetObjectValue ->
-		"""{"k":"staticField","ownerType":${fqnJson(typeName(node.symbol.owner))},"name":"INSTANCE"}"""
+	// stdlib) — no DotKt.Runtime. A dll2klib declaration whose Kotlin object identity differs from its physical CLR
+	// singleton forwards its existing @ClrExternal owner fact here, matching the external IrGetField path below and
+	// external call ownerType nodes. This does not infer a CLR name or shape; bir2cir still binds the carried owner.
+	is IrGetObjectValue -> if (node.symbol.owner.isCompanion) {
+		val companion = node.symbol.owner
+		val owner = companion.parent as IrClass
+		"""{"k":"companionValue","ownerType":${fqnJson(typeName(owner))},"companionType":${fqnJson(typeName(companion))},"name":${str(companion.name.asString())}}"""
+	} else
+		"""{"k":"staticField","ownerType":${fqnJson(clrExternalOwner(node.symbol.owner) ?: typeName(node.symbol.owner))},"name":"INSTANCE"}"""
 	is IrBlock -> blockExpr(node)
 	is IrGetField -> {
 		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
