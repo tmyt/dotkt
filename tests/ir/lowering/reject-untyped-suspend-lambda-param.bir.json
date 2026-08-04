@@ -1,0 +1,38 @@
+{
+  "fileClass": "RejectUntypedSuspendLambdaParamKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "make",
+      "static": true,
+      "params": [],
+      "ret": {
+        "t": "fn", "suspend": true,
+        "ret": { "t": "fqn", "name": "kotlin.Unit" },
+        "params": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "newSuspendLambda",
+            "arity": 1,
+            "captures": [],
+            "params": [{ "name": "value" }],
+            "suspendRet": { "t": "fqn", "name": "kotlin.Unit" },
+            "typeParams": [],
+            "funcType": {
+              "t": "fn", "suspend": true,
+              "ret": { "t": "fqn", "name": "kotlin.Unit" },
+              "params": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "body": []
+          }
+        }
+      ]
+    }
+  ]
+}

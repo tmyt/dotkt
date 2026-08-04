@@ -31,7 +31,6 @@ using DotKt.Bir;
 
 static class SuspendLambdaLowering
 {
-    static readonly TypeNode AnyTn = new TypeNode.Fqn("kotlin.Any");
     static readonly TypeNode ContAnyTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Any") });
     static JsonNode ContAny() => TypeJson.Write(ContAnyTn);
     const string SuspendLambdaFqn = "kotlin.coroutines.clr.internal.SuspendLambda";
@@ -208,12 +207,20 @@ static class SuspendLambdaLowering
         // with THOSE originals. When absent (kotc's own source-lambda emission), fall back to the positional
         // `smName<tv{type,0..N-1}>` — keeping source-lambda output BYTE-IDENTICAL.
         TypeNode smInst;
+        if (ctorTypeArgs != null && ctorTypeArgs.Count != typeArgs.Count)
+            throw new NotSupportedException(
+                $"bir2cir: suspend-lambda lowering: `{smName}` carries {ctorTypeArgs.Count} construction type "
+                + $"argument(s) for {typeArgs.Count} state-machine type parameter(s) — an earlier lowering "
+                + "dropped or added a construction type argument.");
         if (typeArgs.Count == 0)
             smInst = new TypeNode.Fqn(smName);
-        else if (ctorTypeArgs != null && ctorTypeArgs.Count == typeArgs.Count)
-            smInst = new TypeNode.Fqn(smName, ctorTypeArgs.Select(ta => TypeJson.Read(ta) ?? AnyTn).ToArray());
-        else
+        else if (ctorTypeArgs == null)
             smInst = new TypeNode.Fqn(smName, Enumerable.Range(0, typeArgs.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+        else
+        {
+            smInst = new TypeNode.Fqn(smName, ctorTypeArgs.Select((ta, i) =>
+                RequiredType(ta, $"construction type argument {i} of `{smName}`")).ToArray());
+        }
 
         // The lambda VALUE: `new SM(captureVals..., null)` — captures read at the emit site, a null completion (a
         // cold, unstarted lambda; create() rebinds the completion when a builder starts it).
@@ -280,9 +287,16 @@ static class SuspendLambdaLowering
         if (arr is JsonArray a)
             foreach (var it in a)
                 if (it is JsonObject o && Str(o["name"]) is string n)
-                    list.Add((n, TypeJson.Read(o["type"]) ?? AnyTn));
+                    list.Add((n, RequiredType(o["type"], $"capture `{n}` of a suspend lambda")));
         return list;
     }
+
+    // Both channels are mandatory BIR facts: captures are parameter declarations and `typeArgs` entries are type
+    // nodes by schema. Inventing Any here would turn an earlier producer/schema violation into a differently-shaped
+    // CLR state machine, so keep the failure at the ownership boundary and name the missing fact.
+    static TypeNode RequiredType(JsonNode node, string slot) =>
+        TypeJson.Read(node) ?? throw new NotSupportedException(
+            $"bir2cir: suspend-lambda lowering: the {slot} carries no type — an earlier lowering dropped it.");
 
     static List<string> ReadStrings(JsonNode arr)
     {
