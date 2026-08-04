@@ -623,29 +623,18 @@ internal fun BirEmitter.regularArgs(call: org.jetbrains.kotlin.ir.expressions.Ir
 	}
 }
 
-/** Does this receiver need a call-evaluation-plan BINDING of its own, or may it stay in its slot?
+/** Every receiver gets its own call-evaluation-plan binding.
  *
- *  Everything does, except a reference to an object THIS BACKEND GIVES NO INSTANCE: a plain `companion object`, which
- *  is FLATTENED onto its enclosing class (the `callStatic` arm below, and [inlineReceiverParts] for the inline
- *  payload), and a projected .NET static holder, which dll2klib surfaces as exactly such a companion. For those the
- *  emitted call has no receiver slot to read a binding back from, so binding one leaves a binding NOTHING reads whose
- *  expression is a read of an `INSTANCE` field that is never emitted. It only ever survived because bir2cir happened
- *  to drop unread pure-looking loads; it is the producer's job not to mint it. Nothing is lost: there is no value
- *  there to evaluate.
- *
- *  A real `object` stays bound because loading its `INSTANCE` runs its type initializer. A semantic companion stays
- *  bound until bir2cir chooses its representation and can preserve or remove that evaluation deliberately. This is
- *  observable evaluation
+ *  Loading an object can run its type initializer, and kotc does not choose whether a semantic companion has a CLR
+ *  instance. It therefore keeps the receiver evaluation until bir2cir selects the representation and deliberately
+ *  preserves or removes it. This is observable evaluation
  *  (docs/dotkt-semantics.md §7a), and Kotlin evaluates the receiver BEFORE every argument, so it needs a binding to
  *  hold that position: without one, `O.f(side())` lets `side()` run first, and if `O`'s initializer throws it must
  *  not have run at all.
  *
  *  Asked at EVERY receiver binding site, ordinary and inline ([filledArgs], [filledExternalArgs], and the three in
  *  BirEmitterInline): the rule is about what the value IS, not about which emitter reached it. */
-internal fun BirEmitter.needsPlanBinding(receiver: IrExpression): Boolean {
-	val obj = (receiver as? IrGetObjectValue)?.symbol?.owner ?: return true
-	return true
-}
+internal fun BirEmitter.needsPlanBinding(@Suppress("UNUSED_PARAMETER") receiver: IrExpression): Boolean = true
 
 internal fun BirEmitter.dispatchReceiver(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): IrExpression? {
 	val params = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.parameters ?: return null
