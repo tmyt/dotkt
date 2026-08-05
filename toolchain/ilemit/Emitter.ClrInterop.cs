@@ -634,7 +634,10 @@ sealed partial class Emitter
         var accessor = LinkClrMethod(type, e.GetProperty("accessor").GetString(), e, instance: !isStatic);
         var delType = ParametersOf(accessor)[0].ParameterType;   // == the event's EventHandlerType
         if (!isStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
-        EmitHandlerAsDelegate(e.GetProperty("handler"), delType);
+        if (e.TryGetProperty("handlerExact", out var exact) && exact.GetBoolean())
+            EmitExpr(e.GetProperty("handler"));
+        else
+            EmitHandlerAsDelegate(e.GetProperty("handler"), delType);
         if (isStatic) EmitMethod(_il, OpCodes.Call, accessor);
         else EmitClrDispatch(accessor, RequireDispatch(e, type, add ? "clrEventAdd" : "clrEventRemove"), type);
         return Bcl("System.Void");

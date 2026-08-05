@@ -1,0 +1,3 @@
+suspend-lambda lowering
+capture `x`
+carries no type

@@ -319,7 +319,7 @@ static class FBoundStarProjectionErasure
             ["abstract"] = true,
             ["objectOverride"] = false,
             ["vis"] = "public",
-            ["params"] = EraseParams(method["params"] as JsonArray, owners, refs),
+            ["params"] = EraseParams(method["params"] as JsonArray, MethodDisplay(method), owners, refs),
             ["ret"] = TypeJson.Write(EraseOwnerTv(
                 TypeJson.Read(method["ret"]) ?? new TypeNode.Fqn("kotlin.Unit"), owners, refs)),
             ["body"] = new JsonArray(),
@@ -339,14 +339,15 @@ static class FBoundStarProjectionErasure
         string bridgeName = null, TypeNode.Fqn callOwner = null)
     {
         var originalParams = method["params"] as JsonArray ?? new JsonArray();
-        var bridgeParams = EraseParams(originalParams, owners, refs);
+        var methodDisplay = $"{owner.Name}.{MethodDisplay(method)}";
+        var bridgeParams = EraseParams(originalParams, methodDisplay, owners, refs);
         var args = new JsonArray();
         var sig = new JsonArray();
         for (var i = 0; i < originalParams.Count; i++)
         {
             if (originalParams[i] is not JsonObject p) continue;
             var name = Str(p["name"]) ?? "p" + i;
-            var originalType = TypeJson.Read(p["type"]) ?? new TypeNode.Fqn("kotlin.Any");
+            var originalType = RequiredParamType(p, i, methodDisplay);
             JsonNode value = new JsonObject { ["k"] = "local", ["name"] = name };
             if (ContainsOwnerTv(originalType))
                 value = new JsonObject
@@ -402,20 +403,29 @@ static class FBoundStarProjectionErasure
         return bridge;
     }
 
-    static JsonArray EraseParams(JsonArray parameters,
+    static JsonArray EraseParams(JsonArray parameters, string methodDisplay,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         var result = new JsonArray();
         if (parameters == null) return result;
-        foreach (var p in parameters.OfType<JsonObject>())
+        for (var i = 0; i < parameters.Count; i++)
         {
+            if (parameters[i] is not JsonObject p) continue;
             var copy = p.DeepClone() as JsonObject;
-            if (TypeJson.Read(p["type"]) is TypeNode pt)
-                copy["type"] = TypeJson.Write(EraseOwnerTv(pt, owners, refs));
+            var pt = RequiredParamType(p, i, methodDisplay);
+            copy["type"] = TypeJson.Write(EraseOwnerTv(pt, owners, refs));
             result.Add(copy);
         }
         return result;
     }
+
+    static string MethodDisplay(JsonObject method) => Str(method["name"]) ?? "<unnamed>";
+
+    static TypeNode RequiredParamType(JsonObject parameter, int index, string methodDisplay) =>
+        TypeJson.Read(parameter["type"]) ?? throw new NotSupportedException(
+            $"bir2cir: star-projection erasure: parameter "
+            + $"`{Str(parameter["name"]) ?? "p" + index}` of `{methodDisplay}` carries no type — "
+            + "an earlier lowering dropped it.");
 
     static JsonArray EraseOwnerTypeParamConstraints(JsonArray typeParams,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)

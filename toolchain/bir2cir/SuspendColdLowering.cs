@@ -1526,7 +1526,7 @@ static partial class SuspendColdLowering
                 foreach (var (n, t) in _captures)
                     FieldStorage(n, t, RoleCapture, lives: true, across: null);             // captured vars -> ctor-set fields
             foreach (var p in _params)
-                FieldStorage(Str(p["name"]), TypeJson.Read(p["type"]), RoleParam, true, null);  // lambda: create()-set param field(s)
+                FieldStorage(Str(p["name"]), RequiredParamType(p), RoleParam, true, null);  // lambda: create()-set param field(s)
             foreach (var (vn, vt, role) in live.DeclaredVars)
             {
                 var declared = TypeJson.Read(vt);
@@ -1659,7 +1659,7 @@ static partial class SuspendColdLowering
                     throw new NotSupportedException(FieldLegality.SuspendAbiMessage(
                         FieldLegality.PosPrefix(_m), DiagOwner, role, name, t, offending, why));
             }
-            foreach (var p in _params) Check(RoleParam, Str(p["name"]), TypeJson.Read(p["type"]));
+            foreach (var p in _params) Check(RoleParam, Str(p["name"]), RequiredParamType(p));
             if (_captures != null) foreach (var (n, t) in _captures) Check(RoleCapture, n, t);
             Check(RoleReturn, "<result>", _resultType);
         }
@@ -1683,6 +1683,11 @@ static partial class SuspendColdLowering
                 + $"`{Str(v["name"])}` is declared with no type, so the slot that holds it across a suspension would "
                 + "be untyped — an earlier lowering dropped the type.");
 
+        TypeNode RequiredParamType(JsonObject p) =>
+            TypeJson.Read(p["type"]) ?? throw new NotSupportedException(
+                $"bir2cir: {FieldLegality.PosPrefix(_m)}suspend-lowering: in `{DiagOwner}`, parameter "
+                + $"`{Str(p["name"])}` carries no static type — an earlier lowering dropped it.");
+
         // A `{k:var}` that the storage gate left as a MoveNext LOCAL.
         JsonObject LocalVar(JsonObject v, JsonNode init) => new()
         {
@@ -1703,7 +1708,8 @@ static partial class SuspendColdLowering
                     // An init-less `var` (e.g. kotc's tryExpr `var dotkt_tryvalN`, assigned in the try/catch) default-inits:
                     // `{k:default}` is the zero value for BOTH a reference (ldnull) and a VALUE type (initobj) — a bare
                     // NullConst(valueType) would emit a null Int32 (ilemit: "requires Number, target is Null").
-                    var val = init == null ? DefaultOf(VarType(o)) : Rewrite(init, outp);
+                    var declared = VarType(o);
+                    var val = init == null ? DefaultOf(declared) : Rewrite(init, outp, declared);
                     if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
                     else outp.Add(LocalVar(o, val));
                     break;
@@ -1711,7 +1717,7 @@ static partial class SuspendColdLowering
                 case "setLocal":
                 {
                     var nm = Str(o["name"]);
-                    var val = Rewrite(o["value"], outp);
+                    var val = Rewrite(o["value"], outp, RequiredSlotType(nm));
                     if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
                     else outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = nm, ["value"] = val });
                     break;
@@ -1719,11 +1725,12 @@ static partial class SuspendColdLowering
                 case "return":
                 {
                     var v = o["value"];
-                    outp.Add(v == null ? Ret(NullConst(AnyTn)) : Ret(Rewrite(v, outp)));
+                    outp.Add(v == null ? Ret(NullConst(AnyTn))
+                        : Ret(Rewrite(v, outp, IsUnitTn(_resultType) ? UnitTn : _resultType)));
                     break;
                 }
                 case "exprStmt":
-                    outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = Rewrite(o["expr"], outp) });
+                    outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = Rewrite(o["expr"], outp, UnitTn) });
                     break;
                 case "block":
                     if (o["body"] is JsonArray bb) foreach (var s in bb) EmitStmt(s, outp);
@@ -1738,7 +1745,7 @@ static partial class SuspendColdLowering
                         ["k"] = "brIf",
                         ["id"] = o["id"]?.DeepClone(),
                         ["on"] = o["on"]?.DeepClone(),
-                        ["cond"] = Rewrite(o["cond"], outp),
+                        ["cond"] = Rewrite(o["cond"], outp, BoolTn),
                     });
                     break;
                 case "try":
@@ -1851,7 +1858,7 @@ static partial class SuspendColdLowering
                     && (o["args"] is not JsonArray csa0 || csa0.Count == 0))
                     return Suspended();
                 if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
-                    return FieldOf(ln, FieldType(ln));
+                    return FieldOf(ln, RequiredFieldType(ln));
                 if (Str(o["k"]) == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf0)
                     return sf0;
                 if (Str(o["k"]) == "setLocal" && Str(o["name"]) is string sln && _fields.Contains(sln))
@@ -1888,7 +1895,7 @@ static partial class SuspendColdLowering
         // WHICH arms append to `outp` is a fact one caller has to predict before calling: `LowersToStatements`
         // (below) mirrors them, so an operand can be bound before a neighbour that emits statements. Add an
         // appending arm here and add it there.
-        JsonNode Rewrite(JsonNode node, List<JsonNode> outp)
+        JsonNode Rewrite(JsonNode node, List<JsonNode> outp, TypeNode expectedType = null)
         {
             if (node is JsonObject o)
             {
@@ -1909,7 +1916,7 @@ static partial class SuspendColdLowering
                     && (o["args"] is not JsonArray csa1 || csa1.Count == 0))
                     return Suspended();
                 if (k == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
-                    return FieldOf(ln, FieldType(ln));
+                    return FieldOf(ln, RequiredFieldType(ln));
                 if (k == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf1)
                     return sf1;
                 // A `setLocal`/`var` that assigns a SPILLED variable but sits INSIDE an expression subtree (e.g. the
@@ -1917,13 +1924,13 @@ static partial class SuspendColdLowering
                 // is reached via Rewrite, not the statement-level EmitStmt, so its field-assignment must be redirected
                 // here too — else a bare `setLocal index` to an SM FIELD reaches ilemit as `store unknown var index`.
                 if (k == "setLocal" && Str(o["name"]) is string sln && _fields.Contains(sln))
-                    return SetField(sln, Rewrite(o["value"], outp));
+                    return SetField(sln, Rewrite(o["value"], outp, RequiredFieldType(sln)));
                 if (k == "var" && Str(o["name"]) is string vln)
                     return _fields.Contains(vln)
                         ? SetField(vln, o["init"] == null
-                            ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp))
+                            ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp, VarType(o)))
                         : LocalVar(o, o["init"] == null
-                            ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp));
+                            ? DefaultOf(VarType(o)) : Rewrite(o["init"], outp, VarType(o)));
                 if (_isMember && k == "this")
                     return FieldOf(ThisField, new TypeNode.Fqn(_ownerClass));
                 if (k == "this" && CapturedOuterField() is JsonNode of1)
@@ -1954,7 +1961,9 @@ static partial class SuspendColdLowering
                 {
                     if (o["stmts"] is JsonArray vbStmts) foreach (var s in vbStmts) EmitStmt(s, outp);
                     if (o["body"] is JsonArray vbBody) foreach (var s in vbBody) EmitStmt(s, outp);
-                    return o["result"] != null ? Rewrite(o["result"], outp) : NullConst(TypeJson.Read(o["type"]) ?? AnyTn);
+                    return o["result"] != null
+                        ? Rewrite(o["result"], outp, expectedType)
+                        : MissingValuePlaceholder(expectedType);
                 }
                 // #10 REVERSE bridge — a call to dll2klib's metadata-only
                 // @ClrAwaitBridge declaration. The exact declaration marker,
@@ -2022,7 +2031,7 @@ static partial class SuspendColdLowering
             var elseL = NextLabel();
             var endL = NextLabel();
 
-            var condExpr = Rewrite(c["cond"], outp);
+            var condExpr = Rewrite(c["cond"], outp, BoolTn);
             outp.Add(BrIf(condExpr, false, elseL));
             EmitCondBranch(c["then"], outp, resultSlot, ty);
             outp.Add(Goto(endL));
@@ -2048,12 +2057,12 @@ static partial class SuspendColdLowering
                 if (b["body"] is JsonArray body)
                     foreach (var stmt in body) EmitStmt(stmt, outp);
                 value = b["result"] != null
-                    ? Rewrite(b["result"], outp)
+                    ? Rewrite(b["result"], outp, resultType)
                     : NullConst(resultType);
             }
             else
             {
-                value = Rewrite(branch, outp);
+                value = Rewrite(branch, outp, resultType);
             }
             // A terminal expression has no fallthrough value to assign. Emitting it as a
             // standalone CIR statement also guarantees that no setField receiver has been
@@ -2288,7 +2297,7 @@ static partial class SuspendColdLowering
             }
 
             if (wrapper) outp.Add(SetField("label", IntConst(state)));
-            outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = "result", ["value"] = Rewrite(tail, outp) });
+            outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = "result", ["value"] = Rewrite(tail, outp, AnyTn) });
             outp.Add(BrIf(new JsonObject
             {
                 ["k"] = "objEq",
@@ -2498,7 +2507,7 @@ static partial class SuspendColdLowering
             // so the ordering rule that plan states is stated here for the two operands a marker has.
             var awaitable = Rewrite(
                 isMember ? awaitNode["recv"] : callArgs.FirstOrDefault(),
-                outp);
+                outp, awaitableType);
             JsonNode captureValue = null;
             if (configured)
             {
@@ -2542,7 +2551,7 @@ static partial class SuspendColdLowering
                         };
                     }
                 }
-                captureValue = Rewrite(ccArgNode, outp);
+                captureValue = Rewrite(ccArgNode, outp, BoolTn);
             }
 
             var state = ++_state;
@@ -2863,8 +2872,14 @@ static partial class SuspendColdLowering
         TypeNode FieldType(string name)
         {
             foreach (var (n, t) in _fieldDecls) if (n == name) return t;
-            return _localTypes.TryGetValue(name ?? "", out var lt) && lt != null ? lt : AnyTn;
+            return _localTypes.TryGetValue(name ?? "", out var lt) ? lt : null;
         }
+
+        TypeNode RequiredFieldType(string name) => FieldType(name) ?? throw new NotSupportedException(
+            $"bir2cir: suspend-lowering: state-machine slot `{name}` in `{DiagOwner}` carries no static type.");
+
+        TypeNode RequiredSlotType(string name) => FieldType(name) ?? throw new NotSupportedException(
+            $"bir2cir: suspend-lowering: local slot `{name}` in `{DiagOwner}` carries no static type.");
 
         // kotc names a suspend lambda's captured ENCLOSING extension receiver `__outer` (the `<this>` capture-field
         // convention, BirEmitter.kt:2929) yet, INSIDE the lambda body, references that receiver as `local __self`
@@ -2874,7 +2889,7 @@ static partial class SuspendColdLowering
         // which the generic local->field rule already redirects — this alias is only for the lambda-capture mismatch.
         JsonNode CapturedSelfField() =>
             (!_fields.Contains("__self") && _fields.Contains("__outer"))
-                ? FieldOf("__outer", FieldType("__outer")) : null;
+                ? FieldOf("__outer", RequiredFieldType("__outer")) : null;
 
         // #34a — a suspend LAMBDA that closes over its enclosing INSTANCE captures it as the `__outer`
         // field (SuspendLambdaLowering seeds the ctor arg from the enclosing `this`/`__self`). kotc emits references
@@ -2885,7 +2900,7 @@ static partial class SuspendColdLowering
         // use the `smSelf` marker, so they are unaffected. Absent an `__outer` capture there is nothing to redirect.
         JsonNode CapturedOuterField() =>
             (_isLambda && _fields.Contains("__outer"))
-                ? FieldOf("__outer", FieldType("__outer")) : null;
+                ? FieldOf("__outer", RequiredFieldType("__outer")) : null;
 
         // GAP 2 — copy a `newSuspendLambda` verbatim (its body is the lambda's own scope, left for
         // SuspendLambdaLowering) and attach `capValues`: each capture's construction value resolved into THIS cold
@@ -2928,11 +2943,11 @@ static partial class SuspendColdLowering
             if (name == "__outer")
             {
                 if (_isMember) return FieldOf(ThisField, _selfType);
-                if (_fields.Contains("__self")) return FieldOf("__self", FieldType("__self"));
-                if (_isLambda && _fields.Contains("__outer")) return FieldOf("__outer", FieldType("__outer"));
+                if (_fields.Contains("__self")) return FieldOf("__self", RequiredFieldType("__self"));
+                if (_isLambda && _fields.Contains("__outer")) return FieldOf("__outer", RequiredFieldType("__outer"));
                 return new JsonObject { ["k"] = "this" };
             }
-            if (_fields.Contains(name)) return FieldOf(name, FieldType(name));
+            if (_fields.Contains(name)) return FieldOf(name, RequiredFieldType(name));
             return new JsonObject { ["k"] = "local", ["name"] = name };
         }
 
@@ -3379,7 +3394,7 @@ static partial class SuspendColdLowering
                 for (var i = 0; i < _params.Count; i++)
                 {
                     var paramName = Str(_params[i]["name"]);
-                    var paramType = TypeJson.Read(_params[i]["type"]) ?? AnyTn;
+                    var paramType = RequiredParamType(_params[i]);
                     JsonNode elem = new JsonObject
                     {
                         ["k"] = "arrayGet",
@@ -3415,7 +3430,7 @@ static partial class SuspendColdLowering
                 // needs an explicit unbox/castclass (ilemit's setField does not auto-coerce object -> value) —
                 // the same `cast` wrap FunGen uses for await fields. A kotlin.Any field takes the value verbatim.
                 var paramName = Str(_params[0]["name"]);
-                var paramType = TypeJson.Read(_params[0]["type"]) ?? AnyTn;
+                var paramType = RequiredParamType(_params[0]);
                 JsonNode storedValue = IsAnyTn(paramType)
                     ? new JsonObject { ["k"] = "local", ["name"] = "value" }
                     : new JsonObject { ["k"] = "cast", ["type"] = Tw(paramType), ["e"] = new JsonObject { ["k"] = "local", ["name"] = "value" } };
@@ -4138,6 +4153,13 @@ static partial class SuspendColdLowering
         static JsonObject IntConst(int v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(IntTn), ["value"] = v };
         static JsonObject BoolConst(bool v) => new() { ["k"] = "const", ["type"] = TypeJson.Write(BoolTn), ["value"] = v };
         static JsonObject NullConst(TypeNode type) => new() { ["k"] = "const", ["type"] = TypeJson.Write(type), ["value"] = null };
+        JsonObject MissingValuePlaceholder(TypeNode expectedType)
+        {
+            var type = expectedType ?? throw new NotSupportedException(
+                $"bir2cir: suspend-lowering: a result-less suspension-bearing valueBlock in "
+                + $"`{DiagOwner}` has no enclosing expected type.");
+            return IsUnitTn(type) ? NullConst(type) : DefaultOf(type);
+        }
         // The zero value of a type (ldnull for a ref, initobj for a value type) — the correct init-less-`var` default,
         // unlike NullConst which emits a null literal that ilemit rejects for a value type.
         static JsonObject DefaultOf(TypeNode type) => new() { ["k"] = "default", ["type"] = TypeJson.Write(type) };

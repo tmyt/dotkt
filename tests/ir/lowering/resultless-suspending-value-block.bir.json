@@ -1,0 +1,78 @@
+{
+  "fileClass": "ResultlessSuspendingValueBlockKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "useBlock",
+      "static": true,
+      "mods": { "suspend": true },
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "valueBlock",
+            "stmts": [
+              {
+                "k": "exprStmt",
+                "expr": {
+                  "k": "callStatic",
+                  "owner": { "t": "fqn", "name": "ResultlessSuspendingValueBlockKt" },
+                  "method": "anchor",
+                  "sig": [],
+                  "args": [],
+                  "suspendCall": true,
+                  "sty": { "t": "fqn", "name": "kotlin.Unit" }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "anchor",
+      "static": true,
+      "mods": { "suspend": true },
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": []
+    },
+    {
+      "name": "useIntBlock",
+      "static": true,
+      "mods": { "suspend": true },
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "valueBlock",
+            "stmts": [
+              {
+                "k": "exprStmt",
+                "expr": {
+                  "k": "callStatic",
+                  "owner": { "t": "fqn", "name": "ResultlessSuspendingValueBlockKt" },
+                  "method": "anchor",
+                  "sig": [],
+                  "args": [],
+                  "suspendCall": true,
+                  "sty": { "t": "fqn", "name": "kotlin.Unit" }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
