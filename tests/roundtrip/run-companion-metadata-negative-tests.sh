@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-set -euo pipefail
+SCRIPT_NAME="$(basename -- "$0")"
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)/scripts/lib.sh"
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FIXTURE="$ROOT/tests/roundtrip/malformed-companion-fixtures/MalformedCompanionFixtures.csproj"
-DLL2KLIB="$ROOT/toolchain/dll2klib/bin/Debug/net10.0/dll2klib.dll"
-BIR2CIR="$ROOT/toolchain/bir2cir/bin/Debug/net10.0/bir2cir.dll"
+need_tool dll2klib
+need_tool bir2cir
+DLL2KLIB="$DLL2KLIB_DLL"
+BIR2CIR="$BIR2CIR_DLL"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
