@@ -25,10 +25,10 @@
 // Every scenario is self-contained inside its method (no shared top-level declarations), so there is nothing to
 // name-prefix in this single-battery assembly.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 class RegexTests {
     // il-regex: kotlin.text.Regex -> System.Text.RegularExpressions.Regex. toRegex / containsMatchIn / replace /

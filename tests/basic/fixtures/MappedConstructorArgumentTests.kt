@@ -16,7 +16,7 @@
 // `Nothing`-typed shapes are where this meets #197's termination: an argument that both must be evaluated and
 // never returns.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 val mcaLog = mutableListOf<String>()
 

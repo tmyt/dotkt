@@ -3,7 +3,7 @@
 // remain FAULTED. Reflection calls the physical Task-returning entry because Kotlin source correctly sees these
 // declarations as suspend functions and would otherwise route a call to their cold entries.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.OperationCanceledException
 import System.Type
 import System.Threading.Tasks.Task1

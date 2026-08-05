@@ -49,6 +49,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _singletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _semanticOwnerByCompanionCarrier = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionCarrierByPhysicalOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _companionSourceNameByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionPhysicalOwnerBySemanticType = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionSemanticTypeByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
@@ -210,6 +211,13 @@ sealed partial class ReferenceMetadataIndex
                 if (!_companionCarrierByPhysicalOwner.TryAdd(physicalOwner, kv.Value) ||
                     _companionCarrierByPhysicalOwner[physicalOwner] != kv.Value)
                     throw new InvalidOperationException($"conflicting Kotlin companion physical owner '{physicalOwner}'");
+            }
+            foreach (var kv in asm.DotKt.CompanionSourceNameByPhysicalOwner)
+            {
+                var physicalOwner = StripGenericArity(DottedFqn(kv.Key));
+                if (!_companionSourceNameByPhysicalOwner.TryAdd(physicalOwner, kv.Value) ||
+                    _companionSourceNameByPhysicalOwner[physicalOwner] != kv.Value)
+                    throw new InvalidOperationException($"conflicting Kotlin companion source name for '{physicalOwner}'");
             }
             foreach (var kv in asm.DotKt.CompanionPhysicalOwnerBySemanticType)
             {
@@ -749,6 +757,16 @@ sealed partial class ReferenceMetadataIndex
     public bool TryCompanionCarrierByPhysicalOwner(string physicalOwner, out string carrier) =>
         _companionCarrierByPhysicalOwner.TryGetValue(
             StripGenericArity(DottedFqn(physicalOwner)), out carrier);
+
+    public bool TryCompanionAccessor(string physicalOwner, string memberName, out string carrier)
+    {
+        carrier = null;
+        var key = StripGenericArity(DottedFqn(physicalOwner));
+        return memberName != null &&
+            _companionSourceNameByPhysicalOwner.TryGetValue(key, out var sourceName) &&
+            memberName == sourceName &&
+            _companionCarrierByPhysicalOwner.TryGetValue(key, out carrier);
+    }
 
     public bool TryCompanionPhysicalOwner(string semanticType, out string physicalOwner) =>
         _companionPhysicalOwnerBySemanticType.TryGetValue(
@@ -1788,6 +1806,7 @@ sealed partial class ReferenceMetadataIndex
             var companionRepresentations = dotKtAuthored
                 ? ValidateCompanionCarriers(types, asm, out singletonCompanionCarriers,
                     metadata.CompanionCarrierByPhysicalOwner,
+                    metadata.CompanionSourceNameByPhysicalOwner,
                     metadata.CompanionPhysicalOwnerBySemanticType,
                     metadata.CompanionSemanticOwnerByCarrier)
                 : new Dictionary<Type, bool>();
@@ -2087,6 +2106,7 @@ sealed partial class ReferenceMetadataIndex
         Assembly assembly,
         out Dictionary<string, string> singletonCompanionCarriers,
         Dictionary<string, string> companionCarriersByPhysicalOwner,
+        Dictionary<string, string> companionSourceNamesByPhysicalOwner,
         Dictionary<string, string> companionPhysicalOwnerBySemanticType,
         Dictionary<string, string> companionSemanticOwnerByCarrier)
     {
@@ -2231,6 +2251,8 @@ sealed partial class ReferenceMetadataIndex
                 companionCarriersByPhysicalOwner.Add(
                     StripGenericArity(DottedFqn(physicalOwner)),
                     carrierType.FullName ?? carrierType.Name);
+                companionSourceNamesByPhysicalOwner.Add(
+                    StripGenericArity(DottedFqn(physicalOwner)), name);
             }
         }
         return result;
@@ -2867,6 +2889,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, bool> CompanionStaticByPhysicalOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> SingletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionCarrierByPhysicalOwner = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> CompanionSourceNameByPhysicalOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionPhysicalOwnerBySemanticType = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionSemanticOwnerByCarrier = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity

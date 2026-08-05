@@ -13,7 +13,7 @@
 //   genim    <- il-genim     a generic method declared ON an interface; the impl class assignable to the interface
 //   inherit  <- il-inherit   subclass a C# base + override its PROTECTED VIRTUAL; subtype assignability
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // il-clrasm: colliding `Item`/`Bag` disambiguated per-namespace via aliased imports (the scan resolves the FQN).
 import ClrAsm.Bag as ClrAsmBag

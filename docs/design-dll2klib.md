@@ -223,7 +223,10 @@ A real Kotlin companion is a different shape: it is a nested
 receiver. `dll2klib` does not synthesize a companion to represent CLR statics.
 
 The embedded CLR compiler enables `CompanionBlocksAndExtensions` as a platform
-capability so the standard KLIB loader accepts static class members. When the
+capability so the standard KLIB loader accepts static class members. Every CLR
+analysis host, including an IDE/LSP integration, must install the same target
+language-version settings; enabling it only in a command-line wrapper would make
+editor analysis disagree with compilation. When the
 frontend produces a fake-override accessor for a static property, the BIR
 emitter resolves it to the underlying declaration and uses the IR declaration
 shape—not the number of call arguments—to preserve static ownership.

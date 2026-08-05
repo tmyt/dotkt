@@ -4,7 +4,7 @@
 // suspend funs and suspend member cold entries by simple name). The former `main` + golden -> one @TestAttribute
 // method (values 1:1).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
 
 interface CrossinlineObjectSuspendSink {

@@ -772,7 +772,7 @@ sealed class Pipeline
         // BIR, but CLR MemberRefs require a constructed parent. Canonicalize to `G<Any>` here (the member cannot depend
         // on T), so ilemit never guesses an instantiation. No source/library names are involved.
         if (!_options.RefBuild)
-            GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList());
+            GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
         // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 1 of 2: kotc names a type-parameter receiver's classifier with
         // a BARE token (`fun <N : Node<N>> N.close()` -> `Node`). Close it from N's own lexical bound, which source

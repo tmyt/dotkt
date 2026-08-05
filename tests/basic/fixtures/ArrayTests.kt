@@ -31,8 +31,8 @@
 // Top-level names are unique within this single battery assembly (one project = one namespace) and `Arr`-prefixed
 // to avoid clashing with sibling batteries and stdlib names.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 // ---- #86 D2 : the OPEN forms of `Array<T?>` / `Array<T>`, exercised at a VALUE instantiation ---------------------
 // `Array<T?>` is the erased slot itself; `Array<T>` at `T = Int?` is the same physical array reached through a BARE

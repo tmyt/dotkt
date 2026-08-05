@@ -4,7 +4,7 @@
 //   delegnull <- il-delegnull  a lambda returning null binds Func<string?> only when the return surfaces as
 //                              String?; an Action<string?> param is String?, so `s ?: "<n>"` is legal.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import DlgNrt.Api
 
 class NullableDelegateTests {

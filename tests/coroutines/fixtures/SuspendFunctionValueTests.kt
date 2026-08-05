@@ -15,7 +15,7 @@
 // descriptive `suspendFunctionValue`/`SuspendFunctionValue` stems. (The bare lambda case has no
 // top-level decls.)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 

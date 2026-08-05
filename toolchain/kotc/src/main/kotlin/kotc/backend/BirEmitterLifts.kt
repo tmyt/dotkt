@@ -467,6 +467,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			"its FIR-resolved use-site type was not a function type")
 	val dispatchIdx = fn.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
 	val hasExt = fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }
+	val ownerClass = fn.parent as? IrClass
 	// A suspend function reference (`::suspendFn`, typed KSuspendFunctionN) -> a `newSuspendLambda` ADAPTER: the
 	// suspend lambda `{ args -> target(args) }` whose body is a suspendCall to the target. A plain `newDelegate`
 	// cannot carry the cold-suspend protocol (bir2cir has no suspend-delegate lowering; it DOES build a SuspendLambda
@@ -513,6 +514,34 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ownVps)}],"ret":${str(retT)},"body":[$invokeBody]${typeParamsJson(tps)}}"""
 		val capExprs = caps.joinToString(",") { capValueExpr(it) }
 		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${funcTypeOf(fn).toJson()}$typeArgs,"synthClass":$synthClass}"""
+	}
+	// A direct static declaration loaded from a CLR reference KLIB has no dispatch receiver and is therefore not a
+	// top-level file-facade function. Materialize the same neutral local adapter used for the older object-qualified
+	// CLR static shape: the adapter body carries the external owner identity and static declaration fact, while
+	// bir2cir remains responsible for resolving the concrete CLR member shape. This also gives the delegate a real
+	// local calleeOwner instead of losing the declaring type on a bare newDelegate.
+	if (dispatchIdx < 0 && !hasExt && ownerClass != null && isExternalNetType(ownerClass)) {
+		val clrOwner = clrName(ownerClass)
+			?: return unsupported(node, "this CLR static function reference", "its external owner identity is missing")
+		val regs = fn.parameters.filter { it.kind == IrParameterKind.Regular }
+		if (regs.size != resolvedFuncType.params.size)
+			return unsupported(node, "this CLR static function reference",
+				"its use-site function arity does not match the resolved declaration")
+		val lname = "__mref${lambdaCounter++}"
+		val psJson = regs.zip(resolvedFuncType.params).joinToString(",") { (p, t) ->
+			"""{"name":${str(p.name.asString())},"type":${t.toJson()}}"""
+		}
+		val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+		val argTypes = regs.joinToString(",") { birType(it.type).toJson() }
+		val anySlotTag = if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""
+		val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"argTypes":[$argTypes],"ret":${resolvedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag}"""
+		val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
+			else """{"k":"return","value":$callE}"""
+		val freeTps = freeTypeParams(listOf(node.type))
+		val adapterTypeArgs = if (freeTps.isEmpty()) "" else
+			""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
+		liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${resolvedFuncType.ret.toJson()},"body":[$body]}""")
+		return """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
 	}
 	if (dispatchIdx < 0 && !hasExt) {
 		// A generic top-level callable reference has already been instantiated by FIR at this use site. Preserve those
@@ -607,7 +636,6 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// already the exact declaring-class identity (the member analogue of calleeOwner); `sig` disambiguates overloads
 	// within it and survives bir2cir's name-only declaration/slot rewrites unchanged.
 	val boundRecv = if (dispatchIdx >= 0 && !hasExt) node.arguments.getOrNull(dispatchIdx) else null
-	val ownerClass = fn.parent as? IrClass
 	if (boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass)) {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		return """{"k":"newBoundDelegate","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""},"calleeOwner":${fqnJson(typeName(ownerClass))}}"""
@@ -646,7 +674,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		// (a callStatic, no `__self`) and make a plain newDelegate over it; bir2cir's NetInteropBinding reshapes the
 		// inner callStatic to clrStatic. A genuine bound INSTANCE ref (a real object receiver) keeps the
 		// newBoundDelegate below. Mirrors the unbound-instance forwarder just below, minus the receiver.
-		if (boundRecv is IrGetObjectValue && ownerClass?.isCompanion != true) {
+		if (boundRecv is IrGetObjectValue && !ownerClass.isCompanion) {
 			val lname = "__mref${lambdaCounter++}"
 			val psJson = regs.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
 			val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
@@ -660,7 +688,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			return """{"k":"newDelegate","method":${str(lname)},"funcType":${TypeNode.Fn(false, retT, regs.map { birTypeDeleg(it.type) }).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 		}
 		if (boundRecv != null) {
-			val companionCallTag = if (ownerClass?.isCompanion == true) ""","companionCall":true""" else ""
+			val companionCallTag = if (ownerClass.isCompanion) ""","companionCall":true""" else ""
 			return """{"k":"newBoundDelegate","ownerType":${fqnJson(clrOwner)},"method":${str(member)}$referenceTypeArgs,"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}$anySlotTag,"calleeOwner":${fqnJson(clrOwner)}$companionCallTag}"""
 		}
 		if (dispatchIdx >= 0) {
@@ -1050,6 +1078,15 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val arity0 = ifaceSpec.name == "kotlin.reflect.KProperty0" || ifaceSpec.name == "kotlin.reflect.KMutableProperty0"
 	val vType = ifaceArgs.lastOrNull() ?: OBJ
 	val recvTypeNode = ifaceArgs.getOrNull(0).takeIf { !arity0 }   // KProperty1/KMutableProperty1's T (unbound only)
+	// A direct static declaration from a CLR reference KLIB is a KProperty0/KMutableProperty0 despite its Kotlin 2.4
+	// fake accessor declaring a synthetic dispatch parameter. Classify from the resolved callable-reference type and
+	// absence of a captured receiver, not that wrapper parameter. A real companion member reference captures its
+	// singleton and therefore stays on the ordinary bound path below.
+	val externalStatic = arity0 && capturedRecv == null && declClass != null &&
+		isExternalNetType(declClass) && !hasExtRecv
+	val externalStaticOwner = if (externalStatic) clrName(declClass) else null
+	if (externalStatic && externalStaticOwner == null)
+		return unsupported(node, "this CLR static property reference", "its external owner identity is missing")
 
 	// BOUND (KProperty0, receiver captured in `__recv`) vs UNBOUND (KProperty1, receiver = the get/set's leading
 	// param), for BOTH a member property (`declClass != null`) and a top-level extension property (`hasExtRecv`).
@@ -1064,6 +1101,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		else -> """{"k":"this"}"""
 	}
 	val memberOwner: TypeNode = when {
+		externalStatic -> TypeNode.Fqn(externalStaticOwner!!)
 		bound && semanticCompanionType != null -> semanticCompanionType
 		bound && companionCaptureClass != null -> ownerSpec(companionCaptureClass, boundRecv!!.type)
 		bound && declClass != null -> ownerSpec(declClass, boundRecv!!.type)
@@ -1123,9 +1161,21 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		// ordinary member field-read path (BirEmitterCalls).
 		else -> """{"k":"field","ownerType":${memberOwner.toJson()},"recv":${recvExprIn()},"name":${str(name)}${retHint((memberOwner as? TypeNode.Fqn)?.args != null, getterFn.returnType)}}"""
 	}
+	fun externalStaticAccess(isSetter: Boolean, valueArg: String?): String {
+		val owner = memberOwner.toJson()
+		if (fieldBacked) return if (isSetter)
+			"""{"k":"staticFieldSet","ownerType":$owner,"name":${str(name)},"value":$valueArg}"""
+		else """{"k":"staticField","ownerType":$owner,"name":${str(name)},"ret":${vType.toJson()}}"""
+		val kind = if (isSetter) "set" else "get"
+		val args = valueArg ?: ""
+		val argTypes = if (isSetter) vType.toJson() else ""
+		val ret = if (isSetter) TypeNode.Fqn("kotlin.Unit") else vType
+		return """{"k":"callStatic","ownerType":$owner,"method":${str(name)},"prop":${str(kind)},"argTypes":[$argTypes],"ret":${ret.toJson()},"args":[$args]}"""
+	}
 
 	val readBody: String = when {
 		hasExtRecv -> """{"k":"return","value":${extAccessorCall(false, null)}}"""
+		externalStatic -> """{"k":"return","value":${externalStaticAccess(false, null)}}"""
 		declClass != null && fieldBacked -> """{"k":"return","value":${fieldAccess(false, null)}}"""
 		declClass == null -> {
 			// Top-level property: mirrors the ordinary top-level property-read path (a plain val/var is a static
@@ -1149,6 +1199,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val setMethod: String? = setterFn?.let {
 		val setBody = when {
 			hasExtRecv -> """{"k":"exprStmt","expr":${extAccessorCall(true, """{"k":"local","name":"value"}""")}}"""
+			externalStatic -> """{"k":"exprStmt","expr":${externalStaticAccess(true, """{"k":"local","name":"value"}""")}}"""
 			declClass != null && fieldBacked -> """{"k":"exprStmt","expr":${fieldAccess(true, """{"k":"local","name":"value"}""")}}"""
 			declClass == null -> {
 				val owner = fileClassOf(prop)

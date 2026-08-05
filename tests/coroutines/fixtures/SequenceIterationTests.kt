@@ -13,7 +13,7 @@
 //
 // No top-level declarations, so there is nothing to prefix.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 class SequenceIterationTests {
     @TestAttribute

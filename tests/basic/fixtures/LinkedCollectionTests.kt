@@ -8,9 +8,9 @@
 //
 // Neither case carried a top-level declaration; each method body is self-contained (nothing to prefix).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 
 class LinkedCollectionTests {
     @TestAttribute

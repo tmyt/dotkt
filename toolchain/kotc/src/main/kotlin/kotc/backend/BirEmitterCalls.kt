@@ -175,8 +175,8 @@ internal fun BirEmitter.filledArgs(
 	//   Under a plan both are bound EAGERLY and dispatch-first, because Kotlin evaluates a receiver before every
 	// argument and the binding order IS the evaluation order. Without a plan they stay lazy: rendering a receiver has
 	// synthesis side effects (a lifted method appended to the file class for a non-capturing lambda, a consumed synth
-	// index), so an unread one must not be forced for a rendering that is then discarded. A projected static holder has
-	// no receiver to bind; a real `object` or companion is bound like anything else — see [needsPlanBinding].
+	// index), so an unread one must not be forced for a rendering that is then discarded. A flattened plain companion
+	// has no receiver to bind; a real `object` or companion is bound like anything else — see [needsPlanBinding].
 	val dispatchRecv: Lazy<String?> = lazy {
 		dispatchReceiver(call)?.let { r ->
 			(if (needsPlanBinding(r)) plan else null)?.bindValue(r, "recv", "receiver of '$label'") ?: expr(r)
@@ -907,8 +907,17 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// property-vs-field decision off the reference assembly.
 	val propertyAccessorDeclaration =
 		if (callee.isFakeOverride) callee.resolveFakeOverride() ?: callee else callee
+	// Kotlin 2.4 currently drops the static predicate while manufacturing this fake override, but preserves an exact
+	// structural invariant: the wrapper declares a synthetic leading dispatch slot which the call omits. A getter is
+	// therefore 0/1 and a setter 1/2; an instance property supplies its receiver and is 1/1 or 2/2. This is an IR/KLIB
+	// projection fact, not a CLR-shape inference, and is restricted to fake property accessors.
+	val wrapperReturnsCompanion =
+		(propertyAccessorDeclaration.returnType.classifierOrNull?.owner as? IrClass)?.isCompanion == true
+	val klibStaticPropertyWrapper = callee.isFakeOverride && !wrapperReturnsCompanion &&
+		callee.parameters.firstOrNull()?.kind == IrParameterKind.DispatchReceiver &&
+		call.arguments.size + 1 == callee.parameters.size
 	val staticPropertyAccessor = propertyAccessorDeclaration.takeIf {
-		it.isStaticMethodOfClass && it.correspondingPropertySymbol != null
+		(it.isStaticMethodOfClass || klibStaticPropertyWrapper) && it.correspondingPropertySymbol != null
 	}
 	if (staticPropertyAccessor != null) {
 		val staticProperty = staticPropertyAccessor.correspondingPropertySymbol!!.owner
@@ -1207,14 +1216,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// the plain Kotlin member-call path below (bir2cir substitutes it from the ref.dll).
 	val clrTypeName = declaringClass?.let { clrName(it) }
 		?: (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass)?.let { clrName(it) }
-		// A synthesized companion of a projected .NET type holds its STATIC members (`App.Start`) -> a static call
-		// on the .NET type itself.
+		// A restored external Kotlin companion may carry a CLR owner annotation; keep that exact owner identity.
 		?: declaringClass?.takeIf { it.isCompanion }?.let { it.parent as? IrClass }?.let { clrName(it) }
 	val clrType = clrTypeName?.let { TypeNode.Fqn(it) }
 	if (clrType != null) {
 		val recv = dispatchReceiver(call)
-		// A synthesized companion of a normal projected .NET class represents that class's CLR statics. A genuine Kotlin
-		// `object`, however, is an instance singleton: keep its IrGetObjectValue receiver in BIR (`Owner.INSTANCE`) and
+		// A restored external Kotlin companion is an instance singleton: keep its IrGetObjectValue receiver in BIR
+		// (`Owner.INSTANCE`) and
 		// let bir2cir decide whether the referenced owner is actually a CLR static class or an emitted Kotlin object.
 		// Treating every object receiver as CLR static here erased the receiver of cross-module `Dispatchers.Default`.
 		val isExternalCompanion = declaringClass?.isCompanion == true && clrName(declaringClass) != null

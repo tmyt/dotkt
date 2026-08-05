@@ -14,12 +14,15 @@ import org.jetbrains.kotlin.util.PerformanceManagerImpl
  * source roots, ...) and run the common metadata frontend against KLIB dependencies.
  */
 fun main(args: Array<String>) {
+	// CLR reference KLIBs represent CLR statics with Kotlin metadata's standard static-member flags. Upstream still
+	// gates those declarations behind this language feature, but on Kotlin/CLR it is a platform capability rather than
+	// a user-selected preview: ignore either user spelling and force the frontend's real parsed setting to enabled.
 	val normalizedArgs = args
 		.filterNot {
 			it == "-no-stdlib" ||
 				it.startsWith("-XXLanguage:+CompanionBlocksAndExtensions") ||
 				it.startsWith("-XXLanguage:-CompanionBlocksAndExtensions")
-		}
+		} + "-XXLanguage:+CompanionBlocksAndExtensions"
 	val arguments = parseCommandLineArguments<K2MetadataCompilerArguments>(normalizedArgs)
 	arguments.multiPlatform = true
 	val collector = PrintingMessageCollector(System.err, MessageRenderer.PLAIN_RELATIVE_PATHS, arguments.verbose)

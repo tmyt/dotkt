@@ -1,5 +1,5 @@
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 class CrossModuleTopLevelPropertyTests {

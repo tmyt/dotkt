@@ -7,7 +7,7 @@
 //
 // Driven by the shared `dotkt.support.blockOn` harness; top-level names use the `suspendContextParameter` stem.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 

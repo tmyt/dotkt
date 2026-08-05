@@ -9,7 +9,7 @@
 // or a silent null for a generic context type), the overload/`paramSig` key was one arity short of the
 // declaration it selected, and an omitted default reading a context parameter emitted a dangling local.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 class CtxScale(val factor: Int)
 class CtxTag(val label: String)

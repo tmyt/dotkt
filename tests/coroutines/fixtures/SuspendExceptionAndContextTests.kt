@@ -12,7 +12,7 @@
 // Top-level names distinguish suspending catch, cross-thread resume, and coroutine-context reads under descriptive
 // `suspendContext`/`SuspendContext` stems.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import System.Threading.Thread
 import kotlin.coroutines.coroutineContext

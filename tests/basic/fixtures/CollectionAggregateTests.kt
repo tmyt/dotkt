@@ -19,9 +19,9 @@
 //   m-b12 -> bitwiseAndShift         and / or / xor / shl / shr / inv
 //   m-b13 -> stringUtilsAndIndex     isEmpty / isNotEmpty / isBlank / isNotBlank / char indexing
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 fun <T : Comparable<T>> collectionGenericMax(values: Collection<T>): T? = values.maxOrNull()
 

@@ -9,7 +9,7 @@
 //   il-cwindowedv   -> genericInstantiation_cwindowedv    CharSequence.windowed with a VALUE-TYPE transform result (R = Int/Char): the
 //                                        synthetic `<>dotkt_CharSequence` `it` must not collapse to String (W4-B guard)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- il-geninlinearg : #122 nested generic passed inline as a ctor/newobj argument ------------------------------
 class GenericInstantiationHolder<T>(val list: MutableList<T>)

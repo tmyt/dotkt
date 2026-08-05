@@ -10,8 +10,8 @@
 // Top-level names are family-prefixed with `BclMethodReference` (one assembly = one namespace) to avoid clashing with
 // sibling batteries and the stdlib.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.Text.StringBuilder
 import System.Random
 

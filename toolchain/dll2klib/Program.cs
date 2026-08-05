@@ -3022,49 +3022,6 @@ internal sealed class AssemblyScanner
             ReadNestedClasses(companionHandle, companion, fragment, names, signatures);
             return;
         }
-        if (_validatedCompanionOwners.Contains(ownerHandle)) return;
-        AddStaticCompanion(ownerHandle, owner, fragment, names);
-    }
-
-    // Ordinary CLR static projection has no [KotlinCompanion] association. Preserve its historical synthetic
-    // `Companion` view without treating it as a restored Kotlin source declaration.
-    private void AddStaticCompanion(
-        TypeDefinitionHandle ownerHandle,
-        Class owner,
-        PackageFragment fragment,
-        NameTable names)
-    {
-        if (_attrs.Has(ownerHandle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute") ||
-            _md.GetTypeDefinition(ownerHandle).GetNestedTypes().Any(h =>
-                StripArity(_md.GetString(_md.GetTypeDefinition(h).Name)) == "Companion"))
-            return;
-        var functions = owner.Function.Where(f => (f.Flags & (1 << 18)) != 0).ToList();
-        var properties = owner.Property.Where(p => (p.Flags & (1 << 19)) != 0).ToList();
-        if (functions.Count == 0 && properties.Count == 0) return;
-
-        const string sourceName = "Companion";
-        var companionName = names.String(sourceName);
-        owner.CompanionObjectName = companionName;
-        owner.NestedClassName.Add(companionName);
-        var companion = new Class {
-            FqName = CompanionClassName(ownerHandle, names, sourceName),
-            Flags = Flags.Declaration(modality: 0, kind: 6) | 1,
-        };
-        companion.ClassAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(ownerHandle)));
-        foreach (var function in functions)
-        {
-            var clone = function.Clone();
-            clone.Flags &= ~(1 << 18);
-            companion.Function.Add(clone);
-        }
-        foreach (var property in properties)
-        {
-            var clone = property.Clone();
-            clone.Flags &= ~(1 << 19);
-            companion.Property.Add(clone);
-        }
-        fragment.Class.Add(companion);
-        fragment.ClassName.Add(companion.FqName);
     }
 
     private List<(MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)> KotlinAccessorPairs(

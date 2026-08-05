@@ -1,9 +1,9 @@
 // C#-producer roundtrip consumer battery (batch A — static .NET events). N6: STATIC .NET events use closeable
-// subscriptions. dll2klib surfaces them as `kotlin.clr.ClrEvent<T>` properties (a companion property for a
-// normal class; an object member for a `static class`) that bir2cir's ClrEventSubscriptionBinding binds to the event's
+// subscriptions. dll2klib surfaces them as direct static `kotlin.clr.ClrEvent<T>` properties that bir2cir's
+// ClrEventSubscriptionBinding binds to the event's
 // STATIC add/remove accessor. Side-effect prints are captured into an ordered value and asserted 1:1.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import Eventext.Station
 import Eventext.Beacon
 
@@ -15,7 +15,7 @@ class StaticEventTests {
         val ping = Beacon.Pinged.subscribe { n -> log += "ping: $n\n" }
         Beacon.Ping(3)            // ping: 3
         Beacon.Ping(7)            // ping: 7
-        // (2) static event on a NORMAL class, reached through the companion.
+        // (2) static event on a normal class, reached directly on its declaring type.
         val announce = Station.Announced.subscribe { s -> log += "announce: $s\n" }
         Station.Announce("hi")    // announce: hi
         // (3) close removes the exact stored handler from a static event.

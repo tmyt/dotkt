@@ -12,7 +12,7 @@
 // All top-level declarations use the `byRefStorage`/`ByRefStorage` feature stem so their simple names are
 // unique across this assembly (the cold-core lowering keys top-level suspend funs by simple name).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Span
 import System.Threading.Tasks.Task
 import kotlin.coroutines.resume

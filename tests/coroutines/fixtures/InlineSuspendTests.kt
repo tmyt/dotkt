@@ -6,7 +6,7 @@
 // collides ("reached codegen un-lowered"); the pilots prefix for the same reason. Driven by the shared
 // `dotkt.support.blockOn` harness; the former `main` + golden -> one @TestAttribute method (value 1:1).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 

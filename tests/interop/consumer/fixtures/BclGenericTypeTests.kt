@@ -9,9 +9,9 @@
 // Top-level names are family-prefixed with `BclGenericType` (one assembly = one namespace) to avoid clashing with
 // sibling batteries and the stdlib.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import System.Collections.ObjectModel.Collection
 import System.Runtime.CompilerServices.Unsafe
 import System.Runtime.CompilerServices.RuntimeHelpers

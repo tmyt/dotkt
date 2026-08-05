@@ -5,7 +5,7 @@
 // this case's `nestedCaptureSuspend` must not clash with il-inlmatsetcap's `materializedCaptureSuspend`). Driven by the shared
 // `dotkt.support.blockOn` harness; the former `main` + golden -> one @TestAttribute method (values 1:1).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn

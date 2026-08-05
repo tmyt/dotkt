@@ -17,7 +17,7 @@
 //
 // Top-level names are family-prefixed with `bclValueArg` (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.String as ClrString
 import System.StringComparison
 import System.Collections.Generic.Dictionary

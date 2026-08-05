@@ -14,7 +14,7 @@
 // Top-level names use the descriptive `taskAwaitValueTask`/`TaskAwaitValueTask` stem; taskfam has no top-level
 // decls (its body is inline in the method).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import System.Threading.Tasks.Task1
 import System.Threading.Tasks.TaskCompletionSource1
@@ -30,7 +30,7 @@ suspend fun taskAwaitValueTaskAwait(): Int {
 class TaskAndValueTaskAwaitTests {
     @TestAttribute
     fun sameNameArityFamily() {
-        // non-generic Task: implicit companion statics + instance members
+        // non-generic Task: direct statics + instance members
         val t: Task = Task.Delay(10)
         t.Wait()
         assertEquals(true, t.IsCompleted)   // former golden: plain=True

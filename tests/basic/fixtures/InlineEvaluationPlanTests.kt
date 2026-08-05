@@ -16,7 +16,7 @@
 // Every side effect is captured into `iepLog` and asserted positionally, which is strictly stronger than a value
 // assertion alone: a re-evaluated argument produces the right number twice and only the log shows it.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 val iepLog = mutableListOf<String>()
 

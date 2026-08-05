@@ -2,7 +2,7 @@
 // These shapes used to be v1 refusals. Keep both declaration forms and their normal/exceptional routes as execution
 // regressions now that handlers and nested protected regions are hoisted into resumable straight-line routes.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 

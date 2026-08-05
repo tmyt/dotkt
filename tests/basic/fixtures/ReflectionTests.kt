@@ -9,7 +9,7 @@
 // self-contained. The genuinely-dynamic `x::class` (open/interface static type) is NOT covered here — its run-time
 // CLR->Kotlin reversal is a sequenced stdlib follow-up (docs/dotkt-semantics.md §5g).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 class ReflWidget {
     class Inner

@@ -12,7 +12,7 @@
 //
 // Top-level names are family-prefixed (`suspendDispatchAbstract`/`suspendDispatchBase`/`suspendDispatchSubtype`/`suspendDispatchDefaultInterface`/`suspendDispatchStaticMember`).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
 
 // ---- il-coldabstract: an abstract-class suspend member round-trips its full vtable shape ---------------------

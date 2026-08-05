@@ -43,7 +43,7 @@ holistically, do not patch the symptom. Do NOT trust the gate to find this indir
 kotc pokes several **internal/unstable FIR surfaces**; a bump can silently break any of them:
 - **CLR intrinsic declarations** (`libraries/stdlib/clr/kotlin/clr/CompilerIntrinsics.kt`) — verify that the frontend
   KLIB continues to expose the fixed `byref` / `stackBuffer` / `clrEvent` vocabulary without a compiler plugin.
-  CLR reference declarations and their static companions are loaded from reference KLIBs.
+  CLR reference declarations and their direct static members are loaded from reference KLIBs.
 - **fake-override linking** (`resolveFakeOverride`, default-accessor discrimination) — the classic wrong-dispatch
   miscompile source when Fir2Ir internals get rewritten.
 - **default-import synthesis** — 2.4.0 made `FirDefaultImportsProviderHolder` composable, so `register` *composed*

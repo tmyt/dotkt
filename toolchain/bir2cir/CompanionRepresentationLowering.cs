@@ -183,6 +183,24 @@ static class CompanionRepresentationLowering
         {
             if (node is JsonObject obj)
             {
+                // With CompanionBlocksAndExtensions enabled, the frontend represents `Owner.Companion` as the
+                // ordinary static source-name accessor emitted on Owner. For a generic owner that accessor's CLR
+                // field type is tied to the selected outer instantiation, while Kotlin's companion classifier has no
+                // such type arguments. Consume the trusted association and load the canonical carrier singleton
+                // directly, just as the older companionValue form below does.
+                if (Str(obj["k"]) == "staticField" &&
+                    Str((obj["ownerType"] as JsonObject)?["name"]) is string accessorOwner &&
+                    Str(obj["name"]) is string accessorName &&
+                    refs.TryCompanionAccessor(accessorOwner, accessorName, out var accessorCarrier))
+                {
+                    var accessorRepresentation = new UseRepresentation(
+                        null, accessorCarrier, refs.OwnerArity(accessorCarrier));
+                    obj.Clear();
+                    obj["k"] = "staticField";
+                    obj["ownerType"] = PhysicalType(accessorRepresentation);
+                    obj["name"] = "$INSTANCE";
+                    return;
+                }
                 // Physical carrier tokens restored by dll2klib use CIR's source-style arity-free spelling. Once the
                 // trusted association has been validated, replace every such TypeNode with the exact reflected TypeDef
                 // token. This includes declaration/capture slots, not just member owners, and retains any synthetic

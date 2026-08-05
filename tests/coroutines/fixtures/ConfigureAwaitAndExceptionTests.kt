@@ -9,7 +9,7 @@
 //
 // Top-level names are family-prefixed (`configureAwaitNonGeneric`/`configureAwaitGeneric`/`configureAwaitTaskDelay`/`configureAwaitException`).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import System.InvalidOperationException
 import dotkt.support.blockOn

@@ -6,12 +6,12 @@
 // @TestAttribute method preserving every asserted value 1:1 (see the `// <expected>` comments).
 //
 // Coverage preserved (old case -> method):
-//   il-taskgen  -> taskgen_genericStaticFactory   Task.FromResult<TResult>: the companion generic-static builder resolves FromResult(42) -> Task<Int>
+//   il-taskgen  -> taskgen_genericStaticFactory   Task.FromResult<TResult>: the direct generic static resolves FromResult(42) -> Task<Int>
 //   il-taskwhen -> taskwhen_nestedGenericCombinators  Task.WhenAny -> Task<Task<T>> (double-nested return) + Task.WhenAll(vararg Task<T>) -> Task<T[]>
 //
 // The fixture introduces no shared top-level declarations.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import System.Threading.Tasks.Task1
 

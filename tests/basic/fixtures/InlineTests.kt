@@ -30,8 +30,8 @@
 // GenericsTests (`Box`) and within the family (`twice`, `runIt`, `pick`, `Box`) are renamed with a case suffix.
 import kotlin.time.Duration.Companion.seconds
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 // ---- il-inline : non-reified value inline (no reified T / non-local return / mutable capture) ----------------
 inline fun twice(x: Int, f: (Int) -> Int): Int = f(f(x))

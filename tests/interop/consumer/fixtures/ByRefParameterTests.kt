@@ -5,7 +5,7 @@
 //                        it is a LIVE ref (getValue/setValue inline to ldobj/stobj) so writes flow back.
 // `@ClrField` is recognized by SHORT NAME (bir2cir), so declaring the annotation here keeps the sample standalone.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import OutRef.Calc
 import kotlin.clr.byref
 import kotlin.clr.ClrRef

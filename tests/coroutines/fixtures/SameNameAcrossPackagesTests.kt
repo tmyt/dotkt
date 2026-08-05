@@ -10,7 +10,7 @@
 // (3) ilemit dispatching an `owner:null` `callStatic` via that `calleeOwner` hint rather than a global
 // first-match `FindStatic`. On the bir2cir dedup alone it still mis-dispatches (both return the first pkg's value).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
 import col199a.pkgFoo as aFoo
 import col199b.pkgFoo as bFoo

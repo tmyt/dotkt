@@ -24,9 +24,9 @@
 // Top-level names are unique within this single battery assembly (one project = one namespace); every method body is
 // self-contained (no shared top-level declarations), so there is nothing to prefix.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min

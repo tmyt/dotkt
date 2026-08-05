@@ -10,7 +10,7 @@
 //
 // Top-level names are family-prefixed (`CoroutineClassDelegation`/`CoroutineAdapterReference`/`coroutineAdapterReference`/`coroutineAdapterCapture`).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- il-classdeleg: Kotlin CLASS delegation (`class Foo : Bar by baz`) ----------------------------------------
 interface CoroutineClassDelegationProducer { fun produce(): String; val tag: Int }

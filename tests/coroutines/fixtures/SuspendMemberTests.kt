@@ -12,7 +12,7 @@
 //
 // Top-level names are family-prefixed (`suspendMemberInstance`/`suspendMemberInherited`/`suspendMemberGeneric`/`suspendMemberRestricted`/`suspendMemberDrain`).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext

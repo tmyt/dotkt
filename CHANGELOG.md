@@ -104,8 +104,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   Consequently C# views different closed generic owners as different CLR static regions in this first nested-carrier
   implementation; cross-instantiation singleton unification is deliberately deferred. Protected
   companions retain protected Kotlin visibility while their generated carrier remains reachable from lifted callable-
-  reference and suspend helpers. Custom names remain distinct from ordinary nested classes and synthesized CLR-static
-  companions. A basic CLR enum keeps its enum representation and nested carrier; because CLR enums cannot own the
+  reference and suspend helpers. Custom names remain distinct from ordinary nested classes. CLR static members use
+  the standard KLIB static flags directly and no longer manufacture a companion type/value. A basic CLR enum keeps
+  its enum representation and nested carrier; because CLR enums cannot own the
   type initializer needed for a reference-valued outer field, only its C# source-name accessor remains deferred. The
   round-trip gate independently inspects the semantic BIR, physical CIR/DLL carrier, generated KLIB
   linkage, generic constraints, and runtime behavior.

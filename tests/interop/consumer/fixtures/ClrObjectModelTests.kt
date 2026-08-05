@@ -18,9 +18,9 @@
 // renamed `ClrObjectModelRec` for collision-freedom, so its auto-toString reads `ClrObjectModelRec(...)` — the class name is part of
 // the data-class toString value (the old golden's `Rec(name=k, n=9)` differs only by that prefix; the format is 1:1).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 
 // il-superobj: super whose immediate super is kotlin.Any must reach the System.Object slot NON-virtually.
 class ClrObjectModelNode(val id: Int) {

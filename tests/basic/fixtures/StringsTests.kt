@@ -35,10 +35,10 @@
 // Top-level names are unique within this single battery assembly (one project = one namespace) and `str`-prefixed
 // to avoid clashing with sibling batteries and with stdlib names (e.g. a plain `lines`/`word`/`pick`).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 import kotlin.reflect.KProperty0
 import kotlin.reflect.KProperty1
 

@@ -16,7 +16,7 @@
 // Top-level names distinguish the generic sequence and external-generic-base features under descriptive
 // `sequenceBuilderGeneric` / `SequenceBuilderExternalGenericBase` stems.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.AbstractCoroutineContextKey
 

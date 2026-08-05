@@ -17,7 +17,7 @@
 import ByRefLikeInterop.ByRefLikeApi
 import ByRefLikeInterop.Tally
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.ReadOnlySpan
 import dotkt.support.blockOn
 import kotlin.clr.Span

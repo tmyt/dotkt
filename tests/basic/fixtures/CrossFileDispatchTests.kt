@@ -7,7 +7,7 @@
 // Coverage preserved (old case -> method):
 //   m-c1  -> crossFileClassesAndOverride   cross-file class + method call; open-class area() override reached via label()
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import crossFileDeclarations.CrossFilePoint
 import crossFileDeclarations.CrossFileRect
 

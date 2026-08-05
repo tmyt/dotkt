@@ -21,7 +21,7 @@ import CaptureAwaitable.Duo
 import CaptureAwaitable.Pair
 import CaptureAwaitable.RefTickApi
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
 
 // ---- 1. permuted configured type ------------------------------------------------------------------------------

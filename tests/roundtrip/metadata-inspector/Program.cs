@@ -140,7 +140,7 @@ static void VerifyDll(string path)
             var gp = md.GetGenericParameter(gpHandle);
             Require(gp.GetConstraints().Count == 0 &&
                     (gp.Attributes & GenericParameterAttributes.SpecialConstraintMask) == 0,
-                $"synthetic companion capture inherited an owner constraint: {DefinitionName(md, carrier.Handle)}");
+                $"generated companion carrier capture inherited an owner constraint: {DefinitionName(md, carrier.Handle)}");
         }
         Require(def.GetFields().Count(h => IsExactSelfTypedInstance(md, carrier.Handle, h)) == 1,
             $"carrier has no unique public static self-typed $INSTANCE: {DefinitionName(md, carrier.Handle)}");
@@ -187,7 +187,7 @@ static void VerifyKlib(string path)
     Require(!privateOwner.HasCompanionObjectName, "private companion synthesized a public KLIB companion link");
     var constrainedGenericCompanion = Class(fragment, Ns + "ConstrainedGenericOwnerCompanionHost.Companion");
     Require(constrainedGenericCompanion.TypeParameter.Count == 0,
-        "constrained owner's synthetic capture parameters leaked onto the semantic companion");
+        "constrained owner's physical carrier capture parameters leaked onto the semantic companion");
 }
 
 static void VerifyCompanion(

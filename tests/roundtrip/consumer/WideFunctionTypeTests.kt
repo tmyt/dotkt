@@ -1,5 +1,5 @@
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import roundtrip.wide.acceptWidened
 import roundtrip.wide.narrowSource
 import roundtrip.wide.param17

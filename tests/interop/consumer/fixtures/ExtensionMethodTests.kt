@@ -9,7 +9,7 @@
 //   csextrecv<- il-csextrecv#144: same-name/same-arity `[Extension]`s on DIFFERENT receivers (class + primitive)
 //   genextval<- il-genextval#157: an inferred `Cell(40)` over a projected generic must construct `Cell<int32>`
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 // il-c1net (`import Owner.member` form — the `using static` analog)
 import C1Net.Vec2
 import C1Net.Util

@@ -663,34 +663,6 @@ static partial class ClrMemberResolution
         node.Remove("argTypes");
     }
 
-    // Resolve the static/instance shape of a synthetic companion receiver from the exact foreign declaration.
-    // The frontend descriptor is still in Kotlin vocabulary when NetInteropBinding runs, so lower a detached copy
-    // with the same alias/value-type tables as the eventual whole-tree lowering, then use this pass's ordinary
-    // overload matcher across BOTH member shapes.  A missing or ambiguous descriptor is therefore a hard ABI error;
-    // a same-name static overload can never turn an unrelated instance overload into a static call.
-    internal static bool ResolveCompanionMethodStatic(ReferenceMetadataIndex refs, Type open,
-        JsonNode ownerType, string name, JsonArray argTypes, int methodArity, string context)
-    {
-        _refs = refs;
-        var descriptor = new JsonObject
-        {
-            ["ownerType"] = ownerType?.DeepClone(),
-            ["argTypes"] = argTypes?.DeepClone() ?? new JsonArray(),
-        };
-        descriptor = (JsonObject)BirTypeLowering.Lower(descriptor, refBuild: false,
-            refs.Aliases, refs.IsValueTypeFqn, context);
-        if (ReadOwnerNode(descriptor["ownerType"]) is not TypeNode.Fqn ownerFqn)
-            throw new InvalidOperationException($"bir2cir: {context} has no resolvable owner descriptor");
-        var args = ReadArgTypes(descriptor);
-        var candidates = Candidates(open, name, args, ownerFqn.Args,
-                BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance)
-            .Where(m => m.GetGenericArguments().Length == methodArity)
-            .ToList();
-        var winner = PickUnique(candidates, m => m.GetParameters(), args, ownerFqn.Args,
-            $"{context} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(args)})");
-        return winner.IsStatic;
-    }
-
     // ---- shared resolution ---------------------------------------------------------------------
 
     // Resolve the owner's OPEN definition off the ref.dll — via ResolveRefType, which (unlike ResolveNetType) does NOT

@@ -111,6 +111,19 @@ done
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
 
+# CLR statics are direct KLIB declarations. A plain CLR owner must not acquire a companion classifier/value merely
+# because it has static members; otherwise source can silently depend on projection scaffolding that does not exist in
+# CLR metadata. Keep this as a negative frontend probe alongside the positive Widget.Global / Widget.Twice uses above.
+no_companion_log="$OUT/no-synthetic-companion.log"
+if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/no-synthetic-companion.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/no-synthetic-companion-bir" \
+	>"$no_companion_log" 2>&1; then
+	die "plain CLR static owner unexpectedly exposed Widget.Companion"
+fi
+grep -q "unresolved reference.*Companion" "$no_companion_log" \
+	|| die "Widget.Companion was rejected for an unexpected reason"
+
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \

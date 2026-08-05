@@ -29,8 +29,8 @@
 // Top-level names are family-prefixed (`suspendResultType`) — the cold-core lowering keys top-level suspend funs by simple
 // name, so they must be unique across this assembly.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 import System.Activator
 import System.Math
 import System.Numerics.Vector3

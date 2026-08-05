@@ -26,7 +26,7 @@
 // `multiFileClosure`, `multiFileLambda`, `writeCapture`, `functionReference`, and `extensionReference`) so they
 // remain readable and assembly-unique.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- il-closure : capturing lambda (closure) — captured `base` becomes a closure-class field --------------------
 fun closureMakeAdder(base: Int): (Int) -> Int = { x -> x + base }

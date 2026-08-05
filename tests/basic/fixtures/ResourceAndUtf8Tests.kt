@@ -10,8 +10,8 @@
 //
 // All top-level declarations introduced here are ResourceUtf8-prefixed (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import kotlin.text.CharacterCodingException
 
 // ---- il-use : close() ordering captured into a log (was ordered `println`s) --------------------------------------
