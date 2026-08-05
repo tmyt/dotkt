@@ -25,6 +25,9 @@ import org.jetbrains.kotlin.cli.pipeline.PerformanceNotifications
 import org.jetbrains.kotlin.cli.pipeline.metadata.MetadataFrontendPipelineArtifact
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
+import org.jetbrains.kotlin.config.LanguageFeature
+import org.jetbrains.kotlin.config.LanguageVersionSettings
+import org.jetbrains.kotlin.config.languageVersionSettings
 import org.jetbrains.kotlin.config.moduleName
 import org.jetbrains.kotlin.config.phaser.CompilerPhase
 import org.jetbrains.kotlin.fir.backend.Fir2IrConfiguration
@@ -54,6 +57,7 @@ object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompiler
 		configuration: CompilerConfiguration,
 	) {
 		val arguments = input.arguments
+		configuration.languageVersionSettings = ClrPlatformLanguageVersionSettings(configuration.languageVersionSettings)
 		val commonSources = arguments.commonSources?.toSet() ?: emptySet()
 		val hmppModuleStructure = configuration.get(CommonConfigurationKeys.HMPP_MODULE_STRUCTURE)
 		for (arg in arguments.freeArgs) {
@@ -76,6 +80,23 @@ object ClrMetadataConfigurationUpdater : ConfigurationUpdater<K2MetadataCompiler
 			"Specify destination via -d",
 		)
 	}
+}
+
+/**
+ * Language features that are part of the Kotlin/CLR target contract rather than user-selected previews.
+ *
+ * Keep the underlying customized-feature and pre-release state intact: exposing the CLR capability through the
+ * ordinary `-XXLanguage` channel would incorrectly diagnose every compilation as manually opting into a preview.
+ */
+private class ClrPlatformLanguageVersionSettings(
+	private val delegate: LanguageVersionSettings,
+) : LanguageVersionSettings by delegate {
+	override fun getFeatureSupport(feature: LanguageFeature): LanguageFeature.State =
+		if (feature == LanguageFeature.CompanionBlocksAndExtensions) LanguageFeature.State.ENABLED
+		else delegate.getFeatureSupport(feature)
+
+	override fun supportsFeature(feature: LanguageFeature): Boolean =
+		feature == LanguageFeature.CompanionBlocksAndExtensions || delegate.supportsFeature(feature)
 }
 
 class ClrFir2IrPipelineArtifact(
