@@ -10,9 +10,9 @@
 //
 // Assembly-wide collision rule: every top-level declaration is `Comparison`-prefixed (Ver -> ComparisonVer, IntCmp -> ComparisonIntCmp).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 
 // ---- il-comparable : user class implementing Kotlin's Comparable<V> (self-referential generic) -----------------
 class ComparisonVer(val major: Int, val minor: Int) : Comparable<ComparisonVer> {

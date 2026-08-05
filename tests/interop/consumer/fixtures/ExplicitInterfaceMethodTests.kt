@@ -3,7 +3,7 @@ import ExplicitMethodInterop.InheritedExplicitOperation
 import ExplicitMethodInterop.IOperations
 import ExplicitMethodInterop.StringTransformer
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 private class DerivedExplicitOperations : ExplicitOperations()
 

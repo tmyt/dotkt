@@ -5,7 +5,7 @@
 // suspend lowering keys top-level suspend funs by simple name). Driven by the shared `dotkt.support.blockOn` harness;
 // the former `main` + golden -> one @TestAttribute method (values 1:1).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 

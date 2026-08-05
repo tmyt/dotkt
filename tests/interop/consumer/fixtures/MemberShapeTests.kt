@@ -6,7 +6,7 @@
 //   transinj <- il-transinj  constructed-generic members (IList/IReadOnlyList/Dictionary/IEnumerable) + 2-hop
 //                            transitive projection (Gadget/Sprocket are reached through signatures)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 // il-ixname
 import PIx.Grid
 // il-vtprop

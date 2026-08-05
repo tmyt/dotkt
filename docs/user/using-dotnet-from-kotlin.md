@@ -39,10 +39,10 @@ fun main() {
 }
 ```
 
-## 2. Static members — just like Kotlin
+## 2. Static members
 
-A .NET class's statics surface on a synthesized companion object, and you call them the natural
-Kotlin way — `Type.member` works directly (the explicit `.Companion` form is also accepted):
+A .NET class's statics remain static members of that class in the reference KLIB. Call them directly as
+`Type.member`; CLR statics do not synthesize a Kotlin companion type or singleton value:
 
 ```kotlin
 import Kfc.App
@@ -51,9 +51,12 @@ fun main() {
     App.start { p -> println("p=$p") }   // static method (lambda → .NET delegate)
     println(App.Count)                   // static property
     println(App.Answer)                  // static field
-    App.Companion.start { }              // the explicit form works too (same BIR)
 }
 ```
+
+The DotKt compiler enables the required Kotlin analysis feature automatically. Editors must analyze the project with
+DotKt's CLR target configuration; a generic Kotlin LSP does not know the `.ktproj` reference KLIBs or CLR language
+settings and can therefore report false diagnostics for this interop surface.
 
 ## 3. Lambdas, delegates, and events
 

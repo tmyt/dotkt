@@ -3,7 +3,7 @@
 //   netinterop <- il-netinterop  .NET enum (read/pass/==/when), generic delegates (Func + custom Mapper<T>),
 //                                nullable value types (int?/double? <-> Int?/Double? both directions)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 // il-netenum
 import Kfc.Nums
 import Kfc.Words

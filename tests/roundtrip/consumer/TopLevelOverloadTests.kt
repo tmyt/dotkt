@@ -2,7 +2,7 @@
 // file facades (N5.UtilsKt and N5.HelpersKt), routing their shared CallableId(N5, "foo") by value-parameter arity.
 import N5.*
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 class TopLevelOverloadTests {
     @TestAttribute

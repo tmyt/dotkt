@@ -119,25 +119,6 @@ internal fun BirEmitter.bodyStatements(body: org.jetbrains.kotlin.ir.IrElement?)
 	else -> emptyList()
 }
 
-/** True iff [callee]'s body references its DISPATCH receiver — a member fn's enclosing-class/companion `this` — by an
- *  IrGetValue of the dispatch-receiver parameter, anywhere (descending into nested lambdas, whose companion refs are
- *  equally the enclosing dispatch `this`). A member-EXTENSION inline fn's extension receiver rides `__self` (a
- *  `{k:local,name:__self}` body ref), so the ONLY `{k:this}` a spliced body can carry is this dispatch receiver; when the
- *  body never touches it (the pure-extension idiom), the splice needs no dispatch binding and is sound via the extension
- *  path. Used by `inlineSpliceCallSameModule`'s #20 gate. A pure Kotlin-frontend fact (which receiver the IR body reads). */
-internal fun BirEmitter.bodyReferencesDispatch(callee: IrSimpleFunction): Boolean {
-	val dispatch = callee.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver } ?: return false
-	var found = false
-	callee.body?.acceptVoid(object : IrVisitorVoid() {
-		override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
-			if (found) return
-			if (element is IrGetValue && element.symbol == dispatch.symbol) { found = true; return }
-			element.acceptChildrenVoid(this)
-		}
-	})
-	return found
-}
-
 /** SAME-MODULE inline (#75): a call to a user/stdlib-self-build `inline fun` (body present in THIS run) taking ANY
  *  lambda arg (AXIS ①). Retires mechanism-1 (the old `inlineCall` splicer): instead of splicing the body HERE, kotc
  *  emits the SAME generic `callInline` node the cross-module emitters do (`inlineSpliceCall`/
@@ -152,30 +133,7 @@ internal fun BirEmitter.bodyReferencesDispatch(callee: IrSimpleFunction): Boolea
  *  delegate value) — AXIS ②. NO fallback slot: the engine fails loud if it cannot splice. A lambda-less inline call
  *  never reaches here — it falls through to the ordinary member-call path (a real emitted generic method; the JIT
  *  inlines it). */
-internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String {
-	// #87: resolve the fake override so the #20 dual-receiver guard inspects the REAL declaration's body (an inherited
-	// inline member is a fake override with a null body). emitOwnerfulInlineNode resolves independently for its facts.
-	val callee = call.symbol.owner.let { if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it }
-	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-	val dispatchArg = dispatchReceiver(call)
-	// A MEMBER extension inline fn (`class C { inline fun T.f(block) }`, #20/#23) has BOTH a dispatch (the enclosing
-	// class/companion) AND an extension receiver. The extension receiver rides the leading `__self` param (recvs.extension
-	// -> InlineBirStash classifies it `recv=extensionParam`), so the extension splices exactly like a top-level extension.
-	// The dispatch receiver is the ONLY `{k:this}` a spliced member-ext body can carry (the extension `this` renders as
-	// `{k:local,name:__self}` via selfSubst, never `{k:this}`). InlineBirStash's `recv` is single-valued (extensionParam
-	// shadows dispatch); bir2cir reads the payload `static` flag to decide the `{k:this}` binding:
-	//  - REAL-INSTANCE member (`class C`, !static): recvs.dispatch is a live receiver value; bir2cir CO-BINDS the payload
-	//    `{k:this}` to it alongside `__self` (#23). Emit normally (emitOwnerfulInlineNode carries recvs.dispatch).
-	//  - FLATTENED-companion member-ext (static): `expr(dispatchArg)` renders a dangling `Owner.INSTANCE` staticField, so a
-	//    dispatch-reading body cannot co-bind -> FAIL LOUD here (do NOT emit a node bir2cir would have to reject).
-	// The common pure-extension idiom (body never reads the dispatch `{k:this}`: `Long.withState` decoding only the Long
-	// `this`; kotlinx.coroutines `LockFreeTaskQueueCore.withState`) has no `{k:this}` and always splices, static or not.
-	if (extParam != null && dispatchArg != null && bodyReferencesDispatch(callee) && (callee.parent as? IrClass)?.isCompanion != false)
-		return unsupported(call,
-			"a same-module FLATTENED-companion member-extension inline call whose body uses the enclosing (companion) receiver",
-			"a flattened companion's dispatch receiver renders a dangling `Owner.INSTANCE` staticField; co-binding is only supported for a REAL-INSTANCE member-extension (the pure-extension form, whose body never references the enclosing receiver, always splices)")
-	return emitOwnerfulInlineNode(call)
-}
+internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String = emitOwnerfulInlineNode(call)
 
 /** Render one `callInline` argument slot — GRANULARITY trigger (d) of §2.7, shared by the three inline emitters.
  *
@@ -211,10 +169,8 @@ private fun BirEmitter.inlineArgJson(
  *  BOTH the same-module member/top-level splice (`inlineSpliceCallSameModule`, body present) and the CROSS-MODULE inline
  *  MEMBER call (#60/W1: `body==null`, a dispatch receiver present — a dll2klib-projected DotKt member OR a KLIB stdlib
  *  member; the call-site gate in BirEmitterCalls invokes this DIRECTLY, unconditionally, because kotc is body-blind and
- *  bir2cir owns the splice-or-fail-loud decision off the ref.dll `[KotlinInline]` payload). The same-module caller
- *  applies its OWN #20 dual-receiver risk guard first; the cross-module caller does NOT (kotc cannot inspect the body) —
- *  bir2cir's §4.3 splices the pure-extension idiom and FAILS LOUD on a dual-receiver body that reads the dispatch
- *  `{k:this}` (#23, until W2). The emitted shape — `owner`, `pc`, `ga`,
+ *  bir2cir owns the splice-or-fail-loud decision off the ref.dll `[KotlinInline]` payload). The emitted shape — `owner`,
+ *  `pc`, `ga`,
  *  `typeArgs`, `recvs` (dispatch/extension + F2A `dispatchTypeArgs`), the per-POSITIONAL-param `args`, `retType`, `paramSig`
  *  — is IDENTICAL for both callers, so bir2cir's InlineSplice consumes them the same whether the payload is same-module
  *  (`InlineBirStash.Index`) or cross-module (ref.dll `InlineCandidates`). */
@@ -268,9 +224,9 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// inside a loop) still evaluates it exactly once, here, and an omitted default that bir2cir fills inside the splice
 	// lands after every supplied value rather than in its parameter's slot.
 	val label = calleeLabel(callee)
-	// A receiver naming an object this backend gives NO INSTANCE — the FLATTENED plain companion described below, or a
-	// projected static holder — is rendered in place instead of bound ([needsPlanBinding]): a binding for it would ask
-	// the plan to evaluate a value that does not exist. A real `object` and a super-typed companion DO have an
+	// A receiver naming an object this backend gives NO INSTANCE — a flattened plain companion — is rendered in place
+	// instead of bound ([needsPlanBinding]): a binding for it would ask
+	// the plan to evaluate a value that does not exist. A real `object` and a lifted companion DO have an
 	// `INSTANCE`, loading it runs the object's body, and so they are bound like any other receiver.
 	val dispatchJson = dispatchArg?.let {
 		if (needsPlanBinding(it)) callPlan(call).bindValue(it, "recv", "receiver of '$label'") else expr(it)
@@ -290,12 +246,9 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
  *  (payload param[0] == `__self`); a member dispatch receiver -> `recvs.dispatch` (the payload's own `{k:this}` refs bind
  *  to it, §4.3). Both are carried when present. Shared by `emitOwnerfulInlineNode` (same-module + cross-module member) so
  *  the receiver shape bir2cir's InlineSplice §4.3 consumes is emitted identically on both paths.
- *  NOTE (#20/#23): a PLAIN companion is FLATTENED to static methods of the enclosing class (BirEmitterDeclarations §630),
- *  so for a companion callee `expr(dispatchArg)` renders a `Queue.INSTANCE` staticField that does NOT exist — a
- *  DANGLING token. bir2cir gates the #23 dual-receiver co-bind on the payload's `static` flag: it reads `recvs.dispatch`
- *  for a `recv==dispatch` plain member AND for a `recv==extensionParam` REAL-INSTANCE (!static) member-extension, but
- *  NEVER for a flattened companion / top-level (static) payload — so this dangling companion token is correctly ignored
- *  (the same-module producer above also fails loud for the flattened-companion dispatch-reading case before emitting). */
+ *  A companion dispatch is emitted as the semantic `companionValue`. CompanionRepresentationLowering runs before the
+ *  inline stash: every companion has a real semantic receiver that bir2cir maps to the carrier INSTANCE for
+ *  InlineSplice to co-bind alongside the extension receiver. */
 internal fun BirEmitter.inlineReceiverParts(
 	callee: IrSimpleFunction,
 	extJson: String?,

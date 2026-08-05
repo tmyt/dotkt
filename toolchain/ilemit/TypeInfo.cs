@@ -48,7 +48,7 @@ sealed class TypeInfo
     public bool IsDelegate;
     public bool IsEnum;
     public Type Created;                   // baked enum Type (created early so its tokens are valid in other IL)
-    // Generic type parameters (`class Box<T>`): name -> the GenericTypeParameterBuilder defined in pass 1.
+    // All physical generic parameters: source-declared plus any explicit nested captures chosen by bir2cir.
     public readonly Dictionary<string, GenericTypeParameterBuilder> TypeParams = new();
     public bool IsGeneric => TypeParams.Count > 0;
     public Type AsType => Created ?? TB;

@@ -45,12 +45,13 @@ PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
 
 # The two-path form is an internal worker protocol. Without the batch parent's complete resolved catalog it cannot
-# identify external delegate TypeRefs and must fail rather than silently project them as ordinary nominal classes.
+# identify external delegate or Kotlin companion TypeRefs and must fail rather than silently project their physical
+# CLR carriers as ordinary nominal classes.
 direct_out="$OUT/direct-Probe.klib"
 if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
-	die "standalone direct worker invocation unexpectedly succeeded without a resolved delegate catalog"
+	die "standalone direct worker invocation unexpectedly succeeded without resolved reference catalogs"
 fi
-grep -q "direct worker mode requires the batch-provided resolved delegate catalog" <<<"$direct_error" \
+grep -q "direct worker mode requires the batch-provided resolved delegate and companion catalogs" <<<"$direct_error" \
 	|| die "standalone direct worker rejection did not explain the required batch reference set"
 [[ ! -e "$direct_out" ]] || die "rejected standalone direct worker invocation still wrote a KLIB"
 
@@ -90,7 +91,7 @@ touch "$CONTRACTS_REF"
 dependency_rebuild="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
 grep -q 'converting 2/2 reference(s)' <<<"$dependency_rebuild" \
 	|| die "external delegate change did not invalidate the consuming Probe KLIB"
-# Removing or adding an input can change the shared arity/delegate catalog without changing any surviving DLL's
+# Removing or adding an input can change the shared arity/delegate/companion catalog without changing any surviving DLL's
 # timestamp. Every surviving KLIB must be regenerated so cached and newly projected declarations keep one naming
 # universe.
 printf '%s\n' "$PROBE_REF" > "$OUT/references.rsp"
@@ -109,6 +110,19 @@ done
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
+
+# CLR statics are direct KLIB declarations. A plain CLR owner must not acquire a companion classifier/value merely
+# because it has static members; otherwise source can silently depend on projection scaffolding that does not exist in
+# CLR metadata. Keep this as a negative frontend probe alongside the positive Widget.Global / Widget.Twice uses above.
+no_companion_log="$OUT/no-synthetic-companion.log"
+if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/no-synthetic-companion.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/no-synthetic-companion-bir" \
+	>"$no_companion_log" 2>&1; then
+	die "plain CLR static owner unexpectedly exposed Widget.Companion"
+fi
+grep -q "unresolved reference.*Companion" "$no_companion_log" \
+	|| die "Widget.Companion was rejected for an unexpected reason"
 
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"

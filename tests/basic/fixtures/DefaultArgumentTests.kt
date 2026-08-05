@@ -11,7 +11,7 @@
 // The data class was `P`; renamed `DefaultArgP` for collision-freedom, so its toString reads `DefaultArgP(...)` — the class name is
 // incidental to the subject (default-arg slot correctness), which is unchanged.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 data class DefaultArgP(val x: Int, val y: Int, val z: Int)
 

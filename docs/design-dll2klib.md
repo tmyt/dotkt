@@ -223,7 +223,10 @@ A real Kotlin companion is a different shape: it is a nested
 receiver. `dll2klib` does not synthesize a companion to represent CLR statics.
 
 The embedded CLR compiler enables `CompanionBlocksAndExtensions` as a platform
-capability so the standard KLIB loader accepts static class members. When the
+capability so the standard KLIB loader accepts static class members. Every CLR
+analysis host, including an IDE/LSP integration, must install the same target
+language-version settings; enabling it only in a command-line wrapper would make
+editor analysis disagree with compilation. When the
 frontend produces a fake-override accessor for a static property, the BIR
 emitter resolves it to the underlying declaration and uses the IR declaration
 shape—not the number of call arguments—to preserve static ownership.
@@ -319,13 +322,14 @@ dll2klib --out <directory> [--jobs <N>] @<references.rsp>
 ```
 
 The two-path direct form is the internal worker protocol used by the batch launcher. The launcher supplies its
-resolved naming and delegate catalogs through the worker environment; invoking that form standalone is rejected,
-because one DLL cannot resolve the identity and `Invoke` shape of delegates defined in referenced assemblies.
+resolved naming, delegate, and Kotlin companion catalogs through the worker environment; invoking that form
+standalone is rejected, because one DLL cannot resolve either the `Invoke` shape of delegates or the trusted
+semantic identity of companion carriers defined in referenced assemblies.
 
 Batch mode:
 
 1. reads and normalizes the response-file inputs;
-2. computes the naming and delegate projection catalogs from the complete set;
+2. computes the naming, delegate, and trusted companion projection catalogs from the complete set;
 3. rejects output-name collisions;
 4. selects stale outputs;
 5. starts one child process per stale DLL, bounded by `--jobs`; and
@@ -405,7 +409,7 @@ An output KLIB is stale when any of the following is true:
 - a defining assembly used for a cross-assembly delegate is newer; or
 - the complete-set projection catalog changed.
 
-The projection catalog records the generic-arity collision set and delegate
+The projection catalog records the generic-arity collision set, delegate, and companion
 definitions. A catalog change invalidates all KLIBs because it can change the
 meaning or name of a declaration even when a particular input DLL is
 unchanged.

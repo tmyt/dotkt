@@ -1,5 +1,5 @@
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import StackBufferInterop.SpanOperations
 import kotlin.clr.stackBuffer
 

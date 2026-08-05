@@ -1,7 +1,7 @@
 // General #367 regression: this consumes a separate, ordinary C# NRT assembly. Nothing here names Console or any
 // BCL owner, so the behavior can only come from dll2klib's declaration-shape rule.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NrtParams.Api
 import NrtParams.CtorProbe
 import NrtParams.FinalApi

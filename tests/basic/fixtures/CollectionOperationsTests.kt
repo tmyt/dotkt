@@ -15,7 +15,7 @@
 //
 // Assembly-wide collision rule: the sole top-level helper is `CollectionOperations`-prefixed (il-arraydeque's `Holder` -> `CollectionOperationsDequeHolder`).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- il-arraydeque : a concrete generic stdlib collection as a FIELD/owner type ---------------------------------
 class CollectionOperationsDequeHolder {

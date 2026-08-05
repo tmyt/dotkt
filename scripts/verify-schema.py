@@ -92,6 +92,9 @@ STR_OK = {
                                                  # payload for [KotlinInline]/[KotlinSuspendFunctionType] and the nested
                                                  # NullableAttribute(byte[]) form; ilemit's ConstArgValue decodes it to a
                                                  # real byte[] fixed argument. An opaque payload, NOT a type slot.
+    "companionCaptureOwner", "externalCompanionOwner", # #275: temporary semantic companion association keys for
+                                                # lifted/suspend callable-reference captures. Declaration/carrier
+                                                # identities, not value-type slots; consumed before CIR.
     # OWNER-FQN owner slots (§2.2.1 — a type IDENTITY used as a resolution key) are ALL structured `{t:fqn}` nodes now
     # (#48 fully realized): `owner` (callStatic AND callInline.owner/callee), `ownerType`
     # (callInstance/field/setField/staticField, incl. the top-level-file-class + interop-extension owners kotc formerly
@@ -111,7 +114,11 @@ CLR_OWNER_KINDS = {
 # DECLARATION names a variable; references to it use positional tv{scope,i} nodes (§1), so this
 # is a decl-name list, NOT a type-usage slot. (The clrGeneric* overload key is now the STRUCTURED `memberSig`
 # TypeNode array — W1-S1 #46 — walked as ordinary type nodes; the retired lossy `shapes` string island is gone.)
-STRARR_OK = {"typeParams"}
+STRARR_OK = {
+    "typeParams",
+    "capturedTypeParams",                       # #275: enclosing CLR generic-slot declaration names copied onto
+                                                # the nested companion carrier, not Type usages.
+}
 
 MOD_KEYS = {
     "inline", "infix", "operator", "tailrec", "external", "ext", "override", "abstract",
@@ -135,7 +142,8 @@ KINDS = {
     "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat", "cond",
     "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
     "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
-    "newBoundDelegate", "newBoundClrDelegate",
+    "newBoundDelegate", "newBoundClrDelegate", "newClrStaticDelegate",
+    "companionValue",                           # #275 BIR-only semantic access; bir2cir resolves the nested carrier.
     "enumValue", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",
     # §2.7 CALL-EVALUATION PLAN — BIR-only. `callEval` wraps a call in its ordered bindings; `bindRef` is a pure READ
     # of one. bir2cir's CallEvalLowering lowers both (to `var`+`valueBlock`, or to a ctor's `preStmts`) before CIR.
@@ -308,8 +316,23 @@ class V:
                     self.err(f, path, f"{o['k']!r} is a BIR call-evaluation plan node and must be lowered before CIR")
                 if "delegationBindings" in o:
                     self.err(f, path, "delegationBindings is a BIR call-evaluation plan and must be lowered to preStmts before CIR")
+                if o.get("k") == "companionValue":
+                    self.err(f, path, "companionValue is a BIR semantic node and must be lowered before CIR")
+                for companion_key in ("kotlinCompanion", "companionCaptureOwner", "externalCompanionOwner"):
+                    if companion_key in o:
+                        self.err(f, path, f"{companion_key} is a BIR companion fact and must be consumed before CIR")
             if f.endswith(".bir.json") and "preStmts" in o:
                 self.err(f, path, "preStmts is the bir2cir-authored lowering of a delegation plan and must not appear in BIR")
+            if f.endswith(".bir.json"):
+                if o.get("k") == "newClrStaticDelegate":
+                    self.err(f, path, "newClrStaticDelegate is a bir2cir-authored physical node and must not appear in BIR")
+                if "capturedTypeParams" in o:
+                    self.err(f, path, "capturedTypeParams is a bir2cir-authored nested CLR declaration fact and must not appear in BIR")
+            if o.get("k") == "newClrStaticDelegate" and f.endswith(".cir.json"):
+                if not isinstance(o.get("memberSig"), list):
+                    self.err(f, path, "newClrStaticDelegate.memberSig must be a resolved Type-node array in CIR")
+                if not isinstance(o.get("memberOwner"), dict) or "t" not in o["memberOwner"]:
+                    self.err(f, path, "newClrStaticDelegate.memberOwner must be a resolved Type node in CIR")
             if isinstance(o.get("mods"), dict):
                 for mk in o["mods"]:
                     if mk not in MOD_KEYS:
@@ -324,6 +347,11 @@ class V:
                 if isinstance(val, str):
                     if key == "type" and clr_owner:
                         pass  # clr*.type is the call OWNER (owner-FQN island §2.2.1), not a value type
+                    elif path.endswith("/kotlinCompanion") and key in ("owner", "visibility"):
+                        # A declaration fact, not an owner Type slot. Keep the exception path-scoped so a bare
+                        # `owner` elsewhere still reddens the gate.
+                        if key == "visibility" and val not in VIS - {"protectedInternal"}:
+                            self.err(f, p, f"unknown Kotlin companion visibility {val!r}")
                     elif key not in STR_OK:
                         self.err(f, p, f"bare STRING at type slot {key!r}: {val!r} (types must be {{t:...}} nodes)")
                 elif isinstance(val, list):

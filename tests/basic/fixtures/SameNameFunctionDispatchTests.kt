@@ -5,7 +5,7 @@
 // file-class DISPATCH hint, which ilemit resolves the owner-null static through — rather than a global
 // first-match. (Suspend analogue: SameNameAcrossPackagesTests in tests/coroutines.)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import xpkg199a.xFoo as aFoo
 import xpkg199b.xFoo as bFoo
 

@@ -12,7 +12,7 @@
 // The interleaved-order case captures side effects into `suspendEvaluationSideEffectLog` (asserted positionally, strictly stronger than
 // the old stdout order-diff). Top-level names are family-prefixed (`suspendEvaluationSideEffect`/`suspendEvaluationFieldOrder`/`suspendEvaluationArrayOrder`).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
 
 // ---- il-coevalorder: `side() + g()` must evaluate the left side effect BEFORE g() runs ----------------------

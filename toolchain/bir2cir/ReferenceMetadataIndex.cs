@@ -11,10 +11,16 @@ using DotKt.Toolchain;
 
 sealed partial class ReferenceMetadataIndex
 {
+    sealed class MalformedTrustedCompanionException : Exception
+    {
+        public MalformedTrustedCompanionException(string message, Exception inner = null) : base(message, inner) { }
+    }
+
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
+    const string KotlinCompanionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
     // The #86/#147 positional carrier: the PRE-erasure Kotlin TypeNode of a declaration slot whose `Nullable(Tv)`
     // NullableGenericErasure object-erased. Read per member slot (return parameter and each value parameter) so a
     // CONSUMING module can re-derive `Subst(Erase(decl))` at a use of that slot instead of guessing from the call.
@@ -39,6 +45,13 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
     readonly HashSet<string> _byRefLikeOwners = new(StringComparer.Ordinal);         // Kotlin FQN -> is a `ref struct`
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
+    readonly Dictionary<string, bool> _companionStaticByPhysicalOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _singletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _semanticOwnerByCompanionCarrier = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _companionCarrierByPhysicalOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _companionSourceNameByPhysicalOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _companionPhysicalOwnerBySemanticType = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _companionSemanticTypeByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly Dictionary<string, string[]> _ownerTypeParams = new(StringComparer.Ordinal); // Kotlin FQN -> generic param names
     // Per owner-FQN, the declared param type names of its (first/sole) constructor — used to adapt a static-String arg
@@ -164,7 +177,60 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.Aliases) _ownerAlias[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
             foreach (var owner in asm.DotKt.ByRefLikeOwners) _byRefLikeOwners.Add(owner);
-            foreach (var owner in asm.DotKt.DotKtOwners) _dotKtOwners.Add(owner);
+            foreach (var owner in asm.DotKt.DotKtOwners)
+                _dotKtOwners.Add(StripGenericArity(DottedFqn(owner)));
+            foreach (var kv in asm.DotKt.CompanionStaticByPhysicalOwner)
+            {
+                var physicalOwner = StripGenericArity(DottedFqn(kv.Key));
+                if (!_companionStaticByPhysicalOwner.TryAdd(physicalOwner, kv.Value) ||
+                    _companionStaticByPhysicalOwner[physicalOwner] != kv.Value)
+                    throw new InvalidOperationException($"conflicting Kotlin companion representation for '{physicalOwner}'");
+            }
+            foreach (var kv in asm.DotKt.SingletonCompanionCarrierBySemanticOwner)
+            {
+                var semanticOwner = StripGenericArity(DottedFqn(kv.Key));
+                // Keep the reflected metadata spelling (`Outer`1+$Companion`) as the value. Keys use dotted Kotlin
+                // vocabulary, but consumers that resolve the physical TypeDef must not have to guess where a dotted
+                // source separator becomes CLR's nested `+` separator.
+                var carrier = kv.Value;
+                if (!_singletonCompanionCarrierBySemanticOwner.TryAdd(semanticOwner, carrier) ||
+                    _singletonCompanionCarrierBySemanticOwner[semanticOwner] != carrier)
+                    throw new InvalidOperationException($"conflicting Kotlin singleton companion carrier for '{semanticOwner}'");
+            }
+            foreach (var kv in asm.DotKt.CompanionSemanticOwnerByCarrier)
+            {
+                var carrierKey = StripGenericArity(DottedFqn(kv.Key));
+                var semanticOwner = StripGenericArity(DottedFqn(kv.Value));
+                if (!_semanticOwnerByCompanionCarrier.TryAdd(carrierKey, semanticOwner) ||
+                    _semanticOwnerByCompanionCarrier[carrierKey] != semanticOwner)
+                    throw new InvalidOperationException($"conflicting Kotlin semantic owner for companion carrier '{kv.Key}'");
+            }
+            foreach (var kv in asm.DotKt.CompanionCarrierByPhysicalOwner)
+            {
+                var physicalOwner = StripGenericArity(DottedFqn(kv.Key));
+                if (!_companionCarrierByPhysicalOwner.TryAdd(physicalOwner, kv.Value) ||
+                    _companionCarrierByPhysicalOwner[physicalOwner] != kv.Value)
+                    throw new InvalidOperationException($"conflicting Kotlin companion physical owner '{physicalOwner}'");
+            }
+            foreach (var kv in asm.DotKt.CompanionSourceNameByPhysicalOwner)
+            {
+                var physicalOwner = StripGenericArity(DottedFqn(kv.Key));
+                if (!_companionSourceNameByPhysicalOwner.TryAdd(physicalOwner, kv.Value) ||
+                    _companionSourceNameByPhysicalOwner[physicalOwner] != kv.Value)
+                    throw new InvalidOperationException($"conflicting Kotlin companion source name for '{physicalOwner}'");
+            }
+            foreach (var kv in asm.DotKt.CompanionPhysicalOwnerBySemanticType)
+            {
+                var semanticType = StripGenericArity(DottedFqn(kv.Key));
+                var physicalOwner = kv.Value;
+                if (!_companionPhysicalOwnerBySemanticType.TryAdd(semanticType, physicalOwner) ||
+                    _companionPhysicalOwnerBySemanticType[semanticType] != physicalOwner)
+                    throw new InvalidOperationException($"conflicting Kotlin companion declaration identity '{semanticType}'");
+                else if (!_companionSemanticTypeByPhysicalOwner.TryAdd(
+                    StripGenericArity(DottedFqn(physicalOwner)), semanticType) ||
+                    _companionSemanticTypeByPhysicalOwner[StripGenericArity(DottedFqn(physicalOwner))] != semanticType)
+                    throw new InvalidOperationException($"conflicting Kotlin companion physical declaration owner '{physicalOwner}'");
+            }
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.CtorParamTypes) _ownerCtorParams[kv.Key] = kv.Value;
@@ -332,7 +398,7 @@ sealed partial class ReferenceMetadataIndex
     // owner type), keyed off the [KotlinFunction(Suspend)] flag scanned into MemberBinding.Suspend. Used by
     // SuspendColdLowering to rewrite a cross-assembly `x.g()` suspend call to `x.g$dotkt_suspend(…, completion)`.
     public bool HasSuspendMember(string owner, string name) =>
-        owner != null && _membersByOwner.TryGetValue(owner, out var list)
+        owner != null && TryMembersByBirOwner(owner, out var list)
         && list.Any(m => m.Suspend && string.Equals(m.Name, name, StringComparison.Ordinal));
 
     // #78 Defect A (cross-assembly axis) — the exact-owner HasSuspendMember above misses a suspend member declared on a
@@ -577,7 +643,45 @@ sealed partial class ReferenceMetadataIndex
 
     public void DisposeNet() { try { _netMlc?.Dispose(); } catch { } _netMlc = null; }
 
-    public int OwnerArity(string ownerFqn) => _ownerArity.GetValueOrDefault(ownerFqn, 0);
+    public int OwnerArity(string ownerFqn)
+    {
+        if (ownerFqn == null) return 0;
+        // Reflection metadata keeps nested TypeDef identity with '+'. Prefer that exact key; dotted normalization is
+        // only the fallback for source-style CIR tokens. This is load-bearing for a generic owner's nested companion:
+        // its synthetic capture closes `$INSTANCE` even though the companion has no Kotlin-declared type parameters.
+        var exact = StripGenericArity(ownerFqn);
+        return _ownerArity.TryGetValue(exact, out var arity)
+            ? arity
+            : _ownerArity.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)), 0);
+    }
+    public bool IsKotlinRichEnumOwner(string ownerFqn)
+    {
+        var bare = BareOwnerFqn(ownerFqn);
+        if (!_membersByOwner.TryGetValue(bare, out var members)) return false;
+        var values = members.Count(m => m.IsStatic && m.Name == "values" && m.ParamCount == 0
+            && m.ReturnTypeNode is TypeNode.Array { Elem: TypeNode.Fqn valueElem } && valueElem.Name == bare);
+        var valueOf = members.Count(m => m.IsStatic && m.Name == "valueOf" && m.ParamCount == 1
+            && m.ParamTypeNodes is { Length: 1 } && IsStringType(m.ParamTypeNodes[0])
+            && m.ReturnTypeNode is TypeNode.Fqn valueType && valueType.Name == bare);
+        return values == 1 && valueOf == 1;
+    }
+    public bool IsKotlinRichEnumStaticApi(string ownerFqn, string memberName, int paramCount)
+    {
+        var bare = BareOwnerFqn(ownerFqn);
+        if (!IsKotlinRichEnumOwner(bare) || !_membersByOwner.TryGetValue(bare, out var members)) return false;
+        return memberName switch
+        {
+            "values" when paramCount == 0 => members.Count(m => m.IsStatic && m.Name == memberName &&
+                m.ParamCount == 0 && m.ReturnTypeNode is TypeNode.Array { Elem: TypeNode.Fqn elem } &&
+                elem.Name == bare) == 1,
+            "valueOf" when paramCount == 1 => members.Count(m => m.IsStatic && m.Name == memberName &&
+                m.ParamCount == 1 && m.ParamTypeNodes is { Length: 1 } && IsStringType(m.ParamTypeNodes[0]) &&
+                m.ReturnTypeNode is TypeNode.Fqn ret && ret.Name == bare) == 1,
+            _ => false,
+        };
+    }
+    static bool IsStringType(TypeNode type) => type is TypeNode.Fqn f &&
+        f.Name is "kotlin.String" or "System.String" or "string";
     public string[] OwnerTypeParamNames(string ownerFqn) => _ownerTypeParams.GetValueOrDefault(ownerFqn);
     // The declared param type names of the owner's (sole/first) constructor, or null. Keyed by the arity-stripped
     // Kotlin FQN (`dotkt$obj90`, not `dotkt$obj90``1`), matching the CIR `new` node's bare type token.
@@ -637,7 +741,62 @@ sealed partial class ReferenceMetadataIndex
     // Deterministic synthetic owners (for example an F-bound star-view interface) are part of a DotKt reference's
     // ordinary type surface.  bir2cir may target one only when it is actually present; this avoids assuming that an
     // arbitrary CLR library opted into a compiler-private ABI convention merely because its generic shape looks alike.
-    public bool HasDotKtOwner(string ownerFqn) => _dotKtOwners.Contains(ownerFqn);
+    public bool HasDotKtOwner(string ownerFqn) =>
+        ownerFqn != null && _dotKtOwners.Contains(StripGenericArity(DottedFqn(ownerFqn)));
+
+    public bool TryCompanionIsStatic(string physicalOwner, out bool isStatic) =>
+        _companionStaticByPhysicalOwner.TryGetValue(
+            StripGenericArity(DottedFqn(physicalOwner)), out isStatic);
+
+    // A late compiler synthesis can name a Kotlin companion member by its SEMANTIC owner after NetInteropBinding has
+    // already run (SuspendColdLowering's Result factories are the current producer). Recover the exact singleton
+    // carrier only from the validated trusted association; no suffix/name reconstruction is permitted.
+    public bool TrySingletonCompanionCarrier(string semanticOwner, out string carrier) =>
+        _singletonCompanionCarrierBySemanticOwner.TryGetValue(StripGenericArity(semanticOwner), out carrier);
+
+    public bool TryCompanionCarrierByPhysicalOwner(string physicalOwner, out string carrier) =>
+        _companionCarrierByPhysicalOwner.TryGetValue(
+            StripGenericArity(DottedFqn(physicalOwner)), out carrier);
+
+    public bool TryCompanionAccessor(string physicalOwner, string memberName, out string carrier)
+    {
+        carrier = null;
+        var key = StripGenericArity(DottedFqn(physicalOwner));
+        return memberName != null &&
+            _companionSourceNameByPhysicalOwner.TryGetValue(key, out var sourceName) &&
+            memberName == sourceName &&
+            _companionCarrierByPhysicalOwner.TryGetValue(key, out carrier);
+    }
+
+    public bool TryCompanionPhysicalOwner(string semanticType, out string physicalOwner) =>
+        _companionPhysicalOwnerBySemanticType.TryGetValue(
+            StripGenericArity(DottedFqn(semanticType)), out physicalOwner);
+
+    public bool TryCompanionSemanticType(string physicalOwner, out string semanticType) =>
+        _companionSemanticTypeByPhysicalOwner.TryGetValue(
+            StripGenericArity(DottedFqn(physicalOwner)), out semanticType);
+
+    public bool TryCompanionSemanticOwner(string physicalCarrier, out string semanticOwner) =>
+        _semanticOwnerByCompanionCarrier.TryGetValue(
+            StripGenericArity(DottedFqn(physicalCarrier)), out semanticOwner);
+
+    // Recover the exact reflected carrier token from an already-physical dotted CIR/KLIB token. Both directions are
+    // explicit trusted metadata associations; no `$` suffix or nested-boundary inference participates.
+    public bool TryCompanionMetadataCarrier(string physicalType, out string metadataCarrier)
+    {
+        metadataCarrier = null;
+        return TryCompanionSemanticType(physicalType, out var semanticType) &&
+            _companionPhysicalOwnerBySemanticType.TryGetValue(semanticType, out metadataCarrier);
+    }
+
+    public Type ResolveCompanionMetadataCarrier(string physicalType, int genericArity = 0)
+    {
+        if (!TryCompanionMetadataCarrier(physicalType, out var metadataCarrier))
+            throw new InvalidOperationException(
+                $"trusted companion physical type '{physicalType}' has no exact metadata carrier mapping");
+        return ProbeNetType(metadataCarrier, genericArity) ?? throw new InvalidOperationException(
+            $"trusted companion metadata carrier '{metadataCarrier}' is absent from the exact compile references");
+    }
 
     // The frontend deliberately preserves the Kotlin surface of a CLR static class as an `object`: an event read on
     // that object therefore reaches BIR with an INSTANCE-looking receiver. Static/instance is nevertheless a CLR ABI
@@ -754,7 +913,7 @@ sealed partial class ReferenceMetadataIndex
     public bool TryMemberProperty(string ownerFqn, string memberName, int argCount, out int access, out string name)
     {
         access = 0; name = null;
-        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
+        if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var cands = list.Where(m => m.Name == memberName && m.PropertyName != null).ToList();
         if (cands.Count == 0) return false;
         var pick = cands.FirstOrDefault(m => m.ParamCount == argCount);
@@ -780,7 +939,7 @@ sealed partial class ReferenceMetadataIndex
     public bool TryMemberConv(string ownerFqn, string memberName, int argCount, out string convTo)
     {
         convTo = null;
-        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
+        if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var cands = list.Where(m => m.Name == memberName && m.Conv).ToList();
         if (cands.Count == 0) return false;
         var pick = cands.FirstOrDefault(m => m.ParamCount == argCount) ?? cands[0];
@@ -788,11 +947,59 @@ sealed partial class ReferenceMetadataIndex
         return convTo != null;
     }
 
+    // Whether this exact declaration overload carries any authored member-level CLR binding. This is intentionally
+    // stricter than the individual substitution lookups, whose single-candidate fallback supports legacy call sites:
+    // deciding whether a nested companion call may cross onto its aliased semantic outer must never let a differently
+    // shaped bound overload capture an intrinsic-less real carrier body of the same Kotlin name. Generic arity and the
+    // complete declaration vector are both part of the identity; a same-name/same-arity sibling is not evidence.
+    public bool HasExactMemberClrBinding(string ownerFqn, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> signature) =>
+        TryExactMemberClrBinding(ownerFqn, memberName, methodArity, signature, out _);
+
+    internal bool TryExactMemberClrBinding(string ownerFqn, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> signature, out ExactClrMemberBinding binding)
+    {
+        binding = null;
+        var matches = ExactBoundMembers(ownerFqn, memberName, methodArity, signature);
+        if (matches.Count != 1) return false;
+        var match = matches[0];
+        binding = new ExactClrMemberBinding(match.Intrinsic, match.PropertyAccess, match.PropertyName,
+            match.Conv, match.ConvTo, match.ByrefPositions);
+        return true;
+    }
+
+    // Callable references are reshaped before MemberCallSubstitution. Give that earlier pass the same exact-overload
+    // authority, and only expose an intrinsic method name: properties/conversions have different node vocabularies and
+    // cannot be represented by a method delegate without an explicit lowering of their own.
+    public bool TryExactMemberIntrinsic(string ownerFqn, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> signature, out string intrinsic)
+    {
+        intrinsic = null;
+        if (!TryExactMemberClrBinding(ownerFqn, memberName, methodArity, signature, out var binding)
+            || binding.Intrinsic == null) return false;
+        intrinsic = binding.Intrinsic;
+        return true;
+    }
+
+    List<MemberBinding> ExactBoundMembers(string ownerFqn, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> signature)
+    {
+        if (memberName == null || signature == null || !TryMembersByBirOwner(ownerFqn, out var list))
+            return new List<MemberBinding>();
+        var candidates = list.Where(m => m.Name == memberName && m.MethodArity == methodArity
+            && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
+            && (m.Intrinsic != null || m.PropertyName != null || m.Conv)).ToList();
+        var exact = candidates.Where(m => m.ParamTypeNodes.SequenceEqual(signature)).ToList();
+        if (exact.Count > 0) return exact;
+        return candidates.Where(m => m.ParamTypeNodes
+            .Select((p, i) => DeclarationDescribesCall(p, signature[i])).All(x => x)).ToList();
+    }
+
     // The @ClrIntrinsic BCL member name for owner.member (overload-disambiguated by arg count when possible).
     public bool TryMemberIntrinsic(string ownerFqn, string memberName, int argCount, out string intrinsic)
     {
         intrinsic = null;
-        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
+        if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var cands = list.Where(m => m.Name == memberName && m.Intrinsic != null).ToList();
         if (cands.Count == 0) return false;
         var pick = cands.FirstOrDefault(m => m.ParamCount == argCount);
@@ -815,7 +1022,7 @@ sealed partial class ReferenceMetadataIndex
     // ->Insert). Unlike TryMemberIntrinsic there is no `?? cands[0]` arity fallback — no exact-arity match = no rename.
     public bool TryMemberIntrinsicExact(string ownerFqn, string memberName, int argCount, out string intrinsic)
     {
-        intrinsic = _membersByOwner.TryGetValue(ownerFqn, out var list)
+        intrinsic = TryMembersByBirOwner(ownerFqn, out var list)
             ? list.FirstOrDefault(m => m.Name == memberName && m.Intrinsic != null && m.ParamCount == argCount)?.Intrinsic
             : null;
         return intrinsic != null;
@@ -826,7 +1033,7 @@ sealed partial class ReferenceMetadataIndex
     // (@ClrIntrinsic, dropped) is distinguished from `append(CharSequence?)` (rule-3, kept), which share name+arity.
     public bool IsBoundStub(string ownerFqn, string memberName, IReadOnlyList<string> birParamKeys)
     {
-        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return false;
+        if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         return list.Any(m => m.Name == memberName && m.Intrinsic != null && m.ParamTypes != null
             && m.ParamTypes.Length == birParamKeys.Count
             && m.ParamTypes.Select(ParamKey).SequenceEqual(birParamKeys));
@@ -950,7 +1157,7 @@ sealed partial class ReferenceMetadataIndex
     // (@ClrRefArgument). Empty when none.
     public int[] MemberByrefPositions(string ownerFqn, string memberName, int argCount)
     {
-        if (!_membersByOwner.TryGetValue(ownerFqn, out var list)) return Array.Empty<int>();
+        if (!TryMembersByBirOwner(ownerFqn, out var list)) return Array.Empty<int>();
         var cands = list.Where(m => m.Name == memberName && m.ByrefPositions != null && m.ByrefPositions.Length > 0).ToList();
         if (cands.Count == 0) return Array.Empty<int>();
         var pick = cands.FirstOrDefault(m => m.ParamCount == argCount);
@@ -1103,7 +1310,7 @@ sealed partial class ReferenceMetadataIndex
     // key is supplied or none matches (monotone — only previously-arbitrary picks change).
     public TypeNode TryMemberReturn(string ownerFqn, string name, int argCount, string firstParamKey = null)
     {
-        if (ownerFqn == null || !_membersByOwner.TryGetValue(ownerFqn, out var list)) return null;
+        if (ownerFqn == null || !TryMembersByBirOwner(ownerFqn, out var list)) return null;
         if (firstParamKey != null
             && list.FirstOrDefault(b => b.Name == name && b.ParamCount == argCount && b.ReturnType != null
                     && b.ParamTypes is { Length: > 0 } && NoRecvNull(ParamKey(b.ParamTypes[0])) == NoRecvNull(firstParamKey)) is { } keyed)
@@ -1123,7 +1330,7 @@ sealed partial class ReferenceMetadataIndex
     {
         kotlinReturn = null;
         if (ownerFqn == null || name == null
-            || !_membersByOwner.TryGetValue(BareOwnerFqn(ownerFqn), out var list))
+            || !TryMembersByBirOwner(BareOwnerFqn(ownerFqn), out var list))
             return false;
         var shapeMatches = list.Where(m =>
                 m.Name == name
@@ -1434,7 +1641,7 @@ sealed partial class ReferenceMetadataIndex
     // accessor (setLength/capacity/nativeSetCapacity/ticks) is a BOUND stub — its call substitutes to clrPropGet/clrPropSet
     // (Rule 2p) — so it must NOT hoist its throwing TODO body into the helper (the same exclusion @ClrIntrinsic gets).
     public bool IsRule3Member(string ownerFqn, string memberName) =>
-        _membersByOwner.TryGetValue(ownerFqn, out var list) &&
+        TryMembersByBirOwner(ownerFqn, out var list) &&
         list.Any(m => m.Name == memberName && m.Intrinsic == null && m.PropertyName == null && !m.Conv && !m.IsAbstract);
 
     // Whether the ref.dll owner DECLARES its own concrete (non-abstract, nullary, instance) `iterator()` — a real slot a
@@ -1443,7 +1650,7 @@ sealed partial class ReferenceMetadataIndex
     // LinkedHashSet is the case an APP sees non-locally; the AbstractMutable{Collection,Set} bases keep iterator() ABSTRACT
     // (IsAbstract) so they still reroute. Mirrors the local-decl scan MemberCallSubstitution does for same-file owners.
     public bool DeclaresConcreteIterator(string ownerToken) =>
-        ownerToken != null && _membersByOwner.TryGetValue(BareOwnerFqn(ownerToken), out var list)
+        ownerToken != null && TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)
         && list.Any(m => m.Name == "iterator" && m.ParamCount == 0 && !m.IsAbstract && !m.IsStatic);
 
     // Does this exact referenced owner declare a concrete instance member of the given Kotlin/CLR name and arity?
@@ -1593,7 +1800,18 @@ sealed partial class ReferenceMetadataIndex
             var dotKtAuthored = IsDotKtEmittedAssembly(asm);
             if (dotKtAuthored)
                 foreach (var authoredType in types)
-                    metadata.DotKtOwners.Add(StripGenericArity(authoredType.FullName ?? authoredType.Name));
+                    metadata.DotKtOwners.Add(
+                        StripGenericArity(DottedFqn(authoredType.FullName ?? authoredType.Name)));
+            var singletonCompanionCarriers = new Dictionary<string, string>(StringComparer.Ordinal);
+            var companionRepresentations = dotKtAuthored
+                ? ValidateCompanionCarriers(types, asm, out singletonCompanionCarriers,
+                    metadata.CompanionCarrierByPhysicalOwner,
+                    metadata.CompanionSourceNameByPhysicalOwner,
+                    metadata.CompanionPhysicalOwnerBySemanticType,
+                    metadata.CompanionSemanticOwnerByCarrier)
+                : new Dictionary<Type, bool>();
+            foreach (var companion in singletonCompanionCarriers)
+                metadata.SingletonCompanionCarrierBySemanticOwner.Add(companion.Key, companion.Value);
 
             foreach (var type in types)
             {
@@ -1603,6 +1821,9 @@ sealed partial class ReferenceMetadataIndex
                     // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
+                    if (companionRepresentations.TryGetValue(type, out var companionIsStatic))
+                        metadata.CompanionStaticByPhysicalOwner.Add(
+                            StripGenericArity(DottedFqn(ownerFqn)), companionIsStatic);
                     metadata.TypeKinds[ownerFqn] = TypeKind(type);
                     // Both spellings: the reflection name nests with `+`, every bir2cir type token is DOTTED, and a
                     // NESTED `ref struct` (`Span<T>.Enumerator`, `MemoryExtensions.SpanSplitEnumerator`) is exactly
@@ -1845,12 +2066,14 @@ sealed partial class ReferenceMetadataIndex
                                 : null));
                     }
                 }
+                catch (MalformedTrustedCompanionException) { throw; }
                 catch (Exception ex)
                 {
                     metadata.Diagnostics.Add($"subst scan skip {type?.FullName}: {ex.GetType().Name}");
                 }
             }
         }
+        catch (MalformedTrustedCompanionException) { throw; }
         catch (Exception ex)
         {
             metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: subst scan failed: {ex.GetType().Name}: {ex.Message}");
@@ -1876,6 +2099,208 @@ sealed partial class ReferenceMetadataIndex
             // foreign assembly as Kotlin; the normal CLR path will surface any actually required metadata failure.
             return false;
         }
+    }
+
+    static Dictionary<Type, bool> ValidateCompanionCarriers(
+        Type[] types,
+        Assembly assembly,
+        out Dictionary<string, string> singletonCompanionCarriers,
+        Dictionary<string, string> companionCarriersByPhysicalOwner,
+        Dictionary<string, string> companionSourceNamesByPhysicalOwner,
+        Dictionary<string, string> companionPhysicalOwnerBySemanticType,
+        Dictionary<string, string> companionSemanticOwnerByCarrier)
+    {
+        var physicalTypes = types
+            .GroupBy(t => (Name: PhysicalMetadataName(t), Arity: DeclaredGenericArity(t)))
+            .ToDictionary(g => g.Key, g => g.ToArray());
+        var semanticOwners = new Dictionary<string, Type>(StringComparer.Ordinal);
+        var claimedPhysicalOwners = new HashSet<Type>();
+        var result = new Dictionary<Type, bool>();
+        singletonCompanionCarriers = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var carrierType in types)
+        {
+            CustomAttributeData carrierAttribute;
+            try
+            {
+                var carrierAttributes = carrierType.GetCustomAttributesData().Where(c =>
+                    c.AttributeType.FullName == KotlinCompanionAttr &&
+                    c.AttributeType.Assembly == assembly &&
+                    HasAttribute(c.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr))
+                    .ToArray();
+                if (carrierAttributes.Length > 1)
+                    throw new MalformedTrustedCompanionException(
+                        $"duplicate trusted [KotlinCompanion] carriers on '{carrierType.FullName}'");
+                carrierAttribute = carrierAttributes.SingleOrDefault();
+            }
+            catch (MalformedTrustedCompanionException) { throw; }
+            catch (Exception ex)
+            {
+                throw new MalformedTrustedCompanionException(
+                    $"could not inspect trusted [KotlinCompanion] on '{carrierType.FullName}'", ex);
+            }
+            if (carrierAttribute == null) continue;
+
+            JsonObject payload;
+            try
+            {
+                if (carrierAttribute.ConstructorArguments.Count != 2 ||
+                    carrierAttribute.ConstructorArguments[0].Value is not string version)
+                    throw new FormatException("expected (version, byte[]) constructor arguments");
+                if (carrierAttribute.NamedArguments.Count != 0)
+                    throw new FormatException("named arguments are forbidden");
+                payload = BirCarrier.DecodeBody(version, ReadByteArrayArg(carrierAttribute.ConstructorArguments[1]))
+                    as JsonObject ?? throw new FormatException("payload must be an object");
+            }
+            catch (Exception ex)
+            {
+                throw new MalformedTrustedCompanionException(
+                    $"malformed trusted [KotlinCompanion] on '{carrierType.FullName}': {ex.Message}", ex);
+            }
+
+            string RequiredString(string property)
+            {
+                if (payload[property] is not JsonValue value ||
+                    !value.TryGetValue<string>(out var text) || string.IsNullOrEmpty(text))
+                    throw new MalformedTrustedCompanionException(
+                        $"malformed trusted [KotlinCompanion] on '{carrierType.FullName}': '{property}' must be a non-empty string");
+                return text;
+            }
+            var kind = RequiredString("kind");
+            var owner = RequiredString("owner");
+            var name = RequiredString("name");
+            var visibility = RequiredString("visibility");
+            var physicalOwner = RequiredString("physicalOwner");
+            if (kind != "nested")
+                throw new MalformedTrustedCompanionException(
+                    $"malformed trusted [KotlinCompanion] on '{carrierType.FullName}': invalid kind '{kind}'");
+            if (!IsSemanticQualifiedName(owner) || !IsSemanticNameSegment(name))
+                throw new MalformedTrustedCompanionException(
+                    $"malformed trusted [KotlinCompanion] on '{carrierType.FullName}': invalid semantic owner/name");
+            if (visibility is not ("public" or "internal" or "private" or "protected" or "protectedInternal"))
+                throw new MalformedTrustedCompanionException(
+                    $"malformed trusted [KotlinCompanion] on '{carrierType.FullName}': invalid visibility '{visibility}'");
+            if (payload["physicalOwnerArity"] is not JsonValue arityValue ||
+                !arityValue.TryGetValue<int>(out var physicalOwnerArity) || physicalOwnerArity < 0)
+                throw new MalformedTrustedCompanionException(
+                    $"malformed trusted [KotlinCompanion] on '{carrierType.FullName}': invalid physicalOwnerArity");
+            if (!physicalTypes.TryGetValue((physicalOwner, physicalOwnerArity), out var ownerMatches) ||
+                ownerMatches.Length != 1)
+                throw new MalformedTrustedCompanionException(
+                    $"trusted [KotlinCompanion] owner '{physicalOwner}' arity {physicalOwnerArity} resolved to " +
+                    $"{(ownerMatches is null ? 0 : ownerMatches.Length)} physical types");
+            var ownerType = ownerMatches[0];
+            if (!claimedPhysicalOwners.Add(ownerType))
+                throw new MalformedTrustedCompanionException(
+                    $"multiple trusted [KotlinCompanion] carriers name owner '{owner}'");
+            if (!semanticOwners.TryAdd(owner, ownerType) && semanticOwners[owner] != ownerType)
+                throw new MalformedTrustedCompanionException(
+                    $"multiple physical types claim Kotlin companion owner '{owner}'");
+
+            if (carrierType == ownerType || carrierType.DeclaringType != ownerType)
+                throw new MalformedTrustedCompanionException(
+                    "nested trusted [KotlinCompanion] must be an ordinary nested type of its physical owner");
+            if (!carrierType.IsNestedPublic)
+                throw new MalformedTrustedCompanionException(
+                    "nested trusted [KotlinCompanion] carrier must have NestedPublic visibility");
+            if (carrierType.GetGenericArguments().Length != ownerType.GetGenericArguments().Length)
+                throw new MalformedTrustedCompanionException(
+                    "nested trusted [KotlinCompanion] must capture exactly its physical owner's generic slots");
+            if (carrierType.GetGenericArguments().Any(parameter =>
+                parameter.GenericParameterAttributes != GenericParameterAttributes.None ||
+                parameter.GetGenericParameterConstraints().Length != 0))
+                throw new MalformedTrustedCompanionException(
+                    "nested trusted [KotlinCompanion] generic captures must be unconstrained");
+            if (!HasTrustedMarker(carrierType, assembly, "DotKt.Runtime.CompilerServices.KotlinObjectAttribute"))
+                throw new MalformedTrustedCompanionException(
+                    "nested trusted [KotlinCompanion] requires trusted [KotlinObject]");
+            FieldInfo[] instances;
+            try
+            {
+                instances = carrierType.GetFields(BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.Static | BindingFlags.DeclaredOnly)
+                    .Where(f => f.Name == "$INSTANCE" && f.IsPublic && IsOpenSelfType(f.FieldType, carrierType))
+                    .ToArray();
+            }
+            catch (Exception ex)
+            {
+                throw new MalformedTrustedCompanionException(
+                    $"could not validate nested [KotlinCompanion] carrier '{carrierType.FullName}'", ex);
+            }
+            if (instances.Length != 1)
+                throw new MalformedTrustedCompanionException(
+                    "nested trusted [KotlinCompanion] requires one public static self-typed $INSTANCE field");
+
+            companionSemanticOwnerByCarrier.Add(
+                StripGenericArity(DottedFqn(carrierType.FullName ?? carrierType.Name)),
+                StripGenericArity(owner));
+
+            // Private/internal companions do not participate in downstream call binding. Public and protected
+            // companions do; the carrier remains public enough for lifted helper types while the payload restores
+            // Kotlin visibility. Every carrier was still validated above so malformed compiler-owned metadata cannot
+            // silently alter the scan.
+            if (visibility is "public" or "protected" &&
+                IsPubliclyVisible(ownerType) && IsPubliclyVisible(carrierType))
+            {
+                result.Add(carrierType, false);
+                var semanticType = StripGenericArity(owner) + ".<companion:" + name + ">";
+                companionPhysicalOwnerBySemanticType.Add(semanticType,
+                    carrierType.FullName ?? carrierType.Name);
+                singletonCompanionCarriers.Add(
+                    StripGenericArity(owner),
+                    carrierType.FullName ?? carrierType.Name);
+                companionCarriersByPhysicalOwner.Add(
+                    StripGenericArity(DottedFqn(physicalOwner)),
+                    carrierType.FullName ?? carrierType.Name);
+                companionSourceNamesByPhysicalOwner.Add(
+                    StripGenericArity(DottedFqn(physicalOwner)), name);
+            }
+        }
+        return result;
+    }
+
+    static bool IsOpenSelfType(Type fieldType, Type carrierType)
+    {
+        if (!carrierType.IsGenericTypeDefinition) return fieldType == carrierType;
+        if (!fieldType.IsGenericType || fieldType.GetGenericTypeDefinition() != carrierType) return false;
+        var args = fieldType.GetGenericArguments();
+        return args.Length == carrierType.GetGenericArguments().Length &&
+            args.Select((arg, index) => arg.IsGenericParameter &&
+                arg.DeclaringMethod == null && arg.GenericParameterPosition == index).All(x => x);
+    }
+
+    static readonly char[] ForbiddenSemanticNameCharacters = ['.', '/', '\\', '<', '>', ':', '[', ']', '$'];
+
+    static bool IsSemanticNameSegment(string value) =>
+        value.Length != 0 && value.IndexOfAny(ForbiddenSemanticNameCharacters) < 0 &&
+        !value.Any(char.IsControl);
+
+    static bool IsSemanticQualifiedName(string value) =>
+        value.Split('.', StringSplitOptions.None).All(IsSemanticNameSegment);
+
+    static bool HasTrustedMarker(Type type, Assembly assembly, string marker) =>
+        type.GetCustomAttributesData().Any(c => c.AttributeType.FullName == marker &&
+            c.AttributeType.Assembly == assembly &&
+            HasAttribute(c.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr));
+
+    static bool IsPubliclyVisible(Type type) => type.IsNested
+        ? (type.IsNestedPublic || type.IsNestedFamily || type.IsNestedFamORAssem) &&
+            type.DeclaringType != null && IsPubliclyVisible(type.DeclaringType)
+        : type.IsPublic;
+
+    static int DeclaredGenericArity(Type type)
+    {
+        if (!type.IsGenericType) return 0;
+        var total = type.GetGenericArguments().Length;
+        var inherited = type.DeclaringType is { IsGenericType: true } parent
+            ? parent.GetGenericArguments().Length : 0;
+        return total - inherited;
+    }
+
+    static string PhysicalMetadataName(Type type)
+    {
+        var simple = StripGenericArity(type.Name);
+        if (type.DeclaringType != null) return PhysicalMetadataName(type.DeclaringType) + "+" + simple;
+        return string.IsNullOrEmpty(type.Namespace) ? simple : type.Namespace + "." + simple;
     }
 
     // A reflected byte[] ctor argument materializes under MetadataLoadContext as an IReadOnlyList<CustomAttributeTypedArgument>
@@ -1927,6 +2352,22 @@ sealed partial class ReferenceMetadataIndex
             }
         }
         return null;
+    }
+
+    static JsonNode CarrierJsonOf(
+        IList<CustomAttributeData> attrs,
+        Assembly declaringAssembly,
+        string attrFullName)
+    {
+        if (declaringAssembly == null) return null;
+        var cad = attrs.FirstOrDefault(c =>
+            c.AttributeType.FullName == attrFullName &&
+            c.AttributeType.Assembly == declaringAssembly &&
+            HasAttribute(c.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr));
+        if (cad == null || cad.ConstructorArguments.Count != 2 ||
+            cad.ConstructorArguments[0].Value is not string version)
+            return null;
+        return BirCarrier.DecodeBody(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
     }
 
     // The first constructor string argument of the attribute `fullName` (e.g. @ClrCollectionFactory("list") -> "list"),
@@ -2445,6 +2886,12 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
     public readonly HashSet<string> ByRefLikeOwners = new(StringComparer.Ordinal);        // ownerFqn -> is a `ref struct` (see IsByRefLikeFqn)
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
+    public readonly Dictionary<string, bool> CompanionStaticByPhysicalOwner = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> SingletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> CompanionCarrierByPhysicalOwner = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> CompanionSourceNameByPhysicalOwner = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> CompanionPhysicalOwnerBySemanticType = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> CompanionSemanticOwnerByCarrier = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> (first) ctor param type names
@@ -2526,6 +2973,11 @@ readonly record struct SlotFact(TypeNode Node, bool Refused);
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
 sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null);
+
+// The exact authored binding selected from a complete declaration identity. Carrying this value across the alias-
+// companion rewrite prevents a later name+arity lookup from silently selecting a different overload.
+sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string PropertyName,
+    bool Conv, string ConvTo, int[] ByrefPositions);
 
 // A referenced CONSTRUCTOR's declaration shape. A `new` is a call whose declaration is the owner's constructor, so the
 // nullable-generic realign types its arguments exactly as it types a method call's — and a ctor has no name of its own,

@@ -28,9 +28,9 @@
 // COLLISION: this is one assembly / one namespace, so EVERY top-level declaration introduced here is prefixed `ReferenceProperty`
 // with a per-case tag (Mref/Nst/Nnc/Ov/Op/Pref/Props/Rc/Rf/Rpt/Rwp) to avoid clashing with sibling batteries + stdlib.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import kotlin.reflect.KProperty0
 import kotlin.reflect.KMutableProperty1
 import kotlin.properties.ReadWriteProperty

@@ -14,9 +14,9 @@
 //   g6 declaration-site variance (out/in)      (was il-generic6)
 import NUnit.Framework.TestAttribute
 // Standard assertion imports (the convention for every battery — see docs/design-nunit-test-harness.md).
-// NUnit's static asserts live on ClassicAssert.Companion in DotKt (C# static classes surface their statics
-// on the Kotlin `.Companion`); `import ... as` aliases the member as a callable so tests read idiomatically.
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+// NUnit's static asserts remain direct KLIB static declarations; `import ... as` aliases the member as a callable
+// so tests read idiomatically.
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // G-1: generic class + generic function.
 class Box<T>(val value: T) { fun get(): T = value }

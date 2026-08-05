@@ -34,9 +34,9 @@
 // is renamed IterIntBox because GenericsTests already owns `IntBox`, and the two `Countdown` classes are
 // disambiguated (IterCountdown / IterableCountdown).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 
 // ---- il-collrealkt : generic collection extensions exercising indexer/size member access -----------------------
 fun <T> List<T>.crkFirstE(): T {

@@ -11,7 +11,7 @@
 // Assembly-wide collision rule (one battery assembly = one namespace): every top-level declaration is `Constructor`-prefixed so it
 // cannot clash with a sibling fixture (e.g. il-ctorref's `Point` -> `ConstructorPointR`).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- il-ctor : secondary constructors + init blocks; secondary delegates to primary via this(...) --------------
 class ConstructorRect(val w: Int, val h: Int) {

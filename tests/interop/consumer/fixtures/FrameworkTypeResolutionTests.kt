@@ -8,8 +8,8 @@
 // Coverage preserved (old case -> method):
 //   ktproj-inbox  -> inbox_tpaFallbackFrameworkTypes  System.Text.Json (inbox) + System.Net.Http (inbox) resolve via TPA
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import System.Text.Json.JsonSerializerOptions
 import System.Net.Http.HttpClient
 

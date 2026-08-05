@@ -10,7 +10,7 @@
 //
 // Assembly-wide collision rule: top-level helpers are `NumericRepresentation`-prefixed (takeByte -> numericRepresentationTakeByte, Holder -> NumericRepresentationByteHolder).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- il-bytearg : Byte/Short parameters, fields ----------------------------------------------------------------
 fun numericRepresentationTakeByte(b: Byte): Int = b.toInt()

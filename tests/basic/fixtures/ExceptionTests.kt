@@ -31,9 +31,9 @@
 // Top-level names are unique within this single battery assembly (one project = one namespace) and `exc`-prefixed
 // to avoid clashing with sibling batteries and stdlib names.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 // ---- il-exc : try/catch as a statement, ArithmeticException on integer division ------------------------------
 fun excSafeDiv(a: Int, b: Int): Int {

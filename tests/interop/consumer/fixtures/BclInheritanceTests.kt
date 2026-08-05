@@ -8,7 +8,7 @@
 // Top-level names are family-prefixed with `BclInheritance` (one assembly = one namespace) to avoid clashing with
 // sibling batteries and the stdlib.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Exception
 import System.InvalidOperationException
 

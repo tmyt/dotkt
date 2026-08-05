@@ -156,6 +156,17 @@ MERGED (same-shape variants → one canonical kind):
 KEPT distinct (NOT synonyms — different semantics): `staticField`≠`clrStaticField`,
 `callInstance`≠`clrInstance`, `field`≠`clrPropGet`, `field`/`setField` (this-asm field) ≠ property accessors.
 
+Companion vocabulary (#275) also stays phase-owned. kotc emits `companionValue` as a BIR-only semantic singleton
+access and records `kotlinCompanion:{owner,name,visibility}` on the semantic companion declaration. bir2cir alone
+chooses the ordinary nested CLR carrier, gives that CIR declaration `nestedIn` plus declaration-name
+`capturedTypeParams`, and eliminates every `companionValue`. A CLR-static callable reference is the distinct
+`newClrStaticDelegate` node after external binding; ilemit consumes that already-resolved physical decision. The
+temporary `companionCaptureOwner`/`externalCompanionOwner` strings are declaration-association keys for lifted and
+suspend captures, not Type slots, and must be consumed before CIR. The schema gate enforces those phase boundaries:
+`companionValue`, `kotlinCompanion`, and both capture-owner keys are forbidden in CIR; `newClrStaticDelegate` and
+`capturedTypeParams` are forbidden in BIR. A CIR `newClrStaticDelegate` must already carry the resolved
+`memberSig`/`memberOwner` descriptors required by ilemit.
+
 Control flow: the structured `for*` family and the CFG `label`/`brIf`/`goto` while-family coexist
 (mid-migration, audit D8) — the freeze picks the CFG form as canonical for lowered output; the structured
 `for*` may remain as a kotc-emit sugar that bir2cir lowers. [finalize in impl]
@@ -552,7 +563,9 @@ freshly-emitted BIR + CIR and reddens the gate on any drift.
   entry/underlying/physical-value payloads, the enum keys `scope`/`op`/`vis`/`variance`/`kind`, and the documented
   owner/member NAME islands §2.2.1 plus an external attribute's exact `attrAssembly` metadata scope) is
   fixed; a bare string at ANY other key is a type-token leak and reds. Array string elements red too, except the
-  `typeParams` name-declaration shorthand (`STRARR_OK`). This fails closed across the whole tree — a future
+  `typeParams`/`capturedTypeParams` name-declaration shorthand (`STRARR_OK`). The
+  `kotlinCompanion.owner`/`.visibility` exception is path-scoped to that declaration fact; it does not re-admit a
+  bare `owner` type slot elsewhere. This fails closed across the whole tree — a future
   string type token anywhere reddens without the validator having to enumerate every type slot.
 - **Canonical node kinds + type tags (§2.5/§2.6).** Every `{k}` must be in the frozen `KINDS` set (the union of
   every kind the current toolchain emits across a full fresh build — regenerate with `--dump-kinds`); every emitted

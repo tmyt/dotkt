@@ -1,5 +1,5 @@
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 private open class CovariantBase(val value: Int)
 private class CovariantDerived(value: Int) : CovariantBase(value)

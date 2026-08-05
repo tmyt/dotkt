@@ -12,8 +12,8 @@
 //
 // All top-level declarations introduced here are PropertyAtomic-prefixed (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import kotlin.reflect.KProperty
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicInt

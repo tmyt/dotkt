@@ -13,8 +13,8 @@
 // NOT driven here: an `out int?` referent, which is a slot in the same rule. `ClrRef` parameters have a separate,
 // separately-tracked defect (see ByRefParameterTests' note), so a case there would assert that instead of this.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 import NvGen.Api
 import NvGen.GenFac
 import NvGen.INotObliged

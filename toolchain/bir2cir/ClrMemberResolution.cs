@@ -277,6 +277,7 @@ static partial class ClrMemberResolution
             case "clrStatic": ResolveCall(node, instance: false); break;
             case "clrInstance": ResolveCall(node, instance: true); break;
             case "newBoundClrDelegate": ResolveBoundClrDelegate(node); break;
+            case "newClrStaticDelegate": ResolveClrStaticDelegate(node); break;
             // A GENERIC .NET method gets its `memberSig` from NetInteropBinding (kotc's FIR-resolved `shapeTypes`),
             // so it never needed resolving here — and so its DECLARED RETURN was never established either, which is
             // the one thing the crossing refusal reads. It is resolved for that fact alone: `memberSig` is left
@@ -485,8 +486,15 @@ static partial class ClrMemberResolution
         else return;
         var name = (node["method"] as JsonValue)?.GetValue<string>();
         var argNodes = ReadArgTypes(node);
-        var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
-        var cands = Candidates(open, name, argNodes, ownerFqn.Args, flags);
+        // Protected declarations are part of the referenced Kotlin/CLR surface and the frontend has already enforced
+        // their source access rule.
+        // Reflection's Public-only lookup drops those legal slots; enumerate nonpublic methods but retain only CLR
+        // Family/FamORAssem, never private or assembly-only declarations.
+        var flags = BindingFlags.Public | BindingFlags.NonPublic |
+            (instance ? BindingFlags.Instance : BindingFlags.Static);
+        var cands = Candidates(open, name, argNodes, ownerFqn.Args, flags)
+            .Where(m => m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly)
+            .ToList();
         // WITHOUT `typeArgs`, exclude generic-method DEFINITIONS so `Task.fromException` binds the non-generic
         // `Task FromException(Exception)`, not `Task<T> FromException<T>(Exception)` (no inferable T). WITH `typeArgs`
         // keep BOTH kinds: a generic Kotlin @ClrIntrinsic (`arrayCopy<T>`) can bind a NON-generic BCL method
@@ -599,7 +607,7 @@ static partial class ClrMemberResolution
     // ---- bound .NET method-reference (newBoundClrDelegate) --------------------------------------
 
     // W1-S5 (#46/#183) — RESOLVED-CLR-IR carry for a BOUND .NET method-reference (`netObj::method`, produced by
-    // NetInteropBinding.ReshapeBoundDelegate). The target is ALWAYS a public INSTANCE method on the owner `clrType`
+    // NetInteropBinding.ReshapeBoundDelegate). The target is a source-visible public/protected INSTANCE method on the owner `clrType`
     // (Codex-confirmed: the bound receiver comes from an IR dispatch receiver — statics have none, extensions are
     // excluded). Until now ilemit resolved it with `type.GetMethod(name, argTypes) ?? type.GetMethod(name)` — a
     // name+params match with a NAME-ONLY first-pick fallback (exactly the class #46 removes). This carries the winning
@@ -614,12 +622,41 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException($"bir2cir: newBoundClrDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type (#46/#183 memberSig carry)");
         var name = (node["method"] as JsonValue)?.GetValue<string>();
         var argNodes = ReadArgTypes(node);
-        // A bound method-ref carries no `typeArgs` (no `netObj::method<T>` form in the corpus) — exclude generic-method
-        // DEFINITIONS, mirroring ResolveCall's no-typeArgs branch; a generic target would fail loud here (greppable).
-        var cands = Candidates(open, name, argNodes, ownerFqn.Args, BindingFlags.Public | BindingFlags.Instance)
-            .Where(m => !m.IsGenericMethodDefinition).ToList();
+        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+        var cands = Candidates(open, name, argNodes, ownerFqn.Args,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(IsPublicOrProtected)
+            .Where(m => m.IsGenericMethodDefinition
+                ? m.GetGenericArguments().Length == methodArity
+                : methodArity == 0)
+            .ToList();
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
+        node["memberSig"] = MemberSig(win.GetParameters());
+        node["memberOwner"] = DeclaringTypeDescriptor(win);
+        StampMemberRet(node, win.ReturnType);
+        node.Remove("argTypes");
+    }
+
+    static void ResolveClrStaticDelegate(JsonObject node)
+    {
+        if (ReadOwnerNode(node["clrType"]) is not TypeNode.Fqn ownerFqn) return;
+        var open = ResolveOwnerType(ownerFqn);
+        if (open == null)
+            throw new InvalidOperationException(
+                $"bir2cir: newClrStaticDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type");
+        var name = (node["method"] as JsonValue)?.GetValue<string>();
+        var argNodes = ReadArgTypes(node);
+        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+        var cands = Candidates(open, name, argNodes, ownerFqn.Args,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            .Where(IsPublicOrProtected)
+            .Where(m => m.IsGenericMethodDefinition
+                ? m.GetGenericArguments().Length == methodArity
+                : methodArity == 0)
+            .ToList();
+        var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
+            $"newClrStaticDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberSig"] = MemberSig(win.GetParameters());
         node["memberOwner"] = DeclaringTypeDescriptor(win);
         StampMemberRet(node, win.ReturnType);
@@ -634,6 +671,11 @@ static partial class ClrMemberResolution
     // owner (args present) binds the arity-suffixed def (`TaskCompletionSource`1`), never a same-named NON-generic sibling.
     internal static Type ResolveOwnerType(TypeNode.Fqn ownerFqn)
     {
+        // A generated nested companion's CIR token deliberately omits CLR generic-arity punctuation, including the
+        // outer owner's backtick. Its validated [KotlinCompanion] association is the authority for the exact reflected
+        // TypeDef spelling; use that association before the ordinary flat-name arity probe.
+        if (_refs.TryCompanionMetadataCarrier(ownerFqn.Name, out _))
+            return _refs.ResolveCompanionMetadataCarrier(ownerFqn.Name, ownerFqn.Args?.Length ?? 0);
         // A NESTED-generic reflection name already carries backtick arity + `+` separators (`Outer`1+Nested`, the
         // ConfigureAwait awaiter) — resolve it VERBATIM; BareOwnerFqn/StripGenericArity would truncate at the first
         // backtick and lose the nested type. (Its `args` instantiate the OUTER; a member whose sig has no outer type-var
@@ -921,13 +963,15 @@ static partial class ClrMemberResolution
     static List<MethodInfo> Candidates(Type open, string name, List<TypeNode> argNodes, TypeNode[] ownerArgs, BindingFlags flags)
     {
         var own = new List<MethodInfo>();
-        try { own.AddRange(open.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == argNodes.Count)); } catch { }
+        try { own.AddRange(open.GetMethods(flags).Where(m => m.Name == name &&
+            m.GetParameters().Length == argNodes.Count && IsPublicOrProtected(m))); } catch { }
         if ((flags & BindingFlags.Instance) == 0 ||
             own.Any(m => Match(m.GetParameters(), argNodes, ownerArgs) != MatchKind.No))
             return own;
         var withInterfaces = new List<MethodInfo>(own);
         foreach (var bi in SafeInterfaces(open))
-            try { withInterfaces.AddRange(bi.GetMethods(flags).Where(m => m.Name == name && m.GetParameters().Length == argNodes.Count)); } catch { }
+            try { withInterfaces.AddRange(bi.GetMethods(flags).Where(m => m.Name == name &&
+                m.GetParameters().Length == argNodes.Count && IsPublicOrProtected(m))); } catch { }
         return withInterfaces;
     }
 
@@ -1137,6 +1181,7 @@ static partial class ClrMemberResolution
     static readonly string[] ResolvedOnlyKinds =
     {
         "newClr", "clrStatic", "clrInstance", "clrGenericStatic", "clrGenericInstance", "newBoundClrDelegate",
+        "newClrStaticDelegate",
         "clrPropGet", "clrPropSet", "clrEventAdd", "clrEventRemove",
     };
 

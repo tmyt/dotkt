@@ -15,8 +15,8 @@
 // delegate — it exercises the identical event path (implement / raise-from-outside-a-different-type / consume) without
 // tripping the generic-delegate defect.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.ComponentModel.INotifyPropertyChanged
 import System.ComponentModel.PropertyChangedEventArgs
 import EventDelegation.EventSource

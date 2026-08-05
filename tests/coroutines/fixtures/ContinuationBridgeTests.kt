@@ -19,7 +19,7 @@
 // Top-level names use the descriptive `synchronousContinuation` and `unitContinuation` stems so they remain
 // readable and cannot clash with sibling coroutine fixtures or the stdlib.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException

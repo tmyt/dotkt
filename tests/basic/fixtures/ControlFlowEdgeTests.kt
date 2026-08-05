@@ -13,7 +13,7 @@
 //
 // Top-level names are ControlFlow-prefixed (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- m-a1 : sealed type + exhaustive when(is) + smart cast ---------------------------------------------------
 sealed class ControlFlowNode

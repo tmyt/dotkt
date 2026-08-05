@@ -24,10 +24,10 @@
 // Top-level names are unique within this single battery assembly (one project = one namespace); il-mapdes's `sum`
 // vararg helper is renamed varargSum to avoid shadowing the stdlib Iterable.sum extension.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 // ---- il-mapdes : spread `*array` into a vararg ----------------------------------------------------------------
 fun varargSum(vararg xs: Int): Int { var s = 0; for (x in xs) s += x; return s }

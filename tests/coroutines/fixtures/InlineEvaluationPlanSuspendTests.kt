@@ -14,7 +14,7 @@
 // The relays complete synchronously — the reorder/re-evaluation faults these lock are observable purely through the
 // interleaved side effects, exactly as in SuspendEvaluationOrderTests. Top-level names carry the `inlineSuspendPlan` prefix.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
 
 val inlineSuspendPlanLog = mutableListOf<String>()

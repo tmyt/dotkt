@@ -41,8 +41,8 @@
 // Top-level names are family-prefixed (`suspendOperand`) — the cold-core lowering keys top-level suspend funs by simple
 // name, so they must be unique across this assembly.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.Text.StringBuilder
 import System.Threading.Tasks.Task
 import System.Threading.Tasks.TaskCompletionSource1

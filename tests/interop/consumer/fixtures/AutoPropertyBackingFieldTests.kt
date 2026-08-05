@@ -8,10 +8,10 @@
 // companion/top-level static, the `@ClrField` opt-out) emits no CLR property and therefore keeps its plain name — the
 // last test pins that boundary. A CUSTOM accessor over a backing field is still accessor-routed, so it IS renamed.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNotNull as assertNotNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.IsNotNull as assertNotNull
 import System.Type
 import System.Reflection.FieldInfo
 import System.Reflection.RuntimeReflectionExtensions.GetRuntimeFields

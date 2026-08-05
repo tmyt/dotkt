@@ -13,7 +13,7 @@
 // Assembly-wide collision rule: every top-level declaration is `DeclarationShape`-prefixed (Tag -> DeclarationShapeTag; Widget -> DeclarationShapeWidget;
 // helper -> declarationShapeHelper; Point -> DeclarationShapePoint3).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- il-annot : user annotations emitted as .NET custom attributes; annotated members run normally --------------
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION)

@@ -14,7 +14,7 @@
 // Top-level names distinguish the `coroutineIntrinsicSuspendBlock` and `CoroutineIntrinsicOwnedRead` features so
 // they remain readable and cannot clash with sibling coroutine fixtures or the stdlib.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.resume
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED

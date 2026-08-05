@@ -13,8 +13,8 @@
 // Assembly-wide collision rule: every top-level declaration is `MapDelegation`-prefixed (User -> MapDelegationUser; topProp -> mapDelegationTopProp;
 // Obj -> MapDelegationObj; Host -> MapDelegationHost; String.shout -> String.mapDelegationShout, etc.).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 
 // ---- il-bymap : map-delegated properties -----------------------------------------------------------------------
 class MapDelegationUser(val data: Map<String, Any?>) {

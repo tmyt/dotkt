@@ -2,7 +2,7 @@
 // kotc -> bir2cir -> ilemit. calleeOwner distinguishes packages, but these pairs deliberately share one file class or
 // one declaring class, so a name-only ldftn would bind both delegates to whichever overload was registered first.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 fun crOvlPick(value: Int): String = "top-int:" + value
 fun crOvlPick(value: String): String = "top-string:" + value

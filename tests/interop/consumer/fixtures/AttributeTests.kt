@@ -5,7 +5,7 @@
 //   netattr        <- il-netattr         a .NET attribute with (string,int) ctor, applied on class + fun (#54)
 //   netattr-vararg <- il-netattr-vararg  a .NET attribute whose ONLY ctor is `params object[]`, applied bare (#184)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 // il-netattr
 import NetAttr.LabelAttribute
 // il-netattr-vararg

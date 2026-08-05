@@ -9,7 +9,7 @@
 //
 // Top-level names are family-prefixed with `bclConsole` (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Console
 import System.Environment
 import System.IO.Path

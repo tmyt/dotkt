@@ -4,7 +4,7 @@
 //   injuint  <- il-injuint   .NET UNSIGNED params: System.UInt32 -> kotlin.UInt, System.UInt64 -> kotlin.ULong
 //   ubyteinj <- il-ubyteinj  System.Byte -> kotlin.UByte, byte[] -> UByteArray (STRICT, #53)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 // il-injuint
 import Boot.Strap
 // il-ubyteinj

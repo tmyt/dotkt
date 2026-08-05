@@ -12,7 +12,7 @@
 // All top-level declarations are InlineMaterialization-prefixed (one project = one namespace, shared with sibling batteries + stdlib).
 // il-inlsiblingdelegate's b.kt half lives in InlineCrossFileSupport.kt to keep the cross-file-class scenario.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- il-inheritedgenericinline : inherited member inline on a GENERIC owner -------------------------------------
 abstract class InlineMaterializationContainer<E>(val value: E) {

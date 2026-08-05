@@ -6,7 +6,7 @@
 // delegate target through — rather than a global first-match FindStatic. (Direct-call analogue:
 // SameNameFunctionDispatchTests; suspend analogue: SameNameAcrossPackagesTests in tests/coroutines.)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import xpkg199da.aDeleg
 import xpkg199db.bDeleg
 

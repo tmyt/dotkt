@@ -252,9 +252,9 @@ static class InlineSplice
         // the extension `__self` SHADOWS dispatch), so STEP 5 binds only the extension. A payload-frame `{k:this}` here is a
         // read of the DISPATCH (enclosing-class) receiver. When the callee is a REAL-INSTANCE member (!static) and kotc
         // carried `recvs.dispatch`, CO-BIND both: §4.3 (below) binds that `{k:this}` to `<prefix>this` alongside the
-        // extension `__self`. EXCLUDE a FLATTENED-companion / top-level (static) extension: its `recvs.dispatch` renders a
-        // dangling `Owner.INSTANCE` staticField, so a dispatch-reading body there stays a hard error (never silently
-        // rebind). The SOUND pure-extension idiom (body reads only `__self`, never `{k:this}`) has no payload-frame `this`.
+        // extension `__self`. CompanionRepresentationLowering leaves companion payloads non-static on their nested
+        // carrier. A static extension that still retains an enclosing `{k:this}` is therefore an unsupported producer
+        // shape, never a companion-representation inference here.
         // What counts as a DISPATCH read in an extension payload:
         //  - a bare payload-frame `{k:this}` (HasPayloadFrameThis) is ALWAYS the dispatch receiver — the extension `this`
         //    renders as `__self` (selfSubst), so a bare `{k:this}` can only be the enclosing-class receiver;
@@ -266,7 +266,7 @@ static class InlineSplice
         bool coBindDispatch = payloadExt && !payloadStatic && hasDispatchRecv && payloadReadsDispatch;
         if (payloadExt && !coBindDispatch && payloadReadsDispatch)
         { FailLoud(o, owner, name, pc, ga, payloadStatic
-              ? "a static (flattened-companion / top-level) extension inline whose body reads an enclosing `this` — recvs.dispatch would be a dangling `Owner.INSTANCE` token, cannot co-bind (#23)"
+              ? "a static extension inline payload retained an enclosing `this` after representation lowering — cannot co-bind (#23)"
               : "member-extension inline whose body reads the dispatch (enclosing-class) receiver but no recvs.dispatch was carried — cannot co-bind (#23)"); return; }
 
         var pRet = payload["ret"]?.DeepClone();
@@ -817,8 +817,9 @@ static class InlineSplice
         // (`args[0]`), but the stash classifies its payload `recv=="extensionParam"` (extension SHADOWS dispatch,
         // InlineBirStash.StashMethod). For a REAL-INSTANCE member (!static) we CO-CARRY recvs.dispatch below, so
         // RewriteGeneric §4.3 co-binds the payload `{k:this}` at STEP 8's fixpoint (nested forwarding keeps both receivers).
-        // A STATIC (flattened-companion) extension's dispatch is a dangling `Owner.INSTANCE`, so a dispatch-reading body
-        // there stays unspliceable -> leave the call untouched (§4.4ii materializes a sound real delegate).
+        // Companion lowering leaves the nested carrier non-static. Any static extension payload that still contains
+        // `{k:this}` is an unbindable producer shape, so
+        // leave the call untouched (§4.4ii materializes a sound real delegate).
         if (k == "callInstance" && recv == "extensionParam" && o["recv"] != null && fwdStatic && HasNode(payload["body"], "this")) return;
 
         var recvs = new JsonObject();

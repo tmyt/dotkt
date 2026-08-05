@@ -28,7 +28,7 @@
 //
 // Top-level names are family-prefixed (`capturedVarRefCell`/`CapturedVarRefCell`) — one project is one namespace, shared with the sibling batteries.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- constructor / init-block root -------------------------------------------------------------------------------
 interface CapturedVarRefCellRunner { fun run() }

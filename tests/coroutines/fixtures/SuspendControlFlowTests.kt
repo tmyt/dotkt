@@ -13,7 +13,7 @@
 // Top-level names use descriptive structured-flow, generic, array-iteration, and inline feature stems so they cannot clash with sibling
 // coroutine fixtures or the stdlib within this single assembly.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED

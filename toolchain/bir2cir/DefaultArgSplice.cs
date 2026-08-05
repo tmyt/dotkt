@@ -7,9 +7,11 @@ using DotKt.Bir;
 
 // CROSS-MODULE DEFAULT-ARGUMENT SPLICE (#134/#146).
 //
-// A call that OMITS a defaulted argument reaches bir2cir in either of two forms:
+// A call that OMITS a defaulted argument reaches bir2cir in one of three forms:
 // - a POSITIONAL `{"k":"defaultArg"}` placeholder when a later argument keeps the omitted slot observable; or
-// - a shorter `args` vector for a purely trailing omission.
+// - a shorter `args` vector for a purely trailing Kotlin omission; or
+// - a shorter owner-qualified CLR-static call whose optional parameter exists only in CLR metadata (Kotlin IR marks
+//   the call legal but does not synthesize an IrErrorExpression/defaultArg placeholder).
 // The call still carries the frontend-selected declaration's complete `sig`/`shapeTypes` vector. For that exact
 // declaration this pass reads the default value from the referenced DLL (`KotlinDefault` carrier first, ECMA-335
 // parameter constant otherwise) and materializes a complete physical argument vector for CIR.
@@ -86,8 +88,44 @@ static class DefaultArgSplice
             // whose callee identifies the carriers and the bindings the fill is written into and reads from.
             if (Str(obj["k"]) == "callEval" && obj["expr"] is JsonObject call && obj["bindings"] is JsonArray bindings)
                 TrySplice(call, bindings, refs, hoist, localOwner);
+            // A genuine static class member restored with Kotlin's IS_STATIC_FUNCTION flag has no synthetic companion
+            // receiver and can expose an ECMA-335 optional parameter directly. The frontend accepts the omission but
+            // its IR stub carries no default expression, so kotc can only emit the shorter argument vector. Resolve the
+            // selected owner+declaration signature here and append only metadata-representable constants. Anything
+            // needing a receiver/earlier-parameter binding still requires the ordinary planned placeholder path.
+            TrySpliceTrailingConstants(obj, refs);
         }
         else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) Walk(it, refs, hoist, localOwner);
+    }
+
+    static void TrySpliceTrailingConstants(JsonObject node, ReferenceMetadataIndex refs)
+    {
+        var k = Str(node["k"]);
+        if (k != "callStatic" && k != "callInstance") return;
+        if (node["args"] is not JsonArray args) return;
+        var sig = node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray;
+        if (sig == null || args.Count >= sig.Count) return;
+        var owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
+        var method = Str(node["method"]);
+        if (owner == null || method == null) return;
+        var sigKey = string.Join(",", sig.Select(t => ReferenceMetadataIndex.ParamKey(t)));
+        var defaults = refs.KotlinDefaultsFor(owner, method, sig.Count, sigKey);
+        if (defaults == null) return;
+
+        // Parse the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
+        // or an earlier parameter and therefore needs callEval bindings; accepting only `const` is both the complete
+        // ECMA-335 optional-constant surface indexed by ReferenceMetadataIndex and safe to append in evaluation order.
+        var fills = new List<JsonNode>();
+        for (var pos = args.Count; pos < sig.Count; pos++)
+        {
+            if (!defaults.TryGetValue(pos, out var bir)) return;
+            JsonNode parsed;
+            try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); }
+            catch { return; }
+            if (parsed is not JsonObject o || Str(o["k"]) != "const") return;
+            fills.Add(parsed);
+        }
+        foreach (var fill in fills) args.Add(fill);
     }
 
     // The binding an argument slot READS, or null when the slot is not a plan read.
@@ -123,9 +161,9 @@ static class DefaultArgSplice
         if (node["args"] is not JsonArray args) return;
         // The reserved binding behind each argument slot, and whether it is still awaiting a cross-module fill. kotc
         // emits a placeholder for EVERY omitted arg of a @KotlinDefault-carrying callee (never a bare trailing DROP),
-        // so `args.Count == sig.Count` here — a call merely SHORT of `sig` (a same-module trailing omit ilemit
-        // backfills, or any non-defaulted call carrying `sig`) must NOT be touched: appending a default off an
-        // ownerless name match would corrupt it.
+        // so `args.Count == sig.Count` here. A shorter owner-qualified call may have had CLR optional constants appended
+        // by TrySpliceTrailingConstants; arbitrary short vectors remain untouched because an ownerless/name-only match
+        // would not identify a safe fill.
         var slotBinding = new JsonObject[args.Count];
         var hasPlaceholder = false;
         for (var j = 0; j < args.Count; j++)

@@ -16,6 +16,7 @@ internal static class Program
 {
     private const string ArityClashesEnvironment = "DOTKT_DLL2KLIB_ARITY_CLASHES";
     private const string DelegateCatalogEnvironment = "DOTKT_DLL2KLIB_DELEGATE_CATALOG";
+    private const string CompanionCatalogEnvironment = "DOTKT_DLL2KLIB_COMPANION_CATALOG";
 
     public static async Task<int> Main(string[] args)
     {
@@ -36,9 +37,10 @@ internal static class Program
                 // referenced TypeDef's identity or Invoke shape on its own. Refuse a human standalone invocation
                 // instead of silently projecting such a delegate as an ordinary nominal class. The batch parent sets
                 // both catalogs on every worker below.
-                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(DelegateCatalogEnvironment)))
+                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(DelegateCatalogEnvironment)) ||
+                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable(CompanionCatalogEnvironment)))
                     throw new InvalidOperationException(
-                        "direct worker mode requires the batch-provided resolved delegate catalog; " +
+                        "direct worker mode requires the batch-provided resolved delegate and companion catalogs; " +
                         "use 'dll2klib --out <directory> @<references.rsp>' with the complete reference set");
                 Convert(input, Path.GetFullPath(args[1]));
                 return 0;
@@ -104,6 +106,8 @@ internal static class Program
         var arityClashes = DiscoverArityClashes(inputs);
         var delegateCatalog = DelegateReferenceCatalog.Discover(resolvedInputs);
         var delegateCatalogJson = delegateCatalog.Serialize();
+        var companionCatalog = CompanionReferenceCatalog.Discover(resolvedInputs);
+        var companionCatalogJson = companionCatalog.Serialize();
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
             .ToArray();
@@ -118,6 +122,7 @@ internal static class Program
             Version = 1,
             ArityClashes = arityClashes,
             Delegates = JsonSerializer.Deserialize<JsonElement>(delegateCatalogJson),
+            Companions = JsonSerializer.Deserialize<JsonElement>(companionCatalogJson),
         });
         var projectionCatalogChanged =
             !File.Exists(projectionCatalogPath) ||
@@ -132,6 +137,8 @@ internal static class Program
             return outputTime < File.GetLastWriteTimeUtc(x.Input) ||
                 outputTime < toolTime ||
                 delegateCatalog.DependenciesOf(x.Input).Any(path =>
+                    outputTime < File.GetLastWriteTimeUtc(path)) ||
+                companionCatalog.DependenciesOf(x.Input).Any(path =>
                     outputTime < File.GetLastWriteTimeUtc(path));
         }).ToArray();
         if (stale.Length == 0)
@@ -143,7 +150,11 @@ internal static class Program
         var catalogPath = Path.Combine(
             outputDirectory,
             $".dll2klib-delegates-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
+        var companionCatalogPath = Path.Combine(
+            outputDirectory,
+            $".dll2klib-companions-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
         File.WriteAllText(catalogPath, delegateCatalogJson);
+        File.WriteAllText(companionCatalogPath, companionCatalogJson);
         try
         {
             var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
@@ -166,6 +177,7 @@ internal static class Program
                     start.ArgumentList.Add(item.Output);
                     start.Environment[ArityClashesEnvironment] = string.Join(';', arityClashes);
                     start.Environment[DelegateCatalogEnvironment] = catalogPath;
+                    start.Environment[CompanionCatalogEnvironment] = companionCatalogPath;
                     using var child = Process.Start(start)
                         ?? throw new InvalidOperationException($"failed to start worker for {item.Input}");
                     var stdout = child.StandardOutput.ReadToEndAsync();
@@ -191,6 +203,7 @@ internal static class Program
         finally
         {
             if (File.Exists(catalogPath)) File.Delete(catalogPath);
+            if (File.Exists(companionCatalogPath)) File.Delete(companionCatalogPath);
         }
     }
 
@@ -239,7 +252,9 @@ internal static class Program
         var arityNames = ArityNames.Create(md, Environment.GetEnvironmentVariable(ArityClashesEnvironment));
         var delegateCatalog = DelegateReferenceCatalog.Load(
             Environment.GetEnvironmentVariable(DelegateCatalogEnvironment));
-        var fragments = new AssemblyScanner(md, arityNames, delegateCatalog).Scan();
+        var companionCatalog = CompanionReferenceCatalog.Load(
+            Environment.GetEnvironmentVariable(CompanionCatalogEnvironment));
+        var fragments = new AssemblyScanner(md, arityNames, delegateCatalog, companionCatalog).Scan();
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         var temp = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -528,6 +543,406 @@ internal sealed class DelegateReferenceCatalog
     }
 }
 
+internal sealed record CompanionCatalogEntry(
+    string AssemblyIdentity,
+    string MetadataName,
+    string SemanticPackage,
+    string[] SemanticClasses,
+    string DefinitionPath);
+
+internal static class CompanionMetadataSyntax
+{
+    private static readonly char[] ForbiddenSegmentCharacters = ['.', '/', '\\', '<', '>', ':', '[', ']', '$'];
+
+    public static bool IsSegment(string value) =>
+        value.Length != 0 && value.IndexOfAny(ForbiddenSegmentCharacters) < 0 &&
+        !value.Any(char.IsControl);
+
+    public static bool IsQualifiedName(string value) =>
+        value.Split('.', StringSplitOptions.None).All(IsSegment);
+}
+
+// A TypeRef carries only the CLR carrier identity. Recovering its Kotlin companion identity therefore requires the
+// compiler-owned carrier on the referenced TypeDef. Build that trusted relation once from the complete resolved
+// reference set and give every worker the same exact (assembly identity, metadata name) catalog. No CLR suffix or
+// source-name convention participates in the lookup.
+internal sealed class CompanionReferenceCatalog
+{
+    private sealed record Carrier(
+        string Owner,
+        string Name,
+        string Visibility,
+        string PhysicalOwner,
+        int PhysicalOwnerArity);
+
+    private readonly Dictionary<string, CompanionCatalogEntry> _entries;
+
+    private CompanionReferenceCatalog(IEnumerable<CompanionCatalogEntry> entries)
+    {
+        _entries = new Dictionary<string, CompanionCatalogEntry>(StringComparer.Ordinal);
+        foreach (var entry in entries)
+        {
+            var key = Key(entry.AssemblyIdentity, entry.MetadataName);
+            if (_entries.TryGetValue(key, out var existing) &&
+                (!StringComparer.Ordinal.Equals(existing.SemanticPackage, entry.SemanticPackage) ||
+                 !existing.SemanticClasses.SequenceEqual(entry.SemanticClasses, StringComparer.Ordinal) ||
+                 !StringComparer.Ordinal.Equals(existing.DefinitionPath, entry.DefinitionPath)))
+                throw new InvalidOperationException(
+                    $"companion carrier '{entry.MetadataName}' is ambiguous for assembly '{entry.AssemblyIdentity}'");
+            _entries[key] = entry;
+        }
+    }
+
+    public static CompanionReferenceCatalog Empty { get; } = new(Array.Empty<CompanionCatalogEntry>());
+
+    public static CompanionReferenceCatalog Discover(IEnumerable<string> inputs)
+    {
+        var paths = inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal).ToArray();
+        var definitions = new List<CompanionCatalogEntry>();
+        foreach (var path in paths)
+        {
+            using var file = File.OpenRead(path);
+            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+            if (!pe.HasMetadata) continue;
+            var md = pe.GetMetadataReader();
+            var attrs = new MetadataAttributes(md);
+            var physicalTypes = md.TypeDefinitions
+                .Select(handle => (
+                    Handle: handle,
+                    Name: PhysicalName(md, handle),
+                    Arity: md.GetTypeDefinition(handle).GetGenericParameters().Count))
+                .GroupBy(x => (x.Name, x.Arity))
+                .ToDictionary(g => g.Key, g => g.Select(x => x.Handle).ToArray());
+            var claimedOwners = new HashSet<TypeDefinitionHandle>();
+            var semanticOwners = new Dictionary<string, TypeDefinitionHandle>(StringComparer.Ordinal);
+            foreach (var handle in md.TypeDefinitions)
+            {
+                if (ReadCarrier(attrs, handle) is not { } carrier) continue;
+                if (!physicalTypes.TryGetValue((carrier.PhysicalOwner, carrier.PhysicalOwnerArity), out var owners) ||
+                    owners.Length != 1)
+                    throw new InvalidDataException(
+                        $"Kotlin companion owner '{carrier.PhysicalOwner}' arity {carrier.PhysicalOwnerArity} " +
+                        $"resolved to {(owners is null ? 0 : owners.Length)} physical types");
+                var owner = owners[0];
+                if (md.GetTypeDefinition(handle).GetDeclaringType() != owner)
+                    throw new InvalidDataException(
+                        $"nested Kotlin companion carrier '{DefinitionName(md, handle)}' must be an ordinary " +
+                        $"nested type of its physical owner '{DefinitionName(md, owner)}' " +
+                        $"(metadata claimed '{carrier.PhysicalOwner}')");
+                if ((md.GetTypeDefinition(handle).Attributes & TypeAttributes.VisibilityMask) !=
+                    TypeAttributes.NestedPublic)
+                    throw new InvalidDataException(
+                        "nested Kotlin companion carrier must have NestedPublic visibility");
+                if (md.GetTypeDefinition(handle).GetGenericParameters().Count !=
+                    md.GetTypeDefinition(owner).GetGenericParameters().Count)
+                    throw new InvalidDataException(
+                        "nested Kotlin companion carrier must capture exactly its physical owner's generic slots");
+                if (md.GetTypeDefinition(handle).GetGenericParameters().Any(parameterHandle =>
+                {
+                    var parameter = md.GetGenericParameter(parameterHandle);
+                    return parameter.Attributes != GenericParameterAttributes.None ||
+                        parameter.GetConstraints().Count != 0;
+                }))
+                    throw new InvalidDataException(
+                        "nested Kotlin companion carrier generic captures must be unconstrained");
+                if (!attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute"))
+                    throw new InvalidDataException("nested Kotlin companion carrier requires [KotlinObject]");
+                var fields = md.GetTypeDefinition(handle).GetFields()
+                    .Where(fieldHandle => IsExactSingletonInstanceField(md, handle, fieldHandle))
+                    .ToArray();
+                if (fields.Length != 1)
+                    throw new InvalidDataException(
+                        "nested Kotlin companion carrier requires one public static self-typed $INSTANCE field");
+                if (!claimedOwners.Add(owner))
+                    throw new InvalidDataException($"multiple Kotlin companion carriers name owner '{carrier.Owner}'");
+                if (!semanticOwners.TryAdd(carrier.Owner, owner) && semanticOwners[carrier.Owner] != owner)
+                    throw new InvalidDataException(
+                        $"multiple physical types claim Kotlin companion owner '{carrier.Owner}'");
+                if (carrier.Visibility is not ("public" or "protected") ||
+                    !IsVisibleType(md, owner) || !IsVisibleType(md, handle))
+                    continue;
+                var semanticPackage = TopLevelNamespace(md, owner);
+                var semanticClassPart = string.IsNullOrEmpty(semanticPackage)
+                    ? carrier.Owner
+                    : carrier.Owner.StartsWith(semanticPackage + ".", StringComparison.Ordinal)
+                        ? carrier.Owner[(semanticPackage.Length + 1)..]
+                        : throw new InvalidDataException(
+                            $"semantic companion owner '{carrier.Owner}' is outside physical package '{semanticPackage}'");
+                definitions.Add(new CompanionCatalogEntry(
+                    AssemblyIdentity(md),
+                    DefinitionName(md, handle),
+                    semanticPackage,
+                    semanticClassPart.Split('.', StringSplitOptions.RemoveEmptyEntries).Append(carrier.Name).ToArray(),
+                    path));
+            }
+        }
+
+        var result = new CompanionReferenceCatalog(definitions);
+        var aliases = new List<CompanionCatalogEntry>();
+        foreach (var path in paths)
+        {
+            using var file = File.OpenRead(path);
+            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+            if (!pe.HasMetadata) continue;
+            var md = pe.GetMetadataReader();
+            var forwardingIdentity = AssemblyIdentity(md);
+            foreach (var handle in md.ExportedTypes)
+            {
+                var exported = md.GetExportedType(handle);
+                const TypeAttributes Forwarder = (TypeAttributes)0x00200000;
+                if ((exported.Attributes & Forwarder) == 0) continue;
+                var targetIdentity = ExportedAssemblyIdentity(md, handle);
+                if (targetIdentity is null) continue;
+                var metadataName = ExportedName(md, handle);
+                if (!result.TryGet(targetIdentity, metadataName, out var target)) continue;
+                aliases.Add(target with {
+                    AssemblyIdentity = forwardingIdentity,
+                    MetadataName = metadataName,
+                });
+            }
+        }
+        return aliases.Count == 0
+            ? result
+            : new CompanionReferenceCatalog(definitions.Concat(aliases));
+    }
+
+    public static CompanionReferenceCatalog Load(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return Empty;
+        var entries = JsonSerializer.Deserialize<List<CompanionCatalogEntry>>(File.ReadAllText(path))
+            ?? throw new InvalidDataException($"invalid companion catalog: {path}");
+        return new CompanionReferenceCatalog(entries);
+    }
+
+    public string Serialize() => JsonSerializer.Serialize(
+        _entries.Values
+            .OrderBy(x => x.AssemblyIdentity, StringComparer.Ordinal)
+            .ThenBy(x => x.MetadataName, StringComparer.Ordinal)
+            .ToArray());
+
+    public bool TryResolve(
+        MetadataReader reader,
+        TypeReferenceHandle handle,
+        out CompanionCatalogEntry entry)
+    {
+        var assemblyIdentity = ReferenceAssemblyIdentity(reader, handle);
+        if (assemblyIdentity is not null &&
+            TryGet(assemblyIdentity, ReferenceName(reader, handle), out entry))
+            return true;
+        entry = null!;
+        return false;
+    }
+
+    public IReadOnlyList<string> DependenciesOf(string input)
+    {
+        using var file = File.OpenRead(input);
+        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+        if (!pe.HasMetadata) return Array.Empty<string>();
+        var md = pe.GetMetadataReader();
+        return md.TypeReferences
+            .Select(handle => TryResolve(md, handle, out var entry) ? entry.DefinitionPath : null)
+            .Where(path => path is not null && !StringComparer.Ordinal.Equals(path, input))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private bool TryGet(string assemblyIdentity, string metadataName, out CompanionCatalogEntry entry) =>
+        _entries.TryGetValue(Key(assemblyIdentity, metadataName), out entry!);
+
+    private static string Key(string assemblyIdentity, string metadataName) =>
+        assemblyIdentity + "\0" + metadataName;
+
+    private static Carrier? ReadCarrier(MetadataAttributes attrs, TypeDefinitionHandle handle)
+    {
+        using var doc = attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinCompanionAttribute");
+        if (doc is null) return null;
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("kind", out var kindNode) || kindNode.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("malformed [KotlinCompanion] carrier: expected kind and name strings");
+        var kind = kindNode.GetString()!;
+        var name = nameNode.GetString()!;
+        if (kind != "nested" || !CompanionMetadataSyntax.IsSegment(name))
+            throw new InvalidDataException(
+                "malformed [KotlinCompanion] carrier: invalid kind or semantic name segment");
+        if (!root.TryGetProperty("owner", out var ownerNode) || ownerNode.ValueKind != JsonValueKind.String ||
+            ownerNode.GetString() is not string owner || !CompanionMetadataSyntax.IsQualifiedName(owner))
+            throw new InvalidDataException(
+                "malformed [KotlinCompanion] carrier: owner must be a non-empty qualified semantic name");
+        if (!root.TryGetProperty("physicalOwner", out var physicalOwnerNode) ||
+            physicalOwnerNode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(physicalOwnerNode.GetString()) ||
+            !root.TryGetProperty("physicalOwnerArity", out var arityNode) ||
+            arityNode.ValueKind != JsonValueKind.Number || !arityNode.TryGetInt32(out var arity) || arity < 0)
+            throw new InvalidDataException(
+                "malformed [KotlinCompanion] carrier: physicalOwner and physicalOwnerArity are required");
+        if (!root.TryGetProperty("visibility", out var visibilityNode) ||
+            visibilityNode.ValueKind != JsonValueKind.String ||
+            visibilityNode.GetString() is not string visibility ||
+            visibility is not ("public" or "internal" or "private" or "protected" or "protectedInternal"))
+            throw new InvalidDataException("malformed [KotlinCompanion] carrier: invalid visibility");
+        return new Carrier(
+            owner, name, visibility, physicalOwnerNode.GetString()!, arity);
+    }
+
+    private static bool IsExactSingletonInstanceField(
+        MetadataReader md,
+        TypeDefinitionHandle carrierHandle,
+        FieldDefinitionHandle fieldHandle)
+    {
+        var field = md.GetFieldDefinition(fieldHandle);
+        if (md.GetString(field.Name) != "$INSTANCE" ||
+            (field.Attributes & FieldAttributes.Static) == 0 ||
+            (field.Attributes & FieldAttributes.FieldAccessMask) != FieldAttributes.Public)
+            return false;
+        var context = new GenericContext(
+            carrierHandle,
+            default,
+            ImmutableDictionary<GenericParameterHandle, int>.Empty);
+        var actual = field.DecodeSignature(RawSignatureTypeProvider.Instance, context);
+        var expectedOpen = RawSignatureTypeProvider.Instance.GetTypeFromDefinition(
+            md, carrierHandle, rawTypeKind: 0x12);
+        var arity = md.GetTypeDefinition(carrierHandle).GetGenericParameters().Count;
+        var expected = arity == 0
+            ? expectedOpen
+            : RawSignatureTypeProvider.Instance.GetGenericInstantiation(
+                expectedOpen,
+                Enumerable.Range(0, arity).Select(i => $"!{i}").ToImmutableArray());
+        return StringComparer.Ordinal.Equals(actual, expected);
+    }
+
+    private static bool IsVisibleType(MetadataReader md, TypeDefinitionHandle handle)
+    {
+        var def = md.GetTypeDefinition(handle);
+        var visibility = def.Attributes & TypeAttributes.VisibilityMask;
+        var parent = def.GetDeclaringType();
+        if (parent.IsNil) return visibility == TypeAttributes.Public;
+        return visibility is TypeAttributes.NestedPublic or TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem &&
+            IsVisibleType(md, parent);
+    }
+
+    private static string DefinitionName(MetadataReader md, TypeDefinitionHandle handle)
+    {
+        var def = md.GetTypeDefinition(handle);
+        var simple = md.GetString(def.Name);
+        var parent = def.GetDeclaringType();
+        if (!parent.IsNil) return DefinitionName(md, parent) + "+" + simple;
+        var ns = md.GetString(def.Namespace);
+        return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string PhysicalName(MetadataReader md, TypeDefinitionHandle handle)
+    {
+        var def = md.GetTypeDefinition(handle);
+        var simple = StripArity(md.GetString(def.Name));
+        var parent = def.GetDeclaringType();
+        if (!parent.IsNil) return PhysicalName(md, parent) + "+" + simple;
+        var ns = md.GetString(def.Namespace);
+        return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string TopLevelNamespace(MetadataReader md, TypeDefinitionHandle handle)
+    {
+        var current = handle;
+        while (true)
+        {
+            var def = md.GetTypeDefinition(current);
+            var parent = def.GetDeclaringType();
+            if (parent.IsNil) return md.GetString(def.Namespace);
+            current = parent;
+        }
+    }
+
+    private static string StripArity(string name)
+    {
+        var tick = name.IndexOf('`');
+        return tick < 0 ? name : name[..tick];
+    }
+
+    private static string ReferenceName(MetadataReader md, TypeReferenceHandle handle)
+    {
+        var type = md.GetTypeReference(handle);
+        var simple = md.GetString(type.Name);
+        if (type.ResolutionScope.Kind == HandleKind.TypeReference)
+            return ReferenceName(md, (TypeReferenceHandle)type.ResolutionScope) + "+" + simple;
+        var ns = md.GetString(type.Namespace);
+        return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string AssemblyIdentity(MetadataReader md)
+    {
+        if (!md.IsAssembly) throw new InvalidDataException("companion carrier catalog requires an assembly definition");
+        var assembly = md.GetAssemblyDefinition();
+        return AssemblyIdentity(
+            md.GetString(assembly.Name),
+            assembly.Version,
+            md.GetString(assembly.Culture),
+            md.GetBlobBytes(assembly.PublicKey),
+            publicKey: true);
+    }
+
+    private static string? ReferenceAssemblyIdentity(MetadataReader md, TypeReferenceHandle handle)
+    {
+        var scope = md.GetTypeReference(handle).ResolutionScope;
+        if (scope.Kind == HandleKind.TypeReference)
+            return ReferenceAssemblyIdentity(md, (TypeReferenceHandle)scope);
+        if (scope.Kind != HandleKind.AssemblyReference) return null;
+        var assembly = md.GetAssemblyReference((AssemblyReferenceHandle)scope);
+        return AssemblyIdentity(
+            md.GetString(assembly.Name),
+            assembly.Version,
+            md.GetString(assembly.Culture),
+            md.GetBlobBytes(assembly.PublicKeyOrToken),
+            publicKey: (assembly.Flags & AssemblyFlags.PublicKey) != 0);
+    }
+
+    private static string AssemblyIdentity(
+        string name,
+        Version version,
+        string culture,
+        byte[] key,
+        bool publicKey)
+    {
+        var assembly = new AssemblyName(name) {
+            Version = version,
+            CultureName = string.IsNullOrEmpty(culture) ? null : culture,
+        };
+        if (key.Length != 0)
+        {
+            if (publicKey) assembly.SetPublicKey(key);
+            else assembly.SetPublicKeyToken(key);
+        }
+        return assembly.FullName
+            ?? throw new InvalidDataException($"could not form assembly identity for '{name}'");
+    }
+
+    private static string ExportedName(MetadataReader md, ExportedTypeHandle handle)
+    {
+        var type = md.GetExportedType(handle);
+        var simple = md.GetString(type.Name);
+        if (type.Implementation.Kind == HandleKind.ExportedType)
+            return ExportedName(md, (ExportedTypeHandle)type.Implementation) + "+" + simple;
+        var ns = md.GetString(type.Namespace);
+        return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string? ExportedAssemblyIdentity(MetadataReader md, ExportedTypeHandle handle)
+    {
+        var implementation = md.GetExportedType(handle).Implementation;
+        if (implementation.Kind == HandleKind.ExportedType)
+            return ExportedAssemblyIdentity(md, (ExportedTypeHandle)implementation);
+        if (implementation.Kind != HandleKind.AssemblyReference) return null;
+        var assembly = md.GetAssemblyReference((AssemblyReferenceHandle)implementation);
+        return AssemblyIdentity(
+            md.GetString(assembly.Name),
+            assembly.Version,
+            md.GetString(assembly.Culture),
+            md.GetBlobBytes(assembly.PublicKeyOrToken),
+            publicKey: (assembly.Flags & AssemblyFlags.PublicKey) != 0);
+    }
+}
+
 internal sealed record Fragment(string PackageName, PackageFragment Message);
 
 internal sealed class ArityNames
@@ -578,6 +993,13 @@ internal sealed class ArityNames
 
 internal sealed class AssemblyScanner
 {
+    private sealed record CompanionCarrier(
+        string Owner,
+        string Name,
+        string Visibility,
+        string PhysicalOwner,
+        int PhysicalOwnerArity);
+
     private sealed record ProjectedFunction(
         MethodDefinitionHandle Handle,
         Function Declaration,
@@ -592,16 +1014,129 @@ internal sealed class AssemblyScanner
     private readonly MetadataAttributes _attrs;
     private readonly ArityNames _arityNames;
     private readonly DelegateReferenceCatalog _delegateCatalog;
+    private readonly CompanionReferenceCatalog _companionCatalog;
+    private readonly Dictionary<TypeDefinitionHandle, CompanionCarrier> _companionCarriers = new();
+    private readonly HashSet<TypeDefinitionHandle> _physicalCompanionCarriers = new();
+    private readonly Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> _liftedCompanions = new();
+    private readonly Dictionary<TypeDefinitionHandle, CompanionCarrier> _companionsByOwner = new();
+    private readonly HashSet<FieldDefinitionHandle> _singletonInstanceFields = new();
+    private readonly Dictionary<TypeDefinitionHandle, string> _semanticOwnerNames = new();
+    private readonly HashSet<TypeDefinitionHandle> _validatedCompanionOwners = new();
 
     public AssemblyScanner(
         MetadataReader md,
         ArityNames arityNames,
-        DelegateReferenceCatalog delegateCatalog)
+        DelegateReferenceCatalog delegateCatalog,
+        CompanionReferenceCatalog companionCatalog)
     {
         _md = md;
         _attrs = new MetadataAttributes(md);
         _arityNames = arityNames;
         _delegateCatalog = delegateCatalog;
+        _companionCatalog = companionCatalog;
+        var physicalTypes = md.TypeDefinitions
+            .Select(handle => (
+                Handle: handle,
+                Name: MetadataTypeName(handle),
+                Arity: md.GetTypeDefinition(handle).GetGenericParameters().Count))
+            .GroupBy(x => (x.Name, x.Arity))
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Handle).ToArray());
+        var semanticOwners = new Dictionary<string, TypeDefinitionHandle>(StringComparer.Ordinal);
+        foreach (var handle in md.TypeDefinitions)
+        {
+            if (ReadCompanionCarrier(handle) is not { } carrier) continue;
+            if (!physicalTypes.TryGetValue((carrier.PhysicalOwner, carrier.PhysicalOwnerArity), out var matches) ||
+                matches.Length != 1)
+                throw new InvalidDataException(
+                    $"Kotlin companion owner '{carrier.PhysicalOwner}' arity {carrier.PhysicalOwnerArity} " +
+                    $"resolved to {(matches is null ? 0 : matches.Length)} physical types");
+            var ownerHandle = matches[0];
+            var carrierDef = md.GetTypeDefinition(handle);
+            if (carrierDef.GetDeclaringType() != ownerHandle)
+                throw new InvalidDataException(
+                    $"nested Kotlin companion carrier '{MetadataTypeName(handle)}' must be an ordinary nested " +
+                    $"type of its physical owner '{MetadataTypeName(ownerHandle)}' " +
+                    $"(metadata claimed '{carrier.PhysicalOwner}')");
+            if ((carrierDef.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.NestedPublic)
+                throw new InvalidDataException(
+                    "nested Kotlin companion carrier must have NestedPublic visibility");
+            if (carrierDef.GetGenericParameters().Count !=
+                md.GetTypeDefinition(ownerHandle).GetGenericParameters().Count)
+                throw new InvalidDataException(
+                    "nested Kotlin companion carrier must capture exactly its physical owner's generic slots");
+            if (carrierDef.GetGenericParameters().Any(parameterHandle =>
+            {
+                var parameter = md.GetGenericParameter(parameterHandle);
+                return parameter.Attributes != GenericParameterAttributes.None ||
+                    parameter.GetConstraints().Count != 0;
+            }))
+                throw new InvalidDataException(
+                    "nested Kotlin companion carrier generic captures must be unconstrained");
+            if (!_attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute"))
+                throw new InvalidDataException("nested Kotlin companion carrier requires [KotlinObject]");
+            var instanceFields = carrierDef.GetFields()
+                .Where(fieldHandle => IsExactSingletonInstanceField(handle, fieldHandle))
+                .ToArray();
+            if (instanceFields.Length != 1)
+                throw new InvalidDataException(
+                    "nested Kotlin companion carrier requires one public static self-typed $INSTANCE field");
+            _singletonInstanceFields.Add(instanceFields[0]);
+
+            // Validate uniqueness before the visibility filter. Two private/internal carrier claims are just as
+            // malformed as two public claims; skipping them first would make the projection silently accept an
+            // ambiguous compiler-owned association.
+            if (!_validatedCompanionOwners.Add(ownerHandle))
+                throw new InvalidDataException($"multiple Kotlin companion carriers name owner '{carrier.Owner}'");
+            if (!semanticOwners.TryAdd(carrier.Owner, ownerHandle) &&
+                semanticOwners[carrier.Owner] != ownerHandle)
+                throw new InvalidDataException(
+                    $"multiple physical types claim Kotlin companion owner '{carrier.Owner}'");
+            // The validated carrier is also the authoritative semantic identity of its public owner. Record that
+            // fact even when the association itself is private/internal and therefore source-invisible: a class
+            // nested below a generic owner is physically lifted with `$`, and projecting that physical spelling
+            // would lose its Kotlin nested identity merely because its own companion is hidden.
+            _semanticOwnerNames[ownerHandle] = carrier.Owner;
+            // A trusted compiler carrier never represents an ordinary Kotlin nested class. Keep every validated
+            // physical TypeDef out of ordinary projection even when its semantic association is private/internal;
+            // otherwise a NestedPublic `$Secret` implementation carrier falls through as a raw KLIB declaration.
+            _physicalCompanionCarriers.Add(handle);
+
+            // Private/internal associations stay source-invisible. A protected association is visible to subclasses
+            // and therefore must be projected; its lifted carrier is a public physical bridge because a subclass of
+            // the OUTER is unrelated to that carrier in CLR inheritance. ProjectClass restores protected Kotlin flags.
+            if (carrier.Visibility is not ("public" or "protected") ||
+                !IsVisibleType(ownerHandle) || !IsVisibleType(handle))
+                continue;
+            _companionCarriers.Add(handle, carrier);
+            if (!_companionsByOwner.TryAdd(ownerHandle, carrier))
+                throw new InvalidDataException($"multiple Kotlin companion carriers name owner '{carrier.Owner}'");
+            _liftedCompanions.Add(ownerHandle, handle);
+        }
+    }
+
+    private bool IsExactSingletonInstanceField(
+        TypeDefinitionHandle carrierHandle,
+        FieldDefinitionHandle fieldHandle)
+    {
+        var field = _md.GetFieldDefinition(fieldHandle);
+        if (_md.GetString(field.Name) != "$INSTANCE" ||
+            (field.Attributes & FieldAttributes.Static) == 0 ||
+            (field.Attributes & FieldAttributes.FieldAccessMask) != FieldAttributes.Public)
+            return false;
+        var context = new GenericContext(
+            carrierHandle,
+            default,
+            ImmutableDictionary<GenericParameterHandle, int>.Empty);
+        var actual = field.DecodeSignature(RawSignatureTypeProvider.Instance, context);
+        var expectedOpen = RawSignatureTypeProvider.Instance.GetTypeFromDefinition(
+            _md, carrierHandle, rawTypeKind: 0x12); // ELEMENT_TYPE_CLASS
+        var arity = _md.GetTypeDefinition(carrierHandle).GetGenericParameters().Count;
+        var expected = arity == 0
+            ? expectedOpen
+            : RawSignatureTypeProvider.Instance.GetGenericInstantiation(
+                expectedOpen,
+                Enumerable.Range(0, arity).Select(i => $"!{i}").ToImmutableArray());
+        return StringComparer.Ordinal.Equals(actual, expected);
     }
 
     public IReadOnlyList<Fragment> Scan()
@@ -609,6 +1144,7 @@ internal sealed class AssemblyScanner
         var visible = _md.TypeDefinitions
             .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
             .Where(x => IsPublicTopLevel(x.Definition))
+            .Where(x => !_physicalCompanionCarriers.Contains(x.Handle))
             .Where(x => _md.GetString(x.Definition.Name) != "<Module>")
             .GroupBy(x => _md.GetString(x.Definition.Namespace), StringComparer.Ordinal);
 
@@ -623,7 +1159,9 @@ internal sealed class AssemblyScanner
             };
             fragment.Package.PackageFqName = names.Package(package.Key);
             var signatures = new SignatureDecoder(
-                _md, names, _attrs, _arityNames, _delegateCatalog);
+                _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog,
+                SemanticCompanionTypeNames(names));
+            var projectedBySemanticName = new Dictionary<string, Class>(StringComparer.Ordinal);
 
             foreach (var (handle, def) in package.OrderBy(x => _md.GetString(x.Definition.Name), StringComparer.Ordinal))
             {
@@ -632,12 +1170,34 @@ internal sealed class AssemblyScanner
                     ReadFileFacade(handle, def, fragment.Package, names, signatures);
                     continue;
                 }
-                var klass = ReadClass(handle, def, names, signatures);
+                var semanticName = _semanticOwnerNames.GetValueOrDefault(handle);
+                var klass = ReadClass(
+                    handle,
+                    def,
+                    names,
+                    signatures,
+                    semanticClassName: semanticName is null ? null : SemanticClassName(handle, names, semanticName));
                 fragment.Class.Add(klass);
                 fragment.ClassName.Add(klass.FqName);
-                AddStaticCompanion(handle, klass, fragment, names);
+                var projectedName = semanticName ?? KotlinFullName(handle);
+                if (!projectedBySemanticName.TryAdd(projectedName, klass))
+                    throw new InvalidDataException(
+                        $"multiple visible CLR types project Kotlin class '{projectedName}'");
+                AddCompanion(handle, klass, fragment, names, signatures);
                 ReadNestedClasses(handle, klass, fragment, names, signatures);
                 ReadCSharpExtensions(handle, def, fragment.Package, names, signatures);
+            }
+            foreach (var (semanticName, klass) in projectedBySemanticName)
+            {
+                var parentSeparator = semanticName.LastIndexOf('.');
+                if (parentSeparator >= 0 &&
+                    projectedBySemanticName.TryGetValue(semanticName[..parentSeparator], out var semanticParent) &&
+                    !ReferenceEquals(semanticParent, klass))
+                {
+                    var childName = semanticName[(parentSeparator + 1)..];
+                    if (!semanticParent.NestedClassName.Select(names.StringValue).Contains(childName))
+                        semanticParent.NestedClassName.Add(names.String(childName));
+                }
             }
             MarkLowPriorityDelegateOverloads(fragment.Package.Function, names);
             fragment.Strings = names.Strings;
@@ -671,7 +1231,8 @@ internal sealed class AssemblyScanner
                 FqName = group.Key,
             };
             var signatures = new SignatureDecoder(
-                _md, names, _attrs, _arityNames, _delegateCatalog);
+                _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog,
+                SemanticCompanionTypeNames(names));
             foreach (var (handle, def) in group)
                 ReadCSharpExtensions(handle, def, package, names, signatures);
             MarkLowPriorityDelegateOverloads(package.Function, names);
@@ -699,7 +1260,57 @@ internal sealed class AssemblyScanner
         return result;
     }
 
-    private Class ReadClass(TypeDefinitionHandle handle, TypeDefinition def, NameTable names, SignatureDecoder signatures)
+    private CompanionCarrier? ReadCompanionCarrier(TypeDefinitionHandle handle)
+    {
+        using var doc = _attrs.CarrierDocument(
+            handle, MetadataAttributes.DotKtNs + "KotlinCompanionAttribute");
+        if (doc is null) return null;
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("kind", out var kindNode) ||
+            kindNode.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("name", out var nameNode) ||
+            nameNode.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("malformed [KotlinCompanion] carrier: expected kind and name strings");
+        var kind = kindNode.GetString()!;
+        var name = nameNode.GetString()!;
+        if (kind != "nested" || !CompanionMetadataSyntax.IsSegment(name))
+            throw new InvalidDataException(
+                "malformed [KotlinCompanion] carrier: invalid kind or semantic name segment");
+        string? owner = null;
+        if (root.TryGetProperty("owner", out var ownerNode))
+        {
+            if (ownerNode.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("malformed [KotlinCompanion] carrier: owner must be a string");
+            owner = ownerNode.GetString();
+        }
+        if (owner is null || !CompanionMetadataSyntax.IsQualifiedName(owner))
+            throw new InvalidDataException(
+                "malformed [KotlinCompanion] carrier: owner must be a non-empty qualified semantic name");
+        if (!root.TryGetProperty("physicalOwner", out var physicalOwnerNode) ||
+            physicalOwnerNode.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(physicalOwnerNode.GetString()) ||
+            !root.TryGetProperty("physicalOwnerArity", out var arityNode) ||
+            arityNode.ValueKind != JsonValueKind.Number ||
+            !arityNode.TryGetInt32(out var arity) || arity < 0)
+            throw new InvalidDataException(
+                "malformed [KotlinCompanion] carrier: physicalOwner and physicalOwnerArity are required");
+        if (!root.TryGetProperty("visibility", out var visibilityNode) ||
+            visibilityNode.ValueKind != JsonValueKind.String ||
+            visibilityNode.GetString() is not string visibility ||
+            visibility is not ("public" or "internal" or "private" or "protected" or "protectedInternal"))
+            throw new InvalidDataException("malformed [KotlinCompanion] carrier: invalid visibility");
+        return new CompanionCarrier(owner!, name, visibility, physicalOwnerNode.GetString()!, arity);
+    }
+
+    private Class ReadClass(
+        TypeDefinitionHandle handle,
+        TypeDefinition def,
+        NameTable names,
+        SignatureDecoder signatures,
+        int? semanticClassName = null,
+        int? semanticKind = null,
+        bool suppressPhysicalTypeParameters = false)
     {
         var metadataName = _md.GetString(def.Name);
         var metadataNamespace = _md.GetString(def.Namespace);
@@ -713,12 +1324,12 @@ internal sealed class AssemblyScanner
         var isObject = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute");
         var isKotlinSealed = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinSealedAttribute");
         var isKotlinValue = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinValueAttribute");
-        var kind = isObject ? 5 : isInterface ? 1 : isEnum ? 2 : isAnnotation ? 4 : 0;
+        var kind = semanticKind ?? (isObject ? 5 : isInterface ? 1 : isEnum ? 2 : isAnnotation ? 4 : 0);
         var modality = isKotlinSealed ? 3
             : kind == 1 || (def.Attributes & TypeAttributes.Abstract) != 0 ? 2
             : (def.Attributes & TypeAttributes.Sealed) == 0 ? 1 : 0;
         var result = new Class {
-            FqName = ClassName(handle, names),
+            FqName = semanticClassName ?? ClassName(handle, names),
             Flags = Flags.Declaration(
                 modality,
                 kind,
@@ -735,6 +1346,7 @@ internal sealed class AssemblyScanner
             var gp = _md.GetGenericParameter(gpHandle);
             var id = gp.Index;
             typeParameterIds[gpHandle] = id;
+            if (suppressPhysicalTypeParameters) continue;
             result.TypeParameter.Add(new TypeParameter {
                 Id = id,
                 Name = names.String(_md.GetString(gp.Name)),
@@ -1108,6 +1720,10 @@ internal sealed class AssemblyScanner
 
         foreach (var fieldHandle in def.GetFields())
         {
+            // Suppress the exact ABI singleton slot validated from [KotlinCompanion], not a declaration selected by
+            // source name. A companion may legally declare `val INSTANCE: Int`; that property must survive beside
+            // the compiler-reserved self slot `$INSTANCE`.
+            if (_singletonInstanceFields.Contains(fieldHandle)) continue;
             var field = _md.GetFieldDefinition(fieldHandle);
             if (!IsPublicOrProtected(field.Attributes)) continue;
             var name = _md.GetString(field.Name);
@@ -1173,6 +1789,19 @@ internal sealed class AssemblyScanner
         AddEnumerableIterator(handle, def, result, names, signatures, typeContext);
         MarkLowPriorityDelegateOverloads(result.Constructor, names);
         MarkLowPriorityDelegateOverloads(result.Function, names);
+        if (_companionCarriers.TryGetValue(handle, out var projectedCompanion) &&
+            projectedCompanion.Visibility == "protected")
+        {
+            result.Flags = Flags.AsProtected(result.Flags);
+            foreach (var constructor in result.Constructor) constructor.Flags = Flags.AsProtected(constructor.Flags);
+            foreach (var function in result.Function) function.Flags = Flags.AsProtected(function.Flags);
+            foreach (var property in result.Property)
+            {
+                property.Flags = Flags.AsProtected(property.Flags);
+                if (property.HasGetterFlags) property.GetterFlags = Flags.AsProtected(property.GetterFlags);
+                if (property.HasSetterFlags) property.SetterFlags = Flags.AsProtected(property.SetterFlags);
+            }
+        }
         return result;
     }
 
@@ -2083,13 +2712,15 @@ internal sealed class AssemblyScanner
         var parentDef = _md.GetTypeDefinition(parentHandle);
         foreach (var childHandle in parentDef.GetNestedTypes())
         {
+            if (_physicalCompanionCarriers.Contains(childHandle))
+                continue;
             var childDef = _md.GetTypeDefinition(childHandle);
             if (!IsPublicNested(childDef)) continue;
             var child = ReadClass(childHandle, childDef, names, signatures);
             parent.NestedClassName.Add(names.String(StripArity(_md.GetString(childDef.Name))));
             fragment.Class.Add(child);
             fragment.ClassName.Add(child.FqName);
-            AddStaticCompanion(childHandle, child, fragment, names);
+            AddCompanion(childHandle, child, fragment, names, signatures);
             ReadNestedClasses(childHandle, child, fragment, names, signatures);
         }
     }
@@ -2365,47 +2996,32 @@ internal sealed class AssemblyScanner
         }
     }
 
-    private void AddStaticCompanion(
+    private void AddCompanion(
         TypeDefinitionHandle ownerHandle,
         Class owner,
         PackageFragment fragment,
-        NameTable names)
+        NameTable names,
+        SignatureDecoder signatures)
     {
-        // Preserve Kotlin's companion vocabulary for both CLR classes and
-        // companion members flattened by the DotKt ABI, while retaining the
-        // standard KLIB static declaration directly on Type. The companion is
-        // a metadata view of the same CLR slots; Kotlin objects remain objects.
-        if (_attrs.Has(ownerHandle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute") ||
-            _md.GetTypeDefinition(ownerHandle).GetNestedTypes().Any(h =>
-                StripArity(_md.GetString(_md.GetTypeDefinition(h).Name)) == "Companion"))
+        if (_liftedCompanions.TryGetValue(ownerHandle, out var companionHandle))
+        {
+            var companionCarrier = _companionCarriers[companionHandle];
+            var companionName = names.String(companionCarrier.Name);
+            owner.CompanionObjectName = companionName;
+            owner.NestedClassName.Add(companionName);
+            var companion = ReadClass(
+                companionHandle,
+                _md.GetTypeDefinition(companionHandle),
+                names,
+                signatures,
+                semanticClassName: CompanionClassName(ownerHandle, names, companionCarrier.Name),
+                semanticKind: 6,
+                suppressPhysicalTypeParameters: true);
+            fragment.Class.Add(companion);
+            fragment.ClassName.Add(companion.FqName);
+            ReadNestedClasses(companionHandle, companion, fragment, names, signatures);
             return;
-        var functions = owner.Function.Where(f => (f.Flags & (1 << 18)) != 0).ToList();
-        var properties = owner.Property.Where(p => (p.Flags & (1 << 19)) != 0).ToList();
-        if (functions.Count == 0 && properties.Count == 0) return;
-
-        var companionName = names.String("Companion");
-        owner.CompanionObjectName = companionName;
-        owner.NestedClassName.Add(companionName);
-        var companion = new Class {
-            FqName = CompanionClassName(ownerHandle, names),
-            Flags = Flags.Declaration(modality: 0, kind: 6),
-        };
-        companion.ClassAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(ownerHandle)));
-        companion.Flags |= 1;
-        foreach (var function in functions)
-        {
-            var clone = function.Clone();
-            clone.Flags &= ~(1 << 18);
-            companion.Function.Add(clone);
         }
-        foreach (var property in properties)
-        {
-            var clone = property.Clone();
-            clone.Flags &= ~(1 << 19);
-            companion.Property.Add(clone);
-        }
-        fragment.Class.Add(companion);
-        fragment.ClassName.Add(companion.FqName);
     }
 
     private List<(MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)> KotlinAccessorPairs(
@@ -2812,8 +3428,27 @@ internal sealed class AssemblyScanner
         return names.Class(package, chain);
     }
 
-    private int CompanionClassName(TypeDefinitionHandle handle, NameTable names)
+    private int CompanionClassName(
+        TypeDefinitionHandle handle,
+        NameTable names,
+        string sourceName = "Companion")
     {
+        if (_semanticOwnerNames.TryGetValue(handle, out var semanticOwner))
+        {
+            var def = _md.GetTypeDefinition(handle);
+            while (!def.GetDeclaringType().IsNil)
+                def = _md.GetTypeDefinition(def.GetDeclaringType());
+            var semanticPackage = _md.GetString(def.Namespace);
+            var classPart = string.IsNullOrEmpty(semanticPackage)
+                ? semanticOwner
+                : semanticOwner.StartsWith(semanticPackage + ".", StringComparison.Ordinal)
+                    ? semanticOwner[(semanticPackage.Length + 1)..]
+                    : throw new InvalidDataException(
+                        $"semantic companion owner '{semanticOwner}' is outside physical package '{semanticPackage}'");
+            return names.Class(
+                semanticPackage,
+                classPart.Split('.', StringSplitOptions.None).Append(sourceName));
+        }
         var chain = new Stack<string>();
         var current = handle;
         string package = "";
@@ -2827,7 +3462,36 @@ internal sealed class AssemblyScanner
                 _md.GetString(def.Name)));
             current = parent;
         }
-        return names.Class(package, chain.Append("Companion"));
+        return names.Class(package, chain.Append(sourceName));
+    }
+
+    private IReadOnlyDictionary<TypeDefinitionHandle, int> SemanticCompanionTypeNames(NameTable names) =>
+        _liftedCompanions.ToDictionary(
+            association => association.Value,
+            association => CompanionClassName(
+                association.Key, names, _companionCarriers[association.Value].Name));
+
+    private int SemanticClassName(TypeDefinitionHandle handle, NameTable names, string semanticName)
+    {
+        var current = handle;
+        string package = "";
+        while (!current.IsNil)
+        {
+            var def = _md.GetTypeDefinition(current);
+            var parent = def.GetDeclaringType();
+            if (parent.IsNil) package = _md.GetString(def.Namespace);
+            current = parent;
+        }
+        var classPart = string.IsNullOrEmpty(package)
+            ? semanticName
+            : semanticName.StartsWith(package + ".", StringComparison.Ordinal)
+                ? semanticName[(package.Length + 1)..]
+                : throw new InvalidDataException(
+                    $"semantic companion owner '{semanticName}' is outside physical package '{package}'");
+        var chain = classPart.Split('.', StringSplitOptions.None);
+        if (chain.Length == 0)
+            throw new InvalidDataException($"semantic companion owner '{semanticName}' has no class name");
+        return names.Class(package, chain);
     }
 
     private string KotlinFullName(TypeDefinitionHandle handle)
@@ -2925,6 +3589,12 @@ internal sealed class AssemblyScanner
     private static bool IsPublicNested(TypeDefinition def) =>
         (def.Attributes & TypeAttributes.VisibilityMask) is
             TypeAttributes.NestedPublic or TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem;
+    private bool IsVisibleType(TypeDefinitionHandle handle)
+    {
+        var def = _md.GetTypeDefinition(handle);
+        var parent = def.GetDeclaringType();
+        return parent.IsNil ? IsPublicTopLevel(def) : IsPublicNested(def) && IsVisibleType(parent);
+    }
     private static bool IsVisibleType(TypeDefinition def) =>
         IsPublicTopLevel(def) || IsPublicNested(def);
     private static bool IsPublicOrProtected(MethodAttributes attrs) =>
@@ -2976,6 +3646,7 @@ internal static class Flags
         | ((attrs & MethodAttributes.Static) != 0 ? 1 << 18 : 0);
     public static int Visibility(MethodAttributes attrs) =>
         (attrs & MethodAttributes.MemberAccessMask) == MethodAttributes.Public ? 6 : 4; // PUBLIC=3, PROTECTED=2
+    public static int AsProtected(int flags) => (flags & ~0xE) | 4;
     public static int Property(MethodAttributes attrs, bool canWrite, bool isStatic) =>
         Visibility(attrs) | (((attrs & MethodAttributes.Abstract) != 0 ? 2
             : (attrs & MethodAttributes.Virtual) != 0 && (attrs & MethodAttributes.Final) == 0 ? 1 : 0) << 4)
@@ -3141,10 +3812,17 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly MetadataAttributes _attrs;
     private readonly ArityNames _arityNames;
     private readonly DelegateReferenceCatalog _delegateCatalog;
+    private readonly CompanionReferenceCatalog _companionCatalog;
+    private readonly IReadOnlyDictionary<TypeDefinitionHandle, int> _semanticTypeNames;
     private readonly bool _restoreKotlinCollections;
     private readonly Dictionary<string, TypeDefinitionHandle> _delegateDefinitions = new(StringComparer.Ordinal);
     private readonly Dictionary<KType, DelegateCatalogEntry> _externalDelegateTypes =
         new(ReferenceEqualityComparer.Instance);
+    // A physical nested companion under a generic CLR owner repeats the owner's type slots on its TypeDef, but its
+    // restored Kotlin companion classifier declares no type parameters. Remember the exact open KType object emitted
+    // by GetTypeFromDefinition/Reference so GetGenericInstantiation can consume, rather than leak, those physical
+    // capture arguments into the semantic KLIB type.
+    private readonly HashSet<KType> _semanticCompanionTypes = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, KType> _externalDelegateShapes = new(StringComparer.Ordinal);
     // The struct-ness oracle for the NRT byte walk, keyed by the PROJECTED name a KType carries. An ECMA signature
     // states value-ness at every occurrence (`ELEMENT_TYPE_VALUETYPE` vs `ELEMENT_TYPE_CLASS`, the `rawTypeKind` the
@@ -3158,13 +3836,17 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         NameTable names,
         MetadataAttributes attrs,
         ArityNames arityNames,
-        DelegateReferenceCatalog delegateCatalog)
+        DelegateReferenceCatalog delegateCatalog,
+        CompanionReferenceCatalog companionCatalog,
+        IReadOnlyDictionary<TypeDefinitionHandle, int>? semanticTypeNames = null)
     {
         _md = md;
         _names = names;
         _attrs = attrs;
         _arityNames = arityNames;
         _delegateCatalog = delegateCatalog;
+        _companionCatalog = companionCatalog;
+        _semanticTypeNames = semanticTypeNames ?? new Dictionary<TypeDefinitionHandle, int>();
         _restoreKotlinCollections = attrs.IsDotKtAssembly;
         // The Kotlin primitives, plus `kotlin.Unit`: it is the name ECMA `void` decodes to, so it holds no NRT byte and
         // takes no annotation — a rule bir2cir's writer implements from the other side ([NullableFlags]), which is what
@@ -3207,6 +3889,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     public KType GetFunctionPointerType(MethodSignature<KType> signature) => Any(nullable: true);
     public KType GetGenericInstantiation(KType genericType, ImmutableArray<KType> typeArguments)
     {
+        if (_semanticCompanionTypes.Contains(genericType)) return genericType;
         if (_externalDelegateTypes.TryGetValue(genericType, out var externalDelegate))
             return Substitute(DecodeExternalDelegate(externalDelegate), typeArguments);
         var genericName = genericType.HasClassName ? _names.ClassName(genericType.ClassName) : null;
@@ -3264,6 +3947,14 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     {
         var def = reader.GetTypeDefinition(handle);
         var name = _arityNames.Full(reader.GetString(def.Namespace), reader.GetString(def.Name));
+        if (_semanticTypeNames.TryGetValue(handle, out var semanticName))
+        {
+            var semantic = rawTypeKind == (byte)SignatureTypeKind.Class
+                ? Platform(semanticName)
+                : MarkValueTypeIfStated(rawTypeKind, Named(semanticName));
+            _semanticCompanionTypes.Add(semantic);
+            return semantic;
+        }
         if (_attrs.CarrierType(handle, MetadataAttributes.DotKtNs + "KotlinTypeAttribute") is { } carrier)
             return FromTypeNode(carrier);
         if (_delegateDefinitions.ContainsKey(name) && !def.GetGenericParameters().Any())
@@ -3272,6 +3963,14 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     }
     public KType GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
     {
+        if (_companionCatalog.TryResolve(reader, handle, out var externalCompanion))
+        {
+            var semantic = rawTypeKind == (byte)SignatureTypeKind.Class
+                ? ExternalCompanion(externalCompanion, platform: true)
+                : MarkValueTypeIfStated(rawTypeKind, ExternalCompanion(externalCompanion, platform: false));
+            _semanticCompanionTypes.Add(semantic);
+            return semantic;
+        }
         var type = reader.GetTypeReference(handle);
         var metadataName = reader.GetString(type.Name);
         var ns = reader.GetString(type.Namespace);
@@ -3637,6 +4336,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     }
 
     private KType Named(string fqName, bool nullable = false) => new() { ClassName = _names.Class(fqName), Nullable = nullable };
+    private static KType Named(int className, bool nullable = false) => new() { ClassName = className, Nullable = nullable };
     private KType Platform(string fqName)
     {
         var lower = Named(fqName);
@@ -3644,16 +4344,32 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         lower.FlexibleUpperBound = Named(fqName, nullable: true);
         return lower;
     }
+    private KType Platform(int className)
+    {
+        var lower = Named(className);
+        lower.FlexibleTypeCapabilitiesId = _names.String("dotkt.clr.PlatformType");
+        lower.FlexibleUpperBound = Named(className, nullable: true);
+        return lower;
+    }
+    private KType ExternalCompanion(CompanionCatalogEntry entry, bool platform)
+    {
+        var className = _names.Class(entry.SemanticPackage, entry.SemanticClasses);
+        return platform ? Platform(className) : Named(className);
+    }
     private KType FromDefinition(TypeDefinitionHandle handle, bool platform)
     {
         var def = _md.GetTypeDefinition(handle);
         var name = _arityNames.Full(_md.GetString(def.Namespace), _md.GetString(def.Name));
+        if (_semanticTypeNames.TryGetValue(handle, out var semanticName))
+            return platform ? Platform(semanticName) : Named(semanticName);
         if (_delegateDefinitions.ContainsKey(name) && !def.GetGenericParameters().Any())
             return DecodeDelegate(handle);
         return platform ? Platform(name) : Named(name);
     }
     private KType FromReference(TypeReferenceHandle handle, bool platform)
     {
+        if (_companionCatalog.TryResolve(_md, handle, out var externalCompanion))
+            return ExternalCompanion(externalCompanion, platform);
         var type = _md.GetTypeReference(handle);
         var metadataName = _md.GetString(type.Name);
         var ns = _md.GetString(type.Namespace);
@@ -3788,7 +4504,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             ArityNames.Create(
                 md,
                 Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES")),
-            _delegateCatalog);
+            _delegateCatalog,
+            _companionCatalog);
         var shape = decoder.DecodeDelegate(handle);
         _externalDelegateShapes[key] = shape;
         return shape.Clone();

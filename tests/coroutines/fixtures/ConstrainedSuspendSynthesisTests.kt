@@ -1,5 +1,5 @@
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine

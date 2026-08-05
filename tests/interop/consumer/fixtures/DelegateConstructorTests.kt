@@ -5,13 +5,14 @@
 //   cbk        <- il-cbk        a lambda binds to a .NET delegate param (custom delegate + BCL Action), façade-free
 //   delegatearg<- il-delegatearg a lambda passed to a .NET CONSTRUCTOR and a .NET METHOD delegate param
 //   delegobj   <- il-delegobj   #1: overriding a BCL virtual whose delegate param has an `object`/Any? Invoke arg
-//   injstatic  <- il-injstatic  public STATIC members surfaced on a synthesized companion (implicit + `.Companion`)
+//   injstatic  <- il-injstatic  public STATIC members surfaced directly on their declaring type
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import Cbk.Engine
 import Delegatearg.Box
 import Delegobj.Ctx
 import Injstatic.App
+import Injstatic.GenericApp
 
 // il-delegobj top-level helper: override a BCL virtual whose delegate param is `(Any?) -> Unit` (the
 // SynchronizationContext.Post shape). Unique name so it cannot collide with another battery's top-level decl.
@@ -52,19 +53,21 @@ class DelegateConstructorTests {
 
     @TestAttribute
     fun injstatic() {
-        // implicit (no .Companion) — the form .NET code naturally reads as
+        // CLR statics remain direct KLIB static declarations; no synthetic companion value exists.
         var p = 0
         App.start({ x -> p = x })                  // -> p=42
         assertEquals(42, p)
         assertEquals(7, App.Count)                 // -> 7
         assertEquals(99, App.Answer)               // -> 99  (static FIELD, surfaced as a property -> ldsfld)
         assertEquals(123, App.Magic)               // -> 123 (const/literal FIELD -> inlined value)
-        // explicit .Companion — regression coverage for the original form
-        var p2 = 0
-        App.Companion.start({ x -> p2 = x })       // -> p=42
-        assertEquals(42, p2)
-        assertEquals(7, App.Companion.Count)       // -> 7
-        assertEquals(99, App.Companion.Answer)     // -> 99
-        assertEquals(123, App.Companion.Magic)     // -> 123
+        App.Mutable = 11
+        assertEquals(11, App.Mutable)              // mutable static FIELD -> stsfld / ldsfld
+        GenericApp.Mutable = 13
+        assertEquals(13, GenericApp.Mutable)       // generic owner -> representative GenericApp<object>
+        val countRef = App::Count
+        assertEquals(7, countRef.get())
+        val mutableRef = App::Mutable
+        mutableRef.set(17)
+        assertEquals(17, mutableRef.get())          // direct CLR static KMutableProperty0
     }
 }

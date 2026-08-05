@@ -9,7 +9,7 @@
 //
 // All top-level declarations here are Declaration-prefixed (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 // ---- m-a4 : top-level properties (const val / val / var), vararg, subjectless `when` --------------------------
 const val MIGM_GREETING = "hi"

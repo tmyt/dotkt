@@ -12,8 +12,8 @@
 //
 // Helpers are private members of the feature-named fixture, so no top-level collision prefix is needed.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.Collections.ObjectModel.ObservableCollection
 import System.ComponentModel.INotifyPropertyChanged
 

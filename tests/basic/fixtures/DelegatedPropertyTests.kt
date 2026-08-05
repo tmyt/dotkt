@@ -9,7 +9,7 @@
 //   il-gendp  -> delegatedProperty_gendp   #191 GENERIC user delegate `D<T>` backing member/local/top-level/generic-enclosing
 //                           delegated props over a REFERENCE (String) and VALUE (Int) type arg (constructed owner)
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.reflect.KProperty
 import kotlin.properties.Delegates
 

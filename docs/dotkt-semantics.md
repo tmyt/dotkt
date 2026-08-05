@@ -41,7 +41,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [7](#7-default-arguments--a-two-tier-rule-native-metadata-else-a-carried-bir-expression) | Default arguments — the two-tier rule |
 | [8](#8-reverse--cross-assembly-interop) | Reverse / cross-assembly interop |
 | [8b](#8b-dual-representation-import-systemtextstringbuilder-vs-kotlintextstringbuilder--two-typed-views-of-one-clr-type) | Dual view: imported .NET type vs. its stdlib alias |
-| [8c](#8c-projected-net-static-members-implicit-typemember-works-companion-optional) | Projected .NET statics: implicit `Type.member` works |
+| [8c](#8c-projected-net-static-members-typemember) | Projected .NET statics: direct `Type.member` |
 | [8d](#8d-net-event-subscriptions-and-closeable-tokens) | .NET events use closeable subscriptions |
 | [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
 | [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit (incl. pinned-2.4.0 limitations) |
@@ -923,6 +923,7 @@ runtime.
 | `suspend` (a `suspend fun`) | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
 | a `suspend (…) -> T` **function TYPE** (parameter / return / property / field) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` preserves the pre-erasure shape because the CLR slot itself erases to `object`. bir2cir records it, ilemit stamps it, dll2klib reads it, and kotc restores `kotlin.coroutines.SuspendFunctionN`. All four positions are covered by the roundtrip NUnit suite. |
 | top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
+| a Kotlin `companion object` | `kotc` preserves only its semantic owner/name; `bir2cir` creates a compiler-reserved nested singleton carrier and stamps `[KotlinCompanion(version, bytes)]` with the source name plus its exact physical owner. `dll2klib` writes the standard KLIB `companion_object_name` and nested-class link from this validated fact; no CLR suffix/name heuristic is used. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
 | a **context parameter** (`context(s: S) fun f()`) | `[KotlinContextParameter]` on the emitted positional parameter — a bare marker. The parameter is physically ordinary (§5i), so without it the consumer would restore a plain leading value parameter and `with(s) { f() }` would stop resolving. Covers functions and property accessors, top-level and member. |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
@@ -1098,19 +1099,23 @@ factor's evaluation, which no program can tell apart.
 
 **An `object` qualifier splits on whether this backend gives it an instance**, and the split follows the same rule:
 
-- A **real `object`**, and a `companion object` with a supertype (lifted to its own singleton, §5e), have an
+- A **real `object`** and every `companion object` have an
   `INSTANCE`. Loading it runs the object's body, which can print, throw or mutate — an observable evaluation. So it
   is evaluated where Kotlin evaluates it: **before every argument**. `O.f(side())` runs `O`'s initializer first, and
   if that initializer throws, `side()` has not run.
-- A **plain `companion object`** is flattened onto its enclosing class (§5e), and a projected .NET static holder has
-  no instance either. There is no value to evaluate and the emitted static call has no receiver, so nothing is
-  emitted at the qualifier's position at all.
+- `kotc` always emits one logical companion declaration. `bir2cir` gives it a compiler-reserved ordinary nested CLR
+  carrier with one `$INSTANCE`; calls, defaults/inlines, callable/property references, value identity, and type uses all
+  share that carrier. A generic owner contributes separate unconstrained capture parameters to the carrier, avoiding
+  both per-construction singleton identity and accidental inheritance of the owner's source constraints.
+  The outer accessor remains a CLR static per closed generic owner; Kotlin's unqualified owner uses the representative
+  `object` closure, while unifying C# instances across different closed owners is deferred.
+- A basic CLR enum retains its enum representation and nested companion carrier. Its Kotlin companion round-trips,
+  while the outer C# source-name accessor is deferred because a CLR enum cannot own its required type initializer.
+- A projected .NET static holder still has no instance. There is no value to evaluate and the emitted static call has
+  no receiver, so nothing is emitted at the qualifier's position at all.
 
-**Where this deviates from Kotlin/JVM:** only in *when* a FLATTENED companion is initialized. Kotlin evaluates the
-qualifier before the arguments, so a companion body that prints would print before an argument's side effects;
-having no instance to load, DotKt leaves that to the CLR type initializer's own schedule rather than emitting a
-synthetic touch to force the Kotlin point. Note that a flattened companion's `init { }` block is currently not
-emitted at all — a separate gap, not a consequence of this rule.
+The carrier's constructor preserves the full companion initializer order, and loading `$INSTANCE` observes it at the
+qualifier evaluation point.
 
 ## 7b. A slot whose type cannot be derived is a REFUSAL, not `kotlin.Any`
 
@@ -1204,19 +1209,33 @@ frontend path, which the layer rules forbid (kotc reads no CLR-binding metadata)
 diagnostic is the clean 1.0 rule; an explicit `clrView<T>()`-style conversion intrinsic is possible later if the
 cast proves too blunt.
 
-## 8c. Projected .NET STATIC members: implicit `Type.member` works (`.Companion` optional)
+## 8c. Projected .NET STATIC members: `Type.member`
 
-A reference-KLIB-projected .NET class's static members surface on a synthesized **companion object**, and resolve
-**implicitly** — exactly like a hand-written Kotlin companion:
+A reference-KLIB-projected .NET class's static members remain declarations directly on that class, marked with the
+standard KLIB `IS_STATIC_FUNCTION` / `IS_STATIC_PROPERTY` flags:
 
 ```kotlin
 import Avalonia.Application
 Application.Start(...)             // implicit companion access — the natural form
-Application.Companion.Start(...)   // explicit form — still works, identical BIR
 ```
 
-The companion and its owner link come from standard KLIB static-member metadata. Instance members,
-constructors, properties, events, operators, and extension methods resolve directly.
+They have no companion type or singleton value: `Application.Companion` is not synthesized. Instance members,
+constructors, properties, events, operators, and extension methods also resolve directly.
+
+This surface requires Kotlin's `CompanionBlocksAndExtensions` analysis feature. Kotlin/CLR enables it as a target
+capability for every `kotc` invocation; any other analysis host that consumes CLR reference KLIBs (including a future
+DotKt LSP/IDE integration) must install the same CLR language-version settings. A generic Kotlin LSP that is unaware
+of the CLR target configuration is not an authoritative analyzer for a `.ktproj` and may diagnose these direct static
+declarations as unavailable.
+
+A companion restored from a DotKt assembly is a different declaration. A DotKt producer stamps an explicit
+`[KotlinCompanion]` carrier: every source companion retains its singleton value, supertypes, instance
+members, and source name (`Companion`/`Factory`/`Key`). A same-named ordinary nested class remains a separate
+classifier. `dll2klib` only creates these DotKt companion links from the trusted carrier; it never infers one from a
+physical type suffix or naming convention. The carrier also preserves semantic visibility and the exact CLR metadata
+owner identity (`+` for true nested types); source-invisible associations are validated but omitted from public KLIB
+projection. Lifted-carrier occurrences in method and property signatures are restored to the exact standard KLIB nested
+companion classifier, so a companion used only as a parameter or return type remains source-resolvable cross-module.
 
 ## 8d. Same-name .NET arity families: `Task` stays `Task`, `Task<TResult>` becomes `Task1<TResult>`
 
@@ -1278,10 +1297,9 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
   lambda can be safely scoped with `use` without separately retaining it.
 - Public `+=` / `-=` are intentionally not exposed: they split handler identity and subscription lifetime across
   caller-managed values. This also replaces the earlier `add_<Event>` / `remove_<Event>` accessor-method spelling.
-- **Static events** subscribe the same way. A **static** event on a normal class is reached through the companion
-  (`TaskScheduler.UnobservedTaskException.subscribe(h)`); a static event on a `static class`/`object`
-  (`System.Console.CancelKeyPress.subscribe(h)`) is a member of that object. Either binds to the event's **static** add/remove
-  accessor (a plain `Call`).
+- **Static events** subscribe the same way and are reached directly on their declaring type
+  (`TaskScheduler.UnobservedTaskException.subscribe(h)` or `System.Console.CancelKeyPress.subscribe(h)`). They bind
+  to the event's **static** add/remove accessor (a plain `Call`).
 - **Interface events** (`INotifyPropertyChanged.PropertyChanged`) surface as a `ClrEvent<T>` member and **consume**
   the same way on an interface-typed receiver (`n.PropertyChanged.subscribe(h)`). When a Kotlin class **subclasses** a .NET
   class that already implements the interface (`class MyApp : Avalonia.Application`), the inherited concrete
@@ -1897,7 +1915,6 @@ Current deliberate limits are:
 - pointer and function-pointer types project as `Any?`;
 - Kotlin function arities 0..22 round-trip exactly; 23 and above has no CLR delegate and is refused (§8e-bis);
 - arbitrary CLR custom-attribute applications are not reproduced as Kotlin annotation applications;
-- explicit Kotlin companion-object reconstruction is not part of CLR static projection;
 - SOURCE-retained annotations and compile-time-only facts such as contracts are not present in CLR metadata; and
 - `internal` is enforced by CLR assembly visibility, without friend-module or `InternalsVisibleTo` wiring.
 
@@ -1931,7 +1948,8 @@ Current deliberate limits are:
 - An auto-property's backing field is named `<Name>k__BackingField` (C# convention, `[CompilerGenerated]`), not `Name` — so reflection never sees a property and a field under one name. §5h.
 - `System.Byte` is UNSIGNED → maps to `UByte` (and `byte[]` → `UByteArray`, a native `System.Byte[]`); `kotlin.Byte` is signed = `System.SByte`. `UByteArray.toByteArray()` is a reinterpret VIEW, not a copy. §9b.
 - `import System.Text.StringBuilder` and `kotlin.text.StringBuilder` are two distinct typed views of one CLR type; mixing them is a type error (cast to cross). §8b.
-- A projected .NET class's statics resolve implicitly (`Application.Start(...)`); `.Companion` is optional. §8c.
+- A projected .NET class's statics remain direct static declarations (`Application.Start(...)`); no synthetic
+  `.Companion` type or value is created. §8c.
 - Two same-simple-named classes in different packages coexist (packages are namespaces now). §1.
 - A reference type from a .NET assembly built WITHOUT `<Nullable>enable</Nullable>` arrives as a platform type `String!`, not `String`. §9.
 - A null platform-type `String!` used as non-null does **not** throw at the boundary — no assertion is inserted; the null flows to the first dereference, where the CLR throws `NullReferenceException` (faithful to Kotlin, = JVM with call/param assertions off). §9a.

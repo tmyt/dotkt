@@ -7,7 +7,7 @@
 //   fieldvis    <- il-fieldvis    a .NET host reflects the emitted Kotlin type -> honored CLR accessor visibility
 //   ifacechainvt<- il-ifacechainvt#129: implement IMid<Int> where IMid<T> : IBase<T> — value-type slots across the chain
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import Firgap.Engine
 import Firgap.Widget
 import Firgap.Arr

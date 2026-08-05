@@ -20,12 +20,12 @@ static class GenericStaticOwnerBinding
         public HashSet<string> Methods = new(StringComparer.Ordinal);
     }
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         var rootList = roots.ToList();
         var index = new Dictionary<string, GenericStatics>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, index);
-        foreach (var root in rootList) Walk(root, index);
+        foreach (var root in rootList) Walk(root, index, refs);
     }
 
     static void Collect(JsonNode node, Dictionary<string, GenericStatics> index)
@@ -50,21 +50,21 @@ static class GenericStaticOwnerBinding
         }
     }
 
-    static void Walk(JsonNode node, Dictionary<string, GenericStatics> index)
+    static void Walk(JsonNode node, Dictionary<string, GenericStatics> index, ReferenceMetadataIndex refs)
     {
         switch (node)
         {
             case JsonObject obj:
-                Bind(obj, index);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, index);
+                Bind(obj, index, refs);
+                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, index, refs);
                 break;
             case JsonArray arr:
-                foreach (var item in arr) if (item != null) Walk(item, index);
+                foreach (var item in arr) if (item != null) Walk(item, index, refs);
                 break;
         }
     }
 
-    static void Bind(JsonObject node, Dictionary<string, GenericStatics> index)
+    static void Bind(JsonObject node, Dictionary<string, GenericStatics> index, ReferenceMetadataIndex refs)
     {
         var kind = Str(node["k"]);
         string ownerKey;
@@ -72,6 +72,7 @@ static class GenericStaticOwnerBinding
         switch (kind)
         {
             case "staticField":
+            case "staticFieldSet":
             case "setStaticField":
             case "setStaticFieldExpr":
                 ownerKey = "ownerType";
@@ -86,11 +87,23 @@ static class GenericStaticOwnerBinding
         }
 
         if (TypeJson.Read(node[ownerKey]) is not TypeNode.Fqn { Args: null } owner) return;
-        if (!index.TryGetValue(owner.Name, out var statics)) return;
         var member = Str(node[isField ? "name" : "method"]);
-        if (member == null || !(isField ? statics.Fields.Contains(member) : statics.Methods.Contains(member))) return;
+        if (member == null) return;
+        int arity;
+        if (index.TryGetValue(owner.Name, out var statics))
+        {
+            if (!(isField ? statics.Fields.Contains(member) : statics.Methods.Contains(member))) return;
+            arity = statics.Arity;
+        }
+        else
+        {
+            // A referenced declaration is absent from the local type index. Its static node kind is already the BIR
+            // semantic fact; use only the referenced owner's generic arity to select the required CLR TypeSpec.
+            arity = refs.OwnerArity(owner.Name);
+            if (arity == 0) return;
+        }
         node[ownerKey] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
-            Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Any"), statics.Arity).ToArray()));
+            Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Any"), arity).ToArray()));
     }
 
     static bool Bool(JsonNode node) =>

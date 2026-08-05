@@ -93,6 +93,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Round-trip: companion objects now retain their Kotlin declaration across DLL/KLIB
+  re-consumption (#275).** `kotc` carries the source association/name, `bir2cir` materializes a trusted narrow
+  `[KotlinCompanion]` metadata record, and `dll2klib` writes the standard KLIB companion link from that record without
+  suffix or name inference. Every companion is emitted as a compiler-reserved ordinary nested CLR carrier with one
+  `$INSTANCE`, preserving singleton identity within each closed CLR owner, supertypes, instance members, custom names,
+  and use as a value or type.
+  Generic owners contribute separate unconstrained physical capture parameters; those parameters are hidden from the
+  semantic KLIB companion and unqualified Kotlin uses close them independently of the owner's source type arguments.
+  Consequently C# views different closed generic owners as different CLR static regions in this first nested-carrier
+  implementation; cross-instantiation singleton unification is deliberately deferred. Protected
+  companions retain protected Kotlin visibility while their generated carrier remains reachable from lifted callable-
+  reference and suspend helpers. Custom names remain distinct from ordinary nested classes. CLR static members use
+  the standard KLIB static flags directly and no longer manufacture a companion type/value. A basic CLR enum keeps
+  its enum representation and nested carrier; because CLR enums cannot own the
+  type initializer needed for a reference-valued outer field, only its C# source-name accessor remains deferred. The
+  round-trip gate independently inspects the semantic BIR, physical CIR/DLL carrier, generated KLIB
+  linkage, generic constraints, and runtime behavior.
+
 - **kotc: an OMITTED `vararg` argument is now the empty array it always denoted.** A vararg is omissible without
   being optional — Kotlin forbids it a default expression — so every argument-vector builder read the empty slot as
   an omitted DEFAULT it had nothing to fill from: the two that key on `defaultValue` dropped the slot outright and

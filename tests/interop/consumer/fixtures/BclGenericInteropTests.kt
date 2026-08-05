@@ -10,8 +10,8 @@
 // Top-level names are family-prefixed with `BclGenericInterop` (one assembly = one namespace) to avoid clashing with sibling
 // batteries and the stdlib.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.Collections.Generic.List          // il-forin — the raw .NET List<T> (bare `List` in this file)
 import System.Threading.ThreadLocal             // il-gendelegate — Func<T> value-factory ctor
 import System.Progress                          // il-gendelegate — Action<T> handler ctor

@@ -25,9 +25,9 @@
 // `OperatorOverload`, `UniversalMember`, `UserRange`, `rangeMembership`, `whenSubject`, and `smartCast`) so they
 // remain readable and assembly-unique.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 
 // ---- il-object : `object` singleton as shared mutable state; member access routes as instance access -------------
 object ObjectFeatureCounter { var n = 0; fun inc() { n = n + 1 } }

@@ -25,10 +25,10 @@
 // Every scenario is self-contained inside its method (no shared top-level declarations), so there is nothing to
 // name-prefix in this single-battery assembly.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 
 class RegexTests {
     // il-regex: kotlin.text.Regex -> System.Text.RegularExpressions.Regex. toRegex / containsMatchIn / replace /
@@ -107,6 +107,15 @@ class RegexTests {
         assertEquals("a#b34", "[0-9]+".toRegex().replaceFirst("a12b34", "#"))  // a#b34
         assertEquals("a(\\d+)b", Regex("a(\\d+)b").toString())      // a(\d+)b (pattern-string source; method binding)
         assertEquals("c(\\w+)d", Regex("c(\\w+)d").pattern)         // c(\w+)d (rule-3 accessor hoist)
+        // A CLR-alias companion mixes bound BCL statics with real Kotlin carrier bodies. The former must bind on the
+        // semantic Regex alias; the latter must remain an instance method on the nested companion carrier.
+        assertEquals("a\\+b", Regex.escape("a+b"))
+        assertTrue(Regex.fromLiteral("a+b").matches("a+b"))
+        assertEquals("\$\$1", Regex.escapeReplacement("\$1"))
+        // A bound callable reference must use the member's binding too: the companion carrier contains a TODO stub,
+        // while the authored intrinsic targets the BCL static Regex.Escape method.
+        val escapeRef: (String) -> String = Regex.Companion::escape
+        assertEquals("x\\+y", escapeRef("x+y"))
     }
 
     // il-regexgroups: MatchResult.groups — the ClrMatchGroupCollection surface (by-index/by-name access,

@@ -14,8 +14,8 @@
 //
 // All top-level declarations introduced here are NumericTuple-prefixed (one assembly = one namespace).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 
 // ---- il-valclass : @JvmInline value class passed/returned/method-bearing --------------------------------------------
 @JvmInline value class NumericTupleMoney(val cents: Int) {

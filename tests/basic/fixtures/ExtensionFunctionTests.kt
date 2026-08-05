@@ -13,7 +13,7 @@
 // reference's `.name` now reads the new name — the property name is incidental to the subject (that the bound/unbound
 // `::` reference resolves and its get()/set() invoke the static ext accessor with the captured receiver).
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.math.absoluteValue
 import kotlin.math.sign
 

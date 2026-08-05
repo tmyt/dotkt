@@ -14,7 +14,7 @@
 // single System.Text.Json delegate. An enum key and a struct key are asserted together — they are one predicate
 // (`_valueTypeNames`, seeded from every `System.ValueType`/`System.Enum` definition), so neither can regress alone.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Collections.Generic.Dictionary
 import NrtPos.Api
 import NrtPos.Cell

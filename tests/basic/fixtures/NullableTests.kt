@@ -30,10 +30,10 @@
 // Top-level names are unique within this single battery assembly (one project = one namespace) and prefixed
 // (`null`/`nv`/`tryNull`/`nullcs`/`ng`) to avoid clashing with sibling batteries and stdlib names.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsNull as assertNull
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsTrue as assertTrue
-import NUnit.Framework.Legacy.ClassicAssert.Companion.IsFalse as assertFalse
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
+import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 
 // ---- #86 : the same-compilation `T?` DECLARATION surface at a VALUE instantiation ------------------------------
 // A slot's physical type is a function of its DECLARED type, so each `T?` position has to hold a genuine null at a

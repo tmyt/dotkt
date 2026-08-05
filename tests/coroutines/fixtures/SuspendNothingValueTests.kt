@@ -20,7 +20,7 @@
 // battery covers), a value-typed (`Int`) merge, a whole expression body, a nested argument, a `try` arm, and a
 // companion-static producer. Top-level names carry the `suspendNothing` prefix.
 import NUnit.Framework.TestAttribute
-import NUnit.Framework.Legacy.ClassicAssert.Companion.AreEqual as assertEquals
+import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
 
 suspend fun suspendNothingRelay(x: Int): Int = x
