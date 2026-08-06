@@ -157,6 +157,7 @@ static class UnsafeAccessorLowering
     static void RewriteMethod(JsonObject access, string kind, Host caller,
         IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors)
     {
+        var superCall = Bool(access["super"]);
         var frontendVisibility = Str(access["memberVisibility"]);
         var ownerTypeParams = access["memberOwnerTypeParams"] as JsonArray;
         var methodTypeParams = access["memberMethodTypeParams"] as JsonArray;
@@ -165,6 +166,11 @@ static class UnsafeAccessorLowering
         access.Remove("memberOwnerTypeParams");
         access.Remove("memberMethodTypeParams");
         access.Remove("memberReturnType");
+        // UnsafeAccessorKind.Method always performs virtual dispatch. A frontend-authorized `super.X()` is instead
+        // a lexical non-virtual edge and must reach ClrMemberResolution with `super:true` intact. #225 keeps every
+        // carrier that can contain such an edge nested under its nearest semantic class owner, so the CLR call has
+        // the same family-access context as the Kotlin source; replacing it with an UnsafeAccessor changes meaning.
+        if (superCall) return;
         // Top-level Kotlin calls deliberately keep `owner:null` for semantic substitutions and carry their exact
         // file-facade dispatch identity separately. That identity is also the UnsafeAccessor target owner.
         var ownerNode = access["ownerType"] ?? access["owner"] ?? access["calleeOwner"];

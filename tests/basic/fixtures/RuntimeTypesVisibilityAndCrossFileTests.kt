@@ -54,6 +54,15 @@ class RuntimeTypesDog : RuntimeTypesAnimal() { override fun toString() = "dog>" 
 interface RuntimeTypesGreeter { fun hi(): String = "hi-default" }
 class RuntimeTypesImpl : RuntimeTypesGreeter { override fun hi() = "impl+" + super.hi() }
 
+open class RuntimeTypesProtectedSuperBase {
+    protected open fun label(): String = "base"
+}
+class RuntimeTypesProtectedSuperDerived : RuntimeTypesProtectedSuperBase() {
+    override fun label(): String = "derived"
+    fun inlineSuper(): String = run { super.label() }
+    fun liftedSuper(): () -> String = { super.label() }
+}
+
 // ---- il-vis : visibility modifiers -> CLR access flags ------------------------------------------------------------
 class RuntimeTypesAccount(private val balance: Int) {
     private fun fee(): Int = 2
@@ -65,7 +74,8 @@ private fun runtimeTypessecret(): Int = 99
 
 // #225: accessor-routed properties keep a private CLR backing field. This frontend-valid address edge originates on
 // the file facade and targets the sibling class TypeDef, so bir2cir must synthesize a caller-owned UnsafeAccessor
-// instead of kotc widening the slot. ClrRef<T>-declaring Kotlin functions are compile/ILVerify coverage only for now.
+// instead of kotc widening the slot. The test below executes the edge so the runtime's name/signature binding is
+// covered in addition to compile/ILVerify.
 private class RuntimeTypesByRefOwner(var slot: Int)
 private fun runtimeTypesTakeByRef(slot: ClrRef<Int>) {}
 private fun runtimeTypesPrivateBackingAddress(owner: RuntimeTypesByRefOwner) {
@@ -108,6 +118,9 @@ class RuntimeTypeAndSuperDispatchTests {
         val b: RuntimeTypesBase = RuntimeTypesDerived()
         assertEquals("derived+base", b.greet())         // derived+base (virtual dispatch non-regression)
         assertEquals(11, b.twice(5))                    // 11
+        val protected = RuntimeTypesProtectedSuperDerived()
+        assertEquals("base", protected.inlineSuper())
+        assertEquals("base", protected.liftedSuper()())
     }
 
     // #60: the star-projection smart-cast (`is Map<*,*>`/`is List<*>`/`is Iterable<*>`/`is Collection<*>`) on a
@@ -148,6 +161,9 @@ class StarProjectionAndVisibilityTests {
         assertEquals(98, a.net())        // 98
         assertEquals("acct", a.tag())    // acct
         assertEquals(99, runtimeTypessecret())     // 99
+        val byRefOwner = RuntimeTypesByRefOwner(41)
+        runtimeTypesPrivateBackingAddress(byRefOwner)
+        assertEquals(41, byRefOwner.slot)
     }
 
 }
