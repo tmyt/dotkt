@@ -9,6 +9,13 @@ using DotKt.Bir;
 // capture slots. ilemit then emits nestedIn/capturedTypeParams one-to-one.
 static class TypeOwnershipLowering
 {
+    internal sealed class PreparedFacts
+    {
+        internal IReadOnlyDictionary<string, JsonObject> Types { get; }
+
+        internal PreparedFacts(IReadOnlyDictionary<string, JsonObject> types) => Types = types;
+    }
+
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
     // Lifted local/anonymous implementation types keep Kotlin semantic generic order in BIR:
@@ -135,7 +142,7 @@ static class TypeOwnershipLowering
     // Normalize explicit BIR ownership facts before ordinary lowering consumes positional generic information.
     // Local functions are intentionally absent here: kotc keeps them as lexical localFun declarations, and
     // LocalFunctionLowering later consumes their declaration ids without reconstructing ownership from a flat method.
-    public static void PrepareOwnershipFacts(IReadOnlyList<JsonNode> roots)
+    public static PreparedFacts PrepareOwnershipFacts(IReadOnlyList<JsonNode> roots)
     {
         var types = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in roots.OfType<JsonObject>())
@@ -147,6 +154,18 @@ static class TypeOwnershipLowering
 
         NormalizeOwnerCapturePrefixes(roots);
 
+        foreach (var root in roots) PrepareSyntheticOwnerCaptures(root, types);
+        return new PreparedFacts(types);
+    }
+
+    // Inline/default splices mutate only their current consumer root. Reuse the module type index prepared above and
+    // revisit that root alone; walking every file after each consumer splice makes phase 1 quadratic in file count.
+    public static void PrepareSplicedOwnershipFacts(JsonNode root, PreparedFacts prepared) =>
+        PrepareSyntheticOwnerCaptures(root, prepared.Types);
+
+    static void PrepareSyntheticOwnerCaptures(
+        JsonNode root, IReadOnlyDictionary<string, JsonObject> types)
+    {
         void EnsureSyntheticOwnerCapture(JsonObject node)
         {
             if (node["synthClass"] is not JsonObject synth
@@ -208,7 +227,7 @@ static class TypeOwnershipLowering
                 foreach (var value in array)
                     if (value != null) Rewrite(value);
         }
-        foreach (var root in roots) Rewrite(root);
+        Rewrite(root);
     }
 
     // The early representation boundary for type applications. Kotlin IR/BIR orders an inner classifier's flattened

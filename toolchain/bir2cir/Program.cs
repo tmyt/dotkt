@@ -107,8 +107,9 @@ sealed class Pipeline
 
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
-        var companionRepresentations = CompanionRepresentationLowering.Apply(birFiles.Select(b => b.Root));
-        TypeOwnershipLowering.PrepareOwnershipFacts(birFiles.Select(b => b.Root).ToList());
+        var birRoots = birFiles.Select(b => b.Root).ToList();
+        var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
+        var ownershipFacts = TypeOwnershipLowering.PrepareOwnershipFacts(birRoots);
         // #68 (PART 2): kotc emits the PLAIN Kotlin identity `kotlin.CharSequence` at every CharSequence use site (no CLR
         // synthetic name — kotc knows nothing of the synthetic). Recognizing `kotlin.CharSequence` as a synthesize-target is
         // a bir2cir concern (the Kotlin<->CLR layer), so SUBSTITUTE it here — as a one-type hardcode, exactly like the ref.dll
@@ -316,9 +317,9 @@ sealed class Pipeline
             if (attributeTopLevelOwner) DefaultArgSplice.Apply(bir.Root, refs);
             // Inline/default payloads are authored before their consumer lexical owner exists. The splice transfers
             // that exact semanticOwner fact above; now normalize any newly materialized synthClass generic prefix
-            // before ClosureSynthesis turns it into a CLR class. PrepareOwnershipFacts is idempotent for declarations
-            // normalized in the module-wide first pass, so one rule covers same-module and cross-module payloads.
-            TypeOwnershipLowering.PrepareOwnershipFacts(birFiles.Select(b => b.Root).ToList());
+            // before ClosureSynthesis turns it into a CLR class. The module-wide first pass normalized declarations;
+            // only this consumer root changed, so reuse its owner index instead of re-walking every file per splice.
+            TypeOwnershipLowering.PrepareSplicedOwnershipFacts(bir.Root, ownershipFacts);
             // Kotlin local functions remain lexical BIR declarations through every raw-body splice above. Consume the
             // explicit declaration-id relation now and select their CLR MethodDef owner before representation synthesis
             // (closures/suspend lambdas may carry calls to those declarations). No FileClass/name heuristic is involved.
