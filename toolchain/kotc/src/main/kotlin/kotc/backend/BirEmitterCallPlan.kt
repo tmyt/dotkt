@@ -84,7 +84,7 @@ internal class CallPlan(private val e: BirEmitter) {
 	 *  array already IS the evaluation plan). */
 	fun wrap(call: String, type: String): String =
 		if (bindings.isEmpty()) call
-		else """{"k":"callEval","type":$type,"bindings":${bindingsJson()},"expr":$call}"""
+		else """{"k":"callEval","type":$type${e.semanticUseSiteOwnerJson()},"bindings":${bindingsJson()},"expr":$call}"""
 }
 
 /** Run `emit` with a fresh evaluation plan installed for `call`, hand back both. The plan is scoped: a nested call

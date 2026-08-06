@@ -21,6 +21,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
     const string KotlinCompanionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
+    const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
     // The #86/#147 positional carrier: the PRE-erasure Kotlin TypeNode of a declaration slot whose `Nullable(Tv)`
     // NullableGenericErasure object-erased. Read per member slot (return parameter and each value parameter) so a
     // CONSUMING module can re-derive `Subst(Erase(decl))` at a use of that slot instead of guessing from the call.
@@ -82,6 +83,9 @@ sealed partial class ReferenceMetadataIndex
     // declarations.  Keep the graph as structured TypeNodes -- never reconstruct generic owners in
     // ilemit from reflection strings.
     readonly Dictionary<string, ReferenceTypeShape> _referenceTypeShapes = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _physicalTypeBySemanticName = new(StringComparer.Ordinal);
+    readonly Dictionary<string, int> _innerCapturedCount = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _innerSemanticOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
     readonly Dictionary<string, string> _topLevelIntrinsicsBySig = new(StringComparer.Ordinal); // "name|paramKeys" -> FQ static (overload-disambiguated)
     readonly HashSet<string> _ambiguousTopLevelIntrinsics = new(StringComparer.Ordinal); // names whose overloads bind to DIFFERENT statics (Math vs MathF)
@@ -252,6 +256,12 @@ sealed partial class ReferenceMetadataIndex
                 ctors.Add(c);
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.PhysicalTypeBySemanticName)
+                _physicalTypeBySemanticName.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.InnerCapturedCount)
+                _innerCapturedCount.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.InnerSemanticOwner)
+                _innerSemanticOwner.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsics) _topLevelIntrinsics.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.TopLevelIntrinsicsBySig) _topLevelIntrinsicsBySig.TryAdd(kv.Key, kv.Value);
             foreach (var n in asm.DotKt.AmbiguousTopLevelIntrinsics) _ambiguousTopLevelIntrinsics.Add(n);
@@ -317,8 +327,9 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // The CANDIDATE raw-BIR [KotlinInline] payloads for an OWNER-FUL cross-module inline fn (owner|name|pc|ga), each decoded to
-    // its JSON object — the overloads sharing that key. Empty/null when the referenced assembly carries no (or only unreadable
-    // / pre-S1-shaped) [KotlinInline] for that shape. InlineSplice picks the UNIQUE one matching the call's paramSig.
+    // its JSON object — the overloads sharing that key. Empty/null only when the referenced assembly carries no
+    // [KotlinInline] for that shape. Current-format DotKt carriers are internal ABI; malformed/older payloads are
+    // unsupported and must not fall back to a non-inline call. InlineSplice picks the UNIQUE paramSig match.
     public List<JsonObject> InlineCandidates(string owner, string name, int pc, int ga)
     {
         if (owner == null || name == null) return null;
@@ -335,8 +346,19 @@ sealed partial class ReferenceMetadataIndex
         if (jsons == null || jsons.Count == 0) return null;
         var list = new List<JsonObject>(jsons.Count);
         foreach (var j in jsons)
-            try { if (JsonNode.Parse(j) is JsonObject jo) list.Add(jo); } catch { /* unreadable payload — skip candidate */ }
-        return list.Count > 0 ? list : null;
+        {
+            try
+            {
+                list.Add((JsonObject)JsonNode.Parse(j, documentOptions: BirJson.DocOptions));
+            }
+            catch (Exception ex)
+            {
+                // Compiler carriers are internal ABI. Preserve failure across the broad foreign-metadata scan guard;
+                // no compatibility interpretation or dedicated legacy diagnostic is required.
+                throw new InvalidDataException(null, ex);
+            }
+        }
+        return list;
     }
 
     // The @ClrCollectionFactory kind ("list"/"set"/"map") for a top-level fun NAME, or null when the fun is not a
@@ -683,9 +705,30 @@ sealed partial class ReferenceMetadataIndex
     static bool IsStringType(TypeNode type) => type is TypeNode.Fqn f &&
         f.Name is "kotlin.String" or "System.String" or "string";
     public string[] OwnerTypeParamNames(string ownerFqn) => _ownerTypeParams.GetValueOrDefault(ownerFqn);
+
+    // Exact CLR metadata identity for a trusted external DotKt classifier. Local source declarations remain
+    // authoritative and therefore never rewrite through a same-named reference.
+    public IReadOnlyDictionary<string, string> PhysicalTypeNames =>
+        _physicalTypeBySemanticName
+            .Where(kv => !_localEmittedTypes.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+
+    // Kotlin inner applications arrive in BIR as [own..., outer...]. Trusted DotKt metadata supplies the number of
+    // semantic outer slots for referenced declarations; TypeOwnershipLowering alone projects them to CLR's flattened
+    // [outer..., own...] order. Accept both semantic dotted and exact physical nested spellings.
+    public bool TryInnerCapturedCount(string ownerFqn, out int count) =>
+        _innerCapturedCount.TryGetValue(StripGenericArity(DottedFqn(ownerFqn)), out count);
+    public bool TryInnerSemanticOwner(string ownerFqn, out string semanticOwner) =>
+        _innerSemanticOwner.TryGetValue(StripGenericArity(DottedFqn(ownerFqn)), out semanticOwner);
     // The declared param type names of the owner's (sole/first) constructor, or null. Keyed by the arity-stripped
     // Kotlin FQN (`dotkt$obj90`, not `dotkt$obj90``1`), matching the CIR `new` node's bare type token.
-    public string[] OwnerCtorParamTypeNames(string ownerFqn) => _ownerCtorParams.GetValueOrDefault(ownerFqn);
+    public string[] OwnerCtorParamTypeNames(string ownerFqn)
+    {
+        if (string.IsNullOrEmpty(ownerFqn)) return null;
+        return _ownerCtorParams.GetValueOrDefault(ownerFqn)
+            ?? _ownerCtorParams.GetValueOrDefault(StripGenericArity(ownerFqn))
+            ?? _ownerCtorParams.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)));
+    }
 
     // The struct-ness ORACLE (#37/#48 nullability fold). True iff a CONCRETE Kotlin/CLR type FQN is a VALUE type
     // (a foundational primitive, or a ref.dll struct/enum). A value `T?` is `System.Nullable<T>` (keeps its wrapper);
@@ -1802,6 +1845,7 @@ sealed partial class ReferenceMetadataIndex
                 foreach (var authoredType in types)
                     metadata.DotKtOwners.Add(
                         StripGenericArity(DottedFqn(authoredType.FullName ?? authoredType.Name)));
+
             var singletonCompanionCarriers = new Dictionary<string, string>(StringComparer.Ordinal);
             var companionRepresentations = dotKtAuthored
                 ? ValidateCompanionCarriers(types, asm, out singletonCompanionCarriers,
@@ -1821,6 +1865,26 @@ sealed partial class ReferenceMetadataIndex
                     // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
+                    // dll2klib never exposes compiler-generated implementation classifiers to Kotlin. Do not let a
+                    // same-named inline-materialized closure in the current compilation be rebound to a stale helper
+                    // TypeDef from a reference assembly merely because both deterministic names coincide.
+                    if (dotKtAuthored && !HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr))
+                    {
+                        var physicalName = ExactPhysicalMetadataName(type);
+                        // KLIB classifiers use dotted nesting, while a reconstructed external classifier can
+                        // legitimately re-enter BIR with the CLR `+` separator. Both spellings name the same
+                        // trusted DotKt declaration; keep the exact arity-bearing metadata identity as the value.
+                        metadata.PhysicalTypeBySemanticName[ownerFqn] = physicalName;
+                        metadata.PhysicalTypeBySemanticName[DottedFqn(ownerFqn)] = physicalName;
+                    }
+                    if (dotKtAuthored && AttrInt32(type.GetCustomAttributesData(), KotlinInnerAttr) is int capturedCount)
+                    {
+                        var innerName = StripGenericArity(DottedFqn(ownerFqn));
+                        metadata.InnerCapturedCount[innerName] = capturedCount;
+                        if (type.DeclaringType is Type declaringType)
+                            metadata.InnerSemanticOwner[innerName] = StripGenericArity(DottedFqn(
+                                declaringType.FullName ?? declaringType.Name));
+                    }
                     if (companionRepresentations.TryGetValue(type, out var companionIsStatic))
                         metadata.CompanionStaticByPhysicalOwner.Add(
                             StripGenericArity(DottedFqn(ownerFqn)), companionIsStatic);
@@ -1852,17 +1916,26 @@ sealed partial class ReferenceMetadataIndex
                         metadata.TypeParamBounds[DottedFqn(ownerFqn)] = gargs.Select(GenericParamBound).ToArray();
                     }
                     var classAlias = ClrAliasOf(type.GetCustomAttributesData());
-                    if (classAlias != null) metadata.Aliases[ownerFqn] = classAlias;
-                    // A SPLICED anonymous object (`dotkt$obj*`) captures its enclosing inline fn's receiver/free vars as
-                    // ctor params. Record that (sole) ctor's param types so the StringCharSequenceBridge can adapter-wrap
-                    // a static-String arg flowing into a `kotlin.CharSequence` capture slot (the spliced `new` carries no
-                    // argTypes). Scoped to `dotkt$obj*` — the exact single-ctor case — so no multi-overload BCL/stdlib
-                    // type is indexed (where "first ctor" would be ambiguous).
-                    if (ownerFqn.StartsWith("dotkt$obj", StringComparison.Ordinal))
+                    if (classAlias != null)
                     {
-                        var ctor = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).FirstOrDefault();
-                        if (ctor != null)
-                            metadata.CtorParamTypes[ownerFqn] = ctor.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray();
+                        metadata.Aliases[ownerFqn] = classAlias;
+                        metadata.Aliases[DottedFqn(ownerFqn)] = classAlias;
+                    }
+                    // A compiler-generated implementation classifier carried by an inline body may capture the
+                    // enclosing receiver/free values through its sole constructor. Record that exact declaration
+                    // shape so StringCharSequenceBridge can adapt a static String value to a CharSequence capture
+                    // slot even after #225 nests the classifier. CompilerGenerated + exactly one constructor is the
+                    // structural boundary; choosing the first of multiple overloads would be an ownership guess.
+                    if (dotKtAuthored && HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr))
+                    {
+                        var ctors = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                        if (ctors.Length == 1)
+                        {
+                            var ctorParams = ctors[0].GetParameters().Select(p => TypeName(p.ParameterType)).ToArray();
+                            metadata.CtorParamTypes[ownerFqn] = ctorParams;
+                            metadata.CtorParamTypes[DottedFqn(ownerFqn)] = ctorParams;
+                            metadata.CtorParamTypes[ExactPhysicalMetadataName(type)] = ctorParams;
+                        }
                     }
                     if (ownerFqn.StartsWith("dotkt$ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
                     if (HasAttribute(type.GetCustomAttributesData(), RestrictsSuspensionAttr)) metadata.RestrictsSuspensionTypes.Add(ownerFqn);
@@ -1944,11 +2017,14 @@ sealed partial class ReferenceMetadataIndex
                             DeclarationTypeNode(method.ReturnType)));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
-                        // fn's body at a cross-module call site. A malformed / pre-S1-shaped payload is swallowed (no
-                        // cross-module splice for it -> the splicer's plain-call fallback). ga = generic arity.
+                        // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
+                        // malformed payload is unsupported and never enters a plain-call compatibility path.
+                        // ga = generic arity.
                         var inlineCad = method.GetCustomAttributesData().FirstOrDefault(c => c.AttributeType.FullName == KotlinInlineAttr);
-                        if (inlineCad != null && inlineCad.ConstructorArguments.Count == 2)
+                        if (inlineCad != null)
                         {
+                            if (inlineCad.ConstructorArguments.Count != 2)
+                                throw new InvalidDataException();
                             try
                             {
                                 var ver = (string)inlineCad.ConstructorArguments[0].Value!;
@@ -1964,7 +2040,10 @@ sealed partial class ReferenceMetadataIndex
                                 if (!metadata.InlinePayloads.TryGetValue(ikey, out var ilst)) metadata.InlinePayloads[ikey] = ilst = new List<string>();
                                 ilst.Add(json);
                             }
-                            catch { /* unreadable / pre-S1 payload — no cross-module splice; the engine fails loud at splice time */ }
+                            catch (Exception ex)
+                            {
+                                throw new InvalidDataException(null, ex);
+                            }
                         }
                         // A top-level fun (file-class static) with @ClrIntrinsic. TWO shapes:
                         //   FQ "System.X.Y"  -> a fully-qualified BCL static (isNaN, clrTimestamp); keyed by NAME.
@@ -2067,6 +2146,7 @@ sealed partial class ReferenceMetadataIndex
                     }
                 }
                 catch (MalformedTrustedCompanionException) { throw; }
+                catch (InvalidDataException) { throw; }
                 catch (Exception ex)
                 {
                     metadata.Diagnostics.Add($"subst scan skip {type?.FullName}: {ex.GetType().Name}");
@@ -2074,6 +2154,7 @@ sealed partial class ReferenceMetadataIndex
             }
         }
         catch (MalformedTrustedCompanionException) { throw; }
+        catch (InvalidDataException) { throw; }
         catch (Exception ex)
         {
             metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: subst scan failed: {ex.GetType().Name}: {ex.Message}");
@@ -2303,6 +2384,12 @@ sealed partial class ReferenceMetadataIndex
         return string.IsNullOrEmpty(type.Namespace) ? simple : type.Namespace + "." + simple;
     }
 
+    static string ExactPhysicalMetadataName(Type type)
+    {
+        if (type.DeclaringType != null) return ExactPhysicalMetadataName(type.DeclaringType) + "+" + type.Name;
+        return string.IsNullOrEmpty(type.Namespace) ? type.Name : type.Namespace + "." + type.Name;
+    }
+
     // A reflected byte[] ctor argument materializes under MetadataLoadContext as an IReadOnlyList<CustomAttributeTypedArgument>
     // (each element's .Value a boxed byte), not a byte[] — reify it (mirrors ilemit Emitter.CompilerServices.ReadByteArrayArg).
     static byte[] ReadByteArrayArg(CustomAttributeTypedArgument a)
@@ -2512,18 +2599,17 @@ sealed partial class ReferenceMetadataIndex
 
     // A receiver-type key for an extension fun's first param, matched against a call's first-arg type. Arrays collapse
     // to "[]", generic params to "gp", a generic type to its open def's stripped FQN. A NESTED type's reflection name
-    // ("kotlin.collections.Map`2+Map$Entry`2") is normalized to the BIR token convention the call side uses
-    // ("kotlin.collections.Map$Entry" = namespace + innermost simple name) — e.g. the Map.Entry.component1/2 extensions.
+    // ("kotlin.collections.Map`2+Entry`2") is normalized to the BIR semantic hierarchy
+    // ("kotlin.collections.Map.Entry") — e.g. the Map.Entry.component1/2 extensions. Before #225 lifted nested
+    // types carried a `$`-joined top-level metadata name; once ownership is represented by real CLR nesting, dropping
+    // the declaring chain here would turn every sibling `Outer.Entry` into the unrelated `namespace.Entry`.
     static string RecvKey(Type t)
     {
         if (t.IsByRef && t.GetElementType() is Type e) t = e;
         if (t.IsArray) return "[]";
         if (t.IsGenericParameter) return "gp";
         var def = t.IsGenericType ? t.GetGenericTypeDefinition() : t;
-        var full = def.IsNested
-            ? (string.IsNullOrEmpty(def.Namespace) ? "" : def.Namespace + ".") + def.Name
-            : def.FullName ?? def.Name;
-        return StripGenericArity(full);
+        return DottedFqn(StripGenericArity(def.FullName ?? def.Name));
     }
 
     // A method's full ParamKey-normalized signature ("f64", "f64,f64", "i32", ...), used to overload-disambiguate a
@@ -2617,6 +2703,14 @@ sealed partial class ReferenceMetadataIndex
         if (attr == null || attr.ConstructorArguments.Count == 0) return 0;
         var value = attr.ConstructorArguments[0].Value;
         return value is int i ? i : 0;
+    }
+
+    static int? AttrInt32(IList<CustomAttributeData> attrs, string fullName)
+    {
+        var attr = attrs.FirstOrDefault(a => a.AttributeType.FullName == fullName);
+        if (attr == null || attr.ConstructorArguments.Count == 0 || attr.ConstructorArguments[0].Value == null)
+            return null;
+        return Convert.ToInt32(attr.ConstructorArguments[0].Value, CultureInfo.InvariantCulture);
     }
 
     static string TypeName(Type type)
@@ -2904,6 +2998,9 @@ sealed class ReferenceDotKtMetadata
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
     public readonly List<CtorBinding> CtorBindings = new();                               // per-ctor declaration shape (#86 D1)
     public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> InnerSemanticOwner = new(StringComparer.Ordinal);
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the candidate decoded carrier JSONs (one per overload).
     public readonly Dictionary<string, List<string>> InlinePayloads = new(StringComparer.Ordinal);
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").

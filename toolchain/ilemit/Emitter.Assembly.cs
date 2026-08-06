@@ -215,9 +215,10 @@ sealed partial class Emitter
                         BaseName = t.TryGetProperty("base", out var b2)
                             ? (b2.ValueKind == JsonValueKind.String ? b2.GetString() : SlotName(b2)) : null,
                     };
-                    // A physical nested capture is deliberately distinct from a Kotlin-declared parameter. It is
-                    // unconstrained, allowing Kotlin's canonical object closure even when Foo<T> constrains T, while
-                    // Roslyn still substitutes a valid closed Foo<Concrete> argument into the nested metadata slot.
+                    // A physical nested capture is deliberately distinct from this type's own declared parameters.
+                    // A declaration-form capturedTypeParams entry preserves the outer Kotlin constraints; a bare
+                    // name intentionally declares an unconstrained representation slot (for example a companion
+                    // carrier). ApplyConstraints below emits exactly the CIR-authored distinction.
                     var capturedNames = t.TryGetProperty("capturedTypeParams", out var capturedTps)
                         ? TpNames(capturedTps) : [];
                     var declaredNames = t.TryGetProperty("typeParams", out var tps)
@@ -251,6 +252,8 @@ sealed partial class Emitter
             T($"pass2 parent/iface: {ti.TB?.Name}");
             _curTypeParams = EffectiveTps(ti);
             // Bounds may reference any type (now all defined) and the type's own params (now in _curTypeParams).
+            if (ti.IsGeneric && ti.Def.TryGetProperty("capturedTypeParams", out var capturedTps2))
+                ApplyConstraints(capturedTps2, ti.TypeParams, false);
             if (ti.IsGeneric && ti.Def.TryGetProperty("typeParams", out var tps2))
                 ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface || ti.IsDelegate, ti.Def);
             if (ti.BaseName != null)

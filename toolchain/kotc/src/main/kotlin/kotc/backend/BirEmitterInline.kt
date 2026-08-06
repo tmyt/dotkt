@@ -239,7 +239,7 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
 	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, callee, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
-	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]${semanticUseSiteOwnerJson()}}"""
 }
 
 /** Build the `recvs` object for an owner-ful inline `callInline` node: an extension receiver -> `recvs.extension`
@@ -372,7 +372,7 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
 	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, callee, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
-	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]${semanticUseSiteOwnerJson()}}"""
 }
 
 /** paramSig (#95 §4.2, overload disambiguator): one TYPE NODE per callee DECLARED parameter in the SAME order the
@@ -519,7 +519,7 @@ internal fun BirEmitter.inlineSpliceCallOwnerless(call: IrCall, extRecv: IrExpre
 	// The §4.2 overload disambiguator (see `paramSigOf`): one TYPE NODE per callee declared param (extension receiver as
 	// element 0), in the callee's OWN un-instantiated frame. bir2cir keys the ref.dll payload by owner(null)|name|pc|ga
 	// (a candidate list) and picks the candidate whose `params[i].type` DeepEquals this `paramSig[i]`.
-	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":null,"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]}"""
+	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":null,"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]${semanticUseSiteOwnerJson()}}"""
 }
 
 /** True iff [body] contains an IrReturn TARGETING [target] anywhere other than as the body's LAST top-level

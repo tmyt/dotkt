@@ -386,10 +386,16 @@ static class CompanionRepresentationLowering
     static string PhysicalMetadataName(JsonObject type, IReadOnlyDictionary<string, JsonObject> byName)
     {
         var name = Str(type["name"]) ?? throw new InvalidOperationException("companion owner has no physical name");
-        if (Str(type["nestedIn"]) is not string parentName) return name;
-        if (!byName.TryGetValue(parentName, out var parent))
-            throw new InvalidOperationException($"companion owner '{name}' has missing nested parent '{parentName}'");
-        return PhysicalMetadataName(parent, byName) + "+" + name[(name.LastIndexOf('.') + 1)..];
+        // Companion representation runs before the general ownership pass, so an ordinary Kotlin child still carries
+        // BIR `semanticOwner` here; an already-materialized physical helper may carry CIR `nestedIn`. Follow either
+        // fact to author the exact `+`-separated metadata owner recorded in [KotlinCompanion]. A file facade is not a
+        // type declaration in `byName`, but is nevertheless the final physical parent and therefore a valid root.
+        var parentName = Str(type["nestedIn"]) ?? Str(type["semanticOwner"]);
+        if (parentName is null) return name;
+        var physicalParent = byName.TryGetValue(parentName, out var parent)
+            ? PhysicalMetadataName(parent, byName)
+            : parentName;
+        return physicalParent + "+" + name[(name.LastIndexOf('.') + 1)..];
     }
 
     static void RewriteUses(

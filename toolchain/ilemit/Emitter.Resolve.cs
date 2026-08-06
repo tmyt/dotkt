@@ -959,7 +959,12 @@ sealed partial class Emitter
             || ownerNode.ValueKind == JsonValueKind.Null
             || SlotName(ownerNode) is not string owner || owner.Length == 0)
             throw new NotSupportedException($"{kind} target '{name}' is missing required calleeOwner");
-        return FindMethod(owner, name, sig, methodArity)
+        // `calleeOwner` is a CIR TypeSpec, not just a declaration name. Preserve a carried construction such as
+        // `Owner<!0>` when a lifted local function has been restored to its nearest CLR type. Collapsing through
+        // SlotName/FindMethod resolves the member on the open `Owner`1` definition; the later generic-static fallback
+        // then canonicalizes it to `Owner<object>`, losing the caller's enclosing T and producing invalid IL. The
+        // structured ResolveMethod overload anchors the MethodBuilder directly on the exact owner construction.
+        return ResolveMethod(ParseOwnerSlot(ownerNode), name, out _, sig, methodArity)
             ?? throw new NotSupportedException($"{kind} target '{owner}.{name}' was not found through calleeOwner");
     }
 

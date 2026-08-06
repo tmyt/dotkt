@@ -37,6 +37,20 @@ suspend fun nestedGenericSuspendRunSource(src: NestedGenericSuspendSource<Int>):
     return sum
 }
 
+suspend fun nestedGenericSuspendRunText(src: NestedGenericSuspendSource<String>): String {
+    val sink = NestedGenericSuspendListSink<String>()
+    src.drain(sink)
+    return sink.items[0]
+}
+
+fun <A, B, C, D> nestedGenericSuspendSparseMethodSource(x: B, y: D): NestedGenericSuspendSource<String> =
+    nestedGenericSuspendMakeFlow<String> { emit(x.toString() + ":" + y.toString()) }
+
+class NestedGenericSuspendOwner<T : Comparable<T>>(private val prefix: T) {
+    fun <A, B> make(ignored: A, value: B): NestedGenericSuspendSource<String> =
+        nestedGenericSuspendMakeFlow<String> { emit(prefix.toString() + ":" + value.toString()) }
+}
+
 class NestedGenericSuspendLambdaTests {
     @TestAttribute
     fun nestedSuspendLambdaUnderTvRemap() {
@@ -44,5 +58,11 @@ class NestedGenericSuspendLambdaTests {
         val s1 = nestedGenericSuspendMakeFlow<Int> { emit(nestedGenericSuspendProduceOne { c }); emit(nestedGenericSuspendProduceOne { dd }) }
         assertEquals(42, blockOn { nestedGenericSuspendRunSource(s1) })                        // 42
         assertEquals(42, blockOn { nestedGenericSuspendRunSource(nestedGenericSuspendMakeSource(30, 12)) })  // 42
+        val sparse = nestedGenericSuspendSparseMethodSource<Unit, Int, Unit, String>(42, "ok")
+        assertEquals("42:ok", blockOn { nestedGenericSuspendRunText(sparse) })
+        val owner = NestedGenericSuspendOwner("owner")
+        assertEquals("owner:43", blockOn {
+            nestedGenericSuspendRunText(owner.make<Unit, Int>(Unit, 43))
+        })
     }
 }

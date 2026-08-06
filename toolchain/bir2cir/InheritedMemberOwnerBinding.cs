@@ -64,7 +64,7 @@ static class InheritedMemberOwnerBinding
             {
                 Name = name,
                 Kind = Str(type["kind"]),
-                TypeParamCount = (type["typeParams"] as JsonArray)?.Count ?? 0,
+                TypeParamCount = TypeParameterFrame.Count(type),
                 Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
                 Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
                     .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>(),

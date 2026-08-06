@@ -142,7 +142,8 @@ internal sealed class MetadataAttributes
         if (name == NullableContext)
             return new(name, ByteValue: reader.ReadByte());
         if (name == DotKtNs + "KotlinFunctionAttribute" ||
-            name == DotKtNs + "KotlinContextFunctionTypeAttribute")
+            name == DotKtNs + "KotlinContextFunctionTypeAttribute" ||
+            name == DotKtNs + "KotlinInnerAttribute")
             return new(name, Int32Value: reader.ReadInt32());
         if (name == "System.Reflection.AssemblyMetadataAttribute")
             return new(name, StringValue: reader.ReadSerializedString(), StringValue2: reader.ReadSerializedString());

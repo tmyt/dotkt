@@ -13,8 +13,7 @@ using System.Text.Json.Nodes;
 // (the anon is a NESTED class with private access); on the CLR a separate top-level class canNOT touch
 // another class's `private` member -> System.MethodAccessException at runtime.
 //
-// This generalizes SuspendColdLowering.WidenPrivatesAccessedBySm (which widens only what a synthesized SM
-// touches via its `$this` field) to ANY cross-class access: for every local type T, walk its bodies; for a
+// This covers synthesized state machines as well as ordinary lifted types: for every local type T, walk its bodies; for a
 // call (callInstance/callStatic), a bound method reference (newBoundDelegate, an `ldftn` over the member), or a
 // member field-access of the full node family (field/setField/setFieldExpr/lateinitGet/staticField/staticFieldSet)
 // whose owner (generics stripped) names a DIFFERENT local type C, record (C, member); then relax any matching
@@ -52,6 +51,24 @@ static class CrossClassPrivateWidening
                         types[tn] = to;
         if (types.Count == 0) return;
 
+        // A CLR nested type retains lexical access to every enclosing type. Those accesses are no longer
+        // cross-class in the accessibility sense and must not force the containing declaration away from private.
+        bool IsNestedWithin(string child, string ancestor)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var current = child;
+            while (current != null && seen.Add(current) && types.TryGetValue(current, out var declaration))
+            {
+                var parent = Str(declaration["nestedIn"]);
+                if (parent == ancestor) return true;
+                current = parent;
+            }
+            return false;
+        }
+
+        bool NeedsRelaxation(string selfType, string owner) =>
+            owner != null && owner != selfType && !IsNestedWithin(selfType, owner);
+
         // 2. Collect cross-class member accesses: (ownerClass -> {member names}) reached from a DIFFERENT local
         //    type's bodies.
         var accessed = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
@@ -75,19 +92,22 @@ static class CrossClassPrivateWidening
                     // Once both are separate CLR types that constructor is a cross-class access just like a private
                     // method call; record a synthetic member key and widen only the reached constructors.
                     case "new":
-                        if (BareOwner(TypeJson.OwnerName(o["type"])) is string cn && cn != selfType)
+                        if (BareOwner(TypeJson.OwnerName(o["type"])) is string cn && NeedsRelaxation(selfType, cn))
                             Record(TypeJson.OwnerName(o["type"]), ReferenceMetadataIndex.CtorKeyName);
                         break;
-                    // Owner slots are structured Type nodes now — read the Fqn identity directly (BareOwner is then a
-                    // no-op on the already-bare name, kept only as a defensive strip for a legacy string owner).
+                    // Owner slots are structured Type nodes. BareOwner selects the declaration identity from a
+                    // constructed current-format owner such as Owner<!0>; it is not a legacy-name recovery path.
                     case "callInstance":
-                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string ci && ci != selfType)
+                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string ci && NeedsRelaxation(selfType, ci))
                             Record(TypeJson.OwnerName(o["ownerType"]), Str(o["method"]));
                         break;
                     case "callStatic":
-                        if (BareOwner(TypeJson.OwnerName(o["owner"])) is string cs && cs != selfType)
-                            Record(TypeJson.OwnerName(o["owner"]), Str(o["method"]));
+                    {
+                        var callOwner = o["ownerType"] ?? o["owner"];
+                        if (BareOwner(TypeJson.OwnerName(callOwner)) is string cs && NeedsRelaxation(selfType, cs))
+                            Record(TypeJson.OwnerName(callOwner), Str(o["method"]));
                         break;
+                    }
                     // A bound method reference `obj::method` — its delegate does an `ldftn` over (ownerType, method).
                     // A `::privateMethod` captured inside a lifted lambda emits this over the enclosing class's private
                     // method from the separate closure class -> MethodAccessException, the same fault class as the
@@ -95,7 +115,7 @@ static class CrossClassPrivateWidening
                     // guard in Record; the unbound `Class::method` form lowers to a lifted __mref + callInstance,
                     // already covered above.)
                     case "newBoundDelegate":
-                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string bd && bd != selfType)
+                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string bd && NeedsRelaxation(selfType, bd))
                             Record(TypeJson.OwnerName(o["ownerType"]), Str(o["method"]));
                         break;
                     // The full member field-access node family — every kind that names a class member by
@@ -111,7 +131,7 @@ static class CrossClassPrivateWidening
                     case "lateinitGet":
                     case "staticField":
                     case "staticFieldSet":
-                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string fo && fo != selfType)
+                        if (BareOwner(TypeJson.OwnerName(o["ownerType"])) is string fo && NeedsRelaxation(selfType, fo))
                             Record(TypeJson.OwnerName(o["ownerType"]), Str(o["name"]));
                         break;
                 }

@@ -48,7 +48,8 @@ static class StarProjectionBoundLowering
 
     static void CollectType(JsonObject t, Dictionary<string, TypeNode[]> map)
     {
-        if (Str(t["name"]) is string name && t["typeParams"] is JsonArray tps && tps.Count > 0)
+        var tps = TypeParameterFrame.CloneDeclarations(t);
+        if (Str(t["name"]) is string name && tps.Count > 0)
         {
             var bounds = new TypeNode[tps.Count];
             var any = false;

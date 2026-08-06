@@ -15,6 +15,13 @@ fun column(configure: Panel.() -> Unit = {}, build: Panel.() -> Unit): Int { val
 fun run2(pre: () -> Unit = {}, body: () -> Unit): String { pre(); body(); return "ok" }
 fun tagged(name: String, items: List<String> = emptyList()): String = "$name=${items.size}"
 
+// #225: the closed default carrier names a generated implementation type. Once ownership lowering nests that type,
+// its carrier must preserve the semantic identity needed to resolve the producer's physical nested name downstream.
+interface GeneratedDefaultValue { fun value(): Int }
+fun generatedDefault(value: GeneratedDefaultValue = object : GeneratedDefaultValue {
+    override fun value(): Int = 29
+}): Int = value.value()
+
 // #235: the CONSTRUCTOR half of the same mechanism. A ctor's non-constant default now carries `@KotlinDefault` too,
 // so a consumer can omit it: reading an EARLIER ctor param, a CHAIN (the second default reads the first, itself
 // filled), and a call (`= emptyList()`) mixed with a metadata-representable constant in a later slot.

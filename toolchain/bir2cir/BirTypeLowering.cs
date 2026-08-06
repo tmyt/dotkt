@@ -230,6 +230,10 @@ static class BirTypeLowering
         t is TypeNode.Fqn f && f.Args == null &&
         (f.Name == "object" || f.Name == "System.Object" || f.Name == "kotlin.Any" || f.Name == "kotlin.Nothing");
 
+    static string PhysicalName(string semanticName) =>
+        _localTypeNames.Contains(semanticName) ? semanticName
+        : _physicalTypeNames.TryGetValue(semanticName, out var physical) ? physical : semanticName;
+
     // typeArg = "this type sits in a generic type-ARGUMENT position": a primitive there stays BOXED
     // (kotlin.Int / the JVM-boxing dual-representation — Comparable<kotlin.Int>, IReadOnlyList<kotlin.Int>);
     // a bare/value primitive lowers to the CLR shorthand. Only Fqn.args propagate typeArg=true; array/byref/
@@ -252,9 +256,12 @@ static class BirTypeLowering
                 // (which emitted `System.Span` unconditionally); the element lowers like any generic type-arg.
                 if (f.Name == SpanIntrinsicFqn && f.Args != null)
                     return new TypeNode.Fqn(SpanClrFqn, f.Args.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray());
-                // The reference build keeps the pure-Kotlin surface verbatim (no recursion) unless an attribute
-                // blob forces a concrete System.* type.
-                if (!force && refBuild) return f;
+                // The reference build keeps Kotlin type semantics verbatim, but CIR must still name an external
+                // DotKt TypeDef by its exact CLR metadata identity. This matters for nested types under generic owners:
+                // `Outer.Nested` physically lives at `Outer`1+Nested` even when Nested itself declares no arguments.
+                if (!force && refBuild)
+                    return new TypeNode.Fqn(PhysicalName(f.Name),
+                        f.Args?.Select(a => LowerType(a, refBuild, force: false, typeArg: true)).ToArray());
                 // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
                 // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
                 if (f.Name == "kotlin.Enum" && f.Args != null) return new TypeNode.Fqn("System.Enum");
@@ -275,7 +282,9 @@ static class BirTypeLowering
                     // A @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) OR a non-primitive BCL
                     // (StringBuilder/Regex/IComparable/…) -> the BCL FQN, read from the ref.dll alias index.
                     if (AliasBcl(f.Name) is string bclNonGen) return new TypeNode.Fqn(bclNonGen);
-                    return f;   // user / stdlib / in-assembly FQN — identity preserved
+                    return new TypeNode.Fqn(PhysicalName(f.Name));
+                    // user / stdlib / in-assembly names stay unchanged; trusted external DotKt identities become
+                    // their exact physical metadata names.
                 }
                 // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
                 if (AliasBcl(f.Name) is string bcl)
@@ -293,7 +302,7 @@ static class BirTypeLowering
                         return new TypeNode.Fqn(inv, loweredArgs);
                     return new TypeNode.Fqn(bcl, loweredArgs);
                 }
-                return new TypeNode.Fqn(f.Name, loweredArgs);
+                return new TypeNode.Fqn(PhysicalName(f.Name), loweredArgs);
             }
             case TypeNode.Tv:
                 return t;   // scope+i preserved; ilemit maps scope:"type"->!i / scope:"method"->!!i
@@ -397,13 +406,20 @@ static class BirTypeLowering
     // The source file being lowered, for the refusals this pass can raise. Set per `Lower` call alongside the other
     // per-call statics; there is no finer location to give, because a type node carries no position of its own.
     static string _file = "<unknown>";
+    static IReadOnlyDictionary<string, string> _physicalTypeNames =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+    static IReadOnlySet<string> _localTypeNames = new HashSet<string>(StringComparer.Ordinal);
 
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
-        Func<string, bool> isValueFqn = null, string file = null)
+        Func<string, bool> isValueFqn = null, string file = null,
+        IReadOnlyDictionary<string, string> physicalTypeNames = null,
+        IReadOnlySet<string> localTypeNames = null)
     {
         _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _isValueFqn = isValueFqn ?? (_ => false);
         _file = string.IsNullOrEmpty(file) ? "<unknown>" : file;
+        _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
         return LowerNode(root, refBuild, force: false);
     }
 

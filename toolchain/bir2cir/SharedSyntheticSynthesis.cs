@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // #52 (kotc-purity): SYNTHESIZE the remaining fixed-shape CLR-representation synthetic TYPES here, in the Kotlin<->CLR
 // layer, instead of in the kotc frontend. kotc emits only the FACTS (a use-site reference / a `refTypes` registry);
@@ -146,9 +147,14 @@ static class SharedSyntheticSynthesis
         /// own, WITH their constraints, and records which original variable each of its own params stands for. That
         /// makes it an equally valid descriptor source — and the only one when the celled `var` is declared inside the
         /// lift, so no use survives in the frame that originally declared the variable.
-        public void BindThroughSynthetic(JsonArray ownParams, IReadOnlyDictionary<TvKey, int> positions) =>
-            Bind(key => positions.TryGetValue(key, out var position)
-                && position >= 0 && position < ownParams.Count ? ownParams[position] : null);
+        public void BindThroughSynthetic(JsonArray typeParams, JsonArray methodParams,
+            IReadOnlyDictionary<TvKey, TypeNode> bindings) =>
+            Bind(key =>
+            {
+                if (!bindings.TryGetValue(key, out var target) || target is not TypeNode.Tv tv) return null;
+                var source = tv.Scope == "type" ? typeParams : methodParams;
+                return tv.I >= 0 && tv.I < source.Count ? source[tv.I] : null;
+            });
 
         void Bind(Func<TvKey, JsonNode> descriptorOf)
         {
@@ -225,9 +231,10 @@ static class SharedSyntheticSynthesis
         declaration["typeParams"] as JsonArray ?? new JsonArray();
 
     /// A bare cell identity inside a LIFTED SYNTHETIC, together with the frame it must be constructed in: the
-    /// synthetic's own type params, the scope they live in, and which original variable each of them stands for.
+    /// synthetic's available type/method frames and the exact physical slot to which each original variable moved.
     sealed record SyntheticUse(
-        JsonObject Node, string OwnerName, string NewScope, JsonArray OwnParams, Dictionary<TvKey, int> Positions);
+        JsonObject Node, string OwnerName, JsonArray TypeParams, JsonArray MethodParams,
+        Dictionary<TvKey, TypeNode> Bindings);
 
     /// Recover the lexical type-parameter descriptors for every generic cell, then construct each of its uses.
     ///
@@ -258,7 +265,7 @@ static class SharedSyntheticSynthesis
         // descriptors when the celled `var` is declared inside the lift and no use survives in the declaring frame.
         foreach (var use in syntheticUses)
             if (specs.TryGetValue(Str(use.Node["name"]), out var spec) && !spec.IsBound)
-                spec.BindThroughSynthetic(use.OwnParams, use.Positions);
+                spec.BindThroughSynthetic(use.TypeParams, use.MethodParams, use.Bindings);
 
         foreach (var use in syntheticUses)
             ConstructSyntheticRefUse(use, specs);
@@ -274,14 +281,14 @@ static class SharedSyntheticSynthesis
         // here must construct in the METHOD parameter space — the twin of a lifted closure CLASS constructing in its
         // type parameter space. Without this the cell's enclosing-frame `tv` would be looked up in a frame that does
         // not declare it (a file-class method has no enclosing type params at all).
-        CollectSyntheticRefUses(method, ctx, "method");
+        CollectSyntheticRefUses(method, ctx, "method", typeParams);
         BindRefsIn(method, ctx, typeParams, ParamsOf(method));
     }
 
     static void BindType(JsonObject type, BindContext ctx)
     {
         var typeParams = ParamsOf(type);
-        CollectSyntheticRefUses(type, ctx, "type");
+        CollectSyntheticRefUses(type, ctx, "type", new JsonArray());
 
         // Scan the type header/fields without descending through member declarations under the wrong method context.
         foreach (var kv in type)
@@ -323,19 +330,30 @@ static class SharedSyntheticSynthesis
     }
 
     // `_syntheticTypeArgs` records, positionally, which ORIGINAL enclosing type variable each of a lifted synthetic's
-    // own type params re-declares. Two producers, one meaning: kotc emits it on a lifted local `fun` (whose new frame
-    // is its METHOD params), bir2cir's ClosureSynthesis derives it for a lifted closure CLASS from
-    // `newClosure.typeArgs` (whose new frame is the class's TYPE params). [newScope] is that new frame's scope.
-    static void CollectSyntheticRefUses(JsonObject owner, BindContext ctx, string newScope)
+    // own type params re-declares. Two producers, one meaning: kotc emits it on a lifted local `fun` (whose retained
+    // variables move into its METHOD params while owner variables stay in the containing TYPE frame), and bir2cir's
+    // ClosureSynthesis derives it for a lifted closure CLASS (whose variables all move into its TYPE params).
+    static void CollectSyntheticRefUses(JsonObject owner, BindContext ctx, string newScope,
+        JsonArray containingTypeParams)
     {
         if (owner["_syntheticTypeArgs"] is not JsonArray origins) return;
-        var positions = new Dictionary<TvKey, int>();
+        var bindings = new Dictionary<TvKey, TypeNode>();
         for (var i = 0; i < origins.Count; i++)
             if (origins[i] is JsonObject tv && Str(tv["t"]) == "tv" && Str(tv["scope"]) is string scope
                 && tv["i"] is JsonValue iv && iv.TryGetValue<int>(out var index))
-                positions.TryAdd(new TvKey(scope, index), i);
+                bindings.TryAdd(new TvKey(scope, index), new TypeNode.Tv(newScope, i));
         var ownerName = Str(owner["name"]);
         var ownParams = ParamsOf(owner);
+        var typeParams = newScope == "type" ? ownParams : containingTypeParams;
+        var methodParams = newScope == "method" ? ownParams : new JsonArray();
+        // LocalFunctionLowering consumes owner origins from the method-generic vector because the constructed owner
+        // supplies them. Their uses now name the containing type frame directly. A cell declared inside a compacted
+        // local function can likewise already name its new dense method slot. Preserve both identity edges in addition
+        // to the sparse origin correspondence above; TryAdd leaves an explicit non-identity origin authoritative.
+        for (var i = 0; i < typeParams.Count; i++)
+            bindings.TryAdd(new TvKey("type", i), new TypeNode.Tv("type", i));
+        for (var i = 0; i < methodParams.Count; i++)
+            bindings.TryAdd(new TvKey("method", i), new TypeNode.Tv("method", i));
 
         void Walk(JsonNode node)
         {
@@ -345,7 +363,7 @@ static class SharedSyntheticSynthesis
                     if (Str(o["t"]) == "fqn" && Str(o["name"]) is string name
                         && ctx.Specs.TryGetValue(name, out var spec) && spec.Free.Count != 0 && o["args"] == null)
                     {
-                        ctx.SyntheticUses.Add(new SyntheticUse(o, ownerName, newScope, ownParams, positions));
+                        ctx.SyntheticUses.Add(new SyntheticUse(o, ownerName, typeParams, methodParams, bindings));
                         ctx.Deferred.Add(o);
                     }
                     foreach (var kv in o)
@@ -371,11 +389,11 @@ static class SharedSyntheticSynthesis
         var args = new JsonArray();
         foreach (var key in spec.Free)
         {
-            if (!use.Positions.TryGetValue(key, out var position))
+            if (!use.Bindings.TryGetValue(key, out var argument))
                 throw new InvalidOperationException(
                     $"generic ref-cell `{name}` in lifted synthetic `{use.OwnerName}` "
                     + $"cannot map captured {key.Scope} type variable #{key.Index}");
-            args.Add(new JsonObject { ["t"] = "tv", ["scope"] = use.NewScope, ["i"] = position });
+            args.Add(TypeJson.Write(argument));
         }
         use.Node["args"] = args;
     }

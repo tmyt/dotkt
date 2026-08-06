@@ -235,7 +235,8 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		else {
 		// A generic .NET type (`Collection<Int>()`) -> a constructed `clrg:` spec; non-generic stays plain.
 		val clr: TypeNode? = klass?.let { clrName(it) }?.let { net ->
-			val args = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
+			val args = (node.type as? IrSimpleType)?.arguments
+				?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
 			if (args.isNullOrEmpty()) TypeNode.Fqn(net) else TypeNode.Fqn(net, args)
 		}
 		// A collection ctor `ArrayList<R>()` / `HashSet<T>()` (kotlin.collections.* = java.util.* typealiases) -> the
@@ -243,8 +244,18 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// `map`/`filter`/`mapTo` (which build an ArrayList) compile straight to the BCL collection DotKt uses.
 		// A builtin-exception ctor (`throw IllegalStateException(msg)`) is NOT mapped here: it emits a plain `new
 		// @kotlin.IllegalStateException` and bir2cir rewrites it to `newClr System.X` off the stdlib's @ClrTypeAlias.
-		if (clr != null)
-			"""{"k":"new","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${ctorArgs.joinToString(",")}]}"""
+		if (clr != null) {
+			// A referenced DotKt inner class carries a physical @ClrExternal owner, but it is still a Kotlin inner
+			// construction: the enclosing instance is a leading constructor argument in the CLR representation just as
+			// it is for a same-module declaration. A foreign CLR nested type is never `isInner`, so it keeps its ordinary
+			// declared constructor vector.
+			val outerType = if (klass?.isInner == true)
+				dispatchReceiver(node)?.let { birType(it.type).toJson() } else null
+			val externalArgs = (listOfNotNull(outerArg) + ctorArgs).joinToString(",")
+			val externalTypes = (listOfNotNull(outerType) + node.symbol.owner.parameters
+				.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type).toJson() }).joinToString(",")
+			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs]}"""
+		}
 		else {
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
@@ -255,8 +266,14 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				dispatchReceiver(node)?.let { birType(it.type).toJson() } else null
 			val capTypes = klass?.let { localClassCaptures[it] }.orEmpty()
 				.map { str(captureFieldType(it)) }
+			// Constructor parameter declarations live in the constructed class's generic frame. Close that frame at
+			// this call site before publishing the selected signature: for `class L<U>(u: U); L(0)` the argument slot
+			// is `Int`, not whichever type variable happens to occupy index zero in the enclosing caller. This is the
+			// same callee-to-caller substitution used by default-argument rendering.
+			val localCtorSubst = if (klass?.parent !is IrFile && klass?.parent !is IrClass)
+				callSiteSubstitutor(node, node.symbol.owner) else null
 			val regularTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
-				.map { birType(it.type).toJson() }
+				.map { birType(localCtorSubst?.substitute(it.type) ?: it.type).toJson() }
 			val ctorArgTypes = (listOfNotNull(outerType) + capTypes + regularTypes).joinToString(",")
 			// `ownerSpec` names a lifted generic-capturing LOCAL CLASS as its CONSTRUCTED `L<T>` (own args from
 			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a

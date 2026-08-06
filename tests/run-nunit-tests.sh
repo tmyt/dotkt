@@ -47,11 +47,11 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=379
+	["tests/basic"]=380
 	["tests/coroutines"]=157
-	["tests/roundtrip/consumer"]=57
+	["tests/roundtrip/consumer"]=58
 	["tests/roundtrip/bidirectional/consumer"]=3
-	["tests/interop/consumer"]=130
+	["tests/interop/consumer"]=132
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -118,10 +118,12 @@ for proj in "${PROJECTS[@]}"; do
 		producer_klib="$dir/obj/dotkt-reference-klibs/RoundtripProducer.klib"
 		producer_bir="$ROOT/tests/roundtrip/producer/obj/dotkt-bir/DispatchAndCompanion.bir.json"
 		producer_cir="$ROOT/tests/roundtrip/producer/obj/dotkt-cir/DispatchAndCompanion.cir.json"
+		ownership_bir="$ROOT/tests/roundtrip/producer/obj/dotkt-bir/NestedOwnership.bir.json"
+		ownership_cir="$ROOT/tests/roundtrip/producer/obj/dotkt-cir/NestedOwnership.cir.json"
 		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
-			-- "$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" \
+			-- "$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" "$ownership_bir" "$ownership_cir" \
 			>"$ROOT/build/nunit-$name.metadata.log" 2>&1; then
-			echo "  companion semantic BIR + physical CIR + DLL carrier + KLIB linkage OK"
+			echo "  companion + nested-ownership BIR/CIR/DLL/KLIB metadata OK"
 		else
 			echo "  COMPANION METADATA FAIL — see build/nunit-$name.metadata.log"
 			tail -25 "$ROOT/build/nunit-$name.metadata.log"; rc=1

@@ -87,7 +87,7 @@ static class DefaultArgSplice
             // A placeholder only ever lives in a plan binding, so the PLAN is the splice site: it names both the call
             // whose callee identifies the carriers and the bindings the fill is written into and reads from.
             if (Str(obj["k"]) == "callEval" && obj["expr"] is JsonObject call && obj["bindings"] is JsonArray bindings)
-                TrySplice(call, bindings, refs, hoist, localOwner);
+                TrySplice(call, bindings, refs, hoist, localOwner, obj["semanticOwner"]);
             // A genuine static class member restored with Kotlin's IS_STATIC_FUNCTION flag has no synthetic companion
             // receiver and can expose an ECMA-335 optional parameter directly. The frontend accepts the omission but
             // its IR stub carries no default expression, so kotc can only emit the shorter argument vector. Resolve the
@@ -153,7 +153,8 @@ static class DefaultArgSplice
         else if (node is JsonArray a) foreach (var it in a) if (it != null) AssertPlaceholdersPlanned(it, false);
     }
 
-    static void TrySplice(JsonObject node, JsonArray bindings, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
+    static void TrySplice(JsonObject node, JsonArray bindings, ReferenceMetadataIndex refs, JsonArray hoist,
+        JsonNode localOwner, JsonNode semanticOwner)
     {
         var k = Str(node["k"]);
         var isNew = k == "new";
@@ -232,7 +233,7 @@ static class DefaultArgSplice
         var dispatchReceiver = k == "callInstance" ? node["recv"] : null;
         var extensionReceiver = args.Count > 0 ? args[0] : null;
         var enclosingReceiver = isNew && args.Count > 0 ? args[0] : null;
-        Fill(args, slotBinding, sigCount, defaults, label, refs, hoist, localOwner,
+        Fill(args, slotBinding, sigCount, defaults, label, refs, hoist, localOwner, semanticOwner,
             methodTypeArgs, ownerTypeArgs, dispatchReceiver, extensionReceiver, enclosingReceiver);
     }
 
@@ -245,7 +246,7 @@ static class DefaultArgSplice
     /// evaluation. Receiver tokens are supplied separately from the call shape so dispatch/extension/enclosing values
     /// can coexist without sharing a positional meaning.
     static void Fill(JsonArray args, JsonObject[] slotBinding, int sigCount, Dictionary<int, string> defaults,
-        string label, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner,
+        string label, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner, JsonNode semanticOwner,
         JsonArray methodTypeArgs, JsonArray ownerTypeArgs, JsonNode dispatchReceiver, JsonNode extensionReceiver,
         JsonNode enclosingReceiver)
     {
@@ -257,7 +258,7 @@ static class DefaultArgSplice
             var binding = slotBinding[j];
             if (!IsPlaceholder(binding?["expr"]) || !defaults.TryGetValue(j, out var bir)) continue;
             if (SpliceOne(bir, dispatchReceiver, extensionReceiver, enclosingReceiver, args, hoist, refs, label, j,
-                    localOwner, methodTypeArgs, ownerTypeArgs) is not JsonNode fill) continue;
+                    localOwner, semanticOwner, methodTypeArgs, ownerTypeArgs) is not JsonNode fill) continue;
             binding["expr"] = fill;
             // kotc reserved this binding conservatively (it could not know what would fill it). Now that the value is
             // known, answer Q1 (re-readable) for it — a constant default then costs no local at all.
@@ -277,7 +278,7 @@ static class DefaultArgSplice
         {
             if (!defaults.TryGetValue(pos, out var bir)) break;
             if (SpliceOne(bir, dispatchReceiver, extensionReceiver, enclosingReceiver, args, hoist, refs, label, pos,
-                    localOwner, methodTypeArgs, ownerTypeArgs) is JsonNode fill)
+                    localOwner, semanticOwner, methodTypeArgs, ownerTypeArgs) is JsonNode fill)
             { args.Add(fill); Walk(fill, refs, hoist, localOwner); }
             else break;
         }
@@ -332,7 +333,8 @@ static class DefaultArgSplice
             // A constructor delegation has no dispatch/extension receiver. For an inner target its hidden leading
             // argument is the enclosing instance and is already part of this positional vector.
             Fill(args, slotBinding, args.Count, defaults, owner + " constructor", refs, hoist,
-                localOwner, null, TypeArgsOf(type["base"]), null, null, args.Count > 0 ? args[0] : null);
+                localOwner, TypeJson.Fqn(selfName), null, TypeArgsOf(type["base"]), null, null,
+                args.Count > 0 ? args[0] : null);
         }
     }
 
@@ -343,11 +345,15 @@ static class DefaultArgSplice
     // occurrence.
     static JsonNode SpliceOne(string bir, JsonNode dispatchReceiver, JsonNode extensionReceiver,
         JsonNode enclosingReceiver, JsonArray args, JsonArray hoist, ReferenceMetadataIndex refs, string method,
-        int slot, JsonNode localOwner,
+        int slot, JsonNode localOwner, JsonNode semanticOwner,
         JsonArray methodTypeArgs = null, JsonArray ownerTypeArgs = null)
     {
         var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
         if (parsed == null) return null;
+        if (TypeJson.OwnerName(semanticOwner) is not string owner)
+            throw new InvalidOperationException(
+                $"default argument splice for {method} has no authored semantic use-site owner");
+        RehomeSynthClasses(parsed, owner, Interlocked.Increment(ref _counter));
         // CLOSE THE CARRIER'S OWN TYPE FRAME, before its tokens are bound. The carrier is the default as the CALLEE
         // wrote it, so a generic callee's type parameters ride it as positional `tv`s — `fun <T> f(xs: MutableList<T> =
         // mutableListOf())` carries `mutableListOf<tv{method,0}>()`. Nothing downstream resolves those in the
@@ -365,6 +371,39 @@ static class DefaultArgSplice
         return result;
     }
 
+    internal static void RehomeSynthClasses(JsonNode node, string semanticOwner, int cloneId)
+    {
+        if (node is JsonObject obj)
+        {
+            if (obj["synthClass"] is JsonObject synth)
+            {
+                synth["semanticOwner"] = semanticOwner;
+                if (Str(synth["name"]) is string oldName)
+                    RenameFqnRefs(obj, oldName, oldName + "$dflt" + cloneId);
+            }
+            foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
+                RehomeSynthClasses(child, semanticOwner, cloneId);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array.Where(value => value != null).ToList())
+                RehomeSynthClasses(child, semanticOwner, cloneId);
+    }
+
+    static void RenameFqnRefs(JsonNode node, string oldName, string newName)
+    {
+        if (node is JsonObject obj)
+        {
+            if (Str(obj["t"]) == "fqn" && Str(obj["name"]) == oldName) obj["name"] = newName;
+            else if (Str(obj["name"]) == oldName && (obj.ContainsKey("fields") || obj.ContainsKey("methods")))
+                obj["name"] = newName;
+            foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
+                RenameFqnRefs(child, oldName, newName);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array.Where(value => value != null).ToList())
+                RenameFqnRefs(child, oldName, newName);
+    }
+
     // SHARED with InlineSplice (#34 — omitted defaulted param of an inline callee): parse a @KotlinDefault BIR string,
     // unwrap a `defaultCarrier` (re-hoisting its lifted methods into `hoist`),
     // and return the raw default EXPR (still carrying `{defaultArgReceiver kind}` / `{defaultArgParam idx}` tokens — the
@@ -372,17 +411,25 @@ static class DefaultArgSplice
     internal static JsonNode MaterializeDefault(string bir, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner)
     {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
+        var lexicalIdsFreshened = false;
         if (parsed is JsonObject env)
         {
             var envK = Str(env["k"]);
             if (envK == "defaultCarrier")
+            {
                 parsed = UnwrapCarrier(env, hoist, refs, localOwner);
+                lexicalIdsFreshened = true; // UnwrapCarrier freshens the expression and carried declarations jointly.
+            }
         }
         // The carrier is the PRODUCER's BIR, so any evaluation plan inside it carries the producer's binding ids. It is
         // about to be substituted with the CONSUMER's own `bindRef`s and dropped into the consumer's frame, possibly
         // once per omitting call site — re-mint the ids so neither copy can collide with the other or with a
         // consumer-side id (§2.7).
-        if (parsed != null) CallEvalLowering.FreshenPlanIds(parsed);
+        if (parsed != null)
+        {
+            if (!lexicalIdsFreshened) LexicalDeclarationIds.Freshen(parsed);
+            CallEvalLowering.FreshenPlanIds(parsed);
+        }
         return parsed;
     }
 
@@ -402,17 +449,30 @@ static class DefaultArgSplice
             rename[old] = "__dflt$lambda$" + Interlocked.Increment(ref _counter);
             clones.Add((JsonObject)mo.DeepClone());
         }
+        var exprClone = expr.DeepClone();
+        RewriteDelegateNames(exprClone, rename, localOwner);
         foreach (var c in clones)
         {
             if (Str(c["name"]) is string on && rename.TryGetValue(on, out var nn)) c["name"] = nn;
             RewriteDelegateNames(c, rename, localOwner);
+        }
+        // A default expression and its carried methods are one serialized declaration graph. Freshen lexical ids
+        // jointly before recursively materializing nested defaults so declaration/use edges survive every clone.
+        LexicalDeclarationIds.Freshen(new[] { exprClone }.Concat(clones).ToArray());
+        foreach (var c in clones)
+        {
+            if (TypeJson.OwnerName(localOwner) is not string owner)
+                throw new InvalidOperationException("default carrier has no authored consumer file owner");
+            // Lifted default helpers move to the consumer file facade. Any implementation classifier carried inside
+            // such a helper moves with it; keeping the producer member owner would create a dangling semantic owner in
+            // the consumer module. The file owner is explicit at this splice boundary, not recovered from its name.
+			c.Remove("semanticOwner");
+            RehomeSynthClasses(c, owner, Interlocked.Increment(ref _counter));
             // The carried lifted body may ITSELF contain a `defaultArg` placeholder (a default `= { crossModuleFn() }`
             // whose call omits a non-const default) — fill it before the method is hoisted (the clone is unparented here).
             Walk(c, refs, hoist, localOwner);
             hoist.Add(c);
         }
-        var exprClone = expr.DeepClone();
-        RewriteDelegateNames(exprClone, rename, localOwner);
         return exprClone;
     }
 

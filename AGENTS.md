@@ -16,6 +16,12 @@ another layer.
   must remain aligned with their upstream projects.
 - Internal compatibility may be broken deliberately when doing so enables a
   correct design without breaking Kotlin source compatibility.
+- Compiler-produced BIR, CIR, metadata carriers, and DLLs are internal ABI.
+  Do not add compatibility fallbacks for artifacts produced by older compiler
+  versions, and do not reconstruct missing facts from legacy names, physical
+  layout, or method bodies. Artifacts produced by an older compiler are
+  unsupported; arbitrary compiler or linker failure is an acceptable breaking
+  change, and no dedicated compatibility diagnostic is required.
 - Fixes must express general rules that produce valid CLR binaries from
   arbitrary Kotlin source. Do not introduce local special cases tied to a
   particular library or function name.

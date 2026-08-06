@@ -93,6 +93,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Nested and local declarations now retain their Kotlin ownership through BIR and receive CLR nesting in bir2cir
+  (#225).** Local functions remain lexical BIR declarations linked by explicit IDs until bir2cir selects their
+  MethodDef owner; local, anonymous, closure, state-machine, and inner types carry an explicit semantic owner instead
+  of being inferred from generated names or bodies. CLR nested generic frames preserve enclosing constraints, private
+  access no longer requires blanket cross-class widening, and dll2klib reconstructs the nested Kotlin classifier tree
+  while hiding compiler-generated implementation methods and capture fields.
+
 - **Round-trip: companion objects now retain their Kotlin declaration across DLL/KLIB
   re-consumption (#275).** `kotc` carries the source association/name, `bir2cir` materializes a trusted narrow
   `[KotlinCompanion]` metadata record, and `dll2klib` writes the standard KLIB companion link from that record without

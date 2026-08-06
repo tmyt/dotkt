@@ -191,8 +191,8 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		if (arg is IrBlock) """{"k":"block","body":[${arg.statements.joinToString(",") { stmt(it) }}]}"""
 		else stmt(arg)
 	} else """{"k":"exprStmt","expr":${expr(node)}}"""
-	// A local (nested) function -> lift it to a file-class static method (captures become leading params).
-	is IrSimpleFunction -> { liftLocalFn(node); """{"k":"block","body":[]}""" }
+	// Preserve a local function as a lexical BIR declaration. bir2cir alone chooses its CLR MethodDef owner.
+	is IrSimpleFunction -> localFunctionDecl(node)
 	// A function-local class -> lift it to a top-level synthetic type (captures become leading ctor params).
 	is IrClass -> liftLocalClass(node)
 	is IrBlock -> (if (node.origin?.toString() == "FOR_LOOP") birForLoop(node) else null)

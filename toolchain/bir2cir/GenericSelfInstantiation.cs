@@ -42,7 +42,12 @@ static class GenericSelfInstantiation
                 foreach (var t in ts)
                     if (t is JsonObject to && Str(to["name"]) is string self)
                     {
-                        var tps = TypeParamNames(to["typeParams"]);
+                        // CLR nested types flatten captured outer slots before their own declared slots. Both lists
+                        // participate in the constructed self identity; omitting the capture prefix produces a
+                        // partially-open owner such as Inner<!0> for the actual Inner<!0,!1>.
+                        var tps = TypeParamNames(to["capturedTypeParams"])
+                            .Concat(TypeParamNames(to["typeParams"]))
+                            .ToList();
                         if (tps.Count == 0) continue;
                         // The constructed self: `Self<!0,…,!n-1>` — the type-scope generic params by FLATTENED position
                         // (a lifted anon-object is extracted flat, so its own params are indices 0..n-1). bir2cir derives

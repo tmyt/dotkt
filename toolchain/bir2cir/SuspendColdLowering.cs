@@ -477,16 +477,25 @@ static partial class SuspendColdLowering
             // no `$this`, the cold entry/bridge stay static in the class (like a top-level fun, but the container is
             // the class). An instance member is `owner != null && !static`.
             var staticMember = e.TypeNode != null && Bool(e.Method["static"]);
-            // The ENCLOSING class's type-param names (for an INSTANCE member on a generic class): the SM is made
-            // generic over them, `$this` is typed as the CONSTRUCTED self `Box[gp:T]`, and the bridge's self
-            // cold-call targets that constructed self (not the open `Box`), or `this` (Box<T>) mismatches the
-            // callee's declaring type at verification (StackUnexpected). A static member does NOT see the class type
-            // params (it is not generic over them), so its ownerTps stay empty.
-            var ownerTps = new List<string>();
-            if (!staticMember && e.TypeNode?["typeParams"] is JsonArray otps)
-                foreach (var t in otps)
-                    if (t is JsonValue tv2 && tv2.TryGetValue<string>(out var s2)) ownerTps.Add(s2);
-                    else if (t is JsonObject to2 && Str(to2["name"]) is string n2) ownerTps.Add(n2);
+            // The ENCLOSING class's type-param names. An ordinary instance member needs them for its constructed
+            // `$this`. A lexical local function physically materialized as a static member also sees that frame and
+            // carries `lexicalOwnerTypeParamCount`; its state machine is nested under the same generic TypeDef and must
+            // re-declare the complete prefix. Companion/static source members carry no such fact and remain owner-free.
+            var ownerTpDecls = new JsonArray();
+            var lexicalOwnerCount = !staticMember
+                ? (e.TypeNode?["typeParams"] as JsonArray)?.Count ?? 0
+                : e.Method["lexicalOwnerTypeParamCount"] is JsonValue ownerCountValue
+                    && ownerCountValue.TryGetValue<int>(out var ownerCount) ? ownerCount : 0;
+            if (lexicalOwnerCount > 0 && e.TypeNode?["typeParams"] is JsonArray otps)
+            {
+                if (lexicalOwnerCount > otps.Count)
+                    throw new InvalidOperationException(
+                        $"suspend member '{e.Owner}.{key.Name}' claims {lexicalOwnerCount} lexical owner slots " +
+                        $"but its owner declares only {otps.Count}");
+                foreach (var t in otps.Take(lexicalOwnerCount))
+                    ownerTpDecls.Add(t?.DeepClone());
+            }
+            e.Method.Remove("lexicalOwnerTypeParamCount");
             // Per-file registry of top-level `__lambdaN` methods (the non-capturing `newDelegate` block bodies of a
             // cross-module suspendCoroutine — F2). Keyed within the declaring file (kotc names lambdas per-file, so a
             // global map would collide across files).
@@ -501,7 +510,7 @@ static partial class SuspendColdLowering
             // `call` to the (interface-abstract) cold entry is unverifiable (ilverify CallAbstract). Concrete
             // implementations in classes fill both slots — ilemit's interface-impl pass binds them by name/sig.
             var ownerIsInterface = e.TypeNode != null && Str(e.TypeNode["kind"]) == "interface";
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTps, closures, smSuffix[key], coldSuffix[key], fileLambdas, ownerIsInterface, staticMember);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTpDecls, closures, smSuffix[key], coldSuffix[key], fileLambdas, ownerIsInterface, staticMember);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -530,14 +539,8 @@ static partial class SuspendColdLowering
                 foreach (var nt in newTypes) ts.Add(nt);
             }
 
-            // A synthesized instance-member SM is a SEPARATE top-level class, so its `$this.<member>` accesses to
-            // the enclosing class's PRIVATE members (e.g. SequenceBuilderIterator.yield's SM writing the private
-            // `set_nextValue`/`set_state`) fail CLR visibility (MethodAccessException) — on the JVM the SM is a
-            // nested class with private access; on CLR our SM is top-level. Widen exactly the private members the
-            // SM touches on `$this` to `internal` (assembly-visible) so the same-assembly SM can reach them. The
-            // enclosing class is itself internal machinery (SequenceBuilderIterator is a `private class`), so this
-            // leaks nothing to the public surface.
-            if (e.TypeNode != null) WidenPrivatesAccessedBySm(e.TypeNode, newTypes);
+            // The state machine carries its semantic owner and is materialized as that owner's CLR nested type by
+            // TypeOwnershipLowering, so its `$this.<private>` accesses retain lexical accessibility without widening.
         }
 
         // The root Task sink is concrete CLR adapter machinery, not standard-library vocabulary. Emit one internal
@@ -813,53 +816,6 @@ static partial class SuspendColdLowering
         };
     }
 
-    // Collect every member name a synthesized SM reads/writes through its `$this` field, then relax any matching
-    // PRIVATE member on the enclosing type to `internal` so the separate SM class can access it.
-    static void WidenPrivatesAccessedBySm(JsonObject typeNode, List<JsonNode> smTypes)
-    {
-        var accessed = new HashSet<string>(StringComparer.Ordinal);
-        void Collect(JsonNode n)
-        {
-            if (n is JsonObject o)
-            {
-                // A node whose receiver is the SM's `$this` field: a callInstance's `method`, or a field read's `name`.
-                if (o["recv"] is JsonObject r && Str(r["k"]) == "field" && Str(r["name"]) == "$this")
-                {
-                    if (Str(o["method"]) is string mn) accessed.Add(mn);
-                    if (Str(o["k"]) is "field" or "setField" && Str(o["name"]) is string fn) accessed.Add(fn);
-                }
-                foreach (var kv in o) if (kv.Value != null) Collect(kv.Value);
-            }
-            else if (n is JsonArray a) foreach (var it in a) if (it != null) Collect(it);
-        }
-        foreach (var t in smTypes) Collect(t);
-        if (accessed.Count == 0) return;
-
-        void Relax(JsonObject member)
-        {
-            if (member != null && Str(member["vis"]) == "private") member["vis"] = "internal";
-        }
-        if (typeNode["methods"] is JsonArray ms)
-            foreach (var m in ms)
-                if (m is JsonObject mo && Str(mo["name"]) is string n && accessed.Contains(n)) Relax(mo);
-        if (typeNode["fields"] is JsonArray fs)
-            foreach (var f in fs)
-                if (f is JsonObject fo && Str(fo["name"]) is string n && accessed.Contains(n)) Relax(fo);
-        if (typeNode["properties"] is JsonArray ps)
-            foreach (var p in ps)
-                if (p is JsonObject po)
-                {
-                    // The SM calls property accessors by their get_/set_ method name; relax the accessor whose
-                    // synthesized method name was accessed (and the property itself if it is directly named).
-                    if (Str(po["name"]) is string pn)
-                    {
-                        if (accessed.Contains(pn)) Relax(po);
-                        if (accessed.Contains("get_" + pn)) Relax(po["getter"] as JsonObject);
-                        if (accessed.Contains("set_" + pn)) Relax(po["setter"] as JsonObject);
-                    }
-                }
-    }
-
     static JsonArray EnsureArray(JsonObject o, string key)
     {
         var a = new JsonArray();
@@ -888,7 +844,8 @@ static partial class SuspendColdLowering
     // >= 2 overrides the general create(args, completion) slot (CreateMethods unpacks the boxed args).
     public static JsonObject BuildLambdaSm(string smName, int arity,
         List<(string name, TypeNode type)> captures, List<JsonObject> lambdaParams, JsonArray body,
-        TypeNode resultType, List<string> typeParams, bool baseIsLocal,
+        TypeNode resultType, List<string> typeParams, JsonArray typeParamDecls, int ownerTypeParamCount,
+        bool baseIsLocal,
         IReadOnlyDictionary<string, TypeNode> calleeRet = null, bool restricted = false,
         ReferenceMetadataIndex refs = null)
     {
@@ -897,7 +854,7 @@ static partial class SuspendColdLowering
         // (SuspendLambdaLowering runs after ApplyAll, but pass it explicitly rather than rely on the prior static write).
         if (refs != null) _refs = refs;
         var gen = new FunGen(smName, arity, captures ?? new List<(string, TypeNode)>(), lambdaParams, body,
-            resultType, typeParams,
+            resultType, typeParams, typeParamDecls, ownerTypeParamCount,
             calleeRet as Dictionary<string, TypeNode> ??
                 (calleeRet != null ? new Dictionary<string, TypeNode>(calleeRet, StringComparer.Ordinal)
                                    : new Dictionary<string, TypeNode>(StringComparer.Ordinal)),
@@ -1197,6 +1154,7 @@ static partial class SuspendColdLowering
         readonly string _ownerClass;             // enclosing class FQN for a member (instance OR static), else null
         readonly bool _isMember;                 // an INSTANCE member (owner != null && !static): carries a `$this` field
         readonly bool _staticMember;             // M3 — a `static` member (companion suspend fun): cold entry/bridge stay static in the class, no `$this`
+        readonly bool _generated;                // implementation declaration (e.g. a materialized local suspend fun)
         // R1 classifier — non-null when this concrete member cannot be segmented (a v1-unsupported suspension
         // position, or M4 own-generic-on-generic-class): the cold entry becomes a call-time `throw NotSupportedException`
         // carrying this reason (design §11 policy). null for a segmentable or an abstract member.
@@ -1207,6 +1165,7 @@ static partial class SuspendColdLowering
         readonly string _tcsBcl;
         readonly string _taskBcl;
         readonly List<string> _ownerTypeParams;   // enclosing class type-param names (instance member on a generic class)
+        readonly JsonArray _ownerTypeParamDecls;  // the same declarations with their real Kotlin constraints
         readonly List<string> _smAllTps;           // owner + method type-param names (the SM's own generic params)
         readonly TypeNode _selfType;               // constructed self `Box<T>` (instance member), else _ownerClass/null
         readonly bool _memberAbstract;             // source member is `abstract` -> abstract cold entry, no SM
@@ -1257,19 +1216,21 @@ static partial class SuspendColdLowering
 
         public FunGen(JsonObject m, string name, string fileClass, string ownerClass,
             Dictionary<string, TypeNode> calleeRet, bool baseIsLocal, string tcsBcl = null, string taskBcl = null,
-            List<string> ownerTypeParams = null, IReadOnlyDictionary<string, JsonObject> closures = null,
+            JsonArray ownerTypeParamDecls = null, IReadOnlyDictionary<string, JsonObject> closures = null,
             string smNameSuffix = "", string coldNameSuffix = "",
             IReadOnlyDictionary<string, JsonObject> lambdaMethods = null,
             bool ownerIsInterface = false, bool staticMember = false)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _staticMember = staticMember;
+            _generated = Bool(m["generated"]);
             _isMember = ownerClass != null && !staticMember;   // an INSTANCE member (static/companion members are top-level-shaped)
             _calleeRet = calleeRet; _baseIsLocal = baseIsLocal;
             _tcsBcl = tcsBcl; _taskBcl = taskBcl;
             _closures = closures ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _lambdaMethods = lambdaMethods ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-            _ownerTypeParams = ownerTypeParams ?? new List<string>();
+            _ownerTypeParamDecls = ownerTypeParamDecls?.DeepClone() as JsonArray ?? new JsonArray();
+            _ownerTypeParams = ReadTypeParamNames(_ownerTypeParamDecls);
             // Virtuality of the source member (kept in lockstep on the cold entry): an abstract member -> an abstract
             // cold entry (no SM); an override/open member -> an override/virtual cold entry (fills/opens the slot).
             // An interface member with no body is abstract (see the ownerIsInterface note at the call site): its
@@ -1301,7 +1262,9 @@ static partial class SuspendColdLowering
             // The SM is generic over the ENCLOSING class's type params (an instance member on a generic class) PLUS
             // the member's own — its fields / `$this` / label reference them (type-scope tv by flattened position).
             _smAllTps = new List<string>(_ownerTypeParams);
-            foreach (var t in _typeParams) if (!_smAllTps.Contains(t)) _smAllTps.Add(t);
+            // Generic frames concatenate by declaration slot, never by source name. Kotlin permits a method parameter
+            // to shadow an owner's parameter name; the CLR TypeDef must still carry both physical slots.
+            _smAllTps.AddRange(_typeParams);
             _selfType = _ownerClass == null ? null
                 : _ownerTypeParams.Count == 0 ? new TypeNode.Fqn(_ownerClass)
                 : new TypeNode.Fqn(_ownerClass, TypeTvs(_ownerTypeParams.Count));
@@ -1312,7 +1275,7 @@ static partial class SuspendColdLowering
             // Otherwise the body must have every suspension in a segmentable position (SuspensionRefusalReason).
             if (!_memberAbstract)
             {
-                if (_typeParams.Count > 0 && _ownerTypeParams.Count > 0)
+                if (_typeParams.Count > 0 && _ownerTypeParams.Count > 0 && !_staticMember)
                     _stubReason = "a generic suspend method on a generic class (v1)";
                 else if ((m["body"] as JsonArray) is JsonArray b0)
                     _stubReason = SuspensionRefusalReason(b0, inHandler: false, tryDepth: 0);
@@ -1380,11 +1343,21 @@ static partial class SuspendColdLowering
         // parts. Captures become ctor params + fields; the lambda's own params become fields set by create().
         public FunGen(string smName, int arity, List<(string name, TypeNode type)> captures,
             List<JsonObject> lambdaParams, JsonArray body, TypeNode resultType, List<string> typeParams,
-            Dictionary<string, TypeNode> calleeRet, bool baseIsLocal, bool restricted = false)
+            JsonArray typeParamDecls, int ownerTypeParamCount, Dictionary<string, TypeNode> calleeRet,
+            bool baseIsLocal, bool restricted = false)
         {
             _isLambda = true;
             _restrictedBase = restricted;
-            _ownerTypeParams = new List<string>();
+            var allTypeParamDecls = typeParamDecls?.DeepClone() as JsonArray
+                ?? new JsonArray((typeParams ?? new List<string>())
+                    .Select(n => (JsonNode)JsonValue.Create(n)).ToArray());
+            if (ownerTypeParamCount < 0 || ownerTypeParamCount > allTypeParamDecls.Count)
+                throw new InvalidOperationException(
+                    $"suspend lambda '{smName}' declares {allTypeParamDecls.Count} generic slot(s) but " +
+                    $"claims {ownerTypeParamCount} owner capture slot(s)");
+            _ownerTypeParamDecls = new JsonArray(allTypeParamDecls.Take(ownerTypeParamCount)
+                .Select(p => p?.DeepClone()).ToArray());
+            _ownerTypeParams = ReadTypeParamNames(_ownerTypeParamDecls);
             _closures = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _lambdaMethods = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _m = null;
@@ -1402,11 +1375,13 @@ static partial class SuspendColdLowering
             _resultNullable = resultType is TypeNode.Nullable;
             _resultType = (resultType is TypeNode.Nullable lrn ? lrn.Of : resultType) ?? VoidTn;
             _params = lambdaParams ?? new List<JsonObject>();
-            _typeParams = typeParams ?? new List<string>();
-            _methodTypeParamDecls = new JsonArray(_typeParams.Select(n => (JsonNode)JsonValue.Create(n)).ToArray());
+            _methodTypeParamDecls = new JsonArray(allTypeParamDecls.Skip(ownerTypeParamCount)
+                .Select(p => p?.DeepClone()).ToArray());
+            _typeParams = ReadTypeParamNames(_methodTypeParamDecls);
             _overrideMarkers = new JsonArray();
-            _smAllTps = _typeParams;   // a lambda SM has no enclosing-class type params
-            _smTypeInst = _typeParams.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_typeParams.Count));
+            _smAllTps = new List<string>(_ownerTypeParams);
+            _smAllTps.AddRange(_typeParams);
+            _smTypeInst = _smAllTps.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_smAllTps.Count));
             // #125 — lambda SMs share the named-fun segmentability classifier. A refused lambda still gets a valid
             // SuspendLambda type, but invokeSuspend becomes a call-time NotSupportedException stub (Build), never a
             // body containing an unsegmented suspendCall / invalid IL.
@@ -3240,6 +3215,8 @@ static partial class SuspendColdLowering
             {
                 ["name"] = _smType,
                 ["kind"] = "class",
+                ["generated"] = true,
+                ["semanticOwner"] = _ownerClass ?? _fileClass,
                 ["abstract"] = false,
                 ["vis"] = "public",
                 ["base"] = Tn(ContinuationImplFqn),
@@ -3275,12 +3252,15 @@ static partial class SuspendColdLowering
             if (_smAllTps.Count > 0)
             {
                 var tp = new JsonArray();
-                foreach (var n in _ownerTypeParams) tp.Add(n);
+                foreach (var declaration in _ownerTypeParamDecls)
+                    tp.Add(declaration?.DeepClone());
                 foreach (var declaration in _methodTypeParamDecls)
                     tp.Add(declaration?.DeepClone());
                 type["typeParams"] = tp;
             }
-            RebindMethodTypeVariablesToSm(type, ownerArity: 0);
+            if (_ownerTypeParams.Count > 0)
+                type["outerTypeParamCount"] = _ownerTypeParams.Count;
+            RebindMethodTypeVariablesToSm(type, _ownerTypeParams.Count);
             return type;
         }
 
@@ -3329,6 +3309,7 @@ static partial class SuspendColdLowering
             {
                 ["name"] = _smType,
                 ["kind"] = "class",
+                ["generated"] = true,
                 ["abstract"] = false,
                 ["vis"] = "public",
                 ["base"] = Tn(lambdaBaseFqn),
@@ -3355,13 +3336,17 @@ static partial class SuspendColdLowering
                 ["properties"] = new JsonArray(),
                 ["attrs"] = new JsonArray(),
             };
-            if (_typeParams.Count > 0)
+            if (_smAllTps.Count > 0)
             {
                 var tp = new JsonArray();
+                foreach (var declaration in _ownerTypeParamDecls)
+                    tp.Add(declaration?.DeepClone());
                 foreach (var declaration in _methodTypeParamDecls)
                     tp.Add(declaration?.DeepClone());
                 type["typeParams"] = tp;
             }
+            if (_ownerTypeParams.Count > 0)
+                type["outerTypeParamCount"] = _ownerTypeParams.Count;
             RebindMethodTypeVariablesToSm(type, _ownerTypeParams.Count);
             return type;
         }
@@ -3476,9 +3461,10 @@ static partial class SuspendColdLowering
             foreach (var (n, t) in _captures)
             {
                 args.Add(FieldOf(n, t));
-                var declarationType = Tw(t);
-                RebindMethodTypeVariablesToSm(declarationType, ownerArity: 0);
-                argTypes.Add(declarationType);
+                // SmTypeLambda performs one whole-type lexical-method -> physical-type rebind after all create
+                // methods have been assembled. Rebinding here as well would turn `!!0` into `!0` too early; for a
+                // lambda nested in `Owner<T>.method<M>` the final pass would then mistake M for owner slot T.
+                argTypes.Add(Tw(t));
             }
             // The create ABI accepts the existential Continuation<*> view, while every generated SM/base ctor stores
             // the uniform erased Continuation<Any>. Compiled coroutine completions are BaseContinuationImpl/root
@@ -3591,6 +3577,7 @@ static partial class SuspendColdLowering
             };
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
+            if (_generated) method["generated"] = true;
             CarryOverrideMarkers(method, _coldName);
             return method;
         }
@@ -3657,6 +3644,7 @@ static partial class SuspendColdLowering
             };
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
+            if (_generated) method["generated"] = true;
             CarryOverrideMarkers(method, _coldName);
             return method;
         }
@@ -3813,6 +3801,7 @@ static partial class SuspendColdLowering
                 };
                 if (_typeParams.Count > 0)
                     am["typeParams"] = _methodTypeParamDecls.DeepClone();
+                if (_generated) am["generated"] = true;
                 CarryOverrideMarkers(am, _name);
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
                 if (_resultNullableGeneric != null) am["nullableGenericRet"] = _resultNullableGeneric;
@@ -3909,6 +3898,7 @@ static partial class SuspendColdLowering
             };
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
+            if (_generated) method["generated"] = true;
             CarryOverrideMarkers(method, _name);
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the
             // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
@@ -4000,10 +3990,16 @@ static partial class SuspendColdLowering
                 call = new JsonObject
                 {
                     ["k"] = "callStatic",
-                    ["owner"] = _staticMember && _ownerClass != null ? Tn(_ownerClass) : null,
+                    // A materialized local suspend function is static only as a CLR representation detail: its
+                    // declaring owner is still the current Owner<!0,...> closure. Keep that exact constructed owner
+                    // on the generated bridge call. A source static/companion member has no lexical owner slots, so
+                    // its bare owner continues through GenericStaticOwnerBinding's canonical-static rule.
+                    ["ownerType"] = _staticMember && _ownerClass != null ? Tw(_selfType) : null,
                     // #199 Design B: a top-level cold entry keeps owner:null and carries the file-class dispatch hint (a
-                    // static member already names its owner and needs none).
-                    ["calleeOwner"] = _staticMember && _ownerClass != null ? null : Tn(_fileClass),
+                    // materialized static member instead carries its exact constructed declaring owner. callStatic's
+                    // CIR contract requires calleeOwner for every owner-less dispatch; ownerType is its type-checking
+                    // surface, not an alternative dispatch channel.
+                    ["calleeOwner"] = _staticMember && _ownerClass != null ? Tw(_selfType) : Tn(_fileClass),
                     ["method"] = _coldName,
                     ["sig"] = sig.DeepClone(),
                     ["args"] = args,

@@ -34,7 +34,7 @@ static class GenericStaticOwnerBinding
         foreach (var item in types.OfType<JsonObject>())
         {
             var name = Str(item["name"]);
-            var arity = (item["typeParams"] as JsonArray)?.Count ?? 0;
+            var arity = TypeParameterFrame.Count(item);
             if (name != null && arity > 0)
             {
                 var statics = new GenericStatics { Arity = arity };

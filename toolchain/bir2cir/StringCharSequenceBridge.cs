@@ -472,16 +472,14 @@ static class StringCharSequenceBridge
         return WrapAdapter(snapshot);
     }
 
-    // (f): a static-String arg flowing into a SPLICED anonymous object's (`dotkt$obj*`) `CharSequence` ctor slot. A
-    // spliced `new dotkt$obj90(receiver, keySelector)` (the anonymous Grouping from `CharSequence.groupingBy`) captures
-    // the receiver as `kotlin.CharSequence`, but the spliced node carries no argTypes and CharSeqStringLowering already
-    // collapsed the receiver var to `System.String` — so the raw String reaches obj90's `get_length()` and NREs. The
-    // ctor param types come from the ref.dll (_refs); wrap each static-String arg whose ctor slot is CharSequence.
+    // (f): a static-String arg flowing into a carried compiler-generated implementation type's `CharSequence` ctor
+    // slot. The body captures its receiver as `kotlin.CharSequence`, but the carried `new` has no source argTypes and
+    // CharSeqStringLowering already collapsed the receiver value to `System.String`. The exact single-constructor shape
+    // comes from the producer ref.dll; absence means this is not a structurally supported carried implementation type.
     static void WrapNewCtorArgs(JsonObject node, Env env)
     {
         if (_refs == null || node["args"] is not JsonArray args) return;
-        if (TypeJson.Read(node["type"]) is not TypeNode.Fqn tf
-            || !tf.Name.StartsWith("dotkt$obj", StringComparison.Ordinal)) return;
+        if (TypeJson.Read(node["type"]) is not TypeNode.Fqn tf) return;
         var ctorParams = _refs.OwnerCtorParamTypeNames(tf.Name);
         // Require an EXACT arity match: a positional skew (a synthetic `__outer` present on one side only) would align the
         // CharSequence-slot check against the wrong argument and wrap a genuine value. Skip rather than risk it.

@@ -17,6 +17,7 @@ import SelfRef.Cmp
 // il-transinj
 import TX.Panel
 import TX.Widget
+import CompilerGeneratedApi.Surface
 
 class MemberShapeTests {
     @TestAttribute
@@ -61,5 +62,11 @@ class MemberShapeTests {
         for (n in panel.Names()) names.add(n)
         assertEquals(1, names.size)                // one child
         assertEquals("w1.", names[0])              // w1. — Names() yields Name + "."
+    }
+
+    @TestAttribute
+    fun compilerGeneratedExternalApiIsPreserved() {
+        assertEquals(31, Surface().Value())
+        assertEquals(37, Surface.Nested().Value())
     }
 }

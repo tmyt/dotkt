@@ -275,6 +275,11 @@ static class ClosureSynthesis
         // Emit `typeParams` only when non-empty — matches kotc (typeParamsJson omitted the key entirely for a
         // non-generic closure), so the shape is byte-identical for the common case.
         if (sc["typeParams"] is JsonArray tps && tps.Count > 0) cls["typeParams"] = tps.DeepClone();
+        if (sc["semanticOwner"] is JsonValue owner) cls["semanticOwner"] = owner.DeepClone();
+        if (sc["outerTypeParamCount"] is JsonValue outerCount)
+            cls["outerTypeParamCount"] = outerCount.DeepClone();
+        if (sc["outerTypeParamOffset"] is JsonValue outerOffset)
+            cls["outerTypeParamOffset"] = outerOffset.DeepClone();
         if (sc["_syntheticTypeArgs"] is JsonArray origins) cls["_syntheticTypeArgs"] = origins.DeepClone();
         cls["base"] = null;
         cls["interfaces"] = new JsonArray();

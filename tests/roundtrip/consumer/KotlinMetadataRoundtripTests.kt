@@ -103,6 +103,7 @@ import roundtrip.nc.genPairDefaults as nonConstantDefaultGenPairDefaults
 import roundtrip.nc.genMutable as nonConstantDefaultGenMutable
 import roundtrip.nc.bumps as nonConstantDefaultBumps
 import roundtrip.nc.varargAliased as nonConstantDefaultVarargAliased
+import roundtrip.nc.generatedDefault as nonConstantGeneratedDefault
 import roundtrip.nc.MemberDefaults as NonConstantDefaultMemberDefaults
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
@@ -510,6 +511,7 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual(3, nonConstantDefaultColumn(configure = { add("ab") }, build = { add("c") })) // 3  both provided (no fill)
         ClassicAssert.AreEqual("ok", run2(body = { }))                                 // ok  pre defaults to {} (empty plain lambda)
         ClassicAssert.AreEqual("z=0", nonConstantDefaultTagged("z"))                                   // z=0 items defaults to emptyList()
+        ClassicAssert.AreEqual(29, nonConstantGeneratedDefault())                                      // generated object type in the carried default
         // #235: the CONSTRUCTOR half — a ctor's non-constant default is carried and filled at the omitting `new`.
         ClassicAssert.AreEqual(18, NonConstantDefaultRect(3).area)                                      // 18  h defaults to w * 2 = 6
         ClassicAssert.AreEqual("r", NonConstantDefaultRect(3).tag)                                      // r   a later Tier-1 const still fills

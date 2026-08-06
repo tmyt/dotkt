@@ -347,8 +347,9 @@ internal fun BirEmitter.blockExpr(block: IrBlock): String {
 	if (block.origin?.toString() == "OBJECT_LITERAL") {
 		val anon = block.statements.filterIsInstance<IrClass>().firstOrNull()
 		if (anon != null) {
-			val cname = "dotkt\$obj${scopeCounter++}"
-			anonNames[anon] = cname
+			// A member call can ask for the anonymous receiver's owner before it renders the receiver expression.
+			// typeName therefore owns the one-time allocation; reuse it here instead of minting a second identity.
+			val cname = typeName(anon)
 			val captured = capturedVarsForObject(anon)
 			// Writing an outer local through the object goes through its heap ref-cell: the module-wide scan
 			// (BirEmitter.initRefCells) already promoted every captured-and-mutated `var`, so `isRefCell(it)` holds

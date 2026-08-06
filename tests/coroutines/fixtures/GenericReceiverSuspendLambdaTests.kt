@@ -64,6 +64,8 @@ class GenericReceiverSuspendLambdaTests {
         val s4 = GenericReceiverSuspendHolder(41).make(1)
         assertEquals(42, blockOn { genericReceiverSuspendRunSource(s4) })          // 42
         // The SM closes only over M and E. Before #74 the two foreign sig frames added a spurious third parameter.
-        assertEquals(2, Type.GetType("GenericReceiverSuspendHolder_make_lambda3\$sm`2")!!.GetGenericArguments().size)
+        // #225: the state machine keeps its lexical owner instead of being lifted to the file facade. CLR nested
+        // metadata names carry the generic outer arity and the nested declaration's own arity separately.
+        assertEquals(2, Type.GetType("GenericReceiverSuspendHolder`1+GenericReceiverSuspendHolder_make_lambda3\$sm`1")!!.GetGenericArguments().size)
     }
 }

@@ -9,7 +9,7 @@
 # erasure as `Pair<object, String>`, while the call site (which kotc emitted with `A` already substituted) says the
 # result is `Int?`. The reference index answers with the real declaration, so the corrected owner is kept and the
 # result is `Subst(!0, [object, String])` = `object`.
-+"ownerType":{"t":"fqn","name":"kotlin.Pair","args":[{"t":"fqn","name":"object"},{"t":"fqn","name":"System.String"}]}
++"ownerType":{"t":"fqn","name":"kotlin.Pair\u00602","args":[{"t":"fqn","name":"object"},{"t":"fqn","name":"System.String"}]}
 +"method":"get_first","ret":{"t":"fqn","name":"object"}
 # The value still reaches its declared `Int?` slot, and it reaches it through an explicit narrowing — ilemit's
 # `unbox.any` — rather than as a silently mistyped stack slot.

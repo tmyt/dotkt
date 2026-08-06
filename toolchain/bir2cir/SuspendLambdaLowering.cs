@@ -45,6 +45,7 @@ static class SuspendLambdaLowering
     // Consulted when building a lambda SM so an awaited suspend-call value gets its real type (+ unbox) —
     // NOT kotlin.Any. Single-threaded per bir2cir run, so a static binding is sufficient.
     static IReadOnlyDictionary<string, TypeNode> _calleeRet;
+    static IReadOnlyDictionary<string, JsonArray> _ownerTypeParams;
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
     public static void ApplyAll(IReadOnlyList<JsonNode> roots, IReadOnlySet<string> localTypeFqns,
@@ -52,6 +53,13 @@ static class SuspendLambdaLowering
     {
         _calleeRet = calleeRet;
         _refs = refs;
+        _ownerTypeParams = roots.OfType<JsonObject>()
+            .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? [])
+            .Where(type => Str(type["name"]) != null)
+            .GroupBy(type => Str(type["name"]), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key,
+                group => group.First()["typeParams"] as JsonArray ?? new JsonArray(),
+                StringComparer.Ordinal);
         // In the app build the SuspendLambda base is a REFERENCED type (clr: base + clrOverride linkage); in a
         // self-build that declares it, a LOCAL type (bare base + local slot override). Computed per-base because a
         // @RestrictsSuspension lambda uses RestrictedSuspendLambda, which may have a different locality.
@@ -88,7 +96,7 @@ static class SuspendLambdaLowering
                         if (to["ctors"] is JsonArray tcs)
                             foreach (var c in tcs)
                                 if (c is JsonObject co && co["body"] is JsonNode cb)
-                                    Walk(cb, owner + "_ctor", newTypes, counter, baseIsLocal, HasSelfParam(co));
+                                    Walk(cb, owner + "_ctor", owner, newTypes, counter, baseIsLocal, HasSelfParam(co));
                         if (to["properties"] is JsonArray tps)
                             foreach (var p in tps)
                                 if (p is JsonObject po) WalkAccessors(po, owner, newTypes, counter, baseIsLocal);
@@ -121,7 +129,7 @@ static class SuspendLambdaLowering
     {
         var mn = Str(method["name"]) ?? "m";
         var outerSelf = HasSelfParam(method);
-        if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, newTypes, counter, baseIsLocal, outerSelf);
+        if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, prefix, newTypes, counter, baseIsLocal, outerSelf);
     }
 
     // Lower a `newSuspendLambda` stored as a STATIC field's inline initializer (a top-level/object/companion
@@ -131,9 +139,9 @@ static class SuspendLambdaLowering
     {
         var fn = Str(field["name"]) ?? "f";
         if (field["init"] is JsonObject init && Str(init["k"]) == "newSuspendLambda")
-            field["init"] = BuildLambda(init, prefix + "_" + fn, newTypes, counter, baseIsLocal, outerSelf: false);
+            field["init"] = BuildLambda(init, prefix + "_" + fn, prefix, newTypes, counter, baseIsLocal, outerSelf: false);
         else if (field["init"] is JsonNode body)
-            Walk(body, prefix + "_" + fn, newTypes, counter, baseIsLocal, outerSelf: false);
+            Walk(body, prefix + "_" + fn, prefix, newTypes, counter, baseIsLocal, outerSelf: false);
     }
 
     static void WalkAccessors(JsonObject prop, string prefix, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
@@ -141,10 +149,10 @@ static class SuspendLambdaLowering
         var pn = Str(prop["name"]) ?? "p";
         foreach (var acc in new[] { "getter", "setter" })
             if (prop[acc] is JsonObject a && a["body"] is JsonNode b)
-                Walk(b, prefix + "_" + pn + "_" + acc, newTypes, counter, baseIsLocal, HasSelfParam(a));
+                Walk(b, prefix + "_" + pn + "_" + acc, prefix, newTypes, counter, baseIsLocal, HasSelfParam(a));
     }
 
-    static void Walk(JsonNode node, string ctx, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, bool outerSelf)
+    static void Walk(JsonNode node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, bool outerSelf)
     {
         switch (node)
         {
@@ -153,9 +161,9 @@ static class SuspendLambdaLowering
                 {
                     var child = o[key];
                     if (child is JsonObject co && Str(co["k"]) == "newSuspendLambda")
-                        o[key] = BuildLambda(co, ctx, newTypes, counter, baseIsLocal, outerSelf);
+                        o[key] = BuildLambda(co, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
                     else if (child != null)
-                        Walk(child, ctx, newTypes, counter, baseIsLocal, outerSelf);
+                        Walk(child, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
                 }
                 break;
             case JsonArray a:
@@ -163,27 +171,29 @@ static class SuspendLambdaLowering
                 {
                     var child = a[i];
                     if (child is JsonObject co && Str(co["k"]) == "newSuspendLambda")
-                        a[i] = BuildLambda(co, ctx, newTypes, counter, baseIsLocal, outerSelf);
+                        a[i] = BuildLambda(co, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
                     else if (child != null)
-                        Walk(child, ctx, newTypes, counter, baseIsLocal, outerSelf);
+                        Walk(child, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
                 }
                 break;
         }
     }
 
-    static JsonNode BuildLambda(JsonObject node, string ctx, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, bool outerSelf)
+    static JsonNode BuildLambda(JsonObject node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, bool outerSelf)
     {
         // Bottom-up: lower any nested suspend lambdas inside THIS lambda's body first (their SMs + `new`
         // replacements land before this lambda's SM is built over the already-lowered body).
         var body = node["body"] as JsonArray ?? new JsonArray();
-        Walk(body, ctx, newTypes, counter, baseIsLocal, outerSelf);
+        Walk(body, ctx, owner, newTypes, counter, baseIsLocal, outerSelf);
 
+        var ownerTypeParamCount = NormalizeOwnerCapturePrefix(node, owner);
         var arity = IntOf(node["arity"]);
         var captures = ReadNameTypes(node["captures"]);
         var lambdaParams = (node["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
         var resultType = TypeJson.Read(node["suspendRet"]);
         var funcType = TypeJson.Read(node["funcType"]) as TypeNode.Fn;
         var typeArgs = ReadStrings(node["typeParams"]);
+        var typeParamDecls = node["typeParamDecls"] as JsonArray;
         var ctorTypeArgs = node["typeArgs"] as JsonArray;
         var smName = ctx + "_lambda" + (++counter[0]) + "$sm";
 
@@ -195,10 +205,13 @@ static class SuspendLambdaLowering
         var effBaseIsLocal = restricted ? _restrictedBaseIsLocal : baseIsLocal;
 
         var sm = SuspendColdLowering.BuildLambdaSm(
-            smName, arity, captures, lambdaParams, body, resultType, typeArgs, effBaseIsLocal,
+            smName, arity, captures, lambdaParams, body, resultType, typeArgs, typeParamDecls,
+            ownerTypeParamCount, effBaseIsLocal,
             _calleeRet, restricted, _refs);
+        node.Remove("typeParamDecls");
         if (sm == null) return node;   // arity < 0 (never) -> keep the node; arbitrary N is now expressible
 
+        sm["semanticOwner"] = owner;
         newTypes.Add(sm);
 
         // CONSTRUCTION type args (#75 Batch B, 2A): a materialized suspend carrier renumbers its enclosing tvs to a
@@ -247,10 +260,10 @@ static class SuspendLambdaLowering
                     : new JsonObject { ["k"] = "local", ["name"] = n });
             // BuildLambdaSm moves the enclosing method's generic parameters onto the synthesized SM type. Its ctor
             // therefore declares capture slots with those variables in TYPE scope. InlineSplice has already flattened
-            // both enclosing method and owner variables into the SM's single dense index space; preserve that index
-            // while changing only the lexical scope, then view the declaration through this construction's type args.
-            // Adding an owner-count offset here would rebase that already-flattened index a second time (`M` -> `E`).
-            var ctorParam = RebindMethodTvsToSm(t);
+            // method variables follow the complete owner prefix on the nested SM. NormalizeOwnerCapturePrefix made
+            // their indices dense, so shift them once by the captured-owner arity before viewing the declaration
+            // through this construction's type arguments.
+            var ctorParam = RebindMethodTvsToSm(t, ownerTypeParamCount);
             if (smInst is TypeNode.Fqn { Args: { } smArgs })
                 ctorParam = SupertypeGraph.SubstOwnerTvs(ctorParam, smArgs);
             argTypes.Add(TypeJson.Write(ctorParam));
@@ -261,21 +274,149 @@ static class SuspendLambdaLowering
         return new JsonObject { ["k"] = "new", ["type"] = TypeJson.Write(smInst), ["argTypes"] = argTypes, ["args"] = args };
     }
 
-    static TypeNode RebindMethodTvsToSm(TypeNode type) => type switch
+    // A state-machine TypeDef physically nested below Owner<A,...> must re-declare the owner's COMPLETE constrained
+    // generic prefix. kotc's newSuspendLambda lists only free parameters, so `C<A,B> { { use(B) } }` otherwise declares
+    // one SM slot while its fields still name the owner's `!1`. Complete and order the prefix here, preserving any
+    // method/free parameters after it; FunGen then rebinds those dense method variables after the owner prefix.
+    static int NormalizeOwnerCapturePrefix(JsonObject node, string owner)
     {
-        TypeNode.Tv { Scope: "method" } tv => new TypeNode.Tv("type", tv.I),
-        TypeNode.Nullable n => new TypeNode.Nullable(RebindMethodTvsToSm(n.Of)),
-        TypeNode.Oblivious o => new TypeNode.Oblivious(RebindMethodTvsToSm(o.Of)),
+        var ownerParams = _ownerTypeParams != null && _ownerTypeParams.TryGetValue(owner, out var declaredOwnerParams)
+            ? declaredOwnerParams : new JsonArray();
+
+        var oldArgs = node["typeArgs"] as JsonArray ?? new JsonArray();
+        var oldNames = node["typeParams"] as JsonArray ?? new JsonArray();
+        var oldDecls = node["typeParamDecls"] as JsonArray;
+        var denseFrame = Str(node["typeFrame"]) == "dense";
+        // Leave a malformed cardinality untouched: BuildLambda's established construction-channel check below owns
+        // that refusal and its stable diagnostic. This helper only normalizes well-formed semantic input.
+        if (oldArgs.Count != oldNames.Count || (oldDecls != null && oldDecls.Count != oldNames.Count))
+            return 0;
+
+        static bool IsOwnerSlot(JsonNode arg, int slot) =>
+            arg is JsonObject tv && Str(tv["t"]) == "tv" && Str(tv["scope"]) == "type"
+            && tv["i"] is JsonValue index && index.TryGetValue<int>(out var value) && value == slot;
+        static string ParamName(JsonNode parameter) => parameter switch
+        {
+            JsonObject declaration => Str(declaration["name"]),
+            JsonValue value when value.TryGetValue<string>(out var name) => name,
+            _ => null,
+        };
+
+        var consumed = new HashSet<int>();
+        var names = new JsonArray();
+        var declarations = new JsonArray();
+        var args = new JsonArray();
+        var frameSlots = new Dictionary<(string Scope, int Index), TypeNode>();
+        (string Scope, int Index)? FrameKey(int position)
+        {
+            if (oldArgs[position] is not JsonObject tv || Str(tv["t"]) != "tv"
+                || Str(tv["scope"]) is not string scope || tv["i"] is not JsonValue index
+                || !index.TryGetValue<int>(out var original)) return null;
+            return (scope, denseFrame ? position : original);
+        }
+        for (var slot = 0; slot < ownerParams.Count; slot++)
+        {
+            var existing = Enumerable.Range(0, oldArgs.Count)
+                .FirstOrDefault(index => !consumed.Contains(index) && IsOwnerSlot(oldArgs[index], slot), -1);
+            var ownerDeclaration = ownerParams[slot]
+                ?? throw new InvalidOperationException($"generic owner '{owner}' has a missing slot {slot}");
+            var nameNode = existing >= 0 ? oldNames[existing] : JsonValue.Create(ParamName(ownerDeclaration));
+            // An exact semantic-owner slot is constrained by the owner declaration, regardless of how this carrier
+            // was materialized. InlineSplice can provide only a dense placeholder name for an existing slot; using
+            // that placeholder as the declaration silently drops `T : ...` and makes any Owner<!0> field invalid.
+            var declarationNode = ownerDeclaration;
+            if (ParamName(nameNode) is null || ParamName(declarationNode) is null)
+                throw new InvalidOperationException($"generic owner '{owner}' has an unnamed slot {slot}");
+            names.Add(nameNode?.DeepClone());
+            declarations.Add(declarationNode?.DeepClone());
+            args.Add(TypeJson.Write(new TypeNode.Tv("type", slot)));
+            if (existing >= 0)
+            {
+                consumed.Add(existing);
+                if (FrameKey(existing) is { } key) frameSlots[key] = new TypeNode.Tv("type", slot);
+            }
+        }
+
+        var suffix = 0;
+        for (var index = 0; index < oldArgs.Count; index++)
+            if (!consumed.Contains(index))
+            {
+                names.Add(oldNames[index]?.DeepClone());
+                declarations.Add((oldDecls?[index] ?? oldNames[index])?.DeepClone());
+                args.Add(oldArgs[index]?.DeepClone());
+                if (FrameKey(index) is { } key) frameSlots[key] = new TypeNode.Tv("method", suffix);
+                suffix++;
+            }
+
+        TypeNode RemapFrameSlots(TypeNode type) => type switch
+        {
+            TypeNode.Tv tv when frameSlots.TryGetValue((tv.Scope, tv.I), out var physical) => physical,
+            TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(RemapFrameSlots).ToArray()),
+            TypeNode.Nullable n => new TypeNode.Nullable(RemapFrameSlots(n.Of)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(RemapFrameSlots(o.Of)),
+            TypeNode.Array a => new TypeNode.Array(RemapFrameSlots(a.Elem)),
+            TypeNode.ByRef b => new TypeNode.ByRef(RemapFrameSlots(b.Of)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RemapFrameSlots(fn.Ret),
+                fn.Params.Select(RemapFrameSlots).ToArray(),
+                fn.Recv == null ? null : RemapFrameSlots(fn.Recv), fn.Clr,
+                fn.Ctx?.Select(RemapFrameSlots).ToArray()),
+            _ => type,
+        };
+	        void RewriteTypes(JsonNode current)
+	        {
+	            if (current is JsonObject obj)
+	            {
+	                var kind = Str(obj["k"]);
+	                foreach (var key in obj.Select(kv => kv.Key).ToList())
+	                {
+	                    var value = obj[key];
+	                    if (value == null) continue;
+	                    // Declaration descriptors are in the CALLEE's generic frame. Only lexical operands owned by
+	                    // the enclosing method move into the dense suspend-SM frame. A constructor has no method type
+	                    // parameters, so method TVs in `new.argTypes` necessarily belong to this lexical caller.
+	                    if (key is "sig" or "memberSig" or "clrOverrideSig" or "shapeTypes" or "paramSig"
+	                        or "delegationSig" || (key == "argTypes" && kind != "new"))
+	                        continue;
+	                    if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(RemapFrameSlots(TypeJson.Read(value)));
+	                    else RewriteTypes(value);
+	                }
+	            }
+	            else if (current is JsonArray array)
+                for (var i = 0; i < array.Count; i++)
+                {
+                    var value = array[i];
+                    if (value == null) continue;
+                    if (TypeJson.IsType(value)) array[i] = TypeJson.Write(RemapFrameSlots(TypeJson.Read(value)));
+                    else RewriteTypes(value);
+                }
+        }
+
+        // Keep the construction channel in the enclosing frame; every other type occurrence moves with the SM body.
+        node.Remove("typeArgs");
+        node.Remove("typeFrame");
+        RewriteTypes(node);
+        RewriteTypes(declarations);
+        node["typeParams"] = names;
+        node["typeParamDecls"] = declarations;
+        node["typeArgs"] = args;
+        return ownerParams.Count;
+    }
+
+    static TypeNode RebindMethodTvsToSm(TypeNode type, int ownerTypeParamCount) => type switch
+    {
+        TypeNode.Tv { Scope: "method" } tv => new TypeNode.Tv("type", ownerTypeParamCount + tv.I),
+        TypeNode.Nullable n => new TypeNode.Nullable(RebindMethodTvsToSm(n.Of, ownerTypeParamCount)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(RebindMethodTvsToSm(o.Of, ownerTypeParamCount)),
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
-            args.Select(RebindMethodTvsToSm).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(RebindMethodTvsToSm(a.Elem)),
-        TypeNode.ByRef b => new TypeNode.ByRef(RebindMethodTvsToSm(b.Of)),
+            args.Select(a => RebindMethodTvsToSm(a, ownerTypeParamCount)).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(RebindMethodTvsToSm(a.Elem, ownerTypeParamCount)),
+        TypeNode.ByRef b => new TypeNode.ByRef(RebindMethodTvsToSm(b.Of, ownerTypeParamCount)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
-            RebindMethodTvsToSm(fn.Ret),
-            fn.Params.Select(RebindMethodTvsToSm).ToArray(),
-            fn.Recv == null ? null : RebindMethodTvsToSm(fn.Recv),
+            RebindMethodTvsToSm(fn.Ret, ownerTypeParamCount),
+            fn.Params.Select(p => RebindMethodTvsToSm(p, ownerTypeParamCount)).ToArray(),
+            fn.Recv == null ? null : RebindMethodTvsToSm(fn.Recv, ownerTypeParamCount),
             fn.Clr,
-            fn.Ctx?.Select(RebindMethodTvsToSm).ToArray()),
+            fn.Ctx?.Select(p => RebindMethodTvsToSm(p, ownerTypeParamCount)).ToArray()),
         _ => type,
     };
 

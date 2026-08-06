@@ -70,11 +70,14 @@ static partial class ClrMemberResolution
                     var ps = (JsonArray)candidate.ctor["params"];
                     var declared = ps.Select(p => p?["type"] is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
                     if (declared.Any(t => t == null)) continue;
-                    var rawMatch = declared.Select(SupertypeGraph.TypeKey).SequenceEqual(wanted.Select(SupertypeGraph.TypeKey));
-                    var closedMatch = owner.Args is { Length: > 0 }
-                        && declared.Select(t => SupertypeGraph.SubstOwnerTvs(t, owner.Args)).Select(SupertypeGraph.TypeKey)
-                            .SequenceEqual(wanted.Select(SupertypeGraph.TypeKey));
-                    if (rawMatch || closedMatch)
+                    var matches = declared.Select((raw, i) =>
+                    {
+                        var wantedKey = SupertypeGraph.TypeKey(wanted[i]);
+                        if (SupertypeGraph.TypeKey(raw) == wantedKey) return true;
+                        return owner.Args is { Length: > 0 }
+                            && SupertypeGraph.TypeKey(SupertypeGraph.SubstOwnerTvs(raw, owner.Args)) == wantedKey;
+                    }).All(x => x);
+                    if (matches)
                         exact.Add(candidate);
                 }
             }
@@ -451,12 +454,40 @@ static partial class ClrMemberResolution
             .Where(c => c.GetParameters().Length == argNodes.Count).ToList();
         var win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerFqn.Args,
             $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
+        CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerFqn.Args);
         node["memberSig"] = MemberSig(win.GetParameters());
         node["memberOwner"] = DeclaringTypeDescriptor(win);
         // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
         // chokepoint can tell "no return" from "nobody stamped one".
         StampMemberRet(node, typeof(void));
         node.Remove("argTypes");
+    }
+
+    // Root-V lowers a readonly Kotlin collection nested in a constructed generic to its invariant CLR sibling.
+    // A constructor descriptor remains a head-position slot, so the same source type can arrive here as
+    // `IReadOnlyList<T>` while the selected closed constructor parameter is `IList<T>`. Materialize that already-
+    // sanctioned collection-view conversion in CIR; ilemit then emits the stated cast and links memberSig 1:1.
+    // This is structural over the reflected constructor signature, not tied to Pair/Triple or any source name.
+    static void CoerceCtorCollectionViews(JsonObject node, ParameterInfo[] parameters,
+        IReadOnlyList<TypeNode> argNodes, TypeNode[] ownerArgs)
+    {
+        if (node["args"] is not JsonArray args || args.Count != parameters.Length) return;
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            var declared = MemberSigOf(parameters[i].ParameterType);
+            var closed = ownerArgs is { Length: > 0 }
+                ? SupertypeGraph.SubstOwnerTvs(declared, ownerArgs)
+                : declared;
+            if (!CollectionViewCallCoercion.IsCollectionViewSeam(argNodes[i], closed)
+                || args[i] is not JsonNode arg)
+                continue;
+            args[i] = new JsonObject
+            {
+                ["k"] = "cast",
+                ["type"] = TypeJson.Write(closed),
+                ["e"] = arg.DeepClone(),
+            };
+        }
     }
 
     // ---- plain static / instance calls ---------------------------------------------------------
@@ -863,6 +894,12 @@ static partial class ClrMemberResolution
     static MatchKind NodeEq(TypeNode a, TypeNode ownerArg)
     {
         if (a == ownerArg) return MatchKind.Exact;
+        if (CollectionViewCallCoercion.IsCollectionViewSeam(a, ownerArg)) return MatchKind.Assignable;
+        // A constructed owner slot closed over Object accepts every source value through the CLR's ordinary
+        // reference conversion / boxing path. `Pair<Any, …>(nullableInt, …)` is the constructor form of the same
+        // generic object-erasure seam already accepted for method parameters below.
+        if (ownerArg is TypeNode.Fqn { Name: "object" or "System.Object", Args: null })
+            return MatchKind.Assignable;
         // A `Nullable<value>` arg (`Int?`) binds the underlying value owner-arg (`T`=Int): the value-nullable GENERIC
         // erasure (#128) — `IComparer<Int>.Compare(x: Int?, y: Int?)` binds the constructed `Compare(Int,Int)`.
         if (a is TypeNode.Nullable an && NodeEq(an.Of, ownerArg) != MatchKind.No) return MatchKind.Assignable;

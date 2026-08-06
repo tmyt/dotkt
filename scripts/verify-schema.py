@@ -54,13 +54,17 @@ STR_OK = {
                                                 # — a BIR-only frontend fact (A2 step 3/4); bir2cir consumes it into
                                                 # clrPropGet/clrPropSet (get/set) or the default-indexed-property accessor
                                                 # (index-get/index-set), so it never survives to CIR. A marker, not a type slot.
-    "id", "phase", "role",                      # §2.7 CALL-EVALUATION PLAN binding fields: the minted binding id
+    "id", "phase", "role",                      # §2.7 plan ids and lexical local-declaration ids
                                                 # (`dotkt$bN` / `cir$bN`, also the `bindRef.id` that reads it), the
                                                 # evaluation PHASE enum (recv/arg/default) and the source-level ROLE a
                                                 # storage diagnostic names the value by ("receiver of 'copy'"). The
                                                 # role travels onto the lowered `var`. Names/enums, not type slots.
     "local",                                    # a byref*/delegate node's local-VARIABLE-NAME reference
-    "nestedIn",                                 # enclosing-type name (owner-FQN island — §2.2.1). (The applied-attribute
+    "semanticOwner",                            # #225 BIR-only Kotlin lexical owner identity; bir2cir consumes it.
+    "sourceName",                              # #225 BIR-only lexical localFun source name.
+    "typeFrame",                               # bir2cir-internal generic-frame vocabulary (currently "dense").
+    "declaringLocalFunctionId",                # #225 optional lexical owner of a synthetic captured-var ref cell.
+    "nestedIn",                                 # CIR enclosing-type name (owner-FQN island — §2.2.1). (The applied-attribute
                                                 # `attr` type is now a structured `{t:fqn}` node — #48; kotc flags an
                                                 # imported .NET attr with `attrClr:true`, which bir2cir AttrExternalNormalize
                                                 # consumes into the `attrExternal` bool. No `clr:` prefix, no attr string.)
@@ -116,6 +120,8 @@ CLR_OWNER_KINDS = {
 # TypeNode array — W1-S1 #46 — walked as ordinary type nodes; the retired lossy `shapes` string island is gone.)
 STRARR_OK = {
     "typeParams",
+    "typeParamDecls",                          # newSuspendLambda's full declaration-form copy of typeParams;
+                                                # bare names are the same declaration shorthand, not type usages.
     "capturedTypeParams",                       # #275: enclosing CLR generic-slot declaration names copied onto
                                                 # the nested companion carrier, not Type usages.
 }
@@ -138,7 +144,7 @@ CARRIER_VERSIONS = {"bir-json/1"}
 KINDS = {
     # --- core expr/stmt (kotc emit) ---
     "local", "const", "this", "var", "setLocal", "field", "setField", "staticField",
-    "callInstance", "callStatic", "objMethod", "delegateInvoke",
+    "callInstance", "callStatic", "callLocal", "localFunRef", "objMethod", "delegateInvoke",
     "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat", "cond",
     "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
     "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
@@ -149,7 +155,7 @@ KINDS = {
     # of one. bir2cir's CallEvalLowering lowers both (to `var`+`valueBlock`, or to a ctor's `preStmts`) before CIR.
     "callEval", "bindRef",
     "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
-    "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
+    "localFun", "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
     "if", "cond2", "while", "label", "goto", "brIf", "break", "continue",
     "for", "forRange", "forArray", "forEachInline", "forIn", "repeatInline", "callInline", "inlineLambda", "try",
     # field-write family — the setField/setFieldExpr/staticFieldSet merge (§2.5) is "[finalize in impl]", so all
@@ -318,9 +324,14 @@ class V:
                     self.err(f, path, "delegationBindings is a BIR call-evaluation plan and must be lowered to preStmts before CIR")
                 if o.get("k") == "companionValue":
                     self.err(f, path, "companionValue is a BIR semantic node and must be lowered before CIR")
+                if o.get("k") in ("localFun", "callLocal", "localFunRef"):
+                    self.err(f, path, f"{o['k']} is a BIR lexical declaration fact and must be lowered before CIR")
                 for companion_key in ("kotlinCompanion", "companionCaptureOwner", "externalCompanionOwner"):
                     if companion_key in o:
                         self.err(f, path, f"{companion_key} is a BIR companion fact and must be consumed before CIR")
+                for ownership_key in ("semanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):
+                    if ownership_key in o:
+                        self.err(f, path, f"{ownership_key} is a BIR ownership fact and must be consumed before CIR")
             if f.endswith(".bir.json") and "preStmts" in o:
                 self.err(f, path, "preStmts is the bir2cir-authored lowering of a delegation plan and must not appear in BIR")
             if f.endswith(".bir.json"):
@@ -328,6 +339,8 @@ class V:
                     self.err(f, path, "newClrStaticDelegate is a bir2cir-authored physical node and must not appear in BIR")
                 if "capturedTypeParams" in o:
                     self.err(f, path, "capturedTypeParams is a bir2cir-authored nested CLR declaration fact and must not appear in BIR")
+                if "nestedIn" in o:
+                    self.err(f, path, "nestedIn is a bir2cir-authored physical CLR ownership fact and must not appear in BIR")
             if o.get("k") == "newClrStaticDelegate" and f.endswith(".cir.json"):
                 if not isinstance(o.get("memberSig"), list):
                     self.err(f, path, "newClrStaticDelegate.memberSig must be a resolved Type-node array in CIR")

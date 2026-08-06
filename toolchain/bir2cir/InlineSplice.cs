@@ -232,8 +232,12 @@ static class InlineSplice
         // Re-hoist those raw BIR declarations into the consumer and retarget each delegate before any materialization
         // guard runs. `lifted`/`fileClass` are required parts of the current v1 schema; old payloads are intentionally
         // not supported and fail loud with a rebuild diagnostic rather than adding a second compatibility path.
-        if (!sameModule && RehoistPayloadDelegates(payload, pBody) is string rehoistError)
-        { FailLoud(o, owner, name, pc, ga, rehoistError); return; }
+        if (!sameModule)
+        {
+            if (RehoistPayloadDelegates(payload, pBody) is string rehoistError)
+            { FailLoud(o, owner, name, pc, ga, rehoistError); return; }
+        }
+        else LexicalDeclarationIds.Freshen(pBody);
         // BATCH B (#75): a capturing `newSuspendLambda` in the payload is now a first-class HYGIENE citizen — its
         // `captures[].name` descriptors are renamed JOINTLY with the frame by ApplyPrefix/RewriteLocalRefs (skipping the
         // SM's own inner scope), and a captured lambda-param is materialized into a real suspend SM value (§4.4ii suspend
@@ -276,7 +280,11 @@ static class InlineSplice
         // same inline fn spliced at 2+ sites with DIFFERENT type args yields divergent (SubstTv-specialized) class bodies
         // under the SAME origin name (`dotkt$…$SamN`); ClosureSynthesis' name-dedup would collapse them to the first, so the
         // other sites construct the wrong class (boxgen: `compareBy{it}` vs `compareBy{it.first}` both -> Sam102).
-        RenameSpliceSynthClasses(pBody, Interlocked.Increment(ref _counter));
+        var spliceCloneId = Interlocked.Increment(ref _counter);
+        var consumerSemanticOwner = Str(o["semanticOwner"])
+            ?? TypeJson.OwnerName(_fileClassOwner)
+            ?? throw new InvalidOperationException("inline splice has no authored semantic use-site owner");
+        RenameSpliceSynthClasses(pBody, spliceCloneId, consumerSemanticOwner);
         // F2B: the dispatch receiver's concretized owning-class type args (in the flattened `scope:type` index space), or
         // null when kotc could not supply them (no dispatch / non-generic owner / receiver-class != owner / tv-render /
         // arity mismatch). Substituted alongside `scope:method` in the SAME fused STEP-2 pass over the pristine payload.
@@ -485,6 +493,10 @@ static class InlineSplice
                     // ALREADY-bound receiver/earlier-param values — the shared DefaultArgSplice machinery.
                     var raw = DefaultArgSplice.MaterializeDefault(carrierBir, _hoist, _refs, name, i, _fileClassOwner);
                     if (raw == null) { FailLoud(o, owner, name, pc, ga, $"param '{pn}' default carrier BIR is unparseable"); return; }
+                    // STEP 2's body-wide ownership transfer ran before parameter defaults were materialized. Transfer
+                    // the default's self-carried implementation classifiers through the same authored call-site owner
+                    // now; otherwise they retain a producer member owner absent from this consumer module.
+                    DefaultArgSplice.RehomeSynthClasses(raw, consumerSemanticOwner, spliceCloneId);
                     var extensionRecv = ext ? boundArgs.ElementAtOrDefault(0) : null;
                     argNode = DefaultArgSplice.SubstituteTokens(
                         raw, defaultDispatchRecv, extensionRecv, null, boundArgs);
@@ -1026,6 +1038,10 @@ static class InlineSplice
         var lamBody = (lam["body"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
         var lamResult = lam["result"]?.DeepClone();
 
+        // A local-function id is serialized declaration identity, not a name. A lambda body can be inlined more than
+        // once, so alpha-convert its declarations and every explicit id edge together with the ordinary local hygiene.
+        LexicalDeclarationIds.Freshen(lamBody, lamResult);
+
         // BATCH B (#75): a `newSuspendLambda` in this carrier whose descriptor names a carrier-declared local/param is now
         // renamed JOINTLY by PrefixLocalsJoint below — CollectDeclared skips the SM's inner scope and ApplyPrefix prefixes
         // the descriptor + its body capture-refs in lockstep with the carrier frame, so the SM field and the invokeSuspend
@@ -1130,6 +1146,11 @@ static class InlineSplice
         var lamParams = carrier["params"] as JsonArray ?? new JsonArray();
         var lamBody = (carrier["body"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
         var lamResult = carrier["result"]?.DeepClone();
+
+        // Materializing the same forwarded carrier at two nested inline sites creates two declaration graphs. Local
+        // function ids are declaration identity, so clone and alpha-convert the body/result jointly before either the
+        // ordinary closure or suspend-carrier path consumes them.
+        LexicalDeclarationIds.Freshen(lamBody, lamResult);
 
         // A bare `{k:return}` OR expression-position `{k:returnExpr}` in the body OR the `result` cannot survive as a
         // closure invoke body — refuse (caller fails loud). bir2cir cannot prove from the node alone whether such a
@@ -1489,6 +1510,9 @@ static class InlineSplice
         var newSuspendLambda = new JsonObject
         {
             ["k"] = "newSuspendLambda",
+            // The body/signature were alpha-converted into the positional carrier frame above. SuspendLambdaLowering
+            // consumes this representation fact when it merges the semantic owner's complete generic prefix.
+            ["typeFrame"] = "dense",
             ["arity"] = lamParams.Count,
             ["captures"] = captures,
             ["params"] = invParams,
@@ -2362,7 +2386,11 @@ static class InlineSplice
                 // fixpoint (paramSig) / forwarding (sig) matches against. The nested call's ACTUAL type args ride `typeArgs`
                 // (a sibling key), which IS substituted. So skip these two keys; a callee's declared params can never
                 // legitimately reference the outer method's tvs.
-                if (kv.Value != null && kv.Key != "sig" && kv.Key != "paramSig")
+                // A lexical localFun declaration owns an independent dense METHOD frame. Its enclosing application is
+                // carried by callLocal/localFunRef.typeArgs; substituting this outer inline method's frame into the
+                // declaration would reinterpret both its own TVs and its authored _syntheticTypeArgs correspondence.
+                if (kv.Value != null && kv.Key != "sig" && kv.Key != "paramSig"
+                    && !(Str(o["k"]) == "localFun" && kv.Key == "decl"))
                     SubstTvIn(kv.Value, typeArgs, ga, dispatchTypeArgs, typeScope && !ownBoundary && kv.Key != "synthClass");
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) SubstTvIn(c, typeArgs, ga, dispatchTypeArgs, typeScope);
@@ -2716,16 +2744,27 @@ static class InlineSplice
     // Rename each spliced `newSam`/`newClosure` synthClass (and every reference to it — the node's samType/closureType and
     // the class's own self-references) to a per-splice-instance unique name, so divergent instantiations of the same origin
     // class never collide under one name.
-    static void RenameSpliceSynthClasses(JsonNode node, int id)
+    static void RenameSpliceSynthClasses(JsonNode node, int id, string consumerSemanticOwner)
     {
         if (node is JsonObject o)
         {
-            if ((Str(o["k"]) == "newSam" || Str(o["k"]) == "newClosure") && o["synthClass"] is JsonObject sc
-                && Str(sc["name"]) is string old && !old.EndsWith("$sp" + id, StringComparison.Ordinal))
-                RenameFqnRefs(o, old, old + "$sp" + id);
-            foreach (var kv in o) if (kv.Value != null) RenameSpliceSynthClasses(kv.Value, id);
+            // A nested inline call is cloned into the same consumer lexical scope. Keep its authored use-site fact in
+            // lockstep so a later fixpoint splice transfers any newly materialized implementation types to this owner,
+            // rather than back to the producer declaration recorded in the payload.
+            if (Str(o["k"]) == "callInline") o["semanticOwner"] = consumerSemanticOwner;
+            if ((Str(o["k"]) == "newSam" || Str(o["k"]) == "newClosure") && o["synthClass"] is JsonObject sc)
+            {
+                // The payload declaration's source owner is not the cloned declaration's owner. The callInline node
+                // carries kotc's exact semantic use-site owner, so replacement is an authored ownership transfer — no
+                // generated-name or body-shape inference in bir2cir. ClosureSynthesis preserves this fact until the
+                // single semanticOwner -> nestedIn representation boundary.
+                sc["semanticOwner"] = consumerSemanticOwner;
+                if (Str(sc["name"]) is string old && !old.EndsWith("$sp" + id, StringComparison.Ordinal))
+                    RenameFqnRefs(o, old, old + "$sp" + id);
+            }
+            foreach (var kv in o) if (kv.Value != null) RenameSpliceSynthClasses(kv.Value, id, consumerSemanticOwner);
         }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null) RenameSpliceSynthClasses(c, id);
+        else if (node is JsonArray a) foreach (var c in a) if (c != null) RenameSpliceSynthClasses(c, id, consumerSemanticOwner);
     }
 
     static void RenameFqnRefs(JsonNode node, string old, string neu)
@@ -2769,7 +2808,11 @@ static class InlineSplice
     {
         if (payload["lifted"] is not JsonArray lifted)
             return "[KotlinInline] payload has no closed lifted-method set; rebuild the referenced library with the current SDK";
-        if (lifted.Count == 0) return null;
+        if (lifted.Count == 0)
+        {
+            LexicalDeclarationIds.Freshen(body);
+            return null;
+        }
         if (Str(payload["fileClass"]) is not string originFileClass)
             return "[KotlinInline] payload carries lifted methods but has no origin file-class identity";
         if (_fileClassOwner == null)
@@ -2797,9 +2840,16 @@ static class InlineSplice
         {
             var oldName = Str(clone["name"]);
             clone["name"] = rename[oldName];
+            // The payload's semanticOwner names a declaration in the producer. Re-hoisting deliberately places the
+            // cloned implementation on this consumer's file facade, so that BIR-only ownership fact has been
+            // consumed by the representation choice and must not survive into CIR.
+            clone.Remove("semanticOwner");
             RewriteCarriedDelegateEdges(clone, originFileClass, rename);
-            _hoist.Add(clone);
         }
+        // The payload body and carried methods are one serialized declaration graph: a local declaration can live in
+        // a carried lambda while its call edge remains in another root. Alpha-convert the whole graph atomically.
+        LexicalDeclarationIds.Freshen(new[] { (JsonNode)body }.Concat(clones).ToArray());
+        foreach (var clone in clones) _hoist.Add(clone);
         return null;
     }
 
@@ -3197,7 +3247,9 @@ static class InlineSplice
     {
         if (node is JsonObject o)
         {
-            if (IsClosureBoundary(o)) return false;
+            // A lexical local-function declaration owns its own return targets just like a closure body. A carrier
+            // containing `fun local() = ...` is still materializable; only returns in the carrier frame forbid it.
+            if (IsClosureBoundary(o) || Str(o["k"]) == "localFun") return false;
             if (Str(o["k"]) == kind) return true;
             foreach (var kv in o) if (kv.Value != null && HasNodeNonClosure(kv.Value, kind)) return true;
         }
