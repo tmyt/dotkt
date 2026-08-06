@@ -2135,8 +2135,9 @@ internal fun BirEmitter.recvExpr(recv: IrExpression, ownerType: TypeNode, ownerI
 
 /** A `byref(...)` target that is an own-source-set property read -> its BACKING-FIELD node, so ilemit takes the
  *  field address (`ldflda <backing>`) instead of addressing an accessor's return value (Phase 5). The field is
- *  INTERNAL, hence reachable across types in-module. Null for a non-property, a .NET/external property, or a
- *  computed/delegated/lateinit/@ClrField property (no plain in-module backing field to address). */
+ *  private when it is accessor-routed. Preserve the frontend declaration fact on the address node; bir2cir decides
+ *  whether its physical owner differs and needs an UnsafeAccessor. Null for a non-property, a .NET/external property,
+ *  or a computed/delegated/lateinit/@ClrField property (no plain in-module backing field to address). */
 internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	val call = inner as? IrCall ?: return null
 	val callee = call.symbol.owner
@@ -2144,10 +2145,12 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	if (callee !== prop.getter) return null
 	val cls = callee.parent as? IrClass ?: return null
 	if (isExternalNetType(cls)) return null
-	if (prop.backingField == null || prop.isDelegated || prop.isLateinit || isClrField(prop)) return null
+	val backing = prop.backingField ?: return null
+	if (prop.isDelegated || prop.isLateinit || isClrField(prop)) return null
 	val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
 	val owner = ownerSpec(cls, dispatchReceiver(call)?.type).toJson()
-	return """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
+	val rendered = """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
+	return memberFieldVisibilityStamped(backing, rendered)
 }
 
 /** (argsJson, argTypesJson) for an external .NET / restored-DotKt call — the ONE builder every such call site uses,

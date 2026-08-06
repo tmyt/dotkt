@@ -767,16 +767,7 @@ sealed class Pipeline
         // gate instead. Report now, over the classes that actually survived.
         ClosureSynthesis.AssertSurvivingCapturesLegal(staged.Select(s => s.Root));
 
-        // PHASE 1.7 — CROSS-CLASS PRIVATE WIDENING (bundle-6 P5 BUG A): a LIFTED anon-object / closure class
-        // (`dotkt_obj*`) is a SEPARATE top-level CLR class that reads its enclosing class's PRIVATE members
-        // via its captured `__outer` — legal on the JVM (nested class), a System.MethodAccessException on the
-        // CLR. Widen exactly the private members reached CROSS-CLASS to `internal` (assembly-visible). Runs
-        // GLOBALLY, in non-ref builds, AFTER the suspend passes (so synthesized SM types are covered too) and
-        // BEFORE type lowering (owner tokens are still the kotlin.* FQN that match local type names).
-        if (!_options.RefBuild)
-            CrossClassPrivateWidening.ApplyAll(staged.Select(s => s.Root).ToList());
-
-        // PHASE 1.8 — GENERIC SELF INSTANTIATION (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object emits
+        // PHASE 1.7 — GENERIC SELF INSTANTIATION (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object emits
         // its self instance accesses with the BARE type name (`dotkt_obj144`, no type args) -> ".NET method/type
         // not fully instantiated" at runtime. Derive the constructed self `dotkt_obj144[gp:T]` for those
         // executable instance accesses (kotc emits the FQN identity; bir2cir derives the CLR instantiation).
@@ -847,6 +838,14 @@ sealed class Pipeline
         // `byref(obj.prop)` addresses a sibling file's backing field) and unconditional (ref/rt/app emit one shape);
         // last in the structural phase, so every synthesized body exists and owner tokens are still Kotlin FQNs.
         BackingFieldRename.ApplyAll(staged.Select(s => s.Root).ToList());
+
+        // Kotlin lexical visibility remains unchanged even when its declaration and use land in different CLR
+        // TypeDefs. Project each otherwise-illegal physical edge to a private caller-side [UnsafeAccessor] extern;
+        // target members are never widened to internal/protectedInternal.
+        if (_options.RefBuild)
+            UnsafeAccessorLowering.DropFacts(staged.Select(s => s.Root).ToList());
+        else
+            UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // Normalize every local call/delegate descriptor before the module-wide local member binding below. Generic
         // delegate targets may carry a closed function shape while their declaration remains open; bir2cir owns the

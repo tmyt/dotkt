@@ -862,11 +862,11 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		val bf = p.backingField ?: return@mapNotNull null
 		// Honor the property's visibility on its backing field (A-108): a `private`/`internal`/`protected`
 		// property gets a non-public field. (Kotlin's own access rules already keep same-class field reads valid.)
-		// An accessor-routed property's backing field is INTERNAL (assembly-visible): access goes through get_/set_
-		// (CLR property model), yet it stays reachable IN-MODULE so a `byref(obj.prop)` can ldflda it (Phase 5) while a
-		// cross-assembly consumer sees only the property. Only @ClrField / const / lateinit / delegated keep a plain field.
+		// An accessor-routed property's backing slot is an implementation detail. Keep it private; a frontend-valid
+		// `byref(obj.prop)` edge that ownership places in another TypeDef is projected by bir2cir via UnsafeAccessor.
+		// Only @ClrField / const / lateinit / delegated keep a plain source-visible field.
 		val routed = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
-		val declaredVisibility = if (routed) "internal" else visOf(p)
+		val declaredVisibility = if (routed) "private" else visOf(p)
 		val v = declaredVisibility
 		val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
 		// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
@@ -1220,14 +1220,9 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	val isAnySlot = isAnySlotMethod(fn)
 	val emitName = fn.name.asString()
 	val isOvr = isOverride || isAnySlot
-	// Object-overrides / interface members must stay public for virtual dispatch.
-	// A PRIVATE TOP-LEVEL fun is FILE-private in Kotlin, but kotc's emission splits a file across CLR types
-	// (the XKt file class + the file's classes), so CLR `private` under-approximates it: a same-file class
-	// calling the helper threw MethodAccessException at run (Duration..cctor -> DurationKt.durationOfMillis).
-	// Emit `internal` — the tightest CLR visibility that preserves same-file access (the same reasoning that
-	// makes routed property backing fields internal). Class members keep their real visibility.
-	val declaredVis = if (isAnySlot) "public"
-		else visOf(fn).let { if (it == "private" && fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) "internal" else it }
+	// Object-overrides / interface members must stay public for virtual dispatch. Every other declaration keeps its
+	// Kotlin visibility; bir2cir authors caller-side UnsafeAccessors for valid file-private edges split across TypeDefs.
+	val declaredVis = if (isAnySlot) "public" else visOf(fn)
 	val vis = declaredVis
 	val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
 	// Kotlin modifiers with no .NET analog -> stamped as [KotlinFunction] by ilemit so a consuming Kotlin module

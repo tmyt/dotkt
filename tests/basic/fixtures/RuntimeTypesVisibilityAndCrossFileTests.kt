@@ -24,6 +24,8 @@ import crossFileLanguage.crossFileLanguageCurrent
 import crossFileLanguage.crossFileLanguageCall
 import crossFileLanguage.crossFileLanguageCounter
 import crossFileLanguage.crossFileLanguageBump
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
 
 // ---- il-setlocalbox : `Any` field reassigned from String to a boxed Int -------------------------------------------
 class RuntimeTypesHolder {
@@ -60,6 +62,15 @@ class RuntimeTypesAccount(private val balance: Int) {
     protected open fun kind(): String = "base"
 }
 private fun runtimeTypessecret(): Int = 99
+
+// #225: accessor-routed properties keep a private CLR backing field. This frontend-valid address edge originates on
+// the file facade and targets the sibling class TypeDef, so bir2cir must synthesize a caller-owned UnsafeAccessor
+// instead of kotc widening the slot. ClrRef<T>-declaring Kotlin functions are compile/ILVerify coverage only for now.
+private class RuntimeTypesByRefOwner(var slot: Int)
+private fun runtimeTypesTakeByRef(slot: ClrRef<Int>) {}
+private fun runtimeTypesPrivateBackingAddress(owner: RuntimeTypesByRefOwner) {
+    runtimeTypesTakeByRef(byref(owner.slot))
+}
 
 // ---- il-typealias : aliases used across a function boundary -------------------------------------------------------
 typealias RuntimeTypesNames = List<String>

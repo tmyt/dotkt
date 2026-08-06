@@ -61,6 +61,10 @@ STR_OK = {
                                                 # role travels onto the lowered `var`. Names/enums, not type slots.
     "local",                                    # a byref*/delegate node's local-VARIABLE-NAME reference
     "semanticOwner",                            # #225 BIR-only Kotlin lexical owner identity; bir2cir consumes it.
+    "memberVisibility",                         # #225 BIR-only frontend visibility enum on a lexical member edge;
+                                                # bir2cir consumes it into a caller-side UnsafeAccessor when needed.
+    "memberOwnerTypeParams",                    # #225 BIR-only target-owner generic declaration facts.
+    "memberMethodTypeParams",                   # #225 BIR-only target-method generic declaration facts.
     "sourceName",                              # #225 BIR-only lexical localFun source name.
     "typeFrame",                               # bir2cir-internal generic-frame vocabulary (currently "dense").
     "declaringLocalFunctionId",                # #225 optional lexical owner of a synthetic captured-var ref cell.
@@ -124,6 +128,8 @@ STRARR_OK = {
                                                 # bare names are the same declaration shorthand, not type usages.
     "capturedTypeParams",                       # #275: enclosing CLR generic-slot declaration names copied onto
                                                 # the nested companion carrier, not Type usages.
+    "memberOwnerTypeParams",                    # #225: declaration-form owner frame carried on a member edge.
+    "memberMethodTypeParams",                   # #225: declaration-form method frame carried on a member edge.
 }
 
 MOD_KEYS = {
@@ -332,6 +338,10 @@ class V:
                 for ownership_key in ("semanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):
                     if ownership_key in o:
                         self.err(f, path, f"{ownership_key} is a BIR ownership fact and must be consumed before CIR")
+                for member_fact in ("memberVisibility", "memberType", "memberOwnerTypeParams",
+                                    "memberMethodTypeParams", "memberReturnType", "memberSignature"):
+                    if member_fact in o:
+                        self.err(f, path, f"{member_fact} is a BIR frontend access fact and must be consumed before CIR")
             if f.endswith(".bir.json") and "preStmts" in o:
                 self.err(f, path, "preStmts is the bir2cir-authored lowering of a delegation plan and must not appear in BIR")
             if f.endswith(".bir.json"):

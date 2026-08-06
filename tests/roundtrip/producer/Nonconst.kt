@@ -28,6 +28,54 @@ fun generatedDefault(value: GeneratedDefaultValue = object : GeneratedDefaultVal
 class Rect(val w: Int, val h: Int = w * 2, val tag: String = "r") { val area: Int get() = w * h }
 class Tri(val a: Int, val b: Int = a + 1, val c: Int = a * 100 + b)
 class Bag(val items: List<String> = emptyList(), val n: Int = 1) { val size: Int get() = items.size * 10 + n }
+// A default expression keeps lexical access to a private member when it is materialized in a consuming assembly.
+// The consumer emits its own private UnsafeAccessor; the producer declaration remains private.
+class PrivateDefaultOwner(private val secret: String) {
+    fun reveal(value: String = secret): String = value
+}
+// The same lexical edge through a constructed generic owner. The consumer-side accessor must preserve the
+// target owner's generic form instead of baking this call site's concrete argument into an unsupported signature.
+class GenericPrivateDefaultOwner<T>(private val secret: T) {
+    fun reveal(value: T = secret): T = value
+}
+class ConstrainedPrivateDefaultOwner<T : Comparable<T>>(private val secret: T) {
+    fun reveal(value: T = secret): T = value
+}
+class GenericPrivateMethodDefaultOwner<T>(private val secret: T) {
+    private fun <R> identity(value: R): R = value
+    fun reveal(value: T = identity(secret)): T = value
+}
+class NestedGenericPrivateDefaultOwner<T> {
+    inner class Entry(private val secret: T) {
+        fun reveal(value: T = secret): T = value
+    }
+}
+private fun privateTopLevelDefaultValue(): String = "top-level-private-default"
+fun privateTopLevelDefault(value: String = privateTopLevelDefaultValue()): String = value
+
+class PrivateCallableDefaultOwner {
+    private fun secret(): String = "private-callable-default"
+    fun reveal(callback: () -> String = this::secret): String = callback()
+}
+
+class GenericPrivateCallableDefaultOwner<T : Comparable<T>>(private val secret: T) {
+    private fun secretValue(): T = secret
+    fun reveal(callback: () -> T = this::secretValue): T = callback()
+}
+
+class GenericClosurePrivateDefaultOwner<T>(private val secret: T) {
+    fun reveal(read: () -> T = { secret }): T = read()
+}
+
+private fun privateFromNestedGenericCaller(): String = "nested-generic-caller"
+class GenericNestedAccessorCaller<T> {
+    fun callback(): (T) -> String = { _: T -> privateFromNestedGenericCaller() }
+}
+class CapturedGenericNestedAccessorCaller<T> {
+    inner class Entry {
+        fun callback(): (T) -> String = { _: T -> privateFromNestedGenericCaller() }
+    }
+}
 // #235: a base whose constructor default a SUBCLASS omits at its `: super(…)` — a delegation is a call site too, and
 // cross-module its args ride the subclass's constructor declaration rather than a call node.
 open class Panel2(val w: Int, val h: Int = w * 2) { val area: Int get() = w * h }

@@ -166,6 +166,60 @@ static class TypeOwnershipLowering
     static void PrepareSyntheticOwnerCaptures(
         JsonNode root, IReadOnlyDictionary<string, JsonObject> types)
     {
+        static TypeNode RemapSyntheticTypeSlots(TypeNode type, int[] oldToNew) => type switch
+        {
+            TypeNode.Tv tv when tv.Scope == "type" && tv.I >= 0 && tv.I < oldToNew.Length =>
+                new TypeNode.Tv("type", oldToNew[tv.I]),
+            TypeNode.Fqn f => new TypeNode.Fqn(f.Name,
+                f.Args?.Select(arg => RemapSyntheticTypeSlots(arg, oldToNew)).ToArray()),
+            TypeNode.Nullable n => new TypeNode.Nullable(RemapSyntheticTypeSlots(n.Of, oldToNew)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(RemapSyntheticTypeSlots(o.Of, oldToNew)),
+            TypeNode.Array a => new TypeNode.Array(RemapSyntheticTypeSlots(a.Elem, oldToNew)),
+            TypeNode.ByRef b => new TypeNode.ByRef(RemapSyntheticTypeSlots(b.Of, oldToNew)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RemapSyntheticTypeSlots(fn.Ret, oldToNew),
+                fn.Params.Select(param => RemapSyntheticTypeSlots(param, oldToNew)).ToArray(),
+                fn.Recv == null ? null : RemapSyntheticTypeSlots(fn.Recv, oldToNew), fn.Clr,
+                fn.Ctx?.Select(param => RemapSyntheticTypeSlots(param, oldToNew)).ToArray()),
+            _ => type,
+        };
+
+        // `synthClass` opens a fresh type-parameter frame. Remap uses in the current synthesized declaration (including
+        // its own type-parameter constraints), but never descend into a nested synthClass's declaration frame. The
+        // construction-side `typeArgs` beside that nested declaration remain uses of the current frame and are visited.
+        static void RemapSyntheticFrame(JsonNode node, int[] oldToNew, bool root = true)
+        {
+            if (node is JsonObject obj)
+            {
+                var kind = Str(obj["k"]);
+                foreach (var key in obj.Select(pair => pair.Key).ToList())
+                {
+                    var value = obj[key];
+                    if (value == null || (!root && key == "synthClass")) continue;
+                    // Descriptor vectors name the referenced declaration's frame, not the synthesized class's lexical
+                    // frame. This is the same boundary used by NormalizeOwnerCapturePrefixes above.
+                    if (key is "sig" or "memberSig" or "clrOverrideSig" or "shapeTypes" or "paramSig"
+                        or "delegationSig" or "memberOwnerTypeParams" or "memberMethodTypeParams"
+                        or "memberReturnType" or "memberSignature" or "memberType"
+                        || (key == "argTypes" && kind != "new"))
+                        continue;
+                    if (TypeJson.IsType(value))
+                        obj[key] = TypeJson.Write(RemapSyntheticTypeSlots(TypeJson.Read(value), oldToNew));
+                    else
+                        RemapSyntheticFrame(value, oldToNew, root: false);
+                }
+            }
+            else if (node is JsonArray array)
+                for (var index = 0; index < array.Count; index++)
+                {
+                    var value = array[index];
+                    if (value == null) continue;
+                    if (TypeJson.IsType(value))
+                        array[index] = TypeJson.Write(RemapSyntheticTypeSlots(TypeJson.Read(value), oldToNew));
+                    else
+                        RemapSyntheticFrame(value, oldToNew, root: false);
+                }
+        }
+
         void EnsureSyntheticOwnerCapture(JsonObject node)
         {
             if (node["synthClass"] is not JsonObject synth
@@ -187,25 +241,45 @@ static class TypeOwnershipLowering
                 && tv["i"] is JsonValue index && index.TryGetValue<int>(out var value) && value == slot;
 
             var consumed = new HashSet<int>();
-            var normalizedParams = new JsonArray();
-            var normalizedArgs = new JsonArray();
+            var ownerSource = new List<(int Slot, int Existing)>();
             for (var slot = 0; slot < ownerParams.Count; slot++)
             {
                 var existing = Enumerable.Range(0, typeArgs.Count)
                     .FirstOrDefault(index => !consumed.Contains(index) && IsOwnerSlot(typeArgs[index], slot), -1);
+                ownerSource.Add((slot, existing));
+                if (existing >= 0) consumed.Add(existing);
+            }
+
+            var remaining = Enumerable.Range(0, typeArgs.Count).Where(index => !consumed.Contains(index)).ToArray();
+            var oldToNew = new int[typeParams.Count];
+            foreach (var (slot, existing) in ownerSource)
+                if (existing >= 0) oldToNew[existing] = slot;
+            for (var index = 0; index < remaining.Length; index++)
+                oldToNew[remaining[index]] = ownerParams.Count + index;
+
+            // MaterializeCarrier dense-numbers free variables before it knows the eventual CLR owner. Once the owner
+            // segment moves to the required prefix, every use in that synthetic declaration must move with it. Merely
+            // reordering typeParams/typeArgs swaps `A` and `B` in fields and bodies while still producing well-formed
+            // metadata, which is why the failure surfaced as a runtime value corruption rather than a linker error.
+            if (oldToNew.Where((mapped, old) => mapped != old).Any())
+                RemapSyntheticFrame(synth, oldToNew);
+
+            var remappedParams = synth["typeParams"] as JsonArray ?? new JsonArray();
+            var normalizedParams = new JsonArray();
+            var normalizedArgs = new JsonArray();
+            foreach (var (slot, _) in ownerSource)
+            {
                 // The semantic owner is the authority for its slot constraints. A synthesized/materialized closure
                 // may already carry the slot under a dense placeholder name, but that representation must not erase
                 // `T : ...` when the closure becomes a CLR nested type.
                 normalizedParams.Add(ownerParams[slot]?.DeepClone());
                 normalizedArgs.Add(TypeJson.Write(new TypeNode.Tv("type", slot)));
-                if (existing >= 0) consumed.Add(existing);
             }
-            for (var index = 0; index < typeArgs.Count; index++)
-                if (!consumed.Contains(index))
-                {
-                    normalizedParams.Add(typeParams[index]?.DeepClone());
-                    normalizedArgs.Add(typeArgs[index]?.DeepClone());
-                }
+            foreach (var index in remaining)
+            {
+                normalizedParams.Add(remappedParams[index]?.DeepClone());
+                normalizedArgs.Add(typeArgs[index]?.DeepClone());
+            }
 
             synth["typeParams"] = normalizedParams;
             synth["outerTypeParamCount"] = ownerParams.Count;

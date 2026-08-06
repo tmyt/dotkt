@@ -154,13 +154,20 @@ sealed partial class Emitter
             case "lateinitGet":
             {
                 // `lateinit var` read: load the field; if still null (uninitialized), throw.
-                var fld = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
-                if (e.TryGetProperty("static", out var lgs) && lgs.ValueKind == JsonValueKind.True)
-                    EmitField(_il, OpCodes.Ldsfld, fld);
+                Type lateinitType;
+                if (e.TryGetProperty("value", out var lateinitValue))
+                    lateinitType = EmitExpr(lateinitValue);
                 else
                 {
-                    EmitExpr(e.GetProperty("recv"));
-                    EmitField(_il, OpCodes.Ldfld, fld);
+                    var fld = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
+                    if (e.TryGetProperty("static", out var lgs) && lgs.ValueKind == JsonValueKind.True)
+                        EmitField(_il, OpCodes.Ldsfld, fld);
+                    else
+                    {
+                        EmitExpr(e.GetProperty("recv"));
+                        EmitField(_il, OpCodes.Ldfld, fld);
+                    }
+                    lateinitType = FieldTypeOf(fld);
                 }
                 _il.Emit(OpCodes.Dup);
                 var ok = _il.DefineLabel();
@@ -170,7 +177,7 @@ sealed partial class Emitter
                 EmitConstructor(_il, OpCodes.Newobj, Bcl("System.InvalidOperationException").GetConstructor(new[] { Bcl("System.String") }));
                 _il.Emit(OpCodes.Throw);
                 _il.MarkLabel(ok);
-                return FieldTypeOf(fld);
+                return lateinitType;
             }
             case "new":
             {
@@ -316,11 +323,21 @@ sealed partial class Emitter
                 // is the exact dispatch axis. Never global-search by method name: a missing/scoped miss is malformed
                 // CIR and must fail loud instead of silently binding another file class's same-simple-name function.
                 MethodInfo resolved;
+                bool exactConstructedOwner = false;
                 if (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
-                    resolved = FindMethod(ownm, name, csig, CalledMethodArity(e));
+                {
+                    exactConstructedOwner = DotKt.Bir.TypeNode.Read(ow) is DotKt.Bir.TypeNode.Fqn { Args: not null };
+                    resolved = exactConstructedOwner
+                        ? ResolveMethod(ParseOwnerSlot(ow), name, out _, csig, CalledMethodArity(e))
+                        : FindMethod(ownm, name, csig, CalledMethodArity(e));
+                }
                 else
                     resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
-                var mb = ApplyTypeArgs(AnchorOpenGenericOwnerStatic(resolved), e, out var srt, out var sps);
+                // A constructed CIR owner is already the complete physical TypeSpec. Canonicalize only a genuinely
+                // bare/open owner; replacing an explicit `G<string>` with `G<object>` violates the CIR contract and
+                // can also violate generic constraints.
+                var mb = ApplyTypeArgs(exactConstructedOwner ? resolved : AnchorOpenGenericOwnerStatic(resolved),
+                    e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
                 EmitMethod(_il, OpCodes.Call, mb);
@@ -765,12 +782,16 @@ sealed partial class Emitter
                 // final method uses ldftn (the target stays on the stack as the delegate's first ctor arg).
                 var ft = MapType(e.GetProperty("funcType"));
                 var boundName = e.GetProperty("method").GetString();
-                var boundOwner = SlotName(e.GetProperty("ownerType"));
+                var boundOwnerNode = e.GetProperty("ownerType");
+                var boundOwner = SlotName(boundOwnerNode);
                 if (!e.TryGetProperty("calleeOwner", out var bco) || bco.ValueKind == JsonValueKind.Null
                     || SlotName(bco) is not string bcoName || bcoName != boundOwner)
                     throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' is missing or mismatches required calleeOwner");
-                var mb = FindMethod(boundOwner, boundName, SigNodes(e), CalledMethodArity(e))
-                    ?? throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' was not found");
+                var mb = DotKt.Bir.TypeNode.Read(boundOwnerNode) is DotKt.Bir.TypeNode.Fqn { Args: not null }
+                    ? ResolveMethod(ParseOwnerSlot(boundOwnerNode), boundName, out _, SigNodes(e), CalledMethodArity(e))
+                    : FindMethod(boundOwner, boundName, SigNodes(e), CalledMethodArity(e));
+                if (mb == null)
+                    throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' was not found");
                 MethodInfo boundTarget = e.TryGetProperty("typeArgs", out var boundTypeArgs)
                     && boundTypeArgs.GetArrayLength() > 0 && mb.IsGenericMethodDefinition
                         ? ConstructedMethod(mb, boundTypeArgs.EnumerateArray().Select(x => MapType(x)).ToArray())
@@ -944,16 +965,19 @@ sealed partial class Emitter
             }
             case "byrefLoad":
             {
-                // Read through a byref local (the ClrRef delegate): ldloc the pointer, ldobj to dereference.
-                _il.Emit(OpCodes.Ldloc, _locals[e.GetProperty("local").GetString()]);
+                // Read through either a named byref local (ClrRef) or an explicit managed-pointer expression such as
+                // a caller-side UnsafeAccessor field declaration.
+                if (e.TryGetProperty("ptr", out var pointer)) EmitExpr(pointer);
+                else _il.Emit(OpCodes.Ldloc, _locals[e.GetProperty("local").GetString()]);
                 var elem = MapType(e.GetProperty("elem"));
                 _il.Emit(OpCodes.Ldobj, elem);
                 return elem;
             }
             case "byrefStore":
             {
-                // Write through a byref local: ldloc the pointer, push the value, stobj.
-                _il.Emit(OpCodes.Ldloc, _locals[e.GetProperty("local").GetString()]);
+                // Write through either a named byref local or an explicit managed-pointer expression.
+                if (e.TryGetProperty("ptr", out var pointer)) EmitExpr(pointer);
+                else _il.Emit(OpCodes.Ldloc, _locals[e.GetProperty("local").GetString()]);
                 var elem = MapType(e.GetProperty("elem"));
                 EmitArg(e.GetProperty("value"), elem);
                 _il.Emit(OpCodes.Stobj, elem);

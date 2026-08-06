@@ -88,10 +88,83 @@ internal fun BirEmitter.expr(node: IrExpression): String {
 	// A value the ENCLOSING call's evaluation plan bound (§2.7): every reader renders as that binding's `bindRef` read.
 	planReads[node]?.let { return it }
 	// Only a CALL can supply values that need a plan; everything else renders straight through.
-	if (node !is org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression)
-		return styStamped(node, exprInner(node))
-	val (plan, s) = withCallPlan(node) { styStamped(node, exprInner(node)) }
+	if (node !is org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression) {
+		val rendered = exprInner(node)
+		val withMember = if (node is IrGetField) memberFieldVisibilityStamped(node.symbol.owner, rendered) else rendered
+		return styStamped(node, withMember)
+	}
+	val (plan, s) = withCallPlan(node) {
+		styStamped(node, memberVisibilityStamped(node, exprInner(node)))
+	}
 	return plan.wrap(s, birType(node.type).toJson())
+}
+
+/**
+ * A default/inline body can cross an assembly before bir2cir selects its physical CLR owner. Preserve the frontend
+ * fact that a function access targets a private/protected declaration; the consuming bir2cir can then author a
+ * caller-side UnsafeAccessor without rediscovering Kotlin lexical privilege from a CLR reference.
+ */
+private fun BirEmitter.memberVisibilityStamped(
+	node: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	s: String,
+): String = memberVisibilityStamped(
+	node.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility ?: return s,
+	s,
+)
+
+/** The callable-reference path is not an [IrFunctionAccessExpression], but carries the same resolved declaration. */
+internal fun BirEmitter.memberVisibilityStamped(
+	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
+	s: String,
+): String {
+	val visibility = visOf(target)
+	if (visibility != "private" && visibility != "protected") return s
+	if (!(s.startsWith("{\"k\":\"callInstance\"") || s.startsWith("{\"k\":\"callStatic\"") ||
+			s.startsWith("{\"k\":\"new\"") || s.startsWith("{\"k\":\"newBoundDelegate\""))) return s
+	val ownerTypeParams = memberOwnerTypeParamsJson(target)
+	val methodTypeParams = (target as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.let {
+		typeParamsJson(it.typeParameters)
+			.replaceFirst(",\"typeParams\":", ",\"memberMethodTypeParams\":")
+	}.orEmpty()
+	val declarationFact = when (target) {
+		is org.jetbrains.kotlin.ir.declarations.IrConstructor -> {
+			val signature = target.parameters
+				.filter { it.kind == org.jetbrains.kotlin.ir.declarations.IrParameterKind.Regular }
+				.joinToString(",") { birType(it.type).toJson() }
+			",\"memberSignature\":[${signature}]"
+		}
+		is org.jetbrains.kotlin.ir.declarations.IrFunction ->
+			",\"memberReturnType\":" + birType(target.returnType).toJson()
+		else -> ""
+	}
+	return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + ownerTypeParams + methodTypeParams +
+		declarationFact + "}"
+}
+
+/**
+ * Declaration-form generic facts for a private/protected member's semantic owner. These stay in Kotlin vocabulary;
+ * bir2cir decides whether the lexical edge needs a CLR UnsafeAccessor and, if so, maps this frame to method slots.
+ */
+private fun BirEmitter.memberOwnerTypeParamsJson(
+	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
+): String {
+	val owner = target.parent as? org.jetbrains.kotlin.ir.declarations.IrClass ?: return ""
+	val params = innerEnclosingTypeParams(owner) + owner.typeParameters
+	return typeParamsJson(params).replaceFirst(",\"typeParams\":", ",\"memberOwnerTypeParams\":")
+}
+
+/** Preserve the declaration type as well as visibility: a write value can be a subtype and is not a field signature. */
+internal fun BirEmitter.memberFieldVisibilityStamped(
+	field: org.jetbrains.kotlin.ir.declarations.IrField,
+	s: String,
+): String {
+	val visibility = visOf(field)
+	if (visibility != "private" && visibility != "protected") return s
+	if (!(s.startsWith("{\"k\":\"field\"") || s.startsWith("{\"k\":\"lateinitGet\"") ||
+			s.startsWith("{\"k\":\"staticField\"") || s.startsWith("{\"k\":\"setField\"") ||
+			s.startsWith("{\"k\":\"setFieldExpr\"") || s.startsWith("{\"k\":\"staticFieldSet\""))) return s
+	return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + memberOwnerTypeParamsJson(field) +
+		",\"memberType\":" + birType(field.type).toJson() + "}"
 }
 
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */

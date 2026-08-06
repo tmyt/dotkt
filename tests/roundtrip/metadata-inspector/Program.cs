@@ -10,14 +10,15 @@ using DotKt.Klib.Metadata;
 const string Ns = "roundtrip.dispatchsurface.";
 const string CarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
 
-if (args.Length != 6)
+if (args.Length != 7)
     throw new ArgumentException(
-        "usage: CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json>");
+        "usage: CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json> <consumer.dll>");
 
 VerifyLayerBoundary(args[2], args[3]);
 VerifyOwnershipLayerBoundary(args[4], args[5]);
 VerifyDll(args[0]);
 VerifyOwnershipDll(args[0]);
+VerifyUnsafeAccessorDll(args[6]);
 VerifyKlib(args[1]);
 Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
 
@@ -184,9 +185,97 @@ static void VerifyOwnershipDll(string path)
     Require((valueGetter.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
         "nested private access still widened Owner.get_value");
 
+    var privateDefaultOwner = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.nc.PrivateDefaultOwner");
+    var privateDefaultMethods = md.GetTypeDefinition(privateDefaultOwner).GetMethods()
+        .Select(h => md.GetMethodDefinition(h))
+        .ToArray();
+    var secretGetter = privateDefaultMethods.Single(method => md.GetString(method.Name) == "get_secret");
+    Require((secretGetter.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
+        "default carrier widened PrivateDefaultOwner.get_secret");
+    Require(!privateDefaultMethods.Any(method =>
+            md.GetString(method.Name).StartsWith("dotkt$access$", StringComparison.Ordinal)),
+        "producer still exposes a compatibility access bridge for a private default");
+
+    var nonconstFacade = md.TypeDefinitions.Single(h => DefinitionName(md, h) == "roundtrip.nc.NonconstKt");
+    var topLevelPrivate = md.GetTypeDefinition(nonconstFacade).GetMethods().Select(md.GetMethodDefinition)
+        .Single(method => md.GetString(method.Name) == "privateFromNestedGenericCaller");
+    Require((topLevelPrivate.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
+        "top-level file-private function is still widened to assembly visibility");
+    var capturedCaller = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.nc.CapturedGenericNestedAccessorCaller+Entry");
+    var capturedAccessor = md.GetTypeDefinition(capturedCaller).GetMethods().Select(md.GetMethodDefinition)
+        .Single(method => md.GetString(method.Name).Contains("$privateFromNestedGenericCaller", StringComparison.Ordinal));
+    Require((capturedAccessor.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private &&
+            (capturedAccessor.Attributes & MethodAttributes.Static) != 0 && capturedAccessor.RelativeVirtualAddress == 0,
+        "captured-owner caller did not receive a private static extern UnsafeAccessor");
+    Require(md.GetTypeDefinition(capturedCaller).GetGenericParameters().Count == 1,
+        "captured-owner UnsafeAccessor host lost its enclosing generic frame");
+
     var facade = md.TypeDefinitions.Single(h => DefinitionName(md, h) == "roundtrip.ownership.NestedOwnershipKt");
     Require(md.GetTypeDefinition(facade).GetNestedTypes().Any(),
         "top-level local class is not nested under its file facade");
+}
+
+static void VerifyUnsafeAccessorDll(string path)
+{
+    using var stream = File.OpenRead(path);
+    using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+    var md = pe.GetMetadataReader();
+    var accessors = md.TypeDefinitions.SelectMany(typeHandle => md.GetTypeDefinition(typeHandle).GetMethods()
+        .Select(methodHandle => (TypeHandle: typeHandle, Handle: methodHandle,
+            Definition: md.GetMethodDefinition(methodHandle))))
+        .Where(pair => pair.Definition.GetCustomAttributes().Select(md.GetCustomAttribute)
+            .Any(attribute => AttributeName(md, attribute) ==
+                "System.Runtime.CompilerServices.UnsafeAccessorAttribute"))
+        .ToArray();
+    Require(accessors.Length >= 10, "consumer did not synthesize all private-member UnsafeAccessors");
+    foreach (var (_, _, accessor) in accessors)
+    {
+        Require((accessor.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
+            "UnsafeAccessor declaration is not private");
+        Require((accessor.Attributes & MethodAttributes.Static) != 0 && accessor.RelativeVirtualAddress == 0,
+            "UnsafeAccessor declaration is not static extern/bodyless");
+        var attributes = accessor.GetCustomAttributes().Select(md.GetCustomAttribute)
+            .Select(attribute => AttributeName(md, attribute)).ToHashSet(StringComparer.Ordinal);
+        Require(attributes.Contains("System.Runtime.CompilerServices.UnsafeAccessorAttribute"),
+            "caller-side extern is missing UnsafeAccessorAttribute");
+        Require(attributes.Contains("System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
+            "caller-side UnsafeAccessor is missing CompilerGeneratedAttribute");
+    }
+
+    var secretAccessors = accessors.Where(pair =>
+        md.GetString(pair.Definition.Name).Contains("$get_secret", StringComparison.Ordinal)).ToArray();
+    Require(secretAccessors.Length == 6, "unexpected get_secret UnsafeAccessor set");
+    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 1) == 5,
+        "generic owner slots were not preserved on generic UnsafeAccessor holder types");
+    Require(secretAccessors.Any(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Any(handle =>
+            md.GetGenericParameter(handle).GetConstraints().Count > 0)),
+        "constrained owner UnsafeAccessor lost its generic constraint");
+    var identityAccessor = accessors.Single(pair =>
+        md.GetString(pair.Definition.Name).Contains("$identity", StringComparison.Ordinal));
+    Require(md.GetTypeDefinition(identityAccessor.TypeHandle).GetGenericParameters().Count == 1 &&
+            identityAccessor.Definition.GetGenericParameters().Count == 1,
+        "owner and method generic frames were not kept in their respective forms on the UnsafeAccessor");
+    Require(accessors.Any(pair => md.GetString(pair.Definition.Name)
+            .Contains("$privateTopLevelDefaultValue", StringComparison.Ordinal)),
+        "top-level private default did not route through UnsafeAccessor");
+    var genericCallableAccessor = accessors.Single(pair =>
+        md.GetString(pair.Definition.Name).Contains("$secretValue", StringComparison.Ordinal));
+    Require(md.GetTypeDefinition(genericCallableAccessor.TypeHandle).GetGenericParameters().Any(handle =>
+            md.GetGenericParameter(handle).GetConstraints().Count > 0),
+        "generic callable-reference UnsafeAccessor lost its owner constraint");
+
+    var wrappers = md.TypeDefinitions
+        .Where(handle => DefinitionName(md, handle).StartsWith("dotkt$unsafe$holder$", StringComparison.Ordinal))
+        .SelectMany(handle => md.GetTypeDefinition(handle).GetMethods())
+        .Select(md.GetMethodDefinition)
+        .Where(method => md.GetString(method.Name).EndsWith("$invoke", StringComparison.Ordinal))
+        .ToArray();
+    Require(wrappers.Length == 7 && wrappers.All(method =>
+            (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
+            (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
+        "generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers");
 }
 
 static void VerifyLayerBoundary(string birPath, string cirPath)

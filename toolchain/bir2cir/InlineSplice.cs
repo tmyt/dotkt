@@ -588,7 +588,8 @@ static class InlineSplice
         foreach (var (lname, carrier) in lambdaMap.ToList())
         {
             if (!HasLocalIn(pBody, new[] { lname }) && !HasLocalIn(result, new[] { lname })) continue;   // already invoked/forwarded
-            var matTemp = MaterializeCarrier(carrier, lambdaFuncType.GetValueOrDefault(lname), stmts);
+            var matTemp = MaterializeCarrier(
+                carrier, lambdaFuncType.GetValueOrDefault(lname), stmts, consumerSemanticOwner);
             if (matTemp == null)
                 // Un-materializable (a NON-LOCAL-return carrier can't be a delegate; or a `{k:local}` capture kotc did not
                 // list on the carrier) — fail loud (no fallback under #95; never a silent miscompile).
@@ -1140,7 +1141,8 @@ static class InlineSplice
     [ThreadStatic] static string _matReason;
     static string MatNull(string code) { _matReason = code; return null; }
 
-    static string MaterializeCarrier(JsonObject carrier, JsonNode funcType, JsonArray stmts)
+    static string MaterializeCarrier(
+        JsonObject carrier, JsonNode funcType, JsonArray stmts, string semanticOwner)
     {
         if (funcType is not JsonObject ft || Str(ft["t"]) != "fn") return MatNull("MC:funcType-not-fn");   // no delegate type to build the closure against
         var lamParams = carrier["params"] as JsonArray ?? new JsonArray();
@@ -1308,6 +1310,7 @@ static class InlineSplice
         var synthClass = new JsonObject
         {
             ["name"] = cname,
+            ["semanticOwner"] = semanticOwner,
             ["fields"] = fields,
             ["params"] = invParams,
             ["ret"] = invRet,
@@ -2390,6 +2393,9 @@ static class InlineSplice
                 // carried by callLocal/localFunRef.typeArgs; substituting this outer inline method's frame into the
                 // declaration would reinterpret both its own TVs and its authored _syntheticTypeArgs correspondence.
                 if (kv.Value != null && kv.Key != "sig" && kv.Key != "paramSig"
+                    && kv.Key != "memberOwnerTypeParams" && kv.Key != "memberMethodTypeParams"
+                    && kv.Key != "memberReturnType"
+                    && kv.Key != "memberSignature" && kv.Key != "memberType"
                     && !(Str(o["k"]) == "localFun" && kv.Key == "decl"))
                     SubstTvIn(kv.Value, typeArgs, ga, dispatchTypeArgs, typeScope && !ownBoundary && kv.Key != "synthClass");
         }

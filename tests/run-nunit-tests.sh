@@ -120,8 +120,9 @@ for proj in "${PROJECTS[@]}"; do
 		producer_cir="$ROOT/tests/roundtrip/producer/obj/dotkt-cir/DispatchAndCompanion.cir.json"
 		ownership_bir="$ROOT/tests/roundtrip/producer/obj/dotkt-bir/NestedOwnership.bir.json"
 		ownership_cir="$ROOT/tests/roundtrip/producer/obj/dotkt-cir/NestedOwnership.cir.json"
+		consumer_dll="$dir/bin/Debug/net10.0/RoundtripConsumer.Tests.dll"
 		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
-			-- "$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" "$ownership_bir" "$ownership_cir" \
+			-- "$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" "$ownership_bir" "$ownership_cir" "$consumer_dll" \
 			>"$ROOT/build/nunit-$name.metadata.log" 2>&1; then
 			echo "  companion + nested-ownership BIR/CIR/DLL/KLIB metadata OK"
 		else

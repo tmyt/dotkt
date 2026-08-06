@@ -105,6 +105,17 @@ import roundtrip.nc.bumps as nonConstantDefaultBumps
 import roundtrip.nc.varargAliased as nonConstantDefaultVarargAliased
 import roundtrip.nc.generatedDefault as nonConstantGeneratedDefault
 import roundtrip.nc.MemberDefaults as NonConstantDefaultMemberDefaults
+import roundtrip.nc.PrivateDefaultOwner as NonConstantPrivateDefaultOwner
+import roundtrip.nc.GenericPrivateDefaultOwner as NonConstantGenericPrivateDefaultOwner
+import roundtrip.nc.ConstrainedPrivateDefaultOwner as NonConstantConstrainedPrivateDefaultOwner
+import roundtrip.nc.GenericPrivateMethodDefaultOwner as NonConstantGenericPrivateMethodDefaultOwner
+import roundtrip.nc.NestedGenericPrivateDefaultOwner as NonConstantNestedGenericPrivateDefaultOwner
+import roundtrip.nc.privateTopLevelDefault as nonConstantPrivateTopLevelDefault
+import roundtrip.nc.PrivateCallableDefaultOwner as NonConstantPrivateCallableDefaultOwner
+import roundtrip.nc.GenericPrivateCallableDefaultOwner as NonConstantGenericPrivateCallableDefaultOwner
+import roundtrip.nc.GenericClosurePrivateDefaultOwner as NonConstantGenericClosurePrivateDefaultOwner
+import roundtrip.nc.GenericNestedAccessorCaller as NonConstantGenericNestedAccessorCaller
+import roundtrip.nc.CapturedGenericNestedAccessorCaller as NonConstantCapturedGenericNestedAccessorCaller
 import roundtrip.cmp.Ver
 import roundtrip.ubyte.ub
 import roundtrip.ubyte.uba
@@ -516,6 +527,26 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual(18, NonConstantDefaultRect(3).area)                                      // 18  h defaults to w * 2 = 6
         ClassicAssert.AreEqual("r", NonConstantDefaultRect(3).tag)                                      // r   a later Tier-1 const still fills
         ClassicAssert.AreEqual(12, NonConstantDefaultRect(3, 4).area)                                   // 12  h provided, no fill
+        ClassicAssert.AreEqual("private-default", NonConstantPrivateDefaultOwner("private-default").reveal())
+        ClassicAssert.AreEqual("generic-private-default",
+            NonConstantGenericPrivateDefaultOwner("generic-private-default").reveal())
+        ClassicAssert.AreEqual("constrained-private-default",
+            NonConstantConstrainedPrivateDefaultOwner("constrained-private-default").reveal())
+        ClassicAssert.AreEqual("generic-private-method-default",
+            NonConstantGenericPrivateMethodDefaultOwner("generic-private-method-default").reveal())
+        ClassicAssert.AreEqual("nested-generic-private-default",
+            NonConstantNestedGenericPrivateDefaultOwner<String>()
+                .Entry("nested-generic-private-default").reveal())
+        ClassicAssert.AreEqual("top-level-private-default", nonConstantPrivateTopLevelDefault())
+        ClassicAssert.AreEqual("private-callable-default", NonConstantPrivateCallableDefaultOwner().reveal())
+        ClassicAssert.AreEqual("generic-private-callable-default",
+            NonConstantGenericPrivateCallableDefaultOwner("generic-private-callable-default").reveal())
+        ClassicAssert.AreEqual("generic-closure-private-default",
+            NonConstantGenericClosurePrivateDefaultOwner("generic-closure-private-default").reveal())
+        ClassicAssert.AreEqual("nested-generic-caller",
+            NonConstantGenericNestedAccessorCaller<String>().callback()("ignored"))
+        ClassicAssert.AreEqual("nested-generic-caller",
+            NonConstantCapturedGenericNestedAccessorCaller<String>().Entry().callback()("ignored"))
         ClassicAssert.AreEqual("z", NonConstantDefaultRect(3, tag = "z").tag)                           // z   omit the MIDDLE default, name a later arg
         ClassicAssert.AreEqual(6, NonConstantDefaultRect(3, tag = "z").h)                               // 6   the omitted middle still filled from w
         ClassicAssert.AreEqual(203, NonConstantDefaultTri(2).c)                                         // 203 chain: b = a + 1 = 3, c = a * 100 + b

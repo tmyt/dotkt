@@ -889,6 +889,9 @@ sealed partial class Emitter
             if (!ti.IsEnum && !ti.IsDelegate)
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray())
                 {
+                    // A CIR extern is deliberately bodyless (currently caller-side UnsafeAccessor). Its signature and
+                    // custom attributes were defined above; the CLR supplies the implementation.
+                    if (m.TryGetProperty("extern", out var externFlag) && externFlag.GetBoolean()) continue;
                     // Interfaces: emit an IL body ONLY for default methods (those that carry one); abstract slots have none.
                     if (ti.IsInterface && !(m.TryGetProperty("body", out var ib) && ib.ValueKind == JsonValueKind.Array && ib.GetArrayLength() > 0)) continue;
                     T($"pass4 method body: {ti.TB?.Name}.{(m.TryGetProperty("name", out var mn) ? mn.GetString() : "?")}"); GuardBody(() => EmitMethodBody(ti, m));
@@ -1133,6 +1136,8 @@ sealed partial class Emitter
         }
         else if (ti.IsInterface && isStatic) attrs |= MethodAttributes.Static;
         else if (isStatic) attrs |= MethodAttributes.Static;
+        if (m.TryGetProperty("extern", out var externFlag) && externFlag.GetBoolean())
+            attrs |= MethodAttributes.HideBySig;
         // `ToString`/`Equals`/`GetHashCode` and .NET base overrides reuse the base slot (Virtual, no NewSlot).
         else if (objOverride || clrOverride != null) attrs |= MethodAttributes.Virtual | MethodAttributes.HideBySig;
         else if (m.GetProperty("override").GetBoolean()) attrs |= MethodAttributes.Virtual;

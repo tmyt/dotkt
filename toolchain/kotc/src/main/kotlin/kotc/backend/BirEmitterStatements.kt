@@ -125,12 +125,17 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		// `staticFieldSet` is a void EXPRESSION node (ilemit EmitExpr), so wrap it as an `exprStmt` in this
 		// statement position (unlike the instance `setField`, which ilemit emits directly as a statement).
 		val staticOwner = staticBackingFieldOwner(node.symbol.owner)
-		if (staticOwner != null)
+		val rendered = if (staticOwner != null)
 			"""{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(staticOwner)},"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}}"""
 		else if (clr != null)
 			"""{"k":"setField","ownerType":${fqnJson(clr)},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
 		else
 			"""{"k":"setField","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(node.symbol.owner.name.asString())},"value":${expr(node.value)}}"""
+		// staticFieldSet is wrapped in exprStmt at statement position; stamp the inner access node before wrapping.
+		if (staticOwner != null) {
+			val inner = rendered.removePrefix("{\"k\":\"exprStmt\",\"expr\":").dropLast(1)
+			"""{"k":"exprStmt","expr":${memberFieldVisibilityStamped(node.symbol.owner, inner)}}"""
+		} else memberFieldVisibilityStamped(node.symbol.owner, rendered)
 	}
 	is IrReturn -> {
 		// A `return` inside a SPLICED inline body targeting the spliced fun/lambda must NOT emit a raw method
