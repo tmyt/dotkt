@@ -830,6 +830,87 @@ internal static class CompanionMetadataSyntax
 
     public static bool IsQualifiedName(string value) =>
         value.Split('.', StringSplitOptions.None).All(IsSegment);
+
+    public static bool IsCarrierKind(string value) => value is "nested" or "sidecar";
+}
+
+// The one physical shape check for a trusted [KotlinCompanion] carrier, shared by the reference catalog and the
+// projecting scanner so both accept exactly the same metadata. A carrier is NESTED in its physical owner when that
+// owner is non-generic, and HOISTED to a top-level sidecar when it is generic: CLR static storage belongs to each
+// closed constructed type, so a nested carrier of a generic owner would hold one singleton per instantiation instead
+// of the single one its Kotlin declaration means. Neither shape declares generic parameters of its own.
+internal static class CompanionCarrierShape
+{
+    public static FieldDefinitionHandle Validate(
+        MetadataReader md,
+        MetadataAttributes attrs,
+        TypeDefinitionHandle carrierHandle,
+        TypeDefinitionHandle ownerHandle,
+        string kind,
+        int physicalOwnerArity,
+        string carrierName,
+        string ownerName,
+        string claimedPhysicalOwner)
+    {
+        var carrier = md.GetTypeDefinition(carrierHandle);
+        if (kind == "sidecar")
+        {
+            if (physicalOwnerArity == 0)
+                throw new InvalidDataException(
+                    $"hoisted Kotlin companion carrier '{carrierName}' requires a generic physical owner");
+            if (!carrier.GetDeclaringType().IsNil)
+                throw new InvalidDataException(
+                    $"hoisted Kotlin companion carrier '{carrierName}' must be a top-level type");
+            if ((carrier.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.Public)
+                throw new InvalidDataException(
+                    $"hoisted Kotlin companion carrier '{carrierName}' must be public");
+        }
+        else
+        {
+            if (physicalOwnerArity != 0)
+                throw new InvalidDataException(
+                    $"nested Kotlin companion carrier '{carrierName}' requires a non-generic physical owner");
+            if (carrier.GetDeclaringType() != ownerHandle)
+                throw new InvalidDataException(
+                    $"nested Kotlin companion carrier '{carrierName}' must be an ordinary nested type of its " +
+                    $"physical owner '{ownerName}' (metadata claimed '{claimedPhysicalOwner}')");
+            if ((carrier.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.NestedPublic)
+                throw new InvalidDataException(
+                    $"nested Kotlin companion carrier '{carrierName}' must have NestedPublic visibility");
+        }
+        if (carrier.GetGenericParameters().Count != 0)
+            throw new InvalidDataException(
+                $"Kotlin companion carrier '{carrierName}' must declare no generic parameters");
+        if (!attrs.Has(carrierHandle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute"))
+            throw new InvalidDataException($"Kotlin companion carrier '{carrierName}' requires [KotlinObject]");
+        var instances = carrier.GetFields()
+            .Where(fieldHandle => IsExactSingletonInstanceField(md, carrierHandle, fieldHandle))
+            .ToArray();
+        if (instances.Length != 1)
+            throw new InvalidDataException(
+                $"Kotlin companion carrier '{carrierName}' requires one public static self-typed $INSTANCE field");
+        return instances[0];
+    }
+
+    private static bool IsExactSingletonInstanceField(
+        MetadataReader md,
+        TypeDefinitionHandle carrierHandle,
+        FieldDefinitionHandle fieldHandle)
+    {
+        var field = md.GetFieldDefinition(fieldHandle);
+        if (md.GetString(field.Name) != "$INSTANCE" ||
+            (field.Attributes & FieldAttributes.Static) == 0 ||
+            (field.Attributes & FieldAttributes.FieldAccessMask) != FieldAttributes.Public)
+            return false;
+        var context = new GenericContext(
+            carrierHandle,
+            default,
+            ImmutableDictionary<GenericParameterHandle, int>.Empty);
+        var actual = field.DecodeSignature(RawSignatureTypeProvider.Instance, context);
+        var expected = RawSignatureTypeProvider.Instance.GetTypeFromDefinition(
+            md, carrierHandle, rawTypeKind: 0x12); // ELEMENT_TYPE_CLASS
+        return StringComparer.Ordinal.Equals(actual, expected);
+    }
 }
 
 // A TypeRef carries only the CLR carrier identity. Recovering its Kotlin companion identity therefore requires the
@@ -839,6 +920,7 @@ internal static class CompanionMetadataSyntax
 internal sealed class CompanionReferenceCatalog
 {
     private sealed record Carrier(
+        string Kind,
         string Owner,
         string Name,
         string Visibility,
@@ -894,35 +976,9 @@ internal sealed class CompanionReferenceCatalog
                         $"Kotlin companion owner '{carrier.PhysicalOwner}' arity {carrier.PhysicalOwnerArity} " +
                         $"resolved to {(owners is null ? 0 : owners.Length)} physical types");
                 var owner = owners[0];
-                if (md.GetTypeDefinition(handle).GetDeclaringType() != owner)
-                    throw new InvalidDataException(
-                        $"nested Kotlin companion carrier '{DefinitionName(md, handle)}' must be an ordinary " +
-                        $"nested type of its physical owner '{DefinitionName(md, owner)}' " +
-                        $"(metadata claimed '{carrier.PhysicalOwner}')");
-                if ((md.GetTypeDefinition(handle).Attributes & TypeAttributes.VisibilityMask) !=
-                    TypeAttributes.NestedPublic)
-                    throw new InvalidDataException(
-                        "nested Kotlin companion carrier must have NestedPublic visibility");
-                if (md.GetTypeDefinition(handle).GetGenericParameters().Count !=
-                    md.GetTypeDefinition(owner).GetGenericParameters().Count)
-                    throw new InvalidDataException(
-                        "nested Kotlin companion carrier must capture exactly its physical owner's generic slots");
-                if (md.GetTypeDefinition(handle).GetGenericParameters().Any(parameterHandle =>
-                {
-                    var parameter = md.GetGenericParameter(parameterHandle);
-                    return parameter.Attributes != GenericParameterAttributes.None ||
-                        parameter.GetConstraints().Count != 0;
-                }))
-                    throw new InvalidDataException(
-                        "nested Kotlin companion carrier generic captures must be unconstrained");
-                if (!attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute"))
-                    throw new InvalidDataException("nested Kotlin companion carrier requires [KotlinObject]");
-                var fields = md.GetTypeDefinition(handle).GetFields()
-                    .Where(fieldHandle => IsExactSingletonInstanceField(md, handle, fieldHandle))
-                    .ToArray();
-                if (fields.Length != 1)
-                    throw new InvalidDataException(
-                        "nested Kotlin companion carrier requires one public static self-typed $INSTANCE field");
+                CompanionCarrierShape.Validate(
+                    md, attrs, handle, owner, carrier.Kind, carrier.PhysicalOwnerArity,
+                    DefinitionName(md, handle), DefinitionName(md, owner), carrier.PhysicalOwner);
                 if (!claimedOwners.Add(owner))
                     throw new InvalidDataException($"multiple Kotlin companion carriers name owner '{carrier.Owner}'");
                 if (!semanticOwners.TryAdd(carrier.Owner, owner) && semanticOwners[carrier.Owner] != owner)
@@ -1034,7 +1090,7 @@ internal sealed class CompanionReferenceCatalog
             throw new InvalidDataException("malformed [KotlinCompanion] carrier: expected kind and name strings");
         var kind = kindNode.GetString()!;
         var name = nameNode.GetString()!;
-        if (kind != "nested" || !CompanionMetadataSyntax.IsSegment(name))
+        if (!CompanionMetadataSyntax.IsCarrierKind(kind) || !CompanionMetadataSyntax.IsSegment(name))
             throw new InvalidDataException(
                 "malformed [KotlinCompanion] carrier: invalid kind or semantic name segment");
         if (!root.TryGetProperty("owner", out var ownerNode) || ownerNode.ValueKind != JsonValueKind.String ||
@@ -1053,33 +1109,7 @@ internal sealed class CompanionReferenceCatalog
             visibility is not ("public" or "internal" or "private" or "protected" or "protectedInternal"))
             throw new InvalidDataException("malformed [KotlinCompanion] carrier: invalid visibility");
         return new Carrier(
-            owner, name, visibility, physicalOwnerNode.GetString()!, arity);
-    }
-
-    private static bool IsExactSingletonInstanceField(
-        MetadataReader md,
-        TypeDefinitionHandle carrierHandle,
-        FieldDefinitionHandle fieldHandle)
-    {
-        var field = md.GetFieldDefinition(fieldHandle);
-        if (md.GetString(field.Name) != "$INSTANCE" ||
-            (field.Attributes & FieldAttributes.Static) == 0 ||
-            (field.Attributes & FieldAttributes.FieldAccessMask) != FieldAttributes.Public)
-            return false;
-        var context = new GenericContext(
-            carrierHandle,
-            default,
-            ImmutableDictionary<GenericParameterHandle, int>.Empty);
-        var actual = field.DecodeSignature(RawSignatureTypeProvider.Instance, context);
-        var expectedOpen = RawSignatureTypeProvider.Instance.GetTypeFromDefinition(
-            md, carrierHandle, rawTypeKind: 0x12);
-        var arity = md.GetTypeDefinition(carrierHandle).GetGenericParameters().Count;
-        var expected = arity == 0
-            ? expectedOpen
-            : RawSignatureTypeProvider.Instance.GetGenericInstantiation(
-                expectedOpen,
-                Enumerable.Range(0, arity).Select(i => $"!{i}").ToImmutableArray());
-        return StringComparer.Ordinal.Equals(actual, expected);
+            kind, owner, name, visibility, physicalOwnerNode.GetString()!, arity);
     }
 
     private static bool IsVisibleType(MetadataReader md, TypeDefinitionHandle handle)
@@ -1284,6 +1314,7 @@ internal sealed class ArityNames
 internal sealed class AssemblyScanner
 {
     private sealed record CompanionCarrier(
+        string Kind,
         string Owner,
         string Name,
         string Visibility,
@@ -1344,36 +1375,9 @@ internal sealed class AssemblyScanner
                     $"Kotlin companion owner '{carrier.PhysicalOwner}' arity {carrier.PhysicalOwnerArity} " +
                     $"resolved to {(matches is null ? 0 : matches.Length)} physical types");
             var ownerHandle = matches[0];
-            var carrierDef = md.GetTypeDefinition(handle);
-            if (carrierDef.GetDeclaringType() != ownerHandle)
-                throw new InvalidDataException(
-                    $"nested Kotlin companion carrier '{MetadataTypeName(handle)}' must be an ordinary nested " +
-                    $"type of its physical owner '{MetadataTypeName(ownerHandle)}' " +
-                    $"(metadata claimed '{carrier.PhysicalOwner}')");
-            if ((carrierDef.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.NestedPublic)
-                throw new InvalidDataException(
-                    "nested Kotlin companion carrier must have NestedPublic visibility");
-            if (carrierDef.GetGenericParameters().Count !=
-                md.GetTypeDefinition(ownerHandle).GetGenericParameters().Count)
-                throw new InvalidDataException(
-                    "nested Kotlin companion carrier must capture exactly its physical owner's generic slots");
-            if (carrierDef.GetGenericParameters().Any(parameterHandle =>
-            {
-                var parameter = md.GetGenericParameter(parameterHandle);
-                return parameter.Attributes != GenericParameterAttributes.None ||
-                    parameter.GetConstraints().Count != 0;
-            }))
-                throw new InvalidDataException(
-                    "nested Kotlin companion carrier generic captures must be unconstrained");
-            if (!_attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute"))
-                throw new InvalidDataException("nested Kotlin companion carrier requires [KotlinObject]");
-            var instanceFields = carrierDef.GetFields()
-                .Where(fieldHandle => IsExactSingletonInstanceField(handle, fieldHandle))
-                .ToArray();
-            if (instanceFields.Length != 1)
-                throw new InvalidDataException(
-                    "nested Kotlin companion carrier requires one public static self-typed $INSTANCE field");
-            _singletonInstanceFields.Add(instanceFields[0]);
+            _singletonInstanceFields.Add(CompanionCarrierShape.Validate(
+                md, _attrs, handle, ownerHandle, carrier.Kind, carrier.PhysicalOwnerArity,
+                MetadataTypeName(handle), MetadataTypeName(ownerHandle), carrier.PhysicalOwner));
 
             // Validate uniqueness before the visibility filter. Two private/internal carrier claims are just as
             // malformed as two public claims; skipping them first would make the projection silently accept an
@@ -1405,31 +1409,6 @@ internal sealed class AssemblyScanner
                 throw new InvalidDataException($"multiple Kotlin companion carriers name owner '{carrier.Owner}'");
             _liftedCompanions.Add(ownerHandle, handle);
         }
-    }
-
-    private bool IsExactSingletonInstanceField(
-        TypeDefinitionHandle carrierHandle,
-        FieldDefinitionHandle fieldHandle)
-    {
-        var field = _md.GetFieldDefinition(fieldHandle);
-        if (_md.GetString(field.Name) != "$INSTANCE" ||
-            (field.Attributes & FieldAttributes.Static) == 0 ||
-            (field.Attributes & FieldAttributes.FieldAccessMask) != FieldAttributes.Public)
-            return false;
-        var context = new GenericContext(
-            carrierHandle,
-            default,
-            ImmutableDictionary<GenericParameterHandle, int>.Empty);
-        var actual = field.DecodeSignature(RawSignatureTypeProvider.Instance, context);
-        var expectedOpen = RawSignatureTypeProvider.Instance.GetTypeFromDefinition(
-            _md, carrierHandle, rawTypeKind: 0x12); // ELEMENT_TYPE_CLASS
-        var arity = _md.GetTypeDefinition(carrierHandle).GetGenericParameters().Count;
-        var expected = arity == 0
-            ? expectedOpen
-            : RawSignatureTypeProvider.Instance.GetGenericInstantiation(
-                expectedOpen,
-                Enumerable.Range(0, arity).Select(i => $"!{i}").ToImmutableArray());
-        return StringComparer.Ordinal.Equals(actual, expected);
     }
 
     public IReadOnlyList<Fragment> Scan()
@@ -1567,7 +1546,7 @@ internal sealed class AssemblyScanner
             throw new InvalidDataException("malformed [KotlinCompanion] carrier: expected kind and name strings");
         var kind = kindNode.GetString()!;
         var name = nameNode.GetString()!;
-        if (kind != "nested" || !CompanionMetadataSyntax.IsSegment(name))
+        if (!CompanionMetadataSyntax.IsCarrierKind(kind) || !CompanionMetadataSyntax.IsSegment(name))
             throw new InvalidDataException(
                 "malformed [KotlinCompanion] carrier: invalid kind or semantic name segment");
         string? owner = null;
@@ -1593,7 +1572,7 @@ internal sealed class AssemblyScanner
             visibilityNode.GetString() is not string visibility ||
             visibility is not ("public" or "internal" or "private" or "protected" or "protectedInternal"))
             throw new InvalidDataException("malformed [KotlinCompanion] carrier: invalid visibility");
-        return new CompanionCarrier(owner!, name, visibility, physicalOwnerNode.GetString()!, arity);
+        return new CompanionCarrier(kind, owner!, name, visibility, physicalOwnerNode.GetString()!, arity);
     }
 
     private Class ReadClass(
@@ -1602,8 +1581,7 @@ internal sealed class AssemblyScanner
         NameTable names,
         SignatureDecoder signatures,
         int? semanticClassName = null,
-        int? semanticKind = null,
-        bool suppressPhysicalTypeParameters = false)
+        int? semanticKind = null)
     {
         var metadataName = _md.GetString(def.Name);
         var metadataNamespace = _md.GetString(def.Namespace);
@@ -1651,7 +1629,7 @@ internal sealed class AssemblyScanner
             var gp = _md.GetGenericParameter(gpHandle);
             var id = gp.Index;
             typeParameterIds[gpHandle] = id;
-            if (suppressPhysicalTypeParameters || id < capturedOuterTypeParameters.GetValueOrDefault()) continue;
+            if (id < capturedOuterTypeParameters.GetValueOrDefault()) continue;
             var parameter = new TypeParameter {
                 Id = id,
                 Name = names.String(_md.GetString(gp.Name)),
@@ -3353,8 +3331,7 @@ internal sealed class AssemblyScanner
                 names,
                 signatures,
                 semanticClassName: CompanionClassName(ownerHandle, names, companionCarrier.Name),
-                semanticKind: 6,
-                suppressPhysicalTypeParameters: true);
+                semanticKind: 6);
             fragment.Class.Add(companion);
             fragment.ClassName.Add(companion.FqName);
             ReadNestedClasses(companionHandle, companion, fragment, names, signatures);

@@ -817,7 +817,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// ilemit resolve the real emitted `kotlin.Lazy::get_value` — no CLR (System.Lazy) knowledge in kotc.
 		if (dvar.type.classFqName?.asString() == "kotlin.Lazy" && callee === ldp.getter) {
 			val owner = ownerSpec(dvar.type.classifierOrNull?.owner as? IrClass, dvar.type)
-			return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$dlocal,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, ldp.getter.returnType)}}"""
+			return delegateInlined(call, """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$dlocal,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, ldp.getter.returnType)}}""")
 		}
 		// A user delegate class -> its concrete type; a stdlib Read(Write)Property-typed delegate (e.g.
 		// `by Delegates.observable(…)`) -> the REAL generic stdlib interface (mirrors `by lazy` on real
@@ -828,9 +828,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 		if (owner != null) {
 			val kprop = kPropertyStub(ldp.name.asString())
 			val nullRef = """{"k":"const","type":${fqnJson("kotlin.Unit")},"value":null}"""
-			return if (callee === ldp.setter)
+			return delegateInlined(call, if (callee === ldp.setter)
 				"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"setValue"${delegatedOperatorSig(callee)},"args":[$nullRef,$kprop,${expr(regularArgs(call).first())}]}"""
-			else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"getValue"${delegatedOperatorSig(callee)},"args":[$nullRef,$kprop]${retHint(ownerGeneric, ldp.getter.returnType)}}"""
+			else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$dlocal,"method":"getValue"${delegatedOperatorSig(callee)},"args":[$nullRef,$kprop]${retHint(ownerGeneric, ldp.getter.returnType)}}""")
 		}
 	}
 	val name = callee.name.asString()
@@ -1493,7 +1493,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 				// (mirrors the member `by lazy` inline).
 				if (callee === p.getter && delegate != null && bf?.type?.classFqName?.asString() == "kotlin.Lazy") {
 					val owner = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
-					return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$delegate,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, callee.returnType)}}"""
+					return delegateInlined(call, """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$delegate,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, callee.returnType)}}""")
 				}
 				val providerOwner = bf?.let { delegatedProviderOwner(it.type, call, callee) }
 				val owner = providerOwner?.toJson()
@@ -1517,7 +1517,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 					val kprop = kPropertyStub(p.name.asString())
 					val ta = typeArgsJson(bodyCall)
 					val setArg = if (callee === p.setter) ",${expr(regularArgs(call).first())}" else ""
-					return """{"k":"callStatic","owner":null,"method":${str(target.name.asString())}${overloadSigField(target)}$ta${retHintStr(ta.isNotEmpty(), birType(callee.returnType))},"args":[$delegate,$thisRef,$kprop$setArg]${calleeOwnerTag(target)}}"""
+					return delegateInlined(call, """{"k":"callStatic","owner":null,"method":${str(target.name.asString())}${overloadSigField(target)}$ta${retHintStr(ta.isNotEmpty(), birType(callee.returnType))},"args":[$delegate,$thisRef,$kprop$setArg]${calleeOwnerTag(target)}}""")
 				}
 				return unsupported(call, "this top-level delegated property",
 					"its delegate type could not be resolved to a supported form (lazy, a custom getValue/setValue, or a Map)")
@@ -1625,7 +1625,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// ilemit resolve the real emitted `kotlin.Lazy::get_value` — no CLR (System.Lazy) knowledge in kotc.
 		if (callee === property.getter && bf?.type?.classFqName?.asString() == "kotlin.Lazy") {
 			val owner = ownerSpec(bf.type.classifierOrNull?.owner as? IrClass, bf.type)
-			return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$delegate,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, callee.returnType)}}"""
+			return delegateInlined(call, """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$delegate,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, callee.returnType)}}""")
 		}
 		// `val x by map` is NOT intercepted: FIR routes it through the stdlib `Map.getValue`/`setValue` operator —
 		// fall through to the getValue/setValue delegate routing so it emits as real kotlin.* calls.
@@ -1642,9 +1642,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 		if (delegate != null && owner != null) {
 			val kprop = kPropertyStub(property.name.asString())
 			// callvirt: getValue/setValue is virtual (interface impl) or final (duck-typed) — callvirt fits both.
-			return if (callee === property.setter)
+			return delegateInlined(call, if (callee === property.setter)
 				"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue"${delegatedOperatorSig(callee)},"args":[$recv,$kprop,${expr(regularArgs(call).first())}]}"""
-			else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue"${delegatedOperatorSig(callee)},"args":[$recv,$kprop]${retHint(ownerGeneric, call.type)}}"""
+			else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue"${delegatedOperatorSig(callee)},"args":[$recv,$kprop]${retHint(ownerGeneric, call.type)}}""")
 		}
 		// `val x by map` (a TOP-LEVEL-extension delegate convention): FIR resolved the accessor to the stdlib
 		// `kotlin.collections.getValue/setValue(thisRef, property)` extension (MapAccessors.kt) — the resolved
@@ -1662,7 +1662,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			val kprop = kPropertyStub(property.name.asString())
 			val ta = typeArgsJson(bodyCall)
 			val setArg = if (callee === property.setter) ",${expr(regularArgs(call).first())}" else ""
-			return """{"k":"callStatic","owner":null,"method":${str(target.name.asString())}${overloadSigField(target)}$ta${retHintStr(ta.isNotEmpty(), birType(callee.returnType))},"args":[$delegate,$recv,$kprop$setArg]${calleeOwnerTag(target)}}"""
+			return delegateInlined(call, """{"k":"callStatic","owner":null,"method":${str(target.name.asString())}${overloadSigField(target)}$ta${retHintStr(ta.isNotEmpty(), birType(callee.returnType))},"args":[$delegate,$recv,$kprop$setArg]${calleeOwnerTag(target)}}""")
 		}
 		return unsupported(call, "this delegated property",
 			"its delegate type could not be resolved to a supported form (lazy, a custom getValue/setValue, or a Map)")
@@ -2239,3 +2239,12 @@ private fun BirEmitter.readsAsStaticField(prop: IrProperty): Boolean =
 // property) a default setter.
 private fun BirEmitter.writesAsStaticField(prop: IrProperty): Boolean =
 	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || hasDefaultSetter(prop))
+
+/** Records that [call] — a delegated-property accessor access — was rendered as the DELEGATE's member instead. */
+internal fun BirEmitter.delegateInlined(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	rendered: String,
+): String {
+	delegateInlinedAccess = call
+	return rendered
+}

@@ -225,9 +225,15 @@ class Sanity:
             elif k == "cond":
                 if o.get("cond") is None or o.get("then") is None or o.get("else") is None:
                     self.err(_f, _dl, "'cond' is missing 'cond'/'then'/'else'")
-            elif k in ("field", "staticField", "setField", "setFieldExpr", "lateinitGet"):
+            elif k in ("field", "staticField", "setField", "setFieldExpr"):
                 if o.get("ownerType") is None:
                     self.err(_f, _dl, f"'{k}' is missing a non-null 'ownerType'")
+            elif k == "lateinitGet":
+                # A lateinitGet addresses the field itself and needs its owner — UNLESS the field content is already
+                # supplied as 'value', which is what an accessor-routed read leaves behind: there is no field access
+                # left in the node to name an owner for.
+                if o.get("value") is None and o.get("ownerType") is None:
+                    self.err(_f, _dl, "'lateinitGet' is missing a non-null 'ownerType'")
             elif k == "callStatic":
                 if "owner" in o and o.get("owner") is None and o.get("calleeOwner") is None:
                     self.err(_f, _dl, "'callStatic' with owner:null is missing required 'calleeOwner'")

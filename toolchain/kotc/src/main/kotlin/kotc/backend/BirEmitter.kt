@@ -390,6 +390,16 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// A local delegated property's getter/setter function -> the IrLocalDelegatedProperty, so call() rewrites a
 	// `<get-x>`/`<set-x>` call to access on the delegate local (mirrors the member-property delegate path).
 	internal val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
+
+	/**
+	 * The delegated-property accessor access whose rendering was INLINED to the delegate's own member. A `by` accessor
+	 * is not called on the CLR — the emitted node addresses `Lazy.value`, the provider's `getValue`/`setValue`, or the
+	 * stdlib Map extension instead — so the accessor's own Kotlin visibility describes a declaration this node does
+	 * not address. Stamping it would send bir2cir hunting for lexical privilege on the delegate's PUBLIC member and
+	 * mint an UnsafeAccessor for a method that is not private at all. Recorded by [delegateInlined], read by the
+	 * member-visibility stamp for that exact access.
+	 */
+	internal var delegateInlinedAccess: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression? = null
 	// The `buf` parameter of an active `stackBuffer { buf -> … }` block -> its stack allocation (ptr local + length
 	// local + element type), so `buf[i]`/`buf[i]=v`/`buf.size` rewrite to stack ops while the block is spliced.
 	internal class StackBufInfo(val ptrName: String, val lenName: String, val elemT: TypeNode)

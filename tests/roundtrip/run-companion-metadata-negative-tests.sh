@@ -68,10 +68,22 @@ sed -i 's/XINSTANCE/$INSTANCE/g' "$NON_PUBLIC"
 run_rejected dll2klib "$NON_PUBLIC" 'NestedPublic visibility'
 run_rejected bir2cir "$NON_PUBLIC" 'NestedPublic visibility'
 
-build_fixture ConstrainedCompanionCarrier CONSTRAINED_CARRIER
-CONSTRAINED="$WORK/ConstrainedCompanionCarrier/bin/ConstrainedCompanionCarrier.dll"
-sed -i 's/XINSTANCE/$INSTANCE/g' "$CONSTRAINED"
-run_rejected dll2klib "$CONSTRAINED" 'generic captures must be unconstrained'
-run_rejected bir2cir "$CONSTRAINED" 'generic captures must be unconstrained'
+build_fixture GenericOwnerNestedCompanionCarrier GENERIC_OWNER_NESTED_CARRIER
+GENERIC_OWNER_NESTED="$WORK/GenericOwnerNestedCompanionCarrier/bin/GenericOwnerNestedCompanionCarrier.dll"
+sed -i 's/XINSTANCE/$INSTANCE/g' "$GENERIC_OWNER_NESTED"
+run_rejected dll2klib "$GENERIC_OWNER_NESTED" 'non-generic physical owner'
+run_rejected bir2cir "$GENERIC_OWNER_NESTED" 'non-generic physical owner'
 
-echo "non-nested, malformed-name, non-public, and constrained trusted companion carriers rejected by dll2klib + bir2cir: OK"
+build_fixture NestedSidecarCompanionCarrier NESTED_SIDECAR_CARRIER
+NESTED_SIDECAR="$WORK/NestedSidecarCompanionCarrier/bin/NestedSidecarCompanionCarrier.dll"
+sed -i 's/XINSTANCE/$INSTANCE/g' "$NESTED_SIDECAR"
+run_rejected dll2klib "$NESTED_SIDECAR" 'must be a top-level type'
+run_rejected bir2cir "$NESTED_SIDECAR" 'must be a top-level type'
+
+build_fixture NonGenericSidecarCompanionCarrier NON_GENERIC_SIDECAR_CARRIER
+NON_GENERIC_SIDECAR="$WORK/NonGenericSidecarCompanionCarrier/bin/NonGenericSidecarCompanionCarrier.dll"
+sed -i 's/XINSTANCE/$INSTANCE/g' "$NON_GENERIC_SIDECAR"
+run_rejected dll2klib "$NON_GENERIC_SIDECAR" 'requires a generic physical owner'
+run_rejected bir2cir "$NON_GENERIC_SIDECAR" 'requires a generic physical owner'
+
+echo "non-nested, malformed-name, non-public, generic-owner-nested, nested-sidecar, and non-generic-sidecar trusted companion carriers rejected by dll2klib + bir2cir: OK"

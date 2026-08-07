@@ -1,5 +1,6 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
+import mpp.app.passGenericOwnerCompanion
 import mpp.app.passNamedCompanion
 import roundtrip.atomictwin.atomic
 import roundtrip.classnature.Circle
@@ -14,10 +15,18 @@ import roundtrip.dispatchsurface.ConstrainedGenericOwnerCompanionHost
 import roundtrip.dispatchsurface.CompanionMarker
 import roundtrip.dispatchsurface.DefaultCompanionHost
 import roundtrip.dispatchsurface.EnumCompanionHost
+import roundtrip.dispatchsurface.GenericSecretHost
+import roundtrip.dispatchsurface.InternalGenericCompanionHost
+import roundtrip.dispatchsurface.LateinitGenericCompanionHost
 import roundtrip.dispatchsurface.NamedCompanionHost
 import roundtrip.dispatchsurface.NestedCompanionOwners
+import roundtrip.dispatchsurface.NestedGenericCompanionOwners
 import roundtrip.dispatchsurface.PrivateCompanionHost
+import roundtrip.dispatchsurface.PrivateGenericCompanionHost
 import roundtrip.dispatchsurface.ProtectedCompanionHost
+import roundtrip.dispatchsurface.ProtectedGenericCompanionHost
+import roundtrip.dispatchsurface.StarProjectedCompanionHost
+import roundtrip.dispatchsurface.useStarProjectedCompanionHost
 import roundtrip.dispatchsurface.localDefaultCompanionUse
 import roundtrip.dispatchsurface.markerValue
 import roundtrip.dispatchsurface.passGenericCompanion
@@ -41,6 +50,10 @@ import roundtrip.suspendvalues.invokeWideSuspend23
 import roundtrip.suspendvalues.makeBlock
 import roundtrip.suspendvalues.storedBlock
 import roundtrip.suspendnothing.fail as suspendFail
+
+private class ProtectedGenericCompanionConsumer : ProtectedGenericCompanionHost<Int>() {
+    fun revealProtectedGenericCompanion(): Int = marker()
+}
 
 private class ProtectedCompanionConsumer : ProtectedCompanionHost() {
     fun revealProtectedCompanion(): Int = marker() + token
@@ -194,11 +207,33 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreSame(generic, ConstrainedGenericOwnerCompanionHost.Companion)
         ClassicAssert.AreEqual(91, generic.marker())
         ClassicAssert.AreSame(generic, passGenericCompanion(generic))
+        // Assembly B named the hoisted carrier as a TypeRef it never declared; the identity must survive that too.
+        ClassicAssert.AreSame(generic, passGenericOwnerCompanion(generic))
 
         ClassicAssert.AreEqual(101, NestedCompanionOwners.NestedInterface.marker())
         ClassicAssert.AreEqual(102, NestedCompanionOwners.NestedEnum.marker())
+        ClassicAssert.AreEqual(104, StarProjectedCompanionHost.dotkt_star.marker())
+        ClassicAssert.AreEqual(7, useStarProjectedCompanionHost(StarProjectedCompanionHost(1)))
+        ClassicAssert.AreEqual(103, NestedGenericCompanionOwners.Inner.Key.marker())
+        ClassicAssert.AreSame(NestedGenericCompanionOwners.Inner.Key, NestedGenericCompanionOwners.Inner.Key)
+
+        // A generic owner's companion keeps ONE state and its lexical access to the owner's private declarations,
+        // across an assembly boundary and a hoisted physical carrier.
+        val before = GenericSecretHost.opened
+        ClassicAssert.AreEqual(12, GenericSecretHost.peek(GenericSecretHost.open(1)))
+        ClassicAssert.AreEqual(before + 1, GenericSecretHost.opened)
+        ClassicAssert.AreSame(GenericSecretHost.Companion, GenericSecretHost.Companion)
+        ClassicAssert.AreEqual(13, runCrossModuleSuspend {
+            GenericSecretHost.suspendPeek(GenericSecretHost.open(1))
+        })
+        ClassicAssert.AreEqual(before + 2, GenericSecretHost.opened)
 
         ClassicAssert.AreEqual(5, PrivateCompanionHost().reveal())
+        ClassicAssert.AreEqual(4, PrivateGenericCompanionHost(1).reveal())
+        ClassicAssert.AreEqual(9, InternalGenericCompanionHost(1).reveal())
+        ClassicAssert.AreEqual("filled/derived:filled",
+            LateinitGenericCompanionHost.fill(LateinitGenericCompanionHost()))
+        ClassicAssert.AreEqual(105, ProtectedGenericCompanionConsumer().revealProtectedGenericCompanion())
         val protected = ProtectedCompanionConsumer()
         ClassicAssert.AreEqual(21, protected.revealProtectedCompanion())
         ClassicAssert.AreEqual(10, protected.revealMethodReference())

@@ -1103,12 +1103,18 @@ factor's evaluation, which no program can tell apart.
   `INSTANCE`. Loading it runs the object's body, which can print, throw or mutate — an observable evaluation. So it
   is evaluated where Kotlin evaluates it: **before every argument**. `O.f(side())` runs `O`'s initializer first, and
   if that initializer throws, `side()` has not run.
-- `kotc` always emits one logical companion declaration. `bir2cir` gives it a compiler-reserved ordinary nested CLR
-  carrier with one `$INSTANCE`; calls, defaults/inlines, callable/property references, value identity, and type uses all
-  share that carrier. A generic owner contributes separate unconstrained capture parameters to the carrier, avoiding
-  both per-construction singleton identity and accidental inheritance of the owner's source constraints.
-  The outer accessor remains a CLR static per closed generic owner; Kotlin's unqualified owner uses the representative
-  `object` closure, while unifying C# instances across different closed owners is deferred.
+- `kotc` always emits one logical companion declaration. `bir2cir` gives it a compiler-reserved CLR carrier with one
+  `$INSTANCE`; calls, defaults/inlines, callable/property references, value identity, and type uses all share that
+  carrier. **The carrier never declares a generic parameter, and a companion is therefore one object no matter how its
+  owner is instantiated** — `ReferenceEquals(Foo<int>.Companion, Foo<string>.Companion)` is true, and so is the shared
+  state behind it. CLR static storage belongs to each closed constructed type, and a nested TypeDef of a generic type
+  redeclares its enclosing slots, so the carrier of a generic owner cannot live inside it: it is **hoisted to a
+  top-level sidecar** (`p.Foo$companion$Companion` — the owner's nesting path flattened into the name, behind a reserved marker no source name can supply), while a
+  non-generic owner keeps its nested carrier (`p.Host+$Companion`). The source-name accessor stays an ordinary CLR
+  static field, of which a generic owner has one per closed instantiation, each initialized from that one singleton.
+  Hoisting costs the carrier CLR nested access to the owner's `private`/`protected` declarations. Those edges are
+  restored by the same caller-side `[UnsafeAccessor]` projection every other cross-TypeDef lexical access uses, so
+  Kotlin's visibility rules are unchanged and no target member is widened to reach the companion.
 - A basic CLR enum retains its enum representation and nested companion carrier. Its Kotlin companion round-trips,
   while the outer C# source-name accessor is deferred because a CLR enum cannot own its required type initializer.
 - A projected .NET static holder still has no instance. There is no value to evaluate and the emitted static call has

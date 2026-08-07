@@ -94,7 +94,10 @@ internal fun BirEmitter.expr(node: IrExpression): String {
 		return styStamped(node, withMember)
 	}
 	val (plan, s) = withCallPlan(node) {
-		styStamped(node, memberVisibilityStamped(node, exprInner(node)))
+		val rendered = exprInner(node)
+		// A delegated accessor access renders as the DELEGATE's member, so the accessor's own visibility is not this
+		// node's fact — see BirEmitter.delegateInlinedAccess.
+		styStamped(node, if (delegateInlinedAccess === node) rendered else memberVisibilityStamped(node, rendered))
 	}
 	return plan.wrap(s, birType(node.type).toJson())
 }
