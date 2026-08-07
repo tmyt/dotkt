@@ -51,7 +51,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=380
 	["tests/coroutines"]=157
 	["tests/roundtrip/consumer"]=58
-	["tests/roundtrip/bidirectional/consumer"]=3
+	["tests/roundtrip/bidirectional/consumer"]=4
 	["tests/interop/consumer"]=132
 )
 

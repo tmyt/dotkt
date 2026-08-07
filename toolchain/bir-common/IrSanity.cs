@@ -311,9 +311,15 @@ public static class IrSanity
                     case "staticField":
                     case "setField":
                     case "setFieldExpr":
-                    case "lateinitGet":
                         if (!HasNonNull(node, "ownerType"))
                             throw new IrSanityException(decl, $"'{kEl.GetString()}' is missing a non-null 'ownerType'");
+                        break;
+                    case "lateinitGet":
+                        // A lateinitGet addresses the field itself and needs its owner — UNLESS the field content is
+                        // already supplied as 'value', which is what an accessor-routed read leaves behind: there is
+                        // no field access left in the node to name an owner for.
+                        if (!HasNonNull(node, "value") && !HasNonNull(node, "ownerType"))
+                            throw new IrSanityException(decl, "'lateinitGet' is missing a non-null 'ownerType'");
                         break;
                     case "callStatic":
                         if (node.TryGetProperty("owner", out var callOwner) && callOwner.ValueKind == JsonValueKind.Null

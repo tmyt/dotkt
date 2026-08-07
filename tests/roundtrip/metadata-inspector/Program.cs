@@ -9,6 +9,9 @@ using DotKt.Klib.Metadata;
 
 const string Ns = "roundtrip.dispatchsurface.";
 const string CarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
+// A hoisted carrier's reserved separator. It is what keeps `<owner>$companion$dotkt_star` (a companion whose SOURCE
+// name is `dotkt_star`) distinct from `<owner>$dotkt_star` (the star-projection existential of the same owner).
+const string HoistedMarker = "$companion$";
 
 if (args.Length != 7)
     throw new ArgumentException(
@@ -289,13 +292,23 @@ static void VerifyLayerBoundary(string birPath, string cirPath)
         node[name] is JsonValue value && value.TryGetValue<bool>(out var result) && result;
     static JsonObject Type(JsonArray types, string name) =>
         types.OfType<JsonObject>().Single(t => Text(t["name"]) == name);
+    // A CLR TypeDef's arity counts the slots it captured from an enclosing generic type as well as its own.
+    static int PhysicalTypeParamCount(JsonObject type) =>
+        ((type["capturedTypeParams"] as JsonArray)?.Count ?? 0) +
+        ((type["typeParams"] as JsonArray)?.Count ?? 0);
+    static string PhysicalMetadataName(JsonArray types, string name)
+    {
+        var type = Type(types, name);
+        if (Text(type["nestedIn"]) is not string parent) return name;
+        return PhysicalMetadataName(types, parent) + "+" + name[(name.LastIndexOf('.') + 1)..];
+    }
 
     var bir = Root(birPath);
     var birTypes = Types(bir);
     var semantic = birTypes.OfType<JsonObject>()
         .Where(t => t["kotlinCompanion"] is JsonObject)
         .ToArray();
-    Require(semantic.Length == 9, "producer BIR has an unexpected semantic companion declaration set");
+    Require(semantic.Length == 17, "producer BIR has an unexpected semantic companion declaration set");
     foreach (var companion in semantic)
     {
         var name = Text(companion["name"]);
@@ -322,10 +335,19 @@ static void VerifyLayerBoundary(string birPath, string cirPath)
         var semanticName = Text(semanticCompanion["name"])!;
         var declarationOwner = semanticName[..semanticName.LastIndexOf(".<companion:", StringComparison.Ordinal)];
         var sourceName = Text(fact["name"])!;
-        var physicalName = declarationOwner + ".$" + sourceName;
+        var owner = Type(cirTypes, declarationOwner);
+        // The carrier of a GENERIC owner is hoisted beside it, because a nested TypeDef would redeclare the owner's
+        // slots and hold one singleton per closed instantiation. A non-generic owner keeps CLR nesting.
+        var ownerPhysicalArity = PhysicalTypeParamCount(owner);
+        var hoisted = ownerPhysicalArity > 0;
+        var physicalName = hoisted
+            ? PhysicalMetadataName(cirTypes, declarationOwner).Replace('+', '$') + HoistedMarker + sourceName
+            : declarationOwner + ".$" + sourceName;
         var carrier = Type(cirTypes, physicalName);
-        Require(Text(carrier["nestedIn"]) == declarationOwner,
-            $"carrier is not an ordinary nested type of its declaration owner: {physicalName}");
+        Require(Text(carrier["nestedIn"]) == (hoisted ? null : declarationOwner),
+            $"carrier has the wrong CLR ownership for its owner's genericity: {physicalName}");
+        Require(PhysicalTypeParamCount(carrier) == 0,
+            $"carrier declares generic parameters: {physicalName}");
         Require(Text(carrier["vis"]) == "public" && Flag(carrier, "generated") &&
                 Flag(carrier["mods"] as JsonObject ?? new JsonObject(), "object"),
             $"carrier is not a public generated object TypeDef: {physicalName}");
@@ -333,7 +355,6 @@ static void VerifyLayerBoundary(string birPath, string cirPath)
                 .Count(f => Text(f["name"]) == "$INSTANCE" && Flag(f, "static")) == 1,
             $"carrier has no unique physical $INSTANCE: {physicalName}");
 
-        var owner = Type(cirTypes, declarationOwner);
         if (Text(owner["kind"]) != "enum")
         {
             var accessor = (owner["fields"] as JsonArray ?? []).OfType<JsonObject>()
@@ -355,7 +376,7 @@ static void VerifyDll(string path)
     Require(HasAttribute(md, carrierDefinition, "System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
         "KotlinCompanionAttribute is not a compiler-generated trusted carrier definition");
 
-    var carriers = new List<(TypeDefinitionHandle Handle, string Owner, string Name, string Visibility,
+    var carriers = new List<(TypeDefinitionHandle Handle, string Kind, string Owner, string Name, string Visibility,
         string PhysicalOwner, int PhysicalOwnerArity)>();
     foreach (var handle in md.TypeDefinitions)
     foreach (var attributeHandle in md.GetTypeDefinition(handle).GetCustomAttributes())
@@ -372,35 +393,46 @@ static void VerifyDll(string path)
             "unexpected named arguments in KotlinCompanionAttribute");
         using var doc = JsonDocument.Parse(BirCarrier.DecodeBody(version, payload).ToJsonString());
         var root = doc.RootElement;
-        Require(root.GetProperty("kind").GetString() == "nested", "companion carrier kind is not nested");
-        carriers.Add((handle,
+        var carrierKind = root.GetProperty("kind").GetString();
+        Require(carrierKind is "nested" or "sidecar", "companion carrier kind is neither nested nor sidecar");
+        carriers.Add((handle, carrierKind!,
             root.GetProperty("owner").GetString()!, root.GetProperty("name").GetString()!,
             root.GetProperty("visibility").GetString()!, root.GetProperty("physicalOwner").GetString()!,
             root.GetProperty("physicalOwnerArity").GetInt32()));
     }
 
-    Require(carriers.Count >= 9, "producer DLL has no complete companion carrier set");
+    Require(carriers.Count >= 17, "producer DLL has no complete companion carrier set");
+    Require(carriers.Any(c => c.Kind == "sidecar") && carriers.Any(c => c.Kind == "nested"),
+        "producer DLL does not witness both companion carrier shapes");
     foreach (var carrier in carriers)
     {
         var def = md.GetTypeDefinition(carrier.Handle);
         var parent = def.GetDeclaringType();
-        Require(!parent.IsNil && StripArities(DefinitionName(md, parent)) == carrier.PhysicalOwner,
-            $"carrier parent does not match physicalOwner: {DefinitionName(md, carrier.Handle)}");
-        Require(md.GetString(def.Name).Split('`')[0] == "$" + carrier.Name,
-            $"carrier physical name is not reserved: {DefinitionName(md, carrier.Handle)}");
-        Require((def.Attributes & TypeAttributes.VisibilityMask) == TypeAttributes.NestedPublic,
-            $"physical carrier is not NestedPublic: {DefinitionName(md, carrier.Handle)}");
+        Require((carrier.Kind == "sidecar") == (carrier.PhysicalOwnerArity > 0),
+            $"carrier shape does not follow its physical owner's genericity: {DefinitionName(md, carrier.Handle)}");
+        if (carrier.Kind == "sidecar")
+        {
+            Require(parent.IsNil, $"hoisted carrier is nested: {DefinitionName(md, carrier.Handle)}");
+            Require(DefinitionName(md, carrier.Handle) ==
+                    StripArities(carrier.PhysicalOwner).Replace('+', '$') + HoistedMarker + carrier.Name,
+                $"hoisted carrier physical name is not derived from its owner: {DefinitionName(md, carrier.Handle)}");
+            Require((def.Attributes & TypeAttributes.VisibilityMask) == TypeAttributes.Public,
+                $"hoisted carrier is not public: {DefinitionName(md, carrier.Handle)}");
+        }
+        else
+        {
+            Require(!parent.IsNil && StripArities(DefinitionName(md, parent)) == carrier.PhysicalOwner,
+                $"carrier parent does not match physicalOwner: {DefinitionName(md, carrier.Handle)}");
+            Require(md.GetString(def.Name).Split('`')[0] == "$" + carrier.Name,
+                $"carrier physical name is not reserved: {DefinitionName(md, carrier.Handle)}");
+            Require((def.Attributes & TypeAttributes.VisibilityMask) == TypeAttributes.NestedPublic,
+                $"physical carrier is not NestedPublic: {DefinitionName(md, carrier.Handle)}");
+        }
         Require(HasAttribute(md, carrier.Handle, "System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
             $"physical carrier is not compiler-generated: {DefinitionName(md, carrier.Handle)}");
-        Require(def.GetGenericParameters().Count == carrier.PhysicalOwnerArity,
-            $"carrier capture arity does not match physical owner: {DefinitionName(md, carrier.Handle)}");
-        foreach (var gpHandle in def.GetGenericParameters())
-        {
-            var gp = md.GetGenericParameter(gpHandle);
-            Require(gp.GetConstraints().Count == 0 &&
-                    (gp.Attributes & GenericParameterAttributes.SpecialConstraintMask) == 0,
-                $"generated companion carrier capture inherited an owner constraint: {DefinitionName(md, carrier.Handle)}");
-        }
+        // Whatever its CLR owner, the carrier is one closed type: that is what makes its `$INSTANCE` one singleton.
+        Require(def.GetGenericParameters().Count == 0,
+            $"carrier declares generic parameters: {DefinitionName(md, carrier.Handle)}");
         Require(def.GetFields().Count(h => IsExactSelfTypedInstance(md, carrier.Handle, h)) == 1,
             $"carrier has no unique public static self-typed $INSTANCE: {DefinitionName(md, carrier.Handle)}");
     }
@@ -433,22 +465,48 @@ static void VerifyKlib(string path)
     VerifyCompanion(fragment, Ns + "NamedCompanionHost", "Key", ["marker", "suspendMarker", "id"]);
     VerifyCompanion(fragment, Ns + "DefaultCompanionHost", "Companion", ["marker"]);
     VerifyCompanion(fragment, Ns + "EnumCompanionHost", "Key", ["marker"]);
-    VerifyCompanion(fragment, Ns + "ConstrainedGenericOwnerCompanionHost", "Companion", ["marker"]);
+    VerifyCompanion(fragment, Ns + "ConstrainedGenericOwnerCompanionHost", "Companion", ["marker", "peek"]);
     VerifyCompanion(fragment, Ns + "NestedCompanionOwners.NestedInterface", "Companion", ["marker"]);
     VerifyCompanion(fragment, Ns + "NestedCompanionOwners.NestedEnum", "Companion", ["marker"]);
     VerifyCompanion(fragment, Ns + "ProtectedCompanionHost", "Shield", ["marker", "suspendMarker"], expectProtected: true);
+    VerifyCompanion(fragment, Ns + "GenericSecretHost", "Companion", ["open", "peek", "suspendPeek"]);
+    VerifyCompanion(fragment, Ns + "NestedGenericCompanionOwners.Inner", "Key", ["marker"]);
+    VerifyCompanion(fragment, Ns + "StarProjectedCompanionHost", "dotkt_star", ["marker"]);
+    VerifyCompanion(fragment, Ns + "LateinitGenericCompanionHost", "Companion", ["fill"]);
+    VerifyCompanion(fragment, Ns + "ProviderDelegateCompanionHost", "Companion", ["bump", "updatePrivateProvider"]);
+    Require(fragment.Package.Property.Count(p => String(fragment, p.Name) == "roundtripDelegatedCounter") == 1,
+        "top-level delegated property did not round-trip as one package property");
+    Require(fragment.Package.Property.Count(p => String(fragment, p.Name) == "roundtripNullableDelegated") == 1,
+        "nullable top-level delegated property did not round-trip as one package property");
 
-    Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName).Split('.').Any(p => p.StartsWith('$'))),
+    // Both carrier spellings, and only those: a nested carrier is a `$`-prefixed segment, a hoisted one carries the
+    // reserved marker. Other compiler-generated CLR types (a star-projection existential, say) are a different
+    // subject and do reach Kotlin metadata today.
+    Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName).Split('.').Any(p =>
+            p.StartsWith('$') || p.Contains(HoistedMarker, StringComparison.Ordinal))),
         "reserved physical companion carrier leaked into Kotlin metadata");
     Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName).Contains("$sm", StringComparison.Ordinal)),
         "compiler-generated suspend state-machine type leaked into Kotlin metadata");
     Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName) == Ns + "PrivateCompanionHost.Secret"),
         "private companion class leaked into public KLIB metadata");
-    var privateOwner = Class(fragment, Ns + "PrivateCompanionHost");
-    Require(!privateOwner.HasCompanionObjectName, "private companion synthesized a public KLIB companion link");
-    var constrainedGenericCompanion = Class(fragment, Ns + "ConstrainedGenericOwnerCompanionHost.Companion");
-    Require(constrainedGenericCompanion.TypeParameter.Count == 0,
-        "constrained owner's physical carrier capture parameters leaked onto the semantic companion");
+    // A hoisted carrier is a public top-level CLR type whatever the Kotlin companion's visibility, so a private or
+    // internal companion of a generic owner is the case where the CLR shape and the source shape diverge most.
+    foreach (var privateOwnerName in new[] {
+                 Ns + "PrivateCompanionHost", Ns + "PrivateGenericCompanionHost",
+                 Ns + "InternalGenericCompanionHost" })
+        Require(!Class(fragment, privateOwnerName).HasCompanionObjectName,
+            $"private companion synthesized a public KLIB companion link: {privateOwnerName}");
+    foreach (var hiddenCompanion in new[] {
+                 Ns + "PrivateGenericCompanionHost.Hidden", Ns + "InternalGenericCompanionHost.Restricted" })
+        Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName) == hiddenCompanion),
+            $"source-invisible companion of a generic owner reached public KLIB metadata: {hiddenCompanion}");
+    VerifyCompanion(fragment, Ns + "ProtectedGenericCompanionHost", "Shielded", ["marker"], expectProtected: true);
+    foreach (var genericOwnerCompanion in new[] {
+                 Ns + "ConstrainedGenericOwnerCompanionHost.Companion",
+                 Ns + "GenericSecretHost.Companion",
+                 Ns + "NestedGenericCompanionOwners.Inner.Key" })
+        Require(Class(fragment, genericOwnerCompanion).TypeParameter.Count == 0,
+            $"a generic owner's physical carrier parameters leaked onto the semantic companion: {genericOwnerCompanion}");
 
     var ownershipEntry = archive.Entries.Single(e =>
         e.FullName.EndsWith("/package_roundtrip.ownership/0_ownership.knm", StringComparison.Ordinal));

@@ -131,14 +131,9 @@ static partial class SuspendColdLowering
         };
         if (_refs?.TrySingletonCompanionCarrier(semanticOwner, out var carrier) == true)
         {
-            var carrierArity = _refs.OwnerArity(carrier);
-            var carrierType = Tw(carrierArity == 0
-                ? new TypeNode.Fqn(carrier)
-                : new TypeNode.Fqn(
-                    carrier,
-                    Enumerable.Range(0, carrierArity)
-                        .Select(_ => (TypeNode)new TypeNode.Fqn("object"))
-                        .ToArray()));
+            // A companion carrier is always a non-generic TypeDef, whether it is nested in its owner or hoisted
+            // beside it, so its singleton is named with no type arguments.
+            var carrierType = Tw(new TypeNode.Fqn(carrier));
             call["k"] = "callInstance";
             call["ownerType"] = carrierType.DeepClone();
             call["virtual"] = false;

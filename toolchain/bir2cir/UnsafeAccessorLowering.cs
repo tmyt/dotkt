@@ -700,6 +700,18 @@ static class UnsafeAccessorLowering
         var ownerNode = access["ownerType"];
         if (TypeJson.Read(ownerNode) is not TypeNode.Fqn ownerType || Str(access["name"]) is not string targetName)
             return;
+        // kotc names the field's Kotlin DECLARATION owner; whether that owner is constructed at this use site is a
+        // physical fact this layer owns. A field access can therefore carry the bare generic declaration (`H`) while
+        // its receiver's static type carries the construction (`H<Int>`) — a delegated property's `$delegate` read is
+        // the shape that does. Close the owner frame from the receiver before the accessor is minted, so the holder
+        // is constructed exactly as its declaration parameters require.
+        if (ownerType.Args is not { Length: > 0 } && access["recv"] is JsonNode fieldReceiver
+            && NodeType.Of(fieldReceiver) is TypeNode.Fqn constructedReceiver
+            && constructedReceiver.Name == ownerType.Name && constructedReceiver.Args is { Length: > 0 })
+        {
+            ownerType = constructedReceiver;
+            ownerNode = TypeJson.Write(ownerType);
+        }
 
         hosts.TryGetValue(ownerType.Name, out var targetHost);
         if (targetHost != null && DirectPrivateAccessIsValid(caller.Name, targetHost.Name, hosts)) return;
@@ -731,11 +743,13 @@ static class UnsafeAccessorLowering
             new JsonArray(), includeTarget: true);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
 
-        var pointerCall = new JsonObject
+        // A read and a write each need their OWN pointer call: a JsonNode has one parent, so handing the same
+        // instance to both a byrefLoad and a byrefStore throws rather than emitting the second one.
+        JsonObject PointerCall() => new()
         {
             ["k"] = "callStatic",
             ["owner"] = callOwner.DeepClone(),
-            ["ownerType"] = callOwner,
+            ["ownerType"] = callOwner.DeepClone(),
             ["method"] = definition.EntryName,
             ["sig"] = definition.Signature.DeepClone(),
             ["args"] = new JsonArray(targetStatic
@@ -746,7 +760,7 @@ static class UnsafeAccessorLowering
         var read = new JsonObject
         {
             ["k"] = "byrefLoad",
-            ["ptr"] = pointerCall,
+            ["ptr"] = PointerCall(),
             ["elem"] = fieldTypeJson.DeepClone(),
             ["sty"] = fieldTypeJson.DeepClone(),
         };
@@ -771,7 +785,7 @@ static class UnsafeAccessorLowering
         var store = new JsonObject
         {
             ["k"] = "byrefStore",
-            ["ptr"] = pointerCall,
+            ["ptr"] = PointerCall(),
             ["elem"] = fieldTypeJson.DeepClone(),
             ["value"] = access["value"]?.DeepClone(),
         };

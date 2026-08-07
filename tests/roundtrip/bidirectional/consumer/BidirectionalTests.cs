@@ -46,4 +46,38 @@ public class BidirectionalTests
         Assert.That(new BidirectionalNullableCtor("abcd").labelLength(), Is.EqualTo(4));
         Assert.That(new BidirectionalNullableCtor.Nested(null).tagLength(), Is.EqualTo(-1));
     }
+
+    // #383 — Kotlin declares ONE companion object on the generic class declaration, and that companion does not have
+    // the owner's `T` as a type parameter of its own. A carrier nested in the owner would nevertheless land in a
+    // different CLR static region per closed instantiation, so `Host<int>` and `Host<string>` would each get their own
+    // companion and their own state. C# is the only consumer that can name those instantiations separately, so it is
+    // the only place this contract can be asserted.
+    [Test]
+    public void KotlinCompanionOfAGenericOwnerIsOneObjectAcrossClosedInstantiations()
+    {
+        object fromInt = BidirectionalGenericCompanionHost<int>.Companion;
+        object fromString = BidirectionalGenericCompanionHost<string>.Companion;
+        Assert.That(ReferenceEquals(fromInt, fromString), Is.True,
+            "a generic owner's companion must be one object for every closed instantiation");
+
+        // The physical shape that guarantees it: one non-generic TypeDef beside the owner rather than inside it.
+        var carrier = fromInt.GetType();
+        Assert.That(carrier.DeclaringType, Is.Null, "the carrier of a generic owner must not be nested in it");
+        Assert.That(carrier.GetGenericArguments(), Is.Empty, "the carrier must declare no generic parameters");
+        Assert.That(typeof(BidirectionalGenericCompanionHost<int>).GetField("Companion")!.IsInitOnly, Is.True,
+            "the C# companion accessor must not be replaceable");
+        Assert.That(carrier.GetField("$INSTANCE")!.IsInitOnly, Is.True,
+            "the singleton store must not be replaceable");
+
+        BidirectionalGenericCompanionHost<int>.Companion.opened = 5;
+        Assert.That(BidirectionalGenericCompanionHost<string>.Companion.opened, Is.EqualTo(5),
+            "companion state must be shared across closed instantiations");
+        BidirectionalGenericCompanionHost<string>.Companion.opened = 0;
+
+        // Hoisting costs the carrier CLR nested access to the owner's private members; Kotlin's lexical access
+        // must survive that unchanged.
+        Assert.That(
+            BidirectionalGenericCompanionHost<int>.Companion.peek(new BidirectionalGenericCompanionHost<int>(1)),
+            Is.EqualTo(7));
+    }
 }

@@ -94,7 +94,14 @@ internal fun BirEmitter.expr(node: IrExpression): String {
 		return styStamped(node, withMember)
 	}
 	val (plan, s) = withCallPlan(node) {
-		styStamped(node, memberVisibilityStamped(node, exprInner(node)))
+		val rendered = exprInner(node)
+		// A LOCAL delegated access renders as the delegate member (there is no CLR property accessor), so the local
+		// accessor's visibility is not this node's fact. Stamp the actual operator target when one exists.
+		val inlined = delegateInlinedAccess?.takeIf { it.first === node }
+		val withMember = if (inlined != null)
+			inlined.second?.let { memberVisibilityStamped(it, rendered) } ?: rendered
+		else memberVisibilityStamped(node, rendered)
+		styStamped(node, withMember)
 	}
 	return plan.wrap(s, birType(node.type).toJson())
 }

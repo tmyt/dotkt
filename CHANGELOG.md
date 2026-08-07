@@ -7,6 +7,45 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **A `companion object` of a generic class is now ONE object across every instantiation (#383).** CLR static storage
+  belongs to each closed constructed generic type, so the nested carrier every companion received in #275 gave
+  `Foo<int>.Companion` and `Foo<string>.Companion` a singleton each — with separate state — while Kotlin's own uses,
+  which closed the carrier with the representative `object`, formed a third region that shared with neither. Kotlin
+  declares one companion on the class declaration, and that companion does not have the owner's `T` as a parameter of
+  its own, so a carrier whose physical owner has any generic slot is now **hoisted out of the owner** to a top-level
+  sidecar (`p.Foo$companion$Companion`, with the owner's own nesting path flattened into the name); a non-generic owner keeps its
+  nested `p.Host+$Companion`. `ReferenceEquals(Foo<int>.Companion, Foo<string>.Companion)` is true, companion state is
+  shared across closed owners, and Kotlin and C# see the same object. The source-name accessor is still an ordinary CLR
+  static — a generic owner has one field per instantiation — but every one of them is initialized from that single
+  carrier singleton.
+
+  A hoisted carrier shares a namespace with other compiler types derived from an owner's name — notably the
+  star-projection existential `<owner>$dotkt_star` — while a companion's SOURCE name is an ordinary Kotlin identifier
+  that may be spelled `dotkt_star` too. The carrier name therefore carries a reserved `$companion$` marker, which no
+  source name can supply; without it `class Holder<T> { companion object dotkt_star }` used through `Holder<*>` made
+  ilemit resolve the owner's members against the companion carrier and abort the emit.
+
+  Moving the carrier out of the owner puts three lexical edges through the caller-side `[UnsafeAccessor]` projection
+  that no source had reached before, and each was broken: a private field WRITE crashed bir2cir outright (the load and
+  the store were handed the same pointer-call node, and a JSON node has one parent); an accessor-routed `lateinit`
+  read produced a node the IR-sanity gate rejected for missing an owner it no longer addresses; and a private field
+  whose access named the bare generic declaration (a delegated property's `$delegate`) refused the accessor because
+  the owner frame was open — its construction is now recovered from the receiver's static type. Separately, `kotc`
+  stamped the *accessor's* Kotlin visibility onto delegated-property reads it had already inlined to the delegate's
+  own member, so `private val x by lazy` asked for an `UnsafeAccessor` on `kotlin.Lazy.value` — a public method —
+  and failed at runtime with `MissingMethodException`. The stamp now follows the declaration the emitted node
+  actually addresses, for every delegate form: `by lazy`, a provider's `getValue`/`setValue`, and the stdlib `Map`
+  extension convention, at local, member and top-level scope alike.
+
+  No carrier declares generic parameters any more, so the physical capture slots, the `object` closure every Kotlin use
+  site applied to them, and the arity bookkeeping that went with them are deleted rather than kept beside the new
+  shape. Hoisting costs the carrier CLR nested access to the owner's `private`/`protected` declarations, including a
+  private constructor; the ordinary caller-side `[UnsafeAccessor]` projection restores those edges with no target
+  member widened. The trusted `[KotlinCompanion]` payload records the shape as `kind: "nested" | "sidecar"`, and both
+  `dll2klib` and `bir2cir` refuse a nested claim over a generic owner, a sidecar claim over a non-generic one, and any
+  carrier whose CLR nesting or arity contradicts its kind. The semantic KLIB companion is unchanged, so Kotlin source,
+  companion names, visibility, callable references, supertypes and cross-module consumption are unaffected.
+
 - **Function types of 17..22 parameters are now a real cross-assembly ABI (#220).** `System.Func`/`Action` stop at 16
   value parameters, and the wider shapes used to be minted per assembly, so one declared `(…17 Ints…) -> Int` was a
   different nominal type in every module that mentioned it. The six pairs `DotKt.Runtime.CompilerServices.KAction`17`

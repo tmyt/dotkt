@@ -20,7 +20,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | `operator fun` | CLR `op_*` when the operator has a CLR ABI equivalent; otherwise ordinary method | no for ordinary methods; CLR `op_*` names are recoverable but still need Kotlin operator status for Kotlin re-consumption | `[KotlinFunction(Operator)]` |
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
-| named/default `companion object` | compiler-reserved ordinary nested singleton carrier | no; CLR nesting does not record the source companion association/name | `[KotlinCompanion(version, bytes)]` on the physical carrier type |
+| named/default `companion object` | compiler-reserved singleton carrier, nested in a non-generic owner and hoisted beside a generic one | no; CLR nesting does not record the source companion association/name | `[KotlinCompanion(version, bytes)]` on the physical carrier type |
 | inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
 | Kotlin `val` backed by a **`@ClrField` public field** | public field | no; a plain public field looks writable | `[KotlinReadOnly]` — survives **only** for the `@ClrField` plain-field case; a normal `val` is now a get-only CLR property, recoverable from plain metadata (see [design-clr-property-model.md](design-clr-property-model.md)) |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
@@ -72,14 +72,25 @@ classification.
 `{owner:"p.Host",name:"Factory",visibility:"public"}`. Its identity is deliberately non-physical
 (`p.Host.<companion:Factory>`): `kotc` emits no CLR `INSTANCE` and does not choose a physical owner.
 
-`bir2cir` consumes that logical declaration and always creates an ordinary nested carrier named `$` plus the source
-name. `$` is not a legal Kotlin identifier, so this physical namespace cannot collide with source nested declarations.
-The carrier owns the companion's instance members, supertypes, constructor effects, and one public static self-typed
-`$INSTANCE`. A generic owner contributes separate unconstrained physical capture parameters; semantic uses outside the
-carrier close them with `object`, so a constraint on the owner's `T` never becomes a constraint on the companion.
-The outer source-name field is an ordinary CLR static on each closed generic owner, so `Foo<string>.Companion` and
-`Foo<int>.Companion` occupy distinct CLR static regions for now; Kotlin's unqualified `Foo.Companion` uses the
-representative `object` closure. Cross-instantiation singleton unification is outside this first nested-carrier step.
+`bir2cir` consumes that logical declaration and creates one ordinary CLR carrier for it, spelled with a `$` the
+source cannot write, so this physical namespace cannot collide with source declarations. The carrier owns the
+companion's instance members, supertypes, constructor effects, and one public static self-typed `$INSTANCE`. It never
+declares a generic parameter of its own — one closed TypeDef is what makes `$INSTANCE` one singleton — and where it
+lives follows from the owner's genericity:
+
+| physical owner | carrier `kind` | physical identity |
+|---|---|---|
+| non-generic | `nested` | nested in the owner, named `$` + source name (`p.Host+$Factory`) |
+| generic (own or captured slots) | `sidecar` | top-level beside the owner, the owner's `+` nesting path flattened to `$`, then the reserved `$companion$` marker (`p.Host$companion$Factory`, `p.Outer$Inner$companion$Factory`) |
+
+A nested TypeDef of a generic type redeclares every enclosing slot, so a nested carrier of `Foo<T>` would be a
+*different closed type* — and therefore a different singleton and a different static region — for `Foo<int>` than for
+`Foo<string>`. Kotlin declares one companion on the class declaration, and that companion does not have the owner's
+`T` as a parameter of its own, so the carrier is hoisted out of the owner instead. The outer source-name field remains
+an ordinary CLR static, of which a generic owner has one per closed instantiation; each is initialized from the single
+carrier singleton, so `Foo<int>.Companion` and `Foo<string>.Companion` read the same reference and share companion
+state. Leaving the owner costs the carrier CLR nested access to the owner's private declarations; the ordinary
+`[UnsafeAccessor]` projection restores every such lexical edge without widening any target member.
 A basic CLR enum still owns the nested carrier and round-trips as an enum, but has no outer source-name CLR field:
 ECMA-335 enum types cannot own the `.cctor` needed to initialize that reference-valued accessor. Degrading the enum to
 a class would lose enum-entry semantics, so the C# accessor is explicitly deferred for this owner kind.
@@ -87,9 +98,10 @@ The trusted `[KotlinCompanion(version, bytes)]` payload records `kind`, semantic
 exact CLR metadata identity `physicalOwner` (including `+` nesting) plus declared generic arity. `ilemit` emits that
 authored CIR attribute 1:1.
 
-`dll2klib` validates every explicit carrier and its physical declaration before hiding or projecting anything. For
-the nested carrier, it attaches the physical type to the carried owner as a metadata `COMPANION_OBJECT`, retaining
-supertypes and instance members while hiding the physical `$INSTANCE` field and synthetic capture parameters. It sets
+`dll2klib` validates every explicit carrier and its physical declaration before hiding or projecting anything — a
+`nested` claim over a generic owner and a `sidecar` claim over a non-generic one are both refused, as is a carrier
+whose CLR nesting contradicts its kind. It then attaches the physical type to the carried owner as a metadata
+`COMPANION_OBJECT`, retaining supertypes and instance members while hiding the physical `$INSTANCE` field. It sets
 `companion_object_name` and `nested_class_name`; no path recognizes a
 companion from a CLR suffix, the word `Companion`, or member names. Consequently a named companion and an unrelated
 nested class called `Companion` remain distinct, and arbitrary CLR static projection keeps its existing synthetic

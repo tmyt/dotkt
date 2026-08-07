@@ -2251,7 +2251,7 @@ sealed partial class ReferenceMetadataIndex
             var name = RequiredString("name");
             var visibility = RequiredString("visibility");
             var physicalOwner = RequiredString("physicalOwner");
-            if (kind != "nested")
+            if (kind is not ("nested" or "sidecar"))
                 throw new MalformedTrustedCompanionException(
                     $"malformed trusted [KotlinCompanion] on '{carrierType.FullName}': invalid kind '{kind}'");
             if (!IsSemanticQualifiedName(owner) || !IsSemanticNameSegment(name))
@@ -2277,23 +2277,39 @@ sealed partial class ReferenceMetadataIndex
                 throw new MalformedTrustedCompanionException(
                     $"multiple physical types claim Kotlin companion owner '{owner}'");
 
-            if (carrierType == ownerType || carrierType.DeclaringType != ownerType)
+            // A companion is nested in its physical owner exactly when that owner is non-generic; a generic owner's
+            // carrier is hoisted beside it so the singleton cannot multiply across closed instantiations. Either way
+            // the carrier itself declares no generic slot, so one `$INSTANCE` exists per Kotlin companion.
+            if (kind == "sidecar")
+            {
+                if (physicalOwnerArity == 0)
+                    throw new MalformedTrustedCompanionException(
+                        "hoisted trusted [KotlinCompanion] requires a generic physical owner");
+                if (carrierType.DeclaringType != null)
+                    throw new MalformedTrustedCompanionException(
+                        "hoisted trusted [KotlinCompanion] must be a top-level type");
+                if (!carrierType.IsPublic)
+                    throw new MalformedTrustedCompanionException(
+                        "hoisted trusted [KotlinCompanion] carrier must be public");
+            }
+            else
+            {
+                if (physicalOwnerArity != 0)
+                    throw new MalformedTrustedCompanionException(
+                        "nested trusted [KotlinCompanion] requires a non-generic physical owner");
+                if (carrierType == ownerType || carrierType.DeclaringType != ownerType)
+                    throw new MalformedTrustedCompanionException(
+                        "nested trusted [KotlinCompanion] must be an ordinary nested type of its physical owner");
+                if (!carrierType.IsNestedPublic)
+                    throw new MalformedTrustedCompanionException(
+                        "nested trusted [KotlinCompanion] carrier must have NestedPublic visibility");
+            }
+            if (carrierType.GetGenericArguments().Length != 0)
                 throw new MalformedTrustedCompanionException(
-                    "nested trusted [KotlinCompanion] must be an ordinary nested type of its physical owner");
-            if (!carrierType.IsNestedPublic)
-                throw new MalformedTrustedCompanionException(
-                    "nested trusted [KotlinCompanion] carrier must have NestedPublic visibility");
-            if (carrierType.GetGenericArguments().Length != ownerType.GetGenericArguments().Length)
-                throw new MalformedTrustedCompanionException(
-                    "nested trusted [KotlinCompanion] must capture exactly its physical owner's generic slots");
-            if (carrierType.GetGenericArguments().Any(parameter =>
-                parameter.GenericParameterAttributes != GenericParameterAttributes.None ||
-                parameter.GetGenericParameterConstraints().Length != 0))
-                throw new MalformedTrustedCompanionException(
-                    "nested trusted [KotlinCompanion] generic captures must be unconstrained");
+                    "trusted [KotlinCompanion] carrier must declare no generic parameters");
             if (!HasTrustedMarker(carrierType, assembly, "DotKt.Runtime.CompilerServices.KotlinObjectAttribute"))
                 throw new MalformedTrustedCompanionException(
-                    "nested trusted [KotlinCompanion] requires trusted [KotlinObject]");
+                    "trusted [KotlinCompanion] requires trusted [KotlinObject]");
             FieldInfo[] instances;
             try
             {
@@ -2305,11 +2321,11 @@ sealed partial class ReferenceMetadataIndex
             catch (Exception ex)
             {
                 throw new MalformedTrustedCompanionException(
-                    $"could not validate nested [KotlinCompanion] carrier '{carrierType.FullName}'", ex);
+                    $"could not validate [KotlinCompanion] carrier '{carrierType.FullName}'", ex);
             }
             if (instances.Length != 1)
                 throw new MalformedTrustedCompanionException(
-                    "nested trusted [KotlinCompanion] requires one public static self-typed $INSTANCE field");
+                    "trusted [KotlinCompanion] requires one public static self-typed $INSTANCE field");
 
             companionSemanticOwnerByCarrier.Add(
                 StripGenericArity(DottedFqn(carrierType.FullName ?? carrierType.Name)),
