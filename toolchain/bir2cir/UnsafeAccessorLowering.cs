@@ -161,16 +161,25 @@ static class UnsafeAccessorLowering
         var frontendVisibility = Str(access["memberVisibility"]);
         var ownerTypeParams = access["memberOwnerTypeParams"] as JsonArray;
         var methodTypeParams = access["memberMethodTypeParams"] as JsonArray;
+        var memberSignature = access["memberSignature"] as JsonArray;
         var memberReturnType = access["memberReturnType"]?.DeepClone();
         access.Remove("memberVisibility");
         access.Remove("memberOwnerTypeParams");
         access.Remove("memberMethodTypeParams");
+        access.Remove("memberSignature");
         access.Remove("memberReturnType");
         // UnsafeAccessorKind.Method always performs virtual dispatch. A frontend-authorized `super.X()` is instead
-        // a lexical non-virtual edge and must reach ClrMemberResolution with `super:true` intact. #225 keeps every
-        // carrier that can contain such an edge nested under its nearest semantic class owner, so the CLR call has
-        // the same family-access context as the Kotlin source; replacing it with an UnsafeAccessor changes meaning.
-        if (superCall) return;
+        // a lexical non-virtual edge. It may stay direct only when the call consumes THIS method's `this`; verified IL
+        // rejects a non-virtual base call on a captured outer receiver (`ThisMismatch`). A lifted carrier therefore
+        // calls a private instance forwarder on that outer derived owner, whose own body performs the base call on
+        // its real `this`. This preserves dispatch without widening the base member.
+        if (superCall)
+        {
+            if (Str(access["recv"]?["k"]) == "this") return;
+            RewriteNestedSuperMethod(access, caller, hosts, accessors, methodTypeParams, memberSignature,
+                memberReturnType);
+            return;
+        }
         // Top-level Kotlin calls deliberately keep `owner:null` for semantic substitutions and carry their exact
         // file-facade dispatch identity separately. That identity is also the UnsafeAccessor target owner.
         var ownerNode = access["ownerType"] ?? access["owner"] ?? access["calleeOwner"];
@@ -251,6 +260,116 @@ static class UnsafeAccessorLowering
         // The replacement is a call to the synthesized accessor, so its expression stamp must describe
         // that accessor's return rather than preserve a possibly stale stamp from the rewritten edge.
         replacement["sty"] = callReturnType.DeepClone();
+        Replace(access, replacement);
+    }
+
+    static void RewriteNestedSuperMethod(JsonObject access, Host caller,
+        IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
+        JsonArray methodTypeParams, JsonArray memberSignature, JsonNode memberReturnType)
+    {
+        if (access["recv"] is not JsonObject receiver
+            || NodeType.Of(receiver) is not TypeNode.Fqn receiverType
+            || TypeJson.Read(access["ownerType"]) is not TypeNode.Fqn targetOwner
+            || Str(access["method"]) is not string targetName)
+            throw new InvalidOperationException("Nested Kotlin super call is missing its receiver/target facts");
+
+        var forwarderHost = EnclosingHost(caller, receiverType.Name, hosts)
+            ?? throw new InvalidOperationException(
+                $"Nested Kotlin super receiver '{receiverType.Name}' is not an enclosing physical owner of '{caller.Name}'");
+        // A synthesized carrier's physical type frame includes every captured owner slot. Its copied call-site
+        // owner token can consequently contain the carrier frame rather than the base declaration's arity. Recover
+        // the exact constructed super owner from the derived declaration graph; this is a CLR representation choice,
+        // while memberSignature below remains the frontend's declaration-frame fact.
+        var resolvedOwner = ResolveConstructedAncestor(forwarderHost, targetOwner.Name, hosts) ?? targetOwner;
+        var ownerArgs = resolvedOwner.Args ?? Array.Empty<TypeNode>();
+        var declarationSignature = memberSignature ?? SignatureOf(access);
+        var signature = new JsonArray(declarationSignature.Select(type =>
+        {
+            var parsed = TypeJson.Read(type)
+                ?? throw new InvalidOperationException($"Kotlin super call '{targetName}' has an untyped parameter");
+            return TypeJson.Write(SubstituteOwnerSlots(parsed, ownerArgs));
+        }).ToArray());
+        var declarationReturn = TypeJson.Read(memberReturnType)
+            ?? TypeJson.Read(access["dynRet"])
+            ?? TypeJson.Read(access["ret"])
+            ?? TypeJson.Read(access["sty"])
+            ?? new TypeNode.Fqn("kotlin.Unit");
+        var declaredReturn = SubstituteOwnerSlots(declarationReturn, ownerArgs);
+        var declaredReturnJson = TypeJson.Write(declaredReturn);
+        var forwarderTypeParams = SubstituteOwnerSlotsInDescriptors(methodTypeParams, ownerArgs);
+        var methodArity = access["typeArgs"] is JsonArray typeArgs ? typeArgs.Count : 0;
+        if ((forwarderTypeParams?.Count ?? 0) != methodArity)
+            throw new InvalidOperationException(
+                $"Kotlin super call '{targetOwner.Name}.{targetName}' has {methodArity} method arguments but " +
+                $"{forwarderTypeParams?.Count ?? 0} declaration parameters");
+
+        var key = $"{forwarderHost.Name}|super|{targetOwner.Name}|{targetName}|{methodArity}|" +
+                  string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredReturnJson);
+        if (!accessors.TryGetValue(key, out var definition))
+        {
+            var name = SuperForwarderName(targetName);
+            var parameters = new JsonArray(signature.Select((type, index) =>
+                (JsonNode)Param("arg" + index, type?.DeepClone())).ToArray());
+            var targetCall = (JsonObject)access.DeepClone();
+            targetCall["recv"] = new JsonObject { ["k"] = "this" };
+            targetCall["ownerType"] = TypeJson.Write(resolvedOwner);
+            targetCall["sig"] = declarationSignature.DeepClone();
+            targetCall["args"] = new JsonArray(parameters.OfType<JsonObject>().Select(parameter =>
+                (JsonNode)new JsonObject { ["k"] = "local", ["name"] = parameter["name"]?.DeepClone() }).ToArray());
+            targetCall["ret"] = declaredReturnJson.DeepClone();
+            targetCall["dynRet"] = declaredReturnJson.DeepClone();
+            targetCall["sty"] = declaredReturnJson.DeepClone();
+            if (methodArity > 0)
+                targetCall["typeArgs"] = new JsonArray(Enumerable.Range(0, methodArity)
+                    .Select(index => (JsonNode)TypeJson.Write(new TypeNode.Tv("method", index))).ToArray());
+            else
+                targetCall.Remove("typeArgs");
+            DropMemberFacts(targetCall);
+
+            var returnsUnit = declaredReturn is TypeNode.Fqn { Name: "kotlin.Unit" or "void" };
+            var body = returnsUnit
+                ? new JsonArray(new JsonObject { ["k"] = "exprStmt", ["expr"] = targetCall },
+                    new JsonObject { ["k"] = "return" })
+                : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = targetCall });
+            var forwarder = new JsonObject
+            {
+                ["name"] = name,
+                ["generated"] = true,
+                ["static"] = false,
+                ["override"] = false,
+                ["virtual"] = false,
+                ["abstract"] = false,
+                ["objectOverride"] = false,
+                ["vis"] = "private",
+                ["params"] = parameters,
+                ["ret"] = declaredReturnJson.DeepClone(),
+                ["body"] = body,
+                ["attrs"] = new JsonArray(),
+            };
+            if (forwarderTypeParams != null) forwarder["typeParams"] = forwarderTypeParams;
+            forwarderHost.Methods.Add(forwarder);
+            definition = new AccessorDefinition(name, null, (JsonArray)signature.DeepClone(), 0, methodArity);
+            accessors[key] = definition;
+        }
+
+        var callResult = access["sty"]?.DeepClone()
+            ?? access["dynRet"]?.DeepClone()
+            ?? access["ret"]?.DeepClone()
+            ?? declaredReturnJson.DeepClone();
+        var replacement = new JsonObject
+        {
+            ["k"] = "callInstance",
+            ["ownerType"] = TypeJson.Write(receiverType),
+            ["virtual"] = false,
+            ["recv"] = receiver.DeepClone(),
+            ["method"] = definition.EntryName,
+            ["sig"] = definition.Signature.DeepClone(),
+            ["args"] = access["args"]?.DeepClone() ?? new JsonArray(),
+            ["ret"] = callResult.DeepClone(),
+            ["sty"] = callResult.DeepClone(),
+        };
+        if (access["typeArgs"] is JsonArray originalTypeArgs)
+            replacement["typeArgs"] = originalTypeArgs.DeepClone();
         Replace(access, replacement);
     }
 
@@ -721,6 +840,87 @@ static class UnsafeAccessorLowering
             .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray()));
     }
 
+    static Host EnclosingHost(Host caller, string name, IReadOnlyDictionary<string, Host> hosts)
+    {
+        var current = caller;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (current != null && seen.Add(current.Name))
+        {
+            if (current.Name == name) return current;
+            current = current.NestedIn != null && hosts.TryGetValue(current.NestedIn, out var parent) ? parent : null;
+        }
+        return null;
+    }
+
+    static TypeNode.Fqn ResolveConstructedAncestor(Host start, string target,
+        IReadOnlyDictionary<string, Host> hosts)
+    {
+        if (TypeJson.Read(SelfType(start)) is not TypeNode.Fqn self) return null;
+        var queue = new Queue<TypeNode.Fqn>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        queue.Enqueue(self);
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (!seen.Add(TypeJson.Write(current).ToJsonString())) continue;
+            if (current.Name == target) return current;
+            if (!hosts.TryGetValue(current.Name, out var host)) continue;
+            var args = current.Args ?? Array.Empty<TypeNode>();
+            void Enqueue(JsonNode edge)
+            {
+                if (TypeJson.Read(edge) is TypeNode.Fqn ancestor)
+                    queue.Enqueue((TypeNode.Fqn)SubstituteOwnerSlots(ancestor, args));
+            }
+            Enqueue(host.Declaration["base"]);
+            if (host.Declaration["interfaces"] is JsonArray interfaces)
+                foreach (var edge in interfaces) Enqueue(edge);
+        }
+        return null;
+    }
+
+    static JsonArray SubstituteOwnerSlotsInDescriptors(JsonArray descriptors, TypeNode[] ownerArgs)
+    {
+        if (descriptors == null) return null;
+        var result = (JsonArray)descriptors.DeepClone();
+        void Walk(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                foreach (var key in obj.Select(pair => pair.Key).ToList())
+                {
+                    var value = obj[key];
+                    if (value == null) continue;
+                    if (TypeJson.IsType(value))
+                        obj[key] = TypeJson.Write(SubstituteOwnerSlots(TypeJson.Read(value), ownerArgs));
+                    else
+                        Walk(value);
+                }
+            }
+            else if (node is JsonArray array)
+                for (var index = 0; index < array.Count; index++)
+                {
+                    var value = array[index];
+                    if (value == null) continue;
+                    if (TypeJson.IsType(value))
+                        array[index] = TypeJson.Write(SubstituteOwnerSlots(TypeJson.Read(value), ownerArgs));
+                    else
+                        Walk(value);
+                }
+        }
+        Walk(result);
+        return result;
+    }
+
+    static void DropMemberFacts(JsonObject obj)
+    {
+        obj.Remove("memberVisibility");
+        obj.Remove("memberType");
+        obj.Remove("memberOwnerTypeParams");
+        obj.Remove("memberMethodTypeParams");
+        obj.Remove("memberReturnType");
+        obj.Remove("memberSignature");
+    }
+
     static bool DirectPrivateAccessIsValid(string caller, string target, IReadOnlyDictionary<string, Host> hosts)
     {
         if (caller == target) return true;
@@ -738,6 +938,12 @@ static class UnsafeAccessorLowering
     {
         var safe = new string((target ?? "member").Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray());
         return $"dotkt$unsafe${System.Threading.Interlocked.Increment(ref _counter)}${safe}";
+    }
+
+    static string SuperForwarderName(string target)
+    {
+        var safe = new string((target ?? "member").Select(ch => char.IsLetterOrDigit(ch) ? ch : '_').ToArray());
+        return $"dotkt$super${System.Threading.Interlocked.Increment(ref _counter)}${safe}";
     }
 
     static string TypeKey(JsonNode node) => node?.ToJsonString() ?? "null";

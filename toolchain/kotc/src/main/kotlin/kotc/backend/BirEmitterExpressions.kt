@@ -110,15 +110,18 @@ private fun BirEmitter.memberVisibilityStamped(
 ): String = memberVisibilityStamped(
 	node.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility ?: return s,
 	s,
+	preserveDeclaration = node is IrCall && node.superQualifierSymbol != null,
 )
 
 /** The callable-reference path is not an [IrFunctionAccessExpression], but carries the same resolved declaration. */
 internal fun BirEmitter.memberVisibilityStamped(
 	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
 	s: String,
+	preserveDeclaration: Boolean = false,
 ): String {
 	val visibility = visOf(target)
-	if (visibility != "private" && visibility != "protected") return s
+	val restricted = visibility == "private" || visibility == "protected"
+	if (!restricted && !preserveDeclaration) return s
 	if (!(s.startsWith("{\"k\":\"callInstance\"") || s.startsWith("{\"k\":\"callStatic\"") ||
 			s.startsWith("{\"k\":\"new\"") || s.startsWith("{\"k\":\"newBoundDelegate\""))) return s
 	val ownerTypeParams = memberOwnerTypeParamsJson(target)
@@ -133,11 +136,15 @@ internal fun BirEmitter.memberVisibilityStamped(
 				.joinToString(",") { birType(it.type).toJson() }
 			",\"memberSignature\":[${signature}]"
 		}
-		is org.jetbrains.kotlin.ir.declarations.IrFunction ->
-			",\"memberReturnType\":" + birType(target.returnType).toJson()
+		is org.jetbrains.kotlin.ir.declarations.IrFunction -> {
+			val signature = overloadSigField(target)
+				.replaceFirst(",\"sig\":", ",\"memberSignature\":")
+			signature + ",\"memberReturnType\":" + birType(target.returnType).toJson()
+		}
 		else -> ""
 	}
-	return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + ownerTypeParams + methodTypeParams +
+	val visibilityFact = if (restricted) ",\"memberVisibility\":" + str(visibility) else ""
+	return s.dropLast(1) + visibilityFact + ownerTypeParams + methodTypeParams +
 		declarationFact + "}"
 }
 

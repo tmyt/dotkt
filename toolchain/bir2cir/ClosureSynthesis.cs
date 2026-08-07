@@ -206,7 +206,19 @@ static class ClosureSynthesis
                         return;
                     }
                     foreach (var kv in o)
-                        if (kv.Key != "_syntheticTypeArgs" && kv.Value != null) Walk(kv.Value);
+                    {
+                        if (kv.Value == null || kv.Key == "_syntheticTypeArgs") continue;
+                        // These are facts in the ACCESSED DECLARATION'S generic frame. Only the call site's own
+                        // applications/typeArgs belong to the closure's lexical frame and may be rebound to captured
+                        // class slots. Rebinding a callee `!!0` here changes its formal method parameter into an
+                        // unrelated closure `!N`, corrupting the forwarder descriptor and its generic constraints.
+                        if (kv.Key is "sig" or "memberSig" or "clrOverrideSig" or "shapeTypes" or "paramSig"
+                            or "delegationSig" or "memberSignature" or "memberOwnerTypeParams"
+                            or "memberMethodTypeParams" or "memberReturnType" or "memberType"
+                            || (kv.Key == "argTypes" && Str(o["k"]) != "new"))
+                            continue;
+                        Walk(kv.Value);
+                    }
                     break;
                 case JsonArray a:
                     foreach (var item in a)

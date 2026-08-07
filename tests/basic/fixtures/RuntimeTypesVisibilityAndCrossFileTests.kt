@@ -62,6 +62,23 @@ class RuntimeTypesProtectedSuperDerived : RuntimeTypesProtectedSuperBase() {
     fun inlineSuper(): String = run { super.label() }
     fun liftedSuper(): () -> String = { super.label() }
 }
+class RuntimeTypesSuperContext(val prefix: String)
+interface RuntimeTypesGenericMarker<T> { fun render(): String }
+class RuntimeTypesStringMarker : RuntimeTypesGenericMarker<String> { override fun render(): String = "marker" }
+open class RuntimeTypesGenericProtectedSuperBase<T> {
+    context(context: RuntimeTypesSuperContext)
+    protected open fun <U : RuntimeTypesGenericMarker<T>> combine(value: T, marker: U): String =
+        context.prefix + ":" + value.toString() + ":" + marker.render()
+    protected open fun echo(value: T): T = value
+}
+class RuntimeTypesGenericProtectedSuperDerived<A, B> : RuntimeTypesGenericProtectedSuperBase<B>() {
+    context(context: RuntimeTypesSuperContext)
+    override fun <U : RuntimeTypesGenericMarker<B>> combine(value: B, marker: U): String = "derived"
+    override fun echo(value: B): B = value
+    context(context: RuntimeTypesSuperContext)
+    fun <U : RuntimeTypesGenericMarker<B>> liftedSuper(value: B, marker: U): () -> String =
+        { super.combine(super.echo(value), marker) }
+}
 
 // ---- il-vis : visibility modifiers -> CLR access flags ------------------------------------------------------------
 class RuntimeTypesAccount(private val balance: Int) {
@@ -121,6 +138,11 @@ class RuntimeTypeAndSuperDispatchTests {
         val protected = RuntimeTypesProtectedSuperDerived()
         assertEquals("base", protected.inlineSuper())
         assertEquals("base", protected.liftedSuper()())
+        with(RuntimeTypesSuperContext("base")) {
+            assertEquals("base:value:marker",
+                RuntimeTypesGenericProtectedSuperDerived<Int, String>()
+                    .liftedSuper("value", RuntimeTypesStringMarker())())
+        }
     }
 
     // #60: the star-projection smart-cast (`is Map<*,*>`/`is List<*>`/`is Iterable<*>`/`is Collection<*>`) on a
