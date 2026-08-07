@@ -24,6 +24,7 @@ import roundtrip.dispatchsurface.NestedGenericCompanionOwners
 import roundtrip.dispatchsurface.PrivateCompanionHost
 import roundtrip.dispatchsurface.PrivateGenericCompanionHost
 import roundtrip.dispatchsurface.ProtectedCompanionHost
+import roundtrip.dispatchsurface.ProviderDelegateCompanionHost
 import roundtrip.dispatchsurface.ProtectedGenericCompanionHost
 import roundtrip.dispatchsurface.StarProjectedCompanionHost
 import roundtrip.dispatchsurface.useStarProjectedCompanionHost
@@ -233,6 +234,8 @@ class RoundtripSurfaceTests {
         ClassicAssert.AreEqual(9, InternalGenericCompanionHost(1).reveal())
         ClassicAssert.AreEqual("filled/derived:filled",
             LateinitGenericCompanionHost.fill(LateinitGenericCompanionHost()))
+        val bumped = ProviderDelegateCompanionHost.bump()
+        ClassicAssert.AreEqual(bumped + 1, ProviderDelegateCompanionHost.bump())
         ClassicAssert.AreEqual(105, ProtectedGenericCompanionConsumer().revealProtectedGenericCompanion())
         val protected = ProtectedCompanionConsumer()
         ClassicAssert.AreEqual(21, protected.revealProtectedCompanion())

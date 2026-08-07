@@ -308,7 +308,7 @@ static void VerifyLayerBoundary(string birPath, string cirPath)
     var semantic = birTypes.OfType<JsonObject>()
         .Where(t => t["kotlinCompanion"] is JsonObject)
         .ToArray();
-    Require(semantic.Length == 16, "producer BIR has an unexpected semantic companion declaration set");
+    Require(semantic.Length == 17, "producer BIR has an unexpected semantic companion declaration set");
     foreach (var companion in semantic)
     {
         var name = Text(companion["name"]);
@@ -401,7 +401,7 @@ static void VerifyDll(string path)
             root.GetProperty("physicalOwnerArity").GetInt32()));
     }
 
-    Require(carriers.Count >= 16, "producer DLL has no complete companion carrier set");
+    Require(carriers.Count >= 17, "producer DLL has no complete companion carrier set");
     Require(carriers.Any(c => c.Kind == "sidecar") && carriers.Any(c => c.Kind == "nested"),
         "producer DLL does not witness both companion carrier shapes");
     foreach (var carrier in carriers)
@@ -473,6 +473,7 @@ static void VerifyKlib(string path)
     VerifyCompanion(fragment, Ns + "NestedGenericCompanionOwners.Inner", "Key", ["marker"]);
     VerifyCompanion(fragment, Ns + "StarProjectedCompanionHost", "dotkt_star", ["marker"]);
     VerifyCompanion(fragment, Ns + "LateinitGenericCompanionHost", "Companion", ["fill"]);
+    VerifyCompanion(fragment, Ns + "ProviderDelegateCompanionHost", "Companion", ["bump"]);
 
     // Both carrier spellings, and only those: a nested carrier is a `$`-prefixed segment, a hoisted one carries the
     // reserved marker. Other compiler-generated CLR types (a star-projection existential, say) are a different

@@ -1500,9 +1500,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 				val ownerGeneric = (providerOwner as? TypeNode.Fqn)?.args != null
 				if (delegate != null && owner != null) {
 					val kprop = kPropertyStub(p.name.asString())
-					return if (callee === p.setter)
+					return delegateInlined(call, if (callee === p.setter)
 						"""{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"setValue"${delegatedOperatorSig(callee)},"args":[$thisRef,$kprop,${expr(regularArgs(call).first())}]}"""
-					else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue"${delegatedOperatorSig(callee)},"args":[$thisRef,$kprop]${retHint(ownerGeneric, call.type)}}"""
+					else """{"k":"callInstance","ownerType":$owner,"virtual":true,"recv":$delegate,"method":"getValue"${delegatedOperatorSig(callee)},"args":[$thisRef,$kprop]${retHint(ownerGeneric, call.type)}}""")
 				}
 				// `val x by map` (top-level, extension-convention delegate): FIR resolved the accessor to the stdlib
 				// getValue/setValue extension — re-emit it as the owner-null static call the general top-level-extension

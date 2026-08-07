@@ -1,5 +1,7 @@
 package roundtrip.dispatchsurface
 
+import kotlin.properties.Delegates
+
 open class Animal(private val name: String) {
     open fun sound(): String = "generic"
     fun describe(): String = name + ":" + sound()
@@ -144,6 +146,21 @@ class LateinitGenericCompanionHost<T> {
         fun fill(host: LateinitGenericCompanionHost<Int>): String {
             host.slot = "filled"
             return host.slot + "/" + host.derived
+        }
+    }
+}
+
+// A delegated property whose delegate is a PROVIDER rather than `by lazy` inlines to the provider's own public
+// getValue/setValue, and a top-level one is private to its file. Read from a hoisted companion — a TypeDef with no
+// lexical privilege of its own — this is the shape where stamping the ACCESSOR's visibility onto the provider call
+// asks for an [UnsafeAccessor] on a public stdlib member that does not need one.
+private var providerCounter: Int by Delegates.observable(0) { _, _, _ -> }
+
+class ProviderDelegateCompanionHost<T> {
+    companion object {
+        fun bump(): Int {
+            providerCounter += 1
+            return providerCounter
         }
     }
 }

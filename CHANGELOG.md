@@ -34,7 +34,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   stamped the *accessor's* Kotlin visibility onto delegated-property reads it had already inlined to the delegate's
   own member, so `private val x by lazy` asked for an `UnsafeAccessor` on `kotlin.Lazy.value` — a public method —
   and failed at runtime with `MissingMethodException`. The stamp now follows the declaration the emitted node
-  actually addresses.
+  actually addresses, for every delegate form: `by lazy`, a provider's `getValue`/`setValue`, and the stdlib `Map`
+  extension convention, at local, member and top-level scope alike.
 
   No carrier declares generic parameters any more, so the physical capture slots, the `object` closure every Kotlin use
   site applied to them, and the arity bookkeeping that went with them are deleted rather than kept beside the new
