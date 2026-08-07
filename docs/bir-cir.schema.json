@@ -9,6 +9,7 @@
   "properties": {
     "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
     "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" },
+    "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" }, "description": "top-level accessor-routed properties, explicitly linked to their file-class get_/set_ methods" },
     "refTypes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" }, "declaringLocalFunctionId": { "type": "string" } }, "required": ["name", "elem"] }, "$comment": "#52 BIR-ONLY transient: the heap-ref-cell registry ({name, element type, optional lexical local-function declaration owner}). bir2cir's SharedSyntheticSynthesis ASSEMBLES each `dotkt$<scope>$Ref$<elem>{ var v }` cell class from it, then DROPS the key — absent in CIR." }
   },
   "additionalProperties": true,
@@ -267,6 +268,7 @@
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
         "vis": { "$ref": "#/$defs/vis" }, "volatile": { "type": "boolean" },
+        "initOnly": { "type": "boolean", "description": "CIR physical field flag: emit CLR initonly (C# readonly). bir2cir authors it only when the CLR storage itself is immutable; distinct from Kotlin readOnly round-trip metadata." },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the slot's reference-nullable positions (replaces the retired scalar `nullable` flag)." }
       },
       "required": ["name", "type"],

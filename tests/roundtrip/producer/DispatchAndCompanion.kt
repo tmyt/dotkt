@@ -1,6 +1,7 @@
 package roundtrip.dispatchsurface
 
 import kotlin.properties.Delegates
+import kotlin.reflect.KProperty
 
 open class Animal(private val name: String) {
     open fun sound(): String = "generic"
@@ -63,8 +64,11 @@ fun localDefaultCompanionUse(): Int {
 }
 
 class ConstrainedGenericOwnerCompanionHost<T : CompanionMarker> {
+    private val token: Int = 90
+
     companion object {
         fun marker(): Int = 91
+        fun peek(host: ConstrainedGenericOwnerCompanionHost<NamedCompanionHost.Key>): Int = host.token
     }
 }
 
@@ -150,17 +154,39 @@ class LateinitGenericCompanionHost<T> {
     }
 }
 
-// A delegated property whose delegate is a PROVIDER rather than `by lazy` inlines to the provider's own public
-// getValue/setValue, and a top-level one is private to its file. Read from a hoisted companion — a TypeDef with no
-// lexical privilege of its own — this is the shape where stamping the ACCESSOR's visibility onto the provider call
-// asks for an [UnsafeAccessor] on a public stdlib member that does not need one.
-private var providerCounter: Int by Delegates.observable(0) { _, _, _ -> }
+// A delegated property is exposed through its real CLR get_/set_ accessor. The accessor body alone calls the
+// provider's getValue/setValue and touches the private provider field. A hoisted companion therefore calls only the
+// property accessor and never needs direct access to either implementation detail.
+var roundtripDelegatedCounter: Int by Delegates.observable(0) { _, _, _ -> }
+var roundtripNullableDelegated: String? by Delegates.observable(null) { _, _, _ -> }
 
 class ProviderDelegateCompanionHost<T> {
+    private var providedValue: Int = 106
+
+    private operator fun getValue(
+        thisRef: ProviderDelegateCompanionHost<T>,
+        property: KProperty<*>,
+    ): Int = providedValue
+
+    private operator fun setValue(
+        thisRef: ProviderDelegateCompanionHost<T>,
+        property: KProperty<*>,
+        value: Int,
+    ) {
+        providedValue = value
+    }
+
+    var selfProvided: Int by this
+
     companion object {
         fun bump(): Int {
-            providerCounter += 1
-            return providerCounter
+            roundtripDelegatedCounter += 1
+            return roundtripDelegatedCounter
+        }
+
+        fun updatePrivateProvider(host: ProviderDelegateCompanionHost<Int>): Int {
+            host.selfProvided += 1
+            return host.selfProvided
         }
     }
 }

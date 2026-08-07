@@ -390,16 +390,20 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// A local delegated property's getter/setter function -> the IrLocalDelegatedProperty, so call() rewrites a
 	// `<get-x>`/`<set-x>` call to access on the delegate local (mirrors the member-property delegate path).
 	internal val localDelegates = java.util.IdentityHashMap<IrSimpleFunction, IrLocalDelegatedProperty>()
+	// The member/top-level delegated-property accessor whose generated IR body is currently being projected.
+	// Access sites call the emitted CLR accessor; only its body lowers the Kotlin delegate convention. The context is
+	// needed for the one @InlineOnly convention member (`kotlin.Lazy.getValue`) that has no runtime declaration.
+	internal var activeDelegatedAccessor: IrProperty? = null
 
 	/**
-	 * The delegated-property accessor access whose rendering was INLINED to the delegate's own member. A `by` accessor
-	 * is not called on the CLR — the emitted node addresses `Lazy.value`, the provider's `getValue`/`setValue`, or the
-	 * stdlib Map extension instead — so the accessor's own Kotlin visibility describes a declaration this node does
-	 * not address. Stamping it would send bir2cir hunting for lexical privilege on the delegate's PUBLIC member and
-	 * mint an UnsafeAccessor for a method that is not private at all. Recorded by [delegateInlined], read by the
-	 * member-visibility stamp for that exact access.
+	 * A LOCAL delegated-property access whose rendering was inlined to the delegate member. A local property has no
+	 * CLR accessor, so its synthetic accessor visibility does not describe the emitted call. Member and top-level
+	 * delegated properties instead emit real get_/set_ methods and never set this marker.
 	 */
-	internal var delegateInlinedAccess: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression? = null
+	internal var delegateInlinedAccess: Pair<
+		org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+		org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility?,
+	>? = null
 	// The `buf` parameter of an active `stackBuffer { buf -> … }` block -> its stack allocation (ptr local + length
 	// local + element type), so `buf[i]`/`buf[i]=v`/`buf.size` rewrite to stack ops while the block is spliced.
 	internal class StackBufInfo(val ptrName: String, val lenName: String, val elemT: TypeNode)
@@ -746,7 +750,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			// consuming module restores it as `val`, rejecting external writes (#34b, mirrors
 			// the member-field `readOnly` stamp).
 			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$ro${volatileFieldFlag(p)}}"""
+			// Delegated storage has the provider type, not the public value type. Its surface is the generated accessor.
+			val vis = if (p.isDelegated) ""","vis":"private"""" else ""
+			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$vis$ro${volatileFieldFlag(p)}}"""
 		}
 		// Preserve every companion as a separate semantic declaration. Must run BEFORE body emission so every value/type
 		// use resolves to the same representation-neutral identity.
@@ -758,14 +764,23 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// A top-level property's get_/set_<name> as STATIC methods (the receiver, if any, rides `__self`) — emitted
 		// only when the accessor is CUSTOM (not the trivial `field` passthrough). Covers a NO-backing-field property
 		// (an EXTENSION property `val T.p`, or a computed `val p get() = …`) AND a backing-field property that ALSO
-		// carries a custom accessor (`val p = 41; get() = field + 1`, #89) — its custom accessor must be emitted so
-		// the read routes through it instead of a raw static-field load. A DEFAULT accessor emits none: the field
+		// carries a custom accessor (`val p = 41; get() = field + 1`, #89), or is delegated — its accessor must be
+		// emitted so the read routes through its body instead of the storage field. A DEFAULT accessor emits none: the field
 		// (above) is read/written directly. Getter and setter are decided independently (a `var` may pair a default
 		// getter with a custom setter).
 		val topPropAccessors = topProps.flatMap { p ->
 			listOfNotNull(
 				p.getter?.takeIf { fieldRoutedProperty(p) && !hasDefaultGetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
 				p.setter?.takeIf { fieldRoutedProperty(p) && !hasDefaultSetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
+		}
+		// A top-level delegated property gets an unambiguous CLR Property row. Its backing field is named
+		// `<p>$delegate`, so dll2klib cannot (and must not) infer `p` from storage. Other top-level custom/context
+		// properties retain their established field/accessor reconstruction path; adding a second row would duplicate
+		// their KLIB declarations.
+		val topPropRecords = topProps.filter { it.isDelegated }.joinToString(",") { p ->
+			val n = p.name.asString()
+			val setName = if (p.setter != null && !hasDefaultSetter(p)) str("set_$n") else "null"
+			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()},"get":${str("get_$n")},"set":$setName}"""
 		}
 		// Basic enums -> real CLR enums (int-backed, for .NET interop); rich enums -> plain singleton classes.
 		val (richEnums, basicEnums) = enums.partition { isRichEnum(it) }
@@ -797,7 +812,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// TypeDef JSON twice. Declaration identity is still its generated name; remove only byte-for-byte identical
 		// entries here, while deliberately retaining same-name/different-body entries for a loud downstream collision.
 		val types = (typeDefs + liftedTypes).distinct().joinToString(",")
-		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types],"refTypes":[${refTypesJson()}]}"""
+		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}]}"""
 	}
 
 	/** Emit a flattened `inner class`: it captures the enclosing instance as a leading `__outer` ctor param/field. */

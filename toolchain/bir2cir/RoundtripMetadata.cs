@@ -72,6 +72,10 @@ static class RoundtripMetadata
         // Top-level file-class `val`/`var` static fields carry NO [KotlinReadOnly] (the old file-class field path
         // stamped only [KotlinSuspendFunctionType]; a `val`'s read-only-ness rode the CLR property, not the field).
         StampFields(o["fields"], topLevel: true);
+        // Accessor-routed top-level declarations use the same CLR Property metadata as member properties. Preserve
+        // their nullable/suspend/context-function type carriers on the file facade as well; dll2klib reads those
+        // attributes from the Property row when rebuilding the package declaration.
+        StampProps(o["properties"]);
         if (o["types"] is JsonArray types)
         {
             MaterializeCompanionCarriers(types);

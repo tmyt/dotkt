@@ -465,7 +465,7 @@ static void VerifyKlib(string path)
     VerifyCompanion(fragment, Ns + "NamedCompanionHost", "Key", ["marker", "suspendMarker", "id"]);
     VerifyCompanion(fragment, Ns + "DefaultCompanionHost", "Companion", ["marker"]);
     VerifyCompanion(fragment, Ns + "EnumCompanionHost", "Key", ["marker"]);
-    VerifyCompanion(fragment, Ns + "ConstrainedGenericOwnerCompanionHost", "Companion", ["marker"]);
+    VerifyCompanion(fragment, Ns + "ConstrainedGenericOwnerCompanionHost", "Companion", ["marker", "peek"]);
     VerifyCompanion(fragment, Ns + "NestedCompanionOwners.NestedInterface", "Companion", ["marker"]);
     VerifyCompanion(fragment, Ns + "NestedCompanionOwners.NestedEnum", "Companion", ["marker"]);
     VerifyCompanion(fragment, Ns + "ProtectedCompanionHost", "Shield", ["marker", "suspendMarker"], expectProtected: true);
@@ -473,7 +473,11 @@ static void VerifyKlib(string path)
     VerifyCompanion(fragment, Ns + "NestedGenericCompanionOwners.Inner", "Key", ["marker"]);
     VerifyCompanion(fragment, Ns + "StarProjectedCompanionHost", "dotkt_star", ["marker"]);
     VerifyCompanion(fragment, Ns + "LateinitGenericCompanionHost", "Companion", ["fill"]);
-    VerifyCompanion(fragment, Ns + "ProviderDelegateCompanionHost", "Companion", ["bump"]);
+    VerifyCompanion(fragment, Ns + "ProviderDelegateCompanionHost", "Companion", ["bump", "updatePrivateProvider"]);
+    Require(fragment.Package.Property.Count(p => String(fragment, p.Name) == "roundtripDelegatedCounter") == 1,
+        "top-level delegated property did not round-trip as one package property");
+    Require(fragment.Package.Property.Count(p => String(fragment, p.Name) == "roundtripNullableDelegated") == 1,
+        "nullable top-level delegated property did not round-trip as one package property");
 
     // Both carrier spellings, and only those: a nested carrier is a `$`-prefixed segment, a hoisted one carries the
     // reserved marker. Other compiler-generated CLR types (a star-projection existential, say) are a different

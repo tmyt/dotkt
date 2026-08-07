@@ -25,6 +25,8 @@ import roundtrip.dispatchsurface.PrivateCompanionHost
 import roundtrip.dispatchsurface.PrivateGenericCompanionHost
 import roundtrip.dispatchsurface.ProtectedCompanionHost
 import roundtrip.dispatchsurface.ProviderDelegateCompanionHost
+import roundtrip.dispatchsurface.roundtripDelegatedCounter
+import roundtrip.dispatchsurface.roundtripNullableDelegated
 import roundtrip.dispatchsurface.ProtectedGenericCompanionHost
 import roundtrip.dispatchsurface.StarProjectedCompanionHost
 import roundtrip.dispatchsurface.useStarProjectedCompanionHost
@@ -207,6 +209,8 @@ class RoundtripSurfaceTests {
         val generic = ConstrainedGenericOwnerCompanionHost.Companion
         ClassicAssert.AreSame(generic, ConstrainedGenericOwnerCompanionHost.Companion)
         ClassicAssert.AreEqual(91, generic.marker())
+        ClassicAssert.AreEqual(90,
+            generic.peek(ConstrainedGenericOwnerCompanionHost<NamedCompanionHost.Key>()))
         ClassicAssert.AreSame(generic, passGenericCompanion(generic))
         // Assembly B named the hoisted carrier as a TypeRef it never declared; the identity must survive that too.
         ClassicAssert.AreSame(generic, passGenericOwnerCompanion(generic))
@@ -236,6 +240,21 @@ class RoundtripSurfaceTests {
             LateinitGenericCompanionHost.fill(LateinitGenericCompanionHost()))
         val bumped = ProviderDelegateCompanionHost.bump()
         ClassicAssert.AreEqual(bumped + 1, ProviderDelegateCompanionHost.bump())
+        // The provider field stays private in the producer's file facade; the exported top-level property survives
+        // DLL -> KLIB as one accessor-routed declaration and is consumed here through get_/set_.
+        ClassicAssert.AreEqual(bumped + 1, roundtripDelegatedCounter)
+        roundtripDelegatedCounter = bumped + 2
+        ClassicAssert.AreEqual(bumped + 2, roundtripDelegatedCounter)
+        // The Property row must carry its nullable type metadata through DLL -> KLIB. Without root-level property
+        // stamping this null assignment is rejected by the consuming frontend as a write to String.
+        roundtripNullableDelegated = null
+        ClassicAssert.IsNull(roundtripNullableDelegated)
+        roundtripNullableDelegated = "restored"
+        ClassicAssert.AreEqual("restored", roundtripNullableDelegated)
+        val provider = ProviderDelegateCompanionHost<Int>()
+        ClassicAssert.AreEqual(106, provider.selfProvided)
+        ClassicAssert.AreEqual(107, ProviderDelegateCompanionHost.updatePrivateProvider(provider))
+        ClassicAssert.AreEqual(107, provider.selfProvided)
         ClassicAssert.AreEqual(105, ProtectedGenericCompanionConsumer().revealProtectedGenericCompanion())
         val protected = ProtectedCompanionConsumer()
         ClassicAssert.AreEqual(21, protected.revealProtectedCompanion())

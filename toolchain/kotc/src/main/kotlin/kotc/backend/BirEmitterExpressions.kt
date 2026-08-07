@@ -95,9 +95,13 @@ internal fun BirEmitter.expr(node: IrExpression): String {
 	}
 	val (plan, s) = withCallPlan(node) {
 		val rendered = exprInner(node)
-		// A delegated accessor access renders as the DELEGATE's member, so the accessor's own visibility is not this
-		// node's fact — see BirEmitter.delegateInlinedAccess.
-		styStamped(node, if (delegateInlinedAccess === node) rendered else memberVisibilityStamped(node, rendered))
+		// A LOCAL delegated access renders as the delegate member (there is no CLR property accessor), so the local
+		// accessor's visibility is not this node's fact. Stamp the actual operator target when one exists.
+		val inlined = delegateInlinedAccess?.takeIf { it.first === node }
+		val withMember = if (inlined != null)
+			inlined.second?.let { memberVisibilityStamped(it, rendered) } ?: rendered
+		else memberVisibilityStamped(node, rendered)
+		styStamped(node, withMember)
 	}
 	return plan.wrap(s, birType(node.type).toJson())
 }

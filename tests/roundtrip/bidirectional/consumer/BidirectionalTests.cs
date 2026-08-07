@@ -64,6 +64,10 @@ public class BidirectionalTests
         var carrier = fromInt.GetType();
         Assert.That(carrier.DeclaringType, Is.Null, "the carrier of a generic owner must not be nested in it");
         Assert.That(carrier.GetGenericArguments(), Is.Empty, "the carrier must declare no generic parameters");
+        Assert.That(typeof(BidirectionalGenericCompanionHost<int>).GetField("Companion")!.IsInitOnly, Is.True,
+            "the C# companion accessor must not be replaceable");
+        Assert.That(carrier.GetField("$INSTANCE")!.IsInitOnly, Is.True,
+            "the singleton store must not be replaceable");
 
         BidirectionalGenericCompanionHost<int>.Companion.opened = 5;
         Assert.That(BidirectionalGenericCompanionHost<string>.Companion.opened, Is.EqualTo(5),

@@ -327,6 +327,8 @@ static class CompanionRepresentationLowering
             ["name"] = "$INSTANCE",
             ["type"] = PhysicalType(a),
             ["static"] = true,
+            ["readOnly"] = true,
+            ["initOnly"] = true,
             ["init"] = new JsonObject {
                 ["k"] = "new", ["type"] = PhysicalType(a),
                 ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
@@ -353,6 +355,8 @@ static class CompanionRepresentationLowering
             ["name"] = a.SourceName,
             ["type"] = PhysicalType(a),
             ["static"] = true,
+            ["readOnly"] = true,
+            ["initOnly"] = true,
             ["vis"] = a.Visibility,
             ["init"] = new JsonObject {
                 ["k"] = "staticField",

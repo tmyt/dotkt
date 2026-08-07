@@ -349,7 +349,17 @@ sealed partial class Emitter
                     foreach (var f in ffs.EnumerateArray())
                     {
                         var tlType = MapType(f.GetProperty("type"));
-                        var tlAttrs = FieldAttributes.Public | FieldAttributes.Static;
+                        var tlAttrs = (f.TryGetProperty("vis", out var tlVis) ? tlVis.GetString() : "public") switch
+                        {
+                            "private" => FieldAttributes.Private,
+                            "internal" => FieldAttributes.Assembly,
+                            "protected" => FieldAttributes.Family,
+                            "protectedInternal" => FieldAttributes.FamORAssem,
+                            _ => FieldAttributes.Public,
+                        };
+                        tlAttrs |= FieldAttributes.Static;
+                        if (f.TryGetProperty("initOnly", out var tlInitOnly) && tlInitOnly.GetBoolean())
+                            tlAttrs |= FieldAttributes.InitOnly;
                         // `@kotlin.concurrent.Volatile` on a top-level `var` -> a `modreq(IsVolatile)` static field.
                         var tlFb = f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
                                 ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs)
@@ -358,6 +368,7 @@ sealed partial class Emitter
                         ti.Fields[f.GetProperty("name").GetString()] = tlFb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: true);
+                DeclareProperties(ti);
             }
             else
             {
@@ -379,6 +390,8 @@ sealed partial class Emitter
                             _ => FieldAttributes.Public,
                         };
                         if (f.TryGetProperty("static", out var st) && st.GetBoolean()) fattrs |= FieldAttributes.Static;
+                        if (f.TryGetProperty("initOnly", out var initOnly) && initOnly.GetBoolean())
+                            fattrs |= FieldAttributes.InitOnly;
                         var ftype = MapType(f.GetProperty("type"));
                         // `@kotlin.concurrent.Volatile` -> a `modreq(IsVolatile)` field (the C# `volatile` encoding).
                         var fb = f.TryGetProperty("volatile", out var vol) && vol.GetBoolean()
@@ -388,36 +401,7 @@ sealed partial class Emitter
                         ti.Fields[f.GetProperty("name").GetString()] = fb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);
-                // Real CLR properties: DefineProperty over the already-declared get_/set_ accessor methods, so a Kotlin
-                // property is seen as a PROPERTY (not a bare field/methods) by C#/F#/reflection. Additive — only fires
-                // when kotc emits the `properties` metadata. See docs/design-clr-property-model.md.
-                if (ti.Def.TryGetProperty("properties", out var props))
-                    foreach (var p in props.EnumerateArray())
-                    {
-                        MethodBuilder gm = null;
-                        MethodBuilder sm = null;
-                        if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String)
-                            ti.Methods.TryGetValue(g.GetString(), out gm);
-                        if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String)
-                            ti.Methods.TryGetValue(s.GetString(), out sm);
-                        // ECMA-335 requires the Property signature to describe the accessor's index parameters. Most
-                        // Kotlin properties have none, but a context/extension property's getter physically receives
-                        // those arguments. The CIR already links this Property row to its exact accessor methods; copy
-                        // their recorded physical signature instead of emitting an invalid parameterless Property row
-                        // and relying on a later metadata rewrite to repair it. A setter's final parameter is the value,
-                        // not an index parameter.
-                        var propertyParams = gm != null
-                            ? _mparams[gm]
-                            : sm != null ? _mparams[sm].SkipLast(1).ToArray() : Type.EmptyTypes;
-                        var pb = ti.TB.DefineProperty(
-                            p.GetProperty("name").GetString(),
-                            PropertyAttributes.None,
-                            MapType(p.GetProperty("type")),
-                            propertyParams);
-                        if (gm != null) pb.SetGetMethod(gm);
-                        if (sm != null) pb.SetSetMethod(sm);
-                        StampMemberAttrs(pb.SetCustomAttribute, p);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
-                    }
+                DeclareProperties(ti);
                 // Synthesized field-like .NET events (§4.2, #187): DefineEvent over the already-declared add_/remove_/raise_
                 // accessors, so a C#/reflection consumer sees a real `.event D E`. The accessors ALSO satisfy the interface
                 // add_/remove_ slots (wired by the referenced-interface binding pass below). bir2cir stamped `clrEventDecl`.
@@ -1079,6 +1063,37 @@ sealed partial class Emitter
             "protectedInternal" => MethodAttributes.FamORAssem,
             _ => MethodAttributes.Public,
         };
+
+    // Real CLR properties over already-declared get_/set_ methods. Both ordinary types and file facades use the same
+    // CIR declaration record; a top-level delegated property especially needs this explicit link because its physical
+    // storage is `<name>$delegate`, not a field from which dll2klib could reconstruct the source property name.
+    void DeclareProperties(TypeInfo ti)
+    {
+        if (!ti.Def.TryGetProperty("properties", out var props)) return;
+        foreach (var p in props.EnumerateArray())
+        {
+            MethodBuilder gm = null;
+            MethodBuilder sm = null;
+            if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String)
+                ti.Methods.TryGetValue(g.GetString(), out gm);
+            if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String)
+                ti.Methods.TryGetValue(s.GetString(), out sm);
+            // ECMA-335 requires the Property signature to describe the accessor's index parameters. Most Kotlin
+            // properties have none, but a context/extension property's getter physically receives those arguments.
+            // A setter's final parameter is the value, not an index parameter.
+            var propertyParams = gm != null
+                ? _mparams[gm]
+                : sm != null ? _mparams[sm].SkipLast(1).ToArray() : Type.EmptyTypes;
+            var pb = ti.TB.DefineProperty(
+                p.GetProperty("name").GetString(),
+                PropertyAttributes.None,
+                MapType(p.GetProperty("type")),
+                propertyParams);
+            if (gm != null) pb.SetGetMethod(gm);
+            if (sm != null) pb.SetSetMethod(sm);
+            StampMemberAttrs(pb.SetCustomAttribute, p);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
+        }
+    }
 
     // Method-level generic params, keyed by MethodInfo, so call sites can MakeGenericMethod.
     readonly Dictionary<MethodBuilder, Dictionary<string, GenericTypeParameterBuilder>> _methodTypeParams = new();

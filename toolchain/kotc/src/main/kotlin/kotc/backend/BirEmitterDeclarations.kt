@@ -232,8 +232,8 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// emitting their accessors would produce empty methods (ilverify ReturnMissing). Gate on an IrBlockBody
 	// getter/setter — exactly what accessorMethod can emit.
 	val userProps = ec.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
-	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
-	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
+	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
+	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
 	val userFields = userProps.mapNotNull { p ->
 		val bf = p.backingField ?: return@mapNotNull null
 		val visJson = if (emitsGet(p)) ""","vis":"internal"""" else ""
@@ -633,16 +633,18 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 	val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
-	// #6 non-null parameter PRECONDITIONS + getter return POSTCONDITION (gates on the accessor's REAL IR visibility, not
-	// the hardcoded emitted "public" — a private top-level property's accessor is emitted public but is not the surface).
+	val savedDelegatedAccessor = activeDelegatedAccessor
+	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
+	// #6 non-null parameter PRECONDITIONS + getter return POSTCONDITION, gated on the accessor's real IR visibility.
 	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
+	activeDelegatedAccessor = savedDelegatedAccessor
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 	val name = (if (isGetter) "get_" else "set_") + propName
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
-	return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":"public"${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]}"""
+	return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]}"""
 }
 
 internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
@@ -655,6 +657,8 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	val extRecv = acc.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
 	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
 	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+	val savedDelegatedAccessor = activeDelegatedAccessor
+	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
 	// [isValueParameter], not `Regular`: `context(c: Ctx) val C.p get() = c.n` carries its context parameter as an
 	// ordinary slot here exactly as the top-level accessor path does, so the accessor's arity matches its call sites'.
 	// The `mods.context` marker rides with it for the cross-module restore ([KotlinContextParameter]). Kept as this
@@ -673,6 +677,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// (a setter returns Unit -> naturally out of scope).
 	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
+	activeDelegatedAccessor = savedDelegatedAccessor
 	activeSemanticOwner = savedSemanticOwner
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
@@ -864,8 +869,9 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		// property gets a non-public field. (Kotlin's own access rules already keep same-class field reads valid.)
 		// An accessor-routed property's backing slot is an implementation detail. Keep it private; a frontend-valid
 		// `byref(obj.prop)` edge that ownership places in another TypeDef is projected by bir2cir via UnsafeAccessor.
-		// Only @ClrField / const / lateinit / delegated keep a plain source-visible field.
-		val routed = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p)
+		// Only @ClrField / const / lateinit keep a plain source-visible field. A delegated property exposes its
+		// generated accessor; the provider-typed field remains private.
+		val routed = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p)
 		val declaredVisibility = if (routed) "private" else visOf(p)
 		val v = declaredVisibility
 		val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
@@ -902,7 +908,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		// and a base-typed call (`shape.area()`) resolves to the slot.
 		.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && (it.body != null || it.modality == Modality.ABSTRACT) }
 		.map { method(it, static = false) }
-	// User custom accessors (`get() = …`/`set(v){…}`) -> get_/set_ methods (the access site routes through them).
+	// User custom and frontend-generated delegated accessors -> get_/set_ methods (access sites route through them).
 	// A property optimizes to a plain field; but one implementing a KOTLIN INTERFACE property must emit a get_/set_
 	// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
 	// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md. This is ALSO the sole producer
@@ -922,8 +928,8 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	fun dropFake(p: IrProperty) = p.isFakeOverride && implementationInherited(p.getter)
 	// `!isClrEventProperty`: a `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited through a base's
 	// interface) is not a real property and must not surface an accessor/property member.
-	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)
-	fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !p.isDelegated && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)
+	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)
+	fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p)
 	val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 		listOfNotNull(
 			p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
