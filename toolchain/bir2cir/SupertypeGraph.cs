@@ -57,7 +57,7 @@ static class SupertypeGraph
             {
                 Name = name,
                 Kind = Str(type["kind"]),
-                Arity = (type["typeParams"] as JsonArray)?.Count ?? 0,
+                Arity = TypeParameterFrame.Count(type),
                 Base = TypeJson.Read(type["base"]) as TypeNode.Fqn,
                 Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
                     .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>(),

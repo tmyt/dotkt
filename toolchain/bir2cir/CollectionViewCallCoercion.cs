@@ -72,7 +72,7 @@ static class CollectionViewCallCoercion
         return TypeJson.Read(expr["ret"]) ?? TypeJson.Read(expr["type"]);
     }
 
-    static bool IsCollectionViewSeam(TypeNode got, TypeNode want)
+    internal static bool IsCollectionViewSeam(TypeNode got, TypeNode want)
     {
         if (got is not TypeNode.Fqn { Args.Length: 1 } g
             || want is not TypeNode.Fqn { Args.Length: 1 } w

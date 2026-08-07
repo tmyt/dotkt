@@ -10,14 +10,273 @@ using DotKt.Klib.Metadata;
 const string Ns = "roundtrip.dispatchsurface.";
 const string CarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
 
-if (args.Length != 4)
+if (args.Length != 7)
     throw new ArgumentException(
-        "usage: CompanionMetadataInspector <producer.dll> <producer.klib> <producer.bir.json> <producer.cir.json>");
+        "usage: CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json> <consumer.dll>");
 
 VerifyLayerBoundary(args[2], args[3]);
+VerifyOwnershipLayerBoundary(args[4], args[5]);
 VerifyDll(args[0]);
+VerifyOwnershipDll(args[0]);
+VerifyUnsafeAccessorDll(args[6]);
 VerifyKlib(args[1]);
-Console.WriteLine("companion semantic BIR + nested physical CIR + metadata carrier + KLIB linkage: OK");
+Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
+
+static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
+{
+    static JsonObject Root(string path) => JsonNode.Parse(File.ReadAllText(path)) as JsonObject
+        ?? throw new InvalidDataException($"{path} is not a JSON object");
+    static JsonArray Types(JsonObject root) => root["types"] as JsonArray
+        ?? throw new InvalidDataException("compiler artifact has no types array");
+    static string? Text(JsonNode? node) => (node as JsonValue)?.GetValue<string>();
+    static IEnumerable<JsonObject> Objects(JsonNode? node)
+    {
+        if (node is JsonObject obj)
+        {
+            yield return obj;
+            foreach (var child in obj.Select(pair => pair.Value))
+                foreach (var nested in Objects(child)) yield return nested;
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array)
+                foreach (var nested in Objects(child)) yield return nested;
+    }
+
+    var bir = Root(birPath);
+    var cir = Root(cirPath);
+    var birOwnedTypes = Types(bir).OfType<JsonObject>()
+        .Where(t => Text(t["semanticOwner"]) is not null)
+        .ToArray();
+    Require(birOwnedTypes.Length >= 5, "ownership fixture has an incomplete semantic child set");
+    Require(birOwnedTypes.All(t => t["nestedIn"] is null),
+        "kotc BIR chose a CLR nested representation instead of carrying semantic ownership");
+
+    var cirTypes = Types(cir).OfType<JsonObject>()
+        .ToDictionary(t => Text(t["name"])!, StringComparer.Ordinal);
+    foreach (var semantic in birOwnedTypes)
+    {
+        var name = Text(semantic["name"])!;
+        var owner = Text(semantic["semanticOwner"])!;
+        Require(cirTypes.TryGetValue(name, out var physical), $"CIR lost semantic child {name}");
+        Require(Text(physical!["nestedIn"]) == owner,
+            $"bir2cir did not nest {name} under semantic owner {owner}");
+        Require(physical["semanticOwner"] is null,
+            $"CIR retained BIR-only semanticOwner on {name}");
+    }
+    Require(cirTypes.Values.Count(t => Text(t["nestedIn"]) == "roundtrip.ownership.Owner" &&
+            t["generated"] is JsonValue generated && generated.TryGetValue<bool>(out var isGenerated) && isGenerated) >= 3,
+        "local/anonymous/closure synthesis did not preserve Owner as its physical owner");
+
+    var birLocalDeclarations = Objects(bir)
+        .Where(node => Text(node["k"]) == "localFun")
+        .ToArray();
+    Require(birLocalDeclarations.Length >= 5, "ownership fixture has no lexical local-function declarations");
+    Require((bir["methods"] as JsonArray ?? []).OfType<JsonObject>()
+            .All(method => !Text(method["name"])!.StartsWith("dotkt$local", StringComparison.Ordinal)),
+        "kotc flattened a local function onto the file facade");
+    var declarationIds = birLocalDeclarations.Select(local => Text(local["id"])!).ToArray();
+    Require(declarationIds.Distinct(StringComparer.Ordinal).Count() == declarationIds.Length,
+        "BIR local-function declaration ids are not unique within the file");
+    Require(birLocalDeclarations.All(local => local["decl"] is JsonObject declaration
+            && Text(declaration["sourceName"]) is not null
+            && declaration["name"] is null && declaration["semanticOwner"] is null),
+        "kotc chose a CLR method name or physical owner for a lexical local function");
+    var localUses = Objects(bir)
+        .Where(node => Text(node["k"]) is "callLocal" or "localFunRef")
+        .ToArray();
+    Require(localUses.Length >= birLocalDeclarations.Length
+            && localUses.All(use => declarationIds.Contains(Text(use["id"]), StringComparer.Ordinal)),
+        "BIR local-function reference is not linked to an explicit declaration id");
+
+    Require(!Objects(cir).Any(node => Text(node["k"]) is "localFun" or "callLocal" or "localFunRef"),
+        "CIR retained a BIR-only lexical local-function node");
+    var physicalLocalMethods = (cir["methods"] as JsonArray ?? []).OfType<JsonObject>()
+        .Concat(cirTypes.Values.SelectMany(type =>
+            (type["methods"] as JsonArray ?? []).OfType<JsonObject>()))
+        .Where(method => Text(method["name"])?.StartsWith("dotkt$local", StringComparison.Ordinal) == true)
+        .ToArray();
+    var primaryLocalMethods = physicalLocalMethods
+        .Where(method => !Text(method["name"])!.EndsWith("$dotkt_suspend", StringComparison.Ordinal))
+        .ToArray();
+    Require(primaryLocalMethods.Length == birLocalDeclarations.Length,
+        "bir2cir did not materialize exactly one primary CLR MethodDef per lexical local function");
+
+    static bool IsMethodSlot(JsonNode? node, int slot) => node is JsonObject type
+        && Text(type["t"]) == "tv" && Text(type["scope"]) == "method"
+        && type["i"] is JsonValue index && index.TryGetValue<int>(out var value) && value == slot;
+    var sparseLocal = primaryLocalMethods.Single(method =>
+        Objects(method).Any(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond"));
+    Require(Text(sparseLocal["name"])!.EndsWith("_read", StringComparison.Ordinal)
+            && sparseLocal["typeParams"] is JsonArray typeParameters && typeParameters.Count == 1,
+        "sparse local-function fixture did not materialize as the expected generic read method");
+    Require(IsMethodSlot(sparseLocal["ret"], 0)
+            && sparseLocal["params"] is JsonArray sparseParams
+            && sparseParams.OfType<JsonObject>().All(parameter => IsMethodSlot(parameter["type"], 0)),
+        "sparse lexical generic slots were not compacted into the physical local-method frame");
+    var selectSecondCall = Objects(sparseLocal)
+        .Single(node => Text(node["k"]) == "callStatic" && Text(node["method"]) == "selectSecond");
+    Require(selectSecondCall["sig"] is JsonArray calleeSignature
+            && calleeSignature.Count == 2 && IsMethodSlot(calleeSignature[1], 1)
+            && selectSecondCall["typeArgs"] is JsonArray suppliedTypeArguments
+            && suppliedTypeArguments.Count == 2 && IsMethodSlot(suppliedTypeArguments[1], 0),
+        "local-method frame compaction rewrote the callee declaration frame or missed the supplied type argument");
+}
+
+static void VerifyOwnershipDll(string path)
+{
+    using var stream = File.OpenRead(path);
+    using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+    var md = pe.GetMetadataReader();
+    var owner = md.TypeDefinitions.Single(h => StripArities(DefinitionName(md, h)) == "roundtrip.ownership.Owner");
+    var ownerDef = md.GetTypeDefinition(owner);
+    var ownerChildren = ownerDef.GetNestedTypes().ToArray();
+    Require(ownerChildren.Any(h => md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Nested"),
+        "ordinary Kotlin nested class is not a CLR nested TypeDef of Owner");
+    var inner = ownerChildren.Single(h => md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Inner");
+    Require(md.GetTypeDefinition(inner).GetGenericParameters().Count == 1,
+        "inner class did not re-declare the generic owner's capture slot");
+
+    var shadowOwner = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.ownership.ShadowOwner");
+    var shadowEntry = md.GetTypeDefinition(shadowOwner).GetNestedTypes().Single(h =>
+        md.GetString(md.GetTypeDefinition(h).Name).Split('`')[0] == "Entry");
+    var shadowParameters = md.GetTypeDefinition(shadowEntry).GetGenericParameters()
+        .Select(h => md.GetString(md.GetGenericParameter(h).Name))
+        .ToArray();
+    Require(shadowParameters.Length == 2 && shadowParameters.Distinct(StringComparer.Ordinal).Count() == 2,
+        "shadowed inner type-parameter names collapsed distinct CLR generic slots");
+    Require(shadowParameters[0].StartsWith("dotkt$outer", StringComparison.Ordinal),
+        "captured outer generic slot does not use its compiler-owned physical name");
+    Require(ownerChildren.Count(h => HasAttribute(md, h,
+            "System.Runtime.CompilerServices.CompilerGeneratedAttribute")) >= 2,
+        "local/anonymous/closure implementation types are not nested under Owner");
+
+    var sparseSuspendOwner = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.ownership.SparseGenericSuspendOwner");
+    var sparseSuspendSm = md.GetTypeDefinition(sparseSuspendOwner).GetNestedTypes().Single(h =>
+        md.GetString(md.GetTypeDefinition(h).Name).Contains("$sm", StringComparison.Ordinal));
+    var sparseSuspendParams = md.GetTypeDefinition(sparseSuspendSm).GetGenericParameters().ToArray();
+    Require(sparseSuspendParams.Length == 2,
+        "generic-owner suspend lambda did not capture the complete owner parameter prefix");
+    Require(md.GetGenericParameter(sparseSuspendParams[0]).GetConstraints().Count > 0,
+        "generic-owner suspend lambda dropped the captured owner constraint");
+
+    var ownershipFacade = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.ownership.NestedOwnershipKt");
+    var sparseMethodSm = md.GetTypeDefinition(ownershipFacade).GetNestedTypes().Single(h =>
+        md.GetString(md.GetTypeDefinition(h).Name).Contains("sparseGenericSuspend", StringComparison.Ordinal));
+    Require(md.GetTypeDefinition(sparseMethodSm).GetGenericParameters().Count == 1,
+        "sparse generic-method suspend lambda did not compact its free method slot");
+    foreach (var lexicalOwnerName in new[] {
+                 "roundtrip.ownership.AccessorOwner",
+                 "roundtrip.ownership.DefaultInterfaceOwner",
+             })
+    {
+        var lexicalOwner = md.TypeDefinitions.Single(h =>
+            StripArities(DefinitionName(md, h)) == lexicalOwnerName);
+        Require(md.GetTypeDefinition(lexicalOwner).GetNestedTypes().Any(h => HasAttribute(md, h,
+                "System.Runtime.CompilerServices.CompilerGeneratedAttribute")),
+            $"accessor/default-interface synthesized type is not nested under {lexicalOwnerName}");
+    }
+
+    var valueGetter = ownerDef.GetMethods()
+        .Select(h => md.GetMethodDefinition(h))
+        .Single(x => md.GetString(x.Name) == "get_value");
+    Require((valueGetter.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
+        "nested private access still widened Owner.get_value");
+
+    var privateDefaultOwner = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.nc.PrivateDefaultOwner");
+    var privateDefaultMethods = md.GetTypeDefinition(privateDefaultOwner).GetMethods()
+        .Select(h => md.GetMethodDefinition(h))
+        .ToArray();
+    var secretGetter = privateDefaultMethods.Single(method => md.GetString(method.Name) == "get_secret");
+    Require((secretGetter.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
+        "default carrier widened PrivateDefaultOwner.get_secret");
+    Require(!privateDefaultMethods.Any(method =>
+            md.GetString(method.Name).StartsWith("dotkt$access$", StringComparison.Ordinal)),
+        "producer still exposes a compatibility access bridge for a private default");
+
+    var nonconstFacade = md.TypeDefinitions.Single(h => DefinitionName(md, h) == "roundtrip.nc.NonconstKt");
+    var topLevelPrivate = md.GetTypeDefinition(nonconstFacade).GetMethods().Select(md.GetMethodDefinition)
+        .Single(method => md.GetString(method.Name) == "privateFromNestedGenericCaller");
+    Require((topLevelPrivate.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
+        "top-level file-private function is still widened to assembly visibility");
+    var capturedCaller = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.nc.CapturedGenericNestedAccessorCaller+Entry");
+    var capturedAccessor = md.GetTypeDefinition(capturedCaller).GetMethods().Select(md.GetMethodDefinition)
+        .Single(method => md.GetString(method.Name).Contains("$privateFromNestedGenericCaller", StringComparison.Ordinal));
+    Require((capturedAccessor.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private &&
+            (capturedAccessor.Attributes & MethodAttributes.Static) != 0 && capturedAccessor.RelativeVirtualAddress == 0,
+        "captured-owner caller did not receive a private static extern UnsafeAccessor");
+    Require(md.GetTypeDefinition(capturedCaller).GetGenericParameters().Count == 1,
+        "captured-owner UnsafeAccessor host lost its enclosing generic frame");
+
+    var facade = md.TypeDefinitions.Single(h => DefinitionName(md, h) == "roundtrip.ownership.NestedOwnershipKt");
+    Require(md.GetTypeDefinition(facade).GetNestedTypes().Any(),
+        "top-level local class is not nested under its file facade");
+}
+
+static void VerifyUnsafeAccessorDll(string path)
+{
+    using var stream = File.OpenRead(path);
+    using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+    var md = pe.GetMetadataReader();
+    var accessors = md.TypeDefinitions.SelectMany(typeHandle => md.GetTypeDefinition(typeHandle).GetMethods()
+        .Select(methodHandle => (TypeHandle: typeHandle, Handle: methodHandle,
+            Definition: md.GetMethodDefinition(methodHandle))))
+        .Where(pair => pair.Definition.GetCustomAttributes().Select(md.GetCustomAttribute)
+            .Any(attribute => AttributeName(md, attribute) ==
+                "System.Runtime.CompilerServices.UnsafeAccessorAttribute"))
+        .ToArray();
+    Require(accessors.Length >= 10, "consumer did not synthesize all private-member UnsafeAccessors");
+    foreach (var (_, _, accessor) in accessors)
+    {
+        Require((accessor.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
+            "UnsafeAccessor declaration is not private");
+        Require((accessor.Attributes & MethodAttributes.Static) != 0 && accessor.RelativeVirtualAddress == 0,
+            "UnsafeAccessor declaration is not static extern/bodyless");
+        var attributes = accessor.GetCustomAttributes().Select(md.GetCustomAttribute)
+            .Select(attribute => AttributeName(md, attribute)).ToHashSet(StringComparer.Ordinal);
+        Require(attributes.Contains("System.Runtime.CompilerServices.UnsafeAccessorAttribute"),
+            "caller-side extern is missing UnsafeAccessorAttribute");
+        Require(attributes.Contains("System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
+            "caller-side UnsafeAccessor is missing CompilerGeneratedAttribute");
+    }
+
+    var secretAccessors = accessors.Where(pair =>
+        md.GetString(pair.Definition.Name).Contains("$get_secret", StringComparison.Ordinal)).ToArray();
+    Require(secretAccessors.Length == 6, "unexpected get_secret UnsafeAccessor set");
+    Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 1) == 5,
+        "generic owner slots were not preserved on generic UnsafeAccessor holder types");
+    Require(secretAccessors.Any(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Any(handle =>
+            md.GetGenericParameter(handle).GetConstraints().Count > 0)),
+        "constrained owner UnsafeAccessor lost its generic constraint");
+    var identityAccessor = accessors.Single(pair =>
+        md.GetString(pair.Definition.Name).Contains("$identity", StringComparison.Ordinal));
+    Require(md.GetTypeDefinition(identityAccessor.TypeHandle).GetGenericParameters().Count == 1 &&
+            identityAccessor.Definition.GetGenericParameters().Count == 1,
+        "owner and method generic frames were not kept in their respective forms on the UnsafeAccessor");
+    Require(accessors.Any(pair => md.GetString(pair.Definition.Name)
+            .Contains("$privateTopLevelDefaultValue", StringComparison.Ordinal)),
+        "top-level private default did not route through UnsafeAccessor");
+    var genericCallableAccessor = accessors.Single(pair =>
+        md.GetString(pair.Definition.Name).Contains("$secretValue", StringComparison.Ordinal));
+    Require(md.GetTypeDefinition(genericCallableAccessor.TypeHandle).GetGenericParameters().Any(handle =>
+            md.GetGenericParameter(handle).GetConstraints().Count > 0),
+        "generic callable-reference UnsafeAccessor lost its owner constraint");
+
+    var wrappers = md.TypeDefinitions
+        .Where(handle => DefinitionName(md, handle).StartsWith("dotkt$unsafe$holder$", StringComparison.Ordinal))
+        .SelectMany(handle => md.GetTypeDefinition(handle).GetMethods())
+        .Select(md.GetMethodDefinition)
+        .Where(method => md.GetString(method.Name).EndsWith("$invoke", StringComparison.Ordinal))
+        .ToArray();
+    Require(wrappers.Length == 7 && wrappers.All(method =>
+            (method.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Assembly &&
+            (method.Attributes & MethodAttributes.Static) != 0 && method.RelativeVirtualAddress != 0),
+        "generic UnsafeAccessor holders do not expose only compiler-generated internal wrappers");
+}
 
 static void VerifyLayerBoundary(string birPath, string cirPath)
 {
@@ -181,6 +440,8 @@ static void VerifyKlib(string path)
 
     Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName).Split('.').Any(p => p.StartsWith('$'))),
         "reserved physical companion carrier leaked into Kotlin metadata");
+    Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName).Contains("$sm", StringComparison.Ordinal)),
+        "compiler-generated suspend state-machine type leaked into Kotlin metadata");
     Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName) == Ns + "PrivateCompanionHost.Secret"),
         "private companion class leaked into public KLIB metadata");
     var privateOwner = Class(fragment, Ns + "PrivateCompanionHost");
@@ -188,6 +449,30 @@ static void VerifyKlib(string path)
     var constrainedGenericCompanion = Class(fragment, Ns + "ConstrainedGenericOwnerCompanionHost.Companion");
     Require(constrainedGenericCompanion.TypeParameter.Count == 0,
         "constrained owner's physical carrier capture parameters leaked onto the semantic companion");
+
+    var ownershipEntry = archive.Entries.Single(e =>
+        e.FullName.EndsWith("/package_roundtrip.ownership/0_ownership.knm", StringComparison.Ordinal));
+    using var ownershipStream = ownershipEntry.Open();
+    var ownership = PackageFragment.Parser.ParseFrom(ownershipStream);
+    Require(!ownership.Class.Any(c =>
+            QualifiedName(ownership, c.FqName).Split('.').Any(p =>
+                p.StartsWith("dotkt$", StringComparison.Ordinal) ||
+                p.StartsWith("<>", StringComparison.Ordinal))),
+        "nested compiler-generated implementation type leaked into Kotlin metadata");
+    Require(!ownership.Package.Function
+            .Concat(ownership.Class.SelectMany(c => c.Function))
+            .Any(function => String(ownership, function.Name).StartsWith("dotkt$local", StringComparison.Ordinal)),
+        "compiler-generated local function leaked into Kotlin metadata");
+    Require(!ownership.Class.SelectMany(c => c.Property)
+            .Any(property => String(ownership, property.Name) == "__outer"),
+        "compiler-generated enclosing-instance field leaked into Kotlin metadata");
+    var protectedNested = Class(ownership, "roundtrip.ownership.ProtectedNestedOwner.HiddenNested");
+    Require((protectedNested.Flags & 0xE) == 4,
+        "protected nested CLR type was projected as a public Kotlin classifier");
+    var shadowOwner = Class(ownership, "roundtrip.ownership.ShadowOwner");
+    Require(shadowOwner.TypeParameter.Count == 1 &&
+            shadowOwner.TypeParameter[0].UpperBound.Count != 0,
+        "generic owner constraint was dropped from the projected KLIB");
 }
 
 static void VerifyCompanion(

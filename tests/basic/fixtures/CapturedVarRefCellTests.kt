@@ -238,6 +238,25 @@ class CapturedVarRefCellLocalFunGeneric<T>(val t: T, val other: T) {
     }
 }
 
+class CapturedVarRefCellLocalFunMixedFrame<T>(val first: T, val second: T) {
+    fun pick(): T {
+        var current = first
+        fun <U> set(unused: U) { current = second }
+        set(1)
+        return current
+    }
+}
+
+// The local lift uses only the SECOND parameter of its enclosing method frame. Its own dense method#0 therefore
+// corresponds to the ref-cell registry's original method#1; preserving that authored edge is required when the cell
+// is constructed in the lifted method's compacted generic frame.
+fun <A, B> capturedVarRefCellSparseLocalFun(unused: A, value: B): B {
+    var current = value
+    fun set() { current = value }
+    set()
+    return current
+}
+
 // A lambda that only CALLS the local fun must capture what the local fun captures — the lift passes those values as
 // leading arguments AT THE CALL SITE, which here sits inside the lambda's own frame.
 fun capturedVarRefCellLocalFunViaClosure(): Int {
@@ -545,6 +564,8 @@ class CapturedVarRefCellTests {
         assertEquals(6, CapturedVarRefCellLocalFunInit().total)              // 3 + 3
         assertEquals(2, CapturedVarRefCellLocalFunGeneric(1, 2).pick())      // `other`, not `t`
         assertEquals("b", CapturedVarRefCellLocalFunGeneric("a", "b").pick())
+        assertEquals("b", CapturedVarRefCellLocalFunMixedFrame("a", "b").pick())
+        assertEquals("sparse", capturedVarRefCellSparseLocalFun(1, "sparse"))
         assertEquals(2, capturedVarRefCellLocalFunViaClosure())              // 2
         assertEquals(6, capturedVarRefCellLocalFunRecursive())               // 3 + 2 + 1
     }

@@ -71,7 +71,7 @@ static class ConstrainedTypeParameterReceiverBinding
             foreach (var item in arr)
             {
                 if (item is not JsonObject type || Str(type["name"]) is not string name) continue;
-                result[name] = (type["typeParams"] as JsonArray)?.Count ?? 0;
+                result[name] = TypeParameterFrame.Count(type);
                 Collect(type);
             }
         }
@@ -94,7 +94,7 @@ static class ConstrainedTypeParameterReceiverBinding
 
     static void BindType(JsonObject type, Dictionary<string, int> arity, bool close)
     {
-        var typeParams = type["typeParams"] as JsonArray ?? new JsonArray();
+        var typeParams = TypeParameterFrame.CloneDeclarations(type);
         if (type["ctors"] is JsonArray ctors)
             foreach (var ctor in ctors.OfType<JsonObject>())
                 BindMethod(ctor, typeParams, arity, close);

@@ -206,7 +206,19 @@ static class ClosureSynthesis
                         return;
                     }
                     foreach (var kv in o)
-                        if (kv.Key != "_syntheticTypeArgs" && kv.Value != null) Walk(kv.Value);
+                    {
+                        if (kv.Value == null || kv.Key == "_syntheticTypeArgs") continue;
+                        // These are facts in the ACCESSED DECLARATION'S generic frame. Only the call site's own
+                        // applications/typeArgs belong to the closure's lexical frame and may be rebound to captured
+                        // class slots. Rebinding a callee `!!0` here changes its formal method parameter into an
+                        // unrelated closure `!N`, corrupting the forwarder descriptor and its generic constraints.
+                        if (kv.Key is "sig" or "memberSig" or "clrOverrideSig" or "shapeTypes" or "paramSig"
+                            or "delegationSig" or "memberSignature" or "memberOwnerTypeParams"
+                            or "memberMethodTypeParams" or "memberReturnType" or "memberType"
+                            || (kv.Key == "argTypes" && Str(o["k"]) != "new"))
+                            continue;
+                        Walk(kv.Value);
+                    }
                     break;
                 case JsonArray a:
                     foreach (var item in a)
@@ -275,6 +287,11 @@ static class ClosureSynthesis
         // Emit `typeParams` only when non-empty — matches kotc (typeParamsJson omitted the key entirely for a
         // non-generic closure), so the shape is byte-identical for the common case.
         if (sc["typeParams"] is JsonArray tps && tps.Count > 0) cls["typeParams"] = tps.DeepClone();
+        if (sc["semanticOwner"] is JsonValue owner) cls["semanticOwner"] = owner.DeepClone();
+        if (sc["outerTypeParamCount"] is JsonValue outerCount)
+            cls["outerTypeParamCount"] = outerCount.DeepClone();
+        if (sc["outerTypeParamOffset"] is JsonValue outerOffset)
+            cls["outerTypeParamOffset"] = outerOffset.DeepClone();
         if (sc["_syntheticTypeArgs"] is JsonArray origins) cls["_syntheticTypeArgs"] = origins.DeepClone();
         cls["base"] = null;
         cls["interfaces"] = new JsonArray();

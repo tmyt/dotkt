@@ -427,6 +427,14 @@ object DefaultArgSolo {
     inline fun twice(n: Int, f: (Int) -> Int): Int = f(n) + f(n)
 }
 
+// #225: one default expression is rendered both into its metadata carrier and at a same-module omitting call.
+// A local function in that expression must keep one lexical declaration identity rather than being registered twice
+// (or emitted once with the second rendering left as an unresolved local-function call).
+fun defaultArgLocalFunction(block: () -> Int = {
+    fun answer(): Int = 17
+    answer()
+}): Int = block()
+
 class DefaultArgumentTests {
     @TestAttribute
     fun defaultArguments() {
@@ -444,6 +452,7 @@ class DefaultArgumentTests {
         assertEquals("DefaultArgP(x=10, y=2, z=30)", p.copy(x = 10, z = 30).toString())            // was P(x=10, y=2, z=30)
         assertEquals("Hello, Kotlin!", defaultArgGreet("Kotlin"))                                  // Hello, Kotlin!
         assertEquals("Hello, Kotlin?", defaultArgGreet("Kotlin", punct = "?"))                     // Hello, Kotlin?
+        assertEquals(17, defaultArgLocalFunction())
     }
 
     @TestAttribute

@@ -201,6 +201,20 @@ fun elvisCoerce(q: Int?): Int = coerceRun { return@coerceRun (q ?: -1) }
 fun uintSc(u: UInt?): UInt = coerceRun { if (u != null) return@coerceRun u; 0u }
 fun <T : Any> pickCoerce(x: T?, d: T): T = coerceRun { if (x != null) return@coerceRun x; d }
 
+// A forwarded inline parameter can be materialized independently by more than one nested inline call. Each
+// materialization is a distinct BIR declaration graph, including any local function declared inside the lambda.
+inline fun <R> keepDeferred(crossinline block: () -> R): () -> R = { block() }
+inline fun <R> keepDeferredTwice(crossinline block: () -> R): Pair<() -> R, () -> R> =
+    Pair(keepDeferred(block), keepDeferred(block))
+
+fun materializedLocalFunctionPair(): Pair<Int, Int> {
+    val pair = keepDeferredTwice {
+        fun localValue(): Int = 73
+        localValue()
+    }
+    return Pair(pair.first(), pair.second())
+}
+
 // A tail return in an inline carrier is not necessarily the carrier's own return. With `?.let`, Kotlin lowers
 // `return it` as the lambda's tail IrReturn targeting the enclosing function. The emitter must preserve that
 // non-local control transfer instead of treating `it` as the carrier result and then falling through.
@@ -268,6 +282,11 @@ fun <N : GenericNullNode<N>> genericNullTail(start: N): N {
 }
 
 class InlineTests {
+    @TestAttribute
+    fun forwardedCarrierLocalFunctionIds() {
+        assertEquals(Pair(73, 73), materializedLocalFunctionPair())
+    }
+
     @TestAttribute
     fun valueInline() {
         assertEquals(5, twice(3) { it + 1 })   // f(f(3)) = 5

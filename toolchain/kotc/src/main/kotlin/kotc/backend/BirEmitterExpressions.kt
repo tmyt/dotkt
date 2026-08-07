@@ -88,10 +88,90 @@ internal fun BirEmitter.expr(node: IrExpression): String {
 	// A value the ENCLOSING call's evaluation plan bound (§2.7): every reader renders as that binding's `bindRef` read.
 	planReads[node]?.let { return it }
 	// Only a CALL can supply values that need a plan; everything else renders straight through.
-	if (node !is org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression)
-		return styStamped(node, exprInner(node))
-	val (plan, s) = withCallPlan(node) { styStamped(node, exprInner(node)) }
+	if (node !is org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression) {
+		val rendered = exprInner(node)
+		val withMember = if (node is IrGetField) memberFieldVisibilityStamped(node.symbol.owner, rendered) else rendered
+		return styStamped(node, withMember)
+	}
+	val (plan, s) = withCallPlan(node) {
+		styStamped(node, memberVisibilityStamped(node, exprInner(node)))
+	}
 	return plan.wrap(s, birType(node.type).toJson())
+}
+
+/**
+ * A default/inline body can cross an assembly before bir2cir selects its physical CLR owner. Preserve the frontend
+ * fact that a function access targets a private/protected declaration; the consuming bir2cir can then author a
+ * caller-side UnsafeAccessor without rediscovering Kotlin lexical privilege from a CLR reference.
+ */
+private fun BirEmitter.memberVisibilityStamped(
+	node: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	s: String,
+): String = memberVisibilityStamped(
+	node.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility ?: return s,
+	s,
+	preserveDeclaration = node is IrCall && node.superQualifierSymbol != null,
+)
+
+/** The callable-reference path is not an [IrFunctionAccessExpression], but carries the same resolved declaration. */
+internal fun BirEmitter.memberVisibilityStamped(
+	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
+	s: String,
+	preserveDeclaration: Boolean = false,
+): String {
+	val visibility = visOf(target)
+	val restricted = visibility == "private" || visibility == "protected"
+	if (!restricted && !preserveDeclaration) return s
+	if (!(s.startsWith("{\"k\":\"callInstance\"") || s.startsWith("{\"k\":\"callStatic\"") ||
+			s.startsWith("{\"k\":\"new\"") || s.startsWith("{\"k\":\"newBoundDelegate\""))) return s
+	val ownerTypeParams = memberOwnerTypeParamsJson(target)
+	val methodTypeParams = (target as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.let {
+		typeParamsJson(it.typeParameters)
+			.replaceFirst(",\"typeParams\":", ",\"memberMethodTypeParams\":")
+	}.orEmpty()
+	val declarationFact = when (target) {
+		is org.jetbrains.kotlin.ir.declarations.IrConstructor -> {
+			val signature = target.parameters
+				.filter { it.kind == org.jetbrains.kotlin.ir.declarations.IrParameterKind.Regular }
+				.joinToString(",") { birType(it.type).toJson() }
+			",\"memberSignature\":[${signature}]"
+		}
+		is org.jetbrains.kotlin.ir.declarations.IrFunction -> {
+			val signature = overloadSigField(target)
+				.replaceFirst(",\"sig\":", ",\"memberSignature\":")
+			signature + ",\"memberReturnType\":" + birType(target.returnType).toJson()
+		}
+		else -> ""
+	}
+	val visibilityFact = if (restricted) ",\"memberVisibility\":" + str(visibility) else ""
+	return s.dropLast(1) + visibilityFact + ownerTypeParams + methodTypeParams +
+		declarationFact + "}"
+}
+
+/**
+ * Declaration-form generic facts for a private/protected member's semantic owner. These stay in Kotlin vocabulary;
+ * bir2cir decides whether the lexical edge needs a CLR UnsafeAccessor and, if so, maps this frame to method slots.
+ */
+private fun BirEmitter.memberOwnerTypeParamsJson(
+	target: org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility,
+): String {
+	val owner = target.parent as? org.jetbrains.kotlin.ir.declarations.IrClass ?: return ""
+	val params = innerEnclosingTypeParams(owner) + owner.typeParameters
+	return typeParamsJson(params).replaceFirst(",\"typeParams\":", ",\"memberOwnerTypeParams\":")
+}
+
+/** Preserve the declaration type as well as visibility: a write value can be a subtype and is not a field signature. */
+internal fun BirEmitter.memberFieldVisibilityStamped(
+	field: org.jetbrains.kotlin.ir.declarations.IrField,
+	s: String,
+): String {
+	val visibility = visOf(field)
+	if (visibility != "private" && visibility != "protected") return s
+	if (!(s.startsWith("{\"k\":\"field\"") || s.startsWith("{\"k\":\"lateinitGet\"") ||
+			s.startsWith("{\"k\":\"staticField\"") || s.startsWith("{\"k\":\"setField\"") ||
+			s.startsWith("{\"k\":\"setFieldExpr\"") || s.startsWith("{\"k\":\"staticFieldSet\""))) return s
+	return s.dropLast(1) + ",\"memberVisibility\":" + str(visibility) + memberOwnerTypeParamsJson(field) +
+		",\"memberType\":" + birType(field.type).toJson() + "}"
 }
 
 /** #122's `sty` stamp on the value-node kinds bir2cir's StaticType reads a type from (see the note above). */
@@ -235,7 +315,8 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		else {
 		// A generic .NET type (`Collection<Int>()`) -> a constructed `clrg:` spec; non-generic stays plain.
 		val clr: TypeNode? = klass?.let { clrName(it) }?.let { net ->
-			val args = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
+			val args = (node.type as? IrSimpleType)?.arguments
+				?.mapNotNull { (it as? IrTypeProjection)?.type?.let(::birType) }
 			if (args.isNullOrEmpty()) TypeNode.Fqn(net) else TypeNode.Fqn(net, args)
 		}
 		// A collection ctor `ArrayList<R>()` / `HashSet<T>()` (kotlin.collections.* = java.util.* typealiases) -> the
@@ -243,8 +324,18 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		// `map`/`filter`/`mapTo` (which build an ArrayList) compile straight to the BCL collection DotKt uses.
 		// A builtin-exception ctor (`throw IllegalStateException(msg)`) is NOT mapped here: it emits a plain `new
 		// @kotlin.IllegalStateException` and bir2cir rewrites it to `newClr System.X` off the stdlib's @ClrTypeAlias.
-		if (clr != null)
-			"""{"k":"new","type":${clr.toJson()},"argTypes":[${node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }.joinToString(",") { birType(it.type).toJson() }}],"args":[${ctorArgs.joinToString(",")}]}"""
+		if (clr != null) {
+			// A referenced DotKt inner class carries a physical @ClrExternal owner, but it is still a Kotlin inner
+			// construction: the enclosing instance is a leading constructor argument in the CLR representation just as
+			// it is for a same-module declaration. A foreign CLR nested type is never `isInner`, so it keeps its ordinary
+			// declared constructor vector.
+			val outerType = if (klass?.isInner == true)
+				dispatchReceiver(node)?.let { birType(it.type).toJson() } else null
+			val externalArgs = (listOfNotNull(outerArg) + ctorArgs).joinToString(",")
+			val externalTypes = (listOfNotNull(outerType) + node.symbol.owner.parameters
+				.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type).toJson() }).joinToString(",")
+			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs]}"""
+		}
 		else {
 			// A lifted local class prepends its captured outer locals (evaluated here, in the outer context).
 			val capArgs = klass?.let { localClassCaptures[it] }?.map { capValueExpr(it) } ?: emptyList()
@@ -255,8 +346,14 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				dispatchReceiver(node)?.let { birType(it.type).toJson() } else null
 			val capTypes = klass?.let { localClassCaptures[it] }.orEmpty()
 				.map { str(captureFieldType(it)) }
+			// Constructor parameter declarations live in the constructed class's generic frame. Close that frame at
+			// this call site before publishing the selected signature: for `class L<U>(u: U); L(0)` the argument slot
+			// is `Int`, not whichever type variable happens to occupy index zero in the enclosing caller. This is the
+			// same callee-to-caller substitution used by default-argument rendering.
+			val localCtorSubst = if (klass?.parent !is IrFile && klass?.parent !is IrClass)
+				callSiteSubstitutor(node, node.symbol.owner) else null
 			val regularTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
-				.map { birType(it.type).toJson() }
+				.map { birType(localCtorSubst?.substitute(it.type) ?: it.type).toJson() }
 			val ctorArgTypes = (listOfNotNull(outerType) + capTypes + regularTypes).joinToString(",")
 			// `ownerSpec` names a lifted generic-capturing LOCAL CLASS as its CONSTRUCTED `L<T>` (own args from
 			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a

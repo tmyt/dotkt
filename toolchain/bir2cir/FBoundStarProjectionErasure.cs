@@ -233,9 +233,8 @@ static class FBoundStarProjectionErasure
                 // retain G<X> and call this member there; a true G<*> receiver cannot supply a value for T.
                 if (HasOwnerDependentMethodConstraint(method)) continue;
                 // A non-public method cannot implicitly fill a public CLR interface slot. Give it the same
-                // deterministic forwarding bridge as an owner-T-dependent signature. This includes a
-                // Kotlin-private member reached from a lifted nested class: that class is a separate CLR
-                // type, and CrossClassPrivateWidening later makes the original assembly-callable.
+                // deterministic forwarding bridge as an owner-T-dependent signature. The bridge is declared on the
+                // original owner, so it can invoke a private implementation without changing source visibility.
                 var dependent = ContainsOwnerTvInSignature(method) || !IsPublic(method);
                 var slot = InterfaceSlot(method, dependent ? StarMethodName(owner, method) : null, owners, refs);
                 var key = MethodKey(slot);

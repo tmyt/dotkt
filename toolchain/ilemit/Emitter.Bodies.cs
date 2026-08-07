@@ -626,9 +626,10 @@ sealed partial class Emitter
             case "byrefLoad":
             {
                 // Reading through a managed pointer yields the POINTEE; the address of that pointee is the pointer
-                // itself. A `var x by byref(...)` delegate read reaches here as `byrefLoad`, never as a raw local, so
-                // without this arm `swap(byref(x), byref(y))` fell to the rvalue path below and swapped two
-                // temporaries — verifiable IL that silently drops the write.
+                // itself. A caller-side UnsafeAccessor field projection carries the pointer expression directly;
+                // a `var x by byref(...)` delegate read carries a named byref local. In either form, materializing the
+                // pointee into a temp would pass the temp's address and silently lose the callee's write.
+                if (e.TryGetProperty("ptr", out var pointer)) { EmitExpr(pointer); return; }
                 var bn = e.GetProperty("local").GetString();
                 if (_locals.TryGetValue(bn, out var bl) && bl.LocalType.IsByRef) { _il.Emit(OpCodes.Ldloc, bl); return; }
                 if (_args.TryGetValue(bn, out var ba) && _argTypes[bn].IsByRef) { _il.Emit(OpCodes.Ldarg, ba); return; }

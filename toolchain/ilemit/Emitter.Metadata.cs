@@ -16,6 +16,7 @@ using System.Text.Json;
 sealed partial class Emitter
 {
     sealed record EncodedAttribute(ConstructorInfo Constructor, byte[] Blob);
+    sealed record NamedAttributeArg(bool Field, string Name, Type Type, object Value);
 
     // Fields carrying `@kotlin.concurrent.Volatile` (kotc emits `"volatile":true`). Emitted with a REQUIRED
     // `modreq(System.Runtime.CompilerServices.IsVolatile)` custom modifier — EXACTLY how C# encodes a `volatile`
@@ -50,6 +51,13 @@ sealed partial class Emitter
     {
         var attr = SlotName(a.GetProperty("attr"));   // `attr` is a structured `{t:fqn}` identity node (#48)
         var args = a.GetProperty("args").EnumerateArray().Select(ConstArgValue).ToArray();
+        var namedArgs = a.TryGetProperty("namedArgs", out var named)
+            ? named.EnumerateArray().Select(item => new NamedAttributeArg(
+                item.GetProperty("kind").GetString() == "field",
+                item.GetProperty("name").GetString(),
+                ClrRef(item.GetProperty("type")),
+                ConstArgValue(item.GetProperty("value")))).ToArray()
+            : Array.Empty<NamedAttributeArg>();
         if (a.TryGetProperty("attrExternal", out var extF) && extF.GetBoolean())
         {
             // An EXTERNAL .NET attribute (#54/#48): its type lives in a referenced assembly, not this one. The carried
@@ -59,7 +67,7 @@ sealed partial class Emitter
                 : ClrRef(attr);
             var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
             var nctor = at.GetConstructor(argTypes);
-            return TryAttribute(nctor, argTypes, args, attr);
+            return TryAttribute(nctor, argTypes, args, namedArgs, attr);
         }
         // The attribute type must be emitted in THIS assembly (present in _types). A stdlib-only annotation that the app
         // merely APPLIES — e.g. `@kotlin.OptIn(ExperimentalAtomicApi::class)` opting into an experimental stdlib API — is
@@ -86,10 +94,10 @@ sealed partial class Emitter
             hits.Add((ti.Ctors[i], parameterNodes.Select(MapType).ToArray()));
         }
         if (hits.Count == 0)
-            return TryAttribute(null, Array.Empty<Type>(), args, attr); // existing policy: an unencodable source annotation is skipped
+            return TryAttribute(null, Array.Empty<Type>(), args, namedArgs, attr); // existing policy: an unencodable source annotation is skipped
         if (hits.Count > 1)
             throw new InvalidOperationException($"ilemit: attribute constructor descriptor {attr}{a.GetProperty("argTypes").GetRawText()} links {hits.Count} local declarations");
-        return TryAttribute(hits[0].ctor, hits[0].parameterTypes, args, attr);
+        return TryAttribute(hits[0].ctor, hits[0].parameterTypes, args, namedArgs, attr);
     }
 
     // Stamp each CIR `attrs` entry of a field/property/return-parameter decl onto its builder — the SAME generic
@@ -109,13 +117,14 @@ sealed partial class Emitter
         }
     }
 
-    EncodedAttribute? TryAttribute(ConstructorInfo? ctor, Type[] parameterTypes, object[] args, string attr)
+    EncodedAttribute? TryAttribute(ConstructorInfo? ctor, Type[] parameterTypes, object[] args,
+        NamedAttributeArg[] namedArgs, string attr)
     {
         try
         {
             if (ctor == null) throw new ArgumentException("attribute constructor was not found");
             if (parameterTypes.Length != args.Length) throw new ArgumentException("attribute argument count does not match constructor");
-            return new EncodedAttribute(ctor, EncodeAttributeBlob(parameterTypes, args));
+            return new EncodedAttribute(ctor, EncodeAttributeBlob(parameterTypes, args, namedArgs));
         }
         catch (Exception ex) when (ex is NotSupportedException || ex is ArgumentException)
         {
@@ -125,19 +134,64 @@ sealed partial class Emitter
     }
 
     void SetAttribute(Action<ConstructorInfo, byte[]> set, ConstructorInfo ctor, Type[] parameterTypes, params object[] args)
-        => set(ctor, EncodeAttributeBlob(parameterTypes, args));
+        => set(ctor, EncodeAttributeBlob(parameterTypes, args, Array.Empty<NamedAttributeArg>()));
 
     // II.23.3: prolog, fixed arguments in constructor order, then zero named arguments. Parameter Types come from the
     // same target universe as the constructor; only their ECMA element kind is inspected, never their host identity.
-    static byte[] EncodeAttributeBlob(Type[] parameterTypes, object[] args)
+    static byte[] EncodeAttributeBlob(Type[] parameterTypes, object[] args, NamedAttributeArg[] namedArgs)
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         writer.Write((ushort)1);
         for (var i = 0; i < args.Length; i++) WriteAttributeValue(writer, parameterTypes[i], args[i]);
-        writer.Write((ushort)0);
+        writer.Write((ushort)namedArgs.Length);
+        foreach (var named in namedArgs)
+        {
+            writer.Write(named.Field ? (byte)0x53 : (byte)0x54); // FIELD / PROPERTY
+            WriteFieldOrPropType(writer, named.Type);
+            WriteSerString(writer, named.Name);
+            WriteAttributeValue(writer, named.Type, named.Value);
+        }
         writer.Flush();
         return stream.ToArray();
+    }
+
+    // ECMA-335 II.23.3 FieldOrPropType. CIR states the named argument's declared type explicitly; ilemit encodes that
+    // fact without reflecting over the attribute property or inferring a Kotlin annotation shape.
+    static void WriteFieldOrPropType(BinaryWriter writer, Type type)
+    {
+        if (type.IsEnum)
+        {
+            writer.Write((byte)0x55);
+            WriteSerString(writer, type.FullName);
+            return;
+        }
+        if (type.IsArray)
+        {
+            writer.Write((byte)0x1d);
+            WriteFieldOrPropType(writer, type.GetElementType());
+            return;
+        }
+        var code = type.FullName switch
+        {
+            "System.Boolean" => 0x02,
+            "System.Char" => 0x03,
+            "System.SByte" => 0x04,
+            "System.Byte" => 0x05,
+            "System.Int16" => 0x06,
+            "System.UInt16" => 0x07,
+            "System.Int32" => 0x08,
+            "System.UInt32" => 0x09,
+            "System.Int64" => 0x0a,
+            "System.UInt64" => 0x0b,
+            "System.Single" => 0x0c,
+            "System.Double" => 0x0d,
+            "System.String" => 0x0e,
+            "System.Type" => 0x50,
+            "System.Object" => 0x51,
+            _ => throw new NotSupportedException($"custom attribute named argument type '{type}' is not supported"),
+        };
+        writer.Write((byte)code);
     }
 
     static void WriteAttributeValue(BinaryWriter writer, Type type, object value)

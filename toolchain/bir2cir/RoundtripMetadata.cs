@@ -41,6 +41,7 @@ static class RoundtripMetadata
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
     const string AKObject       = Ns + "KotlinObjectAttribute";
+    const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
@@ -120,6 +121,11 @@ static class RoundtripMetadata
         // reads back off the ref/rt DLL to drive the single-field erase-to-underlying lowering.
         if (ModFlag(to, "value")) Append(to, Marker(AKValue));       // `value` class (@JvmInline)
         if (ModFlag(to, "object")) Append(to, Marker(AKObject));     // `object` singleton
+        if (ModFlag(to, "inner"))
+        {
+            var capturedCount = to["capturedTypeParams"] is JsonArray captured ? captured.Count : 0;
+            Append(to, Marker(AKInner, IntArg(capturedCount)));
+        }
         // [KotlinCompanion(version, bytes)] (#275) — the association, source name, and bir2cir-resolved physical
         // representation. MaterializeCompanionCarriers above consumes kotc's semantic-only {owner,name} fact.
         if (to["kotlinCompanion"] is JsonObject companion)
@@ -531,6 +537,7 @@ static class RoundtripMetadata
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),
             AttrClass(AKObject, Ctor()),
+            AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position

@@ -853,8 +853,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// them to the rt `ClrIteratorBridge`/`ClrCollectionDefaults` helpers off the ref.dll @ClrTypeAlias metadata. kotc
 	// emits the PLAIN member call (faithful IR); it does NOT name the helper class.
 
-	// A call to a lifted local function -> static call with captured values (incl. enclosing `this`) prepended.
-	localFns[callee]?.let { (lname, caps, tps) ->
+	// A call to a lexical local declaration. The declaration id is the dispatch identity; bir2cir resolves it from
+	// lexical scope and only then authors the physical static call and owner.
+	localFns[callee]?.let { local ->
+		val caps = local.captures
 		val capArgs = caps.map { capValueExpr(it) }
 		// The lift emits the callee's OWN value params in declaration order (receivers before regulars, see liftLocalFn),
 		// so a receiver-bearing local (a local extension fun called as `x.f()`) must pass its dispatch/extension receiver
@@ -873,27 +875,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 			callee.parameters.filter { it.kind == IrParameterKind.ExtensionReceiver }.map { birType(it.type).toJson() } +
 			callee.parameters.filter { isValueParameter(it) }.map { birType(it.type).toJson() })
 			.joinToString(",")
-		// If the lifted method is generic (captured enclosing type params), pass them as type arguments.
-		val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { tvOf(it).toJson() }}]"""
-		// #199 DESIGN B — same two-axis contract as a top-level function call, completing it for the LAST `owner:null`
-		// callStatic shape. The lifted static `__local<n>_<fn>` lives in the CURRENT file's file class (liftLocalFn ->
-		// liftedMethods). `owner:null` stays (the load-bearing substitution/recognition axis — a lifted-local call is
-		// never intrinsic-substituted, but the invariant that owner:null ⇔ "not owned by a named class" holds), and the
-		// DISPATCH hint `calleeOwner = <this file class>` scopes ilemit's lookup to the RIGHT file class FIRST (mirrors
-		// `sty`; the owner-null substitution machinery IGNORES it). Uses `fileClass` directly, not `calleeOwnerTag`,
-		// whose IrFile-parent gate excludes a local fn (its parent is the enclosing function).
-		//   The name `__local<n>` embeds `scopeCounter`, which is MONOTONIC across all files in one kotc invocation (one
-		// BirEmitter reused per file; emitFile resets liftedMethods but NOT scopeCounter). Every canonical build is one
-		// invocation per assembly, so two `__local<n>` with the same `<n>` never coexist in an assembly and ilemit's
-		// the old global lookup happened to resolve correctly — explicit ownership is still mandatory (no reproducible mis-dispatch
-		// in a single-invocation build; only two SEPARATE kotc invocations linked into one assembly collide on `__local0`).
-		// It is the method-dispatch analog of `synthScope` (which already per-file-prefixes synthetic closure TYPE names
-		// against the same cross-file link collision) and closes the Design-B rule that every owner:null callStatic
-		// carries its FIR-resolved dispatch owner.
+		val resolvedTypeArgs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
+		val typeArgs = if (local.typeParams.isEmpty()) "" else ""","typeArgs":[${
+			localFunctionTypeArgs(local, callee, resolvedTypeArgs).joinToString(",") { it.toJson() }
+		}]"""
 		// A lift changes only the declaration's location/parameter list; it does not stop being a Kotlin suspend
 		// call. Preserve the same call-site fact as every other suspend call so bir2cir can route it to the lowered
 		// continuation entry. kotc deliberately does not name that CLR entry here.
-		return """{"k":"callStatic","owner":null,"method":${str(lname)},"sig":[$localSig],"args":[${(capArgs + recvArgs + localRegArgs).joinToString(",")}]$typeArgs${suspendCallTag(callee)},"calleeOwner":${fqnJson(fileClass)}}"""
+		return """{"k":"callLocal","id":${str(local.id)},"sig":[$localSig],"args":[${(capArgs + recvArgs + localRegArgs).joinToString(",")}]$typeArgs${suspendCallTag(callee)}}"""
 	}
 
 	// Inlining (lambda-param inline funs only; lambda-less inline = JIT's job — see [[clr-not-jvm-discard-jvmisms]]).
@@ -1952,6 +1941,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 	}
 	// Instance method on a user class, or a sibling top-level call.
 	return if (recv != null) {
+		// Render the receiver before deriving its owner TypeSpec. An object-literal receiver materializes its lifted
+		// class at this point and records any enclosing generic parameters captured by that class. Deriving ownerSpec
+		// first sees neither fact and emits an open `dotkt$obj::member` call beside `new dotkt$obj<T>`.
+		val renderedRecv = expr(recv)
 		// `it.hasNext()`/`it.next()` on a Kotlin iterator, `xs.iterator()` on a Kotlin iterable dispatch on the REAL
 		// generic identity via ownerSpec below (`kotlin.collections.Iterator[int]` / `Iterable[int]`) — bir2cir
 		// substitutes/normalizes them (no monomorphized synthetic; #58).
@@ -1967,7 +1960,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// -- lives on the BCL interface FindMethod skips). ilemit gates on the owner-interface so non-collection misses
 		// still throw. See ilemit EmitDynamicCall.
 		val dynRet = ""","dynRet":${birType(call.type).toJson()}"""
-		"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr, declaringClass?.defaultType)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}$anySlotTag${superTag(call)}}"""
+		"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr, declaringClass?.defaultType, renderedRecv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}$anySlotTag${superTag(call)}}"""
 	} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}${calleeOwnerTag(callee)}}"""
 }
 
@@ -2129,20 +2122,22 @@ internal fun BirEmitter.argExpr(arg: IrExpression, param: IrValueParameter?): St
  *  twin of [argExpr]'s value coercion — a member call on `kotlin.Int`/`kotlin.Char`/… (a primitive
  *  operator, `compareTo`, `toString`, …) needs the raw value, not a `Nullable<T>` struct load / a box. A no-op
  *  for any non-primitive owner. */
-internal fun BirEmitter.recvExpr(recv: IrExpression, ownerType: TypeNode, ownerIr: IrType?): String {
+internal fun BirEmitter.recvExpr(recv: IrExpression, ownerType: TypeNode, ownerIr: IrType?, rendered: String? = null): String {
+	fun value() = rendered ?: expr(recv)
 	// The owner's value-primitive-ness is read from the IR (`ownerIr` = the member's declaring class, or the
 	// receiver's own type when the receiver was boxed to Any) — no kotlin.* primitive FQN table.
 	val ownerPrim = ownerIr?.isPrimitiveOrUnsigned() == true || recv.type.isPrimitiveOrUnsigned()
-	if (!ownerPrim || isPreUnwrappedRead(recv)) return expr(recv)
-	nullableElem(recv.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${expr(recv)}}""" }
-	if (birType(recv.type) == OBJ) return """{"k":"cast","type":${str(ownerType)},"e":${expr(recv)}}"""
-	return expr(recv)
+	if (!ownerPrim || isPreUnwrappedRead(recv)) return value()
+	nullableElem(recv.type)?.let { elem -> return """{"k":"nullableValue","elem":${str(elem)},"e":${value()}}""" }
+	if (birType(recv.type) == OBJ) return """{"k":"cast","type":${str(ownerType)},"e":${value()}}"""
+	return value()
 }
 
 /** A `byref(...)` target that is an own-source-set property read -> its BACKING-FIELD node, so ilemit takes the
  *  field address (`ldflda <backing>`) instead of addressing an accessor's return value (Phase 5). The field is
- *  INTERNAL, hence reachable across types in-module. Null for a non-property, a .NET/external property, or a
- *  computed/delegated/lateinit/@ClrField property (no plain in-module backing field to address). */
+ *  private when it is accessor-routed. Preserve the frontend declaration fact on the address node; bir2cir decides
+ *  whether its physical owner differs and needs an UnsafeAccessor. Null for a non-property, a .NET/external property,
+ *  or a computed/delegated/lateinit/@ClrField property (no plain in-module backing field to address). */
 internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	val call = inner as? IrCall ?: return null
 	val callee = call.symbol.owner
@@ -2150,10 +2145,12 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	if (callee !== prop.getter) return null
 	val cls = callee.parent as? IrClass ?: return null
 	if (isExternalNetType(cls)) return null
-	if (prop.backingField == null || prop.isDelegated || prop.isLateinit || isClrField(prop)) return null
+	val backing = prop.backingField ?: return null
+	if (prop.isDelegated || prop.isLateinit || isClrField(prop)) return null
 	val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
 	val owner = ownerSpec(cls, dispatchReceiver(call)?.type).toJson()
-	return """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
+	val rendered = """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
+	return memberFieldVisibilityStamped(backing, rendered)
 }
 
 /** (argsJson, argTypesJson) for an external .NET / restored-DotKt call — the ONE builder every such call site uses,

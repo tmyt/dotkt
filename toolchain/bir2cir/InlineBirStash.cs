@@ -167,8 +167,8 @@ static class InlineBirStash
     // the UNIQUE one whose declared `params[i].type` equals the call site's `paramSig[i]` for every i.
     // Both sides are kotc-emitted type-node JSON (`birType(param.type)`) in the callee's OWN un-substituted type-param frame
     // — the callInline's `paramSig`, the call's `sig`, and the round-tripped ref payload's `params` all share that source —
-    // dll2klib's external-origin FQN may retain ECMA-335's physical `` `N`` suffix while the KotlinInline payload uses
-    // the Kotlin classifier name. Normalize only that representation detail recursively; all Kotlin type structure
+    // dll2klib's external-origin FQN may retain ECMA-335's physical `` `N`` suffix and `+` nested separator while the
+    // KotlinInline payload uses the Kotlin classifier name. Normalize only those representation details recursively; all Kotlin type structure
     // (arguments, function shape, nullability, and type-variable scope/index) remains exact. `matchCount` reports how many matched; the caller fails
     // loud unless it is exactly 1 (0 = no signature match; >=2 = structurally-ambiguous overloads, e.g. differ only in
     // generic bounds like `ifEmpty`, which are never called with an escaping lambda so never reach the splicer).
@@ -204,7 +204,7 @@ static class InlineBirStash
             if (current is JsonObject obj)
             {
                 if (Str(obj["t"]) == "fqn" && Str(obj["name"]) is string name)
-                    obj["name"] = StripArities(name);
+                    obj["name"] = StripArities(name).Replace('+', '.');
                 foreach (var child in obj.Select(x => x.Value).ToList())
                     if (child != null) Walk(child);
             }

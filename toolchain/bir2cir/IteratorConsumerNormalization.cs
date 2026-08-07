@@ -68,7 +68,8 @@ static class IteratorConsumerNormalization
                 // ClrMutableMapEntry snapshot). Everything then stays consistently typed on MutableEntry (ilverify-clean),
                 // and the read Iterator matches the wrapper's implemented interface. Only the MUTABLE entry element is
                 // rerouted; the immutable `Map.iterator()` path already works and is left untouched.
-                if (elem2 is TypeNode.Fqn { Name: "kotlin.collections.MutableMap$MutableEntry", Args: { } } mutEntry
+                if (elem2 is TypeNode.Fqn { Args: { } } mutEntry
+                    && mutEntry.Name is "kotlin.collections.MutableMap.MutableEntry" or "kotlin.collections.MutableMap$MutableEntry"
                     && TypeJson.OwnerName(init2["owner"]) == "kotlin.collections.MapsKt" && Str(init2["method"]) == "iterator"
                     && init2["args"] is JsonArray iargs && iargs.Count == 1 && iargs[0] is JsonNode recv0)
                 {

@@ -107,7 +107,9 @@ sealed class Pipeline
 
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
-        var companionRepresentations = CompanionRepresentationLowering.Apply(birFiles.Select(b => b.Root));
+        var birRoots = birFiles.Select(b => b.Root).ToList();
+        var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
+        var ownershipFacts = TypeOwnershipLowering.PrepareOwnershipFacts(birRoots);
         // #68 (PART 2): kotc emits the PLAIN Kotlin identity `kotlin.CharSequence` at every CharSequence use site (no CLR
         // synthetic name — kotc knows nothing of the synthetic). Recognizing `kotlin.CharSequence` as a synthesize-target is
         // a bir2cir concern (the Kotlin<->CLR layer), so SUBSTITUTE it here — as a one-type hardcode, exactly like the ref.dll
@@ -313,6 +315,15 @@ sealed class Pipeline
             // external callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
             // self-build would also disturb its byte-stable RefBodySquash/RoundtripMetadata decl set for zero benefit.
             if (attributeTopLevelOwner) DefaultArgSplice.Apply(bir.Root, refs);
+            // Inline/default payloads are authored before their consumer lexical owner exists. The splice transfers
+            // that exact semanticOwner fact above; now normalize any newly materialized synthClass generic prefix
+            // before ClosureSynthesis turns it into a CLR class. The module-wide first pass normalized declarations;
+            // only this consumer root changed, so reuse its owner index instead of re-walking every file per splice.
+            TypeOwnershipLowering.PrepareSplicedOwnershipFacts(bir.Root, ownershipFacts);
+            // Kotlin local functions remain lexical BIR declarations through every raw-body splice above. Consume the
+            // explicit declaration-id relation now and select their CLR MethodDef owner before representation synthesis
+            // (closures/suspend lambdas may carry calls to those declarations). No FileClass/name heuristic is involved.
+            LocalFunctionLowering.Apply((JsonObject)bir.Root, refs);
             // Bind local and ProjectReference companion values after every raw-BIR splice and before an evaluation
             // plan can materialize a representation-less flat receiver as a CLR local.
             CompanionRepresentationLowering.BindUses(
@@ -657,6 +668,10 @@ sealed class Pipeline
         if (!_options.RefBuild)
             ClrEventImplBinding.BindRaisesAll(staged.Select(s => s.Root), refs);
 
+        // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
+        // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.
+        TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
+
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
@@ -738,6 +753,13 @@ sealed class Pipeline
         // sweep has run. The pass is idempotent; cover exactly that new body before type lowering erases the fact.
         foreach (var stagedFile in staged) NothingValueTermination.Apply(stagedFile.Root);
 
+        // Materialize every remaining Kotlin lexical owner as explicit CLR TypeDef nesting only after all source,
+        // inline, event-adapter, closure, and coroutine synthesis has finished adding declarations. This is the sole
+        // BIR semanticOwner -> CIR nestedIn boundary.
+        TypeOwnershipLowering.ApplyAll(staged.Select(s => s.Root).ToList());
+        // Opaque raw-BIR carriers cross the assembly boundary after the representation decision above. Bind any local
+        // nested type tokens to this producer's exact metadata identity now; readers never reconstruct that relation.
+        OpaqueCarrierTypeBinding.ApplyAll(staged.Select(s => s.Root).ToList());
         // A synthesized closure/SAM class holds each capture in an INSTANCE FIELD, which the CLR refuses for a
         // byref-like (`ref struct`) type. ClosureSynthesis recorded those refusals rather than throwing, because the
         // cold suspend lowering above reconstructs a `suspendCoroutine { … }` block inline and PRUNES the class it
@@ -745,16 +767,7 @@ sealed class Pipeline
         // gate instead. Report now, over the classes that actually survived.
         ClosureSynthesis.AssertSurvivingCapturesLegal(staged.Select(s => s.Root));
 
-        // PHASE 1.7 — CROSS-CLASS PRIVATE WIDENING (bundle-6 P5 BUG A): a LIFTED anon-object / closure class
-        // (`dotkt_obj*`) is a SEPARATE top-level CLR class that reads its enclosing class's PRIVATE members
-        // via its captured `__outer` — legal on the JVM (nested class), a System.MethodAccessException on the
-        // CLR. Widen exactly the private members reached CROSS-CLASS to `internal` (assembly-visible). Runs
-        // GLOBALLY, in non-ref builds, AFTER the suspend passes (so synthesized SM types are covered too) and
-        // BEFORE type lowering (owner tokens are still the kotlin.* FQN that match local type names).
-        if (!_options.RefBuild)
-            CrossClassPrivateWidening.ApplyAll(staged.Select(s => s.Root).ToList());
-
-        // PHASE 1.8 — GENERIC SELF INSTANTIATION (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object emits
+        // PHASE 1.7 — GENERIC SELF INSTANTIATION (bundle-6 P5 BUG A part-2): a lifted GENERIC anon-object emits
         // its self instance accesses with the BARE type name (`dotkt_obj144`, no type args) -> ".NET method/type
         // not fully instantiated" at runtime. Derive the constructed self `dotkt_obj144[gp:T]` for those
         // executable instance accesses (kotc emits the FQN identity; bir2cir derives the CLR instantiation).
@@ -826,6 +839,14 @@ sealed class Pipeline
         // last in the structural phase, so every synthesized body exists and owner tokens are still Kotlin FQNs.
         BackingFieldRename.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // Kotlin lexical visibility remains unchanged even when its declaration and use land in different CLR
+        // TypeDefs. Project each otherwise-illegal physical edge to a private caller-side [UnsafeAccessor] extern;
+        // target members are never widened to internal/protectedInternal.
+        if (_options.RefBuild)
+            UnsafeAccessorLowering.DropFacts(staged.Select(s => s.Root).ToList());
+        else
+            UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // Normalize every local call/delegate descriptor before the module-wide local member binding below. Generic
         // delegate targets may carry a closed function shape while their declaration remains open; bir2cir owns the
         // declaration lookup and records that open signature explicitly for one-to-one emission.
@@ -859,7 +880,7 @@ sealed class Pipeline
             // resumeWith method + its Result-construction call args). ALL builds (ref/rt agree), BEFORE type lowering
             // (kotlin.Any then lowers to object in rt/app, verbatim in ref). Un-blocks BlockOnSink/startCoroutine/
             // resumeWith dispatch (CLR interface variance does not lift value types; uniform erasure is the fix).
-            ContinuationErasure.Apply(substituted);
+            ContinuationErasure.Apply(substituted, refs);
             GenericDowncastRealignment.Apply(substituted, genericDowncastHierarchy);
             // GenericDowncastRealignment aligns a local's declared type with an erased
             // G$dotkt_star cast. Bind calls through that local to the exact synthesized
@@ -918,7 +939,8 @@ sealed class Pipeline
             // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
             // is a pass that changed a node's result type without carrying `sty` with it.
             CheckStySanity(outputName, substituted);
-            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName);
+            var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
+                refs.PhysicalTypeNames, emittedLocalTypes);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through

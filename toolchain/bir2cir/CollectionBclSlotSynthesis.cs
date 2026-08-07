@@ -65,7 +65,7 @@ static class CollectionBclSlotSynthesis
             // the OPEN `Owner`1`: this pass runs AFTER GenericSelfInstantiation (which would otherwise construct a bare
             // self ownerType), so a generic self-forward carrying only the bare name resolves the callee on the open def
             // and mismatches the constructed `this` (ilverify StackUnexpected [found Owner<T0>][expected Owner`1]).
-            var selfOwner = SelfOwnerType(owner, to["typeParams"]);
+            var selfOwner = SelfOwnerType(owner, TypeParameterFrame.Count(to));
 
             // ICollection<E> face: Contains / CopyTo / get_IsReadOnly.
             if (!Has("Contains")) methods.Add(SelfForward("Contains", elem, "System.Boolean", "contains", selfOwner));
@@ -79,9 +79,8 @@ static class CollectionBclSlotSynthesis
 
     // The constructed self owner `Owner<!0,…,!n-1>` (the type-scope generic params by position) for a generic class,
     // else the bare `Owner` node for a non-generic one — mirrors GenericSelfInstantiation's constructed-self derivation.
-    static JsonNode SelfOwnerType(string owner, JsonNode typeParams)
+    static JsonNode SelfOwnerType(string owner, int n)
     {
-        var n = typeParams is JsonArray a ? a.Count : 0;
         if (n == 0) return TypeJson.Fqn(owner);
         var args = new JsonArray();
         for (var i = 0; i < n; i++) args.Add(new JsonObject { ["t"] = "tv", ["scope"] = "type", ["i"] = i });

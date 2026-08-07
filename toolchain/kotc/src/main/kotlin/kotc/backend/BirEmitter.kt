@@ -6,6 +6,7 @@ import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
+import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
@@ -277,6 +278,11 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		return out
 	}
 	internal var fileClass = ""   // current file's static class name (for top-level property access)
+	// Lexical Kotlin type currently having a body rendered. Expression nodes do not carry an IR parent, so synthetic
+	// declarations created at an expression use site (property/function-reference adapters in particular) cannot derive
+	// their owner from the referenced target declaration. Declaration emitters scope this value while rendering bodies;
+	// top-level expressions fall back to the current file facade.
+	internal var activeSemanticOwner: String? = null
 	// Per-file prefix for SYNTHETIC type names (closures, ref cells, sequence SMs). Each file is compiled by its own
 	// BirEmitter with a fresh `closureCounter`, so unprefixed names like `dotkt$Closure0` COLLIDE across files when
 	// ilemit links all BIR into one assembly (the dup overwrites in `_types` -> orphaned TypeBuilder -> Save crash).
@@ -322,8 +328,14 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val pkg = f.packageFqName.asString()
 		return if (pkg.isEmpty()) base else "$pkg.$base"
 	}
-	// Local functions: lifted to file-class statics; captured vars become leading params (calls prepend them).
-	internal val localFns = HashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, Triple<String, List<IrValueDeclaration>, List<IrTypeParameter>>>()
+	// Local functions remain lexical BIR declarations. Calls/references carry this explicit declaration id; bir2cir
+	// consumes the relation when it selects a CLR MethodDef owner. No file-class placement is encoded here.
+	internal data class LocalFunctionFact(
+		val id: String,
+		val captures: List<IrValueDeclaration>,
+		val typeParams: List<IrTypeParameter>,
+	)
+	internal val localFns = HashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, LocalFunctionFact>()
 
 	// Anonymous objects (`object : I { }`) are lifted to synthetic top-level classes. Their IR name is
 	// "<no name provided>" (not a valid IL identifier), so map the IrClass identity -> its assigned name;
@@ -414,23 +426,90 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun typeName(k: IrClass): String =
 		// A companion keeps a deliberately non-CLR semantic identity in BIR. CompanionRepresentationLowering consumes
 		// this name before CIR and chooses the physical owner/static or singleton representation.
-		anonNames[k] ?: if (k.isCompanion && k.parent is IrClass)
+		anonNames[k] ?: if (k.name.asString() == "<no name provided>")
+			"dotkt\$obj${scopeCounter++}".also { anonNames[k] = it }
+		else if (k.isCompanion && k.parent is IrClass)
 			typeName(k.parent as IrClass) + ".<companion:" + k.name.asString() + ">"
 		else if (k.parent is IrClass) {
 			val p = k.parent as IrClass
 			val owner = if (p.isCompanion) p.parent as? IrClass else p
-			// A type nested in a GENERIC enclosing flattens to a top-level type (PersistedAssemblyBuilder NREs on nested
-			// generics — see the nestedIn suppression). Joining with `.` would put it in a namespace equal to the
-			// enclosing type's name (`kotlin.collections.AbstractList` type AND namespace) -> the loader can't resolve the
-			// base. Join with `$` (valid in a type name, NOT a namespace separator) to avoid the type/namespace collision.
-			val sep = if (owner != null && owner.typeParameters.isNotEmpty()) "$" else "."
-			(owner?.let { typeName(it) + sep } ?: "") + k.name.asString()
+			// BIR names the Kotlin classifier. Whether this semantic child becomes a CLR nested TypeDef is a bir2cir
+			// decision; genericity of the owner must not change the Kotlin identity emitted by the frontend.
+			(owner?.let { typeName(it) + "." } ?: "") + k.name.asString()
 		}
 		else (k.fqNameWhenAvailable?.asString() ?: k.name.asString())
 
 	internal fun emittedNestedParent(k: IrClass): IrClass? {
 		val p = k.parent as? IrClass ?: return null
 		return if (p.isCompanion) p.parent as? IrClass else p
+	}
+
+	/** Kotlin lexical owner of a type declaration, without selecting a CLR representation. */
+	internal fun semanticTypeOwner(k: IrClass): String? {
+		if (k.isCompanion) return null // kotlinCompanion is the complete semantic association for this declaration.
+		emittedNestedParent(k)?.let { parent ->
+			if (!isExternalNetType(parent)) return typeName(parent)
+		}
+		// Anonymous objects and function-local classes are declarations nested in a callable/block rather than direct
+		// IrClass children. Walk to their nearest class; a top-level callable is owned by its Kotlin file facade.
+		if (!anonNames.containsKey(k)) return null
+		var parent: Any? = k.parent
+		while (parent != null) {
+			when (parent) {
+				is IrClass -> return if (parent.isCompanion)
+					(parent.parent as? IrClass)?.let(::typeName) ?: fileClass
+				else typeName(parent)
+				is IrFile -> return fileClassName(parent)
+				is IrDeclaration -> parent = parent.parent
+				else -> return fileClass
+			}
+		}
+		return fileClass
+	}
+
+	internal fun semanticOwnerJson(k: IrClass): String =
+		semanticTypeOwner(k)?.let { ""","semanticOwner":${str(it)}""" } ?: ""
+
+	/** Nearest Kotlin type declaration containing a callable-generated declaration; top-level callables use the file facade. */
+	internal fun semanticOwnerName(declaration: IrDeclaration): String {
+		var parent: Any? = declaration.parent
+		while (parent != null) {
+			when (parent) {
+				is IrClass -> {
+					val owner = if (parent.isCompanion) parent.parent as? IrClass else parent
+					return owner?.let(::typeName) ?: fileClass
+				}
+				is IrFile -> return fileClassName(parent)
+				is IrDeclaration -> parent = parent.parent
+				else -> return fileClass
+			}
+		}
+		return fileClass
+	}
+
+	internal fun semanticOwnerJson(declaration: IrDeclaration): String =
+		""","semanticOwner":${str(semanticOwnerName(declaration))}"""
+
+	internal fun semanticUseSiteOwnerJson(): String =
+		""","semanticOwner":${str(activeSemanticOwner ?: fileClass)}"""
+
+	/** Exact Kotlin owner application for a compiler-generated method emitted at the current use site. */
+	internal fun semanticUseSiteOwnerSpec(declaration: IrDeclaration): TypeNode {
+		val semanticName = activeSemanticOwner ?: fileClass
+		var parent: Any? = declaration.parent
+		while (parent != null) {
+			when (parent) {
+				is IrClass -> {
+					val owner = if (parent.isCompanion) parent.parent as? IrClass else parent
+					return if (owner != null && typeName(owner) == semanticName) ownerSpec(owner, null)
+					else TypeNode.Fqn(semanticName)
+				}
+				is IrFile -> return TypeNode.Fqn(semanticName)
+				is IrDeclaration -> parent = parent.parent
+				else -> return TypeNode.Fqn(semanticName)
+			}
+		}
+		return TypeNode.Fqn(semanticName)
 	}
 
 	/** The source companion declaration, without choosing any CLR representation. */
@@ -471,8 +550,16 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	/** Compute the module-wide heap ref-cell set (see [refCellVars]). Called ONCE, before any file is emitted. */
 	internal fun initRefCells(module: IrElement) { refCellVars = computeRefCells(module) }
 
-	/** identity key -> (monomorphized Ref class name, element type JSON). One entry per DISTINCT cell in the file. */
-	internal val refTypes = LinkedHashMap<String, Pair<String, String>>()
+	internal data class RefTypeFact(
+		val name: String,
+		val elemJson: String,
+		val declaringLocalFunctionId: String?,
+	)
+	/** identity key -> ref-cell representation facts. One entry per DISTINCT cell shape in the file. */
+	internal val refTypes = LinkedHashMap<String, RefTypeFact>()
+	private val refTypeByVariable = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	internal val localFunctionOwnerByVariable = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	internal val localFunctionIds = java.util.IdentityHashMap<IrSimpleFunction, String>()
 
 	/**
 	 * The cell class for a var, registered once per file.
@@ -485,14 +572,23 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	 * suffixed name.
 	 */
 	internal fun refTypeName(d: IrValueDeclaration): String {
+		refTypeByVariable[d]?.let { return it }
 		val elem = birType(d.type)
 		val elemJson = elem.toJson()
-		val key = elemJson + "|" + typeVarBoundsKey(d.type)
-		refTypes[key]?.let { return it.first }
+		// The declaration parent, not the frame that happens to request the type, owns this fact. localFns is registered
+		// before a local body is rendered, so a var declared there names the localFun id even if a nested closure is the
+		// first consumer; a captured outer var keeps no such owner.
+		val declaringLocalFunctionId = localFunctionOwnerByVariable[d]
+		val key = elemJson + "|" + typeVarBoundsKey(d.type) + "|local:" + (declaringLocalFunctionId ?: "")
+		refTypes[key]?.let {
+			refTypeByVariable[d] = it.name
+			return it.name
+		}
 		val base = "dotkt\$${synthScope}\$Ref\$" + mangle(elem)
-		val taken = refTypes.values.count { (name, _) -> name == base || name.startsWith("$base\$") }
+		val taken = refTypes.values.count { it.name == base || it.name.startsWith("$base\$") }
 		val name = if (taken == 0) base else "$base\$$taken"
-		refTypes[key] = name to elemJson
+		refTypes[key] = RefTypeFact(name, elemJson, declaringLocalFunctionId)
+		refTypeByVariable[d] = name
 		return name
 	}
 
@@ -520,8 +616,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	// use-site `new`/`field`/`setField` on the cell. bir2cir's RefCellSynthesis assembles the actual trivial class
 	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
 	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
-	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { (name, elemJson) ->
-		"""{"name":${str(name)},"elem":$elemJson}"""
+	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { fact ->
+		val localOwner = fact.declaringLocalFunctionId?.let { ",\"declaringLocalFunctionId\":${str(it)}" } ?: ""
+		"""{"name":${str(fact.name)},"elem":${fact.elemJson}$localOwner}"""
 	}
 	internal fun isRefCell(d: IrValueDeclaration) = d in refCellVars
 	/** The Ref-typed base expression for a ref-cell var: its capture field inside a closure, else the local. */
@@ -569,7 +666,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// file class (e.g. App.kt's `__lambda*` reappearing in ControlsKt/DslKt/…). The `dotkt$*` types are
 		// de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods that are NOT — so the duplication is
 		// real metadata bloat and a correctness hazard.
-		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear()
+		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear(); refTypeByVariable.clear()
+		localFunctionOwnerByVariable.clear(); localFunctionIds.clear()
+		indexLocalFunctionOwnership(file)
 		// Compile-time kotlin.clr intrinsics are consumed at their call sites and have no physical CLR method.
 		// Only USER functions (origin DEFINED) — a consuming module's FIR also holds external top-level functions
 		// loaded from reference KLIBs;
@@ -662,7 +761,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val (richEnums, basicEnums) = enums.partition { isRichEnum(it) }
 		// Nested (non-inner) classes -> flattened to top-level synthetic types (they keep their real name, so
 		// `new Nested(...)` and field ownerTypes resolve). `inner` classes need outer-`this` capture (deferred).
-		val nestedParents = classes + interfaces + objects + annClasses
+		val nestedParents = classes + interfaces + objects + enums + annClasses
 		val nested = nestedParents.flatMap { nestedClasses(it) }
 		val nestedObjects = nestedParents.flatMap { nestedObjects(it) }
 		val nestedEnums = nestedParents.flatMap { nestedEnums(it) }
@@ -683,7 +782,11 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// closure class from the `synthClass` fact on its `newClosure` node. The CLR-bound (@ClrTypeAlias) classes are
 		// already in `typeDefs` (they flow through `classes` like any other type — kotc no longer strips them); bir2cir's
 		// AliasHelperHoist drops each alias type def and, for a class, hoists its rule-3 members into the helper.
-		val types = (typeDefs + liftedTypes).joinToString(",")
+		// One source declaration can be visited through two serialized value roots (notably a default expression is
+		// emitted both into its carrier and at an in-module call site). The lift table then contains the same authored
+		// TypeDef JSON twice. Declaration identity is still its generated name; remove only byte-for-byte identical
+		// entries here, while deliberately retaining same-name/different-body entries for a loud downstream collision.
+		val types = (typeDefs + liftedTypes).distinct().joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"types":[$types],"refTypes":[${refTypesJson()}]}"""
 	}
 

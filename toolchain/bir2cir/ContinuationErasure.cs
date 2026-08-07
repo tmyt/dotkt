@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -45,9 +46,14 @@ static class ContinuationErasure
 {
     const string Cont = "kotlin.coroutines.Continuation";
     const string ResultFqn = "kotlin.Result";
+    static IReadOnlySet<string> _resultTypeNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
 
-    public static void Apply(JsonNode root)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
+        var resultNames = new HashSet<string>(StringComparer.Ordinal) { ResultFqn };
+        if (refs.PhysicalTypeNames.TryGetValue(ResultFqn, out var physicalResult))
+            resultNames.Add(physicalResult);
+        _resultTypeNames = resultNames;
         RecordDeclarationSurfaces(root);
         Walk(root, inResumeWith: false);
     }
@@ -222,7 +228,12 @@ static class ContinuationErasure
         {
             case TypeNode.Fqn f:
                 if (f.Name == Cont) return new TypeNode.Fqn(Cont, AnyArg);              // bare or Continuation[X] -> [Any]
-                if (f.Name == ResultFqn && f.Args != null) return new TypeNode.Fqn(ResultFqn, AnyArg);
+                // A trusted inline/default payload can already carry the referenced TypeDef's exact metadata name
+                // (`kotlin.Result`1`) while source-authored slots still use `kotlin.Result`. Both identities come from
+                // the explicit reference index; recognizing the physical twin here avoids splitting one monomorphic
+                // Result value between Result<object> and Result<T> locals without reconstructing a name convention.
+                if (_resultTypeNames.Contains(f.Name) && f.Args != null)
+                    return new TypeNode.Fqn(f.Name, AnyArg);
                 return f.Args == null ? f : new TypeNode.Fqn(f.Name, f.Args.Select(EraseType).ToArray());
             case TypeNode.Nullable n: return new TypeNode.Nullable(EraseType(n.Of));
             case TypeNode.Array a: return new TypeNode.Array(EraseType(a.Elem));

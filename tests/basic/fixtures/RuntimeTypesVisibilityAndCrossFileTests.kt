@@ -24,6 +24,8 @@ import crossFileLanguage.crossFileLanguageCurrent
 import crossFileLanguage.crossFileLanguageCall
 import crossFileLanguage.crossFileLanguageCounter
 import crossFileLanguage.crossFileLanguageBump
+import kotlin.clr.ClrRef
+import kotlin.clr.byref
 
 // ---- il-setlocalbox : `Any` field reassigned from String to a boxed Int -------------------------------------------
 class RuntimeTypesHolder {
@@ -52,6 +54,32 @@ class RuntimeTypesDog : RuntimeTypesAnimal() { override fun toString() = "dog>" 
 interface RuntimeTypesGreeter { fun hi(): String = "hi-default" }
 class RuntimeTypesImpl : RuntimeTypesGreeter { override fun hi() = "impl+" + super.hi() }
 
+open class RuntimeTypesProtectedSuperBase {
+    protected open fun label(): String = "base"
+}
+class RuntimeTypesProtectedSuperDerived : RuntimeTypesProtectedSuperBase() {
+    override fun label(): String = "derived"
+    fun inlineSuper(): String = run { super.label() }
+    fun liftedSuper(): () -> String = { super.label() }
+}
+class RuntimeTypesSuperContext(val prefix: String)
+interface RuntimeTypesGenericMarker<T> { fun render(): String }
+class RuntimeTypesStringMarker : RuntimeTypesGenericMarker<String> { override fun render(): String = "marker" }
+open class RuntimeTypesGenericProtectedSuperBase<T> {
+    context(context: RuntimeTypesSuperContext)
+    protected open fun <U : RuntimeTypesGenericMarker<T>> combine(value: T, marker: U): String =
+        context.prefix + ":" + value.toString() + ":" + marker.render()
+    protected open fun echo(value: T): T = value
+}
+class RuntimeTypesGenericProtectedSuperDerived<A, B> : RuntimeTypesGenericProtectedSuperBase<B>() {
+    context(context: RuntimeTypesSuperContext)
+    override fun <U : RuntimeTypesGenericMarker<B>> combine(value: B, marker: U): String = "derived"
+    override fun echo(value: B): B = value
+    context(context: RuntimeTypesSuperContext)
+    fun <U : RuntimeTypesGenericMarker<B>> liftedSuper(value: B, marker: U): () -> String =
+        { super.combine(super.echo(value), marker) }
+}
+
 // ---- il-vis : visibility modifiers -> CLR access flags ------------------------------------------------------------
 class RuntimeTypesAccount(private val balance: Int) {
     private fun fee(): Int = 2
@@ -60,6 +88,16 @@ class RuntimeTypesAccount(private val balance: Int) {
     protected open fun kind(): String = "base"
 }
 private fun runtimeTypessecret(): Int = 99
+
+// #225: accessor-routed properties keep a private CLR backing field. This frontend-valid address edge originates on
+// the file facade and targets the sibling class TypeDef, so bir2cir must synthesize a caller-owned UnsafeAccessor
+// instead of kotc widening the slot. The test below executes the edge so the runtime's name/signature binding is
+// covered in addition to compile/ILVerify.
+private class RuntimeTypesByRefOwner(var slot: Int)
+private fun runtimeTypesTakeByRef(slot: ClrRef<Int>) {}
+private fun runtimeTypesPrivateBackingAddress(owner: RuntimeTypesByRefOwner) {
+    runtimeTypesTakeByRef(byref(owner.slot))
+}
 
 // ---- il-typealias : aliases used across a function boundary -------------------------------------------------------
 typealias RuntimeTypesNames = List<String>
@@ -97,6 +135,14 @@ class RuntimeTypeAndSuperDispatchTests {
         val b: RuntimeTypesBase = RuntimeTypesDerived()
         assertEquals("derived+base", b.greet())         // derived+base (virtual dispatch non-regression)
         assertEquals(11, b.twice(5))                    // 11
+        val protected = RuntimeTypesProtectedSuperDerived()
+        assertEquals("base", protected.inlineSuper())
+        assertEquals("base", protected.liftedSuper()())
+        with(RuntimeTypesSuperContext("base")) {
+            assertEquals("base:value:marker",
+                RuntimeTypesGenericProtectedSuperDerived<Int, String>()
+                    .liftedSuper("value", RuntimeTypesStringMarker())())
+        }
     }
 
     // #60: the star-projection smart-cast (`is Map<*,*>`/`is List<*>`/`is Iterable<*>`/`is Collection<*>`) on a
@@ -137,6 +183,9 @@ class StarProjectionAndVisibilityTests {
         assertEquals(98, a.net())        // 98
         assertEquals("acct", a.tag())    // acct
         assertEquals(99, runtimeTypessecret())     // 99
+        val byRefOwner = RuntimeTypesByRefOwner(41)
+        runtimeTypesPrivateBackingAddress(byRefOwner)
+        assertEquals(41, byRefOwner.slot)
     }
 
 }

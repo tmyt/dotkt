@@ -108,8 +108,23 @@ private fun BirEmitter.freeTypeParams(types: List<IrType>): List<org.jetbrains.k
 	return acc.toList()
 }
 
-/** Type operands USED in a function body (e.g. `x is R` / `x as R` / `R::class`). A lifted closure must be generic
- *  over these too: on the CLR generics are reified, so `is R` works once the lifted method carries `R` — that is the
+/** Close a lexical local declaration's re-declared type-parameter vector at one use site. Parameters owned by the
+ * local function use the frontend-resolved type arguments from that call/reference; enclosing parameters retain
+ * their current lexical substitution. The vector stays aligned with [BirEmitter.LocalFunctionFact.typeParams]. */
+internal fun BirEmitter.localFunctionTypeArgs(
+	fact: BirEmitter.LocalFunctionFact,
+	function: IrSimpleFunction,
+	resolved: List<IrType?>,
+): List<TypeNode> = fact.typeParams.map { parameter ->
+	val own = function.typeParameters.indexOfFirst { it === parameter }
+	if (own >= 0) resolved.getOrNull(own)?.let { birType(it) }
+		?: (typeArgSubst[parameter] ?: tvOf(parameter))
+	else typeArgSubst[parameter] ?: tvOf(parameter)
+}
+
+/** Type operands USED in a function body (e.g. `x is R` / `x as R` / `R::class`). A separately materialized body must
+ *  be generic over these too: on the CLR generics are reified, so `is R` works once the physical method carries `R` —
+ *  that is the
  *  deliberate CLR form, where the JVM would need `reified`+inlining. freeTypeParams over (params+return+captures)
  *  alone misses a body-only `R`.
  *
@@ -122,7 +137,7 @@ internal fun BirEmitter.bodyTypeOperands(fn: org.jetbrains.kotlin.ir.declaration
 	val out = ArrayList<IrType>()
 	fn.body?.acceptVoid(object : IrVisitorVoid() {
 		override fun visitElement(element: org.jetbrains.kotlin.ir.IrElement) {
-			// Don't descend into NESTED lambdas/local funs — they compute their own free type params when lifted.
+			// Don't descend into NESTED lambdas/local funs — each declaration computes its own free type parameters.
 			if (element is IrFunctionExpression || element is org.jetbrains.kotlin.ir.declarations.IrFunction) return
 			when (element) {
 				is IrTypeOperatorCall -> out.add(element.typeOperand)
@@ -203,6 +218,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// generic over) — a type-param DECLARATION list (bir2cir names the SM's params + instantiates `!i`), NOT a
 	// type-USAGE slot, so it rides as the `typeParams` name shorthand (§2.5), consistent with the other lambda paths.
 	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
+	val typeParamDecls = typeParamsJson(freeTps).replaceFirst(",\"typeParams\":", ",\"typeParamDecls\":")
 	val typeArgsJson = if (freeTps.isEmpty()) "" else
 		""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 	val extensionReceiver = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
@@ -230,13 +246,15 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	val savedExtensionReceiver = extensionReceiver?.let { selfSubst[it] }
 	if (extensionReceiver != null)
 		selfSubst[extensionReceiver] = """{"k":"local","name":${str(extensionReceiver.name.asString())}}"""
-	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	val body = withFreshLambdaLocalFunctionIds(fn) {
+		(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	}
 	if (extensionReceiver != null) {
 		if (hadExtensionReceiver) selfSubst[extensionReceiver] = savedExtensionReceiver!!
 		else selfSubst.remove(extensionReceiver)
 	}
 	shadowCap.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
-	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare]$typeArgsJson,"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
+	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare]$typeParamDecls$typeArgsJson,"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 
 /** SHADOW the lambda's own regular params in `valSubst` while emitting its body: an enclosing lambda carrier
@@ -255,6 +273,12 @@ private inline fun <T> BirEmitter.withLambdaParamShadow(fn: IrSimpleFunction, bl
 		saved.forEach { (n, prev) -> if (prev != null) valSubst[n] = prev else valSubst.remove(n) }
 	}
 }
+
+/** Every emitted lambda/adapter body is a distinct BIR declaration projection, even when the frontend reuses the
+ * same IR function for a default carrier and its in-module executable form. Give local declarations in that body a
+ * fresh identity as one atomic projection; callers still supply the surrounding capture/parameter substitutions. */
+private inline fun <T> BirEmitter.withFreshLambdaLocalFunctionIds(fn: IrSimpleFunction, block: () -> T): T =
+	fn.body?.let { withClonedLocalFunctionIds(it, block) } ?: block()
 
 internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	val fn = node.function
@@ -277,13 +301,18 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 		val typeParams = typeParamsJson(freeTps)
 		run {
 			val recvName = lambdaRecvName(fn)
-			val body = withLambdaSelf(fn, recvName) {
-				withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+			val body = withFreshLambdaLocalFunctionIds(fn) {
+				withLambdaSelf(fn, recvName) {
+					withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+				}
 			}
-			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${str(ret)},"body":[$body]}""")
+			// The frontend may represent a non-capturing lambda as a file-level helper, but its declaration still belongs
+			// to the surrounding Kotlin type. Preserve that owner explicitly: bir2cir decides whether/how it nests the
+			// helper, and nested declarations created in this body retain the owner's generic frame and constraints.
+			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false$typeParams,"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${str(ret)},"body":[$body]${semanticUseSiteOwnerJson()}}""")
 		}
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(ftype)}$typeArgs${localCalleeOwnerTag()}}"""
+		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(ftype)}$typeArgs,"calleeOwner":${semanticUseSiteOwnerSpec(fn).toJson()}}"""
 	}
 	// Capturing: build a closure class. Captures rewrite to `this.<field>` (by symbol identity, so the
 	// enclosing `this` — captured when the lambda reads a member — maps to a `__outer` field, not the
@@ -299,8 +328,10 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 	}
 	val recvName = lambdaRecvName(fn)
-	val body = withLambdaSelf(fn, recvName) {
-		withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	val body = withFreshLambdaLocalFunctionIds(fn) {
+		withLambdaSelf(fn, recvName) {
+			withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+		}
 	}
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
@@ -312,7 +343,7 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	// type-param decls); bir2cir's ClosureSynthesis assembles the actual closure class (kind/base/interfaces wrapper +
 	// the ctor field-init body) into the file `types`, then STRIPS `synthClass`, leaving the lean `newClosure`
 	// (closureType + capture VALUE exprs + funcType + typeArgs) that ilemit consumes for the `new` — byte-identical.
-	val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}}"""
+	val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()}}"""
 	// Capture values are evaluated in the enclosing context (the outer `this`, or an outer local).
 	val capExprs = captures.joinToString(",") { capValueExpr(it) }
 	val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
@@ -345,7 +376,9 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	val savedSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 	capPairs.forEach { (decl, fname) -> savedSubst[decl] = captureSubst[decl]; captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}""" }
 	val samParams = lambdaParamsJson(fn.parameters)
-	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	val body = withFreshLambdaLocalFunctionIds(fn) {
+		(fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	}
 	// A `suspend fun interface` (e.g. FlowCollector { emit(...) }) — the SAM method carries the pure suspend FACT via
 	// `mods.suspend`, the discriminator bir2cir's SuspendColdLowering.IsMemberShapeEligible gates on. Without it a
 	// suspend SAM `emit` body keeps its raw `suspendCall`-tagged nodes (never cold-transformed) — the whole flow
@@ -368,7 +401,7 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 	// SAM class must be self-carried on the node. bir2cir's ClosureSynthesis assembles it into the consuming file (with
 	// name-dedup) and strips `synthClass` — exactly as it does for `lambda()`'s `newClosure` synthClass. Same-file (no
 	// splice): ClosureSynthesis synthesizes the SAME class into this file, so a non-spliced `newSam` is unchanged.
-	val synthClass = """{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)},"base":null,"interfaces":[${str(ifaceSpec)}],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$samMethod]}"""
+	val synthClass = """{"name":${str(cname)},"kind":"class","generated":true${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()},"base":null,"interfaces":[${str(ifaceSpec)}],"fields":[$fields],"ctors":[{"params":[$fields],"baseArgs":null,"body":[$ctorBody]}],"methods":[$samMethod]}"""
 	val capExprs = captures.joinToString(",") { capValueExpr(it) }
 	val tArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 	return """{"k":"newSam","samType":${fqnJson(cname)},"captures":[$capExprs]$tArgs,"synthClass":$synthClass}"""
@@ -415,7 +448,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val newE = """{"k":"new","type":${ownerSpec(klass, ctor.returnType).toJson()},"argTypes":[$ctorArgTypes],"args":[$ctorArgs]}"""
 				val freeTps = freeTypeParams(
 					captures.map { it.type } + ps.map { it.type } + listOf(ctor.returnType))
-				val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ps)}],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]${typeParamsJson(freeTps)}}"""
+				val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ps)}],"ret":${str(retT)},"body":[{"k":"return","value":$newE}]${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()}}"""
 				val capExprs = captures.joinToString(",") { capValueExpr(it) }
 				val typeArgs = if (freeTps.isEmpty()) "" else
 					""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
@@ -483,13 +516,16 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	// projected cross-module callee carries its file class too; any unresolved external shape fails at the
 	// CIR invariant rather than falling back to a global first match.
 	// The substitution axis is unchanged: a delegate over a top-level fun stays owner-less (no `owner` field here).
-	// `::localFun` — a reference to a LOCAL fun, which is not a file-class member under its own name: it was lifted to
-	// a static `__localN_<name>` whose captures are leading params.
-	localFns[fn]?.let { (lname, caps, tps) ->
-		val typeArgs = if (tps.isEmpty()) "" else ""","typeArgs":[${tps.joinToString(",") { tvOf(it).toJson() }}]"""
-		// No captures: the delegate targets the lifted static directly.
+	// `::localFun` — a reference to a lexical declaration by its BIR id. Captures are explicit leading parameters;
+	// bir2cir chooses the eventual static MethodDef owner and compiler-reserved name.
+	localFns[fn]?.let { local ->
+		val caps = local.captures
+		val typeArgs = if (local.typeParams.isEmpty()) "" else ""","typeArgs":[${
+			localFunctionTypeArgs(local, fn, node.typeArguments).joinToString(",") { it.toJson() }
+		}]"""
+		// No captures: bir2cir can materialize a delegate to the physical static method directly.
 		if (caps.isEmpty())
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${funcTypeOf(fn).toJson()}$typeArgs${localCalleeOwnerTag()}}"""
+			return """{"k":"localFunRef","id":${str(local.id)},"funcType":${funcTypeOf(fn).toJson()}$typeArgs}"""
 		// WITH captures the delegate's arity cannot match the lifted static's (captures ride ahead of the declared
 		// params), so the reference is a CLOSURE over those values whose `invoke` forwards to the lift — the same
 		// `{ args -> bump(args) }` the user could write by hand, built from the same `synthClass` ingredients as the
@@ -507,11 +543,11 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		} + ownVps.map { """{"k":"local","name":${str(it.name.asString())}}""" }).joinToString(",")
 		val callSig = (capPairs.map { (decl, _) -> captureFieldType(decl).toJson() } +
 			ownVps.map { birType(it.type).toJson() }).joinToString(",")
-		val callE = """{"k":"callStatic","owner":null,"method":${str(lname)},"sig":[$callSig],"args":[$callArgs]$typeArgs${localCalleeOwnerTag()}}"""
+		val callE = """{"k":"callLocal","id":${str(local.id)},"sig":[$callSig],"args":[$callArgs]$typeArgs}"""
 		val retT = birType(fn.returnType)
 		val invokeBody = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
 			else """{"k":"return","value":$callE}"""
-		val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ownVps)}],"ret":${str(retT)},"body":[$invokeBody]${typeParamsJson(tps)}}"""
+		val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(ownVps)}],"ret":${str(retT)},"body":[$invokeBody]${typeParamsJson(local.typeParams)}${semanticUseSiteOwnerJson()}}"""
 		val capExprs = caps.joinToString(",") { capValueExpr(it) }
 		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${funcTypeOf(fn).toJson()}$typeArgs,"synthClass":$synthClass}"""
 	}
@@ -638,7 +674,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	val boundRecv = if (dispatchIdx >= 0 && !hasExt) node.arguments.getOrNull(dispatchIdx) else null
 	if (boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass)) {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
-		return """{"k":"newBoundDelegate","ownerType":${fqnJson(typeName(ownerClass))},"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""},"calleeOwner":${fqnJson(typeName(ownerClass))}}"""
+		val owner = ownerSpec(ownerClass, boundRecv.type).toJson()
+		val rendered = """{"k":"newBoundDelegate","ownerType":$owner,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""},"calleeOwner":$owner}"""
+		return memberVisibilityStamped(fn, rendered)
 	}
 	// `Class::method` (UNbound) -> a lifted static `__mref(self, args) = self.method(args)`; the receiver
 	// becomes the delegate's first parameter. User classes only (`Func<UserType,…>` resolves via DelegateCtor).
@@ -757,6 +795,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val ret = fnType.ret
 	val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 	val anySlotTag = if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""
+	val local = localFns[fn]
 	// The lambda's OWN physical params = its extension receiver (when the callable type has one), then ordinary
 	// params. TypeNode.Fn deliberately keeps a Kotlin extension receiver in `recv` rather than duplicating it in
 	// `params`; newSuspendLambda's invoke/create protocol still receives it as physical arg0, exactly like source
@@ -771,6 +810,21 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	// callee so bir2cir attributes it identically; `suspendCall:true` is the fact SuspendColdLowering's FunGen segments on.
 	val captures: String; val capValues: String?; val bodyCall: String
 	when {
+		local != null -> {
+			val capPairs = uniqueCaptureNames(local.captures)
+			captures = capPairs.joinToString(",") { (declaration, fieldName) ->
+				"""{"name":${str(fieldName)},"type":${captureFieldType(declaration).toJson()}}"""
+			}
+			capValues = local.captures.joinToString(",") { capValueExpr(it) }.ifEmpty { null }
+			val args = (capPairs.map { (_, fieldName) -> localArg(fieldName) } + paramNames.map(::localArg))
+				.joinToString(",")
+			val sig = (capPairs.map { (declaration, _) -> captureFieldType(declaration).toJson() }
+				+ physicalParamTypes.map { it.toJson() }).joinToString(",")
+			val localTypeArgs = if (local.typeParams.isEmpty()) "" else
+				""","typeArgs":[${localFunctionTypeArgs(local, fn, node.typeArguments)
+					.joinToString(",") { it.toJson() }}]"""
+			bodyCall = """{"k":"callLocal","id":${str(local.id)},"sig":[$sig],"args":[$args]$localTypeArgs,"suspendCall":true}"""
+		}
 		extIdx >= 0 && dispatchIdx >= 0 ->
 			return unsupported(node, "a suspend member extension-function reference",
 				"a member extension function cannot be referenced as a callable in Kotlin")
@@ -826,12 +880,14 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val capValuesJson = if (capValues == null) "" else ""","capValues":[$capValues]"""
 	// The SM must be generic over any enclosing type params in the reference's signature (reified CLR generics); bare
 	// names (bir2cir prepends `gp:`), consistent with suspendLambda().
-	val freeTps = freeTypeParams(listOf(node.type) + listOfNotNull(boundRecv?.type, boundExt?.type))
+	val freeTps = (local?.typeParams
+		?: freeTypeParams(listOf(node.type) + listOfNotNull(boundRecv?.type, boundExt?.type)))
 		.sortedWith(compareBy<IrTypeParameter>(
 			{ if (tvOf(it).scope == "type") 0 else 1 },
 			{ tvOf(it).i },
 		))
 	val typeParamsBare = freeTps.joinToString(",") { str(it.name.asString()) }
+	val typeParamDecls = typeParamsJson(freeTps).replaceFirst(",\"typeParams\":", ",\"typeParamDecls\":")
 	val typeArgsJson = if (freeTps.isEmpty()) "" else
 		""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 	val externalCompanionOwnerTag = companionClass?.let { clrExternalOwner(it) }
@@ -840,7 +896,7 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 		?: companionClass?.takeIf { clrExternalOwner(it) == null }?.let { typeName(it) }
 	val localCompanionCaptureTag = localCompanionCaptureOwner
 		?.let { ""","companionCaptureOwner":${str(it)}""" } ?: ""
-	return """{"k":"newSuspendLambda","arity":${physicalParamTypes.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":[$typeParamsBare]$typeArgsJson,"body":[$body],"funcType":${fnType.toJson()}$externalCompanionOwnerTag$localCompanionCaptureTag}"""
+	return """{"k":"newSuspendLambda","arity":${physicalParamTypes.size},"captures":[$captures]$capValuesJson,"params":[$paramsJson],"suspendRet":${ret.toJson()},"typeParams":[$typeParamsBare]$typeParamDecls$typeArgsJson,"body":[$body],"funcType":${fnType.toJson()}$externalCompanionOwnerTag$localCompanionCaptureTag}"""
 }
 
 /**
@@ -906,7 +962,7 @@ internal fun BirEmitter.boundExtFnRef(node: IrFunctionReference, fn: IrSimpleFun
 	val nodeTypeArgs = (node.type as? IrSimpleType)?.arguments?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
 	val freeTps = freeTypeParams(listOf(boundExt.type) + nodeTypeArgs)
 	val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-	val synthClass = """{"name":${str(cname)},"fields":[{"name":"__recv","type":${str(selfT)}}],"params":[$invokeParams],"ret":${str(retT)},"body":[$forwardBody]${typeParamsJson(freeTps)}}"""
+	val synthClass = """{"name":${str(cname)},"fields":[{"name":"__recv","type":${str(selfT)}}],"params":[$invokeParams],"ret":${str(retT)},"body":[$forwardBody]${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()}}"""
 	return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[${expr(boundExt)}],"method":"invoke","funcType":${str(fnType)}$typeArgs,"synthClass":$synthClass}"""
 }
 
@@ -955,7 +1011,9 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
 	// as the forwarder's own params (referenced by name in the body).
 	if (boundCaps.isEmpty()) {
 		val lname = "__mref${lambdaCounter++}"
-		val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+		val body = withFreshLambdaLocalFunctionIds(fn) {
+			withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+		}
 		liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$invokeParamsJson],"ret":${str(ret)},"body":[$body]}""")
 		return """{"k":"newDelegate","method":${str(lname)},"funcType":${str(fnType)}$typeArgs${localCalleeOwnerTag()}}"""
 	}
@@ -967,11 +1025,13 @@ internal fun BirEmitter.adapterRef(node: IrFunctionReference, fn: IrSimpleFuncti
 	capPairs.forEach { (decl, fname) ->
 		captureSubst[decl] = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":${str(fname)}}"""
 	}
-	val body = withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	val body = withFreshLambdaLocalFunctionIds(fn) {
+		withLambdaParamShadow(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	}
 	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
 	val fields = capPairs.joinToString(",") { (decl, fname) -> """{"name":${str(fname)},"type":${captureFieldType(decl).toJson()}}""" }
 	val capExprs = boundCaps.joinToString(",") { (_, valueExpr) -> expr(valueExpr) }
-	val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[$invokeParamsJson],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}}"""
+	val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[$invokeParamsJson],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()}}"""
 	return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$capExprs],"method":"invoke","funcType":${str(fnType)}$typeArgs,"synthClass":$synthClass}"""
 }
 
@@ -1232,7 +1292,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	// The lifted constructor delegates to ClrPropertyStub(String). Keep that Kotlin declaration identity beside
 	// the arguments so bir2cir, which owns the CLR representation, can resolve and stamp the exact target ctor.
 	val stubDelegationSig = """[{"t":"fqn","name":"kotlin.String"}]"""
-	liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true$companionCaptureTag${typeParamsJson(freeTps)},"base":${stubBase.toJson()},"interfaces":[${ifaceSpec.toJson()}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":[$stubBaseArg],"delegationSig":$stubDelegationSig,"body":[$ctorBody]}],"methods":[$methods]}""")
+	liftedTypes.add("""{"name":${str(cname)},"kind":"class","generated":true$companionCaptureTag${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()},"base":${stubBase.toJson()},"interfaces":[${ifaceSpec.toJson()}],"fields":[$fields],"ctors":[{"params":[$ctorParams],"baseArgs":[$stubBaseArg],"delegationSig":$stubDelegationSig,"body":[$ctorBody]}],"methods":[$methods]}""")
 
 	val classType = if (freeTps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, freeTps.map { tvOf(it) })
 	val ctorArgs = if (bound) expr(capturedRecv!!) else ""
@@ -1257,8 +1317,106 @@ internal fun BirEmitter.capturedVars(fn: IrSimpleFunction, includeThis: Boolean 
  * class nested inside a local class, which is harmless here: such a class is only reachable through its local
  * enclosing one, whose captures the scan already collects.
  */
-private fun isLocalDeclaration(d: IrDeclarationWithVisibility): Boolean =
+internal fun isLocalDeclaration(d: IrDeclarationWithVisibility): Boolean =
 	d.visibility.delegate == org.jetbrains.kotlin.descriptors.Visibilities.Local
+
+/**
+ * Index lexical local-function ownership before any BIR fact is rendered. Capture analysis and synthetic-type
+ * discovery may ask for a ref-cell representation while the enclosing method signature/body is still being
+ * prepared, before [localFunctionDecl] reaches the declaration statement. The declaration edge therefore has to be
+ * available as a file-level semantic fact up front; bir2cir must not recover it later from a body or generated name.
+ *
+ * A lambda's IrSimpleFunction is carried by IrFunctionExpression rather than being a lexical `localFun` declaration.
+ * Traverse its body to find declarations inside it, but do not assign the lambda function itself a localFun id.
+ */
+internal fun BirEmitter.indexLocalFunctionOwnership(file: IrFile) {
+	fun register(fn: IrSimpleFunction) {
+		val localId = localFunctionIds.getOrPut(fn) { "local${scopeCounter++}" }
+		fn.body?.acceptVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) {
+				when (element) {
+					is IrFunctionExpression, is IrSimpleFunction, is IrClass -> return
+					is IrVariable -> localFunctionOwnerByVariable[element] = localId
+				}
+				element.acceptChildrenVoid(this)
+			}
+		})
+	}
+	file.acceptVoid(object : IrVisitorVoid() {
+		override fun visitElement(element: IrElement) {
+			when (element) {
+				is IrFunctionExpression -> {
+					element.function.body?.acceptChildrenVoid(this)
+					return
+				}
+				is IrSimpleFunction -> if (isLocalDeclaration(element)) register(element)
+			}
+			element.acceptChildrenVoid(this)
+		}
+	})
+}
+
+/**
+ * Render a second projection of one IR subtree with fresh lexical declaration ids. Default expressions are projected
+ * once into their metadata carrier and may be projected again at same-module omitting call sites. Those are distinct
+ * BIR declaration instances even when FIR/IR reuses the same [IrSimpleFunction] object; retaining the first ids would
+ * put two `localFun` declarations with one id in the module. Keep the relation explicit in kotc and restore the primary
+ * projection afterwards -- bir2cir must never infer clone boundaries from bodies or generated names.
+ */
+internal inline fun <T> BirEmitter.withClonedLocalFunctionIds(root: IrElement, block: () -> T): T {
+	val functions = ArrayList<IrSimpleFunction>()
+	val seenFunctions = java.util.Collections.newSetFromMap(
+		java.util.IdentityHashMap<IrSimpleFunction, Boolean>(),
+	)
+	root.acceptVoid(object : IrVisitorVoid() {
+		override fun visitElement(element: IrElement) {
+			// IrFunctionExpression carries its function as a declaration payload rather than an ordinary child on this
+			// visitor path. Enter the lambda body explicitly, matching indexLocalFunctionOwnership, so declarations in a
+			// default lambda receive the carrier projection's ids too.
+			if (element is IrFunctionExpression) {
+				element.function.body?.acceptChildrenVoid(this)
+				return
+			}
+			if (element is IrSimpleFunction && isLocalDeclaration(element) && seenFunctions.add(element))
+				functions.add(element)
+			element.acceptChildrenVoid(this)
+		}
+	})
+	if (functions.isEmpty()) return block()
+
+	val savedFunctionIds = java.util.IdentityHashMap<IrSimpleFunction, String>()
+	val primaryVariableOwners = java.util.IdentityHashMap<IrVariable, String>()
+	for (fn in functions) {
+		// A default-value IR subtree may be materialized lazily and therefore need its declaration identity before the
+		// file pre-indexer has encountered that exact IR object. Allocate BOTH identities here in kotc: the primary id
+		// remains attached to the executable projection, while the fresh id is used only for this carrier projection.
+		// This is declaration bookkeeping at the semantic producer, not a compatibility recovery in a lower layer.
+		val primaryId = localFunctionIds.getOrPut(fn) { "local${scopeCounter++}" }
+		savedFunctionIds[fn] = primaryId
+		val cloneId = "local${scopeCounter++}"
+		localFunctionIds[fn] = cloneId
+		fn.body?.acceptVoid(object : IrVisitorVoid() {
+			override fun visitElement(element: IrElement) {
+				when (element) {
+					is IrFunctionExpression, is IrSimpleFunction, is IrClass -> return
+					is IrVariable -> {
+						val primaryOwner = localFunctionOwnerByVariable[element] ?: primaryId
+						primaryVariableOwners[element] = primaryOwner
+						localFunctionOwnerByVariable[element] = cloneId
+					}
+				}
+				element.acceptChildrenVoid(this)
+			}
+		})
+	}
+	try {
+		return block()
+	} finally {
+		for ((fn, id) in savedFunctionIds) localFunctionIds[fn] = id
+		for ((variable, owner) in primaryVariableOwners)
+			localFunctionOwnerByVariable[variable] = owner
+	}
+}
 
 private fun newCycleGuard(): MutableSet<IrElement> =
 	java.util.Collections.newSetFromMap(java.util.IdentityHashMap<IrElement, Boolean>())
@@ -1355,11 +1513,12 @@ internal fun BirEmitter.captureFieldName(d: IrValueDeclaration): String =
 /**
  * Capture (decl, name) pairs, each name unique against [taken] and against the pairs already produced.
  *
- * A capture normally keeps its own Kotlin name — that is what every lift has always emitted, and what a reader
+ * A capture normally keeps its own Kotlin name — that is what each projected capture has always emitted, and what a reader
  * expects to see — unless something else already owns that name in the same namespace, in which case it moves into a
  * `cap$` prefix Kotlin source cannot spell. Set [alwaysPrefix] where the namespace cannot be enumerated up front:
- * a lifted local fun's captures become PARAMETERS, and ilemit resolves a `{k:local}` read against body locals before
- * parameters in one flat map (Emitter.Expressions/Bodies), so a body local declared anywhere inside the lift would
+ * a local function's captures become PARAMETERS in its eventual MethodDef, and ilemit resolves a `{k:local}` read
+ * against body locals before parameters in one flat map (Emitter.Expressions/Bodies), so a body local declared
+ * anywhere inside that method would
  * shadow a like-named capture parameter from that point on. A lifted CLASS has no such problem: its captures are
  * FIELDS, read through `this`, and the names they must avoid are exactly its own fields and constructor parameters.
  *
@@ -1504,11 +1663,13 @@ internal inline fun <T> BirEmitter.withLambdaSelf(fn: IrSimpleFunction, recvName
 internal fun BirEmitter.lambdaRecvName(fn: IrSimpleFunction): String? =
 	if (fn.parameters.any { it.kind == IrParameterKind.ExtensionReceiver }) freshFrameName("__recv", fn) else null
 
-/** Lift a local function to a file-class static method; captured vars become leading params (by their own names). */
-internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
+/** Project a local function as a lexical BIR declaration; captures remain explicit leading parameters. */
+internal fun BirEmitter.localFunctionDecl(fn: IrSimpleFunction): String {
+	// This is a BIR declaration identity, not a CLR method name. InlineSplice alpha-renames cloned ids so they remain
+	// unique within the BIR file; bir2cir assigns a fresh compiler-reserved physical name per materialization.
+	val localId = localFunctionIds[fn] ?: error("local function ownership was not indexed before BIR emission")
 	// Captured vars (incl. the enclosing `this`) become leading params; the call site prepends their values.
 	val captures = capturedVars(fn, includeThis = true)
-	val lname = "__local${scopeCounter++}_${fn.name.asString()}"
 	// A local fn's OWN value parameters = its regular params PLUS its dispatch/extension receiver. A callable-reference
 	// ADAPTER (`ADAPTER_FOR_CALLABLE_REFERENCE`) whose bound receiver is an ExtensionReceiver param `receiver` references
 	// that param by name in its body, so it MUST be emitted as a leading method param, in declaration order (receivers
@@ -1532,7 +1693,10 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	// lift cannot name in its own frame (see `_syntheticTypeArgs` below).
 	val freeTps = freeTypeParams(
 		captures.map { it.type } + ownValueParams.map { it.type } + listOf(fn.returnType) + bodyTypeOperands(fn))
-	localFns[fn] = Triple(lname, captures, freeTps)
+	localFns[fn] = BirEmitter.LocalFunctionFact(localId, captures, freeTps)
+	// Preserve the declaration-to-enclosing-frame relation before giving the declaration an independent dense frame.
+	// These values are not declaration identities: nested functions can both legitimately own `method#0`.
+	val syntheticOrigins = freeTps.map { typeArgSubst[it] ?: tvOf(it) }
 	fun pj(name: String, t: IrType) = """{"name":${str(name)},"type":${birType(t).toJson()}}"""
 	// This lift puts the captures in the method's PARAMETER namespace, beside the fn's own value params — and a
 	// transitive capture arrives from ANOTHER body, where its name may resolve to a different declaration than it does
@@ -1546,30 +1710,50 @@ internal fun BirEmitter.liftLocalFn(fn: IrSimpleFunction) {
 	// be declared INSIDE a closure/object/local class that already bound the same outer decl to its own capture field.
 	// Removing the binding instead would leave the enclosing frame reading the bare local again, so the `bump()` call
 	// site after it (capValueExpr) emits a local that does not exist in that frame.
-	val savedSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
+	val savedCaptureSubst = capPairs.associate { (decl, _) -> decl to captureSubst[decl] }
+	// A captured mutable variable already has a file-unique ref-cell identity in its enclosing frame. Retain that
+	// identity while re-framing the declaration; ordinary capture types are rendered in the dense frame below.
+	val capturedCells = capPairs.associate { (decl, _) ->
+		decl to captureFieldType(decl).takeIf { isRefCell(decl) }
+	}
+	val savedTypeSubst = freeTps.associateWith { typeArgSubst[it] }
+	freeTps.forEachIndexed { index, parameter -> typeArgSubst[parameter] = TypeNode.Tv("method", index) }
 	capPairs.forEach { (decl, fname) -> captureSubst[decl] = """{"k":"local","name":${str(fname)}}""" }
-	val capParams = capPairs.map { (decl, fname) -> """{"name":${str(fname)},"type":${str(captureFieldType(decl))}}""" }
-	val ownParams = ownValueParams.map { pj(it.name.asString(), it.type) }
-	val body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
-	capPairs.forEach { (decl, _) -> val prev = savedSubst[decl]; if (prev != null) captureSubst[decl] = prev else captureSubst.remove(decl) }
-	val ret = birType(fn.returnType)
-	// This lifted static RE-DECLARES the enclosing declaration's free type params as its OWN (`freeTps` ->
-	// `typeParams`), but every `tv` token inside it still names them in their ORIGINAL frame (the enclosing class's
-	// `tv{type,i}` / method's `tv{method,i}`) — the frame is part of a token's identity (#74). Carry the positional
-	// correspondence so a consumer that must re-express one of those tokens in THIS method's frame can: bir2cir's
-	// SharedSyntheticSynthesis needs it to construct a bare heap-ref-cell identity used here, whose element type is
-	// registered in the enclosing frame. Same key, same meaning as the one ClosureSynthesis derives for a lifted
-	// closure CLASS from `newClosure.typeArgs`; consumed and dropped there, never reaching CIR.
-	//
-	// The body is NOT re-expressed in this lift's frame. Doing that (a typeArgSubst over `freeTps`, the treatment
-	// typeDef gives a lifted class) is the real fix for a body-local whose type is an enclosing variable, but it also
-	// re-frames the `newClosure.typeArgs` of any closure nested in this body, from which ClosureSynthesis derives that
-	// closure class's own correspondence — and the two derivations then disagree about which frame a cell inside the
-	// closure belongs to. Attempted and reverted; the residual is bir2cir's loud refusal, recorded at bodyTypeOperands.
-	val synthTvs = if (freeTps.isEmpty()) "" else ""","_syntheticTypeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
-	// Lifting is a Kotlin-to-Kotlin structural projection. Preserve declaration facts exactly as for an ordinary
-	// function; bir2cir remains solely responsible for lowering a suspend declaration to the CLR continuation ABI.
-	liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)}$synthTvs${funModsJson(fn)}${resultTypeJson(fn)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}""")
+	val capParams: List<String>
+	val ownParams: List<String>
+	val body: String
+	val ret: TypeNode
+	val typeParams: String
+	try {
+		capParams = capPairs.map { (decl, fname) ->
+			val type = capturedCells[decl] ?: captureFieldType(decl)
+			"""{"name":${str(fname)},"type":${type.toJson()}}"""
+		}
+		ownParams = ownValueParams.map { pj(it.name.asString(), it.type) }
+		body = (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+		ret = birType(fn.returnType)
+		typeParams = typeParamsJson(freeTps)
+	} finally {
+		capPairs.forEach { (decl, _) ->
+			val previous = savedCaptureSubst[decl]
+			if (previous != null) captureSubst[decl] = previous else captureSubst.remove(decl)
+		}
+		freeTps.forEach { parameter ->
+			val previous = savedTypeSubst[parameter]
+			if (previous != null) typeArgSubst[parameter] = previous else typeArgSubst.remove(parameter)
+		}
+	}
+	// The declaration has an independent dense method frame, but bir2cir must still partition those slots between the
+	// eventual CLR owner's type parameters and the moved method's remaining parameters. Preserve that positional
+	// relation to the lexical frame explicitly. Two source parameters owned by different declarations can both have
+	// source index 0, so deriving it later from source indices would alias them. This is consumed before CIR.
+	val synthTvs = if (freeTps.isEmpty()) "" else ""","_syntheticTypeArgs":[${syntheticOrigins.joinToString(",") {
+		it.toJson()
+	}}]"""
+	// The nested declaration itself is the ownership fact. The declaration id is referenced only by callLocal /
+	// localFunRef nodes in this lexical subtree; neither a FileClass nor a CLR owner is named in BIR.
+	val decl = """{"sourceName":${str(fn.name.asString())},"static":true,"override":false,"virtual":false$typeParams$synthTvs${funModsJson(fn)}${resultTypeJson(fn)},"params":[${(capParams + ownParams).joinToString(",")}],"ret":${str(ret)},"body":[$body]}"""
+	return """{"k":"localFun","id":${str(localId)},"decl":$decl}"""
 }
 
 /**
