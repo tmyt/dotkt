@@ -2089,7 +2089,8 @@ internal sealed class AssemblyScanner
             });
         }
         foreach (var pair in accessorPairs)
-            result.Property.Add(KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds));
+            result.Property.Add(KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds,
+                isStatic: (_md.GetMethodDefinition(pair.Getter).Attributes & MethodAttributes.Static) != 0));
         AddEnumerableIterator(handle, def, result, names, signatures, typeContext);
         MarkLowPriorityDelegateOverloads(result.Constructor, names);
         MarkLowPriorityDelegateOverloads(result.Function, names);
@@ -3053,7 +3054,9 @@ internal sealed class AssemblyScanner
             .ToHashSet();
         foreach (var pair in accessorPairs)
         {
-            var property = KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds);
+            var companionReceiver = CompanionExtensionReceiver(pair.Getter, signatures);
+            var property = KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds,
+                isStatic: companionReceiver is not null, companionReceiver: companionReceiver);
             property.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
             property.Flags |= 1;
             package.Property.Add(property);
@@ -3084,7 +3087,17 @@ internal sealed class AssemblyScanner
                 ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context) },
             };
             PromoteContextParameters(method, function);
-            PromoteReceiver(methodHandle, method, function);
+            // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
+            // of this facade; the trusted carrier holds the type it is associated with. Restoring it needs no new
+            // encoding — a static callable with a receiver IS the standard shape (`isStatic && receiverParameter`), so
+            // put the static flag back and take the receiver from the carrier instead of from a `__self` parameter,
+            // which a companion extension does not have.
+            if (CompanionExtensionReceiver(methodHandle, signatures) is { } fnCompanionReceiver)
+            {
+                function.Flags |= 1 << 18;
+                function.ReceiverType = fnCompanionReceiver;
+            }
+            else PromoteReceiver(methodHandle, method, function);
             foreach (var gpHandle in method.GetGenericParameters())
             {
                 var gp = _md.GetGenericParameter(gpHandle);
@@ -3125,13 +3138,18 @@ internal sealed class AssemblyScanner
                     signatures,
                     context);
             var canWrite = !accessors.Setter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(accessors.Setter).Attributes);
+            // The CLR-property twin of the facade field/method paths: a companion extension that emits a real property
+            // row (a delegated one) is still a static declaration whose receiver comes from the carrier.
+            var propCompanionReceiver = CompanionExtensionReceiver(methodHandle, signatures);
             var projected = new Property {
                 Name = names.String(_md.GetString(property.Name)),
                 ReturnType = type,
-                Flags = Flags.Property(method.Attributes, canWrite, isStatic: false),
+                Flags = Flags.Property(method.Attributes, canWrite, isStatic: propCompanionReceiver is not null),
                 SetterValueParameter = canWrite ? new ValueParameter { Name = names.String("value"), Type = type.Clone() } : null,
             };
-            if (sig.ParameterTypes.Length != 0)
+            if (propCompanionReceiver is not null)
+                projected.ReceiverType = propCompanionReceiver;
+            else if (sig.ParameterTypes.Length != 0)
             {
                 var receiverHandle = method.GetParameters()
                     .Select(h => (Handle: h, Row: _md.GetParameter(h)))
@@ -3155,10 +3173,16 @@ internal sealed class AssemblyScanner
             var canWrite = hasCustomAccessors && (custom.Access & 2) != 0 ||
                 (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
                 !_attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinReadOnlyAttribute");
+            // `companion val C.bar = 1` stores into a plain static field of this facade; its carrier restores both the
+            // static declaration flag and the associated type, exactly as the method path above does.
+            var fieldCompanionReceiver = CompanionExtensionReceiver(fieldHandle, signatures);
             var projected = new Property {
                 Name = names.String(name),
                 ReturnType = type,
-                Flags = Flags.Property(field.Attributes, canWrite) & ~(1 << 19),
+                Flags = fieldCompanionReceiver is null
+                    ? Flags.Property(field.Attributes, canWrite) & ~(1 << 19)
+                    : Flags.Property(field.Attributes, canWrite),
+                ReceiverType = fieldCompanionReceiver,
                 SetterValueParameter = canWrite ? new ValueParameter { Name = names.String("value"), Type = type.Clone() } : null,
             };
             if ((field.Attributes & FieldAttributes.Literal) != 0 &&
@@ -3358,8 +3382,13 @@ internal sealed class AssemblyScanner
             var physical = PhysicalParameters(getter);
             var hasReceiver = physical.Count > 0 && !physical[0].Row.Name.IsNil &&
                 _md.GetString(physical[0].Row.Name) == "__self";
+            // A COMPANION EXTENSION property accessor carries its receiver in trusted metadata instead of a physical
+            // `__self` slot (the frontend drops the parameter), so a receiverless zero-argument getter IS an accessor
+            // here when the carrier says so. Without this the getter would surface as a plain `get_<name>` function.
+            var hasCompanionReceiver =
+                _attrs.Has(getterHandle, MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute");
             var contextStart = hasReceiver ? 1 : 0;
-            if (!hasReceiver && physical.Count == 0 ||
+            if (!hasReceiver && !hasCompanionReceiver && physical.Count == 0 ||
                 physical.Skip(contextStart).Any(x =>
                     !_attrs.Has(x.Handle, MetadataAttributes.DotKtNs + "KotlinContextParameterAttribute")))
                 continue;
@@ -3373,13 +3402,19 @@ internal sealed class AssemblyScanner
         return result;
     }
 
+    /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor
+    /// is a Kotlin static exactly when its CLR accessor is static (a `companion { }` property), while a FILE-FACADE
+    /// accessor is static only when the trusted companion-extension carrier says so — every ordinary top-level
+    /// property has a static accessor and is not a static declaration.
     private Property KotlinAccessorProperty(
         TypeDefinitionHandle owner,
         MethodDefinitionHandle getterHandle,
         MethodDefinitionHandle setterHandle,
         NameTable names,
         SignatureDecoder signatures,
-        Dictionary<GenericParameterHandle, int> typeParameterIds)
+        Dictionary<GenericParameterHandle, int> typeParameterIds,
+        bool isStatic = false,
+        KType? companionReceiver = null)
     {
         var getter = _md.GetMethodDefinition(getterHandle);
         var physical = PhysicalParameters(getter);
@@ -3391,14 +3426,18 @@ internal sealed class AssemblyScanner
         var property = new Property {
             Name = names.String(_md.GetString(getter.Name)[4..]),
             ReturnType = type,
-            Flags = Flags.Property(getter.Attributes, !setterHandle.IsNil, isStatic: false),
+            Flags = Flags.Property(getter.Attributes, !setterHandle.IsNil, isStatic),
             SetterValueParameter = setterHandle.IsNil
                 ? null
                 : new ValueParameter { Name = names.String("value"), Type = type.Clone() },
         };
         ApplyAccessorFlags(property, getterHandle, setterHandle);
         var contextStart = 0;
-        if (hasReceiver)
+        // A COMPANION EXTENSION has no physical receiver slot at all — the frontend drops it — so its associated
+        // type comes from the carrier rather than from a leading `__self` parameter.
+        if (companionReceiver is not null)
+            property.ReceiverType = companionReceiver;
+        else if (hasReceiver)
         {
             property.ReceiverType = ProjectType(
                 physical[0].Handle, signature.ParameterTypes[0], owner, names, signatures, context);
@@ -3689,6 +3728,19 @@ internal sealed class AssemblyScanner
             };
         }
         return 0;
+    }
+
+    /// The Kotlin type a declaration is associated with when it is a Kotlin 2.4 COMPANION EXTENSION
+    /// (`companion fun C.foo()`, `companion val C.bar`), or null when it is not one.
+    ///
+    /// The frontend drops a companion extension's receiver parameter, so the emitted member carries no physical trace
+    /// of the association and it is read back from the trusted [KotlinCompanionExtension] carrier instead. No name,
+    /// library or physical-layout inference participates: an assembly without the carrier simply has no such
+    /// declaration.
+    private KType? CompanionExtensionReceiver(EntityHandle slot, SignatureDecoder signatures)
+    {
+        var node = _attrs.CarrierType(slot, MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute");
+        return node is null ? null : signatures.FromTypeNode(node);
     }
 
     private void PromoteReceiver(MethodDefinitionHandle handle, MethodDefinition method, Function function)

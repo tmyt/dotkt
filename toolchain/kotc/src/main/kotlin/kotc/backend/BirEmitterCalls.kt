@@ -432,7 +432,7 @@ internal fun BirEmitter.reconstructedDefaultReceiver(
 	if (p.defaultValue?.expression !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression) return null
 	if ((callee as? IrSimpleFunction)?.let { isDataClassCopy(it) } != true) return null
 	return callee.parameters.firstOrNull { it.kind == IrParameterKind.DispatchReceiver }
-		?: callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+		?: extensionReceiverParam(callee)
 }
 
 /** Is this argument's ADDRESS free to be taken twice, and free to move past another value? True for a plain
@@ -887,7 +887,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		}
 		val localSig = (caps.map { str(captureFieldType(it)) } +
 			callee.parameters.filter { it.kind == IrParameterKind.DispatchReceiver }.map { birType(it.type).toJson() } +
-			callee.parameters.filter { it.kind == IrParameterKind.ExtensionReceiver }.map { birType(it.type).toJson() } +
+			listOfNotNull(extensionReceiverParam(callee)).map { birType(it.type).toJson() } +
 			callee.parameters.filter { isValueParameter(it) }.map { birType(it.type).toJson() })
 			.joinToString(",")
 		val resolvedTypeArgs = callee.typeParameters.indices.map { call.typeArguments.getOrNull(it) }
@@ -963,6 +963,16 @@ internal fun BirEmitter.call(call: IrCall): String {
 			val args = accessorArgs.joinToString(",") { expr(it) }
 			val propKind = if (isSetter) "set" else "get"
 			val ret = if (isSetter) "" else ""","ret":${birType(call.type).toJson()}"""
+			// A property whose storage IS its user-visible member — `const`, `lateinit var`, `@ClrField` — emits no
+			// accessor at all (the declaration side gates on the same [fieldRoutedProperty] rule), so its access is
+			// the storage itself. Emitting an accessor call here named a `get_`/`set_` slot that does not exist.
+			if (!fieldRoutedProperty(staticProperty)) {
+				val fieldOwner = fqnJson(typeName(staticOwner))
+				val fieldName = str(staticProperty.name.asString())
+				return if (isSetter)
+					"""{"k":"staticFieldSet","ownerType":$fieldOwner,"name":$fieldName,"value":${accessorArgs.first().let { expr(it) }}}"""
+				else """{"k":"staticField","ownerType":$fieldOwner,"name":$fieldName}"""
+			}
 			return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
 		}
 	}
@@ -1900,7 +1910,7 @@ internal fun BirEmitter.plainExternalTopLevelCall(call: IrCall, callee: IrSimple
 			// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
 			// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
 			// PURE-KOTLIN `birType` identities; bir2cir derives the ilemit `shapes` tokens (see the member path above).
-			val shapeParams = (if (extRecv != null) listOf(callee.parameters.first { it.kind == IrParameterKind.ExtensionReceiver }) else emptyList()) + regularParams(callee)
+			val shapeParams = (if (extRecv != null) listOf(extensionReceiverParam(callee)!!) else emptyList()) + regularParams(callee)
 			val shapeTypes = shapeParams.joinToString(",") { birType(it.type).toJson() }
 			// A2 (#61): a PLAIN static call by identity carrying the generic facts (typeArgs + shapeTypes);
 			// bir2cir's NetInteropBinding resolves the file-class owner off the refs and shapes it to clrGenericStatic.
@@ -1917,7 +1927,7 @@ internal fun BirEmitter.plainExternalTopLevelCall(call: IrCall, callee: IrSimple
 	val regArgs = filledExternalArgs(call)
 	val extStr = extRecv?.let { expr(it) }
 	val argStrs = (listOfNotNull(extStr) + regArgs).joinToString(",")
-	val extParamType = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.let { birType(it.type) }
+	val extParamType = extensionReceiverParam(callee)?.let { birType(it.type) }
 	val argTypeNodes = (listOfNotNull(extParamType) + regularParams(callee).map { birType(it.type) }.take(regArgs.size)).joinToString(",") { it.toJson() }
 	return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)}${overloadSigField(callee)},"argTypes":[$argTypeNodes],"ret":${str(ret)},"args":[$argStrs]${suspendCallTag(callee)}}"""
 }
@@ -2090,7 +2100,7 @@ internal fun BirEmitter.clrCallArgs(call: org.jetbrains.kotlin.ir.expressions.Ir
 internal fun BirEmitter.clrCallArgsWithRecv(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
 		callee: org.jetbrains.kotlin.ir.declarations.IrFunction, extRecv: IrExpression): Pair<String, String> {
 	val (aj, tj) = clrCallArgs(call, callee)
-	val extParamType = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val extParamType = extensionReceiverParam(callee)
 		?.let { birType(it.type) } ?: birType(extRecv.type)
 	val args = listOf(expr(extRecv)) + listOfNotNull(aj.takeIf { it.isNotEmpty() })
 	val types = listOf(extParamType.toJson()) + listOfNotNull(tj.takeIf { it.isNotEmpty() })

@@ -92,6 +92,11 @@ STR_OK = {
                                                  # before nested `Nullable(Tv)` is object-erased. RoundtripMetadata
                                                  # carrier-encodes them into [KotlinNullableGeneric] for dll2klib.
                                                  # Payloads, NOT type slots.
+    "companionReceiver",                         # #382: the Kotlin type a COMPANION EXTENSION (`companion fun C.f()`)
+                                                 # is associated with, stashed by kotc as a canonical-JSON string so the
+                                                 # CLR type-lowering passes leave the KOTLIN identity untouched.
+                                                 # RoundtripMetadata carrier-encodes it into [KotlinCompanionExtension]
+                                                 # for dll2klib. A payload, NOT a value-type slot.
     "collIdentity", "collIdentityRet",           # #29: PRE-collapse Kotlin collection TypeNodes stashed as canonical-JSON
                                                  # strings by CollectionIdentityRecord. RoundtripMetadata immediately turns
                                                  # them into [KotlinCollectionIdentity] carrier bytes for dll2klib; these

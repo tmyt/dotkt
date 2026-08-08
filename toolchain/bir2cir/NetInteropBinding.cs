@@ -500,7 +500,7 @@ static class NetInteropBinding
     // A projected static on a generic CLR TypeDef has no enclosing type argument in Kotlin syntax, but its CIL
     // MemberRef parent must still be a TypeSpec. Close the exact reflected owner selected above, rather than using a
     // name-only arity table (Task and Task<T>, for example, deliberately share the same source FQN).
-    static JsonNode CloseStaticOwner(JsonNode ownerJson, Type netType)
+    internal static JsonNode CloseStaticOwner(JsonNode ownerJson, Type netType)
     {
         if (TypeJson.Read(ownerJson) is not TypeNode.Fqn { Args: null } owner ||
             netType == null || !netType.IsGenericTypeDefinition)

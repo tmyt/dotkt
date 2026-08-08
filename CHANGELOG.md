@@ -5,6 +5,47 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+
+- **Kotlin 2.4 `companion { }` blocks and `companion` extensions are supported as native Kotlin/CLR static
+  declarations (#382).** Both spellings now compile, run and survive a DLL → KLIB → second-module round trip, with no
+  CLR-specific source annotation involved.
+
+  A member of `class C { companion { … } }` becomes a genuine static member of the CLR type `C` — a static method, or
+  a static property over static storage initialized in the **type initializer** rather than in a constructor. This
+  holds in a class, a nested class, an `inner` class, an interface (a CLR interface legally carries static methods,
+  static fields and a `.cctor`) and an enum class; an enum that declares one takes the plain-class shape, because an
+  ECMA-335 enum TypeDef may not carry a non-literal static field. Overloads, visibilities, `val`/`var`, `const` and
+  callable references (`C::f`, `C::v`) all work, and a real `companion object` remains structurally distinct — a class
+  may declare both. On a generic owner the statics collapse onto the single canonical `Box<Any>` instantiation, so
+  `Box.count` is ONE variable exactly as the Kotlin source says, rather than one per closed generic type.
+
+  A top-level `companion fun C.foo()` / `companion val C.bar` gets one uniform physical representation: an ordinary
+  receiverless static of the declaring file's facade class, with the associated type carried in trusted
+  `[KotlinCompanionExtension]` metadata. It is never made a member of `C`, so it behaves identically when `C` is an
+  external CLR type. `dll2klib` restores the standard Kotlin shape — the static-declaration flag plus a receiver type,
+  which is exactly what Kotlin means by a companion extension — so a second module resolves `C.foo(...)` from metadata
+  alone; like any extension it must be in scope at the use site. Two frontend erasures had to be undone for this:
+  fir2ir drops a companion extension's receiver parameter (recovered from FIR at capture time), and its LAZY
+  declaration builder — used for library declarations — adds that parameter back unconditionally, so a cross-module
+  callee declared a parameter its compiled method does not have.
+
+  See `docs/dotkt-semantics.md` §8c-bis.
+
+### Fixed
+
+- **A static on a referenced GENERIC type reached the emitted IL with an open generic owner (#382).** Two paths
+  produced an owner the CLR cannot use as a MemberRef parent: a static PROPERTY of a referenced generic type was bound
+  without closing its declaring type at all, and a static CALL had its `owner` axis filled from the bare declaring
+  type while only the sibling `ownerType` axis was later closed to the canonical instantiation — leaving the axis
+  `ilemit` actually dispatches from spelling `G\`1`. Both now close from the same rule, so `G.member` from another
+  module loads instead of throwing `TypeLoadException`.
+
+- **A Kotlin class extending a .NET type re-declared that type's static members (#382).** The frontend materializes a
+  member on the subclass so `Sub.Shared` resolves; the CLR does not inherit statics into a derived TypeDef, so
+  emitting one produced a second, unrelated member — and, once it was correctly marked static, one that was
+  simultaneously static and an override. The subclass now emits nothing for it and `Sub.Shared` is `Base.Shared`.
+
 ### Changed
 
 - **A `companion object` of a generic class is now ONE object across every instantiation (#383).** CLR static storage

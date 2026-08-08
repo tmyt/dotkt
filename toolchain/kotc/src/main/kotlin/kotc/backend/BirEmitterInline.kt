@@ -187,7 +187,7 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// InlineSplice failed loud with "no [KotlinInline] payload found".
 	val callee = call.symbol.owner.let { if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it }
 	val name = callee.name.asString()
-	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val extParam = extensionReceiverParam(callee)
 	val extRecv = extensionReceiver(call)
 	val dispatchArg = dispatchReceiver(call)
 	// The callee's POSITIONAL params ([isValueParameter]: contexts then regulars) — the SAME sequence the DECLARATION
@@ -384,7 +384,7 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
  *  so a param `(T)->R` serializes as `{t:fn,params:[{t:tv,scope:method,i:0}],ret:{t:tv,scope:method,i:1}}` IDENTICALLY
  *  here and at the decl site (never instantiated to the call's type args). */
 internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction): String {
-	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val extParam = extensionReceiverParam(callee)
 	val sigParams = buildList {
 		extParam?.let { add(it) }
 		callee.parameters.filter { isValueParameter(it) }.forEach { add(it) }
@@ -412,7 +412,7 @@ internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction): String {
  *  `this`/implicit-member refs would fall through to the CALLER's `{"k":"this"}` and dangle. */
 internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): String {
 	val fn = lambda.function
-	val extParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val extParam = extensionReceiverParam(fn)
 	// Allocated against the lambda's own frame, like every other minted frame name — the carrier's params sit in the
 	// same flat by-name namespace as the lambda's own, so an unchecked `__recvN` could alias one of them.
 	val freshRecv = extParam?.let { freshFrameName("__recv", fn) }
