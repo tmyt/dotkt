@@ -963,6 +963,16 @@ internal fun BirEmitter.call(call: IrCall): String {
 			val args = accessorArgs.joinToString(",") { expr(it) }
 			val propKind = if (isSetter) "set" else "get"
 			val ret = if (isSetter) "" else ""","ret":${birType(call.type).toJson()}"""
+			// A property whose storage IS its user-visible member — `const`, `lateinit var`, `@ClrField` — emits no
+			// accessor at all (the declaration side gates on the same [fieldRoutedProperty] rule), so its access is
+			// the storage itself. Emitting an accessor call here named a `get_`/`set_` slot that does not exist.
+			if (!fieldRoutedProperty(staticProperty)) {
+				val fieldOwner = fqnJson(typeName(staticOwner))
+				val fieldName = str(staticProperty.name.asString())
+				return if (isSetter)
+					"""{"k":"staticFieldSet","ownerType":$fieldOwner,"name":$fieldName,"value":${accessorArgs.first().let { expr(it) }}}"""
+				else """{"k":"staticField","ownerType":$fieldOwner,"name":$fieldName}"""
+			}
 			return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
 		}
 	}

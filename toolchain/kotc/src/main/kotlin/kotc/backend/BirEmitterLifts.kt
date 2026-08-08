@@ -1076,7 +1076,11 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	// unsupported. Test the accessor's PARAMETER SHAPE, not the bound ARGUMENT (a bound test is null for an UNBOUND
 	// ref, so it would misclassify an unbound top-level ext ref).
 	val extAccessor = node.getter?.owner ?: node.setter?.owner
-	val hasExtRecv = extAccessor?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver } == true
+	// `extensionReceiverParam`, not a raw parameter-kind scan: a COMPANION EXTENSION has no receiver parameter,
+	// and a cross-module one only appears to declare one because fir2ir's lazy declaration builder adds it back
+	// (see [isCompanionExtensionCallee]). Reading the raw kind here sent `C::bar` for a `companion val C.bar`
+	// down the top-level-extension path, whose accessor call then dereferenced that absent parameter.
+	val hasExtRecv = extAccessor?.let { extensionReceiverParam(it) } != null
 	val hasDispatchRecv = extAccessor?.parameters?.any { it.kind == IrParameterKind.DispatchReceiver } == true
 	if (hasExtRecv && hasDispatchRecv)
 		return unsupported(node, "this property reference",
@@ -1246,7 +1250,10 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		declClass == null -> {
 			// Top-level property: mirrors the ordinary top-level property-read path (a plain val/var is a static
 			// field; a computed one — no backing field — is a get_<name>() static).
-			val owner = fileClassOf(prop)
+			// A property loaded from another module has no `IrFile` parent, so `fileClassOf` would fall back to the
+			// file being emitted and name THIS module's facade. dll2klib carries the real physical file class on the
+			// projected declaration; prefer it, exactly as the extension-property path above does.
+			val owner = clrExternalOwner(prop) ?: fileClassOf(prop)
 			if (prop.backingField == null)
 				"""{"k":"return","value":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("get_$name")},"args":[]}}"""
 			else """{"k":"return","value":{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(name)}}}"""
@@ -1268,7 +1275,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 			staticProperty -> """{"k":"exprStmt","expr":${staticPropertyAccess(true, """{"k":"local","name":"value"}""")}}"""
 			declClass != null && fieldBacked -> """{"k":"exprStmt","expr":${fieldAccess(true, """{"k":"local","name":"value"}""")}}"""
 			declClass == null -> {
-				val owner = fileClassOf(prop)
+				val owner = clrExternalOwner(prop) ?: fileClassOf(prop)
 				if (prop.backingField == null)
 					"""{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("set_$name")},"args":[{"k":"local","name":"value"}]}}"""
 				else """{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":{"k":"local","name":"value"}}}"""

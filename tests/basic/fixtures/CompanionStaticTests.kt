@@ -14,6 +14,7 @@
 //   - callable references to both a companion-block fun and a companion-block property
 //   - a real `companion object` DECLARED ALONGSIDE a companion block stays a distinct singleton
 //   - companion EXTENSIONS: fun, computed `val`, backed `val`, `var`
+import kotlin.clr.ClrField
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
@@ -88,6 +89,21 @@ enum class CompanionSimple {
     A, B;
     companion { val first: String = "a" }
 }
+
+// ---- companion-block properties whose storage IS the user-visible member --------------------------------------
+
+class CompanionFieldRouted {
+    companion {
+        // Neither emits an accessor — the storage is the member — so the access site must address the storage, not
+        // a `get_`/`set_` slot that does not exist.
+        lateinit var late: String
+        @ClrField var plain: Int = 1
+    }
+}
+
+// A user property whose name collides with the compiler-reserved singleton field of its own `object`. The property's
+// storage is renamed to keep the CLR type's members distinguishable; the singleton must keep its name.
+object CompanionInstanceNameClash { val INSTANCE = 7 }
 
 // ---- companion extensions ---------------------------------------------------------------------------------------
 
@@ -176,6 +192,21 @@ class CompanionStaticTests {
         // A companion object is a singleton VALUE; the block's members have no instance at all.
         assertTrue(CompanionCounter.Companion === CompanionCounter.Companion)
         assertFalse(CompanionCounter.Companion.label == CompanionCounter.TAG)
+    }
+
+    @TestAttribute
+    fun fieldRoutedCompanionBlockPropertiesAddressTheirStorage() {
+        CompanionFieldRouted.late = "x"
+        assertEquals("x", CompanionFieldRouted.late)
+        CompanionFieldRouted.plain = 3
+        assertEquals(3, CompanionFieldRouted.plain)
+        CompanionFieldRouted.plain = 1
+    }
+
+    @TestAttribute
+    fun anObjectSingletonKeepsItsNameBesideASameNamedProperty() {
+        assertEquals(7, CompanionInstanceNameClash.INSTANCE)
+        assertTrue(CompanionInstanceNameClash === CompanionInstanceNameClash)
     }
 
     @TestAttribute

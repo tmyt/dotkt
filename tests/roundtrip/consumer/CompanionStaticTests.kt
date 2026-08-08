@@ -59,6 +59,16 @@ class CompanionStaticRoundtripTests {
     }
 
     @TestAttribute
+    fun companionExtensionsAreReferenceableAcrossTheModuleBoundary() {
+        // A reference resolves the declaration through metadata, so it exercises the restored shape a second way:
+        // the receiver is not a parameter, and the physical host is the PRODUCER's facade, not this module's.
+        val p = Tag::marker
+        assertEquals("m", p.get())
+        val f: (String) -> Tag = Tag::of
+        assertEquals("z", f("z").label)
+    }
+
+    @TestAttribute
     fun companionExtensionsRoundTripWithTheirAssociatedType() {
         assertEquals("hi", Tag.of("hi").label)
         assertEquals("", Tag.blank.label)
