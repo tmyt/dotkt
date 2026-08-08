@@ -51,7 +51,7 @@ direct_out="$OUT/direct-Probe.klib"
 if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
 	die "standalone direct worker invocation unexpectedly succeeded without resolved reference catalogs"
 fi
-grep -q "direct worker mode requires the batch-provided resolved delegate and companion catalogs" <<<"$direct_error" \
+grep -q "direct worker mode requires the batch-provided resolved delegate, companion, and inner catalogs" <<<"$direct_error" \
 	|| die "standalone direct worker rejection did not explain the required batch reference set"
 [[ ! -e "$direct_out" ]] || die "rejected standalone direct worker invocation still wrote a KLIB"
 
@@ -105,6 +105,33 @@ grep -q 'converting 2/2 reference(s)' <<<"$catalog_restore" \
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done
+
+# The manifest uses an ordinary unique_name, while KlibMetadataProtoBuf.Header.module_name is a Kotlin Name and must
+# therefore use the special `<...>` spelling. A plain header name happens to deserialize as protobuf but is rejected
+# by standard loader paths that construct module data from it.
+manifest_unique_name="$(unzip -p "$PROBE_KLIB" default/manifest | sed -n 's/^unique_name=//p')"
+module_header_name="$(python3 - "$PROBE_KLIB" <<'PY'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1]) as klib:
+    data = klib.read("default/linkdata/module")
+if not data or data[0] != 0x0A:  # field 1, wire type 2: module_name
+    raise SystemExit("KLIB header does not begin with module_name")
+offset = 1
+size = shift = 0
+while True:
+    byte = data[offset]
+    offset += 1
+    size |= (byte & 0x7F) << shift
+    if byte < 0x80:
+        break
+    shift += 7
+print(data[offset:offset + size].decode("utf-8"))
+PY
+)"
+[[ -n "$manifest_unique_name" && "$module_header_name" == "<$manifest_unique_name>" ]] \
+	|| die "KLIB header module_name '$module_header_name' is not the special form of manifest unique_name '$manifest_unique_name'"
 
 # The only classpath metadata for Probe.Widget is the packed KLIB.
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \

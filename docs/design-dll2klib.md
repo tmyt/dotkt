@@ -118,7 +118,9 @@ KLIB extension fields are represented as ordinary C# protobuf fields with the
 same wire numbers. Kotlin's registered extension parser therefore reads the
 result as standard KLIB metadata.
 
-The module identity is derived from the CLR assembly identity and MVID.
+The module identity is derived from the CLR assembly identity and MVID. The manifest records that identity as the
+ordinary `unique_name`; the protobuf header records the corresponding Kotlin special name (`module_name=<...>`), as
+required by the standard Kotlin metadata loader.
 Projection of the same input and projection catalog is deterministic; the E2E
 test verifies byte-identical output.
 
