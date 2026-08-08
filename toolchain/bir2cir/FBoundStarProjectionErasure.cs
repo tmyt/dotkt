@@ -263,9 +263,9 @@ static class FBoundStarProjectionErasure
         var inherited = new JsonArray();
         // An interface can inherit the existential view of a generic class base, but never
         // the concrete class itself. Non-generic interface contracts are handled below.
-        AddErasedAncestor(owner.Def["base"], inherited, owners, allowConcrete: false);
+        AddErasedAncestor(owner.Def["base"], inherited, owners, refs, allowConcrete: false);
         if (owner.Def["interfaces"] is JsonArray interfaces)
-            foreach (var i in interfaces) AddErasedAncestor(i, inherited, owners, allowConcrete: true);
+            foreach (var i in interfaces) AddErasedAncestor(i, inherited, owners, refs, allowConcrete: true);
 
         var methods = new JsonArray();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -335,12 +335,17 @@ static class FBoundStarProjectionErasure
     }
 
     static void AddErasedAncestor(JsonNode slot, JsonArray target, IReadOnlyDictionary<string, Owner> owners,
-        bool allowConcrete)
+        ReferenceMetadataIndex refs, bool allowConcrete)
     {
         if (TypeJson.Read(slot) is not TypeNode.Fqn f) return;
         TypeNode.Fqn inherited;
         if (owners.TryGetValue(f.Name, out var ancestor))
             inherited = new TypeNode.Fqn(ancestor.ErasedName);
+        else if (refs.TryExistentialPhysicalOwner(f.Name, out var referenced))
+            // A local Derived<T> can inherit a generic Base<T> from a referenced DotKt assembly. The semantic base
+            // application contains this owner's T, but Base's trusted non-generic existential is precisely the contract
+            // every closed Base<X> implements, so it is the one legal ancestor of Derived's non-generic view.
+            inherited = new TypeNode.Fqn(referenced);
         else if (allowConcrete && !ContainsOwnerTv(f))
             // A non-generic (or owner-T-independent constructed) interface is implemented by
             // every closed G<T> already, so it is also a sound contract of G's existential
@@ -680,7 +685,11 @@ static class FBoundStarProjectionErasure
             ?? (call["argTypes"] as JsonArray)?.Count
             ?? (call["args"] as JsonArray)?.Count ?? 0;
         var ga = (call["typeArgs"] as JsonArray)?.Count ?? 0;
-        if (start != null && start.Needed && FindDeclaringOwner(start, method, pc, ga, owners) is { } found)
+        var authoredSignature = ((call["sig"] ?? call["argTypes"]) as JsonArray)?
+            .Select(TypeJson.Read).ToArray();
+        if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
+        if (start != null && start.Needed
+            && FindDeclaringOwner(start, method, pc, ga, authoredSignature, owners) is { } found)
         {
             var (declaring, declaration) = found;
             call["ownerType"] = TypeJson.Write(new TypeNode.Fqn(declaring.ErasedName));
@@ -705,10 +714,12 @@ static class FBoundStarProjectionErasure
         // Cross-module equivalent of the local declaration walk above.  The emitted reference is the
         // authority for the physical existential slot; no reference-assembly or namespace special case
         // participates in the decision.
-        if (refs.TryStarProjectionMember(f.Name, method, pc, out var erasedOwner, out var erasedMethod))
+        if (refs.TryStarProjectionMember(f, method, ga, authoredSignature, pc,
+                out var erasedOwner, out var erasedMethod, out var erasedSignature))
         {
             call["ownerType"] = TypeJson.Write(new TypeNode.Fqn(erasedOwner));
             call["method"] = erasedMethod;
+            call["sig"] = new JsonArray(erasedSignature.Select(TypeJson.Write).ToArray());
             call["virtual"] = true;
             return;
         }
@@ -726,7 +737,7 @@ static class FBoundStarProjectionErasure
             .ToArray() ?? Array.Empty<JsonNode>());
 
     static (Owner Owner, JsonObject Method)? FindDeclaringOwner(Owner start, string method, int pc, int ga,
-        IReadOnlyDictionary<string, Owner> owners)
+        IReadOnlyList<TypeNode> authoredSignature, IReadOnlyDictionary<string, Owner> owners)
     {
         var frontier = new List<Owner> { start };
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -742,7 +753,8 @@ static class FBoundStarProjectionErasure
                         // bridge when needed, including private members used by lifted nested classes.
                         if (Str(m["name"]) == method && !Bool(m["static"])
                             && ((m["params"] as JsonArray)?.Count ?? 0) == pc
-                            && ((m["typeParams"] as JsonArray)?.Count ?? 0) == ga)
+                            && ((m["typeParams"] as JsonArray)?.Count ?? 0) == ga
+                            && SignatureMatches(m, authoredSignature))
                             matches.Add((owner, m));
             }
             if (matches.Count == 1) return matches[0];
@@ -758,6 +770,15 @@ static class FBoundStarProjectionErasure
             frontier = next;
         }
         return null;
+    }
+
+    static bool SignatureMatches(JsonObject declaration, IReadOnlyList<TypeNode> authoredSignature)
+    {
+        if (authoredSignature == null) return true;
+        var parameters = (declaration["params"] as JsonArray)?.OfType<JsonObject>()
+            .Select(p => TypeJson.Read(p["type"])).ToArray() ?? Array.Empty<TypeNode>();
+        return parameters.Length == authoredSignature.Count
+            && parameters.Select((p, i) => p == authoredSignature[i]).All(equal => equal);
     }
 
     static (Owner BridgeOwner, string DeclaringName, JsonObject Method)? FindInheritedConcreteBaseMember(
@@ -802,6 +823,17 @@ static class FBoundStarProjectionErasure
     {
         switch (type)
         {
+            case TypeNode.Fqn { Args: { } nestedArgs } nestedForeign
+                when nestedArgs.Any(ContainsStar)
+                    && ForeignStarProjectionBinding.IsForeignStarType(nestedForeign, refs):
+                // A star anywhere below a foreign invariant construction makes the whole construction
+                // non-reifiable on the CLR.  In particular Outer<Inner<*>> is not Outer<object> (nor
+                // Outer<Inner<object>>); keep the original runtime value in one opaque object slot and let
+                // ForeignStarProjectionBinding route member access through the reflection ABI.
+                if (refs.IsByRefLikeFqn(nestedForeign.Name))
+                    throw new NotSupportedException(
+                        $"bir2cir: foreign byref-like generic star projection `{nestedForeign.Name}<*>` has no boxable CLR existential representation");
+                return new TypeNode.Fqn("kotlin.Any");
             case TypeNode.Fqn { Args: { } args } f when args.Any(a => a is TypeNode.Star):
             {
                 var erased = owners.TryGetValue(f.Name, out var local) ? local.ErasedName : null;
@@ -812,7 +844,12 @@ static class FBoundStarProjectionErasure
                 // slot is object; classifier checks/casts/member dispatch were already authored explicitly by
                 // ForeignStarProjectionBinding above. Never manufacture the invariant fiction G<object>.
                 if (!refs.HasDotKtOwner(f.Name) && refs.ResolveNetType(f.Name, args.Length) != null)
+                {
+                    if (refs.IsByRefLikeFqn(f.Name))
+                        throw new NotSupportedException(
+                            $"bir2cir: foreign byref-like generic star projection `{f.Name}<*>` has no boxable CLR existential representation");
                     return new TypeNode.Fqn("kotlin.Any");
+                }
                 return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(a, owners, refs)).ToArray());
             }
             case TypeNode.Star:
@@ -856,6 +893,19 @@ static class FBoundStarProjectionErasure
         TypeNode.ByRef b => ContainsStarOrTypeVariable(b.Of),
         TypeNode.Fn fn => ContainsStarOrTypeVariable(fn.Ret) || fn.Params.Any(ContainsStarOrTypeVariable)
             || (fn.Recv != null && ContainsStarOrTypeVariable(fn.Recv)),
+        _ => false,
+    };
+
+    static bool ContainsStar(TypeNode t) => t switch
+    {
+        TypeNode.Star => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsStar),
+        TypeNode.Nullable n => ContainsStar(n.Of),
+        TypeNode.Oblivious o => ContainsStar(o.Of),
+        TypeNode.Array a => ContainsStar(a.Elem),
+        TypeNode.ByRef b => ContainsStar(b.Of),
+        TypeNode.Fn fn => ContainsStar(fn.Ret) || fn.Params.Any(ContainsStar)
+            || (fn.Recv != null && ContainsStar(fn.Recv)),
         _ => false,
     };
 

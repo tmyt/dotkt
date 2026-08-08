@@ -36,11 +36,15 @@ fun firstUseBox(): FirstUseBox<String> = FirstUseStringBox()
 interface MixedBox<A, B> {
     fun first(): A
     fun second(): B
+    fun choose(value: A): String
+    fun choose(value: String): String
 }
 
 private class MixedValueBox : MixedBox<Int, String> {
     override fun first(): Int = 23
     override fun second(): String = "mixed"
+    override fun choose(value: Int): String = "int:$value"
+    override fun choose(value: String): String = "string:$value"
 }
 
 fun mixedBox(): MixedBox<*, String> = MixedValueBox()
@@ -61,3 +65,7 @@ private class CollisionHostImpl : CollisionHost<String> {
 }
 
 fun collisionHost(): CollisionHost<*> = CollisionHostImpl()
+
+interface ReferencedStarBase<T> {
+    fun inherited(): T
+}

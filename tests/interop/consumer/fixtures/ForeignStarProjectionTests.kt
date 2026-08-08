@@ -1,7 +1,15 @@
 import ForeignStar.Box
 import ForeignStar.Factory
 import ForeignStar.IBox
+import ForeignStar.IRead
 import ForeignStar.Pair
+import ForeignStar.CounterCell
+import ForeignStar.DerivedReader
+import ForeignStar.Duo
+import ForeignStar.GenericDerived
+import ForeignStar.Inner
+import ForeignStar.Outer
+import ForeignStar.ReorderedDerived
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
@@ -18,6 +26,14 @@ class ForeignStarProjectionTests {
 
         val box = value as Box<*>
         assertEquals("foreign", box.Read())
+        // A result containing the projected owner slot is one opaque object. `Holder<String>` is not the fictitious
+        // invariant `Holder<Any?>`; reflection must not append a cast to that construction.
+        assertEquals("foreign", box.Nested().Value)
+
+        // A nested star makes the entire foreign invariant construction opaque. Outer<Inner<String>> is neither
+        // Outer<Any?> nor Outer<Inner<Any?>>, but both member reads remain available through the reflection lane.
+        val outer = Factory.NestedOuterAsObject() as Outer<Inner<*>>
+        assertEquals("nested-foreign", outer.Value.Read())
         assertEquals("int:4", box.Describe(4))
         assertEquals("string:x", box.Describe("x"))
         assertEquals("Int32:9", box.EchoType<Int>(9))
@@ -44,5 +60,41 @@ class ForeignStarProjectionTests {
         assertEquals(7, pair.FirstField)
         pair.SecondField = "changed"
         assertEquals("changed", pair.SecondField)
+
+        // A star-projected foreign struct still has value-copy semantics. Both star locals may initially reference the
+        // same box physically, so the reflection lane clones before mutation and writes the new box only to the receiver.
+        val first: CounterCell<*> = Factory.CounterCell()
+        var second: CounterCell<*> = first
+        second.Increment()
+        second.PublicCount = 3
+        assertEquals(10, first.ReadCount())
+        assertEquals(0, first.PublicCount)
+        assertEquals(11, second.ReadCount())
+        assertEquals(3, second.PublicCount)
+
+        val dual = Factory.DualRead()
+        val stringView: IRead<*> = dual.StringView()
+        val intView: IRead<*> = dual.IntView()
+        assertEquals("string-view", stringView.ReadView())
+        assertEquals(42, intView.ReadView())
+
+        // Owner type parameters are distinct declaration slots. With Duo<*, String>, only the B overload is
+        // callable with String; treating both owner parameters as wildcards makes this falsely ambiguous.
+        val duo: Duo<*, String> = Factory.Duo()
+        assertEquals("second:string", duo.Pick("string"))
+
+        // A generic star owner can inherit its member from an ordinary non-generic base class.
+        val derived: DerivedReader<*> = Factory.DerivedReader()
+        assertEquals("base", derived.BaseValue())
+
+        // An exact Derived<String> witness must be translated to the member's declaring Base<String> closure.
+        val genericDerived: GenericDerived<*> = Factory.GenericDerived()
+        assertEquals("derived-view", genericDerived.ReadInherited())
+
+        // Reflection over Base<B> reports B in the derived owner's parameter frame. Runtime member identity must
+        // nevertheless use the open Base<T> declaration frame (t0), while the readable B slot remains String.
+        val reordered: ReorderedDerived<*, String> = Factory.ReorderedDerived()
+        assertEquals("base:value", reordered.PutInherited("value"))
+        assertEquals("reordered-view", reordered.ReadInherited())
     }
 }

@@ -86,7 +86,15 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   the same; an exact name/arity/parameter-type-shape declaration key bridges a ref.dll whose implementation twin
   assigns different tokens or forwards framework types from a facade. A non-unique declaration key is rejected;
   runtime argument values never participate in overload selection. The runtime creates no wrapper
-  and preserves reference identity. This path has reflection cost by design. A NativeAOT or trimmed build emits
+  and preserves reference identity. A star local initialized from one exact closed CLR interface retains that
+  closed-view fact for dispatch; this matters when one CLR object implements both `G<X>` and `G<Y>`. If no such
+  static fact remains and the runtime object exposes multiple closures of the same generic definition, dispatch is
+  rejected as ambiguous instead of selecting whichever interface reflection happens to enumerate first. A foreign
+  star member with `ref`/`out` parameters, a `ref` return, or a byref-like parameter/result is rejected at compile
+  time: the reflection `object[]` ABI cannot preserve managed-reference aliasing or box a byref-like value. Generic
+  CLR value types are cloned before a mutating reflection call and written back to the receiver slot, preserving
+  value-copy semantics despite physical boxing; a byref-like generic `G<*>` is likewise rejected because no boxable
+  existential representation exists. This path has reflection cost by design. A NativeAOT or trimmed build emits
   `DOTKTSTAR001`, because the
   referenced generic type/member metadata must be preserved; known BCL families with a faithful non-generic surface
   continue to use that surface directly.

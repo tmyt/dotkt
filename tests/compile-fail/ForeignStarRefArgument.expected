@@ -1,0 +1,3 @@
+foreign star member
+has ref/out parameters
+cannot preserve managed-reference aliasing

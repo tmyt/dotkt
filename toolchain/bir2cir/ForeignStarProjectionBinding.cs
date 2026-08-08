@@ -19,7 +19,12 @@ static class ForeignStarProjectionBinding
     static readonly TypeNode Int = new TypeNode.Fqn("kotlin.Int");
     static readonly TypeNode String = new TypeNode.Fqn("kotlin.String");
     static readonly TypeNode Type = new TypeNode.Fqn("System.Type");
+    static readonly TypeNode TypeN = new TypeNode.Nullable(Type);
+    static readonly TypeNode InvocationOutcome = new TypeNode.Fqn(
+        "DotKt.Runtime.CompilerServices.StarProjectionInvocationOutcome");
     static HashSet<string> _reservedNames = new(StringComparer.Ordinal);
+    static Dictionary<string, TypeNode.Fqn> _closedViewHints = new(StringComparer.Ordinal);
+    static Dictionary<string, TypeNode> _dependentLocalTypes = new(StringComparer.Ordinal);
     static int _nextTemp;
     public static bool UsedRuntimeFallback { get; private set; }
 
@@ -28,6 +33,8 @@ static class ForeignStarProjectionBinding
         var rootList = roots.ToList();
         UsedRuntimeFallback = false;
         _reservedNames = new HashSet<string>(StringComparer.Ordinal);
+        _closedViewHints = CollectClosedViewHints(rootList, refs);
+        _dependentLocalTypes = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         _nextTemp = 0;
         foreach (var root in rootList) CollectNames(root);
         foreach (var root in rootList) Rewrite(root, refs);
@@ -38,11 +45,21 @@ static class ForeignStarProjectionBinding
         switch (node)
         {
             case JsonObject obj:
+                if (Str(obj["k"]) == "local" && Str(obj["name"]) is string localName
+                    && _dependentLocalTypes.TryGetValue(localName, out var localType))
+                    obj["sty"] = TypeJson.Write(localType);
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
                     if (value == null || key == "name") continue;
                     Rewrite(value, refs);
+                }
+                if (Str(obj["k"]) == "var" && Str(obj["name"]) is string declaredName
+                    && obj["init"] is JsonNode init && NodeType.Of(init) is TypeNode initType
+                    && IsForeignStarType(initType, refs))
+                {
+                    obj["type"] = TypeJson.Write(initType);
+                    _dependentLocalTypes[declaredName] = initType;
                 }
                 if (TryRewriteClassifier(obj, refs, out var classifier))
                 {
@@ -67,6 +84,9 @@ static class ForeignStarProjectionBinding
         var kind = Str(obj["k"]);
         if (kind is not ("isInst" or "isInstRef" or "cast") || obj["e"] is not JsonNode operand
             || !TryForeignStarOwner(TypeJson.Read(obj["type"]), refs, out var owner, out var nullable)) return false;
+        if (refs.IsByRefLikeFqn(owner.Name))
+            throw new NotSupportedException(
+                $"bir2cir: foreign byref-like generic star projection `{owner.Name}<*>` has no boxable CLR existential representation");
 
         var openType = OpenType(owner, refs);
         if (openType == null)
@@ -126,11 +146,20 @@ static class ForeignStarProjectionBinding
         var sourceName = kind is "clrPropGet" or "clrPropSet" ? Str(obj["name"]) : Str(obj["method"]);
         if (kind is not ("callInstance" or "clrInstance" or "clrGenericInstance" or "clrPropGet" or "clrPropSet")
             || Flag(obj["static"]) || obj["recv"] is not JsonNode receiver
-            || TypeJson.Read(obj["ownerType"] ?? obj["type"]) is not TypeNode.Fqn owner
-            || !TryForeignStarOwner(owner, refs, out owner, out _))
+            || TypeJson.Read(obj["ownerType"] ?? obj["type"]) is not TypeNode.Fqn authoredOwner)
         {
             return false;
         }
+        TypeNode.Fqn owner;
+        if (!TryForeignStarOwner(authoredOwner, refs, out owner, out _))
+        {
+            var receiverType = NodeType.Of(receiver);
+            if (!TryForeignStarOwner(receiverType, refs, out owner, out _)) return false;
+        }
+        if (refs.IsByRefLikeFqn(owner.Name))
+            throw new NotSupportedException(
+                $"bir2cir: foreign byref-like generic star projection `{owner.Name}<*>` has no boxable CLR existential representation");
+        var valueReceiver = refs.IsValueTypeFqn(owner.Name);
 
         var signature = ((obj["sig"] ?? obj["argTypes"] ?? obj["memberSig"]) as JsonArray)?.Select(TypeJson.Read).ToArray();
         if (signature == null && kind == "clrPropSet" && obj["value"] is JsonNode setValue)
@@ -140,27 +169,30 @@ static class ForeignStarProjectionBinding
             throw new NotSupportedException($"bir2cir: foreign star call `{owner.Name}.{sourceName}` has an incomplete signature");
         var methodArity = (obj["typeArgs"] as JsonArray)?.Count ?? 0;
         var methodFound = refs.TryForeignStarMethod(owner, sourceName, propertyAccess, methodArity, signature,
-            out var openType, out var token, out var runtimeName, out var runtimeParameterKeys,
-            out _, out var returnsVoid);
+            out var openType, out var declaringView, out var token, out var runtimeName, out var runtimeParameterKeys,
+            out var declarationReturn, out var returnsVoid);
         if (!methodFound && kind is "clrPropGet" or "clrPropSet"
-            && refs.TryForeignStarField(owner, sourceName, out openType, out token, out _))
+            && refs.TryForeignStarField(owner, sourceName, out openType, out declaringView, out token, out _))
         {
+            var fieldClosedViewHint = ClosedViewHint(receiver, owner, declaringView);
             var fieldCall = kind == "clrPropGet"
-                ? Call("starProjectionGetField", new TypeNode[] { Any, Type, Int, String }, AnyN,
-                    receiver.DeepClone(), ClassRef(openType),
+                ? Call("starProjectionGetField", new TypeNode[] { Any, Type, TypeN, Int, String }, AnyN,
+                    receiver.DeepClone(), ClassRef(openType), fieldClosedViewHint,
                     new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = token },
                     new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(String), ["value"] = sourceName })
-                : Call("starProjectionSetField", new TypeNode[] { Any, Type, Int, String, AnyN },
-                    new TypeNode.Fqn("kotlin.Unit"), receiver.DeepClone(), ClassRef(openType),
+                : Call("starProjectionSetField", new TypeNode[] { Any, Type, TypeN, Int, String, AnyN },
+                    new TypeNode.Fqn("kotlin.Unit"), receiver.DeepClone(), ClassRef(openType), fieldClosedViewHint,
                     new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = token },
                     new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(String), ["value"] = sourceName },
                     obj["value"]?.DeepClone());
             if (kind == "clrPropSet")
             {
-                rewritten = fieldCall;
+                rewritten = valueReceiver
+                    ? BuildValueReceiverFieldSet(receiver, openType, fieldClosedViewHint, token, sourceName, obj["value"])
+                    : fieldCall;
                 return true;
             }
-            var fieldResult = ProjectResult(TypeJson.Read(obj["ret"]), owner.Args);
+            var fieldResult = ProjectResult(TypeJson.Read(obj["ret"]), owner.Args, refs);
             rewritten = IsObjectish(fieldResult) ? fieldCall : new JsonObject
             {
                 ["k"] = "cast", ["type"] = TypeJson.Write(fieldResult), ["e"] = fieldCall,
@@ -171,6 +203,19 @@ static class ForeignStarProjectionBinding
             throw new NotSupportedException(
                 $"bir2cir: cannot bind exact foreign star member `{owner.Name}.{sourceName}`/"
                 + $"{signature.Length}<{methodArity}>");
+        var closedViewHint = ClosedViewHint(receiver, owner, declaringView);
+        if (signature.Any(t => t is TypeNode.ByRef))
+            throw new NotSupportedException(
+                $"bir2cir: foreign star member `{owner.Name}.{sourceName}` has ref/out parameters; "
+                + "the object[] reflection ABI cannot preserve managed-reference aliasing");
+        if (declarationReturn is TypeNode.ByRef)
+            throw new NotSupportedException(
+                $"bir2cir: foreign star member `{owner.Name}.{sourceName}` has a ref return; "
+                + "the object reflection ABI cannot preserve lvalue identity");
+        if (signature.Any(t => ContainsByRefLike(t, refs)) || ContainsByRefLike(declarationReturn, refs))
+            throw new NotSupportedException(
+                $"bir2cir: foreign star member `{owner.Name}.{sourceName}` contains a byref-like parameter or result; "
+                + "the object reflection ABI cannot box that signature");
 
         var methodTypes = new JsonArray();
         if (obj["typeArgs"] is JsonArray typeArgs)
@@ -186,16 +231,30 @@ static class ForeignStarProjectionBinding
         {
             ["k"] = "const", ["type"] = TypeJson.Write(String), ["value"] = key,
         }).ToArray());
-        var invoke = Call(returnsVoid ? "starProjectionInvokeUnit" : "starProjectionInvoke",
-            new TypeNode[] { Any, Type, Int, String, Int, new TypeNode.Array(String),
+        JsonObject RuntimeInvoke(string runtimeMethod, TypeNode result, JsonNode runtimeReceiver, JsonNode runtimeArguments) =>
+            Call(runtimeMethod,
+            new TypeNode[] { Any, Type, TypeN, Int, String, Int, new TypeNode.Array(String),
                 new TypeNode.Array(Type), new TypeNode.Array(AnyN) },
-            returnsVoid ? new TypeNode.Fqn("kotlin.Unit") : AnyN,
-            receiver.DeepClone(), ClassRef(openType),
+            result,
+            runtimeReceiver, ClassRef(openType), closedViewHint.DeepClone(),
             new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = token },
             new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(String), ["value"] = runtimeName },
             new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = methodArity },
             new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(String), ["elems"] = parameterKeys },
             new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(Type), ["elems"] = methodTypes },
+            runtimeArguments);
+
+        if (valueReceiver)
+        {
+            rewritten = BuildValueReceiverInvocation(receiver, arguments, signature, returnsVoid,
+                projectedResult: ProjectResult(TypeJson.Read(obj["ret"]), owner.Args, refs),
+                RuntimeInvoke);
+            return true;
+        }
+
+        var invoke = RuntimeInvoke(returnsVoid ? "starProjectionInvokeUnit" : "starProjectionInvoke",
+            returnsVoid ? new TypeNode.Fqn("kotlin.Unit") : AnyN,
+            receiver.DeepClone(),
             new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(AnyN), ["elems"] = arguments });
         if (returnsVoid)
         {
@@ -203,12 +262,139 @@ static class ForeignStarProjectionBinding
             return true;
         }
 
-        var projectedResult = ProjectResult(TypeJson.Read(obj["ret"]), owner.Args);
+        var projectedResult = ProjectResult(TypeJson.Read(obj["ret"]), owner.Args, refs);
         rewritten = IsObjectish(projectedResult) ? invoke : new JsonObject
         {
             ["k"] = "cast", ["type"] = TypeJson.Write(projectedResult), ["e"] = invoke,
         };
         return true;
+    }
+
+    static JsonObject BuildValueReceiverFieldSet(JsonNode receiver, string openType, JsonNode closedViewHint,
+        int token, string sourceName, JsonNode value)
+    {
+        var pointer = FreshTemp();
+        var boxed = FreshTemp();
+        JsonObject BoxedLocal() => new() { ["k"] = "local", ["name"] = boxed };
+        var unit = new TypeNode.Fqn("kotlin.Unit");
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray(
+                new JsonObject
+                {
+                    ["k"] = "var", ["name"] = pointer,
+                    ["type"] = TypeJson.Write(new TypeNode.ByRef(Any)),
+                    ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = receiver.DeepClone() },
+                },
+                new JsonObject
+                {
+                    ["k"] = "var", ["name"] = boxed, ["type"] = TypeJson.Write(Any),
+                    ["init"] = Call("starProjectionCloneValue", new[] { Any }, Any,
+                        new JsonObject { ["k"] = "byrefLoad", ["local"] = pointer, ["elem"] = TypeJson.Write(Any) }),
+                },
+                new JsonObject
+                {
+                    ["k"] = "exprStmt",
+                    ["expr"] = Call("starProjectionSetField", new TypeNode[] { Any, Type, TypeN, Int, String, AnyN }, unit,
+                        BoxedLocal(), ClassRef(openType), closedViewHint.DeepClone(),
+                        new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = token },
+                        new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(String), ["value"] = sourceName },
+                        value?.DeepClone()),
+                },
+                new JsonObject
+                {
+                    ["k"] = "exprStmt",
+                    ["expr"] = new JsonObject
+                    {
+                        ["k"] = "byrefStore", ["local"] = pointer, ["elem"] = TypeJson.Write(Any),
+                        ["value"] = BoxedLocal(),
+                    },
+                }),
+            ["result"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(unit), ["value"] = null },
+        };
+    }
+
+    static JsonObject BuildValueReceiverInvocation(JsonNode receiver, JsonArray arguments, TypeNode[] signature,
+        bool returnsVoid, TypeNode projectedResult,
+        Func<string, TypeNode, JsonNode, JsonNode, JsonObject> runtimeInvoke)
+    {
+        if (arguments.Count != signature.Length)
+            throw new NotSupportedException("bir2cir: foreign star value-receiver call lost its positional argument vector");
+        if (signature.Any(t => t is TypeNode.ByRef))
+            throw new InvalidOperationException("bir2cir: foreign star ref/out signature reached value-receiver lowering");
+
+        var statements = new JsonArray();
+        var receiverPointer = FreshTemp();
+        statements.Add(new JsonObject
+        {
+            ["k"] = "var", ["name"] = receiverPointer,
+            ["type"] = TypeJson.Write(new TypeNode.ByRef(Any)),
+            ["init"] = new JsonObject { ["k"] = "byrefOf", ["inner"] = receiver.DeepClone() },
+        });
+
+        var receiverTemp = FreshTemp();
+        JsonNode receiverValue = new JsonObject
+        {
+            ["k"] = "byrefLoad", ["local"] = receiverPointer, ["elem"] = TypeJson.Write(Any),
+        };
+        receiverValue = Call("starProjectionCloneValue", new[] { Any }, Any, receiverValue);
+        statements.Add(new JsonObject
+        {
+            ["k"] = "var", ["name"] = receiverTemp, ["type"] = TypeJson.Write(Any),
+            ["init"] = receiverValue,
+        });
+
+        var arrayElements = new JsonArray();
+        for (var i = 0; i < arguments.Count; i++)
+        {
+            // Materialize in source order. Reflection receives boxed values only; ref/out signatures have already
+            // been refused because object[] cannot preserve aliasing between managed-reference arguments.
+            var value = FreshTemp();
+            statements.Add(new JsonObject
+            {
+                ["k"] = "var", ["name"] = value, ["type"] = TypeJson.Write(AnyN),
+                ["init"] = arguments[i]?.DeepClone(),
+            });
+            arrayElements.Add(new JsonObject { ["k"] = "local", ["name"] = value });
+        }
+
+        var arrayTemp = FreshTemp();
+        statements.Add(new JsonObject
+        {
+            ["k"] = "var", ["name"] = arrayTemp, ["type"] = TypeJson.Write(new TypeNode.Array(AnyN)),
+            ["init"] = new JsonObject
+            {
+                ["k"] = "newArray", ["elem"] = TypeJson.Write(AnyN), ["elems"] = arrayElements,
+            },
+        });
+        JsonObject ArrayLocal() => new() { ["k"] = "local", ["name"] = arrayTemp };
+
+        var outcomeTemp = FreshTemp();
+        statements.Add(new JsonObject
+        {
+            ["k"] = "var", ["name"] = outcomeTemp, ["type"] = TypeJson.Write(InvocationOutcome),
+            ["init"] = runtimeInvoke("starProjectionInvokeCaptured", InvocationOutcome,
+                new JsonObject { ["k"] = "local", ["name"] = receiverTemp }, ArrayLocal()),
+        });
+
+        statements.Add(new JsonObject
+        {
+            ["k"] = "exprStmt", ["expr"] = new JsonObject
+            {
+                ["k"] = "byrefStore", ["local"] = receiverPointer, ["elem"] = TypeJson.Write(Any),
+                ["value"] = new JsonObject { ["k"] = "local", ["name"] = receiverTemp },
+            },
+        });
+
+        var outcome = new JsonObject { ["k"] = "local", ["name"] = outcomeTemp };
+        JsonNode result = Call(returnsVoid ? "starProjectionInvocationUnit" : "starProjectionInvocationValue",
+            new[] { InvocationOutcome }, returnsVoid ? new TypeNode.Fqn("kotlin.Unit") : AnyN, outcome);
+        if (!returnsVoid && !IsObjectish(projectedResult)) result = new JsonObject
+        {
+            ["k"] = "cast", ["type"] = TypeJson.Write(projectedResult), ["e"] = result,
+        };
+        return new JsonObject { ["k"] = "valueBlock", ["stmts"] = statements, ["result"] = result };
     }
 
     static bool TryForeignStarOwner(TypeNode type, ReferenceMetadataIndex refs,
@@ -224,6 +410,23 @@ static class ForeignStarProjectionBinding
             && refs.ResolveNetType(owner.Name, args.Length) != null;
     }
 
+    public static bool IsForeignStarType(TypeNode type, ReferenceMetadataIndex refs) =>
+        TryForeignStarOwner(type, refs, out _, out _);
+
+    static bool ContainsByRefLike(TypeNode type, ReferenceMetadataIndex refs) => type switch
+    {
+        TypeNode.Fqn f => refs.IsByRefLikeFqn(f.Name)
+            || (f.Args?.Any(a => ContainsByRefLike(a, refs)) ?? false),
+        TypeNode.Nullable n => ContainsByRefLike(n.Of, refs),
+        TypeNode.Oblivious o => ContainsByRefLike(o.Of, refs),
+        TypeNode.Array a => ContainsByRefLike(a.Elem, refs),
+        TypeNode.ByRef b => ContainsByRefLike(b.Of, refs),
+        TypeNode.Fn fn => ContainsByRefLike(fn.Ret, refs)
+            || fn.Params.Any(p => ContainsByRefLike(p, refs))
+            || (fn.Recv != null && ContainsByRefLike(fn.Recv, refs)),
+        _ => false,
+    };
+
     static string OpenType(TypeNode.Fqn owner, ReferenceMetadataIndex refs)
     {
         var type = refs.ResolveNetType(owner.Name, owner.Args.Length);
@@ -237,6 +440,103 @@ static class ForeignStarProjectionBinding
         ["k"] = "classRef", ["type"] = TypeJson.Write(new TypeNode.Fqn(openType)),
     };
 
+    static JsonObject ClassRef(TypeNode type) => new()
+    {
+        ["k"] = "classRef", ["type"] = TypeJson.Write(type),
+    };
+
+    static JsonNode ClosedViewHint(JsonNode receiver, TypeNode.Fqn owner, TypeNode declaringView)
+    {
+        if (receiver is JsonObject { } obj && Str(obj["k"]) == "local"
+            && Str(obj["name"]) is string name && _closedViewHints.TryGetValue(name, out var hint)
+            && hint.Name == owner.Name && hint.Args?.Length == owner.Args?.Length)
+        {
+            // MetadataLoadContext reports a method declared directly on an open generic as the bare definition.
+            // In that case the authored exact closure already is the declaring view; emitting the bare generic as a
+            // classRef would be an invalid/absent CLR type token.
+            if (declaringView is TypeNode.Fqn { Args: null } direct && direct.Name == owner.Name)
+                return ClassRef(hint);
+            var translated = SubstituteOwnerSlots(declaringView, hint.Args);
+            if (translated is TypeNode.Fqn translatedFqn && !ContainsStar(translatedFqn))
+                return ClassRef(translatedFqn);
+        }
+        return new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(TypeN), ["value"] = null };
+    }
+
+    static TypeNode SubstituteOwnerSlots(TypeNode type, IReadOnlyList<TypeNode> arguments) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < arguments.Count => arguments[tv.I],
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
+            args.Select(arg => SubstituteOwnerSlots(arg, arguments)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstituteOwnerSlots(n.Of, arguments)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstituteOwnerSlots(o.Of, arguments)),
+        TypeNode.Array a => new TypeNode.Array(SubstituteOwnerSlots(a.Elem, arguments)),
+        TypeNode.ByRef b => new TypeNode.ByRef(SubstituteOwnerSlots(b.Of, arguments)),
+        _ => type,
+    };
+
+    // A foreign star value remains the original object to preserve Kotlin reference identity. When an immutable local
+    // is initialized from one exact CLR closure, carry that frontend-authored view separately to reflection dispatch;
+    // this distinguishes `I<X>` and `I<Y>` implemented by the same CLR object without wrapping the value. Mutable
+    // locals are deliberately excluded: a compile-time hint would become stale after an assignment.
+    static Dictionary<string, TypeNode.Fqn> CollectClosedViewHints(IReadOnlyList<JsonNode> roots,
+        ReferenceMetadataIndex refs)
+    {
+        var assigned = new HashSet<string>(StringComparer.Ordinal);
+        void CollectWrites(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["k"]) == "setLocal" && Str(obj["name"]) is string name) assigned.Add(name);
+                foreach (var child in obj.Select(p => p.Value).Where(v => v != null)) CollectWrites(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.Where(v => v != null)) CollectWrites(child);
+        }
+        foreach (var root in roots) CollectWrites(root);
+
+        var result = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
+        var pending = new List<(string Name, TypeNode.Fqn StarOwner, JsonNode Init)>();
+        void CollectVars(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["k"]) == "var" && Str(obj["name"]) is string name && !assigned.Contains(name)
+                    && obj["init"] is JsonNode init
+                    && TryForeignStarOwner(TypeJson.Read(obj["type"]), refs, out var starOwner, out _))
+                    pending.Add((name, starOwner, init));
+                foreach (var child in obj.Select(p => p.Value).Where(v => v != null)) CollectVars(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.Where(v => v != null)) CollectVars(child);
+        }
+        foreach (var root in roots) CollectVars(root);
+
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var (name, starOwner, init) in pending)
+            {
+                if (result.ContainsKey(name)) continue;
+                TypeNode candidate = NodeType.Of(init);
+                while (candidate is TypeNode.Nullable nullable) candidate = nullable.Of;
+                while (candidate is TypeNode.Oblivious oblivious) candidate = oblivious.Of;
+                TypeNode.Fqn exact = candidate as TypeNode.Fqn;
+                if ((exact == null || exact.Args?.Any(ContainsStar) == true)
+                    && init is JsonObject local && Str(local["k"]) == "local"
+                    && Str(local["name"]) is string source && result.TryGetValue(source, out var inherited))
+                    exact = inherited;
+                if (exact?.Args is not { Length: > 0 } args || exact.Name != starOwner.Name
+                    || args.Length != starOwner.Args.Length || args.Any(ContainsStar)
+                    || refs.ResolveNetType(exact.Name, args.Length) == null) continue;
+                result[name] = exact;
+                changed = true;
+            }
+        }
+        return result;
+    }
+
     static JsonObject Call(string method, IReadOnlyList<TypeNode> signature, TypeNode result, params JsonNode[] args) => new()
     {
         ["k"] = "callStatic",
@@ -247,23 +547,65 @@ static class ForeignStarProjectionBinding
         ["args"] = new JsonArray(args),
     };
 
-    static TypeNode ProjectResult(TypeNode type, TypeNode[] ownerArgs) => type switch
+    // Substitute only a DIRECT readable owner slot. If a projected slot occurs inside another reified construction,
+    // replacing it recursively with object would manufacture the same invalid CLR fiction this lowering exists to
+    // avoid (`Holder<T>` -> `Holder<object>`, `T[]` -> `object[]`, ...). A trusted DotKt existential can retain that
+    // nested classifier; every other dependent construction crosses the reflection boundary as one opaque object.
+    static TypeNode ProjectResult(TypeNode type, TypeNode[] ownerArgs, ReferenceMetadataIndex refs)
     {
-        null => AnyN,
+        if (type == null) return AnyN;
+        if (type is TypeNode.Tv { Scope: "type" } tv && tv.I >= 0 && tv.I < ownerArgs.Length)
+            return ownerArgs[tv.I] is TypeNode.Star ? AnyN : ProjectResult(ownerArgs[tv.I], ownerArgs, refs);
+        if (type is TypeNode.Star) return AnyN;
+
+        if (DependsOnProjectedOwnerSlot(type, ownerArgs))
+        {
+            if (type is TypeNode.Fqn f && refs.TryExistentialPhysicalOwner(f.Name, out var existential))
+                return new TypeNode.Fqn(existential);
+            if (type is TypeNode.Fqn dependentFqn && dependentFqn.Args is { Length: > 0 } dependentArgs
+                && refs.ResolveNetType(dependentFqn.Name, dependentArgs.Length) != null)
+                return new TypeNode.Fqn(dependentFqn.Name, dependentArgs.Select(a =>
+                    DependsOnProjectedOwnerSlot(a, ownerArgs)
+                        ? (TypeNode)new TypeNode.Star()
+                        : ProjectResult(a, ownerArgs, refs)).ToArray());
+            if (type is TypeNode.Nullable dependentNullable)
+                return new TypeNode.Nullable(ProjectResult(dependentNullable.Of, ownerArgs, refs));
+            if (type is TypeNode.Oblivious dependentOblivious)
+                return new TypeNode.Oblivious(ProjectResult(dependentOblivious.Of, ownerArgs, refs));
+            return AnyN;
+        }
+
+        return type switch
+        {
+            TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
+                args.Select(a => ProjectResult(a, ownerArgs, refs)).ToArray()),
+            TypeNode.Nullable n => new TypeNode.Nullable(ProjectResult(n.Of, ownerArgs, refs)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(ProjectResult(o.Of, ownerArgs, refs)),
+            TypeNode.Array a => new TypeNode.Array(ProjectResult(a.Elem, ownerArgs, refs)),
+            TypeNode.ByRef b => new TypeNode.ByRef(ProjectResult(b.Of, ownerArgs, refs)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, ProjectResult(fn.Ret, ownerArgs, refs),
+                fn.Params.Select(p => ProjectResult(p, ownerArgs, refs)).ToArray(),
+                fn.Recv == null ? null : ProjectResult(fn.Recv, ownerArgs, refs), fn.Clr,
+                fn.Ctx?.Select(c => ProjectResult(c, ownerArgs, refs)).ToArray()),
+            _ => type,
+        };
+    }
+
+    static bool DependsOnProjectedOwnerSlot(TypeNode type, TypeNode[] ownerArgs) => type switch
+    {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < ownerArgs.Length
-            => ownerArgs[tv.I] is TypeNode.Star ? AnyN : ProjectResult(ownerArgs[tv.I], ownerArgs),
-        TypeNode.Star => AnyN,
-        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
-            args.Select(a => ProjectResult(a, ownerArgs)).ToArray()),
-        TypeNode.Nullable n => new TypeNode.Nullable(ProjectResult(n.Of, ownerArgs)),
-        TypeNode.Oblivious o => new TypeNode.Oblivious(ProjectResult(o.Of, ownerArgs)),
-        TypeNode.Array a => new TypeNode.Array(ProjectResult(a.Elem, ownerArgs)),
-        TypeNode.ByRef b => new TypeNode.ByRef(ProjectResult(b.Of, ownerArgs)),
-        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, ProjectResult(fn.Ret, ownerArgs),
-            fn.Params.Select(p => ProjectResult(p, ownerArgs)).ToArray(),
-            fn.Recv == null ? null : ProjectResult(fn.Recv, ownerArgs), fn.Clr,
-            fn.Ctx?.Select(c => ProjectResult(c, ownerArgs)).ToArray()),
-        _ => type,
+            => ownerArgs[tv.I] is TypeNode.Star || DependsOnProjectedOwnerSlot(ownerArgs[tv.I], ownerArgs),
+        TypeNode.Star => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(a => DependsOnProjectedOwnerSlot(a, ownerArgs)),
+        TypeNode.Nullable n => DependsOnProjectedOwnerSlot(n.Of, ownerArgs),
+        TypeNode.Oblivious o => DependsOnProjectedOwnerSlot(o.Of, ownerArgs),
+        TypeNode.Array a => DependsOnProjectedOwnerSlot(a.Elem, ownerArgs),
+        TypeNode.ByRef b => DependsOnProjectedOwnerSlot(b.Of, ownerArgs),
+        TypeNode.Fn fn => DependsOnProjectedOwnerSlot(fn.Ret, ownerArgs)
+            || fn.Params.Any(p => DependsOnProjectedOwnerSlot(p, ownerArgs))
+            || (fn.Recv != null && DependsOnProjectedOwnerSlot(fn.Recv, ownerArgs))
+            || (fn.Ctx?.Any(c => DependsOnProjectedOwnerSlot(c, ownerArgs)) ?? false),
+        _ => false,
     };
 
     static bool ContainsStar(TypeNode type) => type switch

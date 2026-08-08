@@ -129,6 +129,9 @@ static class ExistentialReceiverBinding
             ?? (call["argTypes"] as JsonArray)?.Count
             ?? (call["args"] as JsonArray)?.Count ?? 0;
         var ga = (call["typeArgs"] as JsonArray)?.Count ?? 0;
+        var authoredSignature = ((call["sig"] ?? call["argTypes"]) as JsonArray)?
+            .Select(TypeJson.Read).ToArray();
+        if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
         string physicalMethod = null;
         TypeNode[] physicalParameters = null;
 
@@ -152,9 +155,17 @@ static class ExistentialReceiverBinding
             var sourceOwner = index.SemanticOwnerByPhysical.GetValueOrDefault(receiverType.Name);
             if (sourceOwner == null)
                 refs.TryExistentialSemanticOwner(receiverType.Name, out sourceOwner);
-            if (refs.TryStarProjectionMember(sourceOwner, sourceMethod, pc, out var erasedOwner, out var erasedMethod)
+            var semanticOwner = TypeJson.Read(call["ownerType"]) as TypeNode.Fqn
+                ?? new TypeNode.Fqn(sourceOwner, Array.Empty<TypeNode>());
+            if (semanticOwner.Name != sourceOwner)
+                semanticOwner = new TypeNode.Fqn(sourceOwner, semanticOwner.Args);
+            if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, ga, authoredSignature, pc,
+                    out var erasedOwner, out var erasedMethod, out var erasedSignature)
                 && erasedOwner == receiverType.Name)
+            {
                 physicalMethod = erasedMethod;
+                physicalParameters = erasedSignature;
+            }
         }
 
         if (physicalMethod == null) return; // ambiguous or absent: never guess a physical slot

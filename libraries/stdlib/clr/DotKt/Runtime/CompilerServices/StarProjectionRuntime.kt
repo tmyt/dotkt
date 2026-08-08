@@ -150,9 +150,16 @@ internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjection
     if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) value else null
 
 @PublishedApi
+internal fun starProjectionCloneValue(value: Any): Any = starProjectionCloneValueIntrinsic(value)
+
+@kotlin.clr.ClrIntrinsic("System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue")
+private fun starProjectionCloneValueIntrinsic(value: Any): Any = TODO("clr binding should be implemented")
+
+@PublishedApi
 internal fun starProjectionInvoke(
     receiver: Any,
     openGenericType: StarProjectionType,
+    closedViewHint: StarProjectionType?,
     metadataToken: Int,
     memberName: String,
     methodArity: Int,
@@ -160,7 +167,7 @@ internal fun starProjectionInvoke(
     methodTypeArguments: Array<StarProjectionType>,
     arguments: Array<Any?>,
 ): Any? {
-    val closedOwner = starProjectionClosedView(receiver.starProjectionRuntimeType(), openGenericType)
+    val closedOwner = starProjectionClosedView(receiver.starProjectionRuntimeType(), openGenericType, closedViewHint)
         ?: throw ClassCastException("Value is not an instance of " + openGenericType.fullName)
     // Resolve against the runtime OPEN definition first. Its signature still contains owner type parameters, so the
     // compile-time declaration key remains comparable even when the receiver is G<String>. The chosen open member's
@@ -186,10 +193,52 @@ internal fun starProjectionInvoke(
     }
 }
 
+// A boxed generic value receiver must be written back even when its method throws. Keep the invoke result separate
+// so bir2cir can publish the mutated box before consuming (and possibly rethrowing) the result. Foreign-star
+// ref/out and ref-return signatures are refused before this runtime because object[] cannot preserve their aliasing.
+@PublishedApi
+internal class StarProjectionInvocationOutcome(
+    @PublishedApi internal val value: Any?,
+    @PublishedApi internal val failure: Throwable?,
+)
+
+@PublishedApi
+internal fun starProjectionInvokeCaptured(
+    receiver: Any,
+    openGenericType: StarProjectionType,
+    closedViewHint: StarProjectionType?,
+    metadataToken: Int,
+    memberName: String,
+    methodArity: Int,
+    parameterTypeKeys: Array<String>,
+    methodTypeArguments: Array<StarProjectionType>,
+    arguments: Array<Any?>,
+): StarProjectionInvocationOutcome = try {
+    StarProjectionInvocationOutcome(
+        starProjectionInvoke(receiver, openGenericType, closedViewHint, metadataToken, memberName, methodArity,
+            parameterTypeKeys, methodTypeArguments, arguments),
+        null,
+    )
+} catch (failure: Throwable) {
+    StarProjectionInvocationOutcome(null, failure)
+}
+
+@PublishedApi
+internal fun starProjectionInvocationValue(outcome: StarProjectionInvocationOutcome): Any? {
+    if (outcome.failure != null) throw outcome.failure
+    return outcome.value
+}
+
+@PublishedApi
+internal fun starProjectionInvocationUnit(outcome: StarProjectionInvocationOutcome) {
+    if (outcome.failure != null) throw outcome.failure
+}
+
 @PublishedApi
 internal fun starProjectionInvokeUnit(
     receiver: Any,
     openGenericType: StarProjectionType,
+    closedViewHint: StarProjectionType?,
     metadataToken: Int,
     memberName: String,
     methodArity: Int,
@@ -197,7 +246,7 @@ internal fun starProjectionInvokeUnit(
     methodTypeArguments: Array<StarProjectionType>,
     arguments: Array<Any?>,
 ) {
-    starProjectionInvoke(receiver, openGenericType, metadataToken, memberName, methodArity,
+    starProjectionInvoke(receiver, openGenericType, closedViewHint, metadataToken, memberName, methodArity,
         parameterTypeKeys, methodTypeArguments, arguments)
 }
 
@@ -205,10 +254,11 @@ internal fun starProjectionInvokeUnit(
 internal fun starProjectionGetField(
     receiver: Any,
     openGenericType: StarProjectionType,
+    closedViewHint: StarProjectionType?,
     metadataToken: Int,
     memberName: String,
 ): Any? {
-    val closedOwner = starProjectionClosedView(receiver.starProjectionRuntimeType(), openGenericType)
+    val closedOwner = starProjectionClosedView(receiver.starProjectionRuntimeType(), openGenericType, closedViewHint)
         ?: throw ClassCastException("Value is not an instance of " + openGenericType.fullName)
     val openField = starProjectionOpenField(openGenericType, metadataToken, memberName)
     for (candidate in closedOwner.getFields()) {
@@ -222,11 +272,12 @@ internal fun starProjectionGetField(
 internal fun starProjectionSetField(
     receiver: Any,
     openGenericType: StarProjectionType,
+    closedViewHint: StarProjectionType?,
     metadataToken: Int,
     memberName: String,
     value: Any?,
 ) {
-    val closedOwner = starProjectionClosedView(receiver.starProjectionRuntimeType(), openGenericType)
+    val closedOwner = starProjectionClosedView(receiver.starProjectionRuntimeType(), openGenericType, closedViewHint)
         ?: throw ClassCastException("Value is not an instance of " + openGenericType.fullName)
     val openField = starProjectionOpenField(openGenericType, metadataToken, memberName)
     for (candidate in closedOwner.getFields()) {
@@ -298,8 +349,8 @@ private fun starProjectionOpenField(
 private fun starProjectionDeclaresOn(
     declaringType: StarProjectionType?,
     openGenericType: StarProjectionType,
-): Boolean = declaringType != null && declaringType.isGenericType
-    && declaringType.getGenericTypeDefinition() == openGenericType
+): Boolean = declaringType != null && (declaringType == openGenericType
+    || declaringType.isGenericType && declaringType.getGenericTypeDefinition() == openGenericType)
 
 private fun starProjectionTypeKey(type: StarProjectionType): String {
     if (type.isGenericParameter)
@@ -325,14 +376,37 @@ private fun starProjectionTypeKey(type: StarProjectionType): String {
 private fun starProjectionClosedView(
     runtimeType: StarProjectionType,
     openGenericType: StarProjectionType,
+    closedViewHint: StarProjectionType? = null,
 ): StarProjectionType? {
+    // The compiler's exact witness describes the authored receiver.  An inherited member can be declared on a
+    // different open generic (`Derived<String>` -> `Base<String>`), so translate that witness through its physical
+    // base/interface graph before comparing it with the declaring closure.  Calling this helper without a hint is
+    // also the ambiguity check: two distinct closed interface views are never guessed.
+    val declaringHint = if (closedViewHint != null
+        && closedViewHint != openGenericType
+        && (!closedViewHint.isGenericType
+            || closedViewHint.getGenericTypeDefinition() != openGenericType))
+        starProjectionClosedView(closedViewHint, openGenericType, null)
+    else closedViewHint
     var current: StarProjectionType? = runtimeType
     while (current != null) {
-        if (current.isGenericType && current.getGenericTypeDefinition() == openGenericType) return current
+        if (current == openGenericType) return current
+        if (current.isGenericType && current.getGenericTypeDefinition() == openGenericType) {
+            if (declaringHint == null || current == declaringHint) return current
+        }
         current = current.baseType
     }
+    var match: StarProjectionType? = null
     for (candidate in runtimeType.getInterfaces()) {
-        if (candidate.isGenericType && candidate.getGenericTypeDefinition() == openGenericType) return candidate
+        if (!candidate.isGenericType || candidate.getGenericTypeDefinition() != openGenericType) continue
+        if (declaringHint != null) {
+            if (candidate == declaringHint) return candidate
+            continue
+        }
+        if (match != null) throw IllegalStateException(
+            "Ambiguous star-projection view " + openGenericType.fullName
+        )
+        match = candidate
     }
-    return null
+    return match
 }

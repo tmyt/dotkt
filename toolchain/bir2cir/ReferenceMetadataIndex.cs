@@ -586,10 +586,11 @@ sealed partial class ReferenceMetadataIndex
     // authoritative, reflection-free ABI.
     public bool TryForeignStarMethod(TypeNode.Fqn sourceOwner, string sourceName, string propertyAccess,
         int methodArity, IReadOnlyList<TypeNode> callSignature,
-        out string openDeclaringType, out int metadataToken, out string runtimeName,
+        out string openDeclaringType, out TypeNode declaringView, out int metadataToken, out string runtimeName,
         out string[] runtimeParameterKeys, out TypeNode declarationReturn, out bool returnsVoid)
     {
         openDeclaringType = null;
+        declaringView = null;
         metadataToken = 0;
         runtimeName = null;
         runtimeParameterKeys = null;
@@ -637,7 +638,7 @@ sealed partial class ReferenceMetadataIndex
                 .SequenceEqual(callSignature)).ToList();
             var compatible = exact.Count > 0 ? exact : candidates.Where(m => m.GetParameters()
                 .Select((p, i) => ForeignStarDeclarationDescribesCall(
-                    DeclarationTypeNode(p.ParameterType), callSignature[i]))
+                    DeclarationTypeNode(p.ParameterType), callSignature[i], ownerArgs))
                 .All(x => x)).ToList();
             if (compatible.Count > 1) return false;
             if (compatible.Count == 1)
@@ -651,12 +652,27 @@ sealed partial class ReferenceMetadataIndex
 
         var declaring = selected.DeclaringType;
         if (declaring == null) return false;
+        declaringView = DeclarationTypeNode(declaring);
         if (declaring.IsConstructedGenericType) declaring = declaring.GetGenericTypeDefinition();
-        if (!declaring.IsGenericTypeDefinition) return false;
+        // Reflection over a constructed inherited owner substitutes its parameters in the DERIVED owner's frame
+        // (`Derived<A,B> : Base<B>` exposes Base.Put(T) as Put(!1)).  The runtime receives the OPEN declaring type,
+        // whose declaration key necessarily uses Base's own frame (Put(!0)).  Recover that open MethodDef by token
+        // before producing the structural key; otherwise the exact member is rejected before token matching.
+        MethodInfo openDeclaration;
+        try
+        {
+            openDeclaration = declaring.GetMethods(flags | BindingFlags.DeclaredOnly)
+                .SingleOrDefault(method => method.MetadataToken == selected.MetadataToken);
+        }
+        catch
+        {
+            return false;
+        }
+        if (openDeclaration == null) return false;
         openDeclaringType = ExactPhysicalMetadataName(declaring);
-        metadataToken = selected.MetadataToken;
-        runtimeName = selected.Name;
-        runtimeParameterKeys = selected.GetParameters()
+        metadataToken = openDeclaration.MetadataToken;
+        runtimeName = openDeclaration.Name;
+        runtimeParameterKeys = openDeclaration.GetParameters()
             .Select(parameter => ForeignStarRuntimeTypeKey(parameter.ParameterType)).ToArray();
         declarationReturn = DeclarationTypeNode(selected.ReturnType);
         returnsVoid = selected.ReturnType == typeof(void);
@@ -687,43 +703,59 @@ sealed partial class ReferenceMetadataIndex
     // already instantiated at the readable projection (`Pair<*, String>.Second = value` has a String argument).
     // Treat only declaration TVs as wildcards after exact candidates have been preferred; nominal structure remains
     // recursive and overload sets that still admit more than one candidate are rejected rather than guessed.
-    static bool ForeignStarDeclarationDescribesCall(TypeNode declaration, TypeNode call)
+    static bool ForeignStarDeclarationDescribesCall(TypeNode declaration, TypeNode call,
+        IReadOnlyList<TypeNode> ownerArgs)
     {
+        // kotc keeps an already-selected CLR overload's owner slot in `sig` (`Duo<*, String>.Pick(B)` carries
+        // `tv(type,1)`, not the substituted String). Compare both declaration and call slots in the source owner's
+        // constructed semantic view; otherwise T0 and T1 either both look wildcard-like or neither matches.
+        if (call is TypeNode.Tv { Scope: "type" } callOwnerTv)
+        {
+            if (callOwnerTv.I < 0 || callOwnerTv.I >= ownerArgs.Count
+                || ownerArgs[callOwnerTv.I] is TypeNode.Star) return false;
+            return ForeignStarDeclarationDescribesCall(declaration, ownerArgs[callOwnerTv.I], ownerArgs);
+        }
+        if (declaration is TypeNode.Tv { Scope: "type" } ownerTv)
+        {
+            if (ownerTv.I < 0 || ownerTv.I >= ownerArgs.Count || ownerArgs[ownerTv.I] is TypeNode.Star) return false;
+            return ForeignStarDeclarationDescribesCall(ownerArgs[ownerTv.I], call, ownerArgs);
+        }
         if (declaration is TypeNode.Tv) return true;
         if (declaration is TypeNode.Oblivious dOb)
-            return ForeignStarDeclarationDescribesCall(dOb.Of, call);
+            return ForeignStarDeclarationDescribesCall(dOb.Of, call, ownerArgs);
         if (call is TypeNode.Oblivious cOb)
-            return ForeignStarDeclarationDescribesCall(declaration, cOb.Of);
+            return ForeignStarDeclarationDescribesCall(declaration, cOb.Of, ownerArgs);
         if (declaration is TypeNode.Nullable dn)
             return call is TypeNode.Nullable cn
-                ? ForeignStarDeclarationDescribesCall(dn.Of, cn.Of)
-                : ForeignStarDeclarationDescribesCall(dn.Of, call);
+                ? ForeignStarDeclarationDescribesCall(dn.Of, cn.Of, ownerArgs)
+                : ForeignStarDeclarationDescribesCall(dn.Of, call, ownerArgs);
         if (call is TypeNode.Nullable callNullable)
-            return ForeignStarDeclarationDescribesCall(declaration, callNullable.Of);
+            return ForeignStarDeclarationDescribesCall(declaration, callNullable.Of, ownerArgs);
         if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
         {
             if (ParamKey(df) != ParamKey(cf)) return false;
             if (df.Args == null || cf.Args == null) return df.Args == null && cf.Args == null;
             return df.Args.Length == cf.Args.Length
-                && df.Args.Select((arg, i) => ForeignStarDeclarationDescribesCall(arg, cf.Args[i])).All(x => x);
+                && df.Args.Select((arg, i) => ForeignStarDeclarationDescribesCall(arg, cf.Args[i], ownerArgs)).All(x => x);
         }
         if (declaration is TypeNode.Array da && call is TypeNode.Array ca)
-            return ForeignStarDeclarationDescribesCall(da.Elem, ca.Elem);
+            return ForeignStarDeclarationDescribesCall(da.Elem, ca.Elem, ownerArgs);
         if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
-            return ForeignStarDeclarationDescribesCall(db.Of, cb.Of);
+            return ForeignStarDeclarationDescribesCall(db.Of, cb.Of, ownerArgs);
         if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn
             && dfn.Params.Length == cfn.Params.Length)
-            return ForeignStarDeclarationDescribesCall(dfn.Ret, cfn.Ret)
-                && dfn.Params.Select((arg, i) => ForeignStarDeclarationDescribesCall(arg, cfn.Params[i])).All(x => x);
+            return ForeignStarDeclarationDescribesCall(dfn.Ret, cfn.Ret, ownerArgs)
+                && dfn.Params.Select((arg, i) => ForeignStarDeclarationDescribesCall(arg, cfn.Params[i], ownerArgs)).All(x => x);
         return DeclarationDescribesCall(declaration, call);
     }
 
     // Field-backed CLR properties projected by dll2klib use the same clrPropGet/clrPropSet node as real properties.
     // Keep field dispatch exact as well: the runtime receives a metadata token, never a source-name lookup.
     public bool TryForeignStarField(TypeNode.Fqn sourceOwner, string sourceName,
-        out string openDeclaringType, out int metadataToken, out TypeNode declarationType)
+        out string openDeclaringType, out TypeNode declaringView, out int metadataToken, out TypeNode declarationType)
     {
         openDeclaringType = null;
+        declaringView = null;
         metadataToken = 0;
         declarationType = null;
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
@@ -756,8 +788,8 @@ sealed partial class ReferenceMetadataIndex
         }
         if (selected == null || selected.DeclaringType == null) return false;
         var declaring = selected.DeclaringType;
+        declaringView = DeclarationTypeNode(declaring);
         if (declaring.IsConstructedGenericType) declaring = declaring.GetGenericTypeDefinition();
-        if (!declaring.IsGenericTypeDefinition) return false;
         openDeclaringType = ExactPhysicalMetadataName(declaring);
         metadataToken = selected.MetadataToken;
         declarationType = DeclarationTypeNode(selected.FieldType);
@@ -1108,24 +1140,46 @@ sealed partial class ReferenceMetadataIndex
     // the emitted existential owner, then select a unique name+arity slot from its actual
     // member table.  The caller retains the Kotlin vocabulary until bir2cir asks this index for the
     // concrete CIR owner/member pair.
-    public bool TryStarProjectionMember(string ownerFqn, string memberName, int paramCount,
-        out string erasedOwner, out string erasedMember)
+    public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> authoredSignature, int paramCount,
+        out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature)
     {
         erasedOwner = erasedMember = null;
-        if (ownerFqn == null || memberName == null) return false;
-        if (!TryExistentialPhysicalOwner(ownerFqn, out var candidateOwner)
-            || !TryMembersByBirOwner(candidateOwner, out var members)) return false;
+        erasedSignature = null;
+        if (sourceOwner == null || memberName == null) return false;
+        if (!TryExistentialPhysicalOwner(sourceOwner.Name, out var candidateOwner)
+            || !TryMembersByBirOwner(candidateOwner, out var members)
+            || !TryMembersByBirOwner(sourceOwner.Name, out var semanticMembers)) return false;
+
+        var declarations = semanticMembers.Where(m => !m.IsStatic && m.Name == memberName
+            && m.MethodArity == methodArity && m.ParamCount == paramCount
+            && (authoredSignature == null || m.ParamTypeNodes is { } ps && ps.Length == authoredSignature.Count
+                && (ps.SequenceEqual(authoredSignature)
+                    || ps.Select((p, i) => ForeignStarDeclarationDescribesCall(
+                        p, authoredSignature[i], sourceOwner.Args ?? Array.Empty<TypeNode>())).All(x => x))))
+            .ToList();
+        if (declarations.Count != 1) return false;
+
+        // Generated bridge names carry the source MethodDef ordinal. Derive it from metadata row order, never from
+        // reflection enumeration order, then validate the resulting name against the trusted carrier's actual table.
+        var orderedSemantic = semanticMembers.OrderBy(m => m.MetadataToken).ToList();
+        var ordinal = orderedSemantic.IndexOf(declarations[0]);
+        if (ordinal < 0) return false;
 
         var prefix = "$dotkt_star$" + memberName + "$";
-        var candidates = members
-            .Where(m => !m.IsStatic && m.ParamCount == paramCount
-                && (m.Name == memberName || m.Name.StartsWith(prefix, StringComparison.Ordinal)))
-            .Select(m => m.Name)
-            .Distinct(StringComparer.Ordinal)
+        var bridgeName = prefix + ordinal;
+        var bridge = members.Where(m => !m.IsStatic && m.ParamCount == paramCount
+            && m.MethodArity == methodArity && m.Name == bridgeName).ToList();
+        var candidates = bridge.Count != 0 ? bridge : members.Where(m => !m.IsStatic && m.ParamCount == paramCount
+            && m.MethodArity == methodArity && m.Name == memberName
+            && (declarations[0].ParamTypeNodes == null || m.ParamTypeNodes is { } physical
+                && physical.Length == declarations[0].ParamTypeNodes.Length
+                && physical.Select((p, i) => DeclarationDescribesCall(declarations[0].ParamTypeNodes[i], p)).All(x => x)))
             .ToList();
         if (candidates.Count != 1) return false;
         erasedOwner = candidateOwner;
-        erasedMember = candidates[0];
+        erasedMember = candidates[0].Name;
+        erasedSignature = candidates[0].ParamTypeNodes ?? Array.Empty<TypeNode>();
         return true;
     }
 
@@ -2253,7 +2307,8 @@ sealed partial class ReferenceMetadataIndex
                             dotKtAuthored
                                 ? method.GetParameters().Select(p => CarrierTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly, KotlinNullableGenericAttr)).ToArray()
                                 : null,
-                            DeclarationTypeNode(method.ReturnType)));
+                            DeclarationTypeNode(method.ReturnType),
+                            method.MetadataToken));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -3325,7 +3380,7 @@ readonly record struct SlotFact(TypeNode Node, bool Refused);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0);
 
 // The exact authored binding selected from a complete declaration identity. Carrying this value across the alias-
 // companion rewrite prevents a later name+arity lookup from silently selecting a different overload.
