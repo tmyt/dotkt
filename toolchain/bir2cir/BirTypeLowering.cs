@@ -21,6 +21,11 @@ using DotKt.Bir;
 // resolve ("cannot resolve .NET type kotlin.Byte").
 static class BirTypeLowering
 {
+    // Kotlin's generic Enum<E> classifier is represented by the non-generic CLR System.Enum classifier. Passes that
+    // synthesize ABI for physically reified generic owners must consult this rule instead of treating the BIR arity
+    // as proof that a CLR generic TypeDef exists.
+    internal static bool ErasesGenericApplicationToNonGenericClassifier(string fqn) => fqn == "kotlin.Enum";
+
     // The `Span<T>` identity pair, in ONE place: kotc emits the faithful `kotlin.clr.Span` intrinsic name and this
     // pass owns the BCL substitution below. Passes that run BEFORE the lowering and must reason about the CLR type
     // (ReferenceMetadataIndex.IsByRefLikeFqn — `System.Span<T>` is a `ref struct`) canonicalize through these two
@@ -264,7 +269,8 @@ static class BirTypeLowering
                         f.Args?.Select(a => LowerType(a, refBuild, force: false, typeArg: true)).ToArray());
                 // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
                 // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
-                if (f.Name == "kotlin.Enum" && f.Args != null) return new TypeNode.Fqn("System.Enum");
+                if (ErasesGenericApplicationToNonGenericClassifier(f.Name) && f.Args != null)
+                    return new TypeNode.Fqn("System.Enum");
                 var methodSlotCarrier = f.Args != null && InterfaceMethodSlotCarriers.Contains(f.Name);
                 var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force,
                     typeArg: methodSlotCarrier ? false : true)).ToArray();

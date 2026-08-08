@@ -19,3 +19,45 @@ private class StarOwnerImpl : StarOwner {
 
 fun starOwner(): StarOwner = StarOwnerImpl()
 fun isConcreteStarKey(key: StarKey<*>): Boolean = key === ConcreteStarKey
+
+// The producer deliberately never star-projects this declaration. A downstream module is nevertheless free to
+// consume the exported generic classifier as FirstUseBox<*>, so its existential CLR ABI cannot depend on whether this
+// source module happened to use that projection itself.
+interface FirstUseBox<T> {
+    fun get(): T
+}
+
+private class FirstUseStringBox : FirstUseBox<String> {
+    override fun get(): String = "first-use"
+}
+
+fun firstUseBox(): FirstUseBox<String> = FirstUseStringBox()
+
+interface MixedBox<A, B> {
+    fun first(): A
+    fun second(): B
+}
+
+private class MixedValueBox : MixedBox<Int, String> {
+    override fun first(): Int = 23
+    override fun second(): String = "mixed"
+}
+
+fun mixedBox(): MixedBox<*, String> = MixedValueBox()
+
+interface CollisionHost<T> {
+    // Keep source classifiers adjacent to every word in the compiler's preferred physical suffix. Kotlin source
+    // cannot spell '$' even in an escaped identifier, so the allocator's exact reserved spelling is unspeakable;
+    // association must nevertheless come only from metadata, never a fuzzy name match.
+    class dotkt {
+        class star
+    }
+
+    fun value(): T
+}
+
+private class CollisionHostImpl : CollisionHost<String> {
+    override fun value(): String = "collision-safe"
+}
+
+fun collisionHost(): CollisionHost<*> = CollisionHostImpl()

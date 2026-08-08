@@ -88,26 +88,6 @@
       ]
     },
     {
-      "name": "d_existentialViewOfAStarProjection",
-      "params": [],
-      "ret": { "t": "fqn", "name": "kotlin.Comparator$dotkt_star" },
-      "body": [
-        {
-          "k": "return",
-          "value": {
-            "k": "callStatic",
-            "owner": null,
-            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
-            "method": "comparatorRead",
-            "sig": [],
-            "sty": { "t": "fqn", "name": "kotlin.Comparator", "args": [{ "t": "tv", "scope": "method", "i": 0 }] },
-            "ret": { "t": "fqn", "name": "kotlin.Comparator$dotkt_star" },
-            "args": []
-          }
-        }
-      ]
-    },
-    {
       "name": "e_nullabilityIsAnAnnotationAxis",
       "params": [],
       "ret": { "t": "fqn", "name": "string" },

@@ -656,8 +656,8 @@ That invariant is MECHANICALLY CHECKED, not merely stated (#305). bir2cir runs t
 check 7 over each file's fully-passed BIR immediately before `BirTypeLowering` — the last point at which the stamp
 still exists — and refuses a `sty` that names a different type than the `ret`/`dynRet` beside it. `IrSanity`'s
 `CheckStampAgreement` documents the accepted-equivalence set and the corpus it is calibrated on; the short version
-is that the relation is a REFUTATION test (a type VARIABLE, a `*`, `kotlin.Nothing`, a `$dotkt_star` existential
-view, a nullability wrapper, a spelling difference between the kotlin.*/shorthand/System.* vocabularies, and any
+is that the relation is a REFUTATION test (a type VARIABLE, a `*`, `kotlin.Nothing`, a nullability wrapper, a
+spelling difference between the kotlin.*/shorthand/System.* vocabularies, and any
 pair of unlike or different-arity shapes all AGREE), so it names only the class that motivated it: a same-shape
 pair whose argument names a genuinely different type. A MISSING stamp is not a disagreement — dropping it is one of
 the two things this invariant permits.

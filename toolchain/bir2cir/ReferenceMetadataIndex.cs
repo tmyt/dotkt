@@ -46,6 +46,11 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
     readonly HashSet<string> _byRefLikeOwners = new(StringComparer.Ordinal);         // Kotlin FQN -> is a `ref struct`
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
+    // Trusted [KotlinType(G<*,...>)] on a compiler-generated non-generic interface is the explicit existential ABI
+    // relation. No physical-name suffix participates in recognition.
+    readonly Dictionary<string, string> _existentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
+    readonly HashSet<string> _existentialPhysicalOwners = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _existentialSemanticByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, bool> _companionStaticByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _singletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _semanticOwnerByCompanionCarrier = new(StringComparer.Ordinal);
@@ -183,6 +188,18 @@ sealed partial class ReferenceMetadataIndex
             foreach (var owner in asm.DotKt.ByRefLikeOwners) _byRefLikeOwners.Add(owner);
             foreach (var owner in asm.DotKt.DotKtOwners)
                 _dotKtOwners.Add(StripGenericArity(DottedFqn(owner)));
+            foreach (var kv in asm.DotKt.ExistentialPhysicalBySemanticOwner)
+            {
+                var semantic = StripGenericArity(DottedFqn(kv.Key));
+                var physical = StripGenericArity(DottedFqn(kv.Value));
+                if (!_existentialPhysicalBySemanticOwner.TryAdd(semantic, physical)
+                    || _existentialPhysicalBySemanticOwner[semantic] != physical)
+                    throw new InvalidOperationException($"conflicting Kotlin existential ABI for '{semantic}'");
+                _existentialPhysicalOwners.Add(physical);
+                if (!_existentialSemanticByPhysicalOwner.TryAdd(physical, semantic)
+                    || _existentialSemanticByPhysicalOwner[physical] != semantic)
+                    throw new InvalidOperationException($"conflicting Kotlin existential physical owner '{physical}'");
+            }
             foreach (var kv in asm.DotKt.CompanionStaticByPhysicalOwner)
             {
                 var physicalOwner = StripGenericArity(DottedFqn(kv.Key));
@@ -560,6 +577,193 @@ sealed partial class ReferenceMetadataIndex
         return ProbeNetType(fqn, genericArity);
     }
 
+    // Resolve one exact public CLR member used through a Kotlin star-projected FOREIGN generic. There is no CLR
+    // nominal type for G<*>, so ForeignStarProjectionBinding dispatches through the stdlib reflection runtime. The
+    // compiler still owns overload resolution: it supplies the declaring generic definition and exact declaration
+    // identity (token plus a structural key for ref.dll/runtime twins), and the runtime only maps that definition
+    // onto the receiver's constructed type. Runtime argument values never participate in overload selection.
+    // DotKt-authored generics are excluded because their compiler-generated existential metadata is the
+    // authoritative, reflection-free ABI.
+    public bool TryForeignStarMethod(TypeNode.Fqn sourceOwner, string sourceName, string propertyAccess,
+        int methodArity, IReadOnlyList<TypeNode> callSignature,
+        out string openDeclaringType, out int metadataToken, out string runtimeName,
+        out string[] runtimeParameterKeys, out TypeNode declarationReturn, out bool returnsVoid)
+    {
+        openDeclaringType = null;
+        metadataToken = 0;
+        runtimeName = null;
+        runtimeParameterKeys = null;
+        declarationReturn = null;
+        returnsVoid = false;
+        if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
+            || callSignature == null || HasDotKtOwner(sourceOwner.Name)) return false;
+
+        var sourceType = ResolveNetType(BareOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        if (sourceType == null) return false;
+        var methodName = propertyAccess switch
+        {
+            "get" => "get_" + sourceName,
+            "set" => "set_" + sourceName,
+            _ => sourceName,
+        };
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
+        var seenTypes = new HashSet<Type>();
+        var frontier = new List<Type> { sourceType };
+        MethodInfo selected = null;
+        while (frontier.Count > 0)
+        {
+            var candidates = new List<MethodInfo>();
+            var next = new List<Type>();
+            foreach (var current in frontier)
+            {
+                if (current == null || !seenTypes.Add(current)) continue;
+                try
+                {
+                    candidates.AddRange(current.GetMethods(flags | BindingFlags.DeclaredOnly)
+                        .Where(m => m.Name == methodName
+                            && m.GetGenericArguments().Length == methodArity
+                            && m.GetParameters().Length == callSignature.Count));
+                    if (current.BaseType != null) next.Add(current.BaseType);
+                    next.AddRange(current.GetInterfaces());
+                }
+                catch
+                {
+                    // An incomplete reference graph cannot authorize a reflection ABI. The caller reports the exact
+                    // star-member shape as unsupported instead of guessing a namesake.
+                }
+            }
+            var exact = candidates.Where(m => m.GetParameters()
+                .Select(p => DeclarationTypeNode(p.ParameterType))
+                .SequenceEqual(callSignature)).ToList();
+            var compatible = exact.Count > 0 ? exact : candidates.Where(m => m.GetParameters()
+                .Select((p, i) => ForeignStarDeclarationDescribesCall(
+                    DeclarationTypeNode(p.ParameterType), callSignature[i]))
+                .All(x => x)).ToList();
+            if (compatible.Count > 1) return false;
+            if (compatible.Count == 1)
+            {
+                selected = compatible[0];
+                break;
+            }
+            frontier = next;
+        }
+        if (selected == null) return false;
+
+        var declaring = selected.DeclaringType;
+        if (declaring == null) return false;
+        if (declaring.IsConstructedGenericType) declaring = declaring.GetGenericTypeDefinition();
+        if (!declaring.IsGenericTypeDefinition) return false;
+        openDeclaringType = ExactPhysicalMetadataName(declaring);
+        metadataToken = selected.MetadataToken;
+        runtimeName = selected.Name;
+        runtimeParameterKeys = selected.GetParameters()
+            .Select(parameter => ForeignStarRuntimeTypeKey(parameter.ParameterType)).ToArray();
+        declarationReturn = DeclarationTypeNode(selected.ReturnType);
+        returnsVoid = selected.ReturnType == typeof(void);
+        return true;
+    }
+
+    // Metadata tokens are the fastest exact identity when compile-time and runtime modules are the same physical
+    // image. Reference assemblies are allowed to assign different tokens from their implementation twin, however.
+    // Carry this structural declaration key as the exact fallback; the runtime compares the selected declaration's
+    // name/arity/parameter TYPES and never chooses an overload from runtime argument values.
+    static string ForeignStarRuntimeTypeKey(Type type)
+    {
+        if (type.IsGenericParameter)
+            return (type.DeclaringMethod == null ? "t" : "m") + type.GenericParameterPosition;
+        if (type.IsByRef) return "r[" + ForeignStarRuntimeTypeKey(type.GetElementType()) + "]";
+        if (type.IsArray)
+            return "a" + type.GetArrayRank() + "[" + ForeignStarRuntimeTypeKey(type.GetElementType()) + "]";
+        if (type.IsGenericType)
+        {
+            var definition = type.IsGenericTypeDefinition ? type : type.GetGenericTypeDefinition();
+            return "g{" + (definition.FullName ?? definition.Name) + "}<"
+                + string.Join(",", type.GetGenericArguments().Select(ForeignStarRuntimeTypeKey)) + ">";
+        }
+        return "n{" + (type.FullName ?? type.Name) + "}";
+    }
+
+    // A member declared on open G<T...> necessarily carries owner/method TVs, while the frontend call descriptor is
+    // already instantiated at the readable projection (`Pair<*, String>.Second = value` has a String argument).
+    // Treat only declaration TVs as wildcards after exact candidates have been preferred; nominal structure remains
+    // recursive and overload sets that still admit more than one candidate are rejected rather than guessed.
+    static bool ForeignStarDeclarationDescribesCall(TypeNode declaration, TypeNode call)
+    {
+        if (declaration is TypeNode.Tv) return true;
+        if (declaration is TypeNode.Oblivious dOb)
+            return ForeignStarDeclarationDescribesCall(dOb.Of, call);
+        if (call is TypeNode.Oblivious cOb)
+            return ForeignStarDeclarationDescribesCall(declaration, cOb.Of);
+        if (declaration is TypeNode.Nullable dn)
+            return call is TypeNode.Nullable cn
+                ? ForeignStarDeclarationDescribesCall(dn.Of, cn.Of)
+                : ForeignStarDeclarationDescribesCall(dn.Of, call);
+        if (call is TypeNode.Nullable callNullable)
+            return ForeignStarDeclarationDescribesCall(declaration, callNullable.Of);
+        if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
+        {
+            if (ParamKey(df) != ParamKey(cf)) return false;
+            if (df.Args == null || cf.Args == null) return df.Args == null && cf.Args == null;
+            return df.Args.Length == cf.Args.Length
+                && df.Args.Select((arg, i) => ForeignStarDeclarationDescribesCall(arg, cf.Args[i])).All(x => x);
+        }
+        if (declaration is TypeNode.Array da && call is TypeNode.Array ca)
+            return ForeignStarDeclarationDescribesCall(da.Elem, ca.Elem);
+        if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
+            return ForeignStarDeclarationDescribesCall(db.Of, cb.Of);
+        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn
+            && dfn.Params.Length == cfn.Params.Length)
+            return ForeignStarDeclarationDescribesCall(dfn.Ret, cfn.Ret)
+                && dfn.Params.Select((arg, i) => ForeignStarDeclarationDescribesCall(arg, cfn.Params[i])).All(x => x);
+        return DeclarationDescribesCall(declaration, call);
+    }
+
+    // Field-backed CLR properties projected by dll2klib use the same clrPropGet/clrPropSet node as real properties.
+    // Keep field dispatch exact as well: the runtime receives a metadata token, never a source-name lookup.
+    public bool TryForeignStarField(TypeNode.Fqn sourceOwner, string sourceName,
+        out string openDeclaringType, out int metadataToken, out TypeNode declarationType)
+    {
+        openDeclaringType = null;
+        metadataToken = 0;
+        declarationType = null;
+        if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
+            || HasDotKtOwner(sourceOwner.Name)) return false;
+        var sourceType = ResolveNetType(BareOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        if (sourceType == null) return false;
+
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        var seen = new HashSet<Type>();
+        var frontier = new List<Type> { sourceType };
+        FieldInfo selected = null;
+        while (frontier.Count > 0)
+        {
+            var matches = new List<FieldInfo>();
+            var next = new List<Type>();
+            foreach (var current in frontier)
+            {
+                if (current == null || !seen.Add(current)) continue;
+                try
+                {
+                    matches.AddRange(current.GetFields(flags).Where(f => f.Name == sourceName));
+                    if (current.BaseType != null) next.Add(current.BaseType);
+                    next.AddRange(current.GetInterfaces());
+                }
+                catch { }
+            }
+            if (matches.Count > 1) return false;
+            if (matches.Count == 1) { selected = matches[0]; break; }
+            frontier = next;
+        }
+        if (selected == null || selected.DeclaringType == null) return false;
+        var declaring = selected.DeclaringType;
+        if (declaring.IsConstructedGenericType) declaring = declaring.GetGenericTypeDefinition();
+        if (!declaring.IsGenericTypeDefinition) return false;
+        openDeclaringType = ExactPhysicalMetadataName(declaring);
+        metadataToken = selected.MetadataToken;
+        declarationType = DeclarationTypeNode(selected.FieldType);
+        return declarationType != null;
+    }
+
     // W1-S2 (#46): resolve a STDLIB-owner clr* member's declaring type off the ref.dll — WITHOUT the `kotlin.*`
     // exclusion that `ResolveNetType` applies (that exclusion keeps NetInteropBinding from reshaping a stdlib call; it
     // does NOT apply to ClrMemberResolution, which runs AFTER substitution and only reflects a member's DECLARED sig).
@@ -676,6 +880,17 @@ sealed partial class ReferenceMetadataIndex
             ? arity
             : _ownerArity.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)), 0);
     }
+
+    public bool TryExistentialPhysicalOwner(string semanticOwner, out string physicalOwner) =>
+        _existentialPhysicalBySemanticOwner.TryGetValue(
+            StripGenericArity(DottedFqn(BareOwnerFqn(semanticOwner))), out physicalOwner);
+
+    public bool IsExistentialPhysicalOwner(string physicalOwner) =>
+        _existentialPhysicalOwners.Contains(StripGenericArity(DottedFqn(BareOwnerFqn(physicalOwner))));
+
+    public bool TryExistentialSemanticOwner(string physicalOwner, out string semanticOwner) =>
+        _existentialSemanticByPhysicalOwner.TryGetValue(
+            StripGenericArity(DottedFqn(BareOwnerFqn(physicalOwner))), out semanticOwner);
     public bool IsKotlinRichEnumOwner(string ownerFqn)
     {
         var bare = BareOwnerFqn(ownerFqn);
@@ -884,13 +1099,13 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
-    // Resolve the physical member exposed by a referenced one-parameter generic's compiler-generated
-    // existential (`G$dotkt_star`).  A member whose signature mentions the owner's T cannot reuse the
+    // Resolve the physical member exposed by a referenced generic's compiler-generated existential. A member whose
+    // signature mentions an owner type parameter cannot reuse the
     // Kotlin name: on G<object> the erased bridge would collide with the real closed-generic slot, so
     // FBoundStarProjectionErasure gives it a deterministic `$dotkt_star$<name>$<ordinal>` name.
     //
-    // This is reference metadata, not a spelling guess about arbitrary assemblies: require the emitted
-    // existential owner to carry DotKt provenance, then select a unique name+arity slot from its actual
+    // This is reference metadata, not a spelling guess: the trusted type-level [KotlinType(G<*,...>)] relation names
+    // the emitted existential owner, then select a unique name+arity slot from its actual
     // member table.  The caller retains the Kotlin vocabulary until bir2cir asks this index for the
     // concrete CIR owner/member pair.
     public bool TryStarProjectionMember(string ownerFqn, string memberName, int paramCount,
@@ -898,8 +1113,7 @@ sealed partial class ReferenceMetadataIndex
     {
         erasedOwner = erasedMember = null;
         if (ownerFqn == null || memberName == null) return false;
-        var candidateOwner = BareOwnerFqn(ownerFqn) + "$dotkt_star";
-        if (!HasDotKtOwner(candidateOwner)
+        if (!TryExistentialPhysicalOwner(ownerFqn, out var candidateOwner)
             || !TryMembersByBirOwner(candidateOwner, out var members)) return false;
 
         var prefix = "$dotkt_star$" + memberName + "$";
@@ -916,7 +1130,7 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // Recover the physical CLR signature hidden behind a KotlinType-restored existential surface. dll2klib correctly
-    // presents `G<*>` to the frontend, but calls in CIR must use the referenced DLL's actual `G$dotkt_star` slots.
+    // presents `G<*>` to the frontend, but calls in CIR must use the referenced DLL's actual existential slots.
     // Require a unique declaration by staticness/name/generic-arity/parameter-count and require that at least one
     // signature position names a provenance-verified existential owner.
     public bool TryExistentialAbiMember(string ownerToken, string memberName, bool isStatic, int methodArity,
@@ -940,7 +1154,7 @@ sealed partial class ReferenceMetadataIndex
 
     bool ContainsExistential(TypeNode type) => type switch
     {
-        TypeNode.Fqn f => (f.Name.EndsWith("$dotkt_star", StringComparison.Ordinal) && HasDotKtOwner(f.Name))
+        TypeNode.Fqn f => IsExistentialPhysicalOwner(f.Name)
             || (f.Args?.Any(ContainsExistential) ?? false),
         TypeNode.Nullable n => ContainsExistential(n.Of),
         TypeNode.Oblivious o => ContainsExistential(o.Of),
@@ -1865,6 +2079,31 @@ sealed partial class ReferenceMetadataIndex
                     // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
+                    if (dotKtAuthored && type.IsInterface && !type.IsGenericType
+                        && HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr)
+                        && KotlinTypeOf(type.GetCustomAttributesData(), asm) is TypeNode.Fqn
+                        {
+                            Args: { Length: > 0 } existentialArgs
+                        } existentialSurface
+                        && existentialArgs.All(a => a is TypeNode.Star))
+                    {
+                        var semantic = StripGenericArity(DottedFqn(existentialSurface.Name));
+                        var declarations = types.Where(candidate =>
+                        {
+                            if (HasAttribute(candidate.GetCustomAttributesData(), CompilerGeneratedAttr)) return false;
+                            var candidateName = StripGenericArity(DottedFqn(candidate.FullName ?? candidate.Name));
+                            return candidateName == semantic
+                                && candidate.GetGenericArguments().Length == existentialArgs.Length;
+                        }).ToArray();
+                        if (declarations.Length != 1)
+                            throw new InvalidDataException(
+                                $"trusted Kotlin existential '{type.FullName}' resolves semantic owner "
+                                + $"'{semantic}'/{existentialArgs.Length} to {declarations.Length} declarations");
+                        var physical = ExactPhysicalMetadataName(type);
+                        if (!metadata.ExistentialPhysicalBySemanticOwner.TryAdd(semantic, physical)
+                            || metadata.ExistentialPhysicalBySemanticOwner[semantic] != physical)
+                            throw new InvalidDataException($"duplicate Kotlin existential ABI for '{semantic}'");
+                    }
                     // dll2klib never exposes compiler-generated implementation classifiers to Kotlin. Do not let a
                     // same-named inline-materialized closure in the current compilation be rebound to a stale helper
                     // TypeDef from a reference assembly merely because both deterministic names coincide.
@@ -2996,6 +3235,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
     public readonly HashSet<string> ByRefLikeOwners = new(StringComparer.Ordinal);        // ownerFqn -> is a `ref struct` (see IsByRefLikeFqn)
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
+    public readonly Dictionary<string, string> ExistentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, bool> CompanionStaticByPhysicalOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> SingletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionCarrierByPhysicalOwner = new(StringComparer.Ordinal);

@@ -5,19 +5,18 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // CLR generics are reified and invariant, so a Kotlin star projection cannot be represented by substituting Any
-// (`G<*>` -> `G<object>`): a `G<Concrete>` value is not a `G<object>`. Give each used local one-parameter generic a
+// (`G<*>` -> `G<object>`): a `G<Concrete>` value is not a `G<object>`. Give each used local generic a
 // deterministic non-generic existential view instead. Every closed `G<X>` implements that view, preserving identity
 // and allowing a `G<X>` value to flow through a `G<*>` slot without a fictitious variance conversion. The same view
 // is used for Kotlin's erased generic `is`/`as` checks (`x is G<T>`): JVM semantics test only the raw classifier.
 //
 // BIR faithfully carries `{t:"star"}`. This pass synthesizes the CLR-facing interface, attaches it to the generic
-// declaration, and rewrites only star positions and erased runtime classifier tests/casts. For compatibility with
-// older BIR, a non-Any-bounded `G<Any>` remains recognized as the legacy unambiguous star spelling. Reference and
-// runtime builds both run it, so downstream compilations recognize the deterministic view from DotKt provenance.
-// Multi-parameter projection masks remain a separate generalization; silently erasing concrete positions is wrong.
+// declaration, and rewrites only explicit star positions and erased runtime classifier tests/casts. Reference and
+// runtime builds both run it, so downstream compilations recognize the view from trusted DotKt metadata. BIR from an
+// older toolchain is unsupported: `G<Any>` is always the concrete Kotlin type and is never guessed back into `G<*>`.
 static class FBoundStarProjectionErasure
 {
-    const string Suffix = "$dotkt_star";
+    const string CarrierMark = "$dotkt$star";
 
     sealed class Owner
     {
@@ -25,21 +24,41 @@ static class FBoundStarProjectionErasure
         public string ErasedName;
         public JsonObject Def;
         public JsonObject Root;
-        public bool Bounded;
+        public int Arity;
         public bool Needed;
     }
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    public static IReadOnlyDictionary<string, string> ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         var rootList = roots.OfType<JsonObject>().ToList();
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
+        AllocateCarrierNames(owners, defs.Keys);
         foreach (var root in rootList) MarkNeeded(root, owners);
         MarkNeededClosure(owners);
 
         foreach (var owner in owners.Values.Where(o => o.Needed)) Synthesize(owner, owners, defs, refs);
+        foreach (var root in rootList) RecordDeclarationSurfaces(root);
+        ForeignStarProjectionBinding.ApplyAll(rootList, refs);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs);
+        return owners.Values.Where(o => o.Needed)
+            .ToDictionary(o => o.Name, o => o.ErasedName, StringComparer.Ordinal);
+    }
+
+    // The physical name is intentionally not an ABI oracle: trusted [KotlinType] metadata carries the relation.
+    // Allocate against every TypeDef in the emission unit so a user declaration (including a backtick identifier)
+    // can never collide with the compiler carrier. The sorted walk makes the chosen suffix deterministic.
+    static void AllocateCarrierNames(IReadOnlyDictionary<string, Owner> owners, IEnumerable<string> declaredNames)
+    {
+        var used = declaredNames.ToHashSet(StringComparer.Ordinal);
+        foreach (var owner in owners.Values.OrderBy(o => o.Name, StringComparer.Ordinal))
+        {
+            var stem = owner.Name + CarrierMark;
+            var candidate = stem;
+            for (var ordinal = 1; !used.Add(candidate); ordinal++) candidate = stem + "$" + ordinal;
+            owner.ErasedName = candidate;
+        }
     }
 
     // If G<T>'s existential surface exposes H<T>, substituting object would manufacture the invalid invariant
@@ -69,12 +88,9 @@ static class FBoundStarProjectionErasure
     {
         switch (type)
         {
-            case TypeNode.Fqn { Args: { Length: 1 } args } f:
-                if (ContainsOwnerTv(args[0]) && owners.TryGetValue(f.Name, out var nested))
+            case TypeNode.Fqn { Args: { } args } f:
+                if (args.Any(ContainsOwnerTv) && owners.TryGetValue(f.Name, out var nested))
                     nested.Needed = true;
-                foreach (var arg in args) MarkDependentResult(arg, owners);
-                break;
-            case TypeNode.Fqn { Args: { } args }:
                 foreach (var arg in args) MarkDependentResult(arg, owners);
                 break;
             case TypeNode.Nullable n: MarkDependentResult(n.Of, owners); break;
@@ -121,23 +137,28 @@ static class FBoundStarProjectionErasure
         {
             var name = Str(def["name"]);
             if (name != null) defs.TryAdd(name, def);
-            if (name != null && IsSingleGeneric(def))
+            if (name != null && IsSourceGeneric(def))
                 owners.TryAdd(name, new Owner
                 {
-                    Name = name, ErasedName = name + Suffix, Def = def, Root = root,
-                    Bounded = IsSingleBounded(def),
+                    Name = name, Def = def, Root = root,
+                    Arity = (def["typeParams"] as JsonArray)?.Count ?? 0,
+                    // A downstream module may introduce G<*> even when this producer never does. Every source-level
+                    // generic declaration that participates in the exported Kotlin ABI therefore owns its existential
+                    // view unconditionally; private declarations remain demand-driven within this compilation.
+                    Needed = IsAbiVisible(def),
                 });
             Collect(root, def, owners, defs);
         }
     }
 
-    static bool IsSingleGeneric(JsonObject def)
+    static bool IsSourceGeneric(JsonObject def)
     {
         // Lifted/local compiler artifacts are not part of the Kotlin ABI and cannot be named by a
         // downstream star-projected use.  Attaching an existential interface to them also turns
         // their implementation-detail type variables into public CLR MethodImpl signatures.
-        if (Bool(def["generated"]) || HasClrTypeAlias(def)) return false;
-        return def["typeParams"] is JsonArray { Count: 1 };
+        if (Bool(def["generated"]) || HasClrTypeAlias(def)
+            || BirTypeLowering.ErasesGenericApplicationToNonGenericClassifier(Str(def["name"]))) return false;
+        return def["typeParams"] is JsonArray { Count: > 0 };
     }
 
     static bool HasClrTypeAlias(JsonObject def)
@@ -148,11 +169,40 @@ static class FBoundStarProjectionErasure
         return false;
     }
 
-    static bool IsSingleBounded(JsonObject def)
+    static bool IsAbiVisible(JsonObject def) => Str(def["vis"]) is null or "public" or "protected" or "internal";
+
+    // The physical existential is one non-generic interface for every projection mask. Preserve each declaration's
+    // exact Kotlin type (`Pair<*, String>`, not merely Pair<*, *>) before the slot becomes that interface/object.
+    // RoundtripMetadata emits these facts as [KotlinType], and dll2klib restores them without inspecting the physical
+    // carrier name. Calls and locals are intentionally excluded: this is exported declaration ABI only.
+    static void RecordDeclarationSurfaces(JsonNode node)
     {
-        if (def["typeParams"] is not JsonArray tps || tps.Count != 1 || tps[0] is not JsonObject tp
-            || tp["constraints"] is not JsonArray constraints) return false;
-        return constraints.Any(c => TypeJson.Read(c) is TypeNode t && !IsObjectish(t));
+        switch (node)
+        {
+            case JsonObject obj:
+                if (obj["k"] == null && obj["name"] is JsonValue && obj["params"] is JsonArray parameters)
+                {
+                    foreach (var parameter in parameters.OfType<JsonObject>())
+                        RecordProjectionSlot(parameter, "type", "kotlinType");
+                    RecordProjectionSlot(obj, "ret", "retKotlinType");
+                }
+                if (obj["k"] == null && obj["type"] != null)
+                    RecordProjectionSlot(obj, "type", "kotlinType");
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList())
+                    RecordDeclarationSurfaces(child);
+                break;
+            case JsonArray array:
+                foreach (var child in array.Where(v => v != null).ToList()) RecordDeclarationSurfaces(child);
+                break;
+        }
+    }
+
+    static void RecordProjectionSlot(JsonObject declaration, string slot, string fact)
+    {
+        if (declaration[fact] != null || TypeJson.Read(declaration[slot]) is not TypeNode type
+            || !ContainsExplicitStar(type))
+            return;
+        declaration[fact] = TypeNode.ToJson(type);
     }
 
     static void MarkNeeded(JsonNode node, IReadOnlyDictionary<string, Owner> owners)
@@ -186,14 +236,10 @@ static class FBoundStarProjectionErasure
     {
         switch (type)
         {
-            case TypeNode.Fqn { Args: { Length: 1 } args } f:
+            case TypeNode.Fqn { Args: { } args } f:
                 if (owners.TryGetValue(f.Name, out var owner)
-                    && (runtimeClassifier || args[0] is TypeNode.Star
-                        || (owner.Bounded && IsObjectish(args[0]))))
+                    && (runtimeClassifier || args.Any(a => a is TypeNode.Star)))
                     owner.Needed = true;
-                foreach (var a in args) MarkNeededType(a, owners, false);
-                break;
-            case TypeNode.Fqn { Args: { } args }:
                 foreach (var a in args) MarkNeededType(a, owners, false);
                 break;
             case TypeNode.Nullable n: MarkNeededType(n.Of, owners, false); break;
@@ -270,7 +316,7 @@ static class FBoundStarProjectionErasure
             // downstream dll2klib restores G<*> for the frontend instead of exposing this synthetic interface or
             // degrading the whole signature to Any?. The ordinary FIR -> IR path erases the captured star before BIR.
             ["kotlinType"] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
-                new TypeNode[] { new TypeNode.Star() })).ToJsonString(),
+                Enumerable.Range(0, owner.Arity).Select(_ => (TypeNode)new TypeNode.Star()).ToArray())).ToJsonString(),
             ["base"] = null,
             ["interfaces"] = inherited,
             ["fields"] = new JsonArray(),
@@ -330,6 +376,7 @@ static class FBoundStarProjectionErasure
         // participate in the same later SuspendColdLowering as the generic declaration; dropping
         // mods here would cold-lower the call while leaving only an unlowered interface member.
         if (method["mods"] != null) slot["mods"] = method["mods"].DeepClone();
+        CopyResultFacts(method, slot, owners, refs);
         return slot;
     }
 
@@ -367,7 +414,8 @@ static class FBoundStarProjectionErasure
         {
             ["k"] = "callInstance",
             ["ownerType"] = TypeJson.Write(callOwner
-                ?? new TypeNode.Fqn(owner.Name, new TypeNode[] { new TypeNode.Tv("type", 0) })),
+                ?? new TypeNode.Fqn(owner.Name, Enumerable.Range(0, owner.Arity)
+                    .Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray())),
             ["virtual"] = Bool(method["virtual"]) || Bool(method["abstract"]),
             ["recv"] = new JsonObject { ["k"] = "this" },
             ["method"] = method["name"]?.DeepClone(),
@@ -375,6 +423,14 @@ static class FBoundStarProjectionErasure
             ["ret"] = TypeJson.Write(originalRet),
             ["args"] = args,
         };
+        if (method["typeParams"] is JsonArray methodTypeParams && methodTypeParams.Count > 0)
+        {
+            var typeArgs = new JsonArray();
+            for (var i = 0; i < methodTypeParams.Count; i++)
+                typeArgs.Add(TypeJson.Write(new TypeNode.Tv("method", i)));
+            call["typeArgs"] = typeArgs;
+        }
+        if (IsSuspend(method)) call["suspendCall"] = true;
         var body = new JsonArray();
         if (originalRet is TypeNode.Fqn { Name: "kotlin.Unit" })
             body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = call });
@@ -399,7 +455,37 @@ static class FBoundStarProjectionErasure
         // The forwarding bridge is a real declaration consumed by later lowering passes. Preserve
         // Kotlin modifiers rather than manufacturing a non-suspend body that calls a suspend slot.
         if (method["mods"] != null) bridge["mods"] = method["mods"].DeepClone();
+        CopyResultFacts(method, bridge, owners, refs);
         return bridge;
+    }
+
+    // This pass runs after declaration-side erasure has recorded semantic return facts but before suspend lowering.
+    // A synthesized existential slot/bridge is a declaration in its own right, so it must carry the same facts in
+    // its owner-erased form. In particular, copying only `mods.suspend` admits the declaration to SuspendColdLowering
+    // while dropping the mandatory `suspendRet`, which makes valid producer BIR internally inconsistent.
+    static void CopyResultFacts(JsonObject source, JsonObject target,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        if (TypeJson.Read(source["suspendRet"]) is TypeNode suspendRet)
+            target["suspendRet"] = TypeJson.Write(EraseOwnerTv(suspendRet, owners, refs));
+
+        foreach (var key in new[]
+                 {
+                     "nullableGenericRet", "nullableGenericSuspendRet",
+                     NullableGenericErasure.RetSuspendFnPre, "retKotlinType",
+                 })
+        {
+            if (Str(source[key]) is not string encoded) continue;
+            try
+            {
+                target[key] = TypeNode.ToJson(EraseOwnerTv(TypeNode.Parse(encoded), owners, refs));
+            }
+            catch
+            {
+                // The compiler-generated ABI never depends on a malformed optional round-trip fact. The structured
+                // declaration slot above remains authoritative, matching RoundtripMetadata's fail-soft carrier rule.
+            }
+        }
     }
 
     static JsonArray EraseParams(JsonArray parameters, string methodDisplay,
@@ -538,10 +624,9 @@ static class FBoundStarProjectionErasure
                 // a valid `as G<Unit>; g.consume(Unit)` into an impossible existential call.
                 var runtimeKind = Str(obj["k"]);
                 if (!Bool(obj["_exactBridgeCast"]) && runtimeKind is "isInst" or "cast"
-                    && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { Length: 1 } runtimeArgs } runtimeF
+                    && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } runtimeArgs } runtimeF
                     && owners.TryGetValue(runtimeF.Name, out var runtimeOwner) && runtimeOwner.Needed
-                    && (runtimeKind == "isInst" || ContainsStarOrTypeVariable(runtimeArgs[0])
-                        || (runtimeOwner.Bounded && IsObjectish(runtimeArgs[0]))))
+                    && (runtimeKind == "isInst" || runtimeArgs.Any(ContainsStarOrTypeVariable)))
                     obj["type"] = TypeJson.Write(new TypeNode.Fqn(runtimeOwner.ErasedName));
                 obj.Remove("_exactBridgeCast");
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
@@ -556,8 +641,7 @@ static class FBoundStarProjectionErasure
                 if (Str(obj["k"]) == "callInstance"
                     && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn erasedOwner
                     && (owners.Values.Any(o => o.ErasedName == erasedOwner.Name)
-                        || (erasedOwner.Name.EndsWith(Suffix, StringComparison.Ordinal)
-                            && refs.HasDotKtOwner(erasedOwner.Name))))
+                        || refs.IsExistentialPhysicalOwner(erasedOwner.Name)))
                     obj["virtual"] = true;
                 break;
             case JsonArray arr:
@@ -581,16 +665,15 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
         if (Str(call["k"]) != "callInstance"
-            || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn { Args: { Length: 1 } args } f
+            || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn { Args: { } args } f
             || Str(call["method"]) is not string method) return;
 
         owners.TryGetValue(f.Name, out var start);
-        var starOwner = args[0] is TypeNode.Star || (start != null && start.Bounded && IsObjectish(args[0]));
+        var starOwner = args.Any(a => a is TypeNode.Star);
         var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
-            && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { Length: 1 } castArgs } castF
+            && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
             && castF.Name == f.Name
-            && (ContainsStarOrTypeVariable(castArgs[0])
-                || (start != null && start.Bounded && IsObjectish(castArgs[0])));
+            && castArgs.Any(ContainsStarOrTypeVariable);
         if (!starOwner && !erasedSmartCast) return;
 
         var pc = (call["sig"] as JsonArray)?.Count
@@ -719,13 +802,17 @@ static class FBoundStarProjectionErasure
     {
         switch (type)
         {
-            case TypeNode.Fqn { Args: { Length: 1 } args } f
-                when args[0] is TypeNode.Star
-                    || (owners.TryGetValue(f.Name, out var oldOwner)
-                        && oldOwner.Bounded && IsObjectish(args[0])):
+            case TypeNode.Fqn { Args: { } args } f when args.Any(a => a is TypeNode.Star):
             {
-                var erased = owners.TryGetValue(f.Name, out var local) ? local.ErasedName : f.Name + Suffix;
-                if ((local != null && local.Needed) || refs.HasDotKtOwner(erased)) return new TypeNode.Fqn(erased);
+                var erased = owners.TryGetValue(f.Name, out var local) ? local.ErasedName : null;
+                if (local != null && local.Needed) return new TypeNode.Fqn(erased);
+                if (refs.TryExistentialPhysicalOwner(f.Name, out var referenced))
+                    return new TypeNode.Fqn(referenced);
+                // A foreign CLR generic cannot be retrofitted to implement DotKt's nominal existential. Its value
+                // slot is object; classifier checks/casts/member dispatch were already authored explicitly by
+                // ForeignStarProjectionBinding above. Never manufacture the invariant fiction G<object>.
+                if (!refs.HasDotKtOwner(f.Name) && refs.ResolveNetType(f.Name, args.Length) != null)
+                    return new TypeNode.Fqn("kotlin.Any");
                 return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(a, owners, refs)).ToArray());
             }
             case TypeNode.Star:
@@ -772,15 +859,42 @@ static class FBoundStarProjectionErasure
         _ => false,
     };
 
+    static bool ContainsExplicitStar(TypeNode t) => t switch
+    {
+        TypeNode.Star => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsExplicitStar),
+        TypeNode.Nullable n => ContainsExplicitStar(n.Of),
+        TypeNode.Oblivious o => ContainsExplicitStar(o.Of),
+        TypeNode.Array a => ContainsExplicitStar(a.Elem),
+        TypeNode.ByRef b => ContainsExplicitStar(b.Of),
+        TypeNode.Fn fn => ContainsExplicitStar(fn.Ret) || fn.Params.Any(ContainsExplicitStar)
+            || (fn.Recv != null && ContainsExplicitStar(fn.Recv)),
+        _ => false,
+    };
+
     static TypeNode EraseOwnerTv(TypeNode t, IReadOnlyDictionary<string, Owner> owners,
         ReferenceMetadataIndex refs) => t switch
     {
         TypeNode.Tv { Scope: "type" } => new TypeNode.Fqn("kotlin.Any"),
-        TypeNode.Fqn { Args: { Length: 1 } args } f
-            when ContainsOwnerTv(args[0])
-                 && ((owners.TryGetValue(f.Name, out var nested) && nested.Needed)
-                     || refs.HasDotKtOwner(f.Name + Suffix))
-            => new TypeNode.Fqn(f.Name + Suffix),
+        TypeNode.Fqn { Args: { } args } f when args.Any(ContainsOwnerTv)
+            && owners.TryGetValue(f.Name, out var nested) && nested.Needed
+            => new TypeNode.Fqn(nested.ErasedName),
+        TypeNode.Fqn { Args: { } args } f when args.Any(ContainsOwnerTv)
+            && refs.TryExistentialPhysicalOwner(f.Name, out var referenced)
+            => new TypeNode.Fqn(referenced),
+        // A foreign/reified construction containing an owner slot is not covariantly substitutable in general:
+        // List<T> is not List<object>, T[] is not object[] for value T, and Func<T,R> has variance of its own.
+        // The existential slot therefore carries the whole value as object; the forwarding bridge casts that object
+        // back to the exact closed declaration type before calling the real member. DotKt-authored generic results
+        // were handled by the two nominal existential cases above and retain their identity-preserving view.
+        TypeNode.Fqn { Args: { } args } when args.Any(ContainsOwnerTv)
+            => new TypeNode.Fqn("kotlin.Any"),
+        TypeNode.Array a when ContainsOwnerTv(a.Elem)
+            => new TypeNode.Fqn("kotlin.Any"),
+        TypeNode.ByRef b when ContainsOwnerTv(b.Of)
+            => new TypeNode.Fqn("kotlin.Any"),
+        TypeNode.Fn fn when ContainsOwnerTv(fn)
+            => new TypeNode.Fqn("kotlin.Any"),
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(
             f.Name, args.Select(a => EraseOwnerTv(a, owners, refs)).ToArray()),
         TypeNode.Nullable n => new TypeNode.Nullable(EraseOwnerTv(n.Of, owners, refs)),
@@ -803,6 +917,7 @@ static class FBoundStarProjectionErasure
 
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
     static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
+    static bool IsSuspend(JsonObject method) => method["mods"] is JsonObject mods && Bool(mods["suspend"]);
     // Older/common BIR omits `vis` for Kotlin's default public visibility; explicit non-public declarations carry a
     // value (`internal`, `private`, ...).  Treat omission exactly as the emitter does, rather than dropping public slots.
     static bool IsPublic(JsonObject method) => Str(method["vis"]) is null or "public";

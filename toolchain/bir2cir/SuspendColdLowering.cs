@@ -102,7 +102,7 @@ static partial class SuspendColdLowering
     static readonly TypeNode ContUnitTn = new TypeNode.Fqn("kotlin.coroutines.Continuation", new TypeNode[] { new TypeNode.Fqn("kotlin.Unit") });
     // Physical existential view synthesized by FBoundStarProjectionErasure for Continuation<*>. BaseContinuationImpl's
     // create overloads use this CLR slot; their Kotlin surface remains Continuation<*> via [KotlinType].
-    static readonly TypeNode ContStarTn = new TypeNode.Fqn("kotlin.coroutines.Continuation$dotkt_star");
+    static TypeNode ContStarTn;
     static JsonNode Tn(string fqn) => TypeJson.Fqn(fqn);
     static JsonNode Tw(TypeNode t) => TypeJson.Write(t);
     static JsonNode ContAny() => TypeJson.Write(ContAnyTn);
@@ -319,10 +319,20 @@ static partial class SuspendColdLowering
     // Returns the callee-return-type map (cold-entry name -> Kotlin resultType), so the SEPARATE
     // SuspendLambdaLowering phase can type a suspend-lambda's awaited value the SAME way (else a
     // lambda's `h()` await falls back to kotlin.Any and the value is never unboxed -> `object + int`).
-    public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild)
+    public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots,
+        ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild,
+        IReadOnlyDictionary<string, string> localExistentialOwners)
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
         _appBuild = appBuild;
+        const string continuation = "kotlin.coroutines.Continuation";
+        var continuationCarrier = localExistentialOwners.GetValueOrDefault(continuation);
+        if (continuationCarrier == null)
+            refs.TryExistentialPhysicalOwner(continuation, out continuationCarrier);
+        if (continuationCarrier == null)
+            throw new InvalidOperationException(
+                "suspend lowering requires the trusted Continuation<*> existential ABI");
+        ContStarTn = new TypeNode.Fqn(continuationCarrier);
         _consumedIntrinsicClosures = new HashSet<string>(StringComparer.Ordinal);
         // 1. R1 — the UNCONDITIONAL registry of EVERY declared suspend fun across every input file. This is a
         //    CLASSIFIER, not a filter: nothing is dropped for shape or resolvability. Each admitted member is classified

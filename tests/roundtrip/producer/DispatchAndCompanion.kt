@@ -98,10 +98,8 @@ class GenericSecretHost<T> private constructor(val value: T) {
     }
 }
 
-// A companion's source name is an ordinary Kotlin identifier, and other compiler types are derived from their owner's
-// name in the same namespace — the star-projection existential of `Host<T>` is `Host$dotkt_star`. A companion NAMED
-// `dotkt_star` on a star-projected generic owner is therefore the case where a bare `<owner>$<name>` carrier spelling
-// would collide with a type the compiler mints elsewhere, and ilemit would resolve `tag` against the wrong TypeDef.
+// A companion's source name is an ordinary Kotlin identifier. Keep a name that formerly collided with the retired
+// fixed star-carrier spelling as a regression guard: neither companion nor existential association may depend on it.
 class StarProjectedCompanionHost<T>(val value: T) {
     fun tag(): Int = 7
 

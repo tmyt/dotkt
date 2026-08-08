@@ -5,20 +5,19 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // FBoundStarProjectionErasure gives Kotlin's G<*> / erased G<T> cast a physical non-generic
-// G$dotkt_star interface. GenericDowncastRealignment subsequently aligns a local declaration
+// compiler-generated existential interface. GenericDowncastRealignment subsequently aligns a local declaration
 // with such a cast. Calls through that local must then target the exact existential interface
 // slot, including its deterministic owner-T-dependent bridge name. Leaving the original G<T>
-// MemberRef on a G$dotkt_star receiver is invalid CLR IL.
+// MemberRef on that existential receiver is invalid CLR IL.
 //
 // This is an explicit CIR binding pass: it consumes the synthesized interface's actual method
 // table (or reference metadata), and ilemit merely emits the owner/member recorded here.
 static class ExistentialReceiverBinding
 {
-    const string Suffix = "$dotkt_star";
-
     public sealed class Index
     {
         internal readonly Dictionary<string, List<Member>> Members = new(StringComparer.Ordinal);
+        internal readonly Dictionary<string, string> SemanticOwnerByPhysical = new(StringComparer.Ordinal);
     }
 
     internal sealed record Member(string Name, TypeNode[] Parameters, int GenericArity)
@@ -39,7 +38,7 @@ static class ExistentialReceiverBinding
         foreach (var type in types.OfType<JsonObject>())
         {
             var name = Str(type["name"]);
-            if (name != null && name.EndsWith(Suffix, StringComparison.Ordinal)
+            if (name != null && ExistentialSemanticOwner(type) is string semanticOwner
                 && type["methods"] is JsonArray methods)
             {
                 var slots = new List<Member>();
@@ -52,6 +51,7 @@ static class ExistentialReceiverBinding
                                 .Where(t => t != null).ToArray() ?? Array.Empty<TypeNode>(),
                             (method["typeParams"] as JsonArray)?.Count ?? 0));
                 index.Members[name] = slots;
+                index.SemanticOwnerByPhysical[name] = semanticOwner;
             }
             CollectTypes(type, index);
         }
@@ -122,7 +122,8 @@ static class ExistentialReceiverBinding
         if (Str(call["method"]) is not string sourceMethod || sourceMethod.StartsWith("$dotkt_star$", StringComparison.Ordinal))
             return;
         var receiverType = ReceiverType(call["recv"], vars) as TypeNode.Fqn;
-        if (receiverType == null || !receiverType.Name.EndsWith(Suffix, StringComparison.Ordinal)) return;
+        if (receiverType == null || (!index.SemanticOwnerByPhysical.ContainsKey(receiverType.Name)
+            && !refs.IsExistentialPhysicalOwner(receiverType.Name))) return;
 
         var pc = (call["sig"] as JsonArray)?.Count
             ?? (call["argTypes"] as JsonArray)?.Count
@@ -148,7 +149,9 @@ static class ExistentialReceiverBinding
         }
         else
         {
-            var sourceOwner = receiverType.Name[..^Suffix.Length];
+            var sourceOwner = index.SemanticOwnerByPhysical.GetValueOrDefault(receiverType.Name);
+            if (sourceOwner == null)
+                refs.TryExistentialSemanticOwner(receiverType.Name, out sourceOwner);
             if (refs.TryStarProjectionMember(sourceOwner, sourceMethod, pc, out var erasedOwner, out var erasedMethod)
                 && erasedOwner == receiverType.Name)
                 physicalMethod = erasedMethod;
@@ -169,6 +172,17 @@ static class ExistentialReceiverBinding
         if (Str(obj["k"]) == "local" && Str(obj["name"]) is string name
             && vars.TryGetValue(name, out var type)) return type;
         return TypeJson.Read(obj["sty"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["type"]);
+    }
+
+    static string ExistentialSemanticOwner(JsonObject type)
+    {
+        if (!Bool(type["generated"]) || Str(type["kotlinType"]) is not string encoded) return null;
+        try
+        {
+            return TypeNode.Parse(encoded) is TypeNode.Fqn { Args: { Length: > 0 } args } f
+                && args.All(a => a is TypeNode.Star) ? f.Name : null;
+        }
+        catch { return null; }
     }
 
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
