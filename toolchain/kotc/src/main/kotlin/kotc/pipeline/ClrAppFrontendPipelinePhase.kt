@@ -194,9 +194,10 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			},
 		)
 
-		// One pipeline execution = one set of context-function-type facts. `ClrContextFnTypes` is an object, so its map
-		// would otherwise outlive the compilation inside a HOSTED kotc and a later run could read a stale entry.
+		// One pipeline execution = one set of frontend-only facts. Both tables are objects, so their maps would
+		// otherwise outlive the compilation inside a HOSTED kotc and a later run could read a stale entry.
 		kotc.frontend.ClrContextFnTypes.reset()
+		kotc.frontend.ClrCompanionExtensions.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			val firFiles = session.buildFirFromKtFiles(files)
@@ -205,6 +206,9 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 				// `ContextFunctionTypeParams` cone attribute, and `context(A) B.(D) -> E` becomes indistinguishable
 				// from `B.(A, D) -> E` at IR level. See [kotc.frontend.ClrContextFnTypes].
 				kotc.frontend.ClrContextFnTypes.capture(it.fir)
+				// Capture the COMPANION-EXTENSION receiver types for the same reason: fir2ir drops a
+				// `companion fun C.foo()`'s receiver parameter outright. See [kotc.frontend.ClrCompanionExtensions].
+				kotc.frontend.ClrCompanionExtensions.capture(session, it.fir)
 			}
 		}
 

@@ -42,6 +42,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [8](#8-reverse--cross-assembly-interop) | Reverse / cross-assembly interop |
 | [8b](#8b-dual-representation-import-systemtextstringbuilder-vs-kotlintextstringbuilder--two-typed-views-of-one-clr-type) | Dual view: imported .NET type vs. its stdlib alias |
 | [8c](#8c-projected-net-static-members-typemember) | Projected .NET statics: direct `Type.member` |
+| [8c-bis](#8c-bis-kotlin-static-declarations-companion--and-companion-fun-cf) | Kotlin static declarations: `companion { }` and `companion fun C.f()` |
 | [8d](#8d-net-event-subscriptions-and-closeable-tokens) | .NET events use closeable subscriptions |
 | [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
 | [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit (incl. pinned-2.4.0 limitations) |
@@ -1228,6 +1229,10 @@ Application.Start(...)             // implicit companion access — the natural 
 They have no companion type or singleton value: `Application.Companion` is not synthesized. Instance members,
 constructors, properties, events, operators, and extension methods also resolve directly.
 
+A Kotlin class that EXTENDS such a type does not re-declare its statics. The frontend materializes one on the
+subclass so that `Sub.Shared` resolves, but the CLR does not inherit statics into a derived TypeDef, so `Sub.Shared`
+IS `Base.Shared` — one member, one storage location — and the subclass emits nothing for it.
+
 This surface requires Kotlin's `CompanionBlocksAndExtensions` analysis feature. Kotlin/CLR enables it as a target
 capability for every `kotc` invocation; any other analysis host that consumes CLR reference KLIBs (including a future
 DotKt LSP/IDE integration) must install the same CLR language-version settings. A generic Kotlin LSP that is unaware
@@ -1242,6 +1247,82 @@ physical type suffix or naming convention. The carrier also preserves semantic v
 owner identity (`+` for true nested types); source-invisible associations are validated but omitted from public KLIB
 projection. Lifted-carrier occurrences in method and property signatures are restored to the exact standard KLIB nested
 companion classifier, so a companion used only as a parameter or return type remains source-resolvable cross-module.
+
+## 8c-bis. Kotlin STATIC declarations: `companion { }` and `companion fun C.f()`
+
+Kotlin 2.4's `CompanionBlocksAndExtensions` gives Kotlin its own spelling for a platform-static declaration. Both
+forms are supported natively; no CLR-specific source annotation is involved.
+
+```kotlin
+class Counter(val n: Int) {
+    companion {
+        fun twice(x: Int): Int = x * 2      // a static method OF Counter
+        val origin: Counter = Counter(0)    // static storage, initialized in the type initializer
+        var seen: Int = 1
+    }
+}
+
+companion fun Tag.of(label: String): Tag = Tag(label)   // a static declaration ASSOCIATED with Tag
+companion val Tag.blank: Tag get() = Tag("")
+```
+
+### A companion BLOCK member is a genuine static member of its class
+
+`Counter.twice(...)`, `Counter.origin` and `Counter.seen` compile to static members of the CLR type `Counter`
+itself — a static method, and a static property over static storage. There is no carrier type, no singleton and no
+instance: a companion-block member is exactly the shape §8c projects an ordinary CLR static back into, so the two
+directions agree. It works in a class, a nested class, an `inner` class, an interface (a CLR interface legally
+carries static methods, static fields and a type initializer) and an enum class. The frontend rejects the rest —
+an `object`, a `companion object`, an anonymous object and an enum entry — and rejects nested classes, typealiases,
+constructors, `init` blocks and extensions *inside* a companion block.
+
+Storage is initialized in the **type initializer**, not in any constructor, which is what "initialized before the
+class is first used" means. A companion-block property on an enum class initializes after the entry singletons.
+
+A real `companion object` stays what it was (§7a): its own nested carrier type with a singleton value, restored
+through the `[KotlinCompanion]` carrier. A class may declare both, and they remain structurally distinct — the
+block's members are statics of the outer type, the object's are instance members of the carrier.
+
+**Collisions.** A companion-block member and an instance member of the same class cannot share a name — the
+frontend rejects that outright (`CONFLICTING_OVERLOADS` for functions, `REDECLARATION` for properties) — so no
+Kotlin-visible name can clash on the emitted type. Overloads that differ by signature are fine and are emitted as
+ordinary CLR overloads. The one clash that would otherwise reach metadata is internal: an accessor-routed property
+emits both a `count` property and its storage, and ECMA-335 name uniqueness within a TypeDef does not care that the
+storage is static, so a companion-block property's backing field is renamed to the unspeakable
+`<count>k__BackingField` exactly as an instance property's is.
+
+**Generic containing classes.** Kotlin forbids a static member from mentioning the enclosing class's type
+parameters, so `class Box<T> { companion { var count: Int } }` declares ONE logical `count`, not one per `T`. The
+CLR's per-closed-generic static storage would give `Box<Int>.count` and `Box<String>.count` separate slots, so
+Kotlin/CLR deliberately collapses every use onto the single canonical `Box<Any>` instantiation. `Box.count` is one
+variable, exactly as the Kotlin source says; this is the same rule that already binds a generic owner's statics.
+
+### A companion EXTENSION is a receiverless static associated with a type
+
+`Tag.of("hi")` passes no receiver — the association is not a parameter. Kotlin/CLR gives every companion extension
+one uniform physical representation: an ordinary static member of the declaring file's facade class, with the
+associated type carried in trusted `[KotlinCompanionExtension]` metadata. It is never made a member of the
+associated type, because it must work identically when that type is an external CLR type the compiler cannot add
+members to.
+
+Round-trip needs no new encoding. `dll2klib` restores the standard Kotlin shape — the `IS_STATIC_FUNCTION` /
+`IS_STATIC_PROPERTY` flag plus a receiver type — which is precisely what Kotlin means by a companion extension,
+so a second module resolves `Tag.of(...)` from metadata alone. Like any extension, it must be in scope at the use
+site (same package, or `import`ed by name).
+
+The frontend restricts the receiver to a bare classifier: no type arguments, no type parameter, no nullable
+receiver, no `object`, no `dynamic`. A typealias receiver is allowed and denotes the class it expands to.
+
+### Feature enablement
+
+Both forms need Kotlin's `CompanionBlocksAndExtensions` analysis feature, which Kotlin/CLR installs as a target
+capability for every `kotc` invocation (§8c). It is deliberately NOT routed through the ordinary `-XXLanguage`
+channel: that channel marks a feature as manually opted into a preview and stamps the output pre-release, which is
+wrong for a platform capability. `kotc` therefore ignores a user-supplied `-XXLanguage:±CompanionBlocksAndExtensions`
+and emits no "manually enabled features will force generation of pre-release binaries" warning. Any other analysis
+host — including a future DotKt LSP/IDE integration — must install the same CLR language-version settings; a generic
+Kotlin LSP unaware of the CLR target is not an authoritative analyzer for a `.ktproj` and may report these
+declarations as unavailable.
 
 ## 8d. Same-name .NET arity families: `Task` stays `Task`, `Task<TResult>` becomes `Task1<TResult>`
 

@@ -306,6 +306,10 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		val parent = fld.parent
 		return when {
 			parent is IrFile && fld.isStatic -> fileClassName(parent)
+			// A `companion { }` property's storage is a static field of the DECLARING CLASS (Kotlin 2.4). Its accessors
+			// are themselves receiverless, so a `field` read/write in one of them has no `this` to load from — the same
+			// shape as the top-level case above, with the class in place of the file class.
+			parent is IrClass && fld.isStatic -> typeName(parent)
 			else -> null
 		}
 	}
@@ -752,7 +756,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
 			// Delegated storage has the provider type, not the public value type. Its surface is the generated accessor.
 			val vis = if (p.isDelegated) ""","vis":"private"""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$vis$ro${volatileFieldFlag(p)}}"""
+			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$vis$ro${volatileFieldFlag(p)}${companionReceiverField(p)}}"""
 		}
 		// Preserve every companion as a separate semantic declaration. Must run BEFORE body emission so every value/type
 		// use resolves to the same representation-neutral identity.

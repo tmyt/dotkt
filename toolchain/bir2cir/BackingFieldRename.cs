@@ -17,7 +17,7 @@ using System.Text.Json.Nodes;
 // is not user-authored" signal that debuggers, analyzers and serializers key on (C# stamps the same attribute on the
 // same field).
 //
-// DISCRIMINATOR: an INSTANCE field whose owner also declares a `properties` record of the same name. That pairing is a
+// DISCRIMINATOR: a field whose owner also declares a `properties` record of the same name. That pairing is a
 // CLR-representation fact read off the CIR type declaration — the property record and the field list are exactly the
 // inputs to "how is this property's storage named on the CLR", which is this layer's decision; it is deliberately NOT
 // a Kotlin-frontend flag. It covers bir2cir's OWN synthesized adapters too (StringCharSequenceBridge's
@@ -25,11 +25,15 @@ using System.Text.Json.Nodes;
 // (DeclarationRename, which runs earlier, rewrites a property record's `get`/`set` but never its `name`, so the
 // pairing key is stable.)
 //
+// STATIC storage is in scope on exactly the same terms. A Kotlin 2.4 `companion { val v = … }` is an accessor-routed
+// property of its class whose storage happens to be static, and ECMA-335 name uniqueness within a TypeDef does not
+// care whether the clashing pair is static: a static field `v` alongside a property `v` is the same broken metadata.
+//
 // OUT OF SCOPE — every property whose storage IS the user-visible member emits NO property record, so none of them is
 // touched and every user-visible field keeps its name: a `@ClrField` property (the opt-out that deliberately emits a
-// plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a companion/top-level static field
-// and every capture/synthetic field. A property with a CUSTOM accessor that still has a backing field
-// (`val x = 7; get() = field + 1`) IS accessor-routed and IS renamed.
+// plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a top-level static field, an
+// `object`'s `INSTANCE`, an enum entry's singleton and every capture/synthetic field. A property with a CUSTOM
+// accessor that still has a backing field (`val x = 7; get() = field + 1`) IS accessor-routed and IS renamed.
 //
 // Runs GLOBALLY over all staged roots (a `byref(obj.prop)` addresses a sibling file's backing field directly) and in
 // EVERY build — ref, runtime and app agree on the emitted shape. Placed at the end of the global structural phase:
@@ -39,9 +43,10 @@ static class BackingFieldRename
 {
     const string CompilerGeneratedAttr = "System.Runtime.CompilerServices.CompilerGeneratedAttribute";
 
-    // The instance-field-addressing node kinds: a read, a statement write and an expression write. `staticField`/
-    // `staticFieldSet` are deliberately absent — a static field is never an accessor-routed property's storage.
-    static readonly HashSet<string> FieldNodeKinds = new(StringComparer.Ordinal) { "field", "setField", "setFieldExpr" };
+    // The field-addressing node kinds: a read, a statement write and an expression write, in their instance and their
+    // static spellings. All six key the owner on `ownerType` and the member on `name`, so one rewrite serves them all.
+    static readonly HashSet<string> FieldNodeKinds = new(StringComparer.Ordinal)
+        { "field", "setField", "setFieldExpr", "staticField", "staticFieldSet", "setStaticField", "setStaticFieldExpr" };
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots)
     {
@@ -92,7 +97,6 @@ static class BackingFieldRename
         foreach (var f in fields)
         {
             if (f is not JsonObject fo) continue;
-            if ((fo["static"] as JsonValue)?.GetValue<bool>() == true) continue;
             if (Str(fo["name"]) is not string fieldName || !propNames.Contains(fieldName)) continue;
             var mangled = Mangle(fieldName);
             // Belt-and-braces. The frontend already rejects the spelling outright — a backtick-quoted

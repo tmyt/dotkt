@@ -236,6 +236,7 @@
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
         "static":     { "type": "boolean", "$comment": "a load-bearing CLR-shape flag, kept scalar (not a Kotlin source modifier)" },
+        "companionReceiver": { "type": "string", "$comment": "#382: the Kotlin type a COMPANION EXTENSION (`companion fun C.foo()`) is semantically associated with, as a serialized type node. Receiverless: the association is not a parameter and nothing is passed at the call. fir2ir erases it, so kotc recovers it from FIR; bir2cir folds it into the method's `attrs` as [KotlinCompanionExtension] and drops the key. A STRING so the CLR type-lowering passes leave the Kotlin identity untouched (as `kotlinType`/`collIdentity` are). Absent on every declaration that is not one." },
         "extern":     { "type": "boolean", "$comment": "CIR-only: bodyless CLR extern method. bir2cir uses this for caller-side UnsafeAccessor declarations; ilemit defines the signature/attributes one-to-one and emits no IL body." },
         "virtual":    { "type": "boolean" },
         "clrBridgeRole": { "enum": ["hasNext", "next", "iterator"], "$comment": "reverse-enumerator-bridge role marker bir2cir (IteratorBridgeMarking) stamps so ilemit drives its GetEnumerator adapter off a semantic marker, never the Kotlin FQN/member names — hasNext/next on kotlin.collections.Iterator's members, iterator on a class iterator(). A bir2cir->ilemit resolution HINT (ilemit reads it into TypeInfo.BridgeRoles), never emitted as .NET metadata." },
@@ -268,6 +269,10 @@
       "properties": {
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
         "vis": { "$ref": "#/$defs/vis" }, "volatile": { "type": "boolean" },
+        "static": { "type": "boolean", "$comment": "the field is storage of the TYPE, not of an instance: a top-level property's file-class field, an `object`/enum-entry singleton, or a Kotlin 2.4 `companion { }` property's backing field. A static field's `init` runs in the type initializer. Like funDecl.static, a CLR-shape flag rather than a Kotlin source modifier." },
+        "init": { "$ref": "#/$defs/node", "$comment": "the initializer expression of a STATIC field, emitted into the type initializer. An instance field is initialized by its constructor instead and carries no `init`." },
+        "readOnly": { "type": "boolean", "$comment": "Kotlin round-trip metadata: the field is not publicly settable (`val`, or `var` with a non-public setter), so a consuming Kotlin module restores it as `val`. bir2cir folds it into [KotlinReadOnly]; distinct from the physical `initOnly` below." },
+        "companionReceiver": { "type": "string", "$comment": "#382: the funDecl twin — the Kotlin type a COMPANION EXTENSION property (`companion val C.bar = 1`) is associated with, as a serialized type node. bir2cir folds it into [KotlinCompanionExtension] and drops the key." },
         "initOnly": { "type": "boolean", "description": "CIR physical field flag: emit CLR initonly (C# readonly). bir2cir authors it only when the CLR storage itself is immutable; distinct from Kotlin readOnly round-trip metadata." },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the slot's reference-nullable positions (replaces the retired scalar `nullable` flag)." }
       },

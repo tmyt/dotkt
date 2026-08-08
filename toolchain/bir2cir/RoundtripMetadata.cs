@@ -43,6 +43,7 @@ static class RoundtripMetadata
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
+    const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
@@ -186,6 +187,14 @@ static class RoundtripMetadata
         // of BirCarrier.EncodeBody). Only for an inline fn that actually stashed a carrier.
         if (ModFlag(mo, "inline") && (mo["inlineBir"] as JsonValue)?.GetValue<string>() is string ib)
             Append(mo, Marker(AKInline, StringArg(BirCarrier.JsonV1), BytesArg(ib)));
+        // [KotlinCompanionExtension(version, bytes)] — a Kotlin 2.4 `companion fun C.foo()`. The declaration is a
+        // receiverless static of the file class physically; the carrier holds the KOTLIN type it is associated with,
+        // which is the only thing a consuming module needs to spell `C.foo(...)` again. Opaque to CLR lowering.
+        if ((mo["companionReceiver"] as JsonValue)?.GetValue<string>() is string mcr)
+        {
+            Append(mo, JsonCarrierAttr(AKCompanionExt, JsonNode.Parse(mcr)));
+            mo.Remove("companionReceiver");
+        }
 
         // Return-position attrs ride `retAttrs` (ilemit stamps them on DefineParameter(0)). Order: [Nullable, SuspendFn,
         // Nothing]. [KotlinNothing] (#133 case3) rides the SAME channel; it goes AFTER the [Nullable] byte so a `Nothing?`
@@ -293,6 +302,13 @@ static class RoundtripMetadata
             if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));
             if (TakeInt(fo, "ctxFnType") is int fctx) Append(fo, Marker(AKCtxFnType, IntArg(fctx)));   // a `val handler: P.() -> R` field (#145)
             if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(fo, CollIdentityAttr(ci));  // #29
+            // The field twin of the method carrier above: `companion val C.bar = 1` stores into a static field of the
+            // file class, and that field is the declaration a consuming module restores the property from.
+            if ((fo["companionReceiver"] as JsonValue)?.GetValue<string>() is string fcr)
+            {
+                Append(fo, JsonCarrierAttr(AKCompanionExt, JsonNode.Parse(fcr)));
+                fo.Remove("companionReceiver");
+            }
         }
     }
 
@@ -543,6 +559,7 @@ static class RoundtripMetadata
             AttrClass(AKObject, Ctor()),
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
+            AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKCtxParam, Ctor()),  // bare marker: a Kotlin `context(...)` parameter (physically positional)

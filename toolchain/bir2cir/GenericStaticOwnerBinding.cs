@@ -67,7 +67,7 @@ static class GenericStaticOwnerBinding
     static void Bind(JsonObject node, Dictionary<string, GenericStatics> index, ReferenceMetadataIndex refs)
     {
         var kind = Str(node["k"]);
-        string ownerKey;
+        string[] ownerKeys;
         bool isField;
         switch (kind)
         {
@@ -75,35 +75,42 @@ static class GenericStaticOwnerBinding
             case "staticFieldSet":
             case "setStaticField":
             case "setStaticFieldExpr":
-                ownerKey = "ownerType";
+                ownerKeys = ["ownerType"];
                 isField = true;
                 break;
             case "callStatic":
-                ownerKey = node["ownerType"] != null ? "ownerType" : "owner";
+                // BOTH owner axes, whenever both are present. An earlier pass may have moved the declaring type onto
+                // the CLR `owner` axis while `ownerType` still carries the Kotlin identity; closing only one leaves
+                // the other spelling the OPEN generic definition, which is not a legal MemberRef parent — and ilemit
+                // dispatches from `owner`, so the stale one is exactly the one that reaches the emitted IL.
+                ownerKeys = ["ownerType", "owner"];
                 isField = false;
                 break;
             default:
                 return;
         }
 
-        if (TypeJson.Read(node[ownerKey]) is not TypeNode.Fqn { Args: null } owner) return;
         var member = Str(node[isField ? "name" : "method"]);
         if (member == null) return;
-        int arity;
-        if (index.TryGetValue(owner.Name, out var statics))
+        foreach (var ownerKey in ownerKeys)
         {
-            if (!(isField ? statics.Fields.Contains(member) : statics.Methods.Contains(member))) return;
-            arity = statics.Arity;
+            if (TypeJson.Read(node[ownerKey]) is not TypeNode.Fqn { Args: null } owner) continue;
+            int arity;
+            if (index.TryGetValue(owner.Name, out var statics))
+            {
+                if (!(isField ? statics.Fields.Contains(member) : statics.Methods.Contains(member))) continue;
+                arity = statics.Arity;
+            }
+            else
+            {
+                // A referenced declaration is absent from the local type index. Its static node kind is already the BIR
+                // semantic fact; use only the referenced owner's generic arity to select the required CLR TypeSpec.
+                arity = refs.OwnerArity(owner.Name);
+                if (arity == 0) continue;
+            }
+            node[ownerKey] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
+                Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Any"), arity).ToArray()));
         }
-        else
-        {
-            // A referenced declaration is absent from the local type index. Its static node kind is already the BIR
-            // semantic fact; use only the referenced owner's generic arity to select the required CLR TypeSpec.
-            arity = refs.OwnerArity(owner.Name);
-            if (arity == 0) return;
-        }
-        node[ownerKey] = TypeJson.Write(new TypeNode.Fqn(owner.Name,
-            Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Any"), arity).ToArray()));
     }
 
     static bool Bool(JsonNode node) =>

@@ -234,6 +234,11 @@ sealed class Pipeline
         // may live in a different .bir.json than the type declaration, while ilemit's emitted-type table is assembly-wide.
         var localRefTypes = AnySlotRebind.CollectLocalTypes(birFiles.Select(f => f.Root));
 
+        // The static members every LOCALLY DECLARED type carries, module-wide: a `C.f()` call site may live in another
+        // .bir.json than C's declaration. Feeds LocalStaticOwnerBinding, which moves such a call's declaring type onto
+        // the CLR owner axis before the ownerless (reference-universe) recognizers get a look at it.
+        var localStatics = LocalStaticOwnerBinding.Collect(birFiles.Select(f => f.Root));
+
         // #63 (F4): the app-local file-class method names a `newDelegate` target `ldftn`-resolves against, collected
         // MODULE-WIDE across every input file — ilemit's FindStatic binds a delegate method by bare name against ALL
         // IsFileClass types in the module (and the inline stash spans all files), so a carrier materializing a SIBLING
@@ -437,6 +442,12 @@ sealed class Pipeline
             // kotc lowers itself (ClrEvent<T>/ClrRef<T>/byref — they don't exist in any ref, so they never resolve here).
             // Non-ref only (the stdlib self-build injects no dll2klib .NET interop).
             if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
+            // A Kotlin static member call whose declaring type is emitted by THIS compilation: the declaring identity
+            // IS the CLR owner, so move it onto the owner axis now — after the .NET binder has had first refusal and
+            // before the ownerless recognizers below, which resolve names against the reference universe and must
+            // never be offered a call whose owner is already known. Runs in every build: a ref build declares the same
+            // statics, and its bodies are squashed later.
+            LocalStaticOwnerBinding.Apply(bir.Root, localStatics);
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
             // #11 — VALUE-TYPE PLATFORM SLOT WRITE COERCION: a `Nullable<V>`/`null` source assigned to a bare value-type
             // platform property/field slot (`ThreadLocal<Int>.Value = someIntQ`) — the WRITE twin of #8's oblivious read.

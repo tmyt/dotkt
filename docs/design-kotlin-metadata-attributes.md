@@ -21,6 +21,8 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
 | named/default `companion object` | compiler-reserved singleton carrier, nested in a non-generic owner and hoisted beside a generic one | no; CLR nesting does not record the source companion association/name | `[KotlinCompanion(version, bytes)]` on the physical carrier type |
+| `class C { companion { … } }` member | a real static member of `C` | **yes** — a CLR static member IS the shape (`IS_STATIC_FUNCTION`/`IS_STATIC_PROPERTY`) | (none) |
+| `companion fun C.foo()` / `companion val C.bar` | receiverless static of the `<File>Kt` class; the receiver is not a parameter | no; nothing physical records which type it is associated with | `[KotlinCompanionExtension(version, bytes)]` carrying the associated Kotlin type |
 | inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
 | Kotlin `val` backed by a **`@ClrField` public field** | public field | no; a plain public field looks writable | `[KotlinReadOnly]` — survives **only** for the `@ClrField` plain-field case; a normal `val` is now a get-only CLR property, recoverable from plain metadata (see [design-clr-property-model.md](design-clr-property-model.md)) |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |

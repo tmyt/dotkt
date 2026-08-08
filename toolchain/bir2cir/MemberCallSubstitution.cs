@@ -701,7 +701,10 @@ static class MemberCallSubstitution
                 var shaped = new JsonObject
                 {
                     ["k"] = injectedPropKind == "get" ? "clrPropGet" : "clrPropSet",
-                    ["type"] = node["ownerType"]?.DeepClone(),
+                    // A static on a GENERIC declaring type has no enclosing type argument in Kotlin syntax, but its
+                    // CIL MemberRef parent must still be a closed TypeSpec. Close it from the exact reflected TypeDef,
+                    // exactly as the .NET binder does for the same shape.
+                    ["type"] = NetInteropBinding.CloseStaticOwner(node["ownerType"], injectedType),
                     ["name"] = fn,
                     ["static"] = true,
                     ["recv"] = null,

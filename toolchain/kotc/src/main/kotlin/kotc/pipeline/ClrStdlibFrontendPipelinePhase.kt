@@ -76,11 +76,15 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		// declares six of them — `kotlin.context(with, block: context(T) () -> R)` and its 2..6-context siblings — and
 		// fir2ir erases which leading arguments were contexts. Without capturing here those public slots carry no
 		// arity, so a consuming module restores `(T) -> R` for `context(T) () -> R`. See [ClrContextFnTypes].
+		// The COMPANION-EXTENSION receiver capture rides along for the same reason and with the same lifetime: fir2ir
+		// drops a `companion fun C.foo()`'s receiver parameter outright. See [ClrCompanionExtensions].
 		kotc.frontend.ClrContextFnTypes.reset()
+		kotc.frontend.ClrCompanionExtensions.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			resolveAndCheckFir(session, session.buildFirFromKtFiles(files), diagnosticsReporter).also {
 				kotc.frontend.ClrContextFnTypes.capture(it.fir)
+				kotc.frontend.ClrCompanionExtensions.capture(session, it.fir)
 			}
 		}
 		outputs.runPlatformCheckers(diagnosticsReporter)
