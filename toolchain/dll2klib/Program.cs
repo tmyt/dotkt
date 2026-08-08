@@ -1339,6 +1339,7 @@ internal sealed class AssemblyScanner
     private readonly InnerReferenceCatalog _innerCatalog;
     private readonly Dictionary<TypeDefinitionHandle, CompanionCarrier> _companionCarriers = new();
     private readonly HashSet<TypeDefinitionHandle> _physicalCompanionCarriers = new();
+    private readonly HashSet<TypeDefinitionHandle> _existentialCarriers = new();
     private readonly Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> _liftedCompanions = new();
     private readonly Dictionary<TypeDefinitionHandle, CompanionCarrier> _companionsByOwner = new();
     private readonly HashSet<FieldDefinitionHandle> _singletonInstanceFields = new();
@@ -1365,6 +1366,34 @@ internal sealed class AssemblyScanner
                 Arity: md.GetTypeDefinition(handle).GetGenericParameters().Count))
             .GroupBy(x => (x.Name, x.Arity))
             .ToDictionary(g => g.Key, g => g.Select(x => x.Handle).ToArray());
+        var semanticTypes = md.TypeDefinitions
+            .Select(handle => (
+                Handle: handle,
+                Name: KotlinFullName(handle),
+                Arity: md.GetTypeDefinition(handle).GetGenericParameters().Count))
+            .GroupBy(x => (x.Name, x.Arity))
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Handle).ToArray());
+        if (_attrs.IsDotKtAssembly)
+        {
+            foreach (var handle in md.TypeDefinitions)
+            {
+                if (!_attrs.Has(handle, "System.Runtime.CompilerServices.CompilerGeneratedAttribute", requireTrust: false)
+                    || _attrs.CarrierType(handle, MetadataAttributes.DotKtNs + "KotlinTypeAttribute")
+                        is not TypeNode.Fqn { Args: { Length: > 0 } args } semantic
+                    || !args.All(arg => arg is TypeNode.Star))
+                    continue;
+                var carrier = md.GetTypeDefinition(handle);
+                if ((carrier.Attributes & TypeAttributes.Interface) == 0
+                    || carrier.GetGenericParameters().Count != 0)
+                    throw new InvalidDataException(
+                        $"Kotlin existential carrier '{MetadataTypeName(handle)}' must be a non-generic interface");
+                if (!semanticTypes.TryGetValue((semantic.Name, args.Length), out var owners) || owners.Length != 1)
+                    throw new InvalidDataException(
+                        $"Kotlin existential owner '{semantic.Name}' arity {args.Length} resolved to "
+                        + $"{(owners is null ? 0 : owners.Length)} physical types");
+                _existentialCarriers.Add(handle);
+            }
+        }
         var semanticOwners = new Dictionary<string, TypeDefinitionHandle>(StringComparer.Ordinal);
         foreach (var handle in md.TypeDefinitions)
         {
@@ -1417,6 +1446,7 @@ internal sealed class AssemblyScanner
             .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
             .Where(x => IsPublicTopLevel(x.Definition))
             .Where(x => !_physicalCompanionCarriers.Contains(x.Handle))
+            .Where(x => !_existentialCarriers.Contains(x.Handle))
             .Where(x => _md.GetString(x.Definition.Name) != "<Module>")
             .GroupBy(x => _md.GetString(x.Definition.Namespace), StringComparer.Ordinal);
 
@@ -1698,6 +1728,11 @@ internal sealed class AssemblyScanner
                 !IsSystemType(def.BaseType, "System", "Attribute"))
                 result.Supertype.Add(signatures.DecodeEntity(def.BaseType, typeContext, platform: false));
             var implementedInterfaces = def.GetInterfaceImplementations()
+                .Where(implHandle => {
+                    var entity = _md.GetInterfaceImplementation(implHandle).Interface;
+                    return entity.Kind != HandleKind.TypeDefinition
+                        || !_existentialCarriers.Contains((TypeDefinitionHandle)entity);
+                })
                 .Select(implHandle => {
                     var impl = _md.GetInterfaceImplementation(implHandle);
                     return signatures.DecodeEntity(impl.Interface, typeContext, platform: false);
@@ -1904,6 +1939,8 @@ internal sealed class AssemblyScanner
         var explicitFunctions = new List<(string Name, MethodDefinitionHandle Body)>();
         var interfaceKeys = def.GetInterfaceImplementations()
             .Select(h => _md.GetInterfaceImplementation(h).Interface)
+            .Where(h => h.Kind != HandleKind.TypeDefinition
+                || !_existentialCarriers.Contains((TypeDefinitionHandle)h))
             .Select(h => TypeKey(signatures.DecodeEntity(h, typeContext, platform: false)))
             .ToHashSet(StringComparer.Ordinal);
         foreach (var implementationHandle in def.GetMethodImplementations())
@@ -3017,6 +3054,8 @@ internal sealed class AssemblyScanner
         foreach (var childHandle in parentDef.GetNestedTypes())
         {
             if (_physicalCompanionCarriers.Contains(childHandle))
+                continue;
+            if (_existentialCarriers.Contains(childHandle))
                 continue;
             var childDef = _md.GetTypeDefinition(childHandle);
             if (!IsPublicNested(childDef)) continue;

@@ -1,0 +1,3 @@
+foreign star member
+contains a byref-like parameter or result
+cannot box that signature

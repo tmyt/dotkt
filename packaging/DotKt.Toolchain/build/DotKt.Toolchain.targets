@@ -192,13 +192,23 @@
     </ItemGroup>
   </Target>
 
+  <PropertyGroup>
+    <!-- A normal build followed by PublishAot/PublishTrimmed must not reuse a lowering that never requested the
+         foreign-star reflection warning. Give reflection-restricted lowering its own incremental output stamp;
+         both modes still touch the ordinary stamp consumed by the downstream emitter. -->
+    <_DotKtReflectionRestrictedArg Condition="'$(PublishAot)' == 'true' or '$(PublishTrimmed)' == 'true'">--reflection-restricted</_DotKtReflectionRestrictedArg>
+    <_DotKtBir2CirModeStamp>$(DotKtCirOut)/.stamp</_DotKtBir2CirModeStamp>
+    <_DotKtBir2CirModeStamp Condition="'$(_DotKtReflectionRestrictedArg)' != ''">$(DotKtCirOut)/.stamp.reflection-restricted</_DotKtBir2CirModeStamp>
+  </PropertyGroup>
+
   <!-- Incremental (#134): re-lower ONLY when the frontend recompiled ($(DotKtOut)/.stamp bumps) or the bir2cir tool
        itself changed (version proxy). A reference-set change already retriggers KotlinCompile (its Inputs include the
        resolved refs) and thus the .stamp, so the cascade covers it. Keyed off the .stamp — not the *.bir.json glob —
        because target-body items don't exist when MSBuild evaluates the Inputs, and the .stamp is the compile's
-       single stable up-to-date marker. Output is $(DotKtCirOut)/.stamp, Touch'd after a successful lowering. -->
+       single stable up-to-date marker. Reflection-restricted mode has a distinct output stamp so changing publish
+       mode cannot suppress DOTKTSTAR001 through an ordinary-build cache hit. -->
   <Target Name="DotKtBir2Cir" BeforeTargets="DotKtIlEmit" DependsOnTargets="KotlinCompile;DotKtResolveReferenceSets"
-          Inputs="$(DotKtOut)/.stamp;$(DotKtBir2Cir)" Outputs="$(DotKtCirOut)/.stamp">
+          Inputs="$(DotKtOut)/.stamp;$(DotKtBir2Cir)" Outputs="$(_DotKtBir2CirModeStamp)">
     <ItemGroup>
       <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
       <!-- Inputs only.  The exact compile-reference universe was materialized by DotKtResolveReferenceSets. -->
@@ -206,8 +216,8 @@
     <RemoveDir Directories="$(DotKtCirOut)" />
     <MakeDir Directories="$(DotKtCirOut)" />
     <Message Importance="high" Text="DotKt: lowering BIR -> CIR" />
-    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtCirOut)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
-    <Touch Files="$(DotKtCirOut)/.stamp" AlwaysCreate="true" />
+    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtCirOut)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; $(_DotKtReflectionRestrictedArg) @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
+    <Touch Files="$(DotKtCirOut)/.stamp;$(_DotKtBir2CirModeStamp)" AlwaysCreate="true" />
   </Target>
 
   <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The exact

@@ -56,8 +56,7 @@ head of `EmitAssembly`, ahead of any resolution.
   RED the day it starts reddening on a legitimate pair. Read it as a guard against a future arm that over-refutes
   rather than as a pin on each present arm: several of its cases (a type variable, an absent stamp, a shape of
   unlike arity) are accepted by the relation's catch-all, so they would still pass with the arm that names them
-  deleted. The arms a fixture genuinely pins are the vocabulary table, `kotlin.Nothing`, the `$dotkt_star`
-  existential view, and the two above.
+  deleted. The arms a fixture genuinely pins are the vocabulary table, `kotlin.Nothing`, and the two above.
   Note the CHOKEPOINT for this invariant is not here — `sty` is stripped on the way to CIR, so bir2cir checks it on
   the pre-lowering BIR and `tests/ir/lowering/reject-stale-sty-after-passes` is what pins that call.
 - The **width of that exemption**, which is the easy thing to get wrong — `reject-unlowered-suspension-in-ctor`

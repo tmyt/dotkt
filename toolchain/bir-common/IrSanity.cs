@@ -388,27 +388,26 @@ public static class IrSanity
     //       when its pass runs, so a node retyped by an early pass and one retyped by a late pass carry the same type
     //       in different vocabularies (8 of the 58: `kotlin.Boolean` vs `bool`, `kotlin.Unit` vs `System.Void`).
     //   (c) `kotlin.Nothing` matches anything — the bottom type inhabits every slot, and it also erases to `object`.
-    //   (d) A `$dotkt_star` name matches anything — those are the synthesized non-generic EXISTENTIAL views
-    //       (ExistentialReceiverBinding / FBoundStarProjectionErasure) of a star-projected generic, i.e. a deliberate
-    //       re-spelling of the same value (`kotlin.Comparator<!!0>` vs `kotlin.Comparator$dotkt_star`).
-    //   (e) `nullable`/`oblivious` wrappers are stripped on both sides before comparing: nullability is an annotation
+    //   (d) `nullable`/`oblivious` wrappers are stripped on both sides before comparing: nullability is an annotation
     //       axis that DeclNullableFlags/ReferenceNullableStrip move off the type at their own point in the pipeline,
     //       not a difference of which type the node produces. (Stripping does not ADD acceptance — it makes the type
     //       UNDER the wrapper comparable, so it is what lets `String?` vs `Int?` be refuted at all.)
-    //   (f) `{t:array,elem:E}` and the name-keyed `kotlin.Array<E>` are the same type in two spellings (spec §2.7
-    //       *One deriver, two layers* — `StaticType.Surface` mints the name-keyed one on purpose). Like (e), this
+    //   (e) `{t:array,elem:E}` and the name-keyed `kotlin.Array<E>` are the same type in two spellings (spec §2.7
+    //       *One deriver, two layers* — `StaticType.Surface` mints the name-keyed one on purpose). Like (d), this
     //       makes the ELEMENTS comparable rather than accepting more.
-    //   (g) Anything not structurally comparable — two different `t` discriminators, two `fqn`s of the same name with
+    //   (f) Anything not structurally comparable — two different `t` discriminators, two `fqn`s of the same name with
     //       DIFFERENT arities, two `fn`s of different arity — is ACCEPTED. An erasure that drops or adds a generic
     //       argument is a shape this check declines to judge; the check exists for the class that bit in FU-⑧, which
     //       is a same-shape, same-arity pair whose ARGUMENT NAMES a different type.
     //
     // What is left is exactly the refutation: two `fqn`s whose canonical names differ, or whose same-arity arguments
-    // recursively refute (likewise two `fn`s). Note which arms therefore do WORK: (e) and (f) are what make a
+    // recursively refute (likewise two `fn`s). Note which arms therefore do WORK: (d) and (e) are what make a
     // refutation REACHABLE through a wrapper or across the two array spellings — without them `String?` vs `Int?`
     // and `Array<String>` vs `int[]` would fall to the catch-all and be accepted — while (a) restates, for a reader,
-    // an acceptance the catch-all already gives (a `tv` is neither `Fqn` nor `Fn`, so nothing refutes it). The
-    // `tests/ir/selftest` fixtures pin (b), (c), (d), the arity guard in (g), and the two refutations (e)/(f) unlock.
+    // an acceptance the catch-all already gives (a `tv` is neither `Fqn` nor `Fn`, so nothing refutes it). Physical
+    // existential names deliberately have no semantic meaning here: the lowering that introduces one must rewrite or
+    // drop the stamp, and trusted [KotlinType] metadata alone records its source relation. The `tests/ir/selftest`
+    // fixtures pin (b), (c), the arity guard in (f), and the two refutations (d)/(e) unlock.
     //
     // TWO LIMITS, stated because they bound what a green gate means. (1) `CanonName` knows the PRIMITIVE vocabulary
     // only, not the whole `@ClrTypeAlias` index (`kotlin.collections.List` vs `IReadOnlyList`, `kotlin.Throwable` vs
@@ -482,7 +481,6 @@ public static class IrSanity
     };
 
     const string Bottom = "kotlin.Nothing";
-    const string ExistentialMark = "$dotkt_star";
 
     static TypeNode Unwrap(TypeNode t)
     {
@@ -513,16 +511,15 @@ public static class IrSanity
             {
                 TypeNode.Array ba => StampAgrees(aa.Elem, ba.Elem),
                 TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } bg } => StampAgrees(aa.Elem, bg[0]),   // (f)
-                _ => true,                                                                                // (g)
+                _ => true,                                                                                // (f)
             };
         if (b is TypeNode.Array bb)
             return a is TypeNode.Fqn { Name: "kotlin.Array", Args: { Length: 1 } ag } ? StampAgrees(ag[0], bb.Elem) : true;
         if (a is TypeNode.Fqn fa && b is TypeNode.Fqn fb)
         {
             if (fa.Name == Bottom || fb.Name == Bottom) return true;                                       // (c)
-            if (fa.Name.Contains(ExistentialMark) || fb.Name.Contains(ExistentialMark)) return true;       // (d)
             if (Canon(fa.Name) != Canon(fb.Name)) return false;                                            // REFUTED
-            if (fa.Args == null || fb.Args == null || fa.Args.Length != fb.Args.Length) return true;        // (g)
+            if (fa.Args == null || fb.Args == null || fa.Args.Length != fb.Args.Length) return true;        // (f)
             for (var i = 0; i < fa.Args.Length; i++)
                 if (!StampAgrees(fa.Args[i], fb.Args[i])) return false;
             return true;
@@ -532,12 +529,12 @@ public static class IrSanity
             if (!StampAgrees(na.Ret, nb.Ret)) return false;
             var pa = na.DelegateParams;
             var pb = nb.DelegateParams;
-            if (pa.Length != pb.Length) return true;                                                       // (g)
+            if (pa.Length != pb.Length) return true;                                                       // (f)
             for (var i = 0; i < pa.Length; i++)
                 if (!StampAgrees(pa[i], pb[i])) return false;
             return true;
         }
-        return true;                                                                                       // (g)
+        return true;                                                                                       // (f)
     }
 
     static string Canon(string name) => CanonName.TryGetValue(name, out var c) ? c : name;

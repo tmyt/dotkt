@@ -91,11 +91,10 @@ _CANON = {
     "kotlin.UShort": "ushort", "System.UInt16": "ushort",
 }
 _BOTTOM = "kotlin.Nothing"
-_EXISTENTIAL = "$dotkt_star"
 
 
 def _unwrap(t):
-    """(e) nullability is an annotation axis, not a difference of which type the node produces."""
+    """(d) nullability is an annotation axis, not a difference of which type the node produces."""
     while isinstance(t, dict) and t.get("t") in ("nullable", "oblivious"):
         t = t.get("of")
     return t
@@ -116,36 +115,34 @@ def _stamps_agree(a, b):
     ta, tb = a.get("t"), b.get("t")
     if ta in ("tv", "star") or tb in ("tv", "star"):            # (a)
         return True
-    if ta == "array" or tb == "array":                          # (f)
+    if ta == "array" or tb == "array":                          # (e)
         arr, other = (a, b) if ta == "array" else (b, a)
         if other.get("t") == "array":
             return _stamps_agree(a.get("elem"), b.get("elem"))
         if other.get("t") == "fqn" and other.get("name") == "kotlin.Array" \
                 and isinstance(other.get("args"), list) and len(other["args"]) == 1:
             return _stamps_agree(arr.get("elem"), other["args"][0])
-        return True                                             # (g)
+        return True                                             # (f)
     if ta == "fqn" and tb == "fqn":
         na, nb = a.get("name"), b.get("name")
         if not isinstance(na, str) or not isinstance(nb, str):
             return True
         if na == _BOTTOM or nb == _BOTTOM:                      # (c)
             return True
-        if _EXISTENTIAL in na or _EXISTENTIAL in nb:            # (d)
-            return True
         if _CANON.get(na, na) != _CANON.get(nb, nb):            # REFUTED
             return False
         aa, ab = a.get("args"), b.get("args")
         if not isinstance(aa, list) or not isinstance(ab, list) or len(aa) != len(ab):
-            return True                                         # (g)
+            return True                                         # (f)
         return all(_stamps_agree(x, y) for x, y in zip(aa, ab))
     if ta == "fn" and tb == "fn":
         if not _stamps_agree(a.get("ret"), b.get("ret")):
             return False
         pa, pb = _fn_params(a), _fn_params(b)
         if len(pa) != len(pb):
-            return True                                         # (g)
+            return True                                         # (f)
         return all(_stamps_agree(x, y) for x, y in zip(pa, pb))
-    return True                                                 # (g)
+    return True                                                 # (f)
 
 
 def _compact(t):
