@@ -65,7 +65,10 @@ class ForeignStarProjectionTests {
         // same box physically, so the reflection lane clones before mutation and writes the new box only to the receiver.
         val first: CounterCell<*> = Factory.CounterCell()
         var second: CounterCell<*> = first
-        second.Increment()
+        // A MetadataLoadContext System.Void is not equal to runtime typeof(void). The compiler must classify it by
+        // metadata identity and materialize Kotlin's Unit value instead of casting reflection's null result to Unit.
+        val incremented: Unit = second.Increment()
+        assertEquals(Unit, incremented)
         second.PublicCount = 3
         assertEquals(10, first.ReadCount())
         assertEquals(0, first.PublicCount)

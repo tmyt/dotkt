@@ -388,8 +388,28 @@ static class ForeignStarProjectionBinding
         });
 
         var outcome = new JsonObject { ["k"] = "local", ["name"] = outcomeTemp };
-        JsonNode result = Call(returnsVoid ? "starProjectionInvocationUnit" : "starProjectionInvocationValue",
-            new[] { InvocationOutcome }, returnsVoid ? new TypeNode.Fqn("kotlin.Unit") : AnyN, outcome);
+        JsonNode result;
+        if (returnsVoid)
+        {
+            // The CLR method and the failure-checking helper both physically return void, while Kotlin Unit is a
+            // value when the call appears in an expression. Keep the call signature honest, then materialize Unit.
+            statements.Add(new JsonObject
+            {
+                ["k"] = "exprStmt",
+                ["expr"] = Call("starProjectionInvocationUnit", new[] { InvocationOutcome },
+                    new TypeNode.Fqn("void"), outcome),
+            });
+            result = new JsonObject
+            {
+                ["k"] = "staticField",
+                ["ownerType"] = TypeJson.Write(new TypeNode.Fqn("kotlin.Unit")),
+                ["name"] = "INSTANCE",
+            };
+        }
+        else
+        {
+            result = Call("starProjectionInvocationValue", new[] { InvocationOutcome }, AnyN, outcome);
+        }
         if (!returnsVoid && !IsObjectish(projectedResult)) result = new JsonObject
         {
             ["k"] = "cast", ["type"] = TypeJson.Write(projectedResult), ["e"] = result,

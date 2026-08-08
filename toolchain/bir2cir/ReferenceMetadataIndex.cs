@@ -675,7 +675,9 @@ sealed partial class ReferenceMetadataIndex
         runtimeParameterKeys = openDeclaration.GetParameters()
             .Select(parameter => ForeignStarRuntimeTypeKey(parameter.ParameterType)).ToArray();
         declarationReturn = DeclarationTypeNode(selected.ReturnType);
-        returnsVoid = selected.ReturnType == typeof(void);
+        // `selected` belongs to MetadataLoadContext. Its System.Void Type is not reference/equality-compatible
+        // with the runtime's typeof(void), even though both have the same CLR identity; compare metadata names.
+        returnsVoid = selected.ReturnType.FullName == "System.Void";
         return true;
     }
 
