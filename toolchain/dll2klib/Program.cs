@@ -1368,6 +1368,9 @@ internal sealed class AssemblyScanner
             HandleKind.MethodDefinition,
             HandleKind.FieldDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinPropertyStorageAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinStaticCarrierAttribute",
             HandleKind.TypeDefinition);
         _arityNames = arityNames;
@@ -3163,6 +3166,9 @@ internal sealed class AssemblyScanner
             var getter = _md.GetMethodDefinition(entry.GetterImplementation);
             if (!IsPublicOrProtected(getter.Attributes)) continue;
             var setterHandle = entry.SetterImplementation;
+            // A non-public setter is not callable from the consuming module represented by this KLIB. Project the
+            // external surface as `val`; the defining DLL keeps the physical setter so code compiled in that module
+            // retains its source semantics. This also avoids inventing a public Kotlin setter by omitting its flags.
             if (!setterHandle.IsNil &&
                 !IsPublicOrProtected(_md.GetMethodDefinition(setterHandle).Attributes))
                 setterHandle = default;
@@ -3178,10 +3184,61 @@ internal sealed class AssemblyScanner
                 companionReceiver: CSharp14ExtensionReceiver(
                     entry.ReceiverMarker, entry.BlockArity, names, signatures));
             property.Name = names.String(_md.GetString(_md.GetPropertyDefinition(entry.Declaration).Name));
+            ApplyCSharp14PropertyStorageFacts(
+                property, entry.GetterImplementation, names);
             property.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
             property.Flags |= 1;
             package.Property.Add(property);
         }
+    }
+
+    private void ApplyCSharp14PropertyStorageFacts(
+        Property property,
+        MethodDefinitionHandle getter,
+        NameTable names)
+    {
+        using var document = _attrs.CarrierDocument(
+            getter, MetadataAttributes.DotKtNs + "KotlinPropertyStorageAttribute");
+        if (document is null) return;
+        var root = document.RootElement;
+        var entries = root.ValueKind == System.Text.Json.JsonValueKind.Object
+            ? root.EnumerateObject().ToArray() : [];
+        if (entries.Length != 2 ||
+            root.TryGetProperty("owner", out var ownerElement) is false ||
+            ownerElement.ValueKind != System.Text.Json.JsonValueKind.String ||
+            string.IsNullOrEmpty(ownerElement.GetString()) ||
+            root.TryGetProperty("field", out var fieldElement) is false ||
+            fieldElement.ValueKind != System.Text.Json.JsonValueKind.String ||
+            string.IsNullOrEmpty(fieldElement.GetString()))
+            throw new InvalidDataException("malformed [KotlinPropertyStorage] payload");
+        var storageOwnerName = ownerElement.GetString()!;
+        var storageOwners = _md.TypeDefinitions
+            .Where(handle => MetadataTypeName(handle) == storageOwnerName)
+            .ToArray();
+        if (storageOwners.Length != 1)
+            throw new InvalidDataException(
+                $"[KotlinPropertyStorage] owner '{storageOwnerName}' resolves {storageOwners.Length} time(s)");
+        var fieldName = fieldElement.GetString()!;
+        var matches = _md.GetTypeDefinition(storageOwners[0]).GetFields()
+            .Where(handle => _md.GetString(_md.GetFieldDefinition(handle).Name) == fieldName)
+            .ToArray();
+        if (matches.Length != 1)
+            throw new InvalidDataException(
+                $"[KotlinPropertyStorage] field '{fieldName}' resolves {matches.Length} time(s)");
+        var fieldHandle = matches[0];
+        var field = _md.GetFieldDefinition(fieldHandle);
+        if ((field.Attributes & FieldAttributes.Static) == 0 ||
+            (field.Attributes & FieldAttributes.FieldAccessMask) != FieldAttributes.Private)
+            throw new InvalidDataException("[KotlinPropertyStorage] must name private static storage");
+
+        if ((field.Attributes & FieldAttributes.Literal) != 0 &&
+            CompileTimeValue(field, names) is { } constant)
+        {
+            property.Flags |= (1 << 11) | (1 << 13); // IS_CONST + HAS_CONSTANT
+            property.CompileTimeValue = constant;
+        }
+        if (_attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute"))
+            property.Flags |= 1 << 12; // IS_LATEINIT
     }
 
     private KType CSharp14ExtensionReceiver(

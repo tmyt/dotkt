@@ -45,6 +45,7 @@ static class RoundtripMetadata
     const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
+    internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
     const string AKStaticCarrier = Ns + "KotlinStaticCarrierAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
@@ -317,8 +318,8 @@ static class RoundtripMetadata
                 fo.Remove("kotlinType");
             }
             // An ordinary file-facade val is restored from its CLR Property row, so its backing field historically
-            // needs no marker. A companion extension is different: dll2klib rebuilds that Kotlin property directly
-            // from this static field and therefore needs the declaration's val/var fact on the field itself.
+            // needs no marker. A staged companion-extension field (generic/context receivers are lowered in the next
+            // increment) is still restored from its carrier field and therefore needs the declaration's val/var fact.
             if ((!topLevel || fo["companionReceiver"] is not null) &&
                 (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true)
                 Prepend(fo, Marker(AKReadOnly));
@@ -326,8 +327,9 @@ static class RoundtripMetadata
             if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));
             if (TakeInt(fo, "ctxFnType") is int fctx) Append(fo, Marker(AKCtxFnType, IntArg(fctx)));   // a `val handler: P.() -> R` field (#145)
             if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(fo, CollIdentityAttr(ci));  // #29
-            // The field twin of the method carrier above: `companion val C.bar = 1` stores into a static field of the
-            // file class, and that field is the declaration a consuming module restores the property from.
+            // The staged field twin of the method carrier above. Ordinary arity-0 properties have already consumed
+            // these facts into the C# 14 extension-property graph; generic/context cases retain this carrier until
+            // their physical lowering lands in the next increment.
             if ((fo["companionReceiver"] as JsonValue)?.GetValue<string>() is string fcr)
             {
                 var sourceName = (fo["companionSourceName"] as JsonValue)?.GetValue<string>()
@@ -512,6 +514,16 @@ static class RoundtripMetadata
         return Marker(attr, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
 
+    // The standard C# 14 Property graph carries receiver/name/accessor shape but cannot say that a private storage
+    // field is Kotlin `const` or `lateinit`. Storage stays on the source file facade so every receiver observes the
+    // original one-.cctor initialization order; this narrow edge names that physical owner/slot while dll2klib reads
+    // the CLR Literal/[KotlinLateinit] facts from the field instead of duplicating them in another payload.
+    internal static void StampPropertyStorage(JsonObject getter, string owner, string fieldName) =>
+        Append(getter, JsonCarrierAttr(AKPropertyStorage, new JsonObject {
+            ["owner"] = owner,
+            ["field"] = fieldName,
+        }));
+
     static JsonObject Marker(string attr, params JsonObject[] args)
     {
         var arr = new JsonArray();
@@ -605,6 +617,7 @@ static class RoundtripMetadata
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
+            AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts
             AttrClass(AKStaticCarrier, Ctor(Param("System.String"), Param(ByteArrayType()))), // one physical static surface for a generic Kotlin owner
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position

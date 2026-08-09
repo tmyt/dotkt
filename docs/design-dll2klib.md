@@ -237,15 +237,19 @@ A Kotlin 2.4 source `companion { }` member is the same shape from the other
 direction: it is emitted as a static member of its own CLR type, so it needs no
 carrier and is read back by the ordinary static-member path above.
 
-A Kotlin 2.4 `companion fun C.foo()` — a COMPANION EXTENSION — has no receiver
+A Kotlin 2.4 companion extension — `companion fun C.foo()` or `companion val C.foo` — has no receiver
 parameter at all: the frontend drops it. For a non-generic associated classifier,
-`bir2cir` emits the released C# 14 static extension-member graph: a source-named
-executable method on a receiver-partitioned top-level container plus its nested
-signature and receiver-marker declarations. Calls target the executable method.
+`bir2cir` emits the released C# 14 static extension-member graph: source-named
+executable methods on a receiver-partitioned top-level container plus nested
+signature, property, and receiver-marker declarations. Calls target the executable methods.
+Field-backed `val`/`var` declarations become ordinary `get_`/`set_` implementation methods over private
+storage on the source file facade; keeping all storage there preserves its single type-initializer order across
+receiver-partitioned C# extension containers.
+same-module Kotlin code is rewritten through those methods too, so the Property row has one executable meaning.
 `dll2klib` restores the source name and standard Kotlin shape from that attributed
 graph — the static-declaration flag plus a receiver type, which is exactly what
 `isStatic && receiverParameter != null` means. No generated-name inference is
-involved. Generic associated classifiers and companion properties remain on the
+involved. Generic associated classifiers, suspend functions, and context-parameter properties remain on the
 trusted `[KotlinCompanionExtension]` carrier during the staged migration.
 
 An ordinary C# 14 static extension member is imported into that same standard

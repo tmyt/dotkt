@@ -4,8 +4,8 @@
 // dll2klib), not from its source, so these assertions fail if the emitted metadata loses either shape:
 //   - a `companion { }` member must arrive as a standard static class declaration (IS_STATIC_FUNCTION /
 //     IS_STATIC_PROPERTY), which is the same shape an ordinary CLR static is projected into;
-//   - a `companion fun C.f()` must arrive as a static declaration WITH a receiver type, restored from the trusted
-//     [KotlinCompanionExtension] carrier — the association has no physical trace to infer it from.
+//   - an ordinary `companion fun/val/var C.m` must arrive as a static declaration WITH a receiver type, restored
+//     from the standard C# 14 extension graph; Kotlin-only property storage facts use explicit trusted metadata.
 // A companion extension is an extension, so it is imported by name exactly as a top-level one would be.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
@@ -35,11 +35,16 @@ import roundtrip.companionstatics.blank
 import roundtrip.companionstatics.marker
 import roundtrip.companionstatics.counter
 import roundtrip.companionstatics.later
+import roundtrip.companionstatics.code
+import roundtrip.companionstatics.computed
+import roundtrip.companionstatics.restricted
+import roundtrip.companionstatics.updateRestrictedTag
 import roundtrip.companionstatics.withValue
 import roundtrip.companionstatics.companionExtensionInlineDefault
 import roundtrip.companionstatics.contextLabel
 import roundtrip.companionstatics.contextState
 import roundtrip.companionstatics.genericValue
+import roundtrip.companionstatics.genericCounter
 import roundtrip.companionstatics.aliasValue
 import roundtrip.companionstatics.localGenericCompanionExtensionValue
 import roundtrip.companionstatics.constrainedBoxInitializations
@@ -53,6 +58,7 @@ const val importedTopLevelTag: String = TOP_TAG
 const val importedCompanionObjectTag: String = Counter.OBJECT_TAG
 const val importedNamedObjectTag: String = NamedConstants.NAME
 const val importedGenericBoxCode: String = Box.CODE
+const val importedCompanionExtensionCode: Int = Tag.code
 
 private fun companionExtensionInlineReturn(): Int {
     Tag.withValue { return 29 }
@@ -203,9 +209,17 @@ class CompanionStaticRoundtripTests {
         assertEquals("tag:v", Tag.formatTag(value = "v"))
         assertEquals("", Tag.blank.label)
         assertEquals("m", Tag.marker)
+        assertEquals(23, Tag.code)
+        assertEquals(23, importedCompanionExtensionCode)
+        assertEquals(11, Tag.restricted)
+        updateRestrictedTag(12)
+        assertEquals(12, Tag.restricted)
         Tag.counter = 4
         assertEquals(4, Tag.counter)
         Tag.counter = 0
+        assertEquals(3, Tag.computed)
+        Tag.computed = 8
+        assertEquals(9, Tag.computed)
         Tag.counter += 2
         Tag.counter++
         assertEquals(3, Tag.counter)
@@ -239,6 +253,9 @@ class CompanionStaticRoundtripTests {
         }
         with(ReadOnlyTagContext(33)) { assertEquals(33, Tag.contextState) }
         assertEquals("generic", GenericTag.genericValue())
+        assertEquals(7, GenericTag.genericCounter)
+        GenericTag.genericCounter = 8
+        assertEquals(8, GenericTag.genericCounter)
         assertEquals("alias", GenericTag.aliasValue())
         assertEquals("generic/alias", localGenericCompanionExtensionValue())
         assertEquals("other-hi", OtherTag.of("other-hi").label)

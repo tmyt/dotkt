@@ -64,6 +64,9 @@ STR_OK = {
                                                 # lifted implementation inside a Kotlin-static member (no owner T capture).
     "memberVisibility",                         # #225 BIR-only frontend visibility enum on a lexical member edge;
                                                 # bir2cir consumes it into a caller-side UnsafeAccessor when needed.
+    "companionSetterVisibility",                # #389 BIR-only visibility enum for a field-backed companion
+                                                # extension var's default setter; bir2cir consumes it into the
+                                                # C# 14 signature/implementation accessors.
     "memberOwnerTypeParams",                    # #225 BIR-only target-owner generic declaration facts.
     "memberMethodTypeParams",                   # #225 BIR-only target-method generic declaration facts.
     "sourceName",                              # #225 BIR-only lexical localFun source name.
@@ -342,7 +345,9 @@ class V:
                 if o.get("k") in ("localFun", "callLocal", "localFunRef"):
                     self.err(f, path, f"{o['k']} is a BIR lexical declaration fact and must be lowered before CIR")
                 for companion_key in ("kotlinCompanion", "companionCaptureOwner", "externalCompanionOwner",
-                                      "companionReceiver", "companionSourceName", "companionMemberKind"):
+                                      "companionReceiver", "companionSourceName", "companionMemberKind",
+                                      "companionPropertyMutable", "companionSetterVisibility",
+                                      "companionStorageReadOnly"):
                     if companion_key in o:
                         self.err(f, path, f"{companion_key} is a BIR companion fact and must be consumed before CIR")
                 for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):

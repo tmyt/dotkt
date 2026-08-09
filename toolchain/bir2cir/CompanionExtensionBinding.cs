@@ -15,7 +15,22 @@ static class CompanionExtensionBinding
 {
     const string KotlinDefault = "kotlin.clr.KotlinDefault";
 
-    internal sealed record Binding(string PhysicalName, string PhysicalOwner);
+    internal sealed record Binding(string PhysicalName, string PhysicalOwner, string ValueType = null);
+
+    sealed class ExtensionGroup
+    {
+        public readonly List<JsonObject> Functions = [];
+        public readonly List<JsonObject> Accessors = [];
+        public readonly List<JsonObject> Fields = [];
+    }
+
+    sealed class PropertyParts
+    {
+        public string SourceName;
+        public JsonObject Getter;
+        public JsonObject Setter;
+        public JsonObject Field;
+    }
 
     public sealed class LocalIndex
     {
@@ -61,27 +76,49 @@ static class CompanionExtensionBinding
         {
             var owner = Str(root["fileClass"])
                 ?? throw new InvalidOperationException("BIR file has no fileClass while binding companion extensions");
+            var extensionGroups = new Dictionary<string, ExtensionGroup>(StringComparer.Ordinal);
             if (root["methods"] is JsonArray methods)
             {
-                var extensionGroups = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
                 foreach (var method in methods.OfType<JsonObject>().ToArray())
                 {
                     if (ShouldEmitCSharp14Function(method, localArities, refs))
                     {
                         var receiver = Str(method["companionReceiver"])!;
                         if (!extensionGroups.TryGetValue(receiver, out var group))
-                            extensionGroups[receiver] = group = [];
-                        group.Add(method);
+                            extensionGroups[receiver] = group = new ExtensionGroup();
+                        group.Functions.Add(method);
+                        methods.Remove(method);
+                    }
+                    else if (ShouldEmitCSharp14PropertyAccessor(method, localArities, refs))
+                    {
+                        var receiver = Str(method["companionReceiver"])!;
+                        if (!extensionGroups.TryGetValue(receiver, out var group))
+                            extensionGroups[receiver] = group = new ExtensionGroup();
+                        group.Accessors.Add(method);
                         methods.Remove(method);
                     }
                     else BindDeclaration(owner, method, bindings);
                 }
-                foreach (var (receiver, declarations) in extensionGroups)
-                    MaterializeCSharp14Functions(root, owner, receiver, declarations, bindings);
             }
             if (root["fields"] is JsonArray fields)
-                foreach (var field in fields.OfType<JsonObject>())
-                    BindDeclaration(owner, field, bindings);
+                foreach (var field in fields.OfType<JsonObject>().ToArray())
+                {
+                    if (ShouldEmitCSharp14PropertyField(field, localArities, refs))
+                    {
+                        var receiver = Str(field["companionReceiver"])!;
+                        if (!extensionGroups.TryGetValue(receiver, out var group))
+                            extensionGroups[receiver] = group = new ExtensionGroup();
+                        group.Fields.Add(field);
+                    }
+                    else
+                    {
+                        BindDeclaration(owner, field, bindings);
+                        if (Str(field["companionReceiver"]) != null)
+                            ConsumeDeferredPropertyFacts(field);
+                    }
+                }
+            foreach (var (receiver, declarations) in extensionGroups)
+                MaterializeCSharp14Members(root, owner, receiver, declarations, bindings);
         }
         return bindings;
     }
@@ -107,6 +144,26 @@ static class CompanionExtensionBinding
         declaration["name"] = physicalName;
     }
 
+    // Increment 3 deliberately leaves generic-receiver properties on the existing trusted carrier, but the three
+    // Kotlin declaration facts added for the C# 14 materializer are still a bir2cir-only hand-off. The legacy field
+    // already carries its externally observable val/var surface through `readOnly`; validate and consume the richer
+    // facts here instead of leaking frontend vocabulary into CIR. This branch disappears with Increment 4.
+    static void ConsumeDeferredPropertyFacts(JsonObject field)
+    {
+        var mutable = field["companionPropertyMutable"]?.GetValue<bool>()
+            ?? throw new InvalidOperationException("deferred companion-extension field has no val/var fact");
+        _ = field["companionStorageReadOnly"]?.GetValue<bool>()
+            ?? throw new InvalidOperationException("deferred companion-extension field has no storage-mutability fact");
+        var setterVisibility = Str(field["companionSetterVisibility"]);
+        if (mutable && setterVisibility == null)
+            throw new InvalidOperationException("deferred companion-extension var has no setter visibility");
+        if (!mutable && setterVisibility != null)
+            throw new InvalidOperationException("deferred companion-extension val unexpectedly has setter visibility");
+        field.Remove("companionPropertyMutable");
+        field.Remove("companionSetterVisibility");
+        field.Remove("companionStorageReadOnly");
+    }
+
     static bool ShouldEmitCSharp14Function(
         JsonObject declaration,
         IReadOnlyDictionary<string, int> localArities,
@@ -121,18 +178,51 @@ static class CompanionExtensionBinding
         if ((declaration["mods"] as JsonObject)?["suspend"] is JsonValue suspend &&
             suspend.TryGetValue<bool>(out var isSuspend) && isSuspend)
             return false;
+        return ReceiverArity(receiver, localArities, refs) == 0;
+    }
+
+    static bool ShouldEmitCSharp14PropertyAccessor(
+        JsonObject declaration,
+        IReadOnlyDictionary<string, int> localArities,
+        ReferenceMetadataIndex refs)
+    {
+        if (Str(declaration["companionReceiver"]) is not string receiver ||
+            Str(declaration["companionMemberKind"]) is not ("get" or "set"))
+            return false;
+        // Context parameters are physical index parameters on the CLR Property row. Multiple Kotlin context
+        // overloads may share one source property name, while CIR's property-to-accessor edge is still name-only.
+        // Keep those declarations on the legacy path until that edge carries a full method identity.
+        if ((declaration["params"] as JsonArray)?.OfType<JsonObject>().Any(parameter =>
+                (parameter["mods"] as JsonObject)?["context"]?.GetValue<bool>() == true) == true)
+            return false;
+        return ReceiverArity(receiver, localArities, refs) == 0;
+    }
+
+    static bool ShouldEmitCSharp14PropertyField(
+        JsonObject declaration,
+        IReadOnlyDictionary<string, int> localArities,
+        ReferenceMetadataIndex refs) =>
+        Str(declaration["companionReceiver"]) is string receiver &&
+        Str(declaration["companionMemberKind"]) == "field" &&
+        ReceiverArity(receiver, localArities, refs) == 0;
+
+    static int ReceiverArity(
+        string receiver,
+        IReadOnlyDictionary<string, int> localArities,
+        ReferenceMetadataIndex refs)
+    {
         var classifier = ReceiverClassifier(JsonNode.Parse(receiver))
             ?? throw new InvalidOperationException("companion extension receiver is not a classifier type: " + receiver);
         var arity = localArities.GetValueOrDefault(classifier);
         if (arity == 0) arity = refs.OwnerArity(classifier);
-        return arity == 0;
+        return arity;
     }
 
-    static void MaterializeCSharp14Functions(
+    static void MaterializeCSharp14Members(
         JsonObject root,
         string semanticOwner,
         string receiver,
-        IReadOnlyList<JsonObject> declarations,
+        ExtensionGroup declarations,
         Dictionary<string, Binding> bindings)
     {
         var receiverClassifier = ReceiverClassifier(JsonNode.Parse(receiver))
@@ -145,8 +235,9 @@ static class CompanionExtensionBinding
         var markerName = groupName + "." + markerSimpleName;
         var implementations = new JsonArray();
         var signatureDeclarations = new JsonArray();
+        var signatureProperties = new JsonArray();
 
-        foreach (var declaration in declarations)
+        foreach (var declaration in declarations.Functions)
         {
             var sourceName = Str(declaration["companionSourceName"])
                 ?? throw new InvalidOperationException("companion extension declaration has no source name");
@@ -178,6 +269,71 @@ static class CompanionExtensionBinding
             implementations.Add(declaration);
         }
 
+        var properties = new Dictionary<string, PropertyParts>(StringComparer.Ordinal);
+        foreach (var accessor in declarations.Accessors)
+        {
+            var sourceName = Str(accessor["companionSourceName"])
+                ?? throw new InvalidOperationException("companion extension accessor has no source name");
+            if (!properties.TryGetValue(sourceName, out var parts))
+                properties[sourceName] = parts = new PropertyParts { SourceName = sourceName };
+            var kind = Str(accessor["companionMemberKind"]);
+            if (kind == "get")
+            {
+                if (parts.Getter != null)
+                    throw new InvalidOperationException($"duplicate companion-extension getter '{semanticOwner}.{sourceName}'");
+                parts.Getter = accessor;
+            }
+            else
+            {
+                if (parts.Setter != null)
+                    throw new InvalidOperationException($"duplicate companion-extension setter '{semanticOwner}.{sourceName}'");
+                parts.Setter = accessor;
+            }
+        }
+        foreach (var field in declarations.Fields)
+        {
+            var sourceName = Str(field["companionSourceName"])
+                ?? throw new InvalidOperationException("companion extension field has no source name");
+            if (properties.ContainsKey(sourceName))
+                throw new InvalidOperationException($"duplicate companion-extension property '{semanticOwner}.{sourceName}'");
+            properties[sourceName] = new PropertyParts { SourceName = sourceName, Field = field };
+        }
+
+        foreach (var parts in properties.Values)
+        {
+            if (parts.Field != null)
+                MaterializeFieldBackedProperty(parts, semanticOwner, receiver);
+            if (parts.Getter == null)
+                throw new InvalidOperationException(
+                    $"companion-extension property '{semanticOwner}.{parts.SourceName}' has no getter");
+
+            var propertyTypeJson = parts.Getter["ret"]!.ToJsonString();
+            AddPropertyBinding(bindings, semanticOwner, receiver, "get", parts.SourceName, containerName, propertyTypeJson);
+            if (parts.Setter != null)
+                AddPropertyBinding(bindings, semanticOwner, receiver, "set", parts.SourceName, containerName, propertyTypeJson);
+
+            PrepareImplementationAccessor(parts.Getter, "get_" + parts.SourceName, implementations);
+            if (parts.Setter != null)
+                PrepareImplementationAccessor(parts.Setter, "set_" + parts.SourceName, implementations);
+
+            var getterSignature = SignatureAccessor(parts.Getter, "get_" + parts.SourceName, markerSimpleName);
+            signatureDeclarations.Add(getterSignature);
+            JsonObject setterSignature = null;
+            if (parts.Setter != null)
+            {
+                setterSignature = SignatureAccessor(parts.Setter, "set_" + parts.SourceName, markerSimpleName);
+                signatureDeclarations.Add(setterSignature);
+            }
+            signatureProperties.Add(new JsonObject
+            {
+                ["name"] = parts.SourceName,
+                ["type"] = parts.Getter["ret"]!.DeepClone(),
+                ["get"] = "get_" + parts.SourceName,
+                ["set"] = setterSignature == null ? null : "set_" + parts.SourceName,
+                ["attrs"] = new JsonArray(ExtensionMarker(markerSimpleName)),
+            });
+        }
+
         var container = new JsonObject
         {
             ["name"] = containerName,
@@ -190,6 +346,7 @@ static class CompanionExtensionBinding
             ["interfaces"] = new JsonArray(),
             ["fields"] = new JsonArray(),
             ["methods"] = implementations,
+            ["properties"] = new JsonArray(),
             ["ctors"] = new JsonArray(),
             ["attrs"] = new JsonArray(ExtensionAttribute()),
         };
@@ -207,6 +364,7 @@ static class CompanionExtensionBinding
             ["interfaces"] = new JsonArray(),
             ["fields"] = new JsonArray(),
             ["methods"] = signatureDeclarations,
+            ["properties"] = signatureProperties,
             ["ctors"] = new JsonArray(),
             ["attrs"] = new JsonArray(ExtensionAttribute()),
         };
@@ -248,6 +406,152 @@ static class CompanionExtensionBinding
         types.Add(group);
         types.Add(marker);
         root["types"] = types;
+    }
+
+    static void AddPropertyBinding(
+        Dictionary<string, Binding> bindings,
+        string semanticOwner,
+        string receiver,
+        string kind,
+        string sourceName,
+        string containerName,
+        string valueType)
+    {
+        var key = Key(semanticOwner, receiver, kind, sourceName);
+        var binding = new Binding(Prefix(kind) + sourceName, containerName, valueType);
+        if (bindings.TryGetValue(key, out var prior) && prior != binding)
+            throw new InvalidOperationException(
+                $"inconsistent companion-extension physical identity for '{semanticOwner}.{sourceName}'");
+        bindings[key] = binding;
+    }
+
+    static void MaterializeFieldBackedProperty(
+        PropertyParts parts,
+        string storageOwner,
+        string receiver)
+    {
+        var field = parts.Field;
+        var sourceName = parts.SourceName;
+        var backingName = PhysicalRoot(receiver, sourceName) + "$storage";
+        var propertyType = field["type"]!.DeepClone();
+        var sourceVisibility = Str(field["vis"]) ?? "public";
+        var mutable = field["companionPropertyMutable"]?.GetValue<bool>()
+            ?? throw new InvalidOperationException(
+                $"companion-extension storage '{storageOwner}.{sourceName}' has no val/var fact");
+        var setterVisibility = mutable
+            ? Str(field["companionSetterVisibility"])
+                ?? throw new InvalidOperationException(
+                    $"companion-extension var '{storageOwner}.{sourceName}' has no setter visibility")
+            : null;
+        var storageReadOnly = field["companionStorageReadOnly"]?.GetValue<bool>()
+            ?? throw new InvalidOperationException(
+                $"companion-extension storage '{storageOwner}.{sourceName}' has no mutability fact");
+        field["name"] = backingName;
+        field["vis"] = "private";
+        field["static"] = true;
+        var isConst = field["const"]?.GetValue<bool>() == true;
+        if (storageReadOnly && !isConst) field["initOnly"] = true;
+        field.Remove("companionPropertyMutable");
+        field.Remove("companionSetterVisibility");
+        field.Remove("companionStorageReadOnly");
+        RemoveCompanionFacts(field);
+
+        var read = isConst
+            ? field["init"]?.DeepClone()
+                ?? throw new InvalidOperationException($"const companion-extension property '{sourceName}' has no value")
+            : field["lateinit"]?.GetValue<bool>() == true
+            ? new JsonObject
+            {
+                ["sty"] = propertyType.DeepClone(),
+                ["k"] = "lateinitGet",
+                ["ownerType"] = TypeJson.Fqn(storageOwner),
+                ["static"] = true,
+                ["name"] = backingName,
+                ["lateinitSourceName"] = sourceName,
+            }
+            : new JsonObject
+            {
+                ["sty"] = propertyType.DeepClone(),
+                ["k"] = "staticField",
+                ["ownerType"] = TypeJson.Fqn(storageOwner),
+                ["name"] = backingName,
+            };
+        parts.Getter = Accessor(
+            "get_" + sourceName,
+            sourceVisibility,
+            new JsonArray(new JsonObject { ["k"] = "return", ["value"] = read }),
+            new JsonArray(),
+            propertyType.DeepClone());
+        if (isConst || field["lateinit"]?.GetValue<bool>() == true)
+            RoundtripMetadata.StampPropertyStorage(parts.Getter, storageOwner, backingName);
+        if (mutable)
+            parts.Setter = Accessor(
+                "set_" + sourceName,
+                setterVisibility,
+                new JsonArray(new JsonObject
+                {
+                    ["k"] = "exprStmt",
+                    ["expr"] = new JsonObject
+                    {
+                        ["k"] = "staticFieldSet",
+                        ["ownerType"] = TypeJson.Fqn(storageOwner),
+                        ["name"] = backingName,
+                        ["value"] = new JsonObject { ["k"] = "local", ["name"] = "value" },
+                    },
+                }),
+                new JsonArray(new JsonObject { ["name"] = "value", ["type"] = propertyType.DeepClone() }),
+                TypeJson.Fqn("kotlin.Unit"));
+    }
+
+    static JsonObject Accessor(
+        string name,
+        string visibility,
+        JsonArray body,
+        JsonArray parameters,
+        JsonNode returnType) => new()
+    {
+        ["name"] = name,
+        ["static"] = true,
+        ["override"] = false,
+        ["virtual"] = false,
+        ["abstract"] = false,
+        ["specialName"] = false,
+        ["vis"] = visibility,
+        ["params"] = parameters,
+        ["ret"] = returnType,
+        ["body"] = body,
+        ["attrs"] = new JsonArray(),
+    };
+
+    static void PrepareImplementationAccessor(JsonObject accessor, string physicalName, JsonArray implementations)
+    {
+        accessor["name"] = physicalName;
+        accessor["static"] = true;
+        accessor["override"] = false;
+        accessor["virtual"] = false;
+        accessor["abstract"] = false;
+        accessor["specialName"] = false;
+        RemoveCompanionFacts(accessor);
+        implementations.Add(accessor);
+    }
+
+    static JsonObject SignatureAccessor(JsonObject accessor, string physicalName, string markerSimpleName)
+    {
+        var signature = (JsonObject)accessor.DeepClone();
+        signature["name"] = physicalName;
+        signature["static"] = true;
+        signature["override"] = false;
+        signature["virtual"] = false;
+        signature["abstract"] = false;
+        signature["specialName"] = true;
+        signature["bodyTerminates"] = true;
+        signature["mods"] = new JsonObject();
+        signature["attrs"] = new JsonArray(ExtensionMarker(markerSimpleName));
+        signature["body"] = ThrowStubBody();
+        signature.Remove("generated");
+        signature.Remove("inlineBir");
+        RemoveCompanionFacts(signature);
+        return signature;
     }
 
     static void RemoveCompanionFacts(JsonObject declaration)
@@ -453,12 +757,36 @@ static class CompanionExtensionBinding
         {
             var owner = TypeJson.OwnerName(node["ownerType"]);
             var sourceName = Str(node["name"]);
-            if (nodeKind == "lateinitGet" && sourceName is not null)
-                node["lateinitSourceName"] = sourceName;
-            var physical = Resolve(owner, receiver, "field", sourceName, bindings, refs, nodeKind);
-            node["name"] = physical.PhysicalName;
+            // Standard C# 14 static extension properties are executable through ordinary implementation accessors;
+            // their fields, when any, are private storage details. Turn every Kotlin field-shaped use into that same
+            // accessor call so same-module code, property references, and cross-module consumers share one path.
+            var kind = nodeKind == "staticFieldSet" ? "set" : "get";
+            if (!TryResolve(owner, receiver, kind, sourceName, bindings, refs, out var physical) &&
+                TryResolve(owner, receiver, "field", sourceName, bindings, refs, out var legacy))
+            {
+                // Increment 3 intentionally leaves generic-receiver properties on the retired carrier. This branch
+                // is not a compatibility fallback: it is the still-current representation for the explicitly
+                // deferred declaration set and disappears with Increment 4.
+                node["name"] = legacy.PhysicalName;
+                node["ownerType"] = TypeJson.Fqn(legacy.PhysicalOwner);
+                if (nodeKind == "lateinitGet" && sourceName is not null)
+                    node["lateinitSourceName"] = sourceName;
+                node.Remove("companionReceiver");
+                return;
+            }
+            if (physical == null) throw Missing(owner, receiver, kind, sourceName, nodeKind);
+
+            var value = nodeKind == "staticFieldSet" ? node["value"]?.DeepClone() : null;
+            var style = node["sty"]?.DeepClone();
+            node.Clear();
+            if (style != null) node["sty"] = style;
+            node["k"] = "callStatic";
             node["ownerType"] = TypeJson.Fqn(physical.PhysicalOwner);
-            node.Remove("companionReceiver");
+            node["method"] = physical.PhysicalName;
+            node["sig"] = kind == "set" && physical.ValueType != null
+                ? new JsonArray(JsonNode.Parse(physical.ValueType))
+                : new JsonArray();
+            node["args"] = value == null ? new JsonArray() : new JsonArray(value);
             return;
         }
 
@@ -475,12 +803,25 @@ static class CompanionExtensionBinding
         ReferenceMetadataIndex refs,
         string nodeKind)
     {
-        if (owner == null || sourceName == null) throw Missing(owner, receiver, kind, sourceName, nodeKind);
-        if (bindings.TryGetValue(Key(owner, receiver, kind, sourceName), out var local))
-            return local;
-        if (refs.TryCompanionExtensionMember(owner, receiver, kind, sourceName, out var physical))
-            return new Binding(physical, owner);
+        if (TryResolve(owner, receiver, kind, sourceName, bindings, refs, out var binding)) return binding;
         throw Missing(owner, receiver, kind, sourceName, nodeKind);
+    }
+
+    static bool TryResolve(
+        string owner,
+        string receiver,
+        string kind,
+        string sourceName,
+        IReadOnlyDictionary<string, Binding> bindings,
+        ReferenceMetadataIndex refs,
+        out Binding binding)
+    {
+        binding = null;
+        if (owner == null || sourceName == null) return false;
+        if (bindings.TryGetValue(Key(owner, receiver, kind, sourceName), out binding)) return true;
+        if (!refs.TryCompanionExtensionMember(owner, receiver, kind, sourceName, out var physical)) return false;
+        binding = new Binding(physical, owner);
+        return true;
     }
 
     static void RewriteStaticOwner(JsonObject node, string physicalOwner)
