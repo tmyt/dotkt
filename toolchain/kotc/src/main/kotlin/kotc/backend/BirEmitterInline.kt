@@ -87,12 +87,20 @@ import java.io.File
  *  and the payload-travel predicate CONSISTENT: a call splices ⟺ the callee is stashed. A lambda passed to a GENERIC/
  *  `Any` param (`inline fun <T> hold(x: T); hold({ 1 })`) is NOT function-typed, so the callee is never stashed → it
  *  must fall through to the plain call, NOT attempt a splice (which would fail-loud on the missing payload — a crash on
- *  legal Kotlin). Index-aligned `parameters[i] ↔ arguments[i]` — NOT `regularArgs.zip` (regularArgs drops null defaulted
- *  slots, misaligning param↔arg). AXIS ① is modifier-blind (noinline/crossinline are AXIS ② in the emitters). */
+ *  legal Kotlin). Declaration/call slots are index-aligned — NOT `regularArgs.zip` (regularArgs drops null defaulted
+ *  slots, misaligning param↔arg) — except for a projected companion extension's explicit semantic-only receiver slot,
+ *  which is absent from the lazy call's argument coordinates. AXIS ① is modifier-blind (noinline/crossinline are
+ *  AXIS ② in the emitters). */
 internal fun BirEmitter.hasLambdaArg(call: IrCall): Boolean {
-	val ps = call.symbol.owner.parameters
-	return call.arguments.withIndex().any { (i, a) ->
-		val p = ps.getOrNull(i) ?: return@any false
+	val callee = call.symbol.owner
+	val companionExtension = isCompanionExtensionCallee(callee) ||
+		companionReceiverCallTag(callee, call).isNotEmpty()
+	val phantomReceiverIndex = if (companionExtension)
+		callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+	else -1
+	return callee.parameters.withIndex().any { (i, p) ->
+		val ai = if (phantomReceiverIndex >= 0 && i > phantomReceiverIndex) i - 1 else i
+		val a = call.arguments.getOrNull(ai)
 		p.kind == IrParameterKind.Regular && birType(p.type) is TypeNode.Fn &&
 			(a is IrFunctionExpression || isForwardedInlineParam(a))
 	}
@@ -187,8 +195,10 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// InlineSplice failed loud with "no [KotlinInline] payload found".
 	val callee = call.symbol.owner.let { if (it.isFakeOverride) it.resolveFakeOverride() ?: it else it }
 	val name = callee.name.asString()
-	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
-	val extRecv = extensionReceiver(call)
+	val companionTag = companionReceiverCallTag(callee, call)
+	val companionExtension = isCompanionExtensionCallee(callee) || companionTag.isNotEmpty()
+	val extParam = extensionReceiverParam(callee).takeUnless { companionExtension }
+	val extRecv = extensionReceiver(call).takeIf { extParam != null }
 	val dispatchArg = dispatchReceiver(call)
 	// The callee's POSITIONAL params ([isValueParameter]: contexts then regulars) — the SAME sequence the DECLARATION
 	// emits and `paramSigOf` keys by, so `pc` and `args` below index the payload's own `params` array one-for-one.
@@ -199,9 +209,15 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// param slot so bir2cir can attribute it to the right param; today bir2cir InlineSplice FAILS LOUD on a leftover
 	// null (filling it from the payload param's carried default is a bir2cir follow-up — DefaultArgSplice today rewrites
 	// only callStatic/callInstance, never callInline).
+	val phantomReceiverIndex = if (companionExtension)
+		callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+	else -1
 	val args: List<IrExpression?> = callee.parameters.withIndex()
 		.filter { isValueParameter(it.value) }
-		.map { call.arguments.getOrNull(it.index) }
+		.map { (i, _) ->
+			val ai = if (phantomReceiverIndex >= 0 && i > phantomReceiverIndex) i - 1 else i
+			call.arguments.getOrNull(ai)
+		}
 	// owner = kotc's OWN name for the hosting .NET type: the enclosing type name for a member inline fun, else the
 	// top-level fun's file-facade class. Matches the stash key (a member is stashed under its type's `name`, a
 	// top-level fun under the file's `fileClass` = `fileClassName`, which `fileClassOf` reproduces cross-file); the
@@ -239,7 +255,7 @@ internal fun BirEmitter.emitOwnerfulInlineNode(call: IrCall): String {
 	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
 	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, callee, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
-	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]${semanticUseSiteOwnerJson()}}"""
+	return """{"k":"callInline","callee":${fqnJson(callableIdentity(callee, name))},"owner":${fqnJson(owner)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee, includeExtensionReceiver = !companionExtension)}]${semanticUseSiteOwnerJson()}$companionTag}"""
 }
 
 /** Build the `recvs` object for an owner-ful inline `callInline` node: an extension receiver -> `recvs.extension`
@@ -335,11 +351,17 @@ internal fun BirEmitter.correspondingSupertypeInstantiation(recvType: IrType, ow
 internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): String {
 	val callee = call.symbol.owner
 	val name = callee.name.asString()
+	val companionTag = companionReceiverCallTag(callee, call)
+	val companionExtension = isCompanionExtensionCallee(callee) || companionTag.isNotEmpty()
 	// A dll2klib-projected cross-module inline EXTENSION fun (`Cell<T>.update { … }`, #133 case1): the extension receiver
 	// rides in `recvs.extension` (the SAME shape the owner-less path threads) — bir2cir's InlineSplice binds it to
 	// payload param[0] (`__self`). owner STAYS the projected file class so bir2cir resolves the [KotlinInline] payload via
 	// the OWNER-FUL ResolveInlinePayload (the owner-less path only searches `kotlin.*`, which a `LibKt` owner is not).
-	val extRecv = extensionReceiver(call)
+	val extParam = extensionReceiverParam(callee).takeUnless { companionExtension }
+	// A lazy companion-extension call can retain a phantom source receiver even though its restored declaration and
+	// physical payload have no receiver parameter. Do not evaluate or count that phantom value; the companion tag is
+	// the semantic association that bir2cir binds to the trusted physical member.
+	val extRecv = extensionReceiver(call).takeIf { extParam != null }
 	// The callee's POSITIONAL params ([isValueParameter]: contexts then regulars) — the SAME sequence the DECLARATION
 	// emits and `paramSigOf` keys by, so `pc` and `args` below index the payload's own `params` array one-for-one.
 	val params = callee.parameters.filter { isValueParameter(it) }
@@ -349,13 +371,19 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	// param slot so bir2cir can attribute it to the right param; today bir2cir InlineSplice FAILS LOUD on a leftover
 	// null (filling it from the payload param's carried default is a bir2cir follow-up — DefaultArgSplice today rewrites
 	// only callStatic/callInstance, never callInline).
+	val phantomReceiverIndex = if (companionExtension)
+		callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+	else -1
 	val args: List<IrExpression?> = callee.parameters.withIndex()
 		.filter { isValueParameter(it.value) }
-		.map { call.arguments.getOrNull(it.index) }
+		.map { (i, _) ->
+			val ai = if (phantomReceiverIndex >= 0 && i > phantomReceiverIndex) i - 1 else i
+			call.arguments.getOrNull(ai)
+		}
 	// Disambiguate the file-facade overload (forEach/count/... exist for Iterable/Array/CharSequence): the .NET method's
 	// param count = positional params (contexts + regulars) + the receiver-as-__self, and its generic arity = the fn's type params. SAME as the
 	// retired inlineSplice node's pc/ga.
-	val pc = params.size + (if (extRecv != null) 1 else 0)
+	val pc = params.size + (if (extParam != null) 1 else 0)
 	val ga = callee.typeParameters.size
 	// One type-arg entry per callee type param (a null/star projection -> object; bir2cir's SubstTv resolves it).
 	val typeArgs = callee.typeParameters.indices.joinToString(",") { i ->
@@ -372,7 +400,14 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
 	// carrier's own name); any other supplied arg -> a plan binding; an omitted default -> null.
 	val argsJson = params.indices.joinToString(",") { i -> inlineArgJson(call, callee, args.getOrNull(i), params[i], label) }
 	val retType = birType(callee.returnType).toJson()
-	return """{"k":"callInline","callee":${fqnJson(callee.fqNameWhenAvailable?.asString() ?: name)},"owner":${fqnJson(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee)}]${semanticUseSiteOwnerJson()}}"""
+	return """{"k":"callInline","callee":${fqnJson(callableIdentity(callee, name))},"owner":${fqnJson(fileClass)},"pc":$pc,"ga":$ga,"typeArgs":[$typeArgs],"recvs":$recvs,"args":[$argsJson],"retType":$retType,"paramSig":[${paramSigOf(callee, includeExtensionReceiver = !companionExtension)}]${semanticUseSiteOwnerJson()}$companionTag}"""
+}
+
+/** Preserve the Kotlin package prefix while replacing only the callable segment with trusted physical provenance. */
+internal fun callableIdentity(callee: IrSimpleFunction, name: String): String {
+	val source = callee.fqNameWhenAvailable?.asString() ?: return name
+	val dot = source.lastIndexOf('.')
+	return if (dot < 0) name else source.substring(0, dot + 1) + name
 }
 
 /** paramSig (#95 §4.2, overload disambiguator): one TYPE NODE per callee DECLARED parameter in the SAME order the
@@ -383,8 +418,8 @@ internal fun BirEmitter.inlineSpliceCall(call: IrCall, fileClass: String): Strin
  *  return type). CRITICAL: each type is emitted in the callee's OWN type-parameter frame — `typeArgSubst` is BYPASSED
  *  so a param `(T)->R` serializes as `{t:fn,params:[{t:tv,scope:method,i:0}],ret:{t:tv,scope:method,i:1}}` IDENTICALLY
  *  here and at the decl site (never instantiated to the call's type args). */
-internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction): String {
-	val extParam = callee.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction, includeExtensionReceiver: Boolean = true): String {
+	val extParam = extensionReceiverParam(callee).takeIf { includeExtensionReceiver }
 	val sigParams = buildList {
 		extParam?.let { add(it) }
 		callee.parameters.filter { isValueParameter(it) }.forEach { add(it) }
@@ -412,7 +447,7 @@ internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction): String {
  *  `this`/implicit-member refs would fall through to the CALLER's `{"k":"this"}` and dangle. */
 internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): String {
 	val fn = lambda.function
-	val extParam = fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+	val extParam = extensionReceiverParam(fn)
 	// Allocated against the lambda's own frame, like every other minted frame name — the carrier's params sit in the
 	// same flat by-name namespace as the lambda's own, so an unchecked `__recvN` could alias one of them.
 	val freshRecv = extParam?.let { freshFrameName("__recv", fn) }

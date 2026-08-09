@@ -1,5 +1,7 @@
+using System.Collections.Immutable;
 using System.IO.Compression;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.Json;
@@ -9,9 +11,18 @@ using DotKt.Klib.Metadata;
 
 const string Ns = "roundtrip.dispatchsurface.";
 const string CarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
+const string LateinitAttribute = "DotKt.Runtime.CompilerServices.KotlinLateinitAttribute";
+const string StaticCarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
 // A hoisted carrier's reserved separator. It is what keeps `<owner>$companion$dotkt_star` (a companion whose SOURCE
 // name is `dotkt_star`) distinct from `<owner>$dotkt_star` (the star-projection existential of the same owner).
 const string HoistedMarker = "$companion$";
+
+if (args.Length >= 4 && args[0] == "--volatile-consumer")
+{
+    foreach (var method in args.Skip(3)) VerifyVolatileMethod(args[1], args[2], method);
+    Console.WriteLine("volatile field access IL: OK");
+    return;
+}
 
 if (args.Length != 7)
     throw new ArgumentException(
@@ -128,7 +139,9 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
 static void VerifyOwnershipDll(string path)
 {
     using var stream = File.OpenRead(path);
-    using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+    // Keep the backing stream available because the volatile-prefix assertion below reads a method body as well as
+    // metadata. A metadata-only prefetch intentionally makes PE section data unavailable.
+    using var pe = new PEReader(stream);
     var md = pe.GetMetadataReader();
     var owner = md.TypeDefinitions.Single(h => StripArities(DefinitionName(md, h)) == "roundtrip.ownership.Owner");
     var ownerDef = md.GetTypeDefinition(owner);
@@ -223,7 +236,7 @@ static void VerifyOwnershipDll(string path)
 static void VerifyUnsafeAccessorDll(string path)
 {
     using var stream = File.OpenRead(path);
-    using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+    using var pe = new PEReader(stream);
     var md = pe.GetMetadataReader();
     var accessors = md.TypeDefinitions.SelectMany(typeHandle => md.GetTypeDefinition(typeHandle).GetMethods()
         .Select(methodHandle => (TypeHandle: typeHandle, Handle: methodHandle,
@@ -246,6 +259,15 @@ static void VerifyUnsafeAccessorDll(string path)
         Require(attributes.Contains("System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
             "caller-side UnsafeAccessor is missing CompilerGeneratedAttribute");
     }
+
+    var companionTests = md.TypeDefinitions.Single(handle =>
+        DefinitionName(md, handle).EndsWith("CompanionStaticRoundtripTests", StringComparison.Ordinal));
+    var externalVolatileAccess = md.GetTypeDefinition(companionTests).GetMethods().Single(handle =>
+        md.GetString(md.GetMethodDefinition(handle).Name) == "companionBlockStorageStaysOneLogicalMemberOnAGenericOwner");
+    var externalVolatileIl = pe.GetMethodBody(md.GetMethodDefinition(externalVolatileAccess).RelativeVirtualAddress)
+        .GetILBytes() ?? Array.Empty<byte>();
+    Require(ContainsVolatileFieldAccess(externalVolatileIl),
+        "consumer access to a referenced @Volatile field omitted the CIR-carried volatile. prefix");
 
     var secretAccessors = accessors.Where(pair =>
         md.GetString(pair.Definition.Name).Contains("$get_secret", StringComparison.Ordinal)).ToArray();
@@ -369,8 +391,8 @@ static void VerifyLayerBoundary(string birPath, string cirPath)
 
 static void VerifyDll(string path)
 {
-    using var stream = File.OpenRead(path);
-    using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+    // The volatile-prefix assertion below needs PE section data as well as metadata.
+    using var pe = new PEReader(ImmutableArray.Create(File.ReadAllBytes(path)));
     var md = pe.GetMetadataReader();
     var carrierDefinition = md.TypeDefinitions.Single(h => DefinitionName(md, h) == CarrierAttribute);
     Require(HasAttribute(md, carrierDefinition, "System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
@@ -437,6 +459,91 @@ static void VerifyDll(string path)
             $"carrier has no unique public static self-typed $INSTANCE: {DefinitionName(md, carrier.Handle)}");
     }
 
+    var fileFacade = md.TypeDefinitions.Single(h =>
+        DefinitionName(md, h) == "roundtrip.companionstatics.CompanionStaticsKt");
+    var facadeFields = md.GetTypeDefinition(fileFacade).GetFields()
+        .ToDictionary(h => md.GetString(md.GetFieldDefinition(h).Name), StringComparer.Ordinal);
+    var privateTop = md.GetFieldDefinition(facadeFields["PRIVATE_TOP_TAG"]);
+    Require((privateTop.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Private &&
+            (privateTop.Attributes & (FieldAttributes.Static | FieldAttributes.Literal)) ==
+            (FieldAttributes.Static | FieldAttributes.Literal),
+        "private top-level const did not retain private CLR visibility");
+    var internalTop = md.GetFieldDefinition(facadeFields["INTERNAL_TOP_TAG"]);
+    Require((internalTop.Attributes & FieldAttributes.FieldAccessMask) == FieldAttributes.Assembly &&
+            (internalTop.Attributes & (FieldAttributes.Static | FieldAttributes.Literal)) ==
+            (FieldAttributes.Static | FieldAttributes.Literal),
+        "internal top-level const did not retain assembly CLR visibility");
+
+    var counter = md.TypeDefinitions.Single(h => DefinitionName(md, h) == "roundtrip.companionstatics.Counter");
+    var counterFields = md.GetTypeDefinition(counter).GetFields()
+        .ToDictionary(h => md.GetString(md.GetFieldDefinition(h).Name), StringComparer.Ordinal);
+    var tag = md.GetFieldDefinition(counterFields["TAG"]);
+    Require((tag.Attributes & (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal)) ==
+            (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal) &&
+            !tag.GetDefaultValue().IsNil,
+        "companion-block const is not a public CLR literal with a metadata constant");
+    var later = md.GetFieldDefinition(counterFields["later"]);
+    Require((later.Attributes & (FieldAttributes.Public | FieldAttributes.Static)) ==
+            (FieldAttributes.Public | FieldAttributes.Static) &&
+            HasFieldAttribute(md, counterFields["later"], LateinitAttribute),
+        "companion-block lateinit field lost its trusted CLR metadata marker");
+
+    var counterCompanionCarrier = carriers.Single(c =>
+        c.Owner == "roundtrip.companionstatics.Counter" && c.Name == "Companion");
+    var objectTagHandle = md.GetTypeDefinition(counterCompanionCarrier.Handle).GetFields().Single(h =>
+        md.GetString(md.GetFieldDefinition(h).Name) == "OBJECT_TAG");
+    var objectTag = md.GetFieldDefinition(objectTagHandle);
+    Require((objectTag.Attributes & (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal)) ==
+            (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal) &&
+            !objectTag.GetDefaultValue().IsNil,
+        "companion-object const is not a physical CLR literal with a metadata constant");
+
+    var namedObject = md.TypeDefinitions.Single(h =>
+        DefinitionName(md, h) == "roundtrip.companionstatics.NamedConstants");
+    var namedConstantHandle = md.GetTypeDefinition(namedObject).GetFields().Single(h =>
+        md.GetString(md.GetFieldDefinition(h).Name) == "NAME");
+    var namedConstant = md.GetFieldDefinition(namedConstantHandle);
+    Require((namedConstant.Attributes & (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal)) ==
+            (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal) &&
+            !namedConstant.GetDefaultValue().IsNil,
+        "named-object const is not a physical CLR literal with a metadata constant");
+
+    var box = md.TypeDefinitions.Single(h =>
+        HasCarrierOwner(md, h, StaticCarrierAttribute, "roundtrip.companionstatics.Box"));
+    var boxFields = md.GetTypeDefinition(box).GetFields()
+        .ToDictionary(h => md.GetString(md.GetFieldDefinition(h).Name), StringComparer.Ordinal);
+    var boxCode = md.GetFieldDefinition(boxFields["CODE"]);
+    Require((boxCode.Attributes & (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal)) ==
+            (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal) &&
+            !boxCode.GetDefaultValue().IsNil,
+        "generic-owner companion const is not a public CLR literal with a metadata constant");
+    var boxLater = md.GetFieldDefinition(boxFields["later"]);
+    Require((boxLater.Attributes & (FieldAttributes.Public | FieldAttributes.Static)) ==
+            (FieldAttributes.Public | FieldAttributes.Static) &&
+            HasFieldAttribute(md, boxFields["later"], LateinitAttribute),
+        "generic-owner companion lateinit lost its trusted CLR metadata marker");
+    Require(md.GetTypeDefinition(box).GetGenericParameters().Count == 0,
+        "generic-owner companion statics were not placed on one non-generic carrier");
+
+    var boxOwner = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.companionstatics.Box");
+    foreach (var methodName in new[] { "readPrivateVolatile", "writePrivateVolatile" })
+    {
+        var method = md.GetTypeDefinition(boxOwner).GetMethods().Single(h =>
+            md.GetString(md.GetMethodDefinition(h).Name) == methodName);
+        var methodIl = pe.GetMethodBody(md.GetMethodDefinition(method).RelativeVirtualAddress).GetILBytes()
+            ?? Array.Empty<byte>();
+        Require(ContainsVolatileFieldAccess(methodIl),
+            $"UnsafeAccessor rewrite of private companion static omitted volatile. in {methodName}");
+    }
+
+    var readVolatile = md.GetTypeDefinition(counter).GetMethods().Single(h =>
+        md.GetString(md.GetMethodDefinition(h).Name) == "readVolatileLater");
+    var il = pe.GetMethodBody(md.GetMethodDefinition(readVolatile).RelativeVirtualAddress).GetILBytes()
+        ?? Array.Empty<byte>();
+    Require(ContainsVolatileFieldAccess(il),
+        "lateinitGet of an @Volatile field omitted the volatile. prefix");
+
     var protectedCarrier = carriers.Single(c => c.Owner == Ns + "ProtectedCompanionHost");
     var protectedMethods = md.GetTypeDefinition(protectedCarrier.Handle).GetMethods()
         .Select(md.GetMethodDefinition)
@@ -479,12 +586,79 @@ static void VerifyKlib(string path)
     Require(fragment.Package.Property.Count(p => String(fragment, p.Name) == "roundtripNullableDelegated") == 1,
         "nullable top-level delegated property did not round-trip as one package property");
 
+    var staticsEntry = archive.Entries.Single(e =>
+        e.FullName.EndsWith("/package_roundtrip.companionstatics/0_companionstatics.knm", StringComparison.Ordinal));
+    using var staticsStream = staticsEntry.Open();
+    var statics = PackageFragment.Parser.ParseFrom(staticsStream);
+    var topTag = statics.Package.Property.Single(p => String(statics, p.Name) == "TOP_TAG");
+    Require((topTag.Flags & ((1 << 11) | (1 << 13))) == ((1 << 11) | (1 << 13)) &&
+            topTag.CompileTimeValue is not null,
+        "top-level const lost KLIB IS_CONST/HAS_CONSTANT or its compile-time value");
+    Require(!statics.Package.Property.Any(p =>
+            String(statics, p.Name) is "PRIVATE_TOP_TAG" or "INTERNAL_TOP_TAG"),
+        "non-public top-level const leaked into reference KLIB");
+    var counter = Class(statics, "roundtrip.companionstatics.Counter");
+    var tag = counter.Property.Single(p => String(statics, p.Name) == "TAG");
+    Require((tag.Flags & ((1 << 11) | (1 << 13))) == ((1 << 11) | (1 << 13)) &&
+            tag.CompileTimeValue is not null,
+        "companion-block const lost KLIB IS_CONST/HAS_CONSTANT or its compile-time value");
+    var later = counter.Property.Single(p => String(statics, p.Name) == "later");
+    Require((later.Flags & (1 << 12)) != 0 &&
+            later.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField") &&
+            later.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrLateinitField"),
+        "companion-block lateinit lost KLIB IS_LATEINIT or its static-property declaration marker");
+    var counterCompanion = Class(statics, "roundtrip.companionstatics.Counter.Companion");
+    var objectTag = counterCompanion.Property.Single(p => String(statics, p.Name) == "OBJECT_TAG");
+    Require((objectTag.Flags & ((1 << 11) | (1 << 13))) == ((1 << 11) | (1 << 13)) &&
+            (objectTag.Flags & (1 << 19)) == 0 && objectTag.CompileTimeValue is not null,
+        "companion-object const lost its semantic member shape or compile-time value");
+    var namedObject = Class(statics, "roundtrip.companionstatics.NamedConstants");
+    var namedConstant = namedObject.Property.Single(p => String(statics, p.Name) == "NAME");
+    Require((namedConstant.Flags & ((1 << 11) | (1 << 13))) == ((1 << 11) | (1 << 13)) &&
+            (namedConstant.Flags & (1 << 19)) == 0 && namedConstant.CompileTimeValue is not null,
+        "named-object const lost its semantic member shape or compile-time value");
+    var box = Class(statics, "roundtrip.companionstatics.Box");
+    var boxCode = box.Property.Single(p => String(statics, p.Name) == "CODE");
+    Require((boxCode.Flags & ((1 << 11) | (1 << 13))) == ((1 << 11) | (1 << 13)) &&
+            boxCode.CompileTimeValue is not null,
+        "generic-owner companion const lost KLIB IS_CONST/HAS_CONSTANT or its compile-time value");
+    var boxLater = box.Property.Single(p => String(statics, p.Name) == "later");
+    Require((boxLater.Flags & (1 << 12)) != 0 &&
+            boxLater.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrField") &&
+            boxLater.PropertyAnnotation.Any(a => QualifiedName(statics, a.Id) == "kotlin.clr.ClrLateinitField"),
+        "generic-owner companion lateinit lost KLIB IS_LATEINIT or its static-property declaration marker");
+    var marker = statics.Package.Property.Single(p =>
+        String(statics, p.Name) == "marker" &&
+        p.ReceiverType is { HasClassName: true } receiver &&
+        QualifiedName(statics, receiver.ClassName) == "roundtrip.companionstatics.Tag");
+    Require((marker.Flags & (1 << 8)) == 0 && marker.SetterValueParameter is null,
+        "companion extension val round-tripped as a writable property");
+    var contextStates = statics.Package.Property.Where(p =>
+        String(statics, p.Name) == "contextState" &&
+        p.ReceiverType is { HasClassName: true } receiver &&
+        QualifiedName(statics, receiver.ClassName) == "roundtrip.companionstatics.Tag").ToArray();
+    Require(contextStates.Length == 2 && contextStates.All(p => p.ContextParameter.Count == 1),
+        "context-overloaded companion properties did not round-trip as two declarations");
+    var mutableContextState = contextStates.Single(p =>
+        p.ContextParameter[0].Type is { HasClassName: true } context &&
+        QualifiedName(statics, context.ClassName) == "roundtrip.companionstatics.MutableTagContext");
+    var readOnlyContextState = contextStates.Single(p =>
+        p.ContextParameter[0].Type is { HasClassName: true } context &&
+        QualifiedName(statics, context.ClassName) == "roundtrip.companionstatics.ReadOnlyTagContext");
+    Require(mutableContextState.SetterValueParameter is not null,
+        "context-overloaded companion var lost its matching setter");
+    Require(readOnlyContextState.SetterValueParameter is null,
+        "context-overloaded companion val acquired another overload's setter");
+
     // Both carrier spellings, and only those: a nested carrier is a `$`-prefixed segment, a hoisted one carries the
     // reserved marker. Other compiler-generated CLR types (a star-projection existential, say) are a different
     // subject and do reach Kotlin metadata today.
     Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName).Split('.').Any(p =>
             p.StartsWith('$') || p.Contains(HoistedMarker, StringComparison.Ordinal))),
         "reserved physical companion carrier leaked into Kotlin metadata");
+    Require(!statics.Class.Any(c => QualifiedName(statics, c.FqName)
+            .Contains("$dotkt_statics", StringComparison.Ordinal)),
+        "generic-static implementation carrier leaked into Kotlin metadata");
     Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName).Contains("$sm", StringComparison.Ordinal)),
         "compiler-generated suspend state-machine type leaked into Kotlin metadata");
     Require(!fragment.Class.Any(c => QualifiedName(fragment, c.FqName) == Ns + "PrivateCompanionHost.Secret"),
@@ -594,6 +768,81 @@ static bool HasAttribute(MetadataReader md, TypeDefinitionHandle handle, string 
     md.GetTypeDefinition(handle).GetCustomAttributes()
         .Select(md.GetCustomAttribute)
         .Any(attribute => AttributeName(md, attribute) == name);
+
+static bool HasFieldAttribute(MetadataReader md, FieldDefinitionHandle handle, string name) =>
+    md.GetFieldDefinition(handle).GetCustomAttributes()
+        .Select(md.GetCustomAttribute)
+        .Any(attribute => AttributeName(md, attribute) == name);
+
+static bool ContainsVolatileFieldAccess(byte[] il)
+{
+    var opCodes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
+        .Where(field => field.FieldType == typeof(OpCode))
+        .Select(field => (OpCode)field.GetValue(null)!)
+        .ToDictionary(op => unchecked((ushort)op.Value));
+    var volatilePrefix = false;
+    for (var offset = 0; offset < il.Length;)
+    {
+        var first = il[offset++];
+        var key = first == 0xfe && offset < il.Length
+            ? (ushort)(0xfe00 | il[offset++])
+            : first;
+        if (!opCodes.TryGetValue(key, out var op)) return false;
+        if (volatilePrefix &&
+            (op == OpCodes.Ldfld || op == OpCodes.Ldsfld || op == OpCodes.Stfld || op == OpCodes.Stsfld ||
+             op == OpCodes.Ldobj || op == OpCodes.Stobj))
+            return true;
+        volatilePrefix = op == OpCodes.Volatile;
+
+        var operandSize = op.OperandType switch {
+            OperandType.InlineNone => 0,
+            OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+            OperandType.InlineVar => 2,
+            OperandType.InlineBrTarget or OperandType.InlineField or OperandType.InlineI or
+                OperandType.InlineMethod or OperandType.InlineSig or OperandType.InlineString or
+                OperandType.InlineTok or OperandType.InlineType or OperandType.ShortInlineR => 4,
+            OperandType.InlineI8 or OperandType.InlineR => 8,
+            OperandType.InlineSwitch when offset + 4 <= il.Length =>
+                4 + checked(BitConverter.ToInt32(il, offset) * 4),
+            _ => -1,
+        };
+        if (operandSize < 0 || offset + operandSize > il.Length) return false;
+        offset += operandSize;
+    }
+    return false;
+}
+
+static void VerifyVolatileMethod(string path, string typeSuffix, string methodName)
+{
+    using var stream = File.OpenRead(path);
+    using var pe = new PEReader(stream);
+    var md = pe.GetMetadataReader();
+    var type = md.TypeDefinitions.Single(handle =>
+        DefinitionName(md, handle).EndsWith(typeSuffix, StringComparison.Ordinal));
+    var method = md.GetTypeDefinition(type).GetMethods().Single(handle =>
+        md.GetString(md.GetMethodDefinition(handle).Name) == methodName);
+    var il = pe.GetMethodBody(md.GetMethodDefinition(method).RelativeVirtualAddress).GetILBytes()
+        ?? Array.Empty<byte>();
+    Require(ContainsVolatileFieldAccess(il),
+        $"{DefinitionName(md, type)}.{methodName} omitted volatile. on a CLR field access");
+}
+
+static bool HasCarrierOwner(MetadataReader md, TypeDefinitionHandle handle, string attributeName, string owner)
+{
+    foreach (var attribute in md.GetTypeDefinition(handle).GetCustomAttributes().Select(md.GetCustomAttribute))
+    {
+        if (AttributeName(md, attribute) != attributeName) continue;
+        var blob = md.GetBlobReader(attribute.Value);
+        if (blob.ReadUInt16() != 1) return false;
+        var version = blob.ReadSerializedString();
+        var length = blob.ReadInt32();
+        if (version is null || length < 0 || length > blob.RemainingBytes - 2) return false;
+        using var doc = JsonDocument.Parse(BirCarrier.DecodeBody(version, blob.ReadBytes(length)).ToJsonString());
+        return blob.ReadUInt16() == 0 && blob.RemainingBytes == 0 &&
+            doc.RootElement.TryGetProperty("owner", out var value) && value.GetString() == owner;
+    }
+    return false;
+}
 
 static string AttributeName(MetadataReader md, CustomAttribute attribute)
 {

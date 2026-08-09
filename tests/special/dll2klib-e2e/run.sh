@@ -51,7 +51,7 @@ direct_out="$OUT/direct-Probe.klib"
 if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
 	die "standalone direct worker invocation unexpectedly succeeded without resolved reference catalogs"
 fi
-grep -q "direct worker mode requires the batch-provided resolved delegate and companion catalogs" <<<"$direct_error" \
+grep -q "direct worker mode requires the batch-provided resolved delegate, companion, and inner catalogs" <<<"$direct_error" \
 	|| die "standalone direct worker rejection did not explain the required batch reference set"
 [[ ! -e "$direct_out" ]] || die "rejected standalone direct worker invocation still wrote a KLIB"
 

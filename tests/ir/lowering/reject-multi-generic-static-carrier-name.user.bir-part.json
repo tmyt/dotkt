@@ -1,0 +1,8 @@
+{
+  "fileClass": "CollisionUserKt", "hasMain": false, "fields": [], "methods": [],
+  "types": [{
+    "name": "CollisionBox$dotkt_statics", "kind": "class", "base": null, "interfaces": [],
+    "fields": [], "ctors": [], "methods": [], "properties": [], "attrs": []
+  }],
+  "refTypes": []
+}

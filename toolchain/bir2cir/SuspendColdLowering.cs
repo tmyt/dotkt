@@ -85,7 +85,7 @@ static partial class SuspendColdLowering
     // class's invoke body into the SM, leaving the class DEAD. It is not merely wasteful: its verbatim invoke body
     // carries a `COROUTINE_SUSPENDED` read whose owner MemberCallSubstitution mis-resolves to the enclosing file class
     // (the SM's own reconstructed `Suspended()` uses the correct IntrinsicsKt owner). So the dead class is pruned after
-    // the transform loop. (The non-capturing `newDelegate`/__lambdaN block form is left untouched — it emits cleanly.)
+    // the transform loop. (The non-capturing `newDelegate`/generated-method block form is left untouched — it emits cleanly.)
     static HashSet<string> _consumedIntrinsicClosures;
 
     // Structured type-node helpers for the SM synthesis (all SM type slots are structured TypeNode). `Tn` = a bare-FQN
@@ -223,7 +223,7 @@ static partial class SuspendColdLowering
     // no longer either — kotc's same-module source-splice + the `suspendIntrinsic` valueBlock stamp were retired in
     // #75 S4b), so in EVERY build (app cross-module AND stdlib self-build same-module) kotc emits a plain
     // `callStatic <name>(<newClosure|newDelegate>) suspendCall:true`, owner:null (top-level intrinsic) OR the resolved
-    // stdlib file-class, the block materialized as a closure class (capturing) or a top-level `__lambdaN`
+    // stdlib file-class, the block materialized as a closure class (capturing) or a top-level generated method
     // (non-capturing). This IS a suspension point — recognized here, lowered by EmitSuspendCoroutineCall (which
     // reconstructs the wrapper's SafeContinuation body / the unintercepted block, since the un-inlined wrapper body is
     // unavailable). The recognizer is purely STRUCTURAL (k/suspendCall/method/owner/arg-shape) — no module-boundary
@@ -491,7 +491,7 @@ static partial class SuspendColdLowering
                     ownerTpDecls.Add(t?.DeepClone());
             }
             e.Method.Remove("lexicalOwnerTypeParamCount");
-            // Per-file registry of top-level `__lambdaN` methods (the non-capturing `newDelegate` block bodies of a
+            // Per-file registry of top-level generated methods (the non-capturing `newDelegate` block bodies of a
             // cross-module suspendCoroutine — F2). Keyed within the declaring file (kotc names lambdas per-file, so a
             // global map would collide across files).
             var fileLambdas = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -1168,7 +1168,7 @@ static partial class SuspendColdLowering
         readonly bool _memberVirtual;              // source member is `open` -> virtual cold entry (new vtable slot)
         // Closure-class registry (name -> type node) for the suspendCoroutine intrinsic inliner. Empty in lambda mode.
         readonly IReadOnlyDictionary<string, JsonObject> _closures;
-        // Top-level `__lambdaN` method registry (name -> method) for a cross-module suspendCoroutine's non-capturing
+        // Top-level generated-method registry (name -> method) for a cross-module suspendCoroutine's non-capturing
         // `newDelegate` block body (F2). Empty in lambda mode.
         readonly IReadOnlyDictionary<string, JsonObject> _lambdaMethods;
         // Lambda mode (bundle-6 P3 wave-2b Part B): a suspend LAMBDA SM (extends SuspendLambda, no cold
@@ -1190,6 +1190,11 @@ static partial class SuspendColdLowering
         // Kotlin override ownership is the proof used by the late CLR slot normalizer. Suspend lowering replaces one
         // logical declaration with TWO physical declarations, so both retain that proof under their final names.
         readonly JsonArray _overrideMarkers;
+        // A companion suspend extension retains both its receiver association and Kotlin source name after the
+        // original method is replaced by the public Task bridge. RoundtripMetadata consumes both facts there.
+        readonly string _companionReceiver;
+        readonly string _companionSourceName;
+        readonly string _companionMemberKind;
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
         readonly List<(string name, TypeNode type)> _fieldDecls = new();
         // Declared type of every `{k:var}` of this body, INCLUDING the ones the storage gate leaves as MoveNext
@@ -1254,6 +1259,9 @@ static partial class SuspendColdLowering
             _typeParams = ReadTypeParamNames(m["typeParams"]);
             _methodTypeParamDecls = (m["typeParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
             _overrideMarkers = (m["overrides"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+            _companionReceiver = (m["companionReceiver"] as JsonValue)?.GetValue<string>();
+            _companionSourceName = (m["companionSourceName"] as JsonValue)?.GetValue<string>();
+            _companionMemberKind = (m["companionMemberKind"] as JsonValue)?.GetValue<string>();
             // The SM is generic over the ENCLOSING class's type params (an instance member on a generic class) PLUS
             // the member's own — its fields / `$this` / label reference them (type-scope tv by flattened position).
             _smAllTps = new List<string>(_ownerTypeParams);
@@ -1374,6 +1382,9 @@ static partial class SuspendColdLowering
                 .Select(p => p?.DeepClone()).ToArray());
             _typeParams = ReadTypeParamNames(_methodTypeParamDecls);
             _overrideMarkers = new JsonArray();
+            _companionReceiver = null;
+            _companionSourceName = null;
+            _companionMemberKind = null;
             _smAllTps = new List<string>(_ownerTypeParams);
             _smAllTps.AddRange(_typeParams);
             _smTypeInst = _smAllTps.Count == 0 ? new TypeNode.Fqn(_smType) : new TypeNode.Fqn(_smType, TypeTvs(_smAllTps.Count));
@@ -2285,7 +2296,7 @@ static partial class SuspendColdLowering
         }
 
         // Resolve a suspendCoroutine block arg (newClosure -> a top-level closure class in _closures; newDelegate -> a
-        // top-level __lambdaN in _lambdaMethods) to its invoke body, continuation-param name, and capture map (empty
+        // top-level generated method in _lambdaMethods) to its invoke body, continuation-param name, and capture map (empty
         // for newDelegate). Returns (null, …) when unresolvable.
         (JsonArray body, string cParam, Dictionary<string, JsonNode> capMap, string closureType)
         ResolveBlockLambda(JsonObject arg)
@@ -3800,6 +3811,9 @@ static partial class SuspendColdLowering
                 CarryOverrideMarkers(am, _name);
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
                 if (_resultNullableGeneric != null) am["nullableGenericRet"] = _resultNullableGeneric;
+                if (_companionReceiver != null) am["companionReceiver"] = _companionReceiver;
+                if (_companionSourceName != null) am["companionSourceName"] = _companionSourceName;
+                if (_companionMemberKind != null) am["companionMemberKind"] = _companionMemberKind;
                 // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
                 // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
                 // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).
@@ -3904,6 +3918,9 @@ static partial class SuspendColdLowering
             // FIRST and only then reads the slot's carrier, so the carrier holds the UNWRAPPED Kotlin result — and the
             // NRT byte above (offset past the Task node) is what puts its `?` back.
             if (_resultNullableGeneric != null) method["nullableGenericRet"] = _resultNullableGeneric;
+            if (_companionReceiver != null) method["companionReceiver"] = _companionReceiver;
+            if (_companionSourceName != null) method["companionSourceName"] = _companionSourceName;
+            if (_companionMemberKind != null) method["companionMemberKind"] = _companionMemberKind;
             // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
             // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
             // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).

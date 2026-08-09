@@ -1,0 +1,6 @@
+# A metadata/reference build still emits a real Constant-table shape. Its physical CLR string slot carries the
+# exact Kotlin declaration type in a trusted KotlinType attribute, rather than retaining executable initialization.
++"name":"ANSWER","type":{"t":"fqn","name":"string"},"static":true,"readOnly":true,"constant":"ok"
++"name":"DotKt.Runtime.CompilerServices.KotlinTypeAttribute"
+-"name":"ANSWER","type":{"t":"fqn","name":"kotlin.String"}
+-"init":{"k":"const"

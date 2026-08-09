@@ -37,12 +37,15 @@ static class RoundtripMetadata
     const string AKFileClass    = Ns + "KotlinFileClassAttribute";
     const string AKInline       = Ns + "KotlinInlineAttribute";
     const string AKReadOnly     = Ns + "KotlinReadOnlyAttribute";
+    const string AKLateinit     = Ns + "KotlinLateinitAttribute";
     const string AKFunInterface = Ns + "KotlinFunInterfaceAttribute";
     const string AKSealed       = Ns + "KotlinSealedAttribute";
     const string AKValue        = Ns + "KotlinValueAttribute";
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
+    const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
+    const string AKStaticCarrier = Ns + "KotlinStaticCarrierAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
@@ -137,6 +140,13 @@ static class RoundtripMetadata
             Append(to, JsonCarrierAttr(AKCompanion, companion));
             to.Remove("kotlinCompanion");
         }
+        // A non-generic CLR implementation carrier for the one logical static surface of a generic Kotlin owner.
+        // The payload names the semantic declaration owner; the attributed TypeDef itself is the physical owner.
+        if (to["staticCarrier"] is JsonObject staticCarrier)
+        {
+            Append(to, JsonCarrierAttr(AKStaticCarrier, staticCarrier));
+            to.Remove("staticCarrier");
+        }
         // [KotlinType(version, bytes)] — a compiler-synthesized CLR type whose Kotlin surface is a different TypeNode.
         // FBoundStarProjectionErasure uses this on its non-generic existential interface so a downstream reader restores
         // the original G<*> projection rather than exposing the CLR implementation type or degrading it to Any?.
@@ -186,6 +196,24 @@ static class RoundtripMetadata
         // of BirCarrier.EncodeBody). Only for an inline fn that actually stashed a carrier.
         if (ModFlag(mo, "inline") && (mo["inlineBir"] as JsonValue)?.GetValue<string>() is string ib)
             Append(mo, Marker(AKInline, StringArg(BirCarrier.JsonV1), BytesArg(ib)));
+        // [KotlinCompanionExtension(version, bytes)] — a Kotlin 2.4 `companion fun C.foo()`. The declaration is a
+        // receiverless static of the file class physically; the carrier holds the KOTLIN type it is associated with,
+        // which is the only thing a consuming module needs to spell `C.foo(...)` again. Opaque to CLR lowering.
+        if ((mo["companionReceiver"] as JsonValue)?.GetValue<string>() is string mcr)
+        {
+            var sourceName = (mo["companionSourceName"] as JsonValue)?.GetValue<string>()
+                ?? throw new InvalidOperationException("companion extension method has no source name");
+            var kind = (mo["companionMemberKind"] as JsonValue)?.GetValue<string>()
+                ?? throw new InvalidOperationException("companion extension method has no member kind");
+            Append(mo, JsonCarrierAttr(AKCompanionExt, new JsonObject {
+                ["receiver"] = JsonNode.Parse(mcr),
+                ["name"] = sourceName,
+                ["kind"] = kind,
+            }));
+            mo.Remove("companionReceiver");
+            mo.Remove("companionSourceName");
+            mo.Remove("companionMemberKind");
+        }
 
         // Return-position attrs ride `retAttrs` (ilemit stamps them on DefineParameter(0)). Order: [Nullable, SuspendFn,
         // Nothing]. [KotlinNothing] (#133 case3) rides the SAME channel; it goes AFTER the [Nullable] byte so a `Nothing?`
@@ -288,11 +316,36 @@ static class RoundtripMetadata
                 Prepend(fo, KotlinTypeAttr(kt));
                 fo.Remove("kotlinType");
             }
-            if (!topLevel && (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true) Prepend(fo, Marker(AKReadOnly));
+            // An ordinary file-facade val is restored from its CLR Property row, so its backing field historically
+            // needs no marker. A companion extension is different: dll2klib rebuilds that Kotlin property directly
+            // from this static field and therefore needs the declaration's val/var fact on the field itself.
+            if ((!topLevel || fo["companionReceiver"] is not null) &&
+                (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true)
+                Prepend(fo, Marker(AKReadOnly));
             if (fo["nullableFlags"] is JsonArray nf && NullableAttr(nf) is JsonObject na) Prepend(fo, na);
             if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));
             if (TakeInt(fo, "ctxFnType") is int fctx) Append(fo, Marker(AKCtxFnType, IntArg(fctx)));   // a `val handler: P.() -> R` field (#145)
             if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(fo, CollIdentityAttr(ci));  // #29
+            // The field twin of the method carrier above: `companion val C.bar = 1` stores into a static field of the
+            // file class, and that field is the declaration a consuming module restores the property from.
+            if ((fo["companionReceiver"] as JsonValue)?.GetValue<string>() is string fcr)
+            {
+                var sourceName = (fo["companionSourceName"] as JsonValue)?.GetValue<string>()
+                    ?? throw new InvalidOperationException("companion extension field has no source name");
+                var kind = (fo["companionMemberKind"] as JsonValue)?.GetValue<string>()
+                    ?? throw new InvalidOperationException("companion extension field has no member kind");
+                Append(fo, JsonCarrierAttr(AKCompanionExt, new JsonObject {
+                    ["receiver"] = JsonNode.Parse(fcr),
+                    ["name"] = sourceName,
+                    ["kind"] = kind,
+                }));
+                fo.Remove("companionReceiver");
+                fo.Remove("companionSourceName");
+                fo.Remove("companionMemberKind");
+            }
+            // CLR field metadata has no built-in analogue of Kotlin lateinit. Preserve the trusted declaration fact
+            // explicitly so dll2klib can restore IS_LATEINIT without inspecting names, accessors, or method bodies.
+            if (TakeBool(fo, "lateinit")) Append(fo, Marker(AKLateinit));
         }
     }
 
@@ -517,6 +570,13 @@ static class RoundtripMetadata
         return n;
     }
 
+    static bool TakeBool(JsonObject o, string key)
+    {
+        if (o[key] is not JsonValue v || !v.TryGetValue<bool>(out var value) || !value) return false;
+        o.Remove(key);
+        return true;
+    }
+
     static bool ModFlag(JsonObject obj, string name) =>
         obj["mods"] is JsonObject m && (m[name] as JsonValue)?.GetValue<bool>() == true;
 
@@ -537,12 +597,15 @@ static class RoundtripMetadata
             AttrClass(AKFileClass, Ctor()),
             AttrClass(AKInline, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKReadOnly, Ctor()),
+            AttrClass(AKLateinit, Ctor()),
             AttrClass(AKFunInterface, Ctor()),
             AttrClass(AKSealed, Ctor()),
             AttrClass(AKValue, Ctor()),
             AttrClass(AKObject, Ctor()),
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
+            AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
+            AttrClass(AKStaticCarrier, Ctor(Param("System.String"), Param(ByteArrayType()))), // one physical static surface for a generic Kotlin owner
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKCtxParam, Ctor()),  // bare marker: a Kotlin `context(...)` parameter (physically positional)

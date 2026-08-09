@@ -23,7 +23,7 @@ using DotKt.Bir;
 // ownerless Kotlin call falls back to `method name | emitted-arity`, where conflicting owners are refused loudly.
 //
 // CLOSED CARRIER (#146): a NON-CONSTANT default that lifts a helper — a non-capturing lambda `= {}` (the Avalonia
-// `configure: Panel.() -> Unit = {}` idiom) whose `newDelegate` points at a library-local `__lambdaN` — is carried as a
+// `configure: Panel.() -> Unit = {}` idiom) whose `newDelegate` points at a library-local generated method — is carried as a
 // `{"k":"defaultCarrier","expr":<newDelegate>,"lifted":[<method decls>]}` envelope (kotc BirEmitterDeclarations
 // .defaultCarrierBir). At the splice we RE-HOIST each carried method into THIS file's file-class methods under a fresh
 // per-splice name and rewrite both `newDelegate.method` and its mandatory `calleeOwner` to this consuming file class —

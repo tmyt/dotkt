@@ -6,6 +6,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using DotKt.Bir;
 using DotKt.Toolchain;
 
@@ -16,11 +18,18 @@ sealed partial class ReferenceMetadataIndex
         public MalformedTrustedCompanionException(string message, Exception inner = null) : base(message, inner) { }
     }
 
+    sealed class MalformedTrustedStaticCarrierException : Exception
+    {
+        public MalformedTrustedStaticCarrierException(string message, Exception inner = null) : base(message, inner) { }
+    }
+
     const string KotlinFileClassAttr = "DotKt.Runtime.CompilerServices.KotlinFileClassAttribute";
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
     const string KotlinCompanionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
+    const string KotlinCompanionExtensionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionExtensionAttribute";
+    const string KotlinStaticCarrierAttr = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
     const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
     // The #86/#147 positional carrier: the PRE-erasure Kotlin TypeNode of a declaration slot whose `Nullable(Tv)`
     // NullableGenericErasure object-erased. Read per member slot (return parameter and each value parameter) so a
@@ -46,12 +55,16 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
     readonly HashSet<string> _byRefLikeOwners = new(StringComparer.Ordinal);         // Kotlin FQN -> is a `ref struct`
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
+    readonly HashSet<string> _fileClassOwners = new(StringComparer.Ordinal);          // trusted Kotlin top-level declaration hosts
     readonly Dictionary<string, bool> _companionStaticByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _singletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _semanticOwnerByCompanionCarrier = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionCarrierByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionSourceNameByPhysicalOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _companionExtensionMembers = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionPhysicalOwnerBySemanticType = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _genericStaticCarrierBySemanticOwner = new(StringComparer.Ordinal);
+    readonly HashSet<string> _genericStaticCarriers = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _companionSemanticTypeByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly Dictionary<string, string[]> _ownerTypeParams = new(StringComparer.Ordinal); // Kotlin FQN -> generic param names
@@ -130,6 +143,9 @@ sealed partial class ReferenceMetadataIndex
     MetadataLoadContext _netMlc;
     List<Assembly> _netRefAsms;       // the explicit --compile-refs assemblies (framework + user references)
     readonly Dictionary<string, Type> _netTypeCache = new(StringComparer.Ordinal);
+    readonly Dictionary<string, (bool Found, TypeNode Type, JsonNode Value)> _literalFieldCache =
+        new(StringComparer.Ordinal);
+    readonly Dictionary<string, bool> _volatileFieldCache = new(StringComparer.Ordinal);
     bool _netInit;
 
     // The bare FQNs of every type DECLARED in THIS compilation (this run's BIR `types`). A local declaration is the
@@ -183,6 +199,8 @@ sealed partial class ReferenceMetadataIndex
             foreach (var owner in asm.DotKt.ByRefLikeOwners) _byRefLikeOwners.Add(owner);
             foreach (var owner in asm.DotKt.DotKtOwners)
                 _dotKtOwners.Add(StripGenericArity(DottedFqn(owner)));
+            foreach (var owner in asm.DotKt.FileClassOwners)
+                _fileClassOwners.Add(StripGenericArity(DottedFqn(owner)));
             foreach (var kv in asm.DotKt.CompanionStaticByPhysicalOwner)
             {
                 var physicalOwner = StripGenericArity(DottedFqn(kv.Key));
@@ -223,6 +241,12 @@ sealed partial class ReferenceMetadataIndex
                     _companionSourceNameByPhysicalOwner[physicalOwner] != kv.Value)
                     throw new InvalidOperationException($"conflicting Kotlin companion source name for '{physicalOwner}'");
             }
+            foreach (var kv in asm.DotKt.CompanionExtensionMembers)
+            {
+                if (!_companionExtensionMembers.TryAdd(kv.Key, kv.Value) &&
+                    _companionExtensionMembers[kv.Key] != kv.Value)
+                    throw new InvalidOperationException($"conflicting Kotlin companion-extension member '{kv.Key}'");
+            }
             foreach (var kv in asm.DotKt.CompanionPhysicalOwnerBySemanticType)
             {
                 var semanticType = StripGenericArity(DottedFqn(kv.Key));
@@ -234,6 +258,13 @@ sealed partial class ReferenceMetadataIndex
                     StripGenericArity(DottedFqn(physicalOwner)), semanticType) ||
                     _companionSemanticTypeByPhysicalOwner[StripGenericArity(DottedFqn(physicalOwner))] != semanticType)
                     throw new InvalidOperationException($"conflicting Kotlin companion physical declaration owner '{physicalOwner}'");
+            }
+            foreach (var kv in asm.DotKt.GenericStaticCarrierBySemanticOwner)
+            {
+                var semantic = StripGenericArity(DottedFqn(kv.Key));
+                if (!_genericStaticCarrierBySemanticOwner.TryAdd(semantic, kv.Value))
+                    throw new InvalidOperationException($"conflicting generic-static carrier for '{semantic}'");
+                _genericStaticCarriers.Add(StripGenericArity(DottedFqn(kv.Value)));
             }
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
@@ -579,6 +610,90 @@ sealed partial class ReferenceMetadataIndex
         return ProbeNetType(fqn, genericArity);
     }
 
+    // A referenced Literal FieldDef has no storage to load. Select its exact Constant-table value and Kotlin surface
+    // type here so ConstFieldLowering can author a `const` CIR node; ilemit must not rediscover this representation.
+    public bool TryResolveLiteralField(TypeNode.Fqn owner, string name, out TypeNode type, out JsonNode value)
+    {
+        type = null;
+        value = null;
+        if (owner == null || string.IsNullOrEmpty(name)) return false;
+        var cacheKey = owner.Name + "|" + (owner.Args?.Length ?? 0) + "|" + name;
+        if (_literalFieldCache.TryGetValue(cacheKey, out var cached))
+        {
+            type = cached.Type;
+            value = cached.Value?.DeepClone();
+            return cached.Found;
+        }
+        var reflectedOwner = ResolveRefType(owner.Name, owner.Args?.Length ?? 0);
+        FieldInfo field;
+        try
+        {
+            field = reflectedOwner?.GetField(name,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.FlattenHierarchy);
+        }
+        catch { return CacheLiteralMiss(cacheKey, out type, out value); }
+        if (field == null || !field.IsLiteral) return CacheLiteralMiss(cacheKey, out type, out value);
+        object raw;
+        try { raw = field.GetRawConstantValue(); }
+        catch { return CacheLiteralMiss(cacheKey, out type, out value); }
+        if (raw == null) return CacheLiteralMiss(cacheKey, out type, out value);
+        type = KotlinTypeOf(field.GetCustomAttributesData(), field.DeclaringType?.Assembly)
+            ?? TypeNodeOf(field.FieldType);
+        if (type == null) return CacheLiteralMiss(cacheKey, out type, out value);
+        value = LiteralValueNode(raw);
+        if (value == null) return CacheLiteralMiss(cacheKey, out type, out value);
+        _literalFieldCache[cacheKey] = (true, type, value.DeepClone());
+        return true;
+    }
+
+    bool CacheLiteralMiss(string cacheKey, out TypeNode type, out JsonNode value)
+    {
+        _literalFieldCache[cacheKey] = (false, null, null);
+        type = null;
+        value = null;
+        return false;
+    }
+
+    // CIR const values use the same compact wire convention as kotc-authored BIR: non-finite floating-point values
+    // are strings because JSON has no tokens for them, and unsigned 32/64-bit values are their signed bit patterns
+    // because ilemit consumes them with GetInt32/GetInt64 before emitting the representation-identical ldc opcode.
+    // Reflection returns the CLR scalar, so normalize it here while bir2cir still owns the physical representation.
+    static JsonNode LiteralValueNode(object raw) => raw switch
+    {
+        double value when double.IsNaN(value) || double.IsInfinity(value) =>
+            JsonValue.Create(value.ToString("R", CultureInfo.InvariantCulture)),
+        float value when float.IsNaN(value) || float.IsInfinity(value) =>
+            JsonValue.Create(value.ToString("R", CultureInfo.InvariantCulture)),
+        uint value => JsonValue.Create(unchecked((int)value)),
+        ulong value => JsonValue.Create(unchecked((long)value)),
+        char value => JsonValue.Create(value.ToString()),
+        _ => JsonSerializer.SerializeToNode(raw, raw.GetType()),
+    };
+
+    // Volatility of a referenced field is a concrete CLR representation fact. Resolve it while reading the reference
+    // universe and carry it into CIR; ilemit must not reopen a FieldInfo and infer the missing prefix at emission time.
+    public bool TryResolveVolatileField(TypeNode.Fqn owner, string name)
+    {
+        if (owner == null || string.IsNullOrEmpty(name)) return false;
+        var cacheKey = owner.Name + "|" + (owner.Args?.Length ?? 0) + "|" + name;
+        if (_volatileFieldCache.TryGetValue(cacheKey, out var cached)) return cached;
+        var reflectedOwner = ResolveRefType(owner.Name, owner.Args?.Length ?? 0);
+        FieldInfo field;
+        try
+        {
+            field = reflectedOwner?.GetField(name, BindingFlags.Public | BindingFlags.NonPublic |
+                BindingFlags.Static | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+        }
+        catch { return _volatileFieldCache[cacheKey] = false; }
+        if (field == null) return _volatileFieldCache[cacheKey] = false;
+        try
+        {
+            return _volatileFieldCache[cacheKey] = field.GetRequiredCustomModifiers().Any(type =>
+                type.FullName == "System.Runtime.CompilerServices.IsVolatile");
+        }
+        catch (NotSupportedException) { return _volatileFieldCache[cacheKey] = false; }
+    }
+
     // Resolve the physical ECMA-335 constant of a named entry on an external CLR enum. The BIR entry name is Kotlin
     // declaration identity; the underlying value is a CLR representation fact and therefore enters CIR only here.
     // String form preserves the complete UInt64 domain without lossy JSON-number conversion.
@@ -787,6 +902,9 @@ sealed partial class ReferenceMetadataIndex
     public bool HasDotKtOwner(string ownerFqn) =>
         ownerFqn != null && _dotKtOwners.Contains(StripGenericArity(DottedFqn(ownerFqn)));
 
+    public bool IsFileClassOwner(string ownerFqn) =>
+        ownerFqn != null && _fileClassOwners.Contains(StripGenericArity(DottedFqn(ownerFqn)));
+
     public bool TryCompanionIsStatic(string physicalOwner, out bool isStatic) =>
         _companionStaticByPhysicalOwner.TryGetValue(
             StripGenericArity(DottedFqn(physicalOwner)), out isStatic);
@@ -811,9 +929,32 @@ sealed partial class ReferenceMetadataIndex
             _companionCarrierByPhysicalOwner.TryGetValue(key, out carrier);
     }
 
+    public bool TryCompanionExtensionMember(
+        string owner, string receiverJson, string kind, string sourceName, out string physicalName) =>
+        _companionExtensionMembers.TryGetValue(
+            CompanionExtensionKey(owner, receiverJson, kind, sourceName), out physicalName);
+
+    static string CompanionExtensionKey(string owner, string receiverJson, string kind, string sourceName)
+    {
+        if (owner == null || receiverJson == null || kind == null || sourceName == null) return "";
+        var classifier = TypeJson.OwnerName(JsonNode.Parse(receiverJson))
+            ?? throw new InvalidDataException("companion-extension receiver payload is not a classifier");
+        // The source language association is the bare classifier. dll2klib can legitimately rehydrate a generic
+        // receiver as C<Any>; its arguments are not declaration identity and must not enter this trusted key.
+        var receiver = TypeJson.Fqn(classifier).ToJsonString();
+        return StripGenericArity(DottedFqn(owner)) + "\u001f" + receiver + "\u001f" + kind + "\u001f" + sourceName;
+    }
+
     public bool TryCompanionPhysicalOwner(string semanticType, out string physicalOwner) =>
         _companionPhysicalOwnerBySemanticType.TryGetValue(
             StripGenericArity(DottedFqn(semanticType)), out physicalOwner);
+
+    public bool TryGenericStaticCarrier(string semanticOwner, out string physicalOwner) =>
+        _genericStaticCarrierBySemanticOwner.TryGetValue(
+            StripGenericArity(DottedFqn(semanticOwner)), out physicalOwner);
+
+    public bool IsGenericStaticCarrier(string physicalOwner) =>
+        _genericStaticCarriers.Contains(StripGenericArity(DottedFqn(physicalOwner)));
 
     public bool TryCompanionSemanticType(string physicalOwner, out string semanticType) =>
         _companionSemanticTypeByPhysicalOwner.TryGetValue(
@@ -1830,6 +1971,7 @@ sealed partial class ReferenceMetadataIndex
     {
         try
         {
+            ValidateCompanionMetadata(reference);
             var asm = mlc.LoadFromAssemblyPath(Path.GetFullPath(reference));
 
             Type[] types;
@@ -1857,6 +1999,40 @@ sealed partial class ReferenceMetadataIndex
             foreach (var companion in singletonCompanionCarriers)
                 metadata.SingletonCompanionCarrierBySemanticOwner.Add(companion.Key, companion.Value);
 
+            if (dotKtAuthored)
+            {
+                var bySemanticName = types.GroupBy(
+                        t => StripGenericArity(DottedFqn(t.FullName ?? t.Name)), StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+                foreach (var carrierType in types)
+                {
+                    var payload = TrustedStaticCarrierPayload(carrierType, asm);
+                    if (payload == null) continue;
+                    var owner = payload["owner"].GetValue<string>();
+                    var physical = StripGenericArity(DottedFqn(carrierType.FullName ?? carrierType.Name));
+                    if (!carrierType.IsPublic)
+                        throw new MalformedTrustedStaticCarrierException(
+                            $"trusted [KotlinStaticCarrier] '{carrierType.FullName}' must be public");
+                    if (string.IsNullOrEmpty(owner) || carrierType.IsGenericType ||
+                        !HasAttribute(carrierType.GetCustomAttributesData(), CompilerGeneratedAttr) ||
+                        !bySemanticName.TryGetValue(StripGenericArity(DottedFqn(owner)), out var semanticTypes) ||
+                        semanticTypes.Length != 1 || !semanticTypes[0].IsGenericTypeDefinition)
+                        throw new MalformedTrustedStaticCarrierException(
+                            $"malformed trusted [KotlinStaticCarrier] on '{carrierType.FullName}'");
+                    ValidateStaticCarrierMembers(carrierType);
+                    var semanticOwner = StripGenericArity(DottedFqn(owner));
+                    if (!metadata.GenericStaticCarrierBySemanticOwner.TryAdd(semanticOwner, physical))
+                        throw new MalformedTrustedStaticCarrierException(
+                            $"duplicate trusted [KotlinStaticCarrier] for semantic owner '{semanticOwner}'");
+                }
+            }
+
+            var semanticOwnerByStaticCarrier = metadata.GenericStaticCarrierBySemanticOwner
+                .ToDictionary(
+                    kv => StripGenericArity(DottedFqn(kv.Value)),
+                    kv => StripGenericArity(DottedFqn(kv.Key)),
+                    StringComparer.Ordinal);
+
             foreach (var type in types)
             {
                 try
@@ -1865,6 +2041,8 @@ sealed partial class ReferenceMetadataIndex
                     // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
+                    var indexedOwnerFqn = semanticOwnerByStaticCarrier.GetValueOrDefault(
+                        StripGenericArity(DottedFqn(ownerFqn))) ?? ownerFqn;
                     // dll2klib never exposes compiler-generated implementation classifiers to Kotlin. Do not let a
                     // same-named inline-materialized closure in the current compilation be rebound to a stale helper
                     // TypeDef from a reference assembly merely because both deterministic names coincide.
@@ -1940,6 +2118,10 @@ sealed partial class ReferenceMetadataIndex
                     if (ownerFqn.StartsWith("dotkt$ClrH_", StringComparison.Ordinal)) metadata.HelperTypes.Add(ownerFqn);
                     if (HasAttribute(type.GetCustomAttributesData(), RestrictsSuspensionAttr)) metadata.RestrictsSuspensionTypes.Add(ownerFqn);
                     var isFileClass = HasAttribute(type.GetCustomAttributesData(), KotlinFileClassAttr);
+                    if (dotKtAuthored && isFileClass)
+                        metadata.FileClassOwners.Add(StripGenericArity(DottedFqn(ownerFqn)));
+                    if (dotKtAuthored)
+                        IndexCompanionExtensionMembers(type, ownerFqn, isFileClass, metadata);
 
                     // `value`/inline class (marked with [KotlinValue], the 2.4.0 carrier of `mods.value`): its single
                     // instance backing field IS the erased value. Record that property's GETTER + the field's CLR conv
@@ -1981,7 +2163,7 @@ sealed partial class ReferenceMetadataIndex
                         // const expression. The reference KLIB carries only DECLARES_DEFAULT_VALUE for frontend
                         // resolution, never either payload.
                         if (CallableDefaultsOf(method) is Dictionary<int, string> defaults)
-                            AddKotlinDefaults(metadata, ownerFqn, method.Name, method.GetParameters(), defaults);
+                            AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults);
                         // The `suspend` bit from the DotKt round-trip [KotlinFunction(flags)] attribute (Suspend = 4,
                         // the flag word ilemit stamps; the dead Assembly.LoadFrom scan read it, this live scan didn't).
                         // Channelled into MemberBinding.Suspend for the coroutine bundle (bundle 6) — no consumer yet.
@@ -1989,7 +2171,7 @@ sealed partial class ReferenceMetadataIndex
                         if (suspend && Environment.GetEnvironmentVariable("DOTKT_BIR2CIR_DEBUG_SUSPEND") == "1")
                             Console.Error.WriteLine($"bir2cir: ref-scan suspend member {ownerFqn}.{method.Name}/{method.GetParameters().Length} (Suspend=true)");
                         metadata.MemberBindings.Add(new MemberBinding(
-                            ownerFqn,
+                            indexedOwnerFqn,
                             method.Name,
                             method.GetParameters().Length,
                             intrinsic,
@@ -2036,7 +2218,7 @@ sealed partial class ReferenceMetadataIndex
                                 // leading `__self` param). InlineSplice picks the UNIQUE candidate whose decoded `params[i].type`
                                 // structurally matches the call's paramSig — the decoded params are kotc-emitted decl nodes, so
                                 // they equal the callInline's paramSig exactly (both from `birType(param.type)`).
-                                var ikey = ownerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length;
+                                var ikey = indexedOwnerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length;
                                 if (!metadata.InlinePayloads.TryGetValue(ikey, out var ilst)) metadata.InlinePayloads[ikey] = ilst = new List<string>();
                                 ilst.Add(json);
                             }
@@ -2146,6 +2328,7 @@ sealed partial class ReferenceMetadataIndex
                     }
                 }
                 catch (MalformedTrustedCompanionException) { throw; }
+                catch (MalformedTrustedStaticCarrierException) { throw; }
                 catch (InvalidDataException) { throw; }
                 catch (Exception ex)
                 {
@@ -2154,10 +2337,43 @@ sealed partial class ReferenceMetadataIndex
             }
         }
         catch (MalformedTrustedCompanionException) { throw; }
+        catch (MalformedTrustedStaticCarrierException) { throw; }
         catch (InvalidDataException) { throw; }
         catch (Exception ex)
         {
             metadata.Diagnostics.Add($"{Path.GetFileName(reference)}: subst scan failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    // CustomAttribute.Parent can name metadata rows that reflection has no object model for (notably InterfaceImpl
+    // and GenericParamConstraint). Validate the trusted companion-extension and static carriers over the complete ECMA
+    // table before MLC projects the assembly. The shared raw reader also validates the exact constructor blobs
+    // (including zero named arguments), so bir2cir and dll2klib accept precisely the same carrier envelopes rather than
+    // two reflection-dependent subsets.
+    static void ValidateCompanionMetadata(string reference)
+    {
+        using var stream = File.OpenRead(reference);
+        using var pe = new PEReader(stream, PEStreamOptions.PrefetchMetadata);
+        if (!pe.HasMetadata) return;
+        var reader = pe.GetMetadataReader();
+        var attrs = new MetadataAttributes(reader);
+        if (!attrs.IsDotKtAssembly) return;
+
+        attrs.ValidateCarrierTargets(
+            KotlinCompanionExtensionAttr,
+            HandleKind.MethodDefinition,
+            HandleKind.FieldDefinition);
+        attrs.ValidateCarrierTargets(
+            KotlinStaticCarrierAttr,
+            HandleKind.TypeDefinition);
+        foreach (var typeHandle in reader.TypeDefinitions)
+        {
+            var type = reader.GetTypeDefinition(typeHandle);
+            using (attrs.CarrierDocument(typeHandle, KotlinStaticCarrierAttr)) { }
+            foreach (var method in type.GetMethods())
+                using (attrs.CarrierDocument(method, KotlinCompanionExtensionAttr)) { }
+            foreach (var field in type.GetFields())
+                using (attrs.CarrierDocument(field, KotlinCompanionExtensionAttr)) { }
         }
     }
 
@@ -2471,6 +2687,133 @@ sealed partial class ReferenceMetadataIndex
             cad.ConstructorArguments[0].Value is not string version)
             return null;
         return BirCarrier.DecodeBody(version, ReadByteArrayArg(cad.ConstructorArguments[1]));
+    }
+
+    static void IndexCompanionExtensionMembers(
+        Type type, string ownerFqn, bool isFileClass, ReferenceDotKtMetadata metadata)
+    {
+        // Constructors share MethodDef as their ECMA-335 parent kind, but reflection deliberately excludes them from
+        // GetMethods.  Inspect both instance constructors and the type initializer explicitly so the trusted-carrier
+        // validator accepts the same physical member set as dll2klib's MetadataReader walk.  No constructor is an
+        // ordinary Kotlin companion-extension function, even when its carrier payload is otherwise well-formed.
+        foreach (var constructor in type.GetConstructors(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+            if (CompanionExtensionPayload(constructor.GetCustomAttributesData(), type.Assembly) != null)
+                throw new InvalidDataException(
+                    $"malformed trusted [KotlinCompanionExtension] on constructor '{type.FullName}.{constructor.Name}'");
+        if (type.TypeInitializer is ConstructorInfo typeInitializer &&
+            CompanionExtensionPayload(typeInitializer.GetCustomAttributesData(), type.Assembly) != null)
+            throw new InvalidDataException(
+                $"malformed trusted [KotlinCompanionExtension] on constructor '{type.FullName}.{typeInitializer.Name}'");
+
+        foreach (var method in type.GetMethods(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance |
+            BindingFlags.DeclaredOnly))
+        {
+            var payload = CompanionExtensionPayload(method.GetCustomAttributesData(), type.Assembly);
+            if (payload == null) continue;
+            if (!isFileClass || !method.IsStatic || method.IsSpecialName || payload.Kind == "field")
+                throw new InvalidDataException(
+                    $"malformed trusted [KotlinCompanionExtension] on method '{type.FullName}.{method.Name}'");
+            AddCompanionExtensionMember(metadata, ownerFqn, payload, method.Name);
+        }
+
+        foreach (var field in type.GetFields(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance |
+            BindingFlags.DeclaredOnly))
+        {
+            var payload = CompanionExtensionPayload(field.GetCustomAttributesData(), type.Assembly);
+            if (payload == null) continue;
+            if (!isFileClass || !field.IsStatic || payload.Kind != "field")
+                throw new InvalidDataException(
+                    $"malformed trusted [KotlinCompanionExtension] on field '{type.FullName}.{field.Name}'");
+            AddCompanionExtensionMember(metadata, ownerFqn, payload, field.Name);
+        }
+    }
+
+    sealed record CompanionExtensionPayloadInfo(string ReceiverJson, string Name, string Kind);
+
+    static CompanionExtensionPayloadInfo CompanionExtensionPayload(
+        IList<CustomAttributeData> attrs, Assembly declaringAssembly)
+    {
+        var trusted = attrs.Where(c =>
+            c.AttributeType.FullName == KotlinCompanionExtensionAttr &&
+            c.AttributeType.Assembly == declaringAssembly &&
+            HasAttribute(c.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
+        if (trusted.Length == 0) return null;
+        if (trusted.Length != 1)
+            throw new InvalidDataException("expected exactly one trusted [KotlinCompanionExtension]");
+
+        var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinCompanionExtensionAttr) as JsonObject
+            ?? throw new InvalidDataException("malformed [KotlinCompanionExtension] payload");
+        if (payload.Count != 3 || payload["receiver"] == null ||
+            payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name) ||
+            payload["kind"] is not JsonValue kindValue || !kindValue.TryGetValue<string>(out var kind) ||
+            string.IsNullOrEmpty(name) || kind is not ("function" or "get" or "set" or "field"))
+            throw new InvalidDataException("malformed [KotlinCompanionExtension] payload");
+        if (TypeJson.Read(payload["receiver"]) is not TypeNode.Fqn { Args: null } receiverType)
+            throw new InvalidDataException("companion-extension receiver is not a bare classifier type");
+        var receiver = TypeJson.Write(receiverType).ToJsonString();
+        return new CompanionExtensionPayloadInfo(receiver, name, kind);
+    }
+
+    static void AddCompanionExtensionMember(
+        ReferenceDotKtMetadata metadata,
+        string owner,
+        CompanionExtensionPayloadInfo payload,
+        string physicalName)
+    {
+        var key = CompanionExtensionKey(owner, payload.ReceiverJson, payload.Kind, payload.Name);
+        if (!metadata.CompanionExtensionMembers.TryAdd(key, physicalName) &&
+            metadata.CompanionExtensionMembers[key] != physicalName)
+            throw new InvalidDataException(
+                $"conflicting companion-extension physical members for '{owner}.{payload.Name}'");
+    }
+
+    static JsonObject TrustedStaticCarrierPayload(Type carrierType, Assembly declaringAssembly)
+    {
+        try
+        {
+            var attrs = carrierType.GetCustomAttributesData().Where(c =>
+                c.AttributeType.FullName == KotlinStaticCarrierAttr &&
+                c.AttributeType.Assembly == declaringAssembly &&
+                HasAttribute(c.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr))
+                .ToArray();
+            if (attrs.Length == 0) return null;
+            if (attrs.Length != 1)
+                throw new FormatException("expected exactly one trusted attribute");
+            var attr = attrs[0];
+            if (attr.ConstructorArguments.Count != 2 ||
+                attr.ConstructorArguments[0].Value is not string version)
+                throw new FormatException("expected (version, byte[]) constructor arguments");
+            if (attr.NamedArguments.Count != 0)
+                throw new FormatException("named arguments are forbidden");
+            if (BirCarrier.DecodeBody(version, ReadByteArrayArg(attr.ConstructorArguments[1])) is not JsonObject payload ||
+                payload.Count != 1 || payload["owner"] is not JsonValue ownerValue ||
+                !ownerValue.TryGetValue<string>(out var owner) || string.IsNullOrEmpty(owner))
+                throw new FormatException("expected exactly one non-empty string 'owner'");
+            return payload;
+        }
+        catch (MalformedTrustedStaticCarrierException) { throw; }
+        catch (Exception ex)
+        {
+            throw new MalformedTrustedStaticCarrierException(
+                $"malformed trusted [KotlinStaticCarrier] on '{carrierType.FullName}'", ex);
+        }
+    }
+
+    static void ValidateStaticCarrierMembers(Type carrierType)
+    {
+        const BindingFlags declared = BindingFlags.Public | BindingFlags.NonPublic |
+            BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        if (carrierType.GetFields(declared).Any(field => !field.IsStatic) ||
+            carrierType.GetMethods(declared).Any(method => !method.IsStatic) ||
+            carrierType.GetConstructors(declared).Any(ctor => !ctor.IsStatic) ||
+            carrierType.GetProperties(declared).Any(property =>
+                property.GetAccessors(nonPublic: true) is not { Length: > 0 } accessors ||
+                accessors.Any(accessor => !accessor.IsStatic)))
+            throw new MalformedTrustedStaticCarrierException(
+                $"trusted [KotlinStaticCarrier] '{carrierType.FullName}' contains an instance declaration");
     }
 
     // The first constructor string argument of the attribute `fullName` (e.g. @ClrCollectionFactory("list") -> "list"),
@@ -2996,11 +3339,15 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
     public readonly HashSet<string> ByRefLikeOwners = new(StringComparer.Ordinal);        // ownerFqn -> is a `ref struct` (see IsByRefLikeFqn)
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
+    public readonly HashSet<string> FileClassOwners = new(StringComparer.Ordinal);         // trusted [KotlinFileClass] types
     public readonly Dictionary<string, bool> CompanionStaticByPhysicalOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> SingletonCompanionCarrierBySemanticOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionCarrierByPhysicalOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionSourceNameByPhysicalOwner = new(StringComparer.Ordinal);
+    // owner + semantic receiver + member role + Kotlin source name -> exact MethodDef/FieldDef name.
+    public readonly Dictionary<string, string> CompanionExtensionMembers = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionPhysicalOwnerBySemanticType = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> GenericStaticCarrierBySemanticOwner = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> CompanionSemanticOwnerByCarrier = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names

@@ -35,7 +35,35 @@ sealed partial class Emitter
 
     // Emit the `volatile.` prefix before a ld/st opcode when the field is volatile (no-op otherwise). Pairs with the
     // `modreq(IsVolatile)` on the field itself — this is what the C# compiler emits for a `volatile` field access.
-    void MaybeVolatile(FieldInfo fld) { if (fld != null && _volatileFields.Contains(fld)) _il.Emit(OpCodes.Volatile); }
+    void MaybeVolatile(FieldInfo fld, JsonElement? access = null)
+    {
+        var isVolatile = fld != null && _volatileFields.Contains(fld) ||
+            access is JsonElement carried && carried.TryGetProperty("volatile", out var marker) &&
+            marker.ValueKind == JsonValueKind.True;
+        if (isVolatile) _il.Emit(OpCodes.Volatile);
+    }
+
+    object LiteralConstant(JsonElement value, Type type)
+    {
+        if (value.ValueKind == JsonValueKind.Null) return null;
+        if (type == Bcl("System.String")) return value.GetString();
+        if (type == Bcl("System.Boolean")) return value.GetBoolean();
+        if (type == Bcl("System.Char")) return value.ValueKind == JsonValueKind.String
+            ? value.GetString()[0] : (char)value.GetInt32();
+        if (type == Bcl("System.SByte")) return (sbyte)value.GetInt32();
+        if (type == Bcl("System.Byte")) return (byte)value.GetInt32();
+        if (type == Bcl("System.Int16")) return (short)value.GetInt32();
+        if (type == Bcl("System.UInt16")) return (ushort)value.GetInt32();
+        if (type == Bcl("System.Int32")) return value.GetInt32();
+        if (type == Bcl("System.UInt32")) return unchecked((uint)value.GetInt32());
+        if (type == Bcl("System.Int64")) return value.GetInt64();
+        if (type == Bcl("System.UInt64")) return unchecked((ulong)value.GetInt64());
+        if (type == Bcl("System.Single")) return value.ValueKind == JsonValueKind.String
+            ? float.Parse(value.GetString(), System.Globalization.CultureInfo.InvariantCulture) : value.GetSingle();
+        if (type == Bcl("System.Double")) return value.ValueKind == JsonValueKind.String
+            ? double.Parse(value.GetString(), System.Globalization.CultureInfo.InvariantCulture) : value.GetDouble();
+        throw new InvalidOperationException($"unsupported literal field type '{type}'");
+    }
 
     // Structured declaration-modifier lookup (spec §2.1): `decl.mods.<key> == true` (absent object/key = false).
     // Replaces the scattered top-level boolean fields (isFun/isSealed/inline/infix/operator/suspend/vararg…).

@@ -17,7 +17,7 @@ using System.Text.Json.Nodes;
 // is not user-authored" signal that debuggers, analyzers and serializers key on (C# stamps the same attribute on the
 // same field).
 //
-// DISCRIMINATOR: an INSTANCE field whose owner also declares a `properties` record of the same name. That pairing is a
+// DISCRIMINATOR: a field whose owner also declares a `properties` record of the same name. That pairing is a
 // CLR-representation fact read off the CIR type declaration — the property record and the field list are exactly the
 // inputs to "how is this property's storage named on the CLR", which is this layer's decision; it is deliberately NOT
 // a Kotlin-frontend flag. It covers bir2cir's OWN synthesized adapters too (StringCharSequenceBridge's
@@ -25,11 +25,15 @@ using System.Text.Json.Nodes;
 // (DeclarationRename, which runs earlier, rewrites a property record's `get`/`set` but never its `name`, so the
 // pairing key is stable.)
 //
+// STATIC storage is in scope on exactly the same terms. A Kotlin 2.4 `companion { val v = … }` is an accessor-routed
+// property of its class whose storage happens to be static, and ECMA-335 name uniqueness within a TypeDef does not
+// care whether the clashing pair is static: a static field `v` alongside a property `v` is the same broken metadata.
+//
 // OUT OF SCOPE — every property whose storage IS the user-visible member emits NO property record, so none of them is
 // touched and every user-visible field keeps its name: a `@ClrField` property (the opt-out that deliberately emits a
-// plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a companion/top-level static field
-// and every capture/synthetic field. A property with a CUSTOM accessor that still has a backing field
-// (`val x = 7; get() = field + 1`) IS accessor-routed and IS renamed.
+// plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a top-level static field, an
+// `object`'s `INSTANCE`, an enum entry's singleton and every capture/synthetic field. A property with a CUSTOM
+// accessor that still has a backing field (`val x = 7; get() = field + 1`) IS accessor-routed and IS renamed.
 //
 // Runs GLOBALLY over all staged roots (a `byref(obj.prop)` addresses a sibling file's backing field directly) and in
 // EVERY build — ref, runtime and app agree on the emitted shape. Placed at the end of the global structural phase:
@@ -39,9 +43,16 @@ static class BackingFieldRename
 {
     const string CompilerGeneratedAttr = "System.Runtime.CompilerServices.CompilerGeneratedAttribute";
 
-    // The instance-field-addressing node kinds: a read, a statement write and an expression write. `staticField`/
-    // `staticFieldSet` are deliberately absent — a static field is never an accessor-routed property's storage.
-    static readonly HashSet<string> FieldNodeKinds = new(StringComparer.Ordinal) { "field", "setField", "setFieldExpr" };
+    // The field-addressing node kinds: a read, a statement write and an expression write, in their INSTANCE and their
+    // STATIC spellings. Both key the owner on `ownerType` and the member on `name`, and the kind alone says which
+    // storage the node addresses — which is why the two are rewritten against separate maps. A type can declare an
+    // instance field and a static field of the SAME Kotlin name (an `object` singleton's `INSTANCE` beside a user
+    // `val INSTANCE`), and renaming a static use against the instance map pointed the singleton load at storage that
+    // does not exist.
+    static readonly HashSet<string> InstanceFieldNodeKinds = new(StringComparer.Ordinal)
+        { "field", "setField", "setFieldExpr" };
+    static readonly HashSet<string> StaticFieldNodeKinds = new(StringComparer.Ordinal)
+        { "staticField", "staticFieldSet", "setStaticField", "setStaticFieldExpr" };
 
     public static void ApplyAll(IReadOnlyList<JsonNode> roots)
     {
@@ -49,29 +60,30 @@ static class BackingFieldRename
         // field node whose `ownerType` names a SUBCLASS (kotc spells a fake-override property's owner as the receiver's
         // class) still resolves to the base that declares the storage.
         var renames = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        var staticRenames = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         var bases = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var root in roots) CollectTypes(root, renames, bases);
-        if (renames.Count == 0) return;
-        foreach (var root in roots) RewriteUses(root, renames, bases);
+        foreach (var root in roots) CollectTypes(root, renames, staticRenames, bases);
+        if (renames.Count == 0 && staticRenames.Count == 0) return;
+        foreach (var root in roots) RewriteUses(root, renames, staticRenames, bases);
     }
 
     // The CLR metadata name for the backing store of property `prop`.
     internal static string Mangle(string prop) => "<" + prop + ">k__BackingField";
 
     static void CollectTypes(JsonNode node, Dictionary<string, Dictionary<string, string>> renames,
-        Dictionary<string, string> bases)
+        Dictionary<string, Dictionary<string, string>> staticRenames, Dictionary<string, string> bases)
     {
         if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
         foreach (var t in types)
             if (t is JsonObject td)
             {
-                RenameDecls(td, renames, bases);
-                CollectTypes(td, renames, bases);   // a nested `types` array, mirroring the other type walkers
+                RenameDecls(td, renames, staticRenames, bases);
+                CollectTypes(td, renames, staticRenames, bases);   // a nested `types` array, mirroring the other walkers
             }
     }
 
     static void RenameDecls(JsonObject td, Dictionary<string, Dictionary<string, string>> renames,
-        Dictionary<string, string> bases)
+        Dictionary<string, Dictionary<string, string>> staticRenames, Dictionary<string, string> bases)
     {
         if (Str(td["name"]) is not string rawName) return;
         var owner = ReferenceMetadataIndex.BareOwnerFqn(rawName);
@@ -87,13 +99,22 @@ static class BackingFieldRename
         var declared = new HashSet<string>(StringComparer.Ordinal);
         foreach (var f in fields)
             if (f is JsonObject fo && Str(fo["name"]) is string fn) declared.Add(fn);
+        // The names an INSTANCE field already claims. A property's storage is instance storage whenever the owner
+        // has any, so a same-named STATIC field beside it is a different member that merely collides — an `object`
+        // singleton's `INSTANCE` next to a user `val INSTANCE`, say. Renaming both would give the type two fields
+        // with one name, which is worse than the clash the rename exists to remove.
+        var instanceNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var f in fields)
+            if (f is JsonObject fo && (fo["static"] as JsonValue)?.GetValue<bool>() != true
+                && Str(fo["name"]) is string ifn) instanceNames.Add(ifn);
 
-        Dictionary<string, string> map = null;
+        Dictionary<string, string> map = null, staticMap = null;
         foreach (var f in fields)
         {
             if (f is not JsonObject fo) continue;
-            if ((fo["static"] as JsonValue)?.GetValue<bool>() == true) continue;
             if (Str(fo["name"]) is not string fieldName || !propNames.Contains(fieldName)) continue;
+            var isStatic = (fo["static"] as JsonValue)?.GetValue<bool>() == true;
+            if (isStatic && instanceNames.Contains(fieldName)) continue;
             var mangled = Mangle(fieldName);
             // Belt-and-braces. The frontend already rejects the spelling outright — a backtick-quoted
             // `` `<Value>k__BackingField` `` fails kotc with "name contains illegal characters: <>" — so no user
@@ -103,14 +124,21 @@ static class BackingFieldRename
                     $"bir2cir: '{owner}' already declares a field named '{mangled}'; cannot rename the backing field of property '{fieldName}'");
             fo["name"] = mangled;
             StampCompilerGenerated(fo);
-            (map ??= new Dictionary<string, string>(StringComparer.Ordinal))[fieldName] = mangled;
+            if (isStatic) (staticMap ??= new Dictionary<string, string>(StringComparer.Ordinal))[fieldName] = mangled;
+            else (map ??= new Dictionary<string, string>(StringComparer.Ordinal))[fieldName] = mangled;
         }
-        if (map == null) return;
         // MERGE, never replace: `owner` is the arity-stripped FQN, so two decls could in principle share the key —
         // dropping the earlier map would silently leave its use sites pointing at the old name.
-        if (renames.TryGetValue(owner, out var existing))
+        Merge(renames, owner, map);
+        Merge(staticRenames, owner, staticMap);
+    }
+
+    static void Merge(Dictionary<string, Dictionary<string, string>> into, string owner, Dictionary<string, string> map)
+    {
+        if (map == null) return;
+        if (into.TryGetValue(owner, out var existing))
             foreach (var kv in map) existing[kv.Key] = kv.Value;
-        else renames[owner] = map;
+        else into[owner] = map;
     }
 
     // Append the standard [CompilerGenerated] to the field's applied-attribute array. `attrExternal` is required: the
@@ -129,19 +157,21 @@ static class BackingFieldRename
     }
 
     static void RewriteUses(JsonNode node, Dictionary<string, Dictionary<string, string>> renames,
-        Dictionary<string, string> bases)
+        Dictionary<string, Dictionary<string, string>> staticRenames, Dictionary<string, string> bases)
     {
         if (node is JsonObject obj)
         {
-            if (Str(obj["k"]) is string k && FieldNodeKinds.Contains(k)
+            if (Str(obj["k"]) is string k
+                && (InstanceFieldNodeKinds.Contains(k) ? renames : StaticFieldNodeKinds.Contains(k) ? staticRenames : null)
+                    is { } map
                 && Str(obj["name"]) is string name
                 && TypeJson.OwnerName(obj["ownerType"]) is string rawOwner
-                && Resolve(ReferenceMetadataIndex.BareOwnerFqn(rawOwner), name, renames, bases) is string mangled)
+                && Resolve(ReferenceMetadataIndex.BareOwnerFqn(rawOwner), name, map, bases) is string mangled)
                 obj["name"] = mangled;
-            foreach (var kv in obj) if (kv.Value != null) RewriteUses(kv.Value, renames, bases);
+            foreach (var kv in obj) if (kv.Value != null) RewriteUses(kv.Value, renames, staticRenames, bases);
         }
         else if (node is JsonArray arr)
-            foreach (var it in arr) if (it != null) RewriteUses(it, renames, bases);
+            foreach (var it in arr) if (it != null) RewriteUses(it, renames, staticRenames, bases);
     }
 
     // The mangled name for (owner, field), consulting the owner first and then its base chain — an `override var`

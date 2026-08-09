@@ -31,7 +31,7 @@ STR_OK = {
     "name",                                     # decl/local/var/field names AND fqn.name (the type identity string)
     "scope",                                    # tv.scope enum
     "op", "cmp",                                # binOp/unaryOp operator / structured-for comparison operator
-    "value",                                    # const literal / attribute-arg scalar
+    "value", "constant",                       # expression literal / attribute-arg scalar; CIR field Constant value
     "entry",                                    # enumValue's Kotlin entry-name identity
     "underlying", "physicalValue",              # resolved external-enum underlying CLR type + invariant integral
                                                 # spelling (string preserves the full signed/unsigned 64-bit domain)
@@ -60,7 +60,8 @@ STR_OK = {
                                                 # storage diagnostic names the value by ("receiver of 'copy'"). The
                                                 # role travels onto the lowered `var`. Names/enums, not type slots.
     "local",                                    # a byref*/delegate node's local-VARIABLE-NAME reference
-    "semanticOwner",                            # #225 BIR-only Kotlin lexical owner identity; bir2cir consumes it.
+    "semanticOwner", "staticSemanticOwner",     # #225 BIR-only Kotlin lexical owner identities; the latter marks a
+                                                # lifted implementation inside a Kotlin-static member (no owner T capture).
     "memberVisibility",                         # #225 BIR-only frontend visibility enum on a lexical member edge;
                                                 # bir2cir consumes it into a caller-side UnsafeAccessor when needed.
     "memberOwnerTypeParams",                    # #225 BIR-only target-owner generic declaration facts.
@@ -92,6 +93,14 @@ STR_OK = {
                                                  # before nested `Nullable(Tv)` is object-erased. RoundtripMetadata
                                                  # carrier-encodes them into [KotlinNullableGeneric] for dll2klib.
                                                  # Payloads, NOT type slots.
+    "companionReceiver",                         # #382: the Kotlin type a COMPANION EXTENSION (`companion fun C.f()`)
+                                                 # is associated with, stashed by kotc as a canonical-JSON string so the
+                                                 # CLR type-lowering passes leave the KOTLIN identity untouched.
+                                                 # RoundtripMetadata carrier-encodes it into [KotlinCompanionExtension]
+                                                 # for dll2klib. A payload, NOT a value-type slot.
+    "companionSourceName", "companionMemberKind", # #382: BIR-only source declaration identity and explicit
+                                                 # function/get/set/field role. bir2cir selects a collision-free physical
+                                                 # name without classifying ordinary get_/set_-prefixed functions.
     "collIdentity", "collIdentityRet",           # #29: PRE-collapse Kotlin collection TypeNodes stashed as canonical-JSON
                                                  # strings by CollectionIdentityRecord. RoundtripMetadata immediately turns
                                                  # them into [KotlinCollectionIdentity] carrier bytes for dll2klib; these
@@ -332,10 +341,11 @@ class V:
                     self.err(f, path, "companionValue is a BIR semantic node and must be lowered before CIR")
                 if o.get("k") in ("localFun", "callLocal", "localFunRef"):
                     self.err(f, path, f"{o['k']} is a BIR lexical declaration fact and must be lowered before CIR")
-                for companion_key in ("kotlinCompanion", "companionCaptureOwner", "externalCompanionOwner"):
+                for companion_key in ("kotlinCompanion", "companionCaptureOwner", "externalCompanionOwner",
+                                      "companionReceiver", "companionSourceName", "companionMemberKind"):
                     if companion_key in o:
                         self.err(f, path, f"{companion_key} is a BIR companion fact and must be consumed before CIR")
-                for ownership_key in ("semanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):
+                for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):
                     if ownership_key in o:
                         self.err(f, path, f"{ownership_key} is a BIR ownership fact and must be consumed before CIR")
                 for member_fact in ("memberVisibility", "memberType", "memberOwnerTypeParams",

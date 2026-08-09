@@ -4,4 +4,7 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="UnsupportedTargetGenerator.cs" />
+  </ItemGroup>
 </Project>

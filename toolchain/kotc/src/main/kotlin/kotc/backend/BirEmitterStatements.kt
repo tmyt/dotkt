@@ -80,7 +80,10 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 	// (byrefOf keeps the ref-return's pointer instead of deref'ing it). getValue/setValue inline to ldobj/stobj.
 	is IrVariable -> if (birType(node.type) is TypeNode.ByRef) {
 		val inner = node.initializer?.let { byrefMarker(it) ?: it }
-		val init = inner?.let { """{"k":"byrefOf","inner":${expr(it)}}""" } ?: "null"
+		// A property read designates its own-source backing storage here just as it does when `byref(...)` is passed
+		// directly to a ref parameter. Routing through get_<p>() would take the address of a returned copy, so writes
+		// through the delegated local would be silently lost and a volatile backing field could not order ldobj/stobj.
+		val init = inner?.let { """{"k":"byrefOf","inner":${byrefBackingField(it) ?: expr(it)}}""" } ?: "null"
 		"""{"k":"var","name":${str(localSlotName(node))},"type":${birType(node.type).toJson()},"init":$init}"""
 	}
 	// A ref-cell var: `var x = init` -> `val x = new dotkt$Ref_<elem>(init)` (the heap cell). The cell's `v` field —

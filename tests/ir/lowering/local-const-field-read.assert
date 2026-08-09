@@ -1,0 +1,4 @@
+# bir2cir owns the CLR representation of Kotlin const reads. A read of a known literal field becomes a CIR const;
+# ilemit must not inspect a referenced field and rediscover the literal by reflection.
++"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":"ok"}
+-"k":"staticField"
