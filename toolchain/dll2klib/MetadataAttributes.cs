@@ -55,6 +55,24 @@ internal sealed class MetadataAttributes
     public int? Int32(EntityHandle owner, string name) =>
         Find(owner, name)?.Int32Value;
 
+    // Standard metadata contracts occasionally use a string-bearing attribute as a graph edge rather than as
+    // optional decoration. Return every occurrence without the forgiving All(...) path so malformed blobs and
+    // duplicate edges remain visible to the graph validator instead of being silently treated as absent.
+    public IReadOnlyList<(EntityHandle Parent, string Value)> StringAttributes(string name)
+    {
+        var result = new List<(EntityHandle, string)>();
+        foreach (var handle in _md.CustomAttributes)
+        {
+            var attribute = _md.GetCustomAttribute(handle);
+            if (AttributeTypeName(attribute.Constructor) != name) continue;
+            var decoded = Decode(name, attribute.Value);
+            if (decoded.StringValue is not { } value)
+                throw new InvalidDataException($"[{name}] must have one string constructor argument");
+            result.Add((attribute.Parent, value));
+        }
+        return result;
+    }
+
     public void ValidateCarrierTargets(string name, params HandleKind[] allowedTargets)
     {
         var allowed = allowedTargets.ToHashSet();
@@ -161,6 +179,14 @@ internal sealed class MetadataAttributes
             return new(name, Int32Value: reader.ReadInt32());
         if (name == "System.Reflection.AssemblyMetadataAttribute")
             return new(name, StringValue: reader.ReadSerializedString(), StringValue2: reader.ReadSerializedString());
+        if (name == "System.Runtime.CompilerServices.ExtensionMarkerAttribute")
+        {
+            var marker = reader.ReadSerializedString()
+                ?? throw new BadImageFormatException("ExtensionMarker string");
+            if (reader.ReadUInt16() != 0 || reader.RemainingBytes != 0)
+                throw new BadImageFormatException("ExtensionMarker named arguments");
+            return new(name, StringValue: marker);
+        }
         if (name.StartsWith(DotKtNs, StringComparison.Ordinal) &&
             name is not (DotKtNs + "KotlinFileClassAttribute"
                 or DotKtNs + "KotlinReadOnlyAttribute"

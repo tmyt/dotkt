@@ -52,7 +52,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=157
 	["tests/roundtrip/consumer"]=64
 	["tests/roundtrip/bidirectional/consumer"]=4
-	["tests/interop/consumer"]=134
+	["tests/interop/consumer"]=135
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -148,6 +148,28 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  VOLATILE FIELD IL FAIL — see build/nunit-$name.volatile.log"
 			tail -25 "$ROOT/build/nunit-$name.volatile.log"; rc=1
+		fi
+		csharp14_producer="$ROOT/tests/special/csharp14-static-extensions/producer/bin/$CONFIGURATION/net10.0/StaticExtensionProducer.dll"
+		csharp14_consumer_project="$ROOT/tests/special/csharp14-static-extensions/consumer/StaticExtensionConsumer.csproj"
+		csharp14_consumer="$ROOT/tests/special/csharp14-static-extensions/consumer/bin/$CONFIGURATION/net10.0/StaticExtensionConsumer.dll"
+		if dotnet build "$csharp14_consumer_project" -c "$CONFIGURATION" --no-incremental -v:q --nologo \
+			>"$ROOT/build/nunit-$name.csharp14-build.log" 2>&1 && \
+			dotnet run --project "$ROOT/tests/special/csharp14-static-extensions/inspector/StaticExtensionInspector.csproj" \
+				-- "$csharp14_producer" "$csharp14_consumer" "$interop_dll" \
+			>"$ROOT/build/nunit-$name.csharp14.log" 2>&1; then
+			echo "  C# 14 static extension KLIB projection + implementation call targets OK"
+		else
+			echo "  C# 14 STATIC EXTENSION METADATA FAIL — see build/nunit-$name.csharp14.log"
+			tail -25 "$ROOT/build/nunit-$name.csharp14-build.log" 2>/dev/null || true
+			tail -25 "$ROOT/build/nunit-$name.csharp14.log" 2>/dev/null || true
+			rc=1
+		fi
+		if bash "$ROOT/tests/special/csharp14-static-extensions/run-malformed.sh" \
+			>"$ROOT/build/nunit-$name.csharp14-negative.log" 2>&1; then
+			echo "  malformed C# 14 static extension graphs rejected by dll2klib + bir2cir OK"
+		else
+			echo "  C# 14 STATIC EXTENSION NEGATIVE FAIL — see build/nunit-$name.csharp14-negative.log"
+			tail -25 "$ROOT/build/nunit-$name.csharp14-negative.log"; rc=1
 		fi
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then

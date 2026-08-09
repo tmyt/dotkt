@@ -7,11 +7,22 @@ using System.Reflection.Emit;
 using System.Runtime.Loader;
 using System.Text.RegularExpressions;
 
-if (args.Length != 2)
-    throw new ArgumentException("usage: StaticExtensionInspector <producer.dll> <consumer.dll>");
+if (args.Length is < 2 or > 3)
+    throw new ArgumentException(
+        "usage: StaticExtensionInspector <producer.dll> <csharp-consumer.dll> [dotkt-consumer.dll]");
 
 var producerPath = Path.GetFullPath(args[0]);
 var consumerPath = Path.GetFullPath(args[1]);
+var dotKtConsumerPath = args.Length == 3 ? Path.GetFullPath(args[2]) : null;
+if (dotKtConsumerPath is not null)
+{
+    var dependencyDirectory = Path.GetDirectoryName(dotKtConsumerPath)!;
+    AssemblyLoadContext.Default.Resolving += (context, name) =>
+    {
+        var candidate = Path.Combine(dependencyDirectory, name.Name + ".dll");
+        return File.Exists(candidate) ? context.LoadFromAssemblyPath(candidate) : null;
+    };
+}
 var producer = AssemblyLoadContext.Default.LoadFromAssemblyPath(producerPath);
 var consumer = AssemblyLoadContext.Default.LoadFromAssemblyPath(consumerPath);
 
@@ -70,6 +81,21 @@ Require(producerCalls.Count(m => m.DeclaringType == alpha.Container && m.Name ==
     "consumer IL did not bind both Select overloads to their implementation methods");
 Require(producerCalls.All(m => m.DeclaringType is { IsNested: false }),
     "consumer IL calls a signature-only extension grouping member");
+
+if (dotKtConsumerPath is not null)
+{
+    var dotKtConsumer = AssemblyLoadContext.Default.LoadFromAssemblyPath(dotKtConsumerPath);
+    var dotKtCalls = ReadCallTargets(dotKtConsumer)
+        .Where(m => m.DeclaringType?.Assembly == producer)
+        .ToArray();
+    foreach (var expected in expectedCalls)
+        Require(dotKtCalls.Any(m => $"{m.DeclaringType!.Name}.{m.Name}" == expected),
+            $"DotKt consumer IL does not call implementation {expected}");
+    Require(dotKtCalls.Count(m => m.DeclaringType == alpha.Container && m.Name == "Select") == 2,
+        "DotKt consumer IL did not bind both Select overloads to their implementation methods");
+    Require(dotKtCalls.All(m => m.DeclaringType is { IsNested: false }),
+        "DotKt consumer IL calls a signature-only extension grouping member");
+}
 
 Console.WriteLine("C# 14 static extension ABI metadata and call targets OK");
 return;

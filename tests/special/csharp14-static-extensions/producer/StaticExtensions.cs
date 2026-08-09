@@ -3,6 +3,10 @@ namespace CSharp14StaticExtensions;
 public sealed class Alpha;
 public sealed class Beta;
 public sealed class GenericTarget<T>;
+public sealed class ComparableValue : System.IComparable<ComparableValue>
+{
+    public int CompareTo(ComparableValue? other) => 0;
+}
 
 public static class AlphaExtensions
 {
