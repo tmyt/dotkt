@@ -89,7 +89,7 @@ static class CompanionExtensionBinding
 
     static string PhysicalRoot(string receiverJson, string sourceName)
     {
-        var receiver = TypeJson.OwnerName(JsonNode.Parse(receiverJson))
+        var receiver = ReceiverClassifier(JsonNode.Parse(receiverJson))
             ?? throw new InvalidOperationException(
                 "companion extension receiver is not a classifier type: " + receiverJson);
         var encoded = Convert.ToHexString(Encoding.UTF8.GetBytes(receiver)).ToLowerInvariant();
@@ -103,12 +103,22 @@ static class CompanionExtensionBinding
 
     static string CanonicalReceiver(string receiver)
     {
-        var classifier = TypeJson.OwnerName(JsonNode.Parse(receiver))
+        var classifier = ReceiverClassifier(JsonNode.Parse(receiver))
             ?? throw new InvalidOperationException(
                 "companion extension receiver is not a classifier type: " + receiver);
         // Kotlin accepts only a bare classifier here. A projected generic classifier may be rehydrated by the
         // consumer frontend as C<Any>, but those arguments are not part of the companion association.
         return TypeJson.Fqn(classifier).ToJsonString();
+    }
+
+    // A classifier imported from an ordinary C# assembly is commonly a platform type (`oblivious(fqn)`). The
+    // companion association is the bare classifier and is independent of NRT flexibility/nullability.
+    static string ReceiverClassifier(JsonNode node)
+    {
+        TypeNode type = TypeJson.Read(node);
+        while (type is TypeNode.Oblivious oblivious) type = oblivious.Of;
+        while (type is TypeNode.Nullable nullable) type = nullable.Of;
+        return type is TypeNode.Fqn fqn ? fqn.Name : null;
     }
 
     static void RewriteUses(

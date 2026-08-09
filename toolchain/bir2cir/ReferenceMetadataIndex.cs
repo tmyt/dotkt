@@ -1186,7 +1186,10 @@ sealed partial class ReferenceMetadataIndex
     static string CompanionExtensionKey(string owner, string receiverJson, string kind, string sourceName)
     {
         if (owner == null || receiverJson == null || kind == null || sourceName == null) return "";
-        var classifier = TypeJson.OwnerName(JsonNode.Parse(receiverJson))
+        TypeNode receiverType = TypeJson.Read(JsonNode.Parse(receiverJson));
+        while (receiverType is TypeNode.Oblivious oblivious) receiverType = oblivious.Of;
+        while (receiverType is TypeNode.Nullable nullable) receiverType = nullable.Of;
+        var classifier = (receiverType is TypeNode.Fqn fqn ? fqn.Name : null)
             ?? throw new InvalidDataException("companion-extension receiver payload is not a classifier");
         // The source language association is the bare classifier. dll2klib can legitimately rehydrate a generic
         // receiver as C<Any>; its arguments are not declaration identity and must not enter this trusted key.
@@ -2417,6 +2420,7 @@ sealed partial class ReferenceMetadataIndex
                         metadata.FileClassOwners.Add(StripGenericArity(DottedFqn(ownerFqn)));
                     if (dotKtAuthored)
                         IndexCompanionExtensionMembers(type, ownerFqn, isFileClass, metadata);
+                    IndexCSharp14StaticExtensionMembers(type, ownerFqn, metadata);
 
                     // `value`/inline class (marked with [KotlinValue], the 2.4.0 carrier of `mods.value`): its single
                     // instance backing field IS the erased value. Record that property's GETTER + the field's CLR conv
@@ -3026,6 +3030,274 @@ sealed partial class ReferenceMetadataIndex
             AddCompanionExtensionMember(metadata, ownerFqn, payload, field.Name);
         }
     }
+
+    static void IndexCSharp14StaticExtensionMembers(
+        Type container,
+        string ownerFqn,
+        ReferenceDotKtMetadata metadata)
+    {
+        const string extensionAttribute = "System.Runtime.CompilerServices.ExtensionAttribute";
+        const string markerAttribute = "System.Runtime.CompilerServices.ExtensionMarkerAttribute";
+        if (container.DeclaringType != null || !container.IsAbstract || !container.IsSealed ||
+            !HasAttribute(container.GetCustomAttributesData(), extensionAttribute))
+            return;
+
+        foreach (var group in container.GetNestedTypes(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+        {
+            var declarations = group.GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Cast<MemberInfo>()
+                .Concat(group.GetProperties(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
+                .Select(member => (Member: member, Markers: CSharp14MarkerNames(member, markerAttribute)))
+                .Where(entry => entry.Markers.Length != 0)
+                .ToArray();
+            if (declarations.Length == 0) continue;
+            if (!group.IsSpecialName || !HasAttribute(group.GetCustomAttributesData(), extensionAttribute))
+                throw new InvalidDataException(
+                    $"malformed C# 14 static extension graph at '{group.FullName}': invalid grouping type");
+            var markerNames = declarations.SelectMany(entry => entry.Markers)
+                .Distinct(StringComparer.Ordinal).ToArray();
+            if (markerNames.Length != 1)
+                throw new InvalidDataException(
+                    $"malformed C# 14 static extension graph at '{group.FullName}': ambiguous receiver marker");
+            var markerMatches = group.GetNestedTypes(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+                .Where(type => type.Name == markerNames[0]).ToArray();
+            if (markerMatches.Length != 1)
+                throw new InvalidDataException(
+                    $"malformed C# 14 static extension graph at '{group.FullName}': receiver marker does not resolve");
+            var marker = markerMatches[0];
+            var markerMethods = marker.GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Where(method => method.Name == "<Extension>$").ToArray();
+            if (markerMethods.Length != 1 || !marker.IsSpecialName || !marker.IsAbstract || !marker.IsSealed)
+                throw new InvalidDataException(
+                    $"malformed C# 14 static extension graph at '{marker.FullName}': invalid receiver marker");
+            var receiverMarker = markerMethods[0];
+            var markerIsGenerated = HasAttribute(receiverMarker.GetCustomAttributesData(), CompilerGeneratedAttr);
+            var markerBodyIsSignatureOnly = CSharp14MarkerBodyIsSignatureOnly(receiverMarker);
+            if (!receiverMarker.IsStatic || !receiverMarker.IsSpecialName ||
+                receiverMarker.ReturnType.FullName != "System.Void" ||
+                receiverMarker.GetGenericArguments().Length != 0 || receiverMarker.GetParameters().Length != 1 ||
+                !markerIsGenerated || !markerBodyIsSignatureOnly)
+                throw new InvalidDataException(
+                    $"malformed C# 14 static extension graph at '{marker.FullName}': invalid marker method " +
+                    $"(static={receiverMarker.IsStatic}, special={receiverMarker.IsSpecialName}, " +
+                    $"return={receiverMarker.ReturnType.FullName}, generic={receiverMarker.GetGenericArguments().Length}, " +
+                    $"params={receiverMarker.GetParameters().Length}, generated={markerIsGenerated}, " +
+                    $"signatureOnly={markerBodyIsSignatureOnly})");
+            var blockParameters = group.GetGenericArguments();
+            if (!CSharp14GenericParametersMatch(
+                    blockParameters, marker.GetGenericArguments(), implementationBlockArity: 0))
+                throw new InvalidDataException(
+                    $"malformed C# 14 static extension graph at '{marker.FullName}': marker constraints differ");
+
+            var receiverName = CSharp14KotlinClassifier(receiverMarker.GetParameters()[0].ParameterType);
+            var receiverJson = TypeJson.Fqn(receiverName).ToJsonString();
+            var propertyAccessors = new HashSet<MethodInfo>();
+            foreach (var property in group.GetProperties(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
+            {
+                var propertyMarkers = CSharp14MarkerNames(property, markerAttribute);
+                var accessors = property.GetAccessors(nonPublic: true);
+                if (propertyMarkers.Length == 0)
+                {
+                    if (accessors.Any(accessor => CSharp14MarkerNames(accessor, markerAttribute).Length != 0))
+                        throw new InvalidDataException(
+                            $"malformed C# 14 static extension graph at '{group.FullName}': unmarked Property row");
+                    continue;
+                }
+                if (propertyMarkers.Length != 1 || propertyMarkers[0] != marker.Name || accessors.Length == 0 ||
+                    accessors.Any(accessor =>
+                        CSharp14MarkerNames(accessor, markerAttribute) is not [var value] || value != marker.Name))
+                    throw new InvalidDataException(
+                        $"malformed C# 14 static extension graph at '{group.FullName}': inconsistent property markers");
+                foreach (var accessor in accessors) propertyAccessors.Add(accessor);
+                var getter = property.GetMethod ?? throw new InvalidDataException(
+                    $"malformed C# 14 static extension graph at '{group.FullName}': property has no getter");
+                if (!getter.IsStatic) continue;
+                var getterImplementation = CSharp14Implementation(container, group, getter, blockParameters.Length);
+                AddCompanionExtensionMember(metadata, ownerFqn,
+                    new CompanionExtensionPayloadInfo(receiverJson, property.Name, "get"),
+                    getterImplementation.Name);
+                if (property.SetMethod is { } setter)
+                {
+                    var setterImplementation = CSharp14Implementation(container, group, setter, blockParameters.Length);
+                    AddCompanionExtensionMember(metadata, ownerFqn,
+                        new CompanionExtensionPayloadInfo(receiverJson, property.Name, "set"),
+                        setterImplementation.Name);
+                }
+            }
+
+            foreach (var declaration in group.GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly))
+            {
+                var declarationMarkers = CSharp14MarkerNames(declaration, markerAttribute);
+                if (declarationMarkers.Length != 1 || declarationMarkers[0] != marker.Name)
+                    throw new InvalidDataException(
+                        $"malformed C# 14 static extension graph at '{group.FullName}': unmarked callable declaration");
+                if (propertyAccessors.Contains(declaration)) continue;
+                if (!declaration.IsStatic) continue;
+                var implementation = CSharp14Implementation(container, group, declaration, blockParameters.Length);
+                AddCompanionExtensionMember(metadata, ownerFqn,
+                    new CompanionExtensionPayloadInfo(receiverJson, declaration.Name, "function"),
+                    implementation.Name);
+            }
+        }
+    }
+
+    static string[] CSharp14MarkerNames(MemberInfo member, string markerAttribute)
+    {
+        var attributes = member.GetCustomAttributesData()
+            .Where(attribute => attribute.AttributeType.FullName == markerAttribute)
+            .ToArray();
+        var result = new string[attributes.Length];
+        for (var index = 0; index < attributes.Length; index++)
+        {
+            var attribute = attributes[index];
+            if (attribute.ConstructorArguments.Count != 1 ||
+                attribute.ConstructorArguments[0].Value is not string value ||
+                string.IsNullOrEmpty(value) || attribute.NamedArguments.Count != 0)
+                throw new InvalidDataException("malformed [ExtensionMarker] attribute");
+            result[index] = value;
+        }
+        return result;
+    }
+
+    static MethodInfo CSharp14Implementation(
+        Type container,
+        Type group,
+        MethodInfo declaration,
+        int blockArity)
+    {
+        if (!CSharp14DeclarationBodyIsSignatureOnly(declaration))
+            throw new InvalidDataException(
+                $"malformed C# 14 static extension graph at '{group.FullName}': declaration '{declaration.Name}' is callable");
+        var matches = container.GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(candidate => candidate.Name == declaration.Name && !candidate.IsSpecialName)
+            .Where(candidate => CSharp14SignaturesMatch(declaration, candidate, blockArity))
+            .ToArray();
+        if (matches.Length != 1)
+            throw new InvalidDataException(
+                $"malformed C# 14 static extension graph at '{group.FullName}': declaration '{declaration.Name}' " +
+                $"resolves to {matches.Length} implementations");
+        return matches[0];
+    }
+
+    static bool CSharp14SignaturesMatch(MethodInfo declaration, MethodInfo implementation, int blockArity)
+    {
+        if ((declaration.Attributes & MethodAttributes.MemberAccessMask) !=
+                (implementation.Attributes & MethodAttributes.MemberAccessMask) ||
+            implementation.GetGenericArguments().Length != blockArity + declaration.GetGenericArguments().Length ||
+            CSharp14TypeKey(declaration.ReturnType, implementation: false, blockArity) !=
+                CSharp14TypeKey(implementation.ReturnType, implementation: true, blockArity))
+            return false;
+        var declarationParameters = declaration.GetParameters();
+        var implementationParameters = implementation.GetParameters();
+        if (declarationParameters.Length != implementationParameters.Length) return false;
+        for (var index = 0; index < declarationParameters.Length; index++)
+            if (CSharp14TypeKey(declarationParameters[index].ParameterType, implementation: false, blockArity) !=
+                CSharp14TypeKey(implementationParameters[index].ParameterType, implementation: true, blockArity))
+                return false;
+        var declarationGeneric = declaration.GetGenericArguments();
+        var implementationGeneric = implementation.GetGenericArguments();
+        return CSharp14GenericParametersMatch(
+                declaration.DeclaringType!.GetGenericArguments(),
+                implementationGeneric.Take(blockArity).ToArray(),
+                blockArity) &&
+            CSharp14GenericParametersMatch(
+                declarationGeneric,
+                implementationGeneric.Skip(blockArity).ToArray(),
+                blockArity);
+    }
+
+    static bool CSharp14GenericParametersMatch(
+        Type[] declarations,
+        Type[] implementations,
+        int implementationBlockArity)
+    {
+        if (declarations.Length != implementations.Length) return false;
+        for (var index = 0; index < declarations.Length; index++)
+        {
+            if (declarations[index].GenericParameterAttributes != implementations[index].GenericParameterAttributes)
+                return false;
+            var left = declarations[index].GetGenericParameterConstraints()
+                .Select(type => CSharp14TypeKey(type, implementation: false, implementationBlockArity))
+                .OrderBy(value => value, StringComparer.Ordinal);
+            var right = implementations[index].GetGenericParameterConstraints()
+                .Select(type => CSharp14TypeKey(type, implementation: implementationBlockArity != 0,
+                    implementationBlockArity))
+                .OrderBy(value => value, StringComparer.Ordinal);
+            if (!left.SequenceEqual(right, StringComparer.Ordinal)) return false;
+        }
+        return true;
+    }
+
+    static string CSharp14TypeKey(Type type, bool implementation, int blockArity)
+    {
+        if (type.IsByRef) return "byref<" + CSharp14TypeKey(type.GetElementType()!, implementation, blockArity) + ">";
+        if (type.IsPointer) return "ptr<" + CSharp14TypeKey(type.GetElementType()!, implementation, blockArity) + ">";
+        if (type.IsArray) return $"array:{type.GetArrayRank()}<" +
+            CSharp14TypeKey(type.GetElementType()!, implementation, blockArity) + ">";
+        if (type.IsGenericParameter)
+        {
+            var index = type.GenericParameterPosition;
+            if (!implementation)
+                return type.DeclaringMethod is null ? $"!{index}" : $"!!{index}";
+            return index < blockArity ? $"!{index}" : $"!!{index - blockArity}";
+        }
+        if (type.IsConstructedGenericType)
+            return StripGenericArity(type.GetGenericTypeDefinition().FullName ?? type.Name) + "<" +
+                string.Join(",", type.GetGenericArguments().Select(argument =>
+                    CSharp14TypeKey(argument, implementation, blockArity))) + ">";
+        return type.FullName ?? type.Name;
+    }
+
+    static string CSharp14KotlinClassifier(Type receiver)
+    {
+        if (receiver.IsConstructedGenericType) receiver = receiver.GetGenericTypeDefinition();
+        return PrimitiveBirName(receiver) switch
+        {
+            "bool" => "kotlin.Boolean",
+            "sbyte" => "kotlin.Byte",
+            "byte" => "kotlin.UByte",
+            "char" => "kotlin.Char",
+            "double" => "kotlin.Double",
+            "float" => "kotlin.Float",
+            "int" => "kotlin.Int",
+            "long" => "kotlin.Long",
+            "object" => "kotlin.Any",
+            "short" => "kotlin.Short",
+            "string" => "kotlin.String",
+            "ushort" => "kotlin.UShort",
+            "uint" => "kotlin.UInt",
+            "ulong" => "kotlin.ULong",
+            _ => DottedFqn(StripGenericArity(receiver.FullName ?? receiver.Name)),
+        };
+    }
+
+    static bool CSharp14MarkerBodyIsSignatureOnly(MethodInfo method)
+    {
+        byte[] body;
+        try { body = method.GetMethodBody()?.GetILAsByteArray(); }
+        catch (BadImageFormatException) { return true; }
+        return body is null or [0x2A] || CSharp14KnownThrowStub(body);
+    }
+
+    static bool CSharp14DeclarationBodyIsSignatureOnly(MethodInfo method)
+    {
+        byte[] body;
+        try { body = method.GetMethodBody()?.GetILAsByteArray(); }
+        catch (BadImageFormatException) { return true; }
+        return body is null || CSharp14KnownThrowStub(body);
+    }
+
+    static bool CSharp14KnownThrowStub(byte[] body) =>
+        body is [0x14, 0x7A] ||
+        body.Length == 6 && body[0] == 0x73 && body[^1] == 0x7A;
 
     sealed record CompanionExtensionPayloadInfo(string ReceiverJson, string Name, string Kind);
 

@@ -12,3 +12,10 @@ actual Property rows. Executable calls must target the top-level implementations
 The negative fixture pins Roslyn's `CS0111` rule for identical receiverless implementation signatures in one
 container. This is why DotKt must partition companion extensions by associated receiver rather than placing every
 implementation on one file facade.
+
+The Increment 1 interop lane consumes this producer through `dll2klib`, calls every method/property shape from
+Kotlin, and inspects the emitted Kotlin consumer IL to prove that calls target the top-level implementation methods,
+never the nested signature stubs. `run-malformed.sh` emits raw ECMA-335 graphs and requires both `dll2klib` and
+`bir2cir` to reject missing marker types, zero or duplicate implementation matches, callable declaration stubs, and
+callable marker stubs. Discovery starts from the standard attributes and their string edges; the `<G>$` and `<M>$`
+spellings are validated only after that graph exists and are never inference keys.

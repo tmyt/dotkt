@@ -255,7 +255,9 @@ internal static class Program
     private static void Convert(string input, string output)
     {
         using var file = File.OpenRead(input);
-        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+        // C# 14 extension grouping declarations are signature-only stubs whose non-callable ldnull/throw body is
+        // part of the standard graph contract, so the scanner needs method bodies as well as metadata.
+        using var pe = new PEReader(file, PEStreamOptions.PrefetchEntireImage);
         if (!pe.HasMetadata || pe.PEHeaders.CorHeader is null)
             throw new InvalidDataException($"not a managed PE: {input}");
 
@@ -269,7 +271,7 @@ internal static class Program
             Environment.GetEnvironmentVariable(CompanionCatalogEnvironment));
         var innerCatalog = InnerReferenceCatalog.Load(
             Environment.GetEnvironmentVariable(InnerCatalogEnvironment));
-        var fragments = new AssemblyScanner(md, arityNames, delegateCatalog, companionCatalog, innerCatalog).Scan();
+        var fragments = new AssemblyScanner(pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog).Scan();
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         var temp = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -1349,8 +1351,10 @@ internal sealed class AssemblyScanner
     private readonly HashSet<FieldDefinitionHandle> _singletonInstanceFields = new();
     private readonly Dictionary<TypeDefinitionHandle, string> _semanticOwnerNames = new();
     private readonly HashSet<TypeDefinitionHandle> _validatedCompanionOwners = new();
+    private readonly CSharp14ExtensionCatalog _csharp14Extensions;
 
     public AssemblyScanner(
+        PEReader pe,
         MetadataReader md,
         ArityNames arityNames,
         DelegateReferenceCatalog delegateCatalog,
@@ -1370,6 +1374,7 @@ internal sealed class AssemblyScanner
         _delegateCatalog = delegateCatalog;
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
+        _csharp14Extensions = CSharp14ExtensionCatalog.Discover(pe, md, _attrs);
         var physicalTypes = md.TypeDefinitions
             .Select(handle => (
                 Handle: handle,
@@ -1537,6 +1542,7 @@ internal sealed class AssemblyScanner
                 AddCompanion(handle, klass, fragment, names, signatures);
                 ReadNestedClasses(handle, klass, fragment, names, signatures);
                 ReadCSharpExtensions(handle, def, fragment.Package, names, signatures);
+                ReadCSharp14StaticExtensions(handle, fragment.Package, names, signatures);
             }
             foreach (var (semanticName, klass) in projectedBySemanticName)
             {
@@ -1567,7 +1573,8 @@ internal sealed class AssemblyScanner
             .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
             .Where(x => IsPublicTopLevel(x.Definition))
             .Where(x => x.Definition.GetMethods().Any(h =>
-                _attrs.Has(h, "System.Runtime.CompilerServices.ExtensionAttribute", requireTrust: false)))
+                _attrs.Has(h, "System.Runtime.CompilerServices.ExtensionAttribute", requireTrust: false)) ||
+                _csharp14Extensions.TryGetContainer(x.Handle, out _))
             .GroupBy(x => {
                 var ns = _md.GetString(x.Definition.Namespace);
                 var simple = _arityNames.Simple(ns, _md.GetString(x.Definition.Name));
@@ -1585,7 +1592,10 @@ internal sealed class AssemblyScanner
                 _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
                 SemanticCompanionTypeNames(names));
             foreach (var (handle, def) in group)
+            {
                 ReadCSharpExtensions(handle, def, package, names, signatures);
+                ReadCSharp14StaticExtensions(handle, package, names, signatures);
+            }
             MarkLowPriorityDelegateOverloads(package.Function, names);
             fragment.Strings = names.Strings;
             fragment.QualifiedNames = names.QualifiedNames;
@@ -3101,6 +3111,131 @@ internal sealed class AssemblyScanner
             AddNrtParamsOverloadBridges(projectedFunctions, package.Function, names);
     }
 
+    private void ReadCSharp14StaticExtensions(
+        TypeDefinitionHandle owner,
+        Package package,
+        NameTable names,
+        SignatureDecoder signatures)
+    {
+        if (!_csharp14Extensions.TryGetContainer(owner, out var container)) return;
+        var projectedFunctions = new List<ProjectedFunction>();
+        foreach (var entry in container.Functions)
+        {
+            var method = _md.GetMethodDefinition(entry.Implementation);
+            if (!IsPublicOrProtected(method.Attributes)) continue;
+            var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
+            var context = new GenericContext(owner, entry.Implementation, typeParameterIds);
+            var signature = method.DecodeSignature(signatures, context);
+            var function = new Function {
+                Name = names.String(_md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
+                Flags = (Flags.Callable(method.Attributes, CallableModality(method.Attributes)) & ~(1 << 18)) |
+                    (1 << 18),
+                ReturnType = ProjectReturn(
+                    entry.Implementation, method, signature.ReturnType, names, signatures, context),
+                ValueParameter = {
+                    Parameters(entry.Implementation, method, signature.ParameterTypes, names, signatures, context)
+                },
+                ReceiverType = CSharp14ExtensionReceiver(
+                    entry.ReceiverMarker, entry.BlockArity, names, signatures),
+            };
+            AddCSharp14MethodTypeParameters(method, function.TypeParameter, names, signatures, context);
+            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
+            function.Flags |= 1;
+            package.Function.Add(function);
+            projectedFunctions.Add(new ProjectedFunction(
+                entry.Implementation,
+                function,
+                PhysicalParameterKeys(method, context)));
+        }
+        AddNrtParamsOverloadBridges(projectedFunctions, package.Function, names);
+
+        foreach (var entry in container.Properties)
+        {
+            var getter = _md.GetMethodDefinition(entry.GetterImplementation);
+            if (!IsPublicOrProtected(getter.Attributes)) continue;
+            var setterHandle = entry.SetterImplementation;
+            if (!setterHandle.IsNil &&
+                !IsPublicOrProtected(_md.GetMethodDefinition(setterHandle).Attributes))
+                setterHandle = default;
+            var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
+            var property = KotlinAccessorProperty(
+                owner,
+                entry.GetterImplementation,
+                setterHandle,
+                names,
+                signatures,
+                typeParameterIds,
+                isStatic: true,
+                companionReceiver: CSharp14ExtensionReceiver(
+                    entry.ReceiverMarker, entry.BlockArity, names, signatures));
+            property.Name = names.String(_md.GetString(_md.GetPropertyDefinition(entry.Declaration).Name));
+            property.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
+            property.Flags |= 1;
+            package.Property.Add(property);
+        }
+    }
+
+    private KType CSharp14ExtensionReceiver(
+        MethodDefinitionHandle markerHandle,
+        int blockArity,
+        NameTable names,
+        SignatureDecoder signatures)
+    {
+        var marker = _md.GetMethodDefinition(markerHandle);
+        var markerOwner = marker.GetDeclaringType();
+        var context = new GenericContext(
+            markerOwner,
+            markerHandle,
+            new Dictionary<GenericParameterHandle, int>());
+        var signature = marker.DecodeSignature(signatures, context);
+        // Roslyn omits the Param row when the synthetic receiver parameter has an empty metadata name. Its type is
+        // still present in the method signature; a nil slot correctly falls back to the marker method's NRT context.
+        var parameterHandle = PhysicalParameters(marker).Select(parameter => parameter.Handle).FirstOrDefault();
+        var receiver = ProjectType(
+            parameterHandle,
+            signature.ParameterTypes.Single(),
+            markerOwner,
+            names,
+            signatures,
+            context);
+        return RebindCSharp14BlockParameters(receiver, blockArity);
+    }
+
+    private static KType RebindCSharp14BlockParameters(KType source, int blockArity)
+    {
+        var result = source.Clone();
+        if (result.HasTypeParameter && result.TypeParameter >= 0 && result.TypeParameter < blockArity)
+            result.TypeParameter = 10000 + result.TypeParameter;
+        for (var index = 0; index < result.Argument.Count; index++)
+            if (result.Argument[index].Type is { } argument)
+                result.Argument[index].Type = RebindCSharp14BlockParameters(argument, blockArity);
+        if (result.FlexibleUpperBound is { } upper)
+            result.FlexibleUpperBound = RebindCSharp14BlockParameters(upper, blockArity);
+        return result;
+    }
+
+    private void AddCSharp14MethodTypeParameters(
+        MethodDefinition method,
+        Google.Protobuf.Collections.RepeatedField<TypeParameter> destination,
+        NameTable names,
+        SignatureDecoder signatures,
+        GenericContext context)
+    {
+        foreach (var gpHandle in method.GetGenericParameters())
+        {
+            var gp = _md.GetGenericParameter(gpHandle);
+            var parameter = new TypeParameter {
+                Id = 10000 + gp.Index,
+                Name = names.String(_md.GetString(gp.Name)),
+                Variance = TypeParameter.Types.Variance.Inv,
+            };
+            foreach (var constraintHandle in gp.GetConstraints())
+                parameter.UpperBound.Add(signatures.DecodeEntity(
+                    _md.GetGenericParameterConstraint(constraintHandle).Type, context, platform: false));
+            destination.Add(parameter);
+        }
+    }
+
     private void ReadNestedClasses(
         TypeDefinitionHandle parentHandle,
         Class parent,
@@ -3114,6 +3249,8 @@ internal sealed class AssemblyScanner
             if (_physicalCompanionCarriers.Contains(childHandle))
                 continue;
             if (_existentialCarriers.Contains(childHandle))
+                continue;
+            if (_csharp14Extensions.IsInfrastructure(childHandle))
                 continue;
             var childDef = _md.GetTypeDefinition(childHandle);
             if (!IsPublicNested(childDef)) continue;

@@ -252,6 +252,17 @@ inference participates.
 Without the carrier there is no such declaration; the facade member stays an
 ordinary top-level function or property.
 
+An ordinary C# 14 static extension member is imported into that same standard
+Kotlin shape from its released metadata graph. `dll2klib` starts from
+`ExtensionAttribute` plus the `ExtensionMarkerAttribute` string edges, validates
+the nested grouping/receiver-marker declarations, and pairs every signature-only
+declaration with exactly one source-named executable method on the top-level
+container. The executable method owns the projected signature and CLR binding;
+the nested declaration only supplies the associated receiver and source member
+shape. Group/marker spellings and throwing bodies are validation details after
+the attributed graph is established, never discovery heuristics. Malformed or
+ambiguous graphs fail rather than falling back to ordinary members.
+
 ### Properties and fields
 
 CLR properties use normal Kotlin property/accessor metadata. DotKt custom

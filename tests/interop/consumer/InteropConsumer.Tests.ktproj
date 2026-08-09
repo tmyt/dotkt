@@ -27,6 +27,9 @@
          il-delegnull case (#150) consumes it façade-free. Kept a SEPARATE assembly so enabling NRT does not
          change the other cases' reference-type nullability (platform-type behavior). -->
     <ProjectReference Include="../producer-nrt/InteropProducerNrt.csproj" />
+    <!-- #389: the released C# 14 static extension-member metadata graph is projected to Kotlin companion
+         extensions and bound back to its executable top-level implementation methods. -->
+    <ProjectReference Include="../../special/csharp14-static-extensions/producer/StaticExtensionProducer.csproj" />
     <ProjectReference Include="../../support/coroutines/DotKt.Tests.CoroutineSupport.ktproj" />
   </ItemGroup>
 
