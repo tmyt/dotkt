@@ -787,6 +787,12 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			val bf = p.backingField ?: return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
 			val const = if (p.isConst) ""","const":true""" else ""
+			val companionProperty = if (companionReceiverJson(p) != null) {
+				val setterVisibility = p.setter?.let { visOf(it) } ?: visOf(p)
+				val setter = if (p.isVar) ""","companionSetterVisibility":${str(setterVisibility)}""" else ""
+				val storageReadOnly = !p.isVar || p.isDelegated
+				""","companionPropertyMutable":${p.isVar},"companionStorageReadOnly":$storageReadOnly$setter"""
+			} else ""
 			// A top-level `val` (or `var` with a non-public setter) -> mark the static field read-only so a downstream
 			// consuming module restores it as `val`, rejecting external writes (#34b, mirrors
 			// the member-field `readOnly` stamp).
@@ -796,7 +802,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			// leak a private/internal top-level const into both the CLR surface and the reconstructed reference KLIB.
 			val v = if (p.isDelegated) "private" else visOf(p)
 			val vis = if (v != "public") ""","vis":${str(v)}""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$const$vis$ro${lateinitFieldFlag(p)}${volatileFieldFlag(p)}${companionReceiverField(p, "field", p.name.asString())}}"""
+			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$const$vis$ro$companionProperty${lateinitFieldFlag(p)}${volatileFieldFlag(p)}${companionReceiverField(p, "field", p.name.asString())}}"""
 		}
 		// Preserve every companion as a separate semantic declaration. Must run BEFORE body emission so every value/type
 		// use resolves to the same representation-neutral identity.

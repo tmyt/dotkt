@@ -12,6 +12,15 @@ fun bidirectionalAdd(a: Int, b: Int): Int = a + b
 // the generic member proves that method type parameters and constraints stay on the executable declaration.
 class BidirectionalStaticAlpha
 class BidirectionalStaticBeta
+class BidirectionalStaticInitAlpha
+class BidirectionalStaticInitBeta
+
+private var bidirectionalComputedStorage: Int = 10
+private var bidirectionalExtensionInitLog: String = ""
+private fun recordBidirectionalExtensionInit(label: String): String {
+    bidirectionalExtensionInitLog += label
+    return label
+}
 
 companion fun BidirectionalStaticAlpha.answer(): Int = 42
 companion fun BidirectionalStaticAlpha.answer(value: Int): Int = 40 + value
@@ -20,11 +29,43 @@ companion fun <T : Comparable<T>> BidirectionalStaticAlpha.echo(value: T): T = v
 companion inline fun BidirectionalStaticAlpha.compute(block: () -> Int): Int = block()
 internal companion fun BidirectionalStaticAlpha.internalAnswer(): Int = 9
 private companion fun BidirectionalStaticAlpha.privateAnswer(): Int = 11
+companion val BidirectionalStaticAlpha.label: String get() = "alpha"
+companion val BidirectionalStaticAlpha.marker: String = "m"
+companion var BidirectionalStaticAlpha.counter: Int = 0
+companion lateinit var BidirectionalStaticAlpha.later: String
+companion const val BidirectionalStaticAlpha.code: Int = 17
+companion var BidirectionalStaticAlpha.computed: Int
+    get() = bidirectionalComputedStorage
+    private set(value) { bidirectionalComputedStorage = value + 1 }
+companion var BidirectionalStaticAlpha.restricted: Int = 1
+    private set
+companion val BidirectionalStaticBeta.label: String get() = "beta"
+companion val BidirectionalStaticInitAlpha.initialized: String = recordBidirectionalExtensionInit("A")
+companion val BidirectionalStaticInitBeta.initialized: String = recordBidirectionalExtensionInit("B")
+
+fun updateRestrictedCompanionProperty() {
+    BidirectionalStaticAlpha.restricted = 2
+}
+
+fun bidirectionalCompanionExtensionInitializationOrder(): String {
+    val second = BidirectionalStaticInitBeta.initialized
+    val first = BidirectionalStaticInitAlpha.initialized
+    return "$first:$second:$bidirectionalExtensionInitLog"
+}
 
 fun bidirectionalStaticCalls(): String =
     "${BidirectionalStaticAlpha.answer()}:${BidirectionalStaticAlpha.answer(2)}:${BidirectionalStaticBeta.answer()}:" +
         "${BidirectionalStaticAlpha.echo("ok")}:${BidirectionalStaticAlpha.compute { 7 }}:" +
         "${BidirectionalStaticAlpha.internalAnswer()}:${BidirectionalStaticAlpha.privateAnswer()}"
+
+fun bidirectionalStaticPropertyCalls(): String {
+    BidirectionalStaticAlpha.counter = 6
+    BidirectionalStaticAlpha.later = "ready"
+    BidirectionalStaticAlpha.computed = 20
+    return "${BidirectionalStaticAlpha.label}:${BidirectionalStaticAlpha.marker}:${BidirectionalStaticAlpha.code}:" +
+        "${BidirectionalStaticAlpha.counter}:${BidirectionalStaticAlpha.later}:${BidirectionalStaticAlpha.computed}:" +
+        BidirectionalStaticBeta.label
+}
 
 // #251 — a nullable CONSTRUCTOR parameter must reach a C# consumer as [Nullable(2)], exactly like a nullable
 // method parameter. The C# side asserts the emitted metadata by reflection (this consumer does not enable NRT,

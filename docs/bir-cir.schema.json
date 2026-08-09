@@ -294,6 +294,9 @@
         "companionReceiver": { "type": "string", "$comment": "#382: the funDecl twin — the Kotlin type a field-backed COMPANION EXTENSION property (`companion val C.bar = 1`) is associated with, as a serialized type node." },
         "companionSourceName": { "type": "string", "$comment": "BIR-only source property name retained independently of the collision-free physical field name." },
         "companionMemberKind": { "const": "field", "$comment": "BIR-only explicit field role; companion property accessors use funDecl get/set instead." },
+        "companionPropertyMutable": { "type": "boolean", "$comment": "BIR-only Kotlin val/var fact for a field-backed companion extension. Unlike readOnly, this remains true for a var whose setter is non-public; bir2cir consumes it when synthesizing the physical setter." },
+        "companionSetterVisibility": { "$ref": "#/$defs/vis", "$comment": "BIR-only visibility of a field-backed companion extension var's default setter. Required when companionPropertyMutable is true and consumed by bir2cir." },
+        "companionStorageReadOnly": { "type": "boolean", "$comment": "BIR-only storage-mutability fact. Distinct from the public Kotlin readOnly surface: a private-set var remains mutable storage, while delegated storage is assigned once. bir2cir consumes it into CIR initOnly." },
         "initOnly": { "type": "boolean", "description": "CIR physical field flag: emit CLR initonly (C# readonly). bir2cir authors it only when the CLR storage itself is immutable; distinct from Kotlin readOnly round-trip metadata." },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the slot's reference-nullable positions (replaces the retired scalar `nullable` flag)." }
       },

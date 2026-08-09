@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -43,6 +44,52 @@ public class BidirectionalTests
         Assert.That(answers.All(method => method.IsPublic), Is.True);
         Assert.That(Implementations("internalAnswer").Single().IsAssembly, Is.True);
         Assert.That(Implementations("privateAnswer").Single().IsPrivate, Is.True);
+    }
+
+    [Test]
+    public void CSharpConsumesKotlinCompanionPropertiesAsStaticExtensionMembers()
+    {
+        Assert.That(BidirectionalStaticAlpha.label, Is.EqualTo("alpha"));
+        Assert.That(BidirectionalStaticAlpha.marker, Is.EqualTo("m"));
+        Assert.That(BidirectionalStaticAlpha.code, Is.EqualTo(17));
+        BidirectionalStaticAlpha.counter = 3;
+        Assert.That(BidirectionalStaticAlpha.counter, Is.EqualTo(3));
+        BidirectionalStaticAlpha.later = "csharp";
+        Assert.That(BidirectionalStaticAlpha.later, Is.EqualTo("csharp"));
+        Assert.That(BidirectionalStaticAlpha.computed, Is.EqualTo(10));
+        Assert.That(BidirectionalStaticAlpha.restricted, Is.EqualTo(1));
+        LibraryKt.updateRestrictedCompanionProperty();
+        Assert.That(BidirectionalStaticAlpha.restricted, Is.EqualTo(2));
+        Assert.That(BidirectionalStaticBeta.label, Is.EqualTo("beta"));
+        Assert.That(LibraryKt.bidirectionalStaticPropertyCalls(), Is.EqualTo("alpha:m:17:6:ready:21:beta"));
+        Assert.That(LibraryKt.bidirectionalCompanionExtensionInitializationOrder(), Is.EqualTo("A:B:AB"));
+        Assert.That(LibraryKt.bidirectionalCompanionExtensionInitializationOrder(), Is.EqualTo("A:B:AB"),
+            "field-backed companion extensions must initialize exactly once");
+
+        var container = typeof(BidirectionalStaticAlpha).Assembly.GetTypes()
+            .Single(type => type.DeclaringType is null && type.IsAbstract && type.IsSealed &&
+                type.IsDefined(typeof(ExtensionAttribute), inherit: false) &&
+                type.GetMethod("get_label", BindingFlags.Public | BindingFlags.Static) is not null &&
+                type.GetMethod("get_counter", BindingFlags.Public | BindingFlags.Static) is not null);
+        foreach (var name in new[] { "get_label", "get_marker", "get_code", "get_counter", "set_counter",
+                     "get_later", "set_later", "get_computed" })
+        {
+            var accessor = container.GetMethod(name, BindingFlags.Public | BindingFlags.Static)!;
+            Assert.That(accessor.IsSpecialName, Is.False,
+                $"implementation accessor {name} must remain an ordinary executable method");
+        }
+        Assert.That(container.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static), Is.Empty,
+            "receiver-partitioned extension containers must not split the file's static storage");
+        var storage = typeof(LibraryKt).GetFields(BindingFlags.NonPublic | BindingFlags.Static)
+            .Where(field => field.Name.EndsWith("$storage", StringComparison.Ordinal))
+            .ToArray();
+        Assert.That(storage, Has.Length.EqualTo(7));
+        Assert.That(storage.All(field => field.IsPrivate), Is.True,
+            "companion extension storage must remain private on its single initialization owner");
+        Assert.That(container.GetMethod("set_computed", BindingFlags.NonPublic | BindingFlags.Static)!.IsPrivate, Is.True,
+            "a private Kotlin setter must remain a private implementation accessor");
+        Assert.That(container.GetMethod("set_restricted", BindingFlags.NonPublic | BindingFlags.Static)!.IsPrivate, Is.True,
+            "a field-backed var's private default setter must survive the C# 14 graph");
     }
 
     // #251 — the emitted CONSTRUCTOR parameter must carry NullableAttribute(2), the same NRT annotation a C#

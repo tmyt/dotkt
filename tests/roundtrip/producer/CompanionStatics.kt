@@ -145,6 +145,16 @@ companion val Tag.blank: Tag get() = Tag("")
 companion val Tag.marker: String = "m"
 companion var Tag.counter: Int = 0
 companion lateinit var Tag.later: String
+companion const val Tag.code: Int = 23
+companion var Tag.restricted: Int = 11
+    private set
+fun updateRestrictedTag(value: Int) {
+    Tag.restricted = value
+}
+private var computedTagState: Int = 3
+companion var Tag.computed: Int
+    get() = computedTagState
+    set(value) { computedTagState = value + 1 }
 companion inline fun Tag.withValue(block: () -> Int): Int = block()
 inline fun companionExtensionInlineDefault(
     value: Int = Tag.withValue { 37 },
@@ -161,6 +171,9 @@ companion var Tag.contextState: Int
 context(context: ReadOnlyTagContext)
 companion val Tag.contextState: Int get() = context.value
 companion fun GenericTag.genericValue(): String = "generic"
+// Increment 3 deliberately keeps generic-receiver properties on the trusted carrier. It still consumes the richer
+// BIR-only property facts before CIR, while preserving the existing cross-module val/var behavior.
+companion var GenericTag.genericCounter: Int = 7
 companion fun StringGenericTag.aliasValue(): String = "alias"
 fun localGenericCompanionExtensionValue(): String = GenericTag.genericValue() + "/" + GenericTag.aliasValue()
 companion fun OtherTag.of(label: String): OtherTag = OtherTag(label)
