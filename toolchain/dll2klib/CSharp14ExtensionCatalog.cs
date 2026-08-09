@@ -179,6 +179,11 @@ internal sealed class CSharp14ExtensionCatalog
             var functions = new List<Function>();
             foreach (var declarationHandle in group.GetMethods())
             {
+                var declarationName = md.GetString(md.GetMethodDefinition(declarationHandle).Name);
+                // PersistedAssemblyBuilder inserts a default instance constructor on DotKt's otherwise metadata-only
+                // sealed grouping TypeDef. Constructors are not extension declarations and Roslyn ignores this one;
+                // keep validating every non-constructor callable exactly like a native C# 14 graph.
+                if (declarationName is ".ctor" or ".cctor") continue;
                 if (!markers.TryGetValue(declarationHandle, out var declarationMarker))
                     throw Malformed(md, groupHandle, "grouping type contains an unmarked callable declaration");
                 if (declarationMarker != markerName)

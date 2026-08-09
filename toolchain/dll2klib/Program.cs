@@ -3126,9 +3126,17 @@ internal sealed class AssemblyScanner
             var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
             var context = new GenericContext(owner, entry.Implementation, typeParameterIds);
             var signature = method.DecodeSignature(signatures, context);
+            var kotlinFlags = _attrs.Int32(
+                entry.Implementation, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
             var function = new Function {
                 Name = names.String(_md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
-                Flags = (Flags.Callable(method.Attributes, CallableModality(method.Attributes)) & ~(1 << 18)) |
+                Flags = (Flags.Callable(
+                    method.Attributes,
+                    CallableModality(method.Attributes),
+                    kotlinFlags,
+                    isInline: _attrs.Has(
+                        entry.Implementation,
+                        MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18)) |
                     (1 << 18),
                 ReturnType = ProjectReturn(
                     entry.Implementation, method, signature.ReturnType, names, signatures, context),
@@ -3138,6 +3146,7 @@ internal sealed class AssemblyScanner
                 ReceiverType = CSharp14ExtensionReceiver(
                     entry.ReceiverMarker, entry.BlockArity, names, signatures),
             };
+            PromoteContextParameters(method, function);
             AddCSharp14MethodTypeParameters(method, function.TypeParameter, names, signatures, context);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
             function.Flags |= 1;

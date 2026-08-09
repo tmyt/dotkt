@@ -194,6 +194,10 @@ sealed partial class Emitter
                     // `final:true` -> TypeAttributes.Sealed (CLR-final, not Kotlin `sealed`). bir2cir sets it on the
                     // round-trip attribute-class defs (#71 S2), matching the old embedded `NotPublic | Sealed | Class`.
                     if (!isIface && t.TryGetProperty("final", out var clsFin) && clsFin.GetBoolean()) attrs |= TypeAttributes.Sealed;
+                    if (t.TryGetProperty("specialName", out var typeSpecialName) && typeSpecialName.GetBoolean())
+                        attrs |= TypeAttributes.SpecialName;
+                    if (t.TryGetProperty("beforeFieldInit", out var beforeFieldInit) && beforeFieldInit.GetBoolean())
+                        attrs |= TypeAttributes.BeforeFieldInit;
                     // Only SOURCE-declared parameters contribute to the metadata-name suffix. A nested companion can
                     // carry the enclosing type's flattened CLR generic slots in `capturedTypeParams` without declaring
                     // Kotlin parameters of its own: `Foo`1+$Companion`, not `...$Companion`1`.

@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using NUnit.Framework;
 
 public class BidirectionalTests
@@ -17,6 +19,30 @@ public class BidirectionalTests
     public void CSharpCallsKotlinTopLevelFunctionAtCompileTime()
     {
         Assert.That(LibraryKt.bidirectionalAdd(2, 3), Is.EqualTo(5));
+    }
+
+    [Test]
+    public void CSharpConsumesKotlinCompanionFunctionsAsStaticExtensionMembers()
+    {
+        Assert.That(BidirectionalStaticAlpha.answer(), Is.EqualTo(42));
+        Assert.That(BidirectionalStaticAlpha.answer(2), Is.EqualTo(42));
+        Assert.That(BidirectionalStaticBeta.answer(), Is.EqualTo(84));
+        Assert.That(BidirectionalStaticAlpha.echo("typed"), Is.EqualTo("typed"));
+        Assert.That(LibraryKt.bidirectionalStaticCalls(), Is.EqualTo("42:42:84:ok:7:9:11"));
+
+        static MethodInfo[] Implementations(string name) => typeof(BidirectionalStaticAlpha).Assembly.GetTypes()
+            .Where(type => type.DeclaringType is null && type.IsAbstract && type.IsSealed &&
+                type.IsDefined(typeof(ExtensionAttribute), inherit: false))
+            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic |
+                BindingFlags.Static | BindingFlags.DeclaredOnly))
+            .Where(method => method.Name == name)
+            .ToArray();
+
+        var answers = Implementations("answer");
+        Assert.That(answers, Has.Length.EqualTo(3));
+        Assert.That(answers.All(method => method.IsPublic), Is.True);
+        Assert.That(Implementations("internalAnswer").Single().IsAssembly, Is.True);
+        Assert.That(Implementations("privateAnswer").Single().IsPrivate, Is.True);
     }
 
     // #251 — the emitted CONSTRUCTOR parameter must carry NullableAttribute(2), the same NRT annotation a C#

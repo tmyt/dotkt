@@ -237,20 +237,16 @@ A Kotlin 2.4 source `companion { }` member is the same shape from the other
 direction: it is emitted as a static member of its own CLR type, so it needs no
 carrier and is read back by the ordinary static-member path above.
 
-A Kotlin 2.4 `companion fun C.foo()` / `companion val C.bar` — a COMPANION
-EXTENSION — has no receiver parameter at all: the frontend drops it, and the
-emitted member is an ordinary static of the declaring file's facade class.
-`bir2cir` gives each declaration a collision-free physical name keyed by the
-associated receiver, source name, and explicit `function`/`get`/`set`/`field`
-role. The same facts are carried by a trusted
-`[KotlinCompanionExtension(version, bytes)]` payload `{receiver, name, kind}`.
-`dll2klib` restores the source name and standard Kotlin shape — the
-static-declaration flag plus a receiver type, which is exactly what
-`isStatic && receiverParameter != null` means. It validates the explicit role;
-no accessor classification from `get_`/`set_`, library rule, or physical-layout
-inference participates.
-Without the carrier there is no such declaration; the facade member stays an
-ordinary top-level function or property.
+A Kotlin 2.4 `companion fun C.foo()` — a COMPANION EXTENSION — has no receiver
+parameter at all: the frontend drops it. For a non-generic associated classifier,
+`bir2cir` emits the released C# 14 static extension-member graph: a source-named
+executable method on a receiver-partitioned top-level container plus its nested
+signature and receiver-marker declarations. Calls target the executable method.
+`dll2klib` restores the source name and standard Kotlin shape from that attributed
+graph — the static-declaration flag plus a receiver type, which is exactly what
+`isStatic && receiverParameter != null` means. No generated-name inference is
+involved. Generic associated classifiers and companion properties remain on the
+trusted `[KotlinCompanionExtension]` carrier during the staged migration.
 
 An ordinary C# 14 static extension member is imported into that same standard
 Kotlin shape from its released metadata graph. `dll2klib` starts from
