@@ -128,7 +128,12 @@ return;
         Require(observedMarker == marker.Name,
             $"{group.FullName}.{declaration.Name} has ExtensionMarker target '{observedMarker}', expected '{marker.Name}'");
         var body = declaration.GetMethodBody()?.GetILAsByteArray();
-        Require(body is [0x14, 0x7A], $"{group.FullName}.{declaration.Name} is not the ldnull/throw signature stub");
+        // Roslyn has emitted both `ldnull; throw` and `newobj <exception>; throw` for this released signature-only
+        // declaration across .NET SDK builds. Debug sequence points may add nop instructions around either form. The
+        // ABI invariant is that the declaration is an unconditional throw stub, not one compiler-version byte string.
+        Require(IsSignatureThrowStub(body),
+            $"{group.FullName}.{declaration.Name} is not a signature-only throw stub " +
+            $"(IL={Convert.ToHexString(body ?? [])})");
     }
     return (container, group, marker);
 }
@@ -167,6 +172,23 @@ string? MarkerName(MemberInfo member) => member.CustomAttributes
 
 static bool HasAttribute(MemberInfo member, string fullName) =>
     member.CustomAttributes.Any(a => a.AttributeType.FullName == fullName);
+
+static bool IsSignatureThrowStub(byte[]? body)
+{
+    if (body is null) return false;
+    var offset = 0;
+    while (offset < body.Length && body[offset] == 0x00) offset++; // nop
+    if (offset < body.Length && body[offset] == 0x14)              // ldnull
+        offset++;
+    else if (offset + 5 <= body.Length && body[offset] == 0x73)   // newobj <4-byte metadata token>
+        offset += 5;
+    else
+        return false;
+    while (offset < body.Length && body[offset] == 0x00) offset++;
+    if (offset >= body.Length || body[offset++] != 0x7A) return false; // throw
+    while (offset < body.Length && body[offset] == 0x00) offset++;
+    return offset == body.Length;
+}
 
 static void Require(bool condition, string message)
 {
