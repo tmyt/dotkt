@@ -162,7 +162,10 @@ sealed partial class Emitter
         BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
-        EmitTrailingRet();
+        // CIR may prove that a body terminates without fall-through (for example, an exact metadata throw stub).
+        // Otherwise keep the verifier-safe fallback return used by ordinary emitted methods.
+        if (!(m.TryGetProperty("bodyTerminates", out var bodyTerminates) && bodyTerminates.GetBoolean()))
+            EmitTrailingRet();
     }
 
     // Append the method's fall-through terminator. For a `void` method a bare `ret` is valid. For a

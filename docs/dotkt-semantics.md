@@ -1339,19 +1339,22 @@ the compile-time value so a second Kotlin module can use the declaration in anot
 
 ### A companion EXTENSION is a receiverless static associated with a type
 
-`Tag.of("hi")` passes no receiver — the association is not a parameter. Kotlin/CLR gives every companion extension
-one uniform physical representation: an ordinary static member of the declaring file's facade class. `bir2cir`
-selects a collision-free physical name from the semantic receiver, source name, and explicit
-`function`/`get`/`set`/`field` role. Trusted `[KotlinCompanionExtension]` metadata carries those same three facts as
-`{receiver, name, kind}`. The member is never made a member of the associated type, because it must work identically
-when that type is an external CLR type the compiler cannot add members to.
+`Tag.of("hi")` passes no receiver — the association is not a parameter. For a non-generic associated classifier,
+`bir2cir` emits the released C# 14 static extension-member metadata graph. The source-named executable method lives
+on a public top-level extension container partitioned by receiver; nested signature and receiver-marker declarations
+make `Tag.of(...)` visible to a C# 14 compiler. Kotlin and C# calls both target the executable method, never the
+signature-only throwing declaration. The member is not injected into `Tag` itself, so the same rule works when the
+associated type belongs to an external CLR assembly.
 
-Round-trip needs no new encoding. `dll2klib` restores the standard Kotlin shape — the `IS_STATIC_FUNCTION` /
-`IS_STATIC_PROPERTY` flag plus a receiver type — which is precisely what Kotlin means by a companion extension,
-so a second module resolves `Tag.of(...)` from metadata alone. The explicit role prevents an ordinary function such
-as `fun get_x()` from being reclassified as a property accessor; general Kotlin declaration collisions remain the
-frontend's existing concern. Like any extension, it must be in scope at the use site (same package, or `import`ed by
-name).
+Round-trip needs no DotKt-specific encoding for those functions. `dll2klib` validates the attributed graph and
+restores the standard Kotlin shape — the `IS_STATIC_FUNCTION` flag plus a receiver type — so a second module resolves
+`Tag.of(...)` from metadata alone. Overloads retain their CLR signatures and generic method constraints; visibility
+is copied onto both the executable and signature declaration. Like any extension, it must be in scope at the use site
+(same package, or `import`ed by name).
+
+This is an incremental migration: functions associated with a generic classifier, suspend functions, and companion
+properties still use the trusted `[KotlinCompanionExtension]` facade representation. Subsequent increments move those
+remaining shapes and then remove that internal ABI rather than retaining a compatibility path.
 
 The frontend restricts the receiver to a bare classifier: no type arguments, no type parameter, no nullable
 receiver, no `object`, no `dynamic`. A typealias receiver is allowed and denotes the class it expands to. The trusted

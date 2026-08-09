@@ -7,6 +7,25 @@ class BidirectionalGreeter(val name: String) {
 
 fun bidirectionalAdd(a: Int, b: Int): Int = a + b
 
+// #389 — companion extensions are emitted as the released C# 14 static extension-member graph. Keeping two
+// receivers with the same source member name proves that bir2cir partitions the physical containers by receiver;
+// the generic member proves that method type parameters and constraints stay on the executable declaration.
+class BidirectionalStaticAlpha
+class BidirectionalStaticBeta
+
+companion fun BidirectionalStaticAlpha.answer(): Int = 42
+companion fun BidirectionalStaticAlpha.answer(value: Int): Int = 40 + value
+companion fun BidirectionalStaticBeta.answer(): Int = 84
+companion fun <T : Comparable<T>> BidirectionalStaticAlpha.echo(value: T): T = value
+companion inline fun BidirectionalStaticAlpha.compute(block: () -> Int): Int = block()
+internal companion fun BidirectionalStaticAlpha.internalAnswer(): Int = 9
+private companion fun BidirectionalStaticAlpha.privateAnswer(): Int = 11
+
+fun bidirectionalStaticCalls(): String =
+    "${BidirectionalStaticAlpha.answer()}:${BidirectionalStaticAlpha.answer(2)}:${BidirectionalStaticBeta.answer()}:" +
+        "${BidirectionalStaticAlpha.echo("ok")}:${BidirectionalStaticAlpha.compute { 7 }}:" +
+        "${BidirectionalStaticAlpha.internalAnswer()}:${BidirectionalStaticAlpha.privateAnswer()}"
+
 // #251 — a nullable CONSTRUCTOR parameter must reach a C# consumer as [Nullable(2)], exactly like a nullable
 // method parameter. The C# side asserts the emitted metadata by reflection (this consumer does not enable NRT,
 // so a missing annotation would otherwise be invisible there).
