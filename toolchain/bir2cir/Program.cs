@@ -22,7 +22,7 @@ static class Bir2Cir
         catch (UsageException ex)
         {
             Console.Error.WriteLine(ex.Message);
-            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] <file.bir.json>...");
+            Console.Error.WriteLine("usage: bir2cir <out-dir> [--compile-refs <dll;dll;...>] [--reflection-restricted] <file.bir.json>...");
             return 1;
         }
         catch (Exception ex)
@@ -51,6 +51,10 @@ sealed class Pipeline
         var diagnostics = refs.Diagnostics.ToList();
         foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
         var cirFiles = TransformFiles(birFiles, refs);
+        if (_options.ReflectionRestricted && ForeignStarProjectionBinding.UsedRuntimeFallback)
+            Console.Error.WriteLine(
+                "bir2cir: warning DOTKTSTAR001: foreign CLR star projection uses reflection; "
+                + "NativeAOT/trimming must preserve the referenced generic type and member metadata");
         // Release the long-lived .NET-interop MetadataLoadContext (kept alive across all transform passes for
         // NetInteropBinding's owner resolution — A2 / #61) now that no pass needs metadata reflection.
         refs.DisposeNet();
@@ -701,7 +705,8 @@ sealed class Pipeline
         // F-BOUND STAR PROJECTION: CLR has no legal/reified `Node<*>` TypeSpec for `Node<N : Node<N>>`.
         // Materialize a deterministic non-generic existential view in bir2cir and make every closed Node<N> implement
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
-        FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+        var localExistentialOwners =
+            FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
         var existentialReceiverMembers =
             ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
 
@@ -755,7 +760,8 @@ sealed class Pipeline
         // Reference-KLIB await bridges are declaration-only call-site facts and never enter this build's method set.
         IReadOnlyDictionary<string, DotKt.Bir.TypeNode> suspendCalleeRet = null;
         if (!_options.RefBuild)
-            suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, localTypeFqns, attributeTopLevelOwner);
+            suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
+                localTypeFqns, attributeTopLevelOwner, localExistentialOwners);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
@@ -849,7 +855,7 @@ sealed class Pipeline
             ConstrainedTypeParameterReceiverBinding.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // dll2klib restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
-        // G$dotkt_star. Re-apply that exact referenced ABI to call signatures and directly initialized locals before
+        // its compiler-generated existential carrier. Re-apply that exact referenced ABI to call signatures and directly initialized locals before
         // CLR type lowering; ilemit must never infer the hidden physical signature.
         if (!_options.RefBuild)
             foreach (var stagedFile in staged)
@@ -922,7 +928,7 @@ sealed class Pipeline
             ContinuationErasure.Apply(substituted, refs);
             GenericDowncastRealignment.Apply(substituted, genericDowncastHierarchy);
             // GenericDowncastRealignment aligns a local's declared type with an erased
-            // G$dotkt_star cast. Bind calls through that local to the exact synthesized
+            // existential-carrier cast. Bind calls through that local to the exact synthesized
             // existential slot before CLR type lowering.
             ExistentialReceiverBinding.Apply(substituted, existentialReceiverMembers, refs);
             // SEQUENCE for-in dispatch (#37 m1 wave-2, cases/il-seqforin): a `for (x in seq)` over a Kotlin Sequence
@@ -1230,7 +1236,8 @@ sealed class Pipeline
 // SUBSTITUTE-set — was never a real mode; the flag makes it unrepresentable.)
 enum BuildStdlibMode { App, Metadata, Runtime }
 
-sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferences, IReadOnlyList<string> Inputs, BuildStdlibMode StdlibMode)
+sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferences, IReadOnlyList<string> Inputs,
+    BuildStdlibMode StdlibMode, bool ReflectionRestricted)
 {
     // The pure-Kotlin REFERENCE stdlib surface (`--build-stdlib=metadata` -> DotKt.Private.Stdlib.dll) keeps kotlin.*
     // type tokens verbatim and squashes bodies to a throw; EVERY other invocation — the runtime stdlib build and all
@@ -1253,6 +1260,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
         var refs = new List<string>();
         var inputs = new List<string>();
         var mode = BuildStdlibMode.App;
+        var reflectionRestricted = false;
 
         for (var i = 1; i < args.Length; i++)
         {
@@ -1271,6 +1279,9 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
                 case "--build-stdlib=runtime":
                     mode = BuildStdlibMode.Runtime;
                     break;
+                case "--reflection-restricted":
+                    reflectionRestricted = true;
+                    break;
                 default:
                     if (args[i].StartsWith("--build-stdlib", StringComparison.Ordinal))
                         throw new UsageException($"bir2cir: --build-stdlib requires 'metadata' or 'runtime' (got '{args[i]}')");
@@ -1284,7 +1295,7 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
         if (inputs.Count == 0)
             throw new UsageException("bir2cir: no BIR input files");
 
-        return new DriverOptions(outDir, refs, inputs, mode);
+        return new DriverOptions(outDir, refs, inputs, mode, reflectionRestricted);
     }
 }
 

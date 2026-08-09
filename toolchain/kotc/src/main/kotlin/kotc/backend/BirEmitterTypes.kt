@@ -229,14 +229,16 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		// A projected .NET / stdlib type identity: emit its Kotlin FQN (`netName`) as an `fqn`. bir2cir/ilemit
 		// resolve whether it is a referenced .NET type / generic (the old `clr:`/`clrg:` decision). A nested
 		// nullable type-parameter arg keeps its `nullable(tv)` marker (bir2cir erases it).
-		val args = (t as? IrSimpleType)?.arguments?.mapNotNull { arg ->
-			(arg as? IrTypeProjection)?.type?.let { argElemNullable(it) }
+		val simple = t as? IrSimpleType
+		val args = simple?.arguments?.map { arg ->
+			if (simple.hasRawType()) TypeNode.Star
+			else (arg as? IrTypeProjection)?.type?.let { argElemNullable(it) } ?: TypeNode.Star
 		}
 		return when {
 			!args.isNullOrEmpty() -> TypeNode.Fqn(netName, args)
-			// A GENERIC type referenced raw / star-projected (no args) still needs its arity — fill `object` per
-			// type param (the open generic def is unresolvable downstream).
-			!clrTypeParams.isNullOrEmpty() -> TypeNode.Fqn(netName, clrTypeParams.map { OBJ })
+			// A generic external classifier referenced raw still needs its semantic arity. This is Kotlin's
+			// existential `G<*>`, not a reified `G<Any>`; bir2cir chooses the CLR representation.
+			!clrTypeParams.isNullOrEmpty() -> TypeNode.Fqn(netName, clrTypeParams.map { TypeNode.Star })
 			else -> TypeNode.Fqn(netName)
 		}
 	}
@@ -255,7 +257,11 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		if (klass.typeParameters.isNotEmpty() || klass.isInner) {
 			val sargs = (t as? IrSimpleType)?.arguments
 			if (!sargs.isNullOrEmpty()) {
-				val semanticArgs = sargs.map { a ->
+				// Fir2Ir represents a RAW external generic using its lower-bound arguments (normally `Any`) plus the
+				// synthetic `kotlin.internal.ir.RawType` annotation. Its IR renderer deliberately prints that shape as
+				// `G<*>`, but reading only `IrTypeProjection.type` silently changes the Kotlin existential into `G<Any>`.
+				// Preserve the frontend fact in BIR; bir2cir owns the physical existential/runtime representation.
+				val semanticArgs = if (t.hasRawType()) sargs.map { TypeNode.Star } else sargs.map { a ->
 					val at = (a as? IrTypeProjection)?.type
 					when {
 						// A STAR projection is Kotlin vocabulary. Preserve it in BIR; bir2cir authors the CLR
@@ -400,6 +406,12 @@ internal fun BirEmitter.nullableElem(t: IrType): TypeNode? =
 internal fun IrType.hasFlexibleNullability(): Boolean =
 	(this as? IrSimpleType)?.annotations?.any { it.type.classFqName?.asString() == "kotlin.internal.ir.FlexibleNullability" } == true
 
+/** A raw external generic (`G<*>` in Kotlin) is represented by Fir2Ir as the lower-bound construction plus this
+ *  synthetic annotation. The ordinary type arguments are therefore not semantic arguments and must never be emitted
+ *  as `G<Any>`; callers that project a constructed classifier treat every slot as [TypeNode.Star]. */
+internal fun IrType.hasRawType(): Boolean =
+	(this as? IrSimpleType)?.annotations?.any { it.type.classFqName?.asString() == "kotlin.internal.ir.RawType" } == true
+
 /** A value-type-nullable source (`Int?` = `Nullable<T>` on the CLR) narrowed/cast to its NON-null value
  *  (`Int`) must read `Nullable<T>.get_Value` — a bare load / `unbox.any` over a `Nullable<T>` STRUCT reads
  *  garbage or emits invalid IL (the C1 smart-cast miscompile). Given the SOURCE and required non-null USE/target
@@ -463,12 +475,16 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 	val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
 	// A lifted generic-capturing local/object class: its captured enclosing params come LAST (the flattened order).
 	val liftedCaps = liftedCaptureArgs(klass)
-	fun projectedArgs(type: IrType?): List<TypeNode>? = (type as? IrSimpleType)?.arguments?.map { a ->
-		val at = (a as? IrTypeProjection)?.type
-		when {
-			at == null -> TypeNode.Star
-			at.isUnit() -> TypeNode.Fqn("kotlin.Unit")
-			else -> birType(at)
+	fun projectedArgs(type: IrType?): List<TypeNode>? {
+		val simple = type as? IrSimpleType ?: return null
+		if (simple.hasRawType()) return simple.arguments.map { TypeNode.Star }
+		return simple.arguments.map { a ->
+			val at = (a as? IrTypeProjection)?.type
+			when {
+				at == null -> TypeNode.Star
+				at.isUnit() -> TypeNode.Fqn("kotlin.Unit")
+				else -> birType(at)
+			}
 		}
 	}
 	// Kotlin's constructed type for an inner classifier carries [own..., outer...]. Preserve it verbatim in BIR;

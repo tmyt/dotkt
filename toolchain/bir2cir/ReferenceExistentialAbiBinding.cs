@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// dll2klib restores a compiler-generated existential's Kotlin surface (`G$dotkt_star` -> `G<*>`) before frontend
+// dll2klib restores a compiler-generated existential's Kotlin surface (physical carrier -> `G<*>`) before frontend
 // analysis. That is the correct source signature, but a cross-module CIR call still has to name the referenced DLL's
 // physical parameter/return slots. Rebind only provenance-verified existential signatures from the reference index,
 // then align directly initialized locals with the physical result. Metadata remains the frontend authority; this pass
@@ -14,7 +14,7 @@ static class ReferenceExistentialAbiBinding
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         BindCalls(root, refs);
-        AlignLocals(root);
+        AlignLocals(root, refs);
     }
 
     static void BindCalls(JsonNode node, ReferenceMetadataIndex refs)
@@ -68,21 +68,21 @@ static class ReferenceExistentialAbiBinding
             ?? (TypeJson.Read(call["calleeOwner"]) as TypeNode.Fqn)?.Name;
     }
 
-    static void AlignLocals(JsonNode node)
+    static void AlignLocals(JsonNode node, ReferenceMetadataIndex refs)
     {
         switch (node)
         {
             case JsonObject obj:
                 if (Str(obj["k"]) == "var"
                     && ExprType(obj["init"]) is TypeNode.Fqn physical
-                    && physical.Name.EndsWith("$dotkt_star", StringComparison.Ordinal))
+                    && refs.IsExistentialPhysicalOwner(physical.Name))
                     obj["type"] = TypeJson.Write(physical);
                 foreach (var value in obj.Select(kv => kv.Value).ToList())
-                    if (value != null) AlignLocals(value);
+                    if (value != null) AlignLocals(value, refs);
                 break;
             case JsonArray array:
                 foreach (var value in array)
-                    if (value != null) AlignLocals(value);
+                    if (value != null) AlignLocals(value, refs);
                 break;
         }
     }

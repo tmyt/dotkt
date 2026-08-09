@@ -13,8 +13,8 @@ const string Ns = "roundtrip.dispatchsurface.";
 const string CarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
 const string LateinitAttribute = "DotKt.Runtime.CompilerServices.KotlinLateinitAttribute";
 const string StaticCarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
-// A hoisted carrier's reserved separator. It is what keeps `<owner>$companion$dotkt_star` (a companion whose SOURCE
-// name is `dotkt_star`) distinct from `<owner>$dotkt_star` (the star-projection existential of the same owner).
+// A hoisted companion carrier's reserved separator keeps compiler companion types disjoint from ordinary source
+// names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
 
 if (args.Length >= 4 && args[0] == "--volatile-consumer")

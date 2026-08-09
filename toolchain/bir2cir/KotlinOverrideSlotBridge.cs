@@ -31,7 +31,7 @@ using Def = SupertypeGraph.Def;
 // Private is necessary and not sufficient — see CarryKotlinType for the one path that re-surfaces a private body.
 //
 // ONE BRIDGE, ONE METHODIMPL PER SLOT IT FILLS. A slot is reached through the whole supertype graph — the constructed
-// interface, its own base interfaces (including the synthesized `G$dotkt_star` existential view), and the base-class
+// interface, its own base interfaces (including a synthesized existential view), and the base-class
 // chain — and every one of those declares its own CLR slot even when the signatures coincide. The bridges are keyed by
 // signature so the several slots share one body, and each contributes its own resolved MethodImpl descriptor. The walk
 // itself is `SupertypeGraph`, shared with the crossing refusal that asks the same graph a different question.
@@ -70,7 +70,7 @@ static class KotlinOverrideSlotBridge
     // body reading it at the type it used to have — verifiably wrong IL.
     //
     // The BRIDGE must land after the star-projection erasure, because that pass ADDS supertypes: a `G<*>` anywhere in
-    // the compilation gives `G` a synthesized `G$dotkt_star` view whose slots an implementer must fill too, and a
+    // the compilation gives `G` a synthesized existential view whose slots an implementer must fill too, and a
     // bridge built before it exists would carry a MethodImpl for the constructed interface and leave the existential
     // one unimplemented. Nothing between the two points can introduce a new nested move — an existential view's slots
     // are copies of the erased ones — so the halves do not race.
@@ -361,7 +361,7 @@ static class KotlinOverrideSlotBridge
     // The class's own declaration that fills this slot. Two independent proofs are accepted, and both are needed:
     // the Kotlin `overrides` fact names the supertype the author wrote (`Sink`), which is what makes the match safe;
     // and a slot may be reached through a supertype the author never named (`Sink`'s own base interfaces, including
-    // the synthesized `Sink$dotkt_star` existential view), so an ANCESTOR of an overridden owner counts too. An
+    // a synthesized existential view of `Sink`), so an ANCESTOR of an overridden owner counts too. An
     // unrelated same-name overload proves neither and is left alone — mis-wiring a MethodImpl fails type LOAD.
     static JsonObject Implementer(Def cls, IReadOnlyDictionary<string, Def> defs, JsonArray methods, string supName,
         string name, int methodArity, TypeNode[] slotParams, TypeNode[] ownArgs)

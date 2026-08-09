@@ -46,6 +46,9 @@ The split prevents frontend declarations, binding metadata, and executable imple
 4. `@ClrIntrinsic` and related annotations are substitution metadata consumed by `bir2cir`; they are not runtime dispatch mechanisms.
 5. `ilemit` consumes resolved CIR and must not recover Kotlin semantics or implement stdlib recognition.
 6. BIR and CIR use the structured vocabulary defined by [bir-cir-spec.md](bir-cir-spec.md) and [bir-cir.schema.json](bir-cir.schema.json).
+7. `kotc` serializes each Kotlin `*` as a BIR `star`; it never substitutes `Any`. `bir2cir` alone selects the CLR
+   representation: trusted DotKt existential ABI, a known non-generic BCL surface, or the exact-token foreign-CLR
+   reflection runtime. `ilemit` sees only the already-authored CIR calls and types.
 
 ## Build modes
 

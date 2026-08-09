@@ -78,7 +78,14 @@ import mpp.app.Greeter
 import kotlinx.genovc.arrOfNulls
 import starprojection.StarKey
 import starprojection.starOwner
+import starprojection.FirstUseBox
+import starprojection.firstUseBox
+import starprojection.MixedBox
+import starprojection.mixedBox
+import starprojection.CollisionHost
+import starprojection.collisionHost
 import starprojection.isConcreteStarKey
+import starprojection.ReferencedStarBase
 import suspendcompanion.CompanionSuspendApi
 import suspendnullable.NullableSuspendHolder
 import suspendnullable.invokeNullableSuspend
@@ -113,6 +120,11 @@ fun runCrossModuleSuspend(block: suspend () -> Int): Int {
 }
 
 private class InvariantTypeProbe<T>(val value: T)
+
+private interface LocalStarDerived<T> : ReferencedStarBase<T>
+private class LocalStarDerivedImpl : LocalStarDerived<String> {
+    override fun inherited(): String = "referenced-base"
+}
 
 private fun requireNullableSuspendType(
     probe: InvariantTypeProbe<(suspend () -> Int)?>
@@ -307,6 +319,28 @@ class GenericMetadataRoundtripTests {
     fun boundedStarProjectionRoundTrips() {
         val key: StarKey<*> = starOwner().key
         ClassicAssert.IsTrue(isConcreteStarKey(key))
+
+        // The producer declares FirstUseBox<T> and returns FirstUseBox<String>, but contains no FirstUseBox<*> use.
+        // The existential view is a declaration ABI, not a producer-use artifact: this consuming module is the first
+        // place that asks for the projection and must still receive the original object through the raw view.
+        val first: FirstUseBox<*> = firstUseBox()
+        ClassicAssert.AreEqual("first-use", first.get())
+
+        // One physical existential serves every projection mask, while [KotlinType] preserves the concrete second
+        // argument. Re-import must therefore keep second() statically String rather than degrading the whole slot.
+        val mixed: MixedBox<*, String> = mixedBox()
+        val second: String = mixed.second()
+        ClassicAssert.AreEqual(23, mixed.first())
+        ClassicAssert.AreEqual("mixed", second)
+        // The frontend-selected concrete-B overload must select its exact existential slot; name+arity sees both
+        // choose(A) and choose(String) and is insufficient after the A slot becomes star-input Nothing.
+        ClassicAssert.AreEqual("string:ok", mixed.choose("ok"))
+
+        val inherited: LocalStarDerived<*> = LocalStarDerivedImpl()
+        ClassicAssert.AreEqual("referenced-base", inherited.inherited())
+
+        val collision: CollisionHost<*> = collisionHost()
+        ClassicAssert.AreEqual("collision-safe", collision.value())
     }
 
     // ktproj-reprop (#17): a direct property get/set on a `kotlinx.`-packaged re-imported type lowers to the

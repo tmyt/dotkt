@@ -73,6 +73,32 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   - Dropping it *removes* the JVM constraint: a consumer can pass a **non-reified** type parameter
     (`fun <U> bar() = foo<U>()` is fine on the CLR, an error on the JVM).
   - There is **no `@Metadata`/reified attribute** to round-trip.
+- **A Kotlin star projection is never represented as `G<object>`.** CLR generics are reified and invariant, so
+  `G<String>` is not a `G<object>` and that substitution changes both runtime tests and dispatch. For a generic
+  declaration emitted by DotKt, `bir2cir` adds a compiler-generated non-generic existential interface implemented by
+  every `G<T...>` closure. The interface is emitted eagerly as declaration ABI, preserves object identity, supports
+  arbitrary arity and mixed masks such as `Pair<*, String>`, and is hidden when the DLL is re-imported. Trusted
+  `[KotlinType]` metadata records the semantic owner and projected declaration types; the carrier's allocated CLR
+  name has no meaning and is chosen collision-free.
+- **An arbitrary imported CLR `G<*>` uses an `object` value slot plus exact reflection dispatch.** A foreign assembly
+  cannot retroactively implement DotKt's existential interface. `is`/`as`, methods, properties, and fields therefore
+  call the pure-Kotlin `DotKt.Runtime.CompilerServices` star runtime. `bir2cir` resolves overloads and supplies the
+  exact open declaring type and member identity. A metadata token is used when the compile/runtime module image is
+  the same; an exact name/arity/parameter-type-shape declaration key bridges a ref.dll whose implementation twin
+  assigns different tokens or forwards framework types from a facade. A non-unique declaration key is rejected;
+  runtime argument values never participate in overload selection. The runtime creates no wrapper
+  and preserves reference identity. A star local initialized from one exact closed CLR interface retains that
+  closed-view fact for dispatch; this matters when one CLR object implements both `G<X>` and `G<Y>`. If no such
+  static fact remains and the runtime object exposes multiple closures of the same generic definition, dispatch is
+  rejected as ambiguous instead of selecting whichever interface reflection happens to enumerate first. A foreign
+  star member with `ref`/`out` parameters, a `ref` return, or a byref-like parameter/result is rejected at compile
+  time: the reflection `object[]` ABI cannot preserve managed-reference aliasing or box a byref-like value. Generic
+  CLR value types are cloned before a mutating reflection call and written back to the receiver slot, preserving
+  value-copy semantics despite physical boxing; a byref-like generic `G<*>` is likewise rejected because no boxable
+  existential representation exists. This path has reflection cost by design. A NativeAOT or trimmed build emits
+  `DOTKTSTAR001`, because the
+  referenced generic type/member metadata must be preserved; known BCL families with a faithful non-generic surface
+  continue to use that surface directly.
 - **Corollary — a star-projected collection (`Map<*,*>` / `List<*>` / `Iterable<*>` / `Collection<*>`) binds to the
   NON-generic BCL interface, because reified generics are INVARIANT.** On the JVM `x is Map<*,*>` and a subsequent
   `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection

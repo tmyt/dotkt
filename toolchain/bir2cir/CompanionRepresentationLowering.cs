@@ -58,10 +58,9 @@ static class CompanionRepresentationLowering
             // A generic physical owner cannot host a non-generic nested TypeDef — CLR nesting redeclares every
             // enclosing slot — so the carrier leaves the owner entirely and flattens the owner's nesting path into
             // its own top-level name. That name shares a namespace with other compiler types derived from an owner,
-            // notably the star-projection existential `<owner>$dotkt_star`, and a companion's SOURCE NAME is an
-            // ordinary identifier that may be spelled `dotkt_star` too. The reserved `$companion$` marker is what
-            // keeps the two apart: every such generated name is an owner followed by ONE `$`-segment, and no Kotlin
-            // owner name can end in `$companion`, so no source can produce a colliding pair.
+            // including the independently allocated star-projection existential. The reserved `$companion$` marker
+            // keeps compiler type families disjoint from a companion's ordinary source name: no Kotlin owner name
+            // can end in `$companion`, so no source can produce a colliding pair.
             var physicalOwner = PhysicalMetadataName(owner, byName);
             // The owner's CLR arity counts the slots it captured from an enclosing generic type as well as its own:
             // that is the arity a consumer reflects off the emitted TypeDef, and the arity the carrier metadata is
