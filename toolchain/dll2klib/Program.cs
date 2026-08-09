@@ -261,7 +261,7 @@ internal static class Program
 
         var md = pe.GetMetadataReader();
         var assemblyName = md.IsAssembly ? md.GetString(md.GetAssemblyDefinition().Name) : Path.GetFileNameWithoutExtension(input);
-        var moduleName = $"clr.{assemblyName}.{md.GetGuid(md.GetModuleDefinition().Mvid):N}";
+        var uniqueName = $"clr.{assemblyName}.{md.GetGuid(md.GetModuleDefinition().Mvid):N}";
         var arityNames = ArityNames.Create(md, Environment.GetEnvironmentVariable(ArityClashesEnvironment));
         var delegateCatalog = DelegateReferenceCatalog.Load(
             Environment.GetEnvironmentVariable(DelegateCatalogEnvironment));
@@ -278,8 +278,10 @@ internal static class Program
             using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
             {
-                Write(zip, "default/manifest", Manifest(moduleName));
-                var header = new Header { ModuleName = moduleName };
+                Write(zip, "default/manifest", Manifest(uniqueName));
+                // The manifest owns the ordinary unique name. KlibMetadataProtoBuf.Header carries Kotlin's Name
+                // spelling instead, and the standard loader requires a special name (`<...>`) for a module.
+                var header = new Header { ModuleName = $"<{uniqueName}>" };
                 header.PackageFragmentName.Add(fragments.Select(x => x.PackageName));
                 Write(zip, "default/linkdata/module", header.ToByteArray());
                 foreach (var fragment in fragments)
@@ -300,12 +302,12 @@ internal static class Program
         Console.WriteLine($"{Path.GetFileName(input)} -> {Path.GetFileName(output)}: {fragments.Sum(x => x.Message.Class.Count)} public class(es)");
     }
 
-    private static byte[] Manifest(string moduleName) => System.Text.Encoding.UTF8.GetBytes(
+    private static byte[] Manifest(string uniqueName) => System.Text.Encoding.UTF8.GetBytes(
         "abi_version=2.4.0\n" +
         "compiler_version=2.4.0\n" +
         "ir_signature_versions=1,2\n" +
         "metadata_version=2.4.0\n" +
-        $"unique_name={moduleName}\n");
+        $"unique_name={uniqueName}\n");
 
     private static IReadOnlyList<string> DiscoverArityClashes(IEnumerable<string> inputs)
     {
