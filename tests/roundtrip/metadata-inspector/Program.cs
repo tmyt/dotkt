@@ -633,6 +633,19 @@ static void VerifyKlib(string path)
         QualifiedName(statics, receiver.ClassName) == "roundtrip.companionstatics.Tag");
     Require((marker.Flags & (1 << 8)) == 0 && marker.SetterValueParameter is null,
         "companion extension val round-tripped as a writable property");
+    var genericValue = statics.Package.Function.Single(f =>
+        String(statics, f.Name) == "genericValue" &&
+        f.ReceiverType is { HasClassName: true } receiver &&
+        QualifiedName(statics, receiver.ClassName) == "roundtrip.companionstatics.GenericTag");
+    Require(genericValue.TypeParameter.Count == 0 && genericValue.ReceiverType.Argument.Count == 0,
+        "generic companion-extension wrapper parameters leaked into the Kotlin callable");
+    var genericCounter = statics.Package.Property.Single(p =>
+        String(statics, p.Name) == "genericCounter" &&
+        p.ReceiverType is { HasClassName: true } receiver &&
+        QualifiedName(statics, receiver.ClassName) == "roundtrip.companionstatics.GenericTag");
+    Require(genericCounter.TypeParameter.Count == 0 && genericCounter.ReceiverType.Argument.Count == 0 &&
+            genericCounter.SetterValueParameter is not null,
+        "generic companion-extension property did not retain one bare receiver and its setter");
     var contextStates = statics.Package.Property.Where(p =>
         String(statics, p.Name) == "contextState" &&
         p.ReceiverType is { HasClassName: true } receiver &&

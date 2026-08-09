@@ -1371,6 +1371,9 @@ internal sealed class AssemblyScanner
             MetadataAttributes.DotKtNs + "KotlinPropertyStorageAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinExtensionCoreAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinStaticCarrierAttribute",
             HandleKind.TypeDefinition);
         _arityNames = arityNames;
@@ -3124,13 +3127,13 @@ internal sealed class AssemblyScanner
         var projectedFunctions = new List<ProjectedFunction>();
         foreach (var entry in container.Functions)
         {
-            var method = _md.GetMethodDefinition(entry.Implementation);
+            var method = _md.GetMethodDefinition(entry.KotlinImplementation);
             if (!IsPublicOrProtected(method.Attributes)) continue;
             var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
-            var context = new GenericContext(owner, entry.Implementation, typeParameterIds);
+            var context = new GenericContext(owner, entry.KotlinImplementation, typeParameterIds);
             var signature = method.DecodeSignature(signatures, context);
             var kotlinFlags = _attrs.Int32(
-                entry.Implementation, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
+                entry.KotlinImplementation, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
             var function = new Function {
                 Name = names.String(_md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
                 Flags = (Flags.Callable(
@@ -3138,16 +3141,17 @@ internal sealed class AssemblyScanner
                     CallableModality(method.Attributes),
                     kotlinFlags,
                     isInline: _attrs.Has(
-                        entry.Implementation,
+                        entry.KotlinImplementation,
                         MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18)) |
                     (1 << 18),
                 ReturnType = ProjectReturn(
-                    entry.Implementation, method, signature.ReturnType, names, signatures, context),
+                    entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
                 ValueParameter = {
-                    Parameters(entry.Implementation, method, signature.ParameterTypes, names, signatures, context)
+                    Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context)
                 },
                 ReceiverType = CSharp14ExtensionReceiver(
-                    entry.ReceiverMarker, entry.BlockArity, names, signatures),
+                    entry.ReceiverMarker, entry.BlockArity, names, signatures,
+                    eraseBlockArguments: entry.KotlinImplementation != entry.Implementation),
             };
             PromoteContextParameters(method, function);
             AddCSharp14MethodTypeParameters(method, function.TypeParameter, names, signatures, context);
@@ -3155,7 +3159,7 @@ internal sealed class AssemblyScanner
             function.Flags |= 1;
             package.Function.Add(function);
             projectedFunctions.Add(new ProjectedFunction(
-                entry.Implementation,
+                entry.KotlinImplementation,
                 function,
                 PhysicalParameterKeys(method, context)));
         }
@@ -3163,9 +3167,9 @@ internal sealed class AssemblyScanner
 
         foreach (var entry in container.Properties)
         {
-            var getter = _md.GetMethodDefinition(entry.GetterImplementation);
+            var getter = _md.GetMethodDefinition(entry.KotlinGetterImplementation);
             if (!IsPublicOrProtected(getter.Attributes)) continue;
-            var setterHandle = entry.SetterImplementation;
+            var setterHandle = entry.KotlinSetterImplementation;
             // A non-public setter is not callable from the consuming module represented by this KLIB. Project the
             // external surface as `val`; the defining DLL keeps the physical setter so code compiled in that module
             // retains its source semantics. This also avoids inventing a public Kotlin setter by omitting its flags.
@@ -3175,17 +3179,18 @@ internal sealed class AssemblyScanner
             var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
             var property = KotlinAccessorProperty(
                 owner,
-                entry.GetterImplementation,
+                entry.KotlinGetterImplementation,
                 setterHandle,
                 names,
                 signatures,
                 typeParameterIds,
                 isStatic: true,
                 companionReceiver: CSharp14ExtensionReceiver(
-                    entry.ReceiverMarker, entry.BlockArity, names, signatures));
+                    entry.ReceiverMarker, entry.BlockArity, names, signatures,
+                    eraseBlockArguments: entry.KotlinGetterImplementation != entry.GetterImplementation));
             property.Name = names.String(_md.GetString(_md.GetPropertyDefinition(entry.Declaration).Name));
             ApplyCSharp14PropertyStorageFacts(
-                property, entry.GetterImplementation, names);
+                property, entry.KotlinGetterImplementation, names);
             property.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
             property.Flags |= 1;
             package.Property.Add(property);
@@ -3245,7 +3250,8 @@ internal sealed class AssemblyScanner
         MethodDefinitionHandle markerHandle,
         int blockArity,
         NameTable names,
-        SignatureDecoder signatures)
+        SignatureDecoder signatures,
+        bool eraseBlockArguments = false)
     {
         var marker = _md.GetMethodDefinition(markerHandle);
         var markerOwner = marker.GetDeclaringType();
@@ -3264,7 +3270,14 @@ internal sealed class AssemblyScanner
             names,
             signatures,
             context);
-        return RebindCSharp14BlockParameters(receiver, blockArity);
+        if (!eraseBlockArguments)
+            return RebindCSharp14BlockParameters(receiver, blockArity);
+        // DotKt's associated classifier is intentionally bare (`companion fun G.foo`, never `G<T>.foo`). The
+        // receiver block exists solely so C# can close the standard wrapper from `G<string>.foo()`; it is not a
+        // Kotlin callable type-parameter declaration and must not leak an unbound 10000+i id into KLIB.
+        receiver.Argument.Clear();
+        if (receiver.FlexibleUpperBound is { } upper) upper.Argument.Clear();
+        return receiver;
     }
 
     private static KType RebindCSharp14BlockParameters(KType source, int blockArity)

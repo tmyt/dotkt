@@ -13,6 +13,7 @@ internal sealed class CSharp14ExtensionCatalog
     internal sealed record Function(
         MethodDefinitionHandle Declaration,
         MethodDefinitionHandle Implementation,
+        MethodDefinitionHandle KotlinImplementation,
         MethodDefinitionHandle ReceiverMarker,
         int BlockArity);
 
@@ -20,6 +21,8 @@ internal sealed class CSharp14ExtensionCatalog
         PropertyDefinitionHandle Declaration,
         MethodDefinitionHandle GetterImplementation,
         MethodDefinitionHandle SetterImplementation,
+        MethodDefinitionHandle KotlinGetterImplementation,
+        MethodDefinitionHandle KotlinSetterImplementation,
         MethodDefinitionHandle ReceiverMarker,
         int BlockArity);
 
@@ -30,6 +33,8 @@ internal sealed class CSharp14ExtensionCatalog
     private const string ExtensionAttribute = "System.Runtime.CompilerServices.ExtensionAttribute";
     private const string ExtensionMarkerAttribute = "System.Runtime.CompilerServices.ExtensionMarkerAttribute";
     private const string CompilerGeneratedAttribute = "System.Runtime.CompilerServices.CompilerGeneratedAttribute";
+    private const string KotlinExtensionCoreAttribute =
+        "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute";
 
     private readonly Dictionary<TypeDefinitionHandle, Container> _containers;
     private readonly HashSet<TypeDefinitionHandle> _infrastructure;
@@ -172,6 +177,10 @@ internal sealed class CSharp14ExtensionCatalog
                     propertyHandle,
                     getterImplementation,
                     setterImplementation,
+                    KotlinImplementation(md, attrs, containerHandle, groupHandle, accessors.Getter,
+                        getterImplementation),
+                    setterImplementation.IsNil ? default : KotlinImplementation(
+                        md, attrs, containerHandle, groupHandle, accessors.Setter, setterImplementation),
                     markerMethodHandle,
                     blockArity));
             }
@@ -191,9 +200,12 @@ internal sealed class CSharp14ExtensionCatalog
                 if (propertyAccessorMethods.Contains(declarationHandle)) continue;
                 if ((md.GetMethodDefinition(declarationHandle).Attributes & MethodAttributes.Static) == 0)
                     continue;
+                var implementation = PairImplementation(
+                    pe, md, containerHandle, groupHandle, declarationHandle, blockArity);
                 functions.Add(new Function(
                     declarationHandle,
-                    PairImplementation(pe, md, containerHandle, groupHandle, declarationHandle, blockArity),
+                    implementation,
+                    KotlinImplementation(md, attrs, containerHandle, groupHandle, declarationHandle, implementation),
                     markerMethodHandle,
                     blockArity));
             }
@@ -207,6 +219,69 @@ internal sealed class CSharp14ExtensionCatalog
             infrastructure.Add(markerHandle);
         }
         return new CSharp14ExtensionCatalog(containers, infrastructure);
+    }
+
+    private static MethodDefinitionHandle KotlinImplementation(
+        MetadataReader md,
+        MetadataAttributes attrs,
+        TypeDefinitionHandle containerHandle,
+        TypeDefinitionHandle groupHandle,
+        MethodDefinitionHandle declarationHandle,
+        MethodDefinitionHandle wrapperHandle)
+    {
+        using var document = attrs.CarrierDocument(wrapperHandle, KotlinExtensionCoreAttribute);
+        if (document is null) return wrapperHandle;
+        var root = document.RootElement;
+        var entries = root.ValueKind == System.Text.Json.JsonValueKind.Object
+            ? root.EnumerateObject().ToArray() : [];
+        if (entries.Length != 1 ||
+            !root.TryGetProperty("name", out var nameElement) ||
+            nameElement.ValueKind != System.Text.Json.JsonValueKind.String ||
+            string.IsNullOrEmpty(nameElement.GetString()))
+            throw Malformed(md, groupHandle, "malformed trusted Kotlin extension-core edge");
+        var name = nameElement.GetString()!;
+        var matches = md.GetTypeDefinition(containerHandle).GetMethods()
+            .Where(handle => md.GetString(md.GetMethodDefinition(handle).Name) == name)
+            .Where(handle => CoreSignatureMatches(md, groupHandle, declarationHandle, containerHandle, handle))
+            .ToArray();
+        if (matches.Length != 1)
+            throw Malformed(md, groupHandle,
+                $"Kotlin extension core '{name}' resolves to {matches.Length} methods");
+        return matches[0];
+    }
+
+    // A Kotlin core has only the declaration's own method parameters; the receiver block belongs exclusively to the
+    // C# wrapper. Kotlin source cannot mention those receiver arguments in the callable signature, so any group-scope
+    // type variable here is malformed rather than something to erase or infer.
+    private static bool CoreSignatureMatches(
+        MetadataReader md,
+        TypeDefinitionHandle groupHandle,
+        MethodDefinitionHandle declarationHandle,
+        TypeDefinitionHandle containerHandle,
+        MethodDefinitionHandle coreHandle)
+    {
+        var declaration = md.GetMethodDefinition(declarationHandle);
+        var core = md.GetMethodDefinition(coreHandle);
+        if ((core.Attributes & MethodAttributes.Static) == 0 ||
+            (core.Attributes & MethodAttributes.SpecialName) != 0 ||
+            (core.Attributes & MethodAttributes.MemberAccessMask) !=
+                (declaration.Attributes & MethodAttributes.MemberAccessMask) ||
+            core.GetGenericParameters().Count != declaration.GetGenericParameters().Count)
+            return false;
+        var declarationSignature = declaration.DecodeSignature(
+            RawSignatureTypeProvider.Instance,
+            new GenericContext(groupHandle, declarationHandle,
+                ImmutableDictionary<GenericParameterHandle, int>.Empty));
+        var coreSignature = core.DecodeSignature(
+            RawSignatureTypeProvider.Instance,
+            new GenericContext(containerHandle, coreHandle,
+                ImmutableDictionary<GenericParameterHandle, int>.Empty));
+        if (declarationSignature.ReturnType != coreSignature.ReturnType ||
+            !declarationSignature.ParameterTypes.SequenceEqual(coreSignature.ParameterTypes, StringComparer.Ordinal))
+            return false;
+        return GenericParametersMatch(
+            md, groupHandle, declarationHandle, containerHandle, coreHandle,
+            declarationSignature.GenericParameterCount, 0, 0);
     }
 
     private static MethodDefinitionHandle PairImplementation(

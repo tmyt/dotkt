@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using BidirectionalInterop;
 using NUnit.Framework;
 
 public class BidirectionalTests
@@ -47,6 +48,51 @@ public class BidirectionalTests
     }
 
     [Test]
+    public void GenericCompanionExtensionsUseStandardWrappersAndOneKotlinCore()
+    {
+        Assert.That(BidirectionalGenericStatic<string>.genericAnswer(), Is.EqualTo(389));
+        BidirectionalGenericStatic<int>.genericCounter = 4;
+        Assert.That(BidirectionalGenericStatic<string>.genericCounter, Is.EqualTo(4),
+            "generic receiver closures must share the Kotlin declaration's one storage slot");
+        Assert.That(BidirectionalGenericStatic<object>.echoGeneric(17), Is.EqualTo(17),
+            "a source method type parameter must not collide with the synthetic receiver block");
+        Assert.That(ReferenceConstrainedTarget<string>.referenceConstraint(), Is.EqualTo("reference"));
+        Assert.That(StructConstrainedTarget<int>.structConstraint(), Is.EqualTo("struct"));
+        Assert.That(RefLikeConstrainedTarget<Span<int>>.refLikeConstraint(), Is.EqualTo("ref-like"));
+        Assert.That(RepeatedGenericOuter<string>.RepeatedGenericInner<int>.repeatedGenericNames(),
+            Is.EqualTo("nested-generic"),
+            "outer and inner receiver slots with the same metadata name must remain distinct");
+        Assert.That(IReadOnlyList<string>.listAliasAnswer(), Is.EqualTo(144),
+            "a generic Kotlin alias receiver must lower to its CLR classifier before emitting the marker");
+
+        var assembly = typeof(BidirectionalGenericStatic<>).Assembly;
+        var wrappers = assembly.GetTypes()
+            .Where(type => type.DeclaringType is null && type.IsAbstract && type.IsSealed &&
+                type.IsDefined(typeof(ExtensionAttribute), inherit: false))
+            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Static |
+                BindingFlags.DeclaredOnly))
+            .Where(method => method.Name is "genericAnswer" or "get_genericCounter" or "set_genericCounter")
+            .ToArray();
+        Assert.That(wrappers, Has.Length.EqualTo(3));
+        Assert.That(wrappers.All(method => method.IsGenericMethodDefinition &&
+            method.GetGenericArguments().Length == 1), Is.True,
+            "the C# implementation wrappers must carry the receiver block parameter");
+        Assert.That(wrappers.All(method => method.GetCustomAttributesData().Any(attribute =>
+            attribute.AttributeType.FullName ==
+                "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute")), Is.True,
+            "every generic wrapper must explicitly name its Kotlin semantic core");
+
+        var refLikeWrapper = assembly.GetTypes()
+            .Where(type => type.DeclaringType is null && type.IsAbstract && type.IsSealed)
+            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Static |
+                BindingFlags.DeclaredOnly))
+            .Single(method => method.Name == "refLikeConstraint");
+        Assert.That(refLikeWrapper.GetGenericArguments().Single().GenericParameterAttributes &
+            GenericParameterAttributes.AllowByRefLike, Is.Not.EqualTo(0),
+            "the C# wrapper must retain the receiver's allows-ref-struct anti-constraint");
+    }
+
+    [Test]
     public void CSharpConsumesKotlinCompanionPropertiesAsStaticExtensionMembers()
     {
         Assert.That(BidirectionalStaticAlpha.label, Is.EqualTo("alpha"));
@@ -83,7 +129,7 @@ public class BidirectionalTests
         var storage = typeof(LibraryKt).GetFields(BindingFlags.NonPublic | BindingFlags.Static)
             .Where(field => field.Name.EndsWith("$storage", StringComparison.Ordinal))
             .ToArray();
-        Assert.That(storage, Has.Length.EqualTo(7));
+        Assert.That(storage, Has.Length.EqualTo(8));
         Assert.That(storage.All(field => field.IsPrivate), Is.True,
             "companion extension storage must remain private on its single initialization owner");
         Assert.That(container.GetMethod("set_computed", BindingFlags.NonPublic | BindingFlags.Static)!.IsPrivate, Is.True,

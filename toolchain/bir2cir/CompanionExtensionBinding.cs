@@ -63,13 +63,12 @@ static class CompanionExtensionBinding
         ReferenceMetadataIndex refs)
     {
         var bindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
-        var localArities = roots.OfType<JsonObject>()
+        var localTypes = roots.OfType<JsonObject>()
             .SelectMany(root => (root["types"] as JsonArray)?.OfType<JsonObject>() ?? [])
             .Where(type => Str(type["name"]) is not null)
             .ToDictionary(
                 type => Str(type["name"]),
-                type => ((type["capturedTypeParams"] as JsonArray)?.Count ?? 0) +
-                    ((type["typeParams"] as JsonArray)?.Count ?? 0),
+                type => type,
                 StringComparer.Ordinal);
 
         foreach (var root in roots.OfType<JsonObject>())
@@ -81,7 +80,7 @@ static class CompanionExtensionBinding
             {
                 foreach (var method in methods.OfType<JsonObject>().ToArray())
                 {
-                    if (ShouldEmitCSharp14Function(method, localArities, refs))
+                    if (ShouldEmitCSharp14Function(method))
                     {
                         var receiver = Str(method["companionReceiver"])!;
                         if (!extensionGroups.TryGetValue(receiver, out var group))
@@ -89,7 +88,7 @@ static class CompanionExtensionBinding
                         group.Functions.Add(method);
                         methods.Remove(method);
                     }
-                    else if (ShouldEmitCSharp14PropertyAccessor(method, localArities, refs))
+                    else if (ShouldEmitCSharp14PropertyAccessor(method))
                     {
                         var receiver = Str(method["companionReceiver"])!;
                         if (!extensionGroups.TryGetValue(receiver, out var group))
@@ -103,7 +102,7 @@ static class CompanionExtensionBinding
             if (root["fields"] is JsonArray fields)
                 foreach (var field in fields.OfType<JsonObject>().ToArray())
                 {
-                    if (ShouldEmitCSharp14PropertyField(field, localArities, refs))
+                    if (ShouldEmitCSharp14PropertyField(field))
                     {
                         var receiver = Str(field["companionReceiver"])!;
                         if (!extensionGroups.TryGetValue(receiver, out var group))
@@ -113,12 +112,10 @@ static class CompanionExtensionBinding
                     else
                     {
                         BindDeclaration(owner, field, bindings);
-                        if (Str(field["companionReceiver"]) != null)
-                            ConsumeDeferredPropertyFacts(field);
                     }
                 }
             foreach (var (receiver, declarations) in extensionGroups)
-                MaterializeCSharp14Members(root, owner, receiver, declarations, bindings);
+                MaterializeCSharp14Members(root, owner, receiver, declarations, bindings, localTypes, refs);
         }
         return bindings;
     }
@@ -144,30 +141,7 @@ static class CompanionExtensionBinding
         declaration["name"] = physicalName;
     }
 
-    // Increment 3 deliberately leaves generic-receiver properties on the existing trusted carrier, but the three
-    // Kotlin declaration facts added for the C# 14 materializer are still a bir2cir-only hand-off. The legacy field
-    // already carries its externally observable val/var surface through `readOnly`; validate and consume the richer
-    // facts here instead of leaking frontend vocabulary into CIR. This branch disappears with Increment 4.
-    static void ConsumeDeferredPropertyFacts(JsonObject field)
-    {
-        var mutable = field["companionPropertyMutable"]?.GetValue<bool>()
-            ?? throw new InvalidOperationException("deferred companion-extension field has no val/var fact");
-        _ = field["companionStorageReadOnly"]?.GetValue<bool>()
-            ?? throw new InvalidOperationException("deferred companion-extension field has no storage-mutability fact");
-        var setterVisibility = Str(field["companionSetterVisibility"]);
-        if (mutable && setterVisibility == null)
-            throw new InvalidOperationException("deferred companion-extension var has no setter visibility");
-        if (!mutable && setterVisibility != null)
-            throw new InvalidOperationException("deferred companion-extension val unexpectedly has setter visibility");
-        field.Remove("companionPropertyMutable");
-        field.Remove("companionSetterVisibility");
-        field.Remove("companionStorageReadOnly");
-    }
-
-    static bool ShouldEmitCSharp14Function(
-        JsonObject declaration,
-        IReadOnlyDictionary<string, int> localArities,
-        ReferenceMetadataIndex refs)
+    static bool ShouldEmitCSharp14Function(JsonObject declaration)
     {
         if (Str(declaration["companionReceiver"]) is not string receiver ||
             Str(declaration["companionMemberKind"]) != "function")
@@ -178,13 +152,10 @@ static class CompanionExtensionBinding
         if ((declaration["mods"] as JsonObject)?["suspend"] is JsonValue suspend &&
             suspend.TryGetValue<bool>(out var isSuspend) && isSuspend)
             return false;
-        return ReceiverArity(receiver, localArities, refs) == 0;
+        return true;
     }
 
-    static bool ShouldEmitCSharp14PropertyAccessor(
-        JsonObject declaration,
-        IReadOnlyDictionary<string, int> localArities,
-        ReferenceMetadataIndex refs)
+    static bool ShouldEmitCSharp14PropertyAccessor(JsonObject declaration)
     {
         if (Str(declaration["companionReceiver"]) is not string receiver ||
             Str(declaration["companionMemberKind"]) is not ("get" or "set"))
@@ -195,44 +166,40 @@ static class CompanionExtensionBinding
         if ((declaration["params"] as JsonArray)?.OfType<JsonObject>().Any(parameter =>
                 (parameter["mods"] as JsonObject)?["context"]?.GetValue<bool>() == true) == true)
             return false;
-        return ReceiverArity(receiver, localArities, refs) == 0;
+        return true;
     }
 
-    static bool ShouldEmitCSharp14PropertyField(
-        JsonObject declaration,
-        IReadOnlyDictionary<string, int> localArities,
-        ReferenceMetadataIndex refs) =>
-        Str(declaration["companionReceiver"]) is string receiver &&
-        Str(declaration["companionMemberKind"]) == "field" &&
-        ReceiverArity(receiver, localArities, refs) == 0;
-
-    static int ReceiverArity(
-        string receiver,
-        IReadOnlyDictionary<string, int> localArities,
-        ReferenceMetadataIndex refs)
-    {
-        var classifier = ReceiverClassifier(JsonNode.Parse(receiver))
-            ?? throw new InvalidOperationException("companion extension receiver is not a classifier type: " + receiver);
-        var arity = localArities.GetValueOrDefault(classifier);
-        if (arity == 0) arity = refs.OwnerArity(classifier);
-        return arity;
-    }
+    static bool ShouldEmitCSharp14PropertyField(JsonObject declaration) =>
+        Str(declaration["companionReceiver"]) is not null &&
+        Str(declaration["companionMemberKind"]) == "field";
 
     static void MaterializeCSharp14Members(
         JsonObject root,
         string semanticOwner,
         string receiver,
         ExtensionGroup declarations,
-        Dictionary<string, Binding> bindings)
+        Dictionary<string, Binding> bindings,
+        IReadOnlyDictionary<string, JsonObject> localTypes,
+        ReferenceMetadataIndex refs)
     {
         var receiverClassifier = ReceiverClassifier(JsonNode.Parse(receiver))
             ?? throw new InvalidOperationException("companion extension receiver is not a classifier type: " + receiver);
+        // Preserve the semantic classifier through BirTypeLowering when it has a CLR alias. Exact metadata spelling is
+        // needed only for unaliased referenced types (notably nested generic TypeDefs); applying it to an alias first
+        // would turn `kotlin.collections.List` into `kotlin.collections.List`1` and bypass the IReadOnlyList binding.
+        var physicalReceiverClassifier = localTypes.ContainsKey(receiverClassifier) ||
+                refs.Aliases.ContainsKey(receiverClassifier)
+            ? receiverClassifier
+            : refs.ExactPhysicalTypeName(receiverClassifier) ?? receiverClassifier;
         var graphKey = semanticOwner + "\u001f" + receiverClassifier;
         var containerName = semanticOwner + "$extensions$" + StableId(graphKey).ToLowerInvariant();
         var groupSimpleName = "<G>$" + StableId("group\u001f" + graphKey);
         var markerSimpleName = "<M>$" + StableId("marker\u001f" + graphKey);
         var groupName = containerName + "." + groupSimpleName;
         var markerName = groupName + "." + markerSimpleName;
+        var receiverTypeParams = ReceiverTypeParameters(receiverClassifier, localTypes, refs);
+        var physicalReceiverTypeParams = PhysicalReceiverTypeParameters(receiverTypeParams);
+        var blockArity = receiverTypeParams.Count;
         var implementations = new JsonArray();
         var signatureDeclarations = new JsonArray();
         var signatureProperties = new JsonArray();
@@ -242,7 +209,8 @@ static class CompanionExtensionBinding
             var sourceName = Str(declaration["companionSourceName"])
                 ?? throw new InvalidOperationException("companion extension declaration has no source name");
             var key = Key(semanticOwner, receiver, "function", sourceName);
-            var binding = new Binding(sourceName, containerName);
+            var coreName = blockArity == 0 ? sourceName : CoreName("function", sourceName);
+            var binding = new Binding(coreName, containerName);
             if (bindings.TryGetValue(key, out var prior) && prior != binding)
                 throw new InvalidOperationException(
                     $"inconsistent companion-extension physical identity for '{semanticOwner}.{sourceName}'");
@@ -264,9 +232,12 @@ static class CompanionExtensionBinding
             RemoveCompanionFacts(signature);
             signatureDeclarations.Add(signature);
 
-            declaration["name"] = sourceName;
+            declaration["name"] = coreName;
             RemoveCompanionFacts(declaration);
             implementations.Add(declaration);
+            if (blockArity != 0)
+                implementations.Add(WrapperImplementation(
+                    declaration, sourceName, coreName, containerName, receiverTypeParams));
         }
 
         var properties = new Dictionary<string, PropertyParts>(StringComparer.Ordinal);
@@ -308,13 +279,25 @@ static class CompanionExtensionBinding
                     $"companion-extension property '{semanticOwner}.{parts.SourceName}' has no getter");
 
             var propertyTypeJson = parts.Getter["ret"]!.ToJsonString();
-            AddPropertyBinding(bindings, semanticOwner, receiver, "get", parts.SourceName, containerName, propertyTypeJson);
+            var getterCoreName = blockArity == 0 ? "get_" + parts.SourceName : CoreName("get", parts.SourceName);
+            var setterCoreName = blockArity == 0 ? "set_" + parts.SourceName : CoreName("set", parts.SourceName);
+            AddPropertyBinding(bindings, semanticOwner, receiver, "get", parts.SourceName, containerName, propertyTypeJson,
+                getterCoreName);
             if (parts.Setter != null)
-                AddPropertyBinding(bindings, semanticOwner, receiver, "set", parts.SourceName, containerName, propertyTypeJson);
+                AddPropertyBinding(bindings, semanticOwner, receiver, "set", parts.SourceName, containerName, propertyTypeJson,
+                    setterCoreName);
 
-            PrepareImplementationAccessor(parts.Getter, "get_" + parts.SourceName, implementations);
+            PrepareImplementationAccessor(parts.Getter, getterCoreName, implementations);
+            if (blockArity != 0)
+                implementations.Add(WrapperImplementation(
+                    parts.Getter, "get_" + parts.SourceName, getterCoreName, containerName, receiverTypeParams));
             if (parts.Setter != null)
-                PrepareImplementationAccessor(parts.Setter, "set_" + parts.SourceName, implementations);
+            {
+                PrepareImplementationAccessor(parts.Setter, setterCoreName, implementations);
+                if (blockArity != 0)
+                    implementations.Add(WrapperImplementation(
+                        parts.Setter, "set_" + parts.SourceName, setterCoreName, containerName, receiverTypeParams));
+            }
 
             var getterSignature = SignatureAccessor(parts.Getter, "get_" + parts.SourceName, markerSimpleName);
             signatureDeclarations.Add(getterSignature);
@@ -361,6 +344,7 @@ static class CompanionExtensionBinding
             ["vis"] = "public",
             ["final"] = true,
             ["specialName"] = true,
+            ["generated"] = true,
             ["interfaces"] = new JsonArray(),
             ["fields"] = new JsonArray(),
             ["methods"] = signatureDeclarations,
@@ -368,6 +352,7 @@ static class CompanionExtensionBinding
             ["ctors"] = new JsonArray(),
             ["attrs"] = new JsonArray(ExtensionAttribute()),
         };
+        if (blockArity != 0) group["typeParams"] = physicalReceiverTypeParams.DeepClone();
         var marker = new JsonObject
         {
             ["name"] = markerName,
@@ -377,6 +362,7 @@ static class CompanionExtensionBinding
             ["abstract"] = true,
             ["final"] = true,
             ["specialName"] = true,
+            ["generated"] = true,
             ["interfaces"] = new JsonArray(),
             ["fields"] = new JsonArray(),
             ["methods"] = new JsonArray(new JsonObject
@@ -392,7 +378,11 @@ static class CompanionExtensionBinding
                 ["params"] = new JsonArray(new JsonObject
                 {
                     ["name"] = "",
-                    ["type"] = JsonNode.Parse(receiver),
+                    ["type"] = blockArity == 0
+                        ? JsonNode.Parse(receiver)
+                        : TypeJson.Write(new TypeNode.Fqn(physicalReceiverClassifier,
+                            Enumerable.Range(0, blockArity)
+                                .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray())),
                 }),
                 ["ret"] = TypeJson.Fqn("void"),
                 ["body"] = new JsonArray(),
@@ -401,6 +391,7 @@ static class CompanionExtensionBinding
             ["ctors"] = new JsonArray(),
             ["attrs"] = new JsonArray(),
         };
+        if (blockArity != 0) marker["capturedTypeParams"] = physicalReceiverTypeParams.DeepClone();
         var types = root["types"] as JsonArray ?? new JsonArray();
         types.Add(container);
         types.Add(group);
@@ -415,15 +406,181 @@ static class CompanionExtensionBinding
         string kind,
         string sourceName,
         string containerName,
-        string valueType)
+        string valueType,
+        string physicalName)
     {
         var key = Key(semanticOwner, receiver, kind, sourceName);
-        var binding = new Binding(Prefix(kind) + sourceName, containerName, valueType);
+        var binding = new Binding(physicalName, containerName, valueType);
         if (bindings.TryGetValue(key, out var prior) && prior != binding)
             throw new InvalidOperationException(
                 $"inconsistent companion-extension physical identity for '{semanticOwner}.{sourceName}'");
         bindings[key] = binding;
     }
+
+    static JsonArray ReceiverTypeParameters(
+        string receiver,
+        IReadOnlyDictionary<string, JsonObject> localTypes,
+        ReferenceMetadataIndex refs)
+    {
+        JsonArray source = null;
+        if (localTypes.TryGetValue(receiver, out var local))
+        {
+            var captured = local["capturedTypeParams"] as JsonArray;
+            var declared = local["typeParams"] as JsonArray;
+            source = new JsonArray();
+            if (captured != null)
+                foreach (var parameter in captured) source.Add(parameter?.DeepClone());
+            if (declared != null)
+                foreach (var parameter in declared) source.Add(parameter?.DeepClone());
+        }
+        else source = refs.OwnerTypeParamDeclarations(receiver);
+
+        var expected = localTypes.TryGetValue(receiver, out var definition)
+            ? ((definition["capturedTypeParams"] as JsonArray)?.Count ?? 0) +
+                ((definition["typeParams"] as JsonArray)?.Count ?? 0)
+            : refs.OwnerArity(receiver);
+        if (expected == 0) return new JsonArray();
+        if (source == null || source.Count != expected)
+            throw new InvalidOperationException(
+                $"generic companion-extension receiver '{receiver}' has no exact type-parameter declarations");
+        return source;
+    }
+
+    static JsonArray WrapperBlockTypeParameters(JsonArray receiverTypeParams, JsonArray ownTypeParams)
+    {
+        var usedNames = new HashSet<string>(
+            (ownTypeParams ?? new JsonArray()).Select(parameter => parameter is JsonObject obj
+                ? Str(obj["name"]) : Str(parameter)).Where(name => name is not null),
+            StringComparer.Ordinal);
+        var result = new JsonArray();
+        for (var index = 0; index < receiverTypeParams.Count; index++)
+        {
+            var source = receiverTypeParams[index];
+            var descriptor = source is JsonObject obj
+                ? (JsonObject)obj.DeepClone()
+                : new JsonObject { ["name"] = Str(source) ?? "T" + index };
+            var name = "dotkt$receiver$" + index;
+            while (!usedNames.Add(name)) name += "$";
+            descriptor["name"] = name;
+            if (descriptor["constraints"] is JsonArray constraints)
+                descriptor["constraints"] = new JsonArray(constraints.Select(constraint =>
+                    constraint == null ? null : TypeJson.Write(RemapWrapperType(TypeJson.Read(constraint), 0))).ToArray());
+            descriptor.Remove("variance");
+            result.Add(descriptor);
+        }
+        return result;
+    }
+
+    // CLR generic-parameter names share one namespace across a flattened nested declaration. Imported nested types
+    // can legally repeat an outer name on an inner slot (`Outer<T>.Inner<T>`), but ilemit's builder map is name-keyed.
+    // Give the signature group and its nested receiver marker one collision-free physical spelling while retaining
+    // the exact positional constraints. The wrapper performs the separate type-scope -> method-scope remap below.
+    static JsonArray PhysicalReceiverTypeParameters(JsonArray receiverTypeParams)
+    {
+        var result = new JsonArray();
+        for (var index = 0; index < receiverTypeParams.Count; index++)
+        {
+            var source = receiverTypeParams[index];
+            var descriptor = source is JsonObject obj
+                ? (JsonObject)obj.DeepClone()
+                : new JsonObject { ["name"] = Str(source) ?? "T" + index };
+            descriptor["name"] = "dotkt$receiver$" + index;
+            descriptor.Remove("variance");
+            result.Add(descriptor);
+        }
+        return result;
+    }
+
+    static JsonObject WrapperImplementation(
+        JsonObject core,
+        string wrapperName,
+        string coreName,
+        string containerName,
+        JsonArray blockTypeParams)
+    {
+        var blockArity = blockTypeParams.Count;
+        var wrapper = (JsonObject)core.DeepClone();
+        wrapper["name"] = wrapperName;
+        wrapper["generated"] = true;
+        wrapper["mods"] = new JsonObject();
+        wrapper.Remove("inlineBir");
+        wrapper.Remove("suspendBridge");
+
+        var ownTypeParams = core["typeParams"] as JsonArray;
+        blockTypeParams = WrapperBlockTypeParameters(blockTypeParams, ownTypeParams);
+        var combined = new JsonArray();
+        foreach (var parameter in blockTypeParams) combined.Add(parameter?.DeepClone());
+        if (ownTypeParams != null)
+            foreach (var parameter in ownTypeParams)
+            {
+                var shifted = parameter is JsonObject obj
+                    ? (JsonObject)obj.DeepClone()
+                    : new JsonObject { ["name"] = Str(parameter) };
+                if (shifted["constraints"] is JsonArray constraints)
+                    shifted["constraints"] = new JsonArray(constraints.Select(constraint =>
+                        constraint == null ? null : TypeJson.Write(
+                            RemapWrapperType(TypeJson.Read(constraint), blockArity))).ToArray());
+                combined.Add(shifted);
+            }
+        wrapper["typeParams"] = combined;
+
+        var parameters = wrapper["params"] as JsonArray ?? new JsonArray();
+        foreach (var parameter in parameters.OfType<JsonObject>())
+            if (parameter["type"] is JsonNode type)
+                parameter["type"] = TypeJson.Write(RemapWrapperType(TypeJson.Read(type), blockArity));
+        wrapper["ret"] = TypeJson.Write(RemapWrapperType(TypeJson.Read(wrapper["ret"]!), blockArity));
+
+        var args = new JsonArray(parameters.OfType<JsonObject>().Select(parameter => (JsonNode)new JsonObject
+        {
+            ["k"] = "local",
+            ["name"] = parameter["name"]?.DeepClone(),
+        }).ToArray());
+        var call = new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Fqn(containerName),
+            ["ownerType"] = TypeJson.Fqn(containerName),
+            ["method"] = coreName,
+            ["sig"] = new JsonArray(parameters.OfType<JsonObject>()
+                .Select(parameter => parameter["type"]?.DeepClone()).ToArray()),
+            ["args"] = args,
+            ["ret"] = wrapper["ret"]!.DeepClone(),
+        };
+        var ownArity = ownTypeParams?.Count ?? 0;
+        if (ownArity != 0)
+            call["typeArgs"] = new JsonArray(Enumerable.Range(0, ownArity)
+                .Select(index => (JsonNode)TypeJson.Write(
+                    new TypeNode.Tv("method", blockArity + index))).ToArray());
+        var returnsUnit = TypeJson.Read(wrapper["ret"]!) is TypeNode.Fqn { Name: "kotlin.Unit" or "void" };
+        wrapper["body"] = returnsUnit
+            ? new JsonArray(
+                new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
+                new JsonObject { ["k"] = "return" })
+            : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call });
+        RoundtripMetadata.StampExtensionCore(wrapper, coreName);
+        return wrapper;
+    }
+
+    static TypeNode RemapWrapperType(TypeNode type, int methodShift) => type switch
+    {
+        TypeNode.Tv tv when tv.Scope == "type" => new TypeNode.Tv("method", tv.I),
+        TypeNode.Tv tv when tv.Scope == "method" => new TypeNode.Tv("method", tv.I + methodShift),
+        TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args?.Select(arg => RemapWrapperType(arg, methodShift)).ToArray()),
+        TypeNode.Nullable nullable => new TypeNode.Nullable(RemapWrapperType(nullable.Of, methodShift)),
+        TypeNode.Oblivious oblivious => new TypeNode.Oblivious(RemapWrapperType(oblivious.Of, methodShift)),
+        TypeNode.Array array => new TypeNode.Array(RemapWrapperType(array.Elem, methodShift)),
+        TypeNode.ByRef byRef => new TypeNode.ByRef(RemapWrapperType(byRef.Of, methodShift)),
+        TypeNode.Fn function => new TypeNode.Fn(
+            function.Suspend,
+            RemapWrapperType(function.Ret, methodShift),
+            function.Params.Select(parameter => RemapWrapperType(parameter, methodShift)).ToArray(),
+            function.Recv == null ? null : RemapWrapperType(function.Recv, methodShift),
+            function.Clr,
+            function.Ctx?.Select(parameter => RemapWrapperType(parameter, methodShift)).ToArray()),
+        _ => type,
+    };
+
+    static string CoreName(string kind, string sourceName) => "dotkt$core$" + Prefix(kind) + sourceName;
 
     static void MaterializeFieldBackedProperty(
         PropertyParts parts,
@@ -761,20 +918,8 @@ static class CompanionExtensionBinding
             // their fields, when any, are private storage details. Turn every Kotlin field-shaped use into that same
             // accessor call so same-module code, property references, and cross-module consumers share one path.
             var kind = nodeKind == "staticFieldSet" ? "set" : "get";
-            if (!TryResolve(owner, receiver, kind, sourceName, bindings, refs, out var physical) &&
-                TryResolve(owner, receiver, "field", sourceName, bindings, refs, out var legacy))
-            {
-                // Increment 3 intentionally leaves generic-receiver properties on the retired carrier. This branch
-                // is not a compatibility fallback: it is the still-current representation for the explicitly
-                // deferred declaration set and disappears with Increment 4.
-                node["name"] = legacy.PhysicalName;
-                node["ownerType"] = TypeJson.Fqn(legacy.PhysicalOwner);
-                if (nodeKind == "lateinitGet" && sourceName is not null)
-                    node["lateinitSourceName"] = sourceName;
-                node.Remove("companionReceiver");
-                return;
-            }
-            if (physical == null) throw Missing(owner, receiver, kind, sourceName, nodeKind);
+            if (!TryResolve(owner, receiver, kind, sourceName, bindings, refs, out var physical))
+                throw Missing(owner, receiver, kind, sourceName, nodeKind);
 
             var value = nodeKind == "staticFieldSet" ? node["value"]?.DeepClone() : null;
             var style = node["sty"]?.DeepClone();

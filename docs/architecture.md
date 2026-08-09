@@ -49,6 +49,10 @@ The split prevents frontend declarations, binding metadata, and executable imple
 7. `kotc` serializes each Kotlin `*` as a BIR `star`; it never substitutes `Any`. `bir2cir` alone selects the CLR
    representation: trusted DotKt existential ABI, a known non-generic BCL surface, or the exact-token foreign-CLR
    reflection runtime. `ilemit` sees only the already-authored CIR calls and types.
+8. Kotlin companion-extension association remains a BIR semantic fact. `bir2cir` alone partitions the declarations
+   by receiver and authors the released C# 14 extension graph. For a generic receiver it also separates the
+   source-named, receiver-parameterized C# wrapper from the receiverless Kotlin semantic core; `ilemit` emits both
+   descriptions one-to-one and does not reconstruct that relationship.
 
 ## Build modes
 

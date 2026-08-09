@@ -153,7 +153,12 @@
       "properties": {
         "name":     { "type": "string", "$comment": "the tv NAME is retained on the DECLARATION; references use positional tv{scope,i}" },
         "variance": { "enum": ["in", "out"] },
-        "bounds":   { "type": "array", "items": { "$ref": "#/$defs/type" } }
+        "constraints": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "specialConstraints": {
+          "type": "array",
+          "items": { "enum": ["class", "struct", "new", "allowsRefStruct"] },
+          "$comment": "CIR-only CLR GenericParameterAttributes copied by bir2cir for a referenced generic receiver's C# 14 extension grouping/wrapper; ilemit emits them one-to-one."
+        }
       },
       "required": ["name"],
       "additionalProperties": false
