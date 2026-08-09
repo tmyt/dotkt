@@ -46,6 +46,7 @@ static class RoundtripMetadata
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
+    internal const string AKExtensionCore = Ns + "KotlinExtensionCoreAttribute";
     const string AKStaticCarrier = Ns + "KotlinStaticCarrierAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
@@ -318,8 +319,8 @@ static class RoundtripMetadata
                 fo.Remove("kotlinType");
             }
             // An ordinary file-facade val is restored from its CLR Property row, so its backing field historically
-            // needs no marker. A staged companion-extension field (generic/context receivers are lowered in the next
-            // increment) is still restored from its carrier field and therefore needs the declaration's val/var fact.
+            // needs no marker. A staged context-parameter companion-extension field is still restored from its
+            // carrier field and therefore needs the declaration's val/var fact.
             if ((!topLevel || fo["companionReceiver"] is not null) &&
                 (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true)
                 Prepend(fo, Marker(AKReadOnly));
@@ -327,8 +328,8 @@ static class RoundtripMetadata
             if (HasRecvFn(fo["type"])) Append(fo, Marker(AKExtFn));
             if (TakeInt(fo, "ctxFnType") is int fctx) Append(fo, Marker(AKCtxFnType, IntArg(fctx)));   // a `val handler: P.() -> R` field (#145)
             if ((fo["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(fo, CollIdentityAttr(ci));  // #29
-            // The staged field twin of the method carrier above. Ordinary arity-0 properties have already consumed
-            // these facts into the C# 14 extension-property graph; generic/context cases retain this carrier until
+            // The staged field twin of the method carrier above. Ordinary and generic properties have already
+            // consumed these facts into the C# 14 extension-property graph; context cases retain this carrier until
             // their physical lowering lands in the next increment.
             if ((fo["companionReceiver"] as JsonValue)?.GetValue<string>() is string fcr)
             {
@@ -524,6 +525,13 @@ static class RoundtripMetadata
             ["field"] = fieldName,
         }));
 
+    // A generic C# 14 extension implementation must carry the receiver block's CLR method parameters. Kotlin's
+    // declaration does not: its associated classifier is bare and contributes no callable type parameters. This
+    // trusted edge points from the standard Roslyn-shaped wrapper to the non-generic-container core that dll2klib and
+    // Kotlin call sites use. Names and receiver identity continue to come exclusively from the standard graph.
+    internal static void StampExtensionCore(JsonObject wrapper, string coreName) =>
+        Append(wrapper, JsonCarrierAttr(AKExtensionCore, new JsonObject { ["name"] = coreName }));
+
     static JsonObject Marker(string attr, params JsonObject[] args)
     {
         var arr = new JsonArray();
@@ -618,6 +626,7 @@ static class RoundtripMetadata
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts
+            AttrClass(AKExtensionCore, Ctor(Param("System.String"), Param(ByteArrayType()))), // generic C# wrapper -> Kotlin semantic core
             AttrClass(AKStaticCarrier, Ctor(Param("System.String"), Param(ByteArrayType()))), // one physical static surface for a generic Kotlin owner
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position

@@ -1,4 +1,8 @@
 import BidirectionalInterop.Palette
+import BidirectionalInterop.ReferenceConstrainedTarget
+import BidirectionalInterop.RefLikeConstrainedTarget
+import BidirectionalInterop.RepeatedGenericOuter.RepeatedGenericInner
+import BidirectionalInterop.StructConstrainedTarget
 
 class BidirectionalGreeter(val name: String) {
     fun greet(): String = "Hi, $name (accent=${Palette().Accent})"
@@ -42,6 +46,16 @@ companion var BidirectionalStaticAlpha.restricted: Int = 1
 companion val BidirectionalStaticBeta.label: String get() = "beta"
 companion val BidirectionalStaticInitAlpha.initialized: String = recordBidirectionalExtensionInit("A")
 companion val BidirectionalStaticInitBeta.initialized: String = recordBidirectionalExtensionInit("B")
+
+class BidirectionalGenericStatic<T>
+companion fun BidirectionalGenericStatic.genericAnswer(): Int = 389
+companion var BidirectionalGenericStatic.genericCounter: Int = 0
+companion fun <TReceiver0> BidirectionalGenericStatic.echoGeneric(value: TReceiver0): TReceiver0 = value
+companion fun ReferenceConstrainedTarget.referenceConstraint(): String = "reference"
+companion fun StructConstrainedTarget.structConstraint(): String = "struct"
+companion fun RefLikeConstrainedTarget.refLikeConstraint(): String = "ref-like"
+companion fun RepeatedGenericInner.repeatedGenericNames(): String = "nested-generic"
+companion fun List.listAliasAnswer(): Int = 144
 
 fun updateRestrictedCompanionProperty() {
     BidirectionalStaticAlpha.restricted = 2

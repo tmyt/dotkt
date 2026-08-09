@@ -1339,8 +1339,8 @@ the compile-time value so a second Kotlin module can use the declaration in anot
 
 ### A companion EXTENSION is a receiverless static associated with a type
 
-`Tag.of("hi")` and `Tag.label` pass no receiver — the association is not a parameter. For a non-generic associated classifier,
-`bir2cir` emits the released C# 14 static extension-member metadata graph. The source-named executable method lives
+`Tag.of("hi")` and `Tag.label` pass no receiver — the association is not a parameter. `bir2cir` emits the released
+C# 14 static extension-member metadata graph. The source-named executable method lives
 on a public top-level extension container partitioned by receiver; nested signature and receiver-marker declarations
 make `Tag.of(...)` visible to a C# 14 compiler. Kotlin and C# calls both target the executable method, never the
 signature-only throwing declaration. The member is not injected into `Tag` itself, so the same rule works when the
@@ -1353,6 +1353,13 @@ every Kotlin and C# read or write calls the executable accessor, including same-
 all fields in that one physical type preserves Kotlin's declaration-order initialization across distinct associated
 receivers. The extension container itself owns neither fields nor Property rows, matching the released C# 14 ABI.
 
+For a generic associated classifier, C# needs receiver-block type parameters on the source-named executable wrapper
+so `GenericTag<string>.of()` can infer the closed receiver. Kotlin has no such callable type parameters: its bare
+`GenericTag.of()` call targets a receiverless semantic core. The wrapper forwards to that core, and both property
+accessors share the same file-facade storage. A trusted `[KotlinExtensionCore]` edge connects the two physical methods;
+the standard C# 14 graph remains authoritative for receiver, source name, and declaration kind. On round-trip,
+`dll2klib` projects the core and removes the wrapper-only receiver block from the bare associated classifier.
+
 `const` and `lateinit` are Kotlin facts with no Property-row equivalent. When either applies, the implementation
 getter carries a trusted `[KotlinPropertyStorage]` edge naming its private storage owner and field. `dll2klib` follows that edge
 and reads the ordinary CLR `Literal` / `[KotlinLateinit]` facts from the field; the payload deliberately does not
@@ -1364,8 +1371,8 @@ restores the standard Kotlin shape — the `IS_STATIC_FUNCTION` flag plus a rece
 is copied onto both the executable and signature declaration. Like any extension, it must be in scope at the use site
 (same package, or `import`ed by name).
 
-This is an incremental migration: declarations associated with a generic classifier, suspend functions, and
-context-parameter properties still use the trusted `[KotlinCompanionExtension]` facade representation. The context
+This is an incremental migration: suspend functions and context-parameter properties still use the trusted
+`[KotlinCompanionExtension]` facade representation. The context
 case remains staged because its same-named accessor overloads require CIR Property edges to identify a full method
 signature rather than only an accessor name. Subsequent increments move those remaining shapes and then remove that
 internal ABI rather than retaining a compatibility path.

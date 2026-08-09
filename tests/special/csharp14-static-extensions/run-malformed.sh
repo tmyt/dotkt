@@ -27,11 +27,28 @@ generate() {
 
 accept() {
     local dll="$1"
+    local stem="$(basename "$dll" .dll)"
     printf '%s\n' "$dll" >"$WORK/refs.rsp"
-    dotnet "$DLL2KLIB_DLL" --out "$WORK/valid-klib" "@$WORK/refs.rsp" \
-        >"$WORK/valid.dll2klib.log" 2>&1
-    dotnet "$BIR2CIR_DLL" "$WORK/valid-cir" --compile-refs "$CORE_REF;$STDLIB_REF_DLL;$dll" "$BIR" \
-        >"$WORK/valid.bir2cir.log" 2>&1
+    if ! dotnet "$DLL2KLIB_DLL" --out "$WORK/$stem-klib" "@$WORK/refs.rsp" \
+        >"$WORK/$stem.dll2klib.log" 2>&1; then
+        cat "$WORK/$stem.dll2klib.log" >&2
+        return 1
+    fi
+    if ! dotnet "$BIR2CIR_DLL" "$WORK/$stem-cir" --compile-refs "$CORE_REF;$STDLIB_REF_DLL;$dll" "$BIR" \
+        >"$WORK/$stem.bir2cir.log" 2>&1; then
+        cat "$WORK/$stem.bir2cir.log" >&2
+        return 1
+    fi
+}
+
+accept_bir2cir() {
+    local dll="$1"
+    local stem="$(basename "$dll" .dll)"
+    if ! dotnet "$BIR2CIR_DLL" "$WORK/$stem-cir" --compile-refs "$CORE_REF;$STDLIB_REF_DLL;$dll" "$BIR" \
+        >"$WORK/$stem.bir2cir.log" 2>&1; then
+        cat "$WORK/$stem.bir2cir.log" >&2
+        return 1
+    fi
 }
 
 reject() {
@@ -56,8 +73,10 @@ reject() {
 
 valid="$(generate valid)"
 accept "$valid"
+forged_core="$(generate forged-core)"
+accept_bir2cir "$forged_core"
 
-for mode in missing-marker duplicate-implementation signature-mismatch callable-declaration callable-marker; do
+for mode in missing-marker duplicate-implementation signature-mismatch callable-declaration callable-marker core-visibility; do
     dll="$(generate "$mode")"
     case "$mode" in
         missing-marker) expected='receiver marker.*resolve' ;;
@@ -65,6 +84,7 @@ for mode in missing-marker duplicate-implementation signature-mismatch callable-
         signature-mismatch) expected='resolves to 0 implementation' ;;
         callable-declaration) expected='declaration.*callable' ;;
         callable-marker) expected='invalid marker method|invalid signature or body' ;;
+        core-visibility) expected='Kotlin( extension)? core.*resolves to 0' ;;
     esac
     reject dll2klib "$dll" "$mode" "$expected"
     reject bir2cir "$dll" "$mode" "$expected"

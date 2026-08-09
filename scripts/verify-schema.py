@@ -140,6 +140,8 @@ STRARR_OK = {
                                                 # bare names are the same declaration shorthand, not type usages.
     "capturedTypeParams",                       # #275: enclosing CLR generic-slot declaration names copied onto
                                                 # the nested companion carrier, not Type usages.
+    "specialConstraints",                      # CIR-only CLR generic-param flags (class/struct/new/allows-ref-struct), copied from a
+                                                # referenced receiver onto a C# 14 extension grouping/wrapper.
     "memberOwnerTypeParams",                    # #225: declaration-form owner frame carried on a member edge.
     "memberMethodTypeParams",                   # #225: declaration-form method frame carried on a member edge.
 }

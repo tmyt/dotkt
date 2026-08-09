@@ -171,8 +171,7 @@ companion var Tag.contextState: Int
 context(context: ReadOnlyTagContext)
 companion val Tag.contextState: Int get() = context.value
 companion fun GenericTag.genericValue(): String = "generic"
-// Increment 3 deliberately keeps generic-receiver properties on the trusted carrier. It still consumes the richer
-// BIR-only property facts before CIR, while preserving the existing cross-module val/var behavior.
+// The generic C# surface closes a receiver-block wrapper while Kotlin binds the parameter-free semantic core.
 companion var GenericTag.genericCounter: Int = 7
 companion fun StringGenericTag.aliasValue(): String = "alias"
 fun localGenericCompanionExtensionValue(): String = GenericTag.genericValue() + "/" + GenericTag.aliasValue()

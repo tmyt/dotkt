@@ -238,8 +238,7 @@ direction: it is emitted as a static member of its own CLR type, so it needs no
 carrier and is read back by the ordinary static-member path above.
 
 A Kotlin 2.4 companion extension — `companion fun C.foo()` or `companion val C.foo` — has no receiver
-parameter at all: the frontend drops it. For a non-generic associated classifier,
-`bir2cir` emits the released C# 14 static extension-member graph: source-named
+parameter at all: the frontend drops it. `bir2cir` emits the released C# 14 static extension-member graph: source-named
 executable methods on a receiver-partitioned top-level container plus nested
 signature, property, and receiver-marker declarations. Calls target the executable methods.
 Field-backed `val`/`var` declarations become ordinary `get_`/`set_` implementation methods over private
@@ -249,8 +248,12 @@ same-module Kotlin code is rewritten through those methods too, so the Property 
 `dll2klib` restores the source name and standard Kotlin shape from that attributed
 graph — the static-declaration flag plus a receiver type, which is exactly what
 `isStatic && receiverParameter != null` means. No generated-name inference is
-involved. Generic associated classifiers, suspend functions, and context-parameter properties remain on the
-trusted `[KotlinCompanionExtension]` carrier during the staged migration.
+involved. For a generic associated classifier, the standard source-named executable method carries the receiver
+block's CLR method parameters for C# inference and forwards to an unspeakable receiverless Kotlin core. A trusted
+`[KotlinExtensionCore]` edge records only that wrapper-to-core relationship; the standard graph remains the sole
+source of the receiver, source name, and declaration kind. `dll2klib` projects the core and erases the wrapper-only
+receiver block so the Kotlin classifier remains bare. Suspend functions and context-parameter properties remain on
+the trusted `[KotlinCompanionExtension]` carrier during the staged migration.
 
 An ordinary C# 14 static extension member is imported into that same standard
 Kotlin shape from its released metadata graph. `dll2klib` starts from

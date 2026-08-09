@@ -29,6 +29,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
     const string KotlinCompanionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
     const string KotlinCompanionExtensionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionExtensionAttribute";
+    const string KotlinExtensionCoreAttr = "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute";
     const string KotlinStaticCarrierAttr = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
     const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
     // The #86/#147 positional carrier: the PRE-erasure Kotlin TypeNode of a declaration slot whose `Nullable(Tv)`
@@ -73,6 +74,10 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _companionSemanticTypeByPhysicalOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, int> _ownerArity = new(StringComparer.Ordinal);      // Kotlin FQN -> generic arity
     readonly Dictionary<string, string[]> _ownerTypeParams = new(StringComparer.Ordinal); // Kotlin FQN -> generic param names
+    // Exact CLR declarations of referenced owner parameters. C# 14 static-extension grouping types must repeat the
+    // receiver block's constraints verbatim; the coarser nullability/star-projection indexes below are insufficient
+    // for F-bounds and the CLR class/struct/new() flags.
+    readonly Dictionary<string, string> _ownerTypeParamDeclarations = new(StringComparer.Ordinal);
     // Per owner-FQN, the declared param type names of its (first/sole) constructor — used to adapt a static-String arg
     // flowing into a CharSequence ctor param of a SPLICED anonymous stdlib object (`dotkt$obj*`, e.g. the anonymous
     // Grouping from `CharSequence.groupingBy` whose ctor captures the receiver as `kotlin.CharSequence`). The spliced
@@ -101,6 +106,10 @@ sealed partial class ReferenceMetadataIndex
     // declarations.  Keep the graph as structured TypeNodes -- never reconstruct generic owners in
     // ilemit from reflection strings.
     readonly Dictionary<string, ReferenceTypeShape> _referenceTypeShapes = new(StringComparer.Ordinal);
+    // Source/KLIB vocabulary flattens CLR nesting to dots and drops per-TypeDef arity suffixes. Generated CLR
+    // signatures must recover the exact metadata identity here in bir2cir; ilemit must not infer whether a generic
+    // argument belongs to an outer or inner TypeDef from the flattened total arity.
+    readonly Dictionary<string, string> _exactPhysicalTypeByDottedName = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _physicalTypeBySemanticName = new(StringComparer.Ordinal);
     readonly Dictionary<string, int> _innerCapturedCount = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _innerSemanticOwner = new(StringComparer.Ordinal);
@@ -285,6 +294,7 @@ sealed partial class ReferenceMetadataIndex
             }
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.TypeParamDeclarations) _ownerTypeParamDeclarations[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.CtorParamTypes) _ownerCtorParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamConstraints) _ownerTypeParamConstraints[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamBounds) _ownerTypeParamBounds[kv.Key] = kv.Value;
@@ -304,6 +314,8 @@ sealed partial class ReferenceMetadataIndex
                 ctors.Add(c);
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.ExactPhysicalTypeByDottedName)
+                _exactPhysicalTypeByDottedName.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.PhysicalTypeBySemanticName)
                 _physicalTypeBySemanticName.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.InnerCapturedCount)
@@ -1069,6 +1081,19 @@ sealed partial class ReferenceMetadataIndex
     static bool IsStringType(TypeNode type) => type is TypeNode.Fqn f &&
         f.Name is "kotlin.String" or "System.String" or "string";
     public string[] OwnerTypeParamNames(string ownerFqn) => _ownerTypeParams.GetValueOrDefault(ownerFqn);
+
+    public JsonArray OwnerTypeParamDeclarations(string ownerFqn)
+    {
+        if (ownerFqn == null) return null;
+        var value = _ownerTypeParamDeclarations.GetValueOrDefault(ownerFqn)
+            ?? _ownerTypeParamDeclarations.GetValueOrDefault(StripGenericArity(ownerFqn))
+            ?? _ownerTypeParamDeclarations.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)));
+        return value == null ? null : JsonNode.Parse(value) as JsonArray;
+    }
+
+    public string ExactPhysicalTypeName(string ownerFqn) => ownerFqn == null
+        ? null
+        : _exactPhysicalTypeByDottedName.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)));
 
     // Exact CLR metadata identity for a trusted external DotKt classifier. Local source declarations remain
     // authoritative and therefore never rewrite through a same-named reference.
@@ -2314,6 +2339,8 @@ sealed partial class ReferenceMetadataIndex
                     // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
+                    metadata.ExactPhysicalTypeByDottedName.TryAdd(
+                        StripGenericArity(DottedFqn(ownerFqn)), ExactPhysicalMetadataName(type));
                     if (dotKtAuthored && type.IsInterface && !type.IsGenericType
                         && HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr)
                         && KotlinTypeOf(type.GetCustomAttributesData(), asm) is TypeNode.Fqn
@@ -2382,7 +2409,13 @@ sealed partial class ReferenceMetadataIndex
                     {
                         var gargs = type.GetGenericArguments();
                         metadata.TypeArity[ownerFqn] = gargs.Length;
+                        metadata.TypeArity[DottedFqn(ownerFqn)] = gargs.Length;
                         metadata.TypeParamNames[ownerFqn] = gargs.Select(g => g.Name).ToArray();
+                        metadata.TypeParamNames[DottedFqn(ownerFqn)] = gargs.Select(g => g.Name).ToArray();
+                        var typeParamDeclarations = new JsonArray(
+                            gargs.Select(GenericParamDeclaration).ToArray()).ToJsonString();
+                        metadata.TypeParamDeclarations[ownerFqn] = typeParamDeclarations;
+                        metadata.TypeParamDeclarations[DottedFqn(ownerFqn)] = typeParamDeclarations;
                         // The struct-ness ORACLE for a TYPE VARIABLE (#37/#48): record each type-param's CLR constraint
                         // class from GenericParameterAttributes so a `T?` on a struct-constrained param stays Nullable<T>.
                         metadata.TypeParamConstraints[ownerFqn] = gargs.Select(GenericParamConstraintClass).ToArray();
@@ -2420,7 +2453,7 @@ sealed partial class ReferenceMetadataIndex
                         metadata.FileClassOwners.Add(StripGenericArity(DottedFqn(ownerFqn)));
                     if (dotKtAuthored)
                         IndexCompanionExtensionMembers(type, ownerFqn, isFileClass, metadata);
-                    IndexCSharp14StaticExtensionMembers(type, ownerFqn, metadata);
+                    IndexCSharp14StaticExtensionMembers(type, ownerFqn, metadata, dotKtAuthored);
 
                     // `value`/inline class (marked with [KotlinValue], the 2.4.0 carrier of `mods.value`): its single
                     // instance backing field IS the erased value. Record that property's GETTER + the field's CLR conv
@@ -2664,6 +2697,9 @@ sealed partial class ReferenceMetadataIndex
             HandleKind.MethodDefinition,
             HandleKind.FieldDefinition);
         attrs.ValidateCarrierTargets(
+            KotlinExtensionCoreAttr,
+            HandleKind.MethodDefinition);
+        attrs.ValidateCarrierTargets(
             KotlinStaticCarrierAttr,
             HandleKind.TypeDefinition);
         foreach (var typeHandle in reader.TypeDefinitions)
@@ -2671,7 +2707,10 @@ sealed partial class ReferenceMetadataIndex
             var type = reader.GetTypeDefinition(typeHandle);
             using (attrs.CarrierDocument(typeHandle, KotlinStaticCarrierAttr)) { }
             foreach (var method in type.GetMethods())
+            {
                 using (attrs.CarrierDocument(method, KotlinCompanionExtensionAttr)) { }
+                using (attrs.CarrierDocument(method, KotlinExtensionCoreAttr)) { }
+            }
             foreach (var field in type.GetFields())
                 using (attrs.CarrierDocument(field, KotlinCompanionExtensionAttr)) { }
         }
@@ -3034,7 +3073,8 @@ sealed partial class ReferenceMetadataIndex
     static void IndexCSharp14StaticExtensionMembers(
         Type container,
         string ownerFqn,
-        ReferenceDotKtMetadata metadata)
+        ReferenceDotKtMetadata metadata,
+        bool dotKtAuthored)
     {
         const string extensionAttribute = "System.Runtime.CompilerServices.ExtensionAttribute";
         const string markerAttribute = "System.Runtime.CompilerServices.ExtensionMarkerAttribute";
@@ -3119,12 +3159,16 @@ sealed partial class ReferenceMetadataIndex
                     $"malformed C# 14 static extension graph at '{group.FullName}': property has no getter");
                 if (!getter.IsStatic) continue;
                 var getterImplementation = CSharp14Implementation(container, group, getter, blockParameters.Length);
+                getterImplementation = CSharp14KotlinImplementation(
+                    container, group, getter, getterImplementation, dotKtAuthored);
                 AddCompanionExtensionMember(metadata, ownerFqn,
                     new CompanionExtensionPayloadInfo(receiverJson, property.Name, "get"),
                     getterImplementation.Name);
                 if (property.SetMethod is { } setter)
                 {
                     var setterImplementation = CSharp14Implementation(container, group, setter, blockParameters.Length);
+                    setterImplementation = CSharp14KotlinImplementation(
+                        container, group, setter, setterImplementation, dotKtAuthored);
                     AddCompanionExtensionMember(metadata, ownerFqn,
                         new CompanionExtensionPayloadInfo(receiverJson, property.Name, "set"),
                         setterImplementation.Name);
@@ -3141,6 +3185,8 @@ sealed partial class ReferenceMetadataIndex
                 if (propertyAccessors.Contains(declaration)) continue;
                 if (!declaration.IsStatic) continue;
                 var implementation = CSharp14Implementation(container, group, declaration, blockParameters.Length);
+                implementation = CSharp14KotlinImplementation(
+                    container, group, declaration, implementation, dotKtAuthored);
                 AddCompanionExtensionMember(metadata, ownerFqn,
                     new CompanionExtensionPayloadInfo(receiverJson, declaration.Name, "function"),
                     implementation.Name);
@@ -3185,6 +3231,51 @@ sealed partial class ReferenceMetadataIndex
                 $"malformed C# 14 static extension graph at '{group.FullName}': declaration '{declaration.Name}' " +
                 $"resolves to {matches.Length} implementations");
         return matches[0];
+    }
+
+    static MethodInfo CSharp14KotlinImplementation(
+        Type container,
+        Type group,
+        MethodInfo declaration,
+        MethodInfo wrapper,
+        bool dotKtAuthored)
+    {
+        // KotlinExtensionCore is an internal DotKt edge, not part of the standard C# 14 graph. A foreign assembly may
+        // legally define a same-named attribute; without the assembly marker it has no authority to redirect Kotlin
+        // calls away from the standard implementation. Keep this trust boundary aligned with dll2klib's raw reader.
+        if (!dotKtAuthored) return wrapper;
+        var coreName = KotlinExtensionCoreName(wrapper.GetCustomAttributesData(), container.Assembly);
+        if (coreName == null) return wrapper;
+        var matches = container.GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(candidate => candidate.Name == coreName && !candidate.IsSpecialName)
+            .Where(candidate => CSharp14CoreSignatureMatches(declaration, candidate))
+            .ToArray();
+        if (matches.Length != 1)
+            throw new InvalidDataException(
+                $"malformed C# 14 static extension graph at '{group.FullName}': Kotlin core '{coreName}' " +
+                $"resolves to {matches.Length} methods");
+        return matches[0];
+    }
+
+    static bool CSharp14CoreSignatureMatches(MethodInfo declaration, MethodInfo core)
+    {
+        if (!core.IsStatic ||
+            (core.Attributes & MethodAttributes.MemberAccessMask) !=
+                (declaration.Attributes & MethodAttributes.MemberAccessMask) ||
+            core.GetGenericArguments().Length != declaration.GetGenericArguments().Length ||
+            CSharp14TypeKey(declaration.ReturnType, implementation: false, blockArity: 0) !=
+                CSharp14TypeKey(core.ReturnType, implementation: true, blockArity: 0))
+            return false;
+        var declarationParameters = declaration.GetParameters();
+        var coreParameters = core.GetParameters();
+        if (declarationParameters.Length != coreParameters.Length) return false;
+        for (var index = 0; index < declarationParameters.Length; index++)
+            if (CSharp14TypeKey(declarationParameters[index].ParameterType, implementation: false, blockArity: 0) !=
+                CSharp14TypeKey(coreParameters[index].ParameterType, implementation: true, blockArity: 0))
+                return false;
+        return CSharp14GenericParametersMatch(
+            declaration.GetGenericArguments(), core.GetGenericArguments(), implementationBlockArity: 0);
     }
 
     static bool CSharp14SignaturesMatch(MethodInfo declaration, MethodInfo implementation, int blockArity)
@@ -3300,6 +3391,25 @@ sealed partial class ReferenceMetadataIndex
         body.Length == 6 && body[0] == 0x73 && body[^1] == 0x7A;
 
     sealed record CompanionExtensionPayloadInfo(string ReceiverJson, string Name, string Kind);
+
+    static string KotlinExtensionCoreName(
+        IList<CustomAttributeData> attrs, Assembly declaringAssembly)
+    {
+        var trusted = attrs.Where(c =>
+            c.AttributeType.FullName == KotlinExtensionCoreAttr &&
+            c.AttributeType.Assembly == declaringAssembly &&
+            HasAttribute(c.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
+        if (trusted.Length == 0) return null;
+        if (trusted.Length != 1)
+            throw new InvalidDataException("expected exactly one trusted [KotlinExtensionCore]");
+        var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinExtensionCoreAttr) as JsonObject
+            ?? throw new InvalidDataException("malformed [KotlinExtensionCore] payload");
+        if (payload.Count != 1 ||
+            payload["name"] is not JsonValue nameValue ||
+            !nameValue.TryGetValue<string>(out var name) || string.IsNullOrEmpty(name))
+            throw new InvalidDataException("malformed [KotlinExtensionCore] payload");
+        return name;
+    }
 
     static CompanionExtensionPayloadInfo CompanionExtensionPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly)
@@ -3883,6 +3993,25 @@ sealed partial class ReferenceMetadataIndex
         return null;
     }
 
+    static JsonNode GenericParamDeclaration(Type gp)
+    {
+        var declaration = new JsonObject { ["name"] = gp.Name };
+        var constraints = new JsonArray();
+        foreach (var constraint in gp.GetGenericParameterConstraints())
+            if (DeclarationTypeNode(constraint) is TypeNode node)
+                constraints.Add(TypeJson.Write(NormalizeNestedNames(node)));
+        if (constraints.Count != 0) declaration["constraints"] = constraints;
+
+        var special = new JsonArray();
+        var attrs = gp.GenericParameterAttributes;
+        if ((attrs & GenericParameterAttributes.ReferenceTypeConstraint) != 0) special.Add("class");
+        if ((attrs & GenericParameterAttributes.NotNullableValueTypeConstraint) != 0) special.Add("struct");
+        if ((attrs & GenericParameterAttributes.DefaultConstructorConstraint) != 0) special.Add("new");
+        if ((attrs & GenericParameterAttributes.AllowByRefLike) != 0) special.Add("allowsRefStruct");
+        if (special.Count != 0) declaration["specialConstraints"] = special;
+        return declaration;
+    }
+
     // Recursively converge every Fqn name in a TypeNode onto dotted form (a nested-type bound like Element carries a `+`).
     static TypeNode NormalizeNestedNames(TypeNode t) => t switch
     {
@@ -3920,6 +4049,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> CompanionSemanticOwnerByCarrier = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
+    public readonly Dictionary<string, string> TypeParamDeclarations = new(StringComparer.Ordinal); // ownerFqn -> exact descriptor array JSON
     public readonly Dictionary<string, string[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> (first) ctor param type names
     public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
     public readonly Dictionary<string, TypeNode[]> TypeParamBounds = new(StringComparer.Ordinal); // DOTTED ownerFqn -> per-param declared bound TypeNode (null when unconstrained/objectish)
@@ -3930,6 +4060,7 @@ sealed class ReferenceDotKtMetadata
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
     public readonly List<CtorBinding> CtorBindings = new();                               // per-ctor declaration shape (#86 D1)
     public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> ExactPhysicalTypeByDottedName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> InnerSemanticOwner = new(StringComparer.Ordinal);

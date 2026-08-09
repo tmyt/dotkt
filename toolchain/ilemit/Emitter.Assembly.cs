@@ -1383,6 +1383,7 @@ sealed partial class Emitter
         {
             if (x.ValueKind != JsonValueKind.Object) continue;
             var gp = map[x.GetProperty("name").GetString()];
+            var parameterAttributes = GenericParameterAttributes.None;
             // Declaration-site variance is legal CLR metadata only on an interface type param, AND only when the param
             // is NOT used in a conflicting position: a covariant `out E` may not appear in an `in` (method-argument)
             // position, a contravariant `in E` not in an `out` (return) position. Kotlin permits the conflict via
@@ -1411,8 +1412,23 @@ sealed partial class Emitter
                          : vs == "out" ? GenericParameterAttributes.Covariant
                          : vs == "in" ? GenericParameterAttributes.Contravariant
                          : GenericParameterAttributes.None;
-                if (attr != GenericParameterAttributes.None) gp.SetGenericParameterAttributes(attr);
+                parameterAttributes |= attr;
             }
+            if (x.TryGetProperty("specialConstraints", out var specials))
+            {
+                foreach (var special in specials.EnumerateArray())
+                    parameterAttributes |= special.GetString() switch
+                    {
+                        "class" => GenericParameterAttributes.ReferenceTypeConstraint,
+                        "struct" => GenericParameterAttributes.NotNullableValueTypeConstraint,
+                        "new" => GenericParameterAttributes.DefaultConstructorConstraint,
+                        "allowsRefStruct" => GenericParameterAttributes.AllowByRefLike,
+                        var value => throw new InvalidDataException(
+                            $"unknown generic-parameter special constraint '{value}'"),
+                    };
+            }
+            if (parameterAttributes != GenericParameterAttributes.None)
+                gp.SetGenericParameterAttributes(parameterAttributes);
             if (x.TryGetProperty("constraints", out var cs))
             {
                 var types = cs.EnumerateArray().Select(c => MapType(c)).ToList();
