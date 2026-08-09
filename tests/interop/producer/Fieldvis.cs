@@ -13,3 +13,10 @@ namespace Fieldvis {
         }
     }
 }
+
+namespace VolatileInterop {
+    public sealed class Fields {
+        public volatile int Value;
+        public static volatile int StaticValue;
+    }
+}

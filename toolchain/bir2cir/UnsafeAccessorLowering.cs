@@ -88,6 +88,11 @@ static class UnsafeAccessorLowering
                 {
                     if (ctor["preStmts"] is JsonNode pre) Rewrite(pre, caller, hosts, accessors);
                     if (ctor["delegation"] is JsonNode delegation) Rewrite(delegation, caller, hosts, accessors);
+                    // Constructor delegation arguments execute in the caller TypeDef just like its body. kotc keeps
+                    // them in dedicated baseArgs/thisArgs vectors, so private sibling/file-class edges there need the
+                    // same UnsafeAccessor projection (SafeContinuation(delegate, UNDECIDED_BOX) is the concrete case).
+                    if (ctor["baseArgs"] is JsonNode baseArgs) Rewrite(baseArgs, caller, hosts, accessors);
+                    if (ctor["thisArgs"] is JsonNode thisArgs) Rewrite(thisArgs, caller, hosts, accessors);
                     if (ctor["body"] is JsonNode body) Rewrite(body, caller, hosts, accessors);
                 }
             if (caller.Declaration["fields"] is JsonArray fields)
@@ -480,7 +485,7 @@ static class UnsafeAccessorLowering
         if (target == null) return semantic;
         var captured = target.Declaration["capturedTypeParams"] as JsonArray;
         var declared = target.Declaration["typeParams"] as JsonArray;
-        if (captured == null || captured.Count == 0) return declared ?? semantic;
+        if (captured == null || captured.Count == 0) return declared ?? new JsonArray();
         var physical = new JsonArray();
         foreach (var parameter in captured) physical.Add(parameter?.DeepClone());
         if (declared != null)
@@ -764,16 +769,20 @@ static class UnsafeAccessorLowering
             ["elem"] = fieldTypeJson.DeepClone(),
             ["sty"] = fieldTypeJson.DeepClone(),
         };
+        if (Bool(access["volatile"]) || Bool(target?["volatile"])) read["volatile"] = true;
 
         if (kind == "lateinitGet")
         {
-            Replace(access, new JsonObject
+            var replacement = new JsonObject
             {
                 ["k"] = "lateinitGet",
                 ["name"] = targetName,
                 ["value"] = read,
                 ["sty"] = fieldTypeJson.DeepClone(),
-            });
+            };
+            if (access["lateinitSourceName"] is JsonNode sourceName)
+                replacement["lateinitSourceName"] = sourceName.DeepClone();
+            Replace(access, replacement);
             return;
         }
         if (kind is "field" or "staticField")
@@ -789,6 +798,7 @@ static class UnsafeAccessorLowering
             ["elem"] = fieldTypeJson.DeepClone(),
             ["value"] = access["value"]?.DeepClone(),
         };
+        if (Bool(access["volatile"]) || Bool(target?["volatile"])) store["volatile"] = true;
         Replace(access, kind == "setField"
             ? new JsonObject { ["k"] = "exprStmt", ["expr"] = store }
             : store);

@@ -18,12 +18,214 @@ namespace DotKt.Runtime.CompilerServices
     }
 
     [CompilerGenerated]
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class KotlinStaticCarrierAttribute(string version, byte[] content) : Attribute
+    {
+        public string Version { get; } = version;
+        public byte[] Content { get; } = content;
+    }
+
+    [CompilerGenerated]
+#if !COMPANION_EXTENSION_WRONG_TARGET && !COMPANION_EXTENSION_PROPERTY_TARGET
+    [AttributeUsage(AttributeTargets.Method | AttributeTargets.Field
+#if CONSTRUCTOR_COMPANION_EXTENSION || STATIC_CONSTRUCTOR_COMPANION_EXTENSION
+        | AttributeTargets.Constructor
+#endif
+    )]
+#endif
+    public sealed class KotlinCompanionExtensionAttribute(string version, byte[] content) : Attribute
+    {
+        public string Version { get; } = version;
+        public byte[] Content { get; } = content;
+#if NAMED_ARGUMENT_COMPANION_EXTENSION
+        public int Extra { get; set; }
+#endif
+    }
+
+    [CompilerGenerated]
     public sealed class KotlinObjectAttribute : Attribute;
 }
 
 namespace Fixture
 {
-#if GENERIC_OWNER_NESTED_CARRIER
+#if COMPANION_EXTENSION_WRONG_TARGET
+    [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] { 123, 125 })]
+    public sealed class WrongCompanionExtensionTarget;
+#elif COMPANION_EXTENSION_PROPERTY_TARGET
+    public sealed class WrongCompanionExtensionPropertyTarget
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] { 123, 125 })]
+        public static int Value => 1;
+    }
+#elif SPECIAL_NAME_COMPANION_EXTENSION || NAMED_ARGUMENT_COMPANION_EXTENSION
+    public sealed class Owner;
+
+    [DotKt.Runtime.CompilerServices.KotlinFileClass]
+    public sealed class FileFacade
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] {
+            123,34,114,101,99,101,105,118,101,114,34,58,123,34,116,34,
+            58,34,102,113,110,34,44,34,110,97,109,101,34,58,34,70,
+            105,120,116,117,114,101,46,79,119,110,101,114,34,125,44,34,
+            110,97,109,101,34,58,34,98,97,100,34,44,34,107,105,110,
+#if SPECIAL_NAME_COMPANION_EXTENSION
+            100,34,58,34,103,101,116,34,125
+#else
+            100,34,58,34,102,117,110,99,116,105,111,110,34,125
+#endif
+        }
+#if NAMED_ARGUMENT_COMPANION_EXTENSION
+        , Extra = 1
+#endif
+        )]
+#if SPECIAL_NAME_COMPANION_EXTENSION
+        public static FileFacade operator +(FileFacade left, FileFacade right) => left;
+#else
+        public static int Bad() => 1;
+#endif
+    }
+#elif NON_FILE_COMPANION_EXTENSION_METHOD
+    public sealed class Owner
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] {
+            123,34,114,101,99,101,105,118,101,114,34,58,123,34,116,34,
+            58,34,102,113,110,34,44,34,110,97,109,101,34,58,34,70,
+            105,120,116,117,114,101,46,79,119,110,101,114,34,125,44,34,
+            110,97,109,101,34,58,34,98,97,100,34,44,34,107,105,110,
+            100,34,58,34,102,117,110,99,116,105,111,110,34,125
+        })]
+        public static int Bad() => 1;
+    }
+#elif CONSTRUCTOR_COMPANION_EXTENSION || STATIC_CONSTRUCTOR_COMPANION_EXTENSION
+    public sealed class Owner;
+
+    [DotKt.Runtime.CompilerServices.KotlinFileClass]
+    public sealed class FileFacade
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] {
+            123,34,114,101,99,101,105,118,101,114,34,58,123,34,116,34,
+            58,34,102,113,110,34,44,34,110,97,109,101,34,58,34,70,
+            105,120,116,117,114,101,46,79,119,110,101,114,34,125,44,34,
+            110,97,109,101,34,58,34,98,97,100,34,44,34,107,105,110,
+            100,34,58,34,102,117,110,99,116,105,111,110,34,125
+        })]
+#if STATIC_CONSTRUCTOR_COMPANION_EXTENSION
+        static FileFacade() { }
+#else
+        public FileFacade() { }
+#endif
+    }
+#elif LEGACY_STRING_COMPANION_EXTENSION
+    public sealed class Owner;
+
+    [DotKt.Runtime.CompilerServices.KotlinFileClass]
+    public sealed class FileFacade
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] {
+            123,34,114,101,99,101,105,118,101,114,34,58,34,70,105,120,
+            116,117,114,101,46,79,119,110,101,114,34,44,34,110,97,109,
+            101,34,58,34,98,97,100,34,44,34,107,105,110,100,34,58,34,
+            102,117,110,99,116,105,111,110,34,125
+        })]
+        public static int Bad() => 1;
+    }
+#elif PARAMETERIZED_COMPANION_EXTENSION
+    public sealed class Owner;
+
+    [DotKt.Runtime.CompilerServices.KotlinFileClass]
+    public sealed class FileFacade
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] {
+            123,34,114,101,99,101,105,118,101,114,34,58,123,34,116,34,
+            58,34,102,113,110,34,44,34,110,97,109,101,34,58,34,70,
+            105,120,116,117,114,101,46,79,119,110,101,114,34,44,34,97,
+            114,103,115,34,58,91,123,34,116,34,58,34,102,113,110,34,
+            44,34,110,97,109,101,34,58,34,107,111,116,108,105,110,46,
+            83,116,114,105,110,103,34,125,93,125,44,34,110,97,109,101,
+            34,58,34,98,97,100,34,44,34,107,105,110,100,34,58,34,102,
+            117,110,99,116,105,111,110,34,125
+        })]
+        public static int Bad() => 1;
+    }
+#elif MALFORMED_PRIVATE_COMPANION_EXTENSION
+    [DotKt.Runtime.CompilerServices.KotlinFileClass]
+    public sealed class FileFacade
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] { 123, 125 })]
+        private static int Bad() => 1;
+    }
+#elif INSTANCE_COMPANION_EXTENSION_METHOD
+    public sealed class Owner;
+
+    [DotKt.Runtime.CompilerServices.KotlinFileClass]
+    public sealed class FileFacade
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] {
+            123,34,114,101,99,101,105,118,101,114,34,58,123,34,116,34,
+            58,34,102,113,110,34,44,34,110,97,109,101,34,58,34,70,
+            105,120,116,117,114,101,46,79,119,110,101,114,34,125,44,34,
+            110,97,109,101,34,58,34,98,97,100,34,44,34,107,105,110,
+            100,34,58,34,102,117,110,99,116,105,111,110,34,125
+        })]
+        public int Bad() => 1;
+    }
+#elif INSTANCE_COMPANION_EXTENSION_FIELD
+    public sealed class Owner;
+
+    [DotKt.Runtime.CompilerServices.KotlinFileClass]
+    public sealed class FileFacade
+    {
+        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] {
+            123,34,114,101,99,101,105,118,101,114,34,58,123,34,116,34,
+            58,34,102,113,110,34,44,34,110,97,109,101,34,58,34,70,
+            105,120,116,117,114,101,46,79,119,110,101,114,34,125,44,34,
+            110,97,109,101,34,58,34,98,97,100,34,44,34,107,105,110,
+            100,34,58,34,102,105,101,108,100,34,125
+        })]
+        public int Bad;
+    }
+#elif EXTRA_STATIC_CARRIER_PAYLOAD
+    public sealed class StaticOwner<T>;
+
+    [CompilerGenerated]
+    [DotKt.Runtime.CompilerServices.KotlinStaticCarrier("bir-json/1", new byte[] {
+        123,34,111,119,110,101,114,34,58,34,70,105,120,116,117,114,
+        101,46,83,116,97,116,105,99,79,119,110,101,114,34,44,34,
+        117,110,101,120,112,101,99,116,101,100,34,58,116,114,117,101,125
+    })]
+    public static class StaticCarrier;
+#elif INSTANCE_STATIC_CARRIER_MEMBER
+    public sealed class StaticOwner<T>;
+
+    [CompilerGenerated]
+    [DotKt.Runtime.CompilerServices.KotlinStaticCarrier("bir-json/1", new byte[] {
+        123,34,111,119,110,101,114,34,58,34,70,105,120,116,117,114,
+        101,46,83,116,97,116,105,99,79,119,110,101,114,34,125
+    })]
+    public sealed class StaticCarrier
+    {
+        public int Bad() => 1;
+    }
+#elif NON_PUBLIC_STATIC_CARRIER
+    public sealed class StaticOwner<T>;
+
+    [CompilerGenerated]
+    [DotKt.Runtime.CompilerServices.KotlinStaticCarrier("bir-json/1", new byte[] {
+        123,34,111,119,110,101,114,34,58,34,70,105,120,116,117,114,
+        101,46,83,116,97,116,105,99,79,119,110,101,114,34,125
+    })]
+    internal static class StaticCarrier;
+#elif NON_GENERIC_STATIC_CARRIER
+    public sealed class StaticOwner;
+
+    // The payload is structurally valid, but only a generic semantic owner may require non-generic CLR storage.
+    [CompilerGenerated]
+    [DotKt.Runtime.CompilerServices.KotlinStaticCarrier("bir-json/1", new byte[] {
+        123,34,111,119,110,101,114,34,58,34,70,105,120,116,117,114,
+        101,46,83,116,97,116,105,99,79,119,110,101,114,34,125
+    })]
+    public static class StaticCarrier;
+#elif GENERIC_OWNER_NESTED_CARRIER
     // A generic owner cannot host the single companion singleton: CLR static storage is per closed constructed type,
     // so a carrier claiming to be NESTED in one is malformed however well-formed it looks otherwise.
     public class GenericOwner<T> where T : struct

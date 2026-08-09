@@ -1,0 +1,5 @@
+# The initializer's static call and the declarations must share the explicit non-generic physical carrier.
++"name":"ReferenceGenericStaticProbe$dotkt_statics"
++"k":"callStatic","method":"seed"
++"owner":{"t":"fqn","name":"ReferenceGenericStaticProbe$dotkt_statics"}
+-"ownerType":{"t":"fqn","name":"ReferenceGenericStaticProbe"}

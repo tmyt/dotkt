@@ -1,0 +1,54 @@
+{
+  "fileClass": "ConstReadProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [
+    {
+      "name": "ConstReadProbe",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": null,
+      "interfaces": [],
+      "fields": [
+        {
+          "name": "ANSWER",
+          "type": { "t": "fqn", "name": "kotlin.String" },
+          "static": true,
+          "kotlinStatic": true,
+          "readOnly": true,
+          "const": true,
+          "init": {
+            "k": "const",
+            "type": { "t": "fqn", "name": "kotlin.String" },
+            "value": "ok"
+          }
+        }
+      ],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    }
+  ],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "readAnswer",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "staticField",
+            "ownerType": { "t": "fqn", "name": "ConstReadProbe" },
+            "name": "ANSWER",
+            "sty": { "t": "fqn", "name": "kotlin.String" }
+          }
+        }
+      ]
+    }
+  ]
+}

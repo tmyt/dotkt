@@ -231,6 +231,25 @@ frontend produces a fake-override accessor for a static property, the BIR
 emitter resolves it to the underlying declaration and uses the IR declaration
 shape—not the number of call arguments—to preserve static ownership.
 
+A Kotlin 2.4 source `companion { }` member is the same shape from the other
+direction: it is emitted as a static member of its own CLR type, so it needs no
+carrier and is read back by the ordinary static-member path above.
+
+A Kotlin 2.4 `companion fun C.foo()` / `companion val C.bar` — a COMPANION
+EXTENSION — has no receiver parameter at all: the frontend drops it, and the
+emitted member is an ordinary static of the declaring file's facade class.
+`bir2cir` gives each declaration a collision-free physical name keyed by the
+associated receiver, source name, and explicit `function`/`get`/`set`/`field`
+role. The same facts are carried by a trusted
+`[KotlinCompanionExtension(version, bytes)]` payload `{receiver, name, kind}`.
+`dll2klib` restores the source name and standard Kotlin shape — the
+static-declaration flag plus a receiver type, which is exactly what
+`isStatic && receiverParameter != null` means. It validates the explicit role;
+no accessor classification from `get_`/`set_`, library rule, or physical-layout
+inference participates.
+Without the carrier there is no such declaration; the facade member stays an
+ordinary top-level function or property.
+
 ### Properties and fields
 
 CLR properties use normal Kotlin property/accessor metadata. DotKt custom

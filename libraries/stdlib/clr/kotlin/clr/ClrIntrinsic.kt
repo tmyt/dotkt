@@ -32,6 +32,13 @@ public annotation class ClrAwaitBridge
 @Retention(AnnotationRetention.BINARY)
 public annotation class ClrField
 
+// Kotlin 2.4 does not copy KLIB IS_LATEINIT onto its synthetic static-property fake override. dll2klib therefore
+// carries the declaration fact in a compiler-only marker alongside ClrField. It is intentionally not a public flag
+// on the user-facing interop annotation: arbitrary @ClrField source must not be able to manufacture lateinit reads.
+@Target(AnnotationTarget.PROPERTY)
+@Retention(AnnotationRetention.BINARY)
+internal annotation class ClrLateinitField
+
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ClrIntrinsic(val name: String)
 

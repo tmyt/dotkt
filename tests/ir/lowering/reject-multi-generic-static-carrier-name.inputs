@@ -1,0 +1,2 @@
+tests/ir/lowering/reject-multi-generic-static-carrier-name.owner.bir-part.json
+tests/ir/lowering/reject-multi-generic-static-carrier-name.user.bir-part.json

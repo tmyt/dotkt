@@ -21,6 +21,10 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | `suspend fun` | `Task<T>`-returning method | no (the Task ABI hides the suspend-ness) | `[KotlinFunction(Suspend)]` |
 | top-level `fun` | static method of a `<File>Kt` class | no (.NET has no top-level functions) | `[KotlinFileClass]` on the file class |
 | named/default `companion object` | compiler-reserved singleton carrier, nested in a non-generic owner and hoisted beside a generic one | no; CLR nesting does not record the source companion association/name | `[KotlinCompanion(version, bytes)]` on the physical carrier type |
+| `class C { companion { … } }` member | a real static member of `C` | **yes** — a CLR static member IS the shape (`IS_STATIC_FUNCTION`/`IS_STATIC_PROPERTY`) | (none) |
+| `companion fun C.foo()` / `companion val C.bar` | receiverless, collision-free static of the `<File>Kt` class; the receiver is not a parameter | no; the physical member does not preserve its associated type, Kotlin source name, or function/get/set/field role | `[KotlinCompanionExtension(version, bytes)]` carrying `{receiver, name, kind}` |
+| field-backed `lateinit var` | ordinary mutable field plus checked Kotlin reads | no; CLR metadata has no `lateinit` modifier | `[KotlinLateinit]` on the backing field; `dll2klib` restores `IS_LATEINIT` and sets the declaration-owned `@ClrField` flag used by Kotlin 2.4 static-property fake overrides |
+| companion-block statics on generic `G<T>` | members of one compiler-generated, public, non-generic CLR carrier | CLR statics on `G<T>` would be duplicated per closed type and a bare generic owner is not a legal MemberRef parent | `[KotlinStaticCarrier(version, bytes)]` on the carrier names semantic `G`; `dll2klib` merges its declarations back into `G` |
 | inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
 | Kotlin `val` backed by a **`@ClrField` public field** | public field | no; a plain public field looks writable | `[KotlinReadOnly]` — survives **only** for the `@ClrField` plain-field case; a normal `val` is now a get-only CLR property, recoverable from plain metadata (see [design-clr-property-model.md](design-clr-property-model.md)) |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
@@ -47,11 +51,12 @@ classification.
 ## Pipeline
 
 ```
-  emit:   BirEmitter records infix/operator/suspend, inline bodies, read-only fields, file classes,
-          and reference nullability
+  emit:   BirEmitter records infix/operator/suspend, companion-extension receiver/name/kind, inline bodies,
+          read-only/lateinit fields, file classes, and reference nullability
             -> ilemit stamps [assembly: AssemblyMetadata("DotKt.Compiler", "metadata-v1")],
                compiler-generated embedded carrier definitions,
-               [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinInline(body)] / [KotlinReadOnly] /
+               [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinCompanionExtension(receiver,name,kind)] /
+               [KotlinInline(body)] / [KotlinReadOnly] / [KotlinLateinit] / [KotlinStaticCarrier] /
                .NET NRT [Nullable*]
   project: dll2klib verifies assembly + carrier provenance, then writes standard KLIB metadata
             (suspend: Task<T> unwrapped to T)

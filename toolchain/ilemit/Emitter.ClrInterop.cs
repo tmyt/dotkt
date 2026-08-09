@@ -561,6 +561,7 @@ sealed partial class Emitter
         var fld = ResolveClrPropField(type, e.GetProperty("name").GetString());
         if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), FieldTypeOf(fld));
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
+        MaybeVolatile(fld, e);
         _il.Emit(fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
         return FieldTypeOf(fld);
     }
@@ -583,6 +584,7 @@ sealed partial class Emitter
         var fld = ResolveClrPropField(type, e.GetProperty("name").GetString());
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitNullableCoerced(e.GetProperty("value"), FieldTypeOf(fld));
+        MaybeVolatile(fld, e);
         _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
         return Bcl("System.Void");
     }

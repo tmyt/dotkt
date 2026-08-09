@@ -1340,6 +1340,8 @@ internal sealed class AssemblyScanner
     private readonly Dictionary<TypeDefinitionHandle, CompanionCarrier> _companionCarriers = new();
     private readonly HashSet<TypeDefinitionHandle> _physicalCompanionCarriers = new();
     private readonly HashSet<TypeDefinitionHandle> _existentialCarriers = new();
+    private readonly Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> _genericStaticCarriers = new();
+    private readonly Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> _genericStaticCarrierByOwner = new();
     private readonly Dictionary<TypeDefinitionHandle, TypeDefinitionHandle> _liftedCompanions = new();
     private readonly Dictionary<TypeDefinitionHandle, CompanionCarrier> _companionsByOwner = new();
     private readonly HashSet<FieldDefinitionHandle> _singletonInstanceFields = new();
@@ -1355,6 +1357,13 @@ internal sealed class AssemblyScanner
     {
         _md = md;
         _attrs = new MetadataAttributes(md);
+        _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute",
+            HandleKind.MethodDefinition,
+            HandleKind.FieldDefinition);
+        _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinStaticCarrierAttribute",
+            HandleKind.TypeDefinition);
         _arityNames = arityNames;
         _delegateCatalog = delegateCatalog;
         _companionCatalog = companionCatalog;
@@ -1438,6 +1447,42 @@ internal sealed class AssemblyScanner
                 throw new InvalidDataException($"multiple Kotlin companion carriers name owner '{carrier.Owner}'");
             _liftedCompanions.Add(ownerHandle, handle);
         }
+
+        foreach (var handle in md.TypeDefinitions)
+        {
+            using var payload = _attrs.CarrierDocument(
+                handle, MetadataAttributes.DotKtNs + "KotlinStaticCarrierAttribute");
+            if (payload == null) continue;
+            if (payload.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                payload.RootElement.EnumerateObject().Count() != 1 ||
+                !payload.RootElement.TryGetProperty("owner", out var ownerElement) ||
+                ownerElement.ValueKind != System.Text.Json.JsonValueKind.String ||
+                ownerElement.GetString() is not string ownerName || string.IsNullOrEmpty(ownerName))
+                throw new InvalidDataException(
+                    "KotlinStaticCarrier payload must contain exactly one non-empty string 'owner'");
+            var definition = md.GetTypeDefinition(handle);
+            if ((definition.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.Public)
+                throw new InvalidDataException(
+                    $"KotlinStaticCarrier '{MetadataTypeName(handle)}' must be public");
+            var ownerMatches = md.TypeDefinitions.Where(candidate =>
+                KotlinFullName(candidate) == ownerName &&
+                md.GetTypeDefinition(candidate).GetGenericParameters().Count > 0).ToArray();
+            if (definition.GetGenericParameters().Count != 0 || ownerMatches.Length != 1 ||
+                !_attrs.Has(handle, "System.Runtime.CompilerServices.CompilerGeneratedAttribute", requireTrust: false))
+                throw new InvalidDataException(
+                    $"malformed KotlinStaticCarrier '{MetadataTypeName(handle)}' for '{ownerName}'");
+            ValidateGenericStaticCarrierMembers(handle);
+            if (!_genericStaticCarriers.TryAdd(handle, ownerMatches[0]) ||
+                !_genericStaticCarrierByOwner.TryAdd(ownerMatches[0], handle))
+                throw new InvalidDataException($"multiple KotlinStaticCarrier declarations for '{ownerName}'");
+        }
+
+        // A trusted companion-extension carrier is compiler-owned metadata, so validate it over the complete
+        // TypeDef/member universe before visibility filtering or ordinary class/file-facade projection. bir2cir
+        // applies the same rule while indexing references: the carrier is valid only on a static member of a
+        // Kotlin file facade, including private implementation members that dll2klib would otherwise skip.
+        foreach (var handle in md.TypeDefinitions)
+            ValidateCompanionExtensionPhysicalMembers(handle, md.GetTypeDefinition(handle));
     }
 
     public IReadOnlyList<Fragment> Scan()
@@ -1447,6 +1492,7 @@ internal sealed class AssemblyScanner
             .Where(x => IsPublicTopLevel(x.Definition))
             .Where(x => !_physicalCompanionCarriers.Contains(x.Handle))
             .Where(x => !_existentialCarriers.Contains(x.Handle))
+            .Where(x => !_genericStaticCarriers.ContainsKey(x.Handle))
             .Where(x => _md.GetString(x.Definition.Name) != "<Module>")
             .GroupBy(x => _md.GetString(x.Definition.Namespace), StringComparer.Ordinal);
 
@@ -1479,6 +1525,7 @@ internal sealed class AssemblyScanner
                     names,
                     signatures,
                     semanticClassName: semanticName is null ? null : SemanticClassName(handle, names, semanticName));
+                MergeGenericStaticCarrier(handle, klass, names, signatures);
                 fragment.Class.Add(klass);
                 fragment.ClassName.Add(klass.FqName);
                 var projectedName = semanticName ?? KotlinFullName(handle);
@@ -1686,7 +1733,7 @@ internal sealed class AssemblyScanner
         }
         if (isKotlinValue)
             AddValueClassRepresentation(handle, def, result, names, signatures, typeContext);
-        var accessorPairs = KotlinAccessorPairs(def);
+        var accessorPairs = KotlinAccessorPairs(handle, def, typeParameterIds);
         var customFieldAccessors = CustomFieldAccessors(def);
         var accessorMethods = accessorPairs
             .SelectMany(x => x.Setter.IsNil ? new[] { x.Getter } : new[] { x.Getter, x.Setter })
@@ -2088,18 +2135,26 @@ internal sealed class AssemblyScanner
                     ? new ValueParameter { Name = names.String("value"), Type = fieldType.Clone() }
                     : null,
             };
+            // An object/companion-object const is physically a CLR static literal (Literal cannot be instance), but
+            // its Kotlin declaration is still an ordinary member of that singleton carrier. Do not turn it into a
+            // Kotlin 2.4 companion-block static merely because of the required CLR storage bit. [KotlinObject] is the
+            // exact producer-authored singleton fact; generic-static implementation carriers are a different set.
+            if (_attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinObjectAttribute"))
+                projected.Flags &= ~(1 << 19); // IS_STATIC
             if ((field.Attributes & FieldAttributes.Literal) != 0 &&
                 CompileTimeValue(field, names) is { } constant)
             {
                 projected.Flags |= (1 << 11) | (1 << 13); // IS_CONST + HAS_CONSTANT
                 projected.CompileTimeValue = constant;
             }
+            var isLateinit = _attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute");
+            if (isLateinit)
+                projected.Flags |= 1 << 12; // IS_LATEINIT
             if (hasCustomAccessors)
                 ApplyAccessorFlags(projected, custom.Handles);
             else {
-                projected.PropertyAnnotation.Add(new Annotation {
-                    Id = names.Class("kotlin.clr.ClrField"),
-                });
+                projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
+                if (isLateinit) projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
                 projected.Flags |= 1;
             }
             result.Property.Add(projected);
@@ -2126,7 +2181,8 @@ internal sealed class AssemblyScanner
             });
         }
         foreach (var pair in accessorPairs)
-            result.Property.Add(KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds));
+            result.Property.Add(KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds,
+                isStatic: (_md.GetMethodDefinition(pair.Getter).Attributes & MethodAttributes.Static) != 0));
         AddEnumerableIterator(handle, def, result, names, signatures, typeContext);
         MarkLowPriorityDelegateOverloads(result.Constructor, names);
         MarkLowPriorityDelegateOverloads(result.Function, names);
@@ -3068,11 +3124,47 @@ internal sealed class AssemblyScanner
                     requireTrust: false))
                 continue;
             var child = ReadClass(childHandle, childDef, names, signatures);
+            MergeGenericStaticCarrier(childHandle, child, names, signatures);
             parent.NestedClassName.Add(names.String(KotlinDefinitionPath(childHandle).Chain[^1]));
             fragment.Class.Add(child);
             fragment.ClassName.Add(child.FqName);
             AddCompanion(childHandle, child, fragment, names, signatures);
             ReadNestedClasses(childHandle, child, fragment, names, signatures);
+        }
+    }
+
+    private void MergeGenericStaticCarrier(
+        TypeDefinitionHandle semanticOwner,
+        Class declaration,
+        NameTable names,
+        SignatureDecoder signatures)
+    {
+        if (!_genericStaticCarrierByOwner.TryGetValue(semanticOwner, out var carrierHandle)) return;
+        var carrier = ReadClass(carrierHandle, _md.GetTypeDefinition(carrierHandle), names, signatures);
+        declaration.Function.Add(carrier.Function);
+        declaration.Property.Add(carrier.Property);
+    }
+
+    private void ValidateGenericStaticCarrierMembers(TypeDefinitionHandle handle)
+    {
+        var definition = _md.GetTypeDefinition(handle);
+        foreach (var fieldHandle in definition.GetFields())
+            if ((_md.GetFieldDefinition(fieldHandle).Attributes & FieldAttributes.Static) == 0)
+                throw new InvalidDataException(
+                    $"KotlinStaticCarrier '{MetadataTypeName(handle)}' contains an instance field");
+        foreach (var methodHandle in definition.GetMethods())
+            if ((_md.GetMethodDefinition(methodHandle).Attributes & MethodAttributes.Static) == 0)
+                throw new InvalidDataException(
+                    $"KotlinStaticCarrier '{MetadataTypeName(handle)}' contains an instance method or constructor");
+        foreach (var propertyHandle in definition.GetProperties())
+        {
+            var accessors = _md.GetPropertyDefinition(propertyHandle).GetAccessors();
+            var methods = new[] { accessors.Getter, accessors.Setter }
+                .Where(method => !method.IsNil).ToArray();
+            if (methods.Length == 0 || methods.Any(method =>
+                    (_md.GetMethodDefinition(method).Attributes & MethodAttributes.Static) == 0))
+                throw new InvalidDataException(
+                    $"KotlinStaticCarrier '{MetadataTypeName(handle)}' contains a non-static property");
         }
     }
 
@@ -3084,7 +3176,7 @@ internal sealed class AssemblyScanner
         SignatureDecoder signatures)
     {
         var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
-        var accessorPairs = KotlinAccessorPairs(def, requireStatic: true);
+        var accessorPairs = KotlinAccessorPairs(handle, def, typeParameterIds, requireStatic: true);
         var customFieldAccessors = CustomFieldAccessors(def, requireStatic: true);
         var extensionPropertyAccessors = accessorPairs
             .SelectMany(x => x.Setter.IsNil ? new[] { x.Getter } : new[] { x.Getter, x.Setter })
@@ -3092,7 +3184,19 @@ internal sealed class AssemblyScanner
             .ToHashSet();
         foreach (var pair in accessorPairs)
         {
-            var property = KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds);
+            var companion = CompanionExtension(pair.Getter, signatures, "get");
+            var setterCompanion = pair.Setter.IsNil ? null : CompanionExtension(pair.Setter, signatures, "set");
+            if (!pair.Setter.IsNil && ((companion is null) != (setterCompanion is null) ||
+                (companion is not null && setterCompanion is not null &&
+                    (companion.Name != setterCompanion.Name || !companion.Receiver.Equals(setterCompanion.Receiver))))
+            )
+                throw new InvalidDataException("inconsistent companion-extension accessor carriers");
+            var property = KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds,
+                isStatic: companion is not null, companionReceiver: companion?.Receiver);
+            if (companion is not null)
+            {
+                property.Name = names.String(companion.Name);
+            }
             property.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
             property.Flags |= 1;
             package.Property.Add(property);
@@ -3114,8 +3218,9 @@ internal sealed class AssemblyScanner
             var sig = method.DecodeSignature(signatures, context);
             var modality = (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
                 : (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0 ? 1 : 0;
+            var companion = CompanionExtension(methodHandle, signatures, "function");
             var function = new Function {
-                Name = names.String(name),
+                Name = names.String(companion?.Name ?? name),
                 Flags = Flags.Callable(method.Attributes, modality,
                     _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0,
                     isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18),
@@ -3123,7 +3228,17 @@ internal sealed class AssemblyScanner
                 ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context) },
             };
             PromoteContextParameters(method, function);
-            PromoteReceiver(methodHandle, method, function);
+            // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
+            // of this facade; the trusted carrier holds the type it is associated with. Restoring it needs no new
+            // encoding — a static callable with a receiver IS the standard shape (`isStatic && receiverParameter`), so
+            // put the static flag back and take the receiver from the carrier instead of from a `__self` parameter,
+            // which a companion extension does not have.
+            if (companion is not null)
+            {
+                function.Flags |= 1 << 18;
+                function.ReceiverType = companion.Receiver;
+            }
+            else PromoteReceiver(methodHandle, method, function);
             foreach (var gpHandle in method.GetGenericParameters())
             {
                 var gp = _md.GetGenericParameter(gpHandle);
@@ -3164,13 +3279,29 @@ internal sealed class AssemblyScanner
                     signatures,
                     context);
             var canWrite = !accessors.Setter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(accessors.Setter).Attributes);
+            // The CLR-property twin of the facade field/method paths: a companion extension that emits a real property
+            // row (a delegated one) is still a static declaration whose receiver comes from the carrier.
+            var propCompanion = CompanionExtension(methodHandle, signatures, "get");
+            var propSetterCompanion = accessors.Setter.IsNil
+                ? null
+                : CompanionExtension(accessors.Setter, signatures, "set");
+            if (!accessors.Setter.IsNil && ((propCompanion is null) != (propSetterCompanion is null) ||
+                (propCompanion is not null && propSetterCompanion is not null &&
+                    (propCompanion.Name != propSetterCompanion.Name ||
+                        !propCompanion.Receiver.Equals(propSetterCompanion.Receiver))))
+            )
+                throw new InvalidDataException("inconsistent companion-extension property carriers");
             var projected = new Property {
-                Name = names.String(_md.GetString(property.Name)),
+                Name = names.String(propCompanion?.Name ?? _md.GetString(property.Name)),
                 ReturnType = type,
-                Flags = Flags.Property(method.Attributes, canWrite, isStatic: false),
+                Flags = Flags.Property(method.Attributes, canWrite, isStatic: propCompanion is not null),
                 SetterValueParameter = canWrite ? new ValueParameter { Name = names.String("value"), Type = type.Clone() } : null,
             };
-            if (sig.ParameterTypes.Length != 0)
+            if (propCompanion is not null)
+            {
+                projected.ReceiverType = propCompanion.Receiver;
+            }
+            else if (sig.ParameterTypes.Length != 0)
             {
                 var receiverHandle = method.GetParameters()
                     .Select(h => (Handle: h, Row: _md.GetParameter(h)))
@@ -3194,10 +3325,16 @@ internal sealed class AssemblyScanner
             var canWrite = hasCustomAccessors && (custom.Access & 2) != 0 ||
                 (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
                 !_attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinReadOnlyAttribute");
+            // `companion val C.bar = 1` stores into a plain static field of this facade; its carrier restores both the
+            // static declaration flag and the associated type, exactly as the method path above does.
+            var fieldCompanion = CompanionExtension(fieldHandle, signatures, "field");
             var projected = new Property {
-                Name = names.String(name),
+                Name = names.String(fieldCompanion?.Name ?? name),
                 ReturnType = type,
-                Flags = Flags.Property(field.Attributes, canWrite) & ~(1 << 19),
+                Flags = fieldCompanion is null
+                    ? Flags.Property(field.Attributes, canWrite) & ~(1 << 19)
+                    : Flags.Property(field.Attributes, canWrite),
+                ReceiverType = fieldCompanion?.Receiver,
                 SetterValueParameter = canWrite ? new ValueParameter { Name = names.String("value"), Type = type.Clone() } : null,
             };
             if ((field.Attributes & FieldAttributes.Literal) != 0 &&
@@ -3206,13 +3343,15 @@ internal sealed class AssemblyScanner
                 projected.Flags |= (1 << 11) | (1 << 13); // IS_CONST + HAS_CONSTANT
                 projected.CompileTimeValue = constant;
             }
+            var isLateinit = _attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute");
+            if (isLateinit)
+                projected.Flags |= 1 << 12; // IS_LATEINIT
             projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
             if (hasCustomAccessors)
                 ApplyAccessorFlags(projected, custom.Handles);
             else {
-                projected.PropertyAnnotation.Add(new Annotation {
-                    Id = names.Class("kotlin.clr.ClrField"),
-                });
+                projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
+                if (isLateinit) projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
             }
             projected.Flags |= 1;
             package.Property.Add(projected);
@@ -3379,7 +3518,9 @@ internal sealed class AssemblyScanner
     }
 
     private List<(MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)> KotlinAccessorPairs(
+        TypeDefinitionHandle owner,
         TypeDefinition def,
+        IReadOnlyDictionary<GenericParameterHandle, int> typeParameterIds,
         bool requireStatic = false)
     {
         var methods = def.GetMethods()
@@ -3397,28 +3538,58 @@ internal sealed class AssemblyScanner
             var physical = PhysicalParameters(getter);
             var hasReceiver = physical.Count > 0 && !physical[0].Row.Name.IsNil &&
                 _md.GetString(physical[0].Row.Name) == "__self";
+            // A COMPANION EXTENSION property accessor carries its receiver in trusted metadata instead of a physical
+            // `__self` slot (the frontend drops the parameter), so a receiverless zero-argument getter IS an accessor
+            // here when the carrier says so. Without this the getter would surface as a plain `get_<name>` function.
+            var hasCompanionReceiver =
+                _attrs.Has(getterHandle, MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute");
             var contextStart = hasReceiver ? 1 : 0;
-            if (!hasReceiver && physical.Count == 0 ||
+            if (!hasReceiver && !hasCompanionReceiver && physical.Count == 0 ||
                 physical.Skip(contextStart).Any(x =>
                     !_attrs.Has(x.Handle, MetadataAttributes.DotKtNs + "KotlinContextParameterAttribute")))
                 continue;
+            var getterSignature = getter.DecodeSignature(
+                RawSignatureTypeProvider.Instance,
+                new GenericContext(owner, getterHandle, typeParameterIds));
+            // Context parameters participate in Kotlin property overload resolution. Parameter count alone can pair
+            // `context(A) var C.p`'s setter with `context(B) val C.p`'s getter, silently making the latter writable.
+            // Compare the complete physical context/receiver prefix and the setter value against the getter result.
             var setter = methods.FirstOrDefault(x =>
-                (_md.GetString(x.Definition.Name) == "set_" + name[4..]) &&
-                (x.Definition.Attributes & MethodAttributes.SpecialName) == 0 &&
-                IsPublicOrProtected(x.Definition.Attributes) &&
-                x.Definition.GetParameters().Count == getter.GetParameters().Count + 1);
+            {
+                if (_md.GetString(x.Definition.Name) != "set_" + name[4..] ||
+                    (x.Definition.Attributes & MethodAttributes.SpecialName) != 0 ||
+                    !IsPublicOrProtected(x.Definition.Attributes) ||
+                    (x.Definition.Attributes & MethodAttributes.Static) !=
+                        (getter.Attributes & MethodAttributes.Static))
+                    return false;
+                var setterSignature = x.Definition.DecodeSignature(
+                    RawSignatureTypeProvider.Instance,
+                    new GenericContext(owner, x.Handle, typeParameterIds));
+                return getterSignature.GenericParameterCount == setterSignature.GenericParameterCount &&
+                    setterSignature.ParameterTypes.Length == getterSignature.ParameterTypes.Length + 1 &&
+                    getterSignature.ParameterTypes.SequenceEqual(
+                        setterSignature.ParameterTypes.Take(getterSignature.ParameterTypes.Length),
+                        StringComparer.Ordinal) &&
+                    getterSignature.ReturnType == setterSignature.ParameterTypes[^1];
+            });
             result.Add((getterHandle, setter.Handle));
         }
         return result;
     }
 
+    /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor
+    /// is a Kotlin static exactly when its CLR accessor is static (a `companion { }` property), while a FILE-FACADE
+    /// accessor is static only when the trusted companion-extension carrier says so — every ordinary top-level
+    /// property has a static accessor and is not a static declaration.
     private Property KotlinAccessorProperty(
         TypeDefinitionHandle owner,
         MethodDefinitionHandle getterHandle,
         MethodDefinitionHandle setterHandle,
         NameTable names,
         SignatureDecoder signatures,
-        Dictionary<GenericParameterHandle, int> typeParameterIds)
+        Dictionary<GenericParameterHandle, int> typeParameterIds,
+        bool isStatic = false,
+        KType? companionReceiver = null)
     {
         var getter = _md.GetMethodDefinition(getterHandle);
         var physical = PhysicalParameters(getter);
@@ -3430,14 +3601,18 @@ internal sealed class AssemblyScanner
         var property = new Property {
             Name = names.String(_md.GetString(getter.Name)[4..]),
             ReturnType = type,
-            Flags = Flags.Property(getter.Attributes, !setterHandle.IsNil, isStatic: false),
+            Flags = Flags.Property(getter.Attributes, !setterHandle.IsNil, isStatic),
             SetterValueParameter = setterHandle.IsNil
                 ? null
                 : new ValueParameter { Name = names.String("value"), Type = type.Clone() },
         };
         ApplyAccessorFlags(property, getterHandle, setterHandle);
         var contextStart = 0;
-        if (hasReceiver)
+        // A COMPANION EXTENSION has no physical receiver slot at all — the frontend drops it — so its associated
+        // type comes from the carrier rather than from a leading `__self` parameter.
+        if (companionReceiver is not null)
+            property.ReceiverType = companionReceiver;
+        else if (hasReceiver)
         {
             property.ReceiverType = ProjectType(
                 physical[0].Handle, signature.ParameterTypes[0], owner, names, signatures, context);
@@ -3488,6 +3663,12 @@ internal sealed class AssemblyScanner
         });
         return annotation;
     }
+
+    private static Annotation ClrFieldAnnotation(NameTable names) =>
+        new() { Id = names.Class("kotlin.clr.ClrField") };
+
+    private static Annotation ClrLateinitFieldAnnotation(NameTable names) =>
+        new() { Id = names.Class("kotlin.clr.ClrLateinitField") };
 
     private void AddIndexer(
         Class owner,
@@ -3728,6 +3909,80 @@ internal sealed class AssemblyScanner
             };
         }
         return 0;
+    }
+
+    private void ValidateCompanionExtensionPhysicalMembers(TypeDefinitionHandle handle, TypeDefinition def)
+    {
+        const string attribute = MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute";
+        var isFileFacade = _attrs.Has(handle, MetadataAttributes.DotKtNs + "KotlinFileClassAttribute");
+        foreach (var methodHandle in def.GetMethods())
+        {
+            using var carrier = _attrs.CarrierDocument(methodHandle, attribute);
+            if (carrier is null) continue;
+            var payload = ReadCompanionExtensionPayload(carrier);
+            var method = _md.GetMethodDefinition(methodHandle);
+            if (!isFileFacade ||
+                (method.Attributes & MethodAttributes.Static) == 0 ||
+                payload.Kind is not ("function" or "get" or "set"))
+                throw new InvalidDataException(
+                    "[KotlinCompanionExtension] must annotate a static method on a Kotlin file facade");
+            if ((method.Attributes & MethodAttributes.SpecialName) != 0)
+                throw new InvalidDataException(
+                    "[KotlinCompanionExtension] method carrier must annotate an ordinary static method");
+        }
+        foreach (var fieldHandle in def.GetFields())
+        {
+            using var carrier = _attrs.CarrierDocument(fieldHandle, attribute);
+            if (carrier is null) continue;
+            var payload = ReadCompanionExtensionPayload(carrier);
+            if (!isFileFacade ||
+                (_md.GetFieldDefinition(fieldHandle).Attributes & FieldAttributes.Static) == 0 ||
+                payload.Kind != "field")
+                throw new InvalidDataException(
+                    "[KotlinCompanionExtension] must annotate a static field on a Kotlin file facade");
+        }
+    }
+
+    /// The Kotlin type a declaration is associated with when it is a Kotlin 2.4 COMPANION EXTENSION
+    /// (`companion fun C.foo()`, `companion val C.bar`), or null when it is not one.
+    ///
+    /// The frontend drops a companion extension's receiver parameter, so the emitted member carries no physical trace
+    /// of the association and it is read back from the trusted [KotlinCompanionExtension] carrier instead. No name,
+    /// library or physical-layout inference participates: an assembly without the carrier simply has no such
+    /// declaration.
+    private sealed record CompanionExtensionPayload(TypeNode.Fqn Receiver, string Name, string Kind);
+
+    private static CompanionExtensionPayload ReadCompanionExtensionPayload(
+        System.Text.Json.JsonDocument document)
+    {
+        var root = document.RootElement;
+        if (root.ValueKind != System.Text.Json.JsonValueKind.Object
+            || root.EnumerateObject().Count() != 3
+            || !root.TryGetProperty("receiver", out var receiver)
+            || !root.TryGetProperty("name", out var name)
+            || name.ValueKind != System.Text.Json.JsonValueKind.String
+            || string.IsNullOrEmpty(name.GetString())
+            || !root.TryGetProperty("kind", out var kind)
+            || kind.ValueKind != System.Text.Json.JsonValueKind.String
+            || TypeNode.Read(receiver) is not TypeNode.Fqn { Args: null } receiverType)
+            throw new InvalidDataException("malformed [KotlinCompanionExtension] payload");
+        return new CompanionExtensionPayload(receiverType, name.GetString()!, kind.GetString()!);
+    }
+
+    private sealed record CompanionExtensionInfo(KType Receiver, string Name);
+
+    private CompanionExtensionInfo? CompanionExtension(
+        EntityHandle slot, SignatureDecoder signatures, string expectedKind)
+    {
+        using var document = _attrs.CarrierDocument(
+            slot, MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute");
+        if (document is null) return null;
+        var payload = ReadCompanionExtensionPayload(document);
+        if (payload.Kind != expectedKind)
+            throw new InvalidDataException("malformed [KotlinCompanionExtension] payload");
+        return new CompanionExtensionInfo(
+            signatures.FromTypeNode(payload.Receiver),
+            payload.Name);
     }
 
     private void PromoteReceiver(MethodDefinitionHandle handle, MethodDefinition method, Function function)

@@ -5,7 +5,7 @@
 # it — not because they are unimportant, but because the producer has been fixed so the shape they guard no longer
 # reaches them. A rule with no witness quietly stops being a rule; these documents are the witness.
 #
-# Four rules are covered today.
+# Six rules are covered today.
 #
 #   docs/bir-cir-spec.md §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. bir2cir
 #   checks this on the fully-passed BIR, just before BirTypeLowering strips the stamp, so the emitted CIR corpus
@@ -27,14 +27,22 @@
 #   Kotlin source can witness them. The `reject-*` documents below are the witness, so the asserts cannot be
 #   silently defeated by a later change that stops deriving (or stops checking).
 #
+#   Project principle (layer ownership) — Kotlin const-field reads are resolved to literal CIR nodes by bir2cir.
+#   `local-const-field-read` pins that decision boundary so ilemit never needs to reflect over fields and rediscover
+#   whether a static field is a literal.
+#
+#   A generic owner's companion statics live on one non-generic physical carrier, including while reference bodies are
+#   retained long enough to emit field initializers. `reference-generic-static-self-init` pins the self-call owner.
+#
 # ACCEPT case — `<name>.bir.json` plus a `<name>.assert` file of lines:
 #     +<substring>   the emitted CIR MUST contain it
 #     -<substring>   the emitted CIR must NOT contain it
 # Blank lines and `#` comments are ignored. The CIR is matched as its emitted JSON text with whitespace stripped.
 #
 # REJECT case — `reject-<name>.bir.json` plus a `reject-<name>.expected` file holding ONE substring per line: bir2cir
-# must EXIT NONZERO on the document and its output must contain every substring. (Same shape as the schema/sanity
-# self-tests in tests/ir/selftest/, and the same anti-vacuity rule: the lane needs at least one of each half.)
+# must EXIT NONZERO on the document and its output must contain every substring. A module-wide refusal uses a
+# `reject-multi-<name>.inputs` manifest whose non-comment lines name two or more `.bir-part.json` roots, plus the same
+# `.expected` sibling. (Same anti-vacuity rule as the schema/sanity self-tests: the lane needs both accept and reject.)
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)/scripts/lib.sh"
 cd "$ROOT"
 
@@ -77,6 +85,37 @@ for bir in tests/ir/lowering/reject-*.bir.json; do
 	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$log" | sed 's/^/                 /'; else echo "  LOWERING ok    $name (refused)"; fi
 done
 
+# A module-wide invariant cannot be witnessed by one document: all BIR roots contribute TypeDefs to one CLR module.
+for manifest in tests/ir/lowering/reject-multi-*.inputs; do
+	[[ -e "$manifest" ]] || continue
+	rejects=$((rejects + 1))
+	name="$(basename "$manifest" .inputs)"
+	expected="${manifest%.inputs}.expected"
+	mapfile -t inputs < <(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$manifest")
+	if [[ ${#inputs[@]} -lt 2 ]]; then
+		echo "  LOWERING FAIL  $name: multi-root manifest needs at least two inputs"; rc=1; continue
+	fi
+	if [[ ! -f "$expected" ]] || ! grep -q '[^[:space:]]' "$expected"; then
+		echo "  LOWERING FAIL  $name: no non-empty .expected file"; rc=1; continue
+	fi
+	out="$work/$name"; mkdir -p "$out"
+	if log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "${inputs[@]}" 2>&1)"; then
+		echo "  LOWERING FAIL  $name: bir2cir ACCEPTED a multi-root module it must refuse"
+		printf '%s\n' "$log" | sed 's/^/                 /'
+		rc=1; continue
+	fi
+	bad=0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+			''|'#'*) continue ;;
+			*) if ! printf '%s' "$log" | grep -qF -- "$line"; then
+					echo "  LOWERING FAIL  $name: the refusal is MISSING $line"; bad=1
+				fi ;;
+		esac
+	done < "$expected"
+	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$log" | sed 's/^/                 /'; else echo "  LOWERING ok    $name (refused)"; fi
+done
+
 # --- ACCEPT half: bir2cir lowers the document and the CIR satisfies the +/- assertions ---------------------------
 for bir in tests/ir/lowering/*.bir.json; do
 	[[ -e "$bir" ]] || continue
@@ -96,7 +135,12 @@ for bir in tests/ir/lowering/*.bir.json; do
 		rc=1; continue
 	fi
 	out="$work/$name"; mkdir -p "$out"
-	if ! log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "$bir" 2>&1)"; then
+	mode=()
+	args_file="${bir%.bir.json}.args"
+	if [[ -f "$args_file" ]]; then
+		mapfile -t mode < <(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$args_file")
+	fi
+	if ! log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "${mode[@]}" "$bir" 2>&1)"; then
 		echo "  LOWERING FAIL  $name: bir2cir refused the document"
 		printf '%s\n' "$log" | sed 's/^/                 /'
 		rc=1; continue

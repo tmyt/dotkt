@@ -52,18 +52,21 @@ static class InlineSplice
     // to the file `refTypes` registry (SharedSyntheticSynthesis assembles the class) + a whole-method box post-pass at Apply.
     static Dictionary<string, string> _refCellNames;          // elem-type JSON -> ref-cell class name (per file)
     static List<(string varName, string refName, JsonNode elem)> _boxRequests;   // DISTINCT (enclosing var, ref class, elem) box requests — keyed by cell, NOT bare name, so two same-named-but-different-typed captures both survive (BoxMaterializedCaptures scopes each by its own cell)
+    static CompanionExtensionBinding.LocalIndex _companionExtensions;
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlyCollection<string> moduleWideAppLocalMethods,
-        IReadOnlyDictionary<string, DispatchDef> dispatchDefs)
+        IReadOnlyDictionary<string, DispatchDef> dispatchDefs,
+        CompanionExtensionBinding.LocalIndex companionExtensions)
     {
         _refs = refs;
         _dispatchDefs = dispatchDefs;
+        _companionExtensions = companionExtensions;
         _fileClassOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
         _nextLabelId = MaxLabelId(root) + 1;
         _hoist = new JsonArray();
         // #63 (F4): SEED module-wide (every input file's file-class methods), NOT just this file's — delegate targets
         // can live in any module file class, and the inline stash
-        // spans all files, so a carrier materializing a SIBLING file's lifted `__lambdaN` IS app-local. Copy into a fresh
+        // spans all files, so a carrier materializing a SIBLING file's lifted generated method IS app-local. Copy into a fresh
         // per-file set so drained #34 re-hoists (added below) never leak across files.
         _appLocalMethods = new HashSet<string>(moduleWideAppLocalMethods, StringComparer.Ordinal);
         _refCellNames = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -111,7 +114,7 @@ static class InlineSplice
 
     // #43/#63: the FILE-CLASS method names a `newDelegate` target `ldftn`-resolves against — collected MODULE-WIDE across
     // EVERY input file (delegate targets may belong to any `IsFileClass` type in the
-    // module, and the inline stash spans all files, so a materialized carrier splicing a SIBLING file's lifted `__lambdaN`
+    // module, and the inline stash spans all files, so a materialized carrier splicing a SIBLING file's lifted generated method
     // is app-local too — #63/F4). Nested-TYPE member methods are deliberately excluded — a bare-name match there would
     // ACCEPT here then fail loud in ilemit's ldftn, so keeping the set exactly ilemit's file-class universe fails such a
     // mismatch at THIS layer instead. Pre-collected once by Program.cs before the per-file Apply loop; re-hoisted #34
@@ -488,11 +491,19 @@ static class InlineSplice
                 }
                 else if (KotlinDefaultCarrier(p) is string carrierBir)
                 {
-                    // Parse the carrier, unwrap a `defaultCarrier` (re-hoisting any lifted `__lambdaN` into this file via
+                    // Parse the carrier, unwrap a `defaultCarrier` (re-hoisting any lifted generated method into this file via
                     // `_hoist`), then bind its discriminated receiver tokens and `{defaultArgParam idx}` tokens to the
                     // ALREADY-bound receiver/earlier-param values — the shared DefaultArgSplice machinery.
+                    var firstNewHoist = _hoist.Count;
                     var raw = DefaultArgSplice.MaterializeDefault(carrierBir, _hoist, _refs, name, i, _fileClassOwner);
                     if (raw == null) { FailLoud(o, owner, name, pc, ga, $"param '{pn}' default carrier BIR is unparseable"); return; }
+                    // The default carrier was serialized before companion-extension declarations received their physical
+                    // names. Consume those explicit receiver/name/role facts before STEP 8 recursively splices a nested
+                    // callInline. UnwrapCarrier may also have materialized lifted helpers from the same opaque graph; bind
+                    // every newly queued helper now, before Apply's hoist drain recursively walks it for inline calls.
+                    CompanionExtensionBinding.BindMaterializedUses(raw, _companionExtensions, _refs);
+                    for (var h = firstNewHoist; h < _hoist.Count; h++)
+                        CompanionExtensionBinding.BindMaterializedUses(_hoist[h], _companionExtensions, _refs);
                     // STEP 2's body-wide ownership transfer ran before parameter defaults were materialized. Transfer
                     // the default's self-carried implementation classifiers through the same authored call-site owner
                     // now; otherwise they retain a producer member owner absent from this consumer module.
@@ -1208,7 +1219,7 @@ static class InlineSplice
         // and one capturing anything else fails loud via HasStrayLocal. This is the `suspendCancellableCoroutine { cont ->
         // … cont.invokeOnCancellation { … } }` pattern (#22). But a nested `newSuspendLambda` (its SM ctor binds captures
         // by DESCRIPTOR NAME, which the splice's field/this rewrites do not touch -> field vs body-ref skew, FINDING 1), a
-        // CROSS-MODULE `newDelegate` (a dangling origin-file `__lambdaN` type token, §4.6 — an APP-LOCAL one, e.g. a #34
+        // CROSS-MODULE `newDelegate` (a dangling origin-file generated-method token, §4.6 — an APP-LOCAL one, e.g. a #34
         // re-hoisted `__dflt$lambda$N`, IS wrapped verbatim, #43), or an un-spliced `inlineLambda` (a nested inline-call
         // lambda arg, only handled at STEP 8's fixpoint) cannot be wrapped verbatim — refuse those.
         if (HasUnmaterializableNested(invBody)) return MatNull("MC:unmaterializable-nested");
@@ -2880,7 +2891,7 @@ static class InlineSplice
                 if (child != null) RewriteCarriedDelegateEdges(child, originFileClass, rename);
     }
 
-    // #43/#63: is a `{k:newDelegate, method:<name>}` target resolvable app-locally (its static `__lambdaN`/`__dflt$lambda$N`
+    // #43/#63: is a `{k:newDelegate, method:<name>}` target resolvable app-locally (its static generated helper
     // lives in a MODULE file-class, so `ldftn` binds) vs a dangling cross-MODULE origin-file token (§4.6)? Resolvable = the
     // target name is a declared file-class method ANYWHERE in the module (`_appLocalMethods` is seeded module-wide, #63/F4)
     // OR a PENDING #34 re-hoist still in `_hoist` (a nested member-inline default fill mints it during the SAME pass,
@@ -2895,7 +2906,7 @@ static class InlineSplice
         return false;
     }
 
-    // #43: does the subtree hold a `newDelegate` that does NOT resolve app-locally (a dangling origin-file `__lambdaN`,
+    // #43: does the subtree hold a `newDelegate` that does NOT resolve app-locally (a dangling origin-file generated method,
     // §4.6)? Used by the SUSPEND §4.4ii arm — a same-module re-hoisted delegate is materializable verbatim; only a
     // cross-module token must still be refused loud.
     static bool HasNonAppLocalDelegate(JsonNode node)

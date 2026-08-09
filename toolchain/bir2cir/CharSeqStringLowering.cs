@@ -155,7 +155,7 @@ static class CharSeqStringLowering
     }
 
     // The lifted lambdas bound into a delegate whose funcType RETURN is `dotkt$CharSequence` (#170). A `newDelegate`
-    // names its lifted static by `method` (`__lambdaN`); a `newClosure` names its synthetic class by `closureType`
+    // names its lifted static by `method` (`dotkt:lambda:<n>`); a `newClosure` names its synthetic class by `closureType`
     // (its lifted body is the class's `invoke`, since every closure's `method` is the constant "invoke"). The bridge
     // resolves each accordingly.
     public sealed record CharSeqRetLambdas(HashSet<string> Statics, HashSet<string> Closures);
@@ -484,4 +484,3 @@ static class CharSeqStringLowering
         return result;
     }
 }
-
