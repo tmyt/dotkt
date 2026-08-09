@@ -500,13 +500,26 @@ internal fun BirEmitter.enclosingThisSubst(
  * positional `defaultArg` binding; bir2cir resolves its value from the selected reference DLL. The evaluation plan
  * gives a carried default only bindRef reads of the receiver and supplied arguments, preserving Kotlin evaluation
  * order and exactly-once evaluation. */
-internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression): List<String> {
+internal fun BirEmitter.filledExternalArgs(
+	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
+	dropPhantomExtensionReceiver: Boolean = false,
+): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
+	// A projected companion extension's lazy declaration retains an extension-receiver parameter that is absent from
+	// the call's argument coordinate space. Remove that one semantic-only slot when mapping declaration positions to
+	// call positions; this is selected only from the explicit companion-extension fact at the caller.
+	val phantomReceiverIndex = if (dropPhantomExtensionReceiver)
+		callee.parameters.indexOfFirst { it.kind == IrParameterKind.ExtensionReceiver }
+	else -1
+	fun callIndex(declarationIndex: Int): Int =
+		if (phantomReceiverIndex >= 0 && declarationIndex > phantomReceiverIndex) declarationIndex - 1
+		else declarationIndex
 	// Every default of a reference-KLIB callee arrives without a usable dependency-IR value,
 	// so any omission this pass fills is a cross-module one — see [filledArgs]'s granularity note for why the test is
 	// taken whole rather than per fill kind.
 	val planNeeded = callee.parameters.withIndex().any { (i, p) ->
-		isValueParameter(p) && (i >= call.arguments.size || call.arguments[i] == null) &&
+		val ai = callIndex(i)
+		isValueParameter(p) && (ai >= call.arguments.size || call.arguments[ai] == null) &&
 			p.defaultValue?.expression is org.jetbrains.kotlin.ir.expressions.IrErrorExpression
 	}
 	val plan = if (planNeeded) callPlan(call) else null
@@ -518,7 +531,8 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 	// evaluation whose position matters.
 	if (plan != null) {
 		dispatchReceiver(call)?.let { if (needsPlanBinding(it)) plan.bindValue(it, "recv", "receiver of '$label'") }
-		extensionReceiver(call)?.let { if (needsPlanBinding(it)) plan.bindValue(it, "recv", "extension receiver of '$label'") }
+		if (!dropPhantomExtensionReceiver)
+			extensionReceiver(call)?.let { if (needsPlanBinding(it)) plan.bindValue(it, "recv", "extension receiver of '$label'") }
 	}
 	val out = ArrayList<String>()
 	// PHASE 1 — the SUPPLIED values, positionally; PHASE 2 below fills the omissions, which Kotlin evaluates after all
@@ -526,7 +540,8 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 	val vals = callee.parameters.withIndex().filter { isValueParameter(it.value) }
 	val slots = arrayOfNulls<String>(vals.size)
 	vals.forEachIndexed { valIdx, (i, p) ->
-		val arg = (if (i < call.arguments.size) call.arguments[i] else null) ?: return@forEachIndexed
+		val ai = callIndex(i)
+		val arg = (if (ai < call.arguments.size) call.arguments[ai] else null) ?: return@forEachIndexed
 		// A `byref(x)` / @ClrRefArgument arg is emitted as its ADDRESSABLE lvalue (ilemit's EmitArg passes it by
 		// address); under a plan that is an `address` binding — an ordering marker, never storage. `addressSlotExpr` is
 		// null for every ordinary argument, so this is a no-op everywhere else.
@@ -540,7 +555,8 @@ internal fun BirEmitter.filledExternalArgs(call: org.jetbrains.kotlin.ir.express
 	}
 	// PHASE 2 — the omitted defaults, in declaration order.
 	vals.forEachIndexed { valIdx, (i, p) ->
-		if (i < call.arguments.size && call.arguments[i] != null) return@forEachIndexed
+		val ai = callIndex(i)
+		if (ai < call.arguments.size && call.arguments[ai] != null) return@forEachIndexed
 		// An omitted VARARG first, for the reason [omittedVararg] states: it carries no default expression, so the
 		// branch below would drop its slot and leave the emitted call one argument short of its own declaration. Under
 		// a plan it BINDS: every omission this pass fills is cross-module, and a carrier naming the vararg
@@ -849,6 +865,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		}
 	}
 	val name = callee.name.asString()
+	val companionExtensionCallTag = companionReceiverCallTag(callee, call)
 	val declaringClass = callee.parent as? IrClass
 	// A top-level fn has no declaringClass; fall back to the callee's OWN package so an external/user top-level
 	// operator (e.g. a restored `operator fun Vec.plus`) isn't mistaken for a kotlin builtin and lowered to a `bin`.
@@ -971,6 +988,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 				val fieldName = str(staticProperty.name.asString())
 				return if (isSetter)
 					"""{"k":"staticFieldSet","ownerType":$fieldOwner,"name":$fieldName,"value":${accessorArgs.first().let { expr(it) }}}"""
+				else if (isLateinitProperty(staticProperty))
+					"""{"k":"lateinitGet","ownerType":$fieldOwner,"static":true,"name":$fieldName}"""
 				else """{"k":"staticField","ownerType":$fieldOwner,"name":$fieldName}"""
 			}
 			return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(staticProperty.name.asString())},"prop":"$propKind"${overloadSigField(propertyAccessorDeclaration)},"argTypes":[$argTypes]$ret,"args":[$args]}"""
@@ -1457,6 +1476,33 @@ internal fun BirEmitter.call(call: IrCall): String {
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
 			val externalPropertyOwner = clrExternalOwner(p)
 			if (declaringClass == null) externalPropertyOwner?.let { fileClass ->
+				val companionTag = companionReceiverCallTag(p, call)
+				// A projected companion extension has no runtime receiver. Keep its Kotlin source identity in BIR;
+				// bir2cir binds that identity to the trusted producer carrier's exact CLR member.
+				if (isCompanionExtensionCallee(p) || companionTag.isNotEmpty()) {
+					val setter = callee === p.setter
+					// Context parameters remain ordinary physical accessor arguments even though the companion receiver
+					// itself has no runtime value. A lazy cross-module setter can still retain its source `value` in the
+					// phantom extension-receiver slot; append that last argument only when the regular positional projection
+					// did not already include it.
+					val positional = regularArgs(call)
+					val values = if (setter) {
+						val value = call.arguments.lastOrNull { it != null }
+						if (value != null && positional.none { it === value }) positional + value else positional
+					} else positional
+					val tag = companionTag
+					if (isClrField(p)) {
+						return if (setter)
+							"""{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(values.first())}$tag}"""
+						else if (isLateinitProperty(p))
+							"""{"k":"lateinitGet","ownerType":${fqnJson(fileClass)},"static":true,"name":${str(p.name.asString())}$tag}"""
+						else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}$tag}"""
+					}
+					val argTypes = values.joinToString(",") { birType(it.type).toJson() }
+					val args = values.joinToString(",") { expr(it) }
+					val ret = if (setter) fqnJson("kotlin.Unit") else birType(callee.returnType).toJson()
+					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":${str(if (setter) "set" else "get")}${overloadSigField(callee)},"argTypes":[$argTypes],"ret":$ret,"args":[$args]$tag}"""
+				}
 				// An accessor that takes ANY argument — an extension receiver, or a `context(...)` parameter — is a
 				// `get_/set_<name>(...)` METHOD on the file class, never a static field: route it to the accessor path
 				// below. (A plain field-backed property's accessor takes none.)
@@ -1501,6 +1547,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// looks for `<ReferencingFile>Kt.prop` and fails (`field XKt.prop not found`; feedback item 11).
 	(callee.correspondingPropertySymbol?.owner)?.let { p ->
 		if (declaringClass == null) {
+			val companionPropertyCallTag = companionReceiverCallTag(p, call)
 			val ext = extensionReceiver(call)
 			// C7: a TOP-LEVEL EXTENSION property (`val List<T>.lastIndex`, `val Int.absoluteValue`, `val
 			// CharSequence.indices`) has NO real static field — its value is an accessor emitted by the property's
@@ -1522,9 +1569,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 				val ta = typeArgsJson(call)
 				return if (callee === p.setter) {
 					val args = listOf(ext) + regularArgs(call)
-					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}}"""
+					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"args":[${args.joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}$companionPropertyCallTag}"""
 				} else
-					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${(listOf(ext) + regularArgs(call)).joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}}"""
+					"""{"k":"callStatic","owner":null,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), birType(call.type))},"args":[${(listOf(ext) + regularArgs(call)).joinToString(",") { expr(it) }}]${calleeOwnerTag(p)}$companionPropertyCallTag}"""
 			}
 			// A plain top-level property (parent is the file/package, not a class) -> a static field of ITS DEFINING
 			// file's class. Use the property's own file, NOT the file currently being emitted — else a cross-file
@@ -1552,14 +1599,16 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// `var` may pair a default getter (field read) with a custom setter (accessor call), or vice versa.
 			return if (callee === p.setter) {
 				if (!writesAsStaticField(p))
-					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]}"""
+					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]$companionPropertyCallTag}"""
 				else
-					"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
+					"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}$companionPropertyCallTag}"""
 			} else {
 				if (!readsAsStaticField(p))
-					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]${retHint(false, call.type)}}"""
+					"""{"k":"callStatic","owner":$accessorOwner,"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[${regularArgs(call).joinToString(",") { expr(it) }}]${retHint(false, call.type)}$companionPropertyCallTag}"""
+				else if (isLateinitProperty(p))
+					"""{"k":"lateinitGet","ownerType":${fqnJson(owner)},"static":true,"name":${str(p.name.asString())}$companionPropertyCallTag}"""
 				else
-					"""{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())}}"""
+					"""{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(p.name.asString())}$companionPropertyCallTag}"""
 			}
 		}
 	}
@@ -1598,7 +1647,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// A property with a custom accessor — OR one overriding an interface property (e.g. CharSequence.length) —
 		// routes through the get_/set_ method, not the backing field. The Kotlin<->CLR slot-name binding (get_length
 		// -> the synthetic dotkt_CharSequence slot / a @ClrIntrinsic member) is bir2cir's, off the `overrides` marker.
-		if (!property.isLateinit && !isClrField(property)) {   // route through get_/set_ accessor (CLR property model); @ClrField reads/writes the plain field
+		if (!isLateinitProperty(property) && !isClrField(property)) {   // route through get_/set_ accessor (CLR property model); @ClrField reads/writes the plain field
 			val virtual = isVirtualInstanceCall(call, callee)
 			// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
 			// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
@@ -1614,7 +1663,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		return if (callee === property.setter)
 			"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 		// `lateinit var` read -> throw if still uninitialized (the field is null) — proper lateinit semantics.
-		else if (property.isLateinit)
+		else if (isLateinitProperty(property))
 			"""{"k":"lateinitGet","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}}"""
 		else """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())}${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}}"""
 	}
@@ -1840,7 +1889,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// remains NetInteropBinding's decision in bir2cir.
 	if (recv == null && callee.isStaticMethodOfClass) {
 		val staticOwner = callee.parent as IrClass
-		return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(name)}${overloadSigField(callee)},"args":[$args]${suspendCallTag(callee)}}"""
+		return """{"k":"callStatic","ownerType":${fqnJson(typeName(staticOwner))},"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}}"""
 	}
 	// #199 DESIGN B — TWO-AXIS top-level call encoding. `owner:null` is LOAD-BEARING BIR vocabulary meaning "this is
 	// a top-level call": ~12 bir2cir recognizers key on it (@ClrIntrinsic/@ClrCollectionFactory/@ClrArrayFactory
@@ -1884,7 +1933,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// still throw. See ilemit EmitDynamicCall.
 		val dynRet = ""","dynRet":${birType(call.type).toJson()}"""
 		"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr, declaringClass?.defaultType, renderedRecv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}$anySlotTag${superTag(call)}}"""
-	} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}${calleeOwnerTag(callee)}}"""
+	} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}${calleeOwnerTag(callee)}$companionExtensionCallTag}"""
 }
 
 /**
@@ -1894,6 +1943,12 @@ internal fun BirEmitter.call(call: IrCall): String {
  * real generic method the JIT inlines) as well as every ordinary non-inline top-level fun.
  */
 internal fun BirEmitter.plainExternalTopLevelCall(call: IrCall, callee: IrSimpleFunction, fileClass: String, name: String, extRecv: IrExpression?): String {
+	val companionExtensionCallTag = companionReceiverCallTag(callee, call)
+	val companionExtension = isCompanionExtensionCallee(callee) || companionExtensionCallTag.isNotEmpty()
+	val extParam = extensionReceiverParam(callee)
+	// A lazy cross-module companion extension can retain a phantom receiver expression even though its declaration
+	// has no physical receiver parameter. Argument and signature shape follow the declaration fact exclusively.
+	val physicalExtRecv = extRecv.takeIf { !companionExtension && extParam != null }
 	// A GENERIC top-level fun (e.g. a `reified` inline restored as a generic method) -> a generic static
 	// call carrying the type args, so ilemit MakeGenericMethods it (the reified `typeof(T)`/`is T` body
 	// then sees the concrete type). CLR generics are reified, so no inlining is needed across assemblies.
@@ -1904,17 +1959,17 @@ internal fun BirEmitter.plainExternalTopLevelCall(call: IrCall, callee: IrSimple
 			// Keep external args as BIR strings: a non-constant cross-module default has no honest IrExpression and is
 			// represented by a positional `defaultArg` for bir2cir to splice from `[KotlinDefault]`.
 			// FILL FIRST, then read the extension receiver (the fill binds it under an evaluation plan).
-			val externalRegArgs = filledExternalArgs(call)
-			val a = listOfNotNull(extRecv?.let { expr(it) }) + externalRegArgs
+			val externalRegArgs = filledExternalArgs(call, companionExtension)
+			val a = listOfNotNull(physicalExtRecv?.let { expr(it) }) + externalRegArgs
 			val taJson = targs.joinToString(",") { birType(it!!).toJson() }
 			// `shapeTypes` must line up with `a` (= extension receiver, then regular args), so a GENERIC extension
 			// fun's `__self` receiver type is included — else bir2cir's by-shape overload pick finds 0 params.
 			// PURE-KOTLIN `birType` identities; bir2cir derives the ilemit `shapes` tokens (see the member path above).
-			val shapeParams = (if (extRecv != null) listOf(extensionReceiverParam(callee)!!) else emptyList()) + regularParams(callee)
+			val shapeParams = listOfNotNull(extParam) + regularParams(callee)
 			val shapeTypes = shapeParams.joinToString(",") { birType(it.type).toJson() }
 			// A2 (#61): a PLAIN static call by identity carrying the generic facts (typeArgs + shapeTypes);
 			// bir2cir's NetInteropBinding resolves the file-class owner off the refs and shapes it to clrGenericStatic.
-			return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",")}]${suspendCallTag(callee)}}"""
+			return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)},"typeArgs":[$taJson],"shapeTypes":[$shapeTypes],"args":[${a.joinToString(",")}]${suspendCallTag(callee)}$companionExtensionCallTag}"""
 		}
 	}
 	// A2 (#61): a PLAIN static call by identity to the referenced .NET file class; bir2cir's NetInteropBinding
@@ -1924,12 +1979,12 @@ internal fun BirEmitter.plainExternalTopLevelCall(call: IrCall, callee: IrSimple
 	// DefaultArgSplice fills it from the callee's ref.dll @KotlinDefault). The extension receiver (arg[0] = `__self`) is
 	// prepended; each arg's type is its PARAMETER's type (a placeholder carries no expr type). `sig` (the callee's full
 	// .NET signature) drives DefaultArgSplice's arg-count match against the ref.dll @KotlinDefault key.
-	val regArgs = filledExternalArgs(call)
-	val extStr = extRecv?.let { expr(it) }
+	val regArgs = filledExternalArgs(call, companionExtension)
+	val extStr = physicalExtRecv?.let { expr(it) }
 	val argStrs = (listOfNotNull(extStr) + regArgs).joinToString(",")
-	val extParamType = extensionReceiverParam(callee)?.let { birType(it.type) }
+	val extParamType = extParam?.let { birType(it.type) }
 	val argTypeNodes = (listOfNotNull(extParamType) + regularParams(callee).map { birType(it.type) }.take(regArgs.size)).joinToString(",") { it.toJson() }
-	return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)}${overloadSigField(callee)},"argTypes":[$argTypeNodes],"ret":${str(ret)},"args":[$argStrs]${suspendCallTag(callee)}}"""
+	return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(name)}${overloadSigField(callee)},"argTypes":[$argTypeNodes],"ret":${str(ret)},"args":[$argStrs]${suspendCallTag(callee)}$companionExtensionCallTag}"""
 }
 
 /**
@@ -1987,9 +2042,11 @@ internal fun BirEmitter.superTag(call: IrCall): String =
 
 /** `,"typeArgs":["int"]` when the callee is a generic method (its own type params resolved at this call). */
 internal fun BirEmitter.typeArgsJson(call: IrCall): String {
-	val tps = call.symbol.owner.typeParameters
-	if (tps.isEmpty()) return ""
-	val args = tps.indices.map { call.typeArguments.getOrNull(it) }
+	// Read the resolved arguments from the call itself. Kotlin 2.4 represents a same-module companion-block static
+	// call through a wrapper symbol whose own typeParameters list is empty even though the IrCall retains the real
+	// TYPE_ARG entries. Gating on the wrapper declaration therefore silently dropped method instantiation facts.
+	val args = call.typeArguments
+	if (args.isEmpty()) return ""
 	if (args.any { it == null }) return ""
 	return ""","typeArgs":[${args.joinToString(",") { birType(it!!).toJson() }}]"""
 }
@@ -2069,7 +2126,7 @@ internal fun BirEmitter.byrefBackingField(inner: IrExpression): String? {
 	val cls = callee.parent as? IrClass ?: return null
 	if (isExternalNetType(cls)) return null
 	val backing = prop.backingField ?: return null
-	if (prop.isDelegated || prop.isLateinit || isClrField(prop)) return null
+	if (prop.isDelegated || isLateinitProperty(prop) || isClrField(prop)) return null
 	val recv = dispatchReceiver(call)?.let { expr(it) } ?: """{"k":"this"}"""
 	val owner = ownerSpec(cls, dispatchReceiver(call)?.type).toJson()
 	val rendered = """{"k":"field","ownerType":$owner,"recv":$recv,"name":${str(prop.name.asString())}}"""
@@ -2149,7 +2206,7 @@ internal fun BirEmitter.hasDefaultSetter(prop: IrProperty): Boolean {
 // `@ClrField` is a plain field by opt-in. Delegated properties are accessor-routed too: their provider field is
 // storage, while the frontend-generated accessor body owns getValue/setValue lowering.
 internal fun BirEmitter.fieldRoutedProperty(prop: IrProperty): Boolean =
-	!prop.isConst && !prop.isLateinit && !isClrField(prop)
+	!prop.isConst && !isLateinitProperty(prop) && !isClrField(prop)
 // #89: a property READ resolves to a raw static-field load only with a real field AND (for a field-routed
 // property) a default getter. An excluded (const/lateinit/@ClrField) property keeps the pre-fix rule; a delegated
 // property is field-routed because its provider-typed slot is never the value surface.

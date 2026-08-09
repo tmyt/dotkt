@@ -360,11 +360,18 @@ sealed partial class Emitter
                         tlAttrs |= FieldAttributes.Static;
                         if (f.TryGetProperty("initOnly", out var tlInitOnly) && tlInitOnly.GetBoolean())
                             tlAttrs |= FieldAttributes.InitOnly;
+                        var tlLiteral = f.TryGetProperty("constant", out var tlLiteralValue);
+                        if (tlLiteral) tlAttrs |= FieldAttributes.Literal;
                         // `@kotlin.concurrent.Volatile` on a top-level `var` -> a `modreq(IsVolatile)` static field.
                         var tlFb = f.TryGetProperty("volatile", out var tlVol) && tlVol.GetBoolean()
                                 ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), tlType, tlAttrs)
                                 : ti.TB.DefineField(f.GetProperty("name").GetString(), tlType, tlAttrs);
                         StampMemberAttrs(tlFb.SetCustomAttribute, f);   // [KotlinReadOnly]/[KotlinSuspendFunctionType]/… (bir2cir-generated)
+                        if (tlLiteral)
+                        {
+                            var constant = LiteralConstant(tlLiteralValue, tlType);
+                            tlFb.SetConstant(constant);
+                        }
                         ti.Fields[f.GetProperty("name").GetString()] = tlFb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: true);
@@ -393,11 +400,18 @@ sealed partial class Emitter
                         if (f.TryGetProperty("initOnly", out var initOnly) && initOnly.GetBoolean())
                             fattrs |= FieldAttributes.InitOnly;
                         var ftype = MapType(f.GetProperty("type"));
+                        var literal = f.TryGetProperty("constant", out var literalValue);
+                        if (literal) fattrs |= FieldAttributes.Static | FieldAttributes.Literal;
                         // `@kotlin.concurrent.Volatile` -> a `modreq(IsVolatile)` field (the C# `volatile` encoding).
                         var fb = f.TryGetProperty("volatile", out var vol) && vol.GetBoolean()
                             ? DefineVolatileField(ti.TB, f.GetProperty("name").GetString(), ftype, fattrs)
                             : ti.TB.DefineField(f.GetProperty("name").GetString(), ftype, fattrs);
                         StampMemberAttrs(fb.SetCustomAttribute, f);   // [KotlinReadOnly]/[KotlinSuspendFunctionType]/… (bir2cir-generated)
+                        if (literal)
+                        {
+                            var constant = LiteralConstant(literalValue, ftype);
+                            fb.SetConstant(constant);
+                        }
                         ti.Fields[f.GetProperty("name").GetString()] = fb;
                     }
                 foreach (var m in ti.Def.GetProperty("methods").EnumerateArray()) DeclareMethod(ti, m, isStatic: false);

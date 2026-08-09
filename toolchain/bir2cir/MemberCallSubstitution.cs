@@ -694,8 +694,8 @@ static class MemberCallSubstitution
             // names and covers class-like enum entries as well as ordinary companion/static properties.
             if ((node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var injectedPropKind
                 && TypeJson.Read(node["ownerType"]) is TypeNode.Fqn injectedPropOwner
-                && refs.ResolveRefType(injectedPropOwner.Name, injectedPropOwner.Args?.Length ?? 0) is Type injectedType
-                && NetInteropBinding.MemberIsPropertyOrField(injectedType, fn))
+                && ResolveInjectedPropertyOwner(refs, injectedPropOwner) is var injected
+                && injected.Type != null && NetInteropBinding.MemberIsPropertyOrField(injected.Type, fn))
             {
                 var injectedPropArgs = node["args"] as JsonArray ?? new JsonArray();
                 var shaped = new JsonObject
@@ -704,7 +704,7 @@ static class MemberCallSubstitution
                     // A static on a GENERIC declaring type has no enclosing type argument in Kotlin syntax, but its
                     // CIL MemberRef parent must still be a closed TypeSpec. Close it from the exact reflected TypeDef,
                     // exactly as the .NET binder does for the same shape.
-                    ["type"] = NetInteropBinding.CloseStaticOwner(node["ownerType"], injectedType),
+                    ["type"] = NetInteropBinding.CloseStaticOwner(injected.Owner, injected.Type),
                     ["name"] = fn,
                     ["static"] = true,
                     ["recv"] = null,
@@ -712,6 +712,20 @@ static class MemberCallSubstitution
                 if (injectedPropKind == "get") shaped["ret"] = node["ret"]?.DeepClone();
                 else shaped["value"] = injectedPropArgs.Count > 0 ? injectedPropArgs[0]?.DeepClone() : null;
                 return shaped;
+            }
+            // A projected static CLASS member already carries its exact declaring type. Keep that declaration identity
+            // ahead of the ownerless top-level indexes: a referenced top-level function may legitimately have the same
+            // name and signature. File-class owners remain on the top-level path below, where their overload indexes are
+            // required. The distinction comes only from trusted producer metadata, never a name convention.
+            var injectedClassSignature = node["argTypes"] as JsonArray ?? node["sig"] as JsonArray;
+            if (node["prop"] == null && injectedClassSignature != null &&
+                TypeJson.Read(node["ownerType"]) is TypeNode.Fqn injectedClassOwner &&
+                refs.HasDotKtOwner(injectedClassOwner.Name) &&
+                !refs.IsFileClassOwner(injectedClassOwner.Name))
+            {
+                node["owner"] = TypeJson.Write(injectedClassOwner);
+                node["sig"] ??= injectedClassSignature.DeepClone();
+                return node;
             }
             // #81/#157: an owner-null top-level PROPERTY accessor read carries the bare property IDENTITY + a
             // `"prop":"get"/"set"` marker instead of a baked `get_`/`set_` slot name (the #78 static-axis convention
@@ -827,11 +841,12 @@ static class MemberCallSubstitution
                 // Some frontend paths already materialize `sig` while others leave only `argTypes`; both represent the
                 // same resolved declaration and must converge to the same CIR. The rule is structural and applies to
                 // every referenced non-generic static callable, without knowing a library, type, or member name.
-                if (node["argTypes"] is JsonArray injectedArgTypes
+                var injectedStaticSignature = node["argTypes"] as JsonArray ?? node["sig"] as JsonArray;
+                if (injectedStaticSignature != null
                     && TypeJson.Read(node["ownerType"]) is TypeNode.Fqn injectedStaticOwner)
                 {
                     node["owner"] = TypeJson.Write(injectedStaticOwner);
-                    node["sig"] ??= injectedArgTypes.DeepClone();
+                    node["sig"] ??= injectedStaticSignature.DeepClone();
                     return node;
                 }
             }
@@ -1255,6 +1270,18 @@ static class MemberCallSubstitution
                 + "name (BCL members are PascalCase). This is a routing MISS: fix the stdlib binding or the owner alias, "
                 + "do not let it fall to a silent runtime dynamic-dispatch NRE.");
         return Constrainify(ClrCallNode(node, clrOwner, member, member, args, instance), node, refs, ctx, ownerToken);
+    }
+
+    static (JsonNode Owner, Type Type) ResolveInjectedPropertyOwner(
+        ReferenceMetadataIndex refs, TypeNode.Fqn semanticOwner)
+    {
+        // A generic Kotlin owner's companion-block properties live on the trusted non-generic carrier. Give that
+        // explicit declaring identity first refusal before the owner-null top-level accessor index sees get_/set_<name>;
+        // otherwise an unrelated top-level property with the same accessor name can silently capture the call.
+        if (refs.TryGenericStaticCarrier(semanticOwner.Name, out var carrier))
+            return (TypeJson.Fqn(carrier), refs.ResolveRefType(carrier, 0));
+        return (TypeJson.Write(semanticOwner),
+            refs.ResolveRefType(semanticOwner.Name, semanticOwner.Args?.Length ?? 0));
     }
 
     // Generic-parameter receiver on a CLR-aliased INTERFACE: bir2cir would emit `clrInstance` on the interface owner

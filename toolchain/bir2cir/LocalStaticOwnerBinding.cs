@@ -23,6 +23,7 @@ static class LocalStaticOwnerBinding
 {
     internal sealed class LocalStatics
     {
+        public string PhysicalOwner;
         public readonly HashSet<string> Methods = new(System.StringComparer.Ordinal);
     }
 
@@ -39,14 +40,24 @@ static class LocalStaticOwnerBinding
         if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
         foreach (var type in types.OfType<JsonObject>())
         {
-            if (Str(type["name"]) is string name && type["methods"] is JsonArray methods)
+            if (Str(type["name"]) is string physicalName && type["methods"] is JsonArray methods)
             {
+                // GenericStaticOwnerBinding has already moved a generic owner's companion-block declarations to its
+                // non-generic carrier. Keep indexing them by the semantic owner kotc put on the call, while recording
+                // the carrier as the exact CLR dispatch owner. Otherwise an ownerless recognizer can capture a local
+                // `G.sqrt(Double)` as the unrelated top-level kotlin.math.sqrt before the late carrier rewrite runs.
+                var name = type["staticCarrier"] is JsonObject carrier && Str(carrier["owner"]) is string semantic
+                    ? semantic
+                    : physicalName;
                 LocalStatics statics = null;
                 foreach (var method in methods.OfType<JsonObject>())
                     if (Bool(method["static"]) && Str(method["name"]) is string mn)
                     {
                         if (statics == null && !index.TryGetValue(name, out statics))
-                            index[name] = statics = new LocalStatics();
+                            index[name] = statics = new LocalStatics { PhysicalOwner = physicalName };
+                        else if (statics.PhysicalOwner != physicalName)
+                            throw new System.InvalidOperationException(
+                                $"multiple local static owners claim semantic type '{name}'");
                         statics.Methods.Add(mn);
                     }
             }
@@ -95,7 +106,7 @@ static class LocalStaticOwnerBinding
         // The declared parameter list doubles as the overload key, matching how every other resolved static callable
         // reaches ilemit.
         if (node["argTypes"] is JsonArray argTypes) node["sig"] ??= argTypes.DeepClone();
-        node["owner"] = node["ownerType"]!.DeepClone();
+        node["owner"] = TypeJson.Fqn(statics.PhysicalOwner);
         node.Remove("ownerType");
     }
 

@@ -18,6 +18,7 @@ import SelfRef.Cmp
 import TX.Panel
 import TX.Widget
 import CompilerGeneratedApi.Surface
+import VolatileInterop.Fields
 
 class MemberShapeTests {
     @TestAttribute
@@ -37,7 +38,21 @@ class MemberShapeTests {
         assertEquals(10, b.V)    // 10 (was 3 before the fix: setter mutated a copy)
         assertEquals(20, b.F)    // 20
         assertEquals(30, b.Sum())// 30
+
+        // A C# volatile field is projected as a Kotlin property, but its field access must retain the CLR
+        // IsVolatile fact through NetInteropBinding's clrPropGet/clrPropSet reshape.
+        val volatile = Fields()
+        volatile.Value = 41
+        assertEquals(41, volatile.Value)
+        Fields.StaticValue = 42
+        assertEquals(42, Fields.StaticValue)
     }
+
+    // Keep each volatile shape isolated so the IL gate proves all four lowering paths independently.
+    fun volatileInstanceGet(fields: Fields): Int = fields.Value
+    fun volatileInstanceSet(fields: Fields, value: Int) { fields.Value = value }
+    fun volatileStaticGet(): Int = Fields.StaticValue
+    fun volatileStaticSet(value: Int) { Fields.StaticValue = value }
 
     @TestAttribute
     fun selfref() {

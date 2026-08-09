@@ -237,12 +237,16 @@ carrier and is read back by the ordinary static-member path above.
 
 A Kotlin 2.4 `companion fun C.foo()` / `companion val C.bar` — a COMPANION
 EXTENSION — has no receiver parameter at all: the frontend drops it, and the
-emitted method is an ordinary static of the declaring file's facade class. The
-association is carried by a trusted `[KotlinCompanionExtension(version, bytes)]`
-holding the associated Kotlin type. `dll2klib` restores it as the standard
-Kotlin shape — the static-declaration flag plus a receiver type, which is
-exactly what `isStatic && receiverParameter != null` means — so no new encoding
-is introduced and no name, library or physical-layout inference participates.
+emitted member is an ordinary static of the declaring file's facade class.
+`bir2cir` gives each declaration a collision-free physical name keyed by the
+associated receiver, source name, and explicit `function`/`get`/`set`/`field`
+role. The same facts are carried by a trusted
+`[KotlinCompanionExtension(version, bytes)]` payload `{receiver, name, kind}`.
+`dll2klib` restores the source name and standard Kotlin shape — the
+static-declaration flag plus a receiver type, which is exactly what
+`isStatic && receiverParameter != null` means. It validates the explicit role;
+no accessor classification from `get_`/`set_`, library rule, or physical-layout
+inference participates.
 Without the carrier there is no such declaration; the facade member stays an
 ordinary top-level function or property.
 

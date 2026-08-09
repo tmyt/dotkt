@@ -62,7 +62,7 @@ sealed partial class Emitter
                 if (IsValueType(ClrRef(s.GetProperty("ownerType")))) EmitAddr(s.GetProperty("recv"));
                 else EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);
-                MaybeVolatile(sfld);
+                MaybeVolatile(sfld, s);
                 EmitField(_il, OpCodes.Stfld, sfld);
                 break;
             }

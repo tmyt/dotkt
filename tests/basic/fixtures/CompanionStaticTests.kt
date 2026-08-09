@@ -20,6 +20,20 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 
+private const val COMPOSED_SUM: Int = 1 + 2
+private const val COMPOSED_FLAG: Int = 1 shl 3
+private const val COMPOSED_TEXT: String = "$COMPOSED_SUM-$COMPOSED_FLAG"
+
+object CompanionNamedConstants {
+    const val NAME: String = "named-object-const"
+}
+
+private var companionConstReceiverEvaluations: Int = 0
+private fun evaluatedCompanionNamedConstants(): CompanionNamedConstants {
+    companionConstReceiverEvaluations += 1
+    return CompanionNamedConstants
+}
+
 // ---- companion block: functions, overloads, visibility, storage ------------------------------------------------
 
 class CompanionCounter(val n: Int) {
@@ -38,6 +52,7 @@ class CompanionCounter(val n: Int) {
     // A real companion object declared alongside the block: a separate singleton with INSTANCE members.
     companion object {
         val label: String = "real-companion"
+        const val OBJECT_TAG: String = "real-companion-const"
         fun describe(): String = "obj:" + label
     }
 
@@ -49,7 +64,43 @@ class CompanionCounter(val n: Int) {
 class CompanionBox<T>(val v: T) {
     companion {
         fun make(): String = "box"
+        fun <R> echoNullable(value: R?): R? = value
+        fun lambdaFactory(): () -> Int = { 42 }
+        fun capturingLambdaFactory(seed: Int): () -> Int = { seed + 1 }
+        // This was the generated name of lambdaFactory before helper identities moved to a Kotlin-unspeakable family.
+        // Both declarations must retain their own identity.
+        fun __lambda17(): Int = 7
+        fun localClassValue(): Int {
+            class Local { fun value(): Int = 43 }
+            return Local().value()
+        }
         var count: Int = 0
+        const val CODE: String = "generic-box"
+        lateinit var later: String
+    }
+}
+
+private var companionBoxInitializations: Int = 0
+private fun initializeConstrainedBox(): Int {
+    companionBoxInitializations += 1
+    return 17
+}
+
+interface ConstrainedCompanionValue
+class FirstConstrainedCompanionValue : ConstrainedCompanionValue
+class SecondConstrainedCompanionValue : ConstrainedCompanionValue
+
+class ConstrainedCompanionBox<T : ConstrainedCompanionValue>(val v: T) {
+    companion {
+        val token: Int = initializeConstrainedBox()
+        fun label(): String = "constrained"
+    }
+}
+
+class FBoundedCompanionBox<T : Comparable<T>> {
+    companion {
+        private fun hidden(): Int = 19
+        fun value(): Int = hidden()
     }
 }
 
@@ -72,6 +123,13 @@ interface CompanionShape {
         fun unit(): CompanionShape = object : CompanionShape { override fun area(): Int = 1 }
         // An interface may not carry a property INITIALIZER, so this one is computed.
         val kind: String get() = "shape"
+    }
+}
+
+interface GenericCompanionShape<T> {
+    companion {
+        fun unitArea(): Int = 2
+        val kind: String get() = "generic-shape"
     }
 }
 
@@ -108,12 +166,47 @@ object CompanionInstanceNameClash { val INSTANCE = 7 }
 // ---- companion extensions ---------------------------------------------------------------------------------------
 
 class CompanionTag(val label: String)
+class CompanionOtherTag(val label: String)
 
 companion fun CompanionTag.of(label: String): CompanionTag = CompanionTag(label)
+companion fun CompanionTag.of(value: Int): CompanionTag = CompanionTag("n:$value")
+companion fun <T> CompanionTag.keep(value: T): T = value
 companion val CompanionTag.blank: CompanionTag get() = CompanionTag("")
 companion val CompanionTag.marker: String = "m"
 companion var CompanionTag.counter: Int = 0
+companion lateinit var CompanionTag.later: String
+private companion lateinit var CompanionTag.hiddenLater: String
+companion inline fun CompanionTag.withValue(block: () -> Int): Int = block()
+companion fun CompanionOtherTag.of(label: String): CompanionOtherTag = CompanionOtherTag(label)
+companion fun <T> CompanionOtherTag.keep(value: T): T = value
+companion val CompanionOtherTag.blank: CompanionOtherTag get() = CompanionOtherTag("other")
+companion val CompanionOtherTag.marker: String = "other-m"
+companion var CompanionOtherTag.counter: Int = 10
 
+private fun companionExtensionInlineReturn(): Int {
+    CompanionTag.withValue { return 29 }
+    return 0
+}
+
+@Suppress("DEPRECATION_ERROR")
+private class PrivateCompanionLateinitReader {
+    fun read(): String = CompanionTag.hiddenLater
+}
+
+@Suppress("DEPRECATION_ERROR")
+private fun privateCompanionLateinitMessageFromSeparateType(): String {
+    return try { PrivateCompanionLateinitReader().read() }
+    catch (e: UninitializedPropertyAccessException) { e.message ?: "" }
+}
+
+// Same file-facade names as the companion extensions above. These are ordinary top-level declarations, not the
+// accessor-shaped case-1 problem; the companion receiver is the semantic discriminator that must survive lowering.
+fun of(label: String): String = "top:$label"
+val marker: String = "top-m"
+private fun passthrough(tag: CompanionTag): CompanionTag = tag
+private fun passthroughLabel(label: String): String = label
+
+@Suppress("DEPRECATION_ERROR")
 class CompanionStaticTests {
     @TestAttribute
     fun companionBlockFunctionsAreStaticMembersOfTheirClass() {
@@ -142,6 +235,15 @@ class CompanionStaticTests {
     @TestAttribute
     fun companionBlockOnAGenericOwnerIsOneLogicalMember() {
         assertEquals("box", CompanionBox.make())
+        assertEquals("echo", CompanionBox.echoNullable("echo"))
+        assertEquals(null, CompanionBox.echoNullable<String>(null))
+        val echoNullable: (String?) -> String? = CompanionBox<String>::echoNullable
+        assertEquals("reference", echoNullable("reference"))
+        assertEquals(null, echoNullable(null))
+        assertEquals(42, CompanionBox.lambdaFactory()())
+        assertEquals(42, CompanionBox.capturingLambdaFactory(41)())
+        assertEquals(7, CompanionBox.__lambda17())
+        assertEquals(43, CompanionBox.localClassValue())
         // Kotlin declares ONE `count`, so writing it through one closed instantiation must be visible through
         // every other one — the CLR's per-closed-generic static storage is deliberately collapsed.
         CompanionBox.count = 3
@@ -150,6 +252,33 @@ class CompanionStaticTests {
         assertEquals(1, CompanionBox(1).v)
         assertEquals(3, CompanionBox.count)
         CompanionBox.count = 0
+
+        // Literal and lateinit field nodes use the same generated non-generic CLR carrier as ordinary
+        // generic-owner statics, including the lifted field read inside a callable property reference.
+        val code = CompanionBox<String>::CODE
+        assertEquals("generic-box", code.get())
+        val later = CompanionBox<String>::later
+        var notInitialized = false
+        try { later.get() } catch (e: UninitializedPropertyAccessException) { notInitialized = true }
+        assertTrue(notInitialized)
+        later.set("ready")
+        assertEquals("ready", CompanionBox.later)
+        assertEquals("ready", later.get())
+
+        // The carrier is non-generic: a class-constrained owner needs no invented G<Any>, and constructing two
+        // different valid instantiations cannot run the logical static initializer twice.
+        assertEquals(0, companionBoxInitializations)
+        ConstrainedCompanionBox(FirstConstrainedCompanionValue())
+        assertEquals(1, companionBoxInitializations)
+        ConstrainedCompanionBox(SecondConstrainedCompanionValue())
+        assertEquals(1, companionBoxInitializations)
+        assertEquals(17, ConstrainedCompanionBox.token)
+        assertEquals("constrained", ConstrainedCompanionBox.label())
+
+        // Private-call descriptors carry this owner's F-bounded declaration frame, but the static body itself does
+        // not capture T and must still move to the non-generic carrier.
+        assertEquals(19, FBoundedCompanionBox.value())
+
     }
 
     @TestAttribute
@@ -162,6 +291,8 @@ class CompanionStaticTests {
     fun companionBlockOnAnInterfaceAndOnEnums() {
         assertEquals(1, CompanionShape.unit().area())
         assertEquals("shape", CompanionShape.kind)
+        assertEquals(2, GenericCompanionShape.unitArea())
+        assertEquals("generic-shape", GenericCompanionShape.kind)
         assertEquals(CompanionColor.GREEN, CompanionColor.best())
         assertEquals("red", CompanionColor.fallback)
         assertEquals("a", CompanionSimple.first)
@@ -195,7 +326,25 @@ class CompanionStaticTests {
     }
 
     @TestAttribute
+    fun objectConstantsUseStaticStorageInCallableReferences() {
+        val named = CompanionNamedConstants::NAME
+        val companion = CompanionCounter.Companion::OBJECT_TAG
+        assertEquals("named-object-const", named.get())
+        assertEquals("real-companion-const", companion.get())
+
+        val evaluated = evaluatedCompanionNamedConstants()::NAME
+        assertEquals(1, companionConstReceiverEvaluations)
+        assertEquals("named-object-const", evaluated.get())
+        assertEquals(3, COMPOSED_SUM)
+        assertEquals(8, COMPOSED_FLAG)
+        assertEquals("3-8", COMPOSED_TEXT)
+    }
+
+    @TestAttribute
     fun fieldRoutedCompanionBlockPropertiesAddressTheirStorage() {
+        var notInitialized = false
+        try { CompanionFieldRouted.late } catch (e: Exception) { notInitialized = true }
+        assertTrue(notInitialized)
         CompanionFieldRouted.late = "x"
         assertEquals("x", CompanionFieldRouted.late)
         CompanionFieldRouted.plain = 3
@@ -211,11 +360,65 @@ class CompanionStaticTests {
 
     @TestAttribute
     fun companionExtensionsResolveAndRun() {
+        // The helper is deliberately in another file at the same source offset as a companion
+        // extension declaration here; it must remain an ordinary call without a receiver tag.
+        assertEquals(2, crossUse())
+        assertEquals("nested", passthrough(CompanionTag.of("nested")).label)
+        assertEquals("m", passthroughLabel(CompanionTag.marker))
+        assertEquals("top:x", CompanionTag.keep(of("x")))
+        assertEquals("top-m", CompanionTag.keep(marker))
         assertEquals("hi", CompanionTag.of("hi").label)
+        assertEquals("n:8", CompanionTag.of(8).label)
+        assertEquals(7, CompanionTag.keep(7))
         assertEquals("", CompanionTag.blank.label)
         assertEquals("m", CompanionTag.marker)
         CompanionTag.counter = 4
         assertEquals(4, CompanionTag.counter)
         CompanionTag.counter = 0
+        CompanionTag.counter += 2
+        CompanionTag.counter++
+        assertEquals(3, CompanionTag.counter)
+        CompanionTag.counter = 0
+        val counterRef = CompanionTag::counter
+        counterRef.set(5)
+        assertEquals(5, counterRef.get())
+        counterRef.set(0)
+        var directLateinitFailed = false
+        try { CompanionTag.later } catch (e: UninitializedPropertyAccessException) {
+            directLateinitFailed = e.message == "lateinit property later has not been initialized"
+        }
+        assertTrue(directLateinitFailed)
+        val laterRef = CompanionTag::later
+        var referencedLateinitFailed = false
+        try { laterRef.get() } catch (e: UninitializedPropertyAccessException) {
+            referencedLateinitFailed = e.message == "lateinit property later has not been initialized"
+        }
+        assertTrue(referencedLateinitFailed)
+        assertEquals(
+            "lateinit property hiddenLater has not been initialized",
+            privateCompanionLateinitMessageFromSeparateType(),
+        )
+        laterRef.set("ready")
+        assertEquals("ready", CompanionTag.later)
+        assertEquals(23, CompanionTag.withValue { 23 })
+        assertEquals(29, companionExtensionInlineReturn())
+        assertEquals("other-hi", CompanionOtherTag.of("other-hi").label)
+        assertEquals("kept", CompanionOtherTag.keep("kept"))
+        assertEquals("other", CompanionOtherTag.blank.label)
+        assertEquals("other-m", CompanionOtherTag.marker)
+        CompanionOtherTag.counter = 14
+        assertEquals(14, CompanionOtherTag.counter)
+        CompanionOtherTag.counter = 10
+        assertEquals("top:x", of("x"))
+        assertEquals("top-m", marker)
+
+        val firstFun: (String) -> CompanionTag = CompanionTag::of
+        val secondFun: (String) -> CompanionOtherTag = CompanionOtherTag::of
+        val firstProperty = CompanionTag::blank
+        val secondProperty = CompanionOtherTag::marker
+        assertEquals("a", firstFun("a").label)
+        assertEquals("b", secondFun("b").label)
+        assertEquals("", firstProperty.get().label)
+        assertEquals("other-m", secondProperty.get())
     }
 }

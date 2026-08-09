@@ -1,0 +1,18 @@
+{
+  "fileClass": "ReferenceConstProbeKt",
+  "hasMain": false,
+  "fields": [
+    {
+      "name": "ANSWER",
+      "type": { "t": "fqn", "name": "kotlin.String" },
+      "static": true,
+      "readOnly": true,
+      "const": true,
+      "init": { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "ok" }
+    }
+  ],
+  "methods": [],
+  "properties": [],
+  "types": [],
+  "refTypes": []
+}

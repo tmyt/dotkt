@@ -16,6 +16,7 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import kotlin.reflect.KProperty
 import kotlin.concurrent.Volatile
+import kotlin.clr.byref
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -41,6 +42,20 @@ class PropertyAtomicCounter {
     @Volatile var value: Int = 0
     @Volatile var label: String? = null
     fun bump() { value = value + 1 }
+}
+
+class GenericVolatileBox<T>(initial: T) {
+    @Volatile var value: T = initial
+    fun readValue(): T = value
+    fun writeValue(newValue: T) { value = newValue }
+    fun readValueByRef(): T {
+        var pointer by byref(value)
+        return pointer
+    }
+    fun writeValueByRef(newValue: T) {
+        var pointer by byref(value)
+        pointer = newValue
+    }
 }
 @Volatile var propertyAtomicGlobalFlag: Boolean = false
 
@@ -75,6 +90,14 @@ class PropertyAndAtomicTests {
         assertEquals("ready", c.label)       // ready
         propertyAtomicGlobalFlag = true
         assertTrue(propertyAtomicGlobalFlag)             // True
+
+        val generic = GenericVolatileBox("generic")
+        assertEquals("generic", generic.readValue())
+        generic.writeValue("updated")
+        assertEquals("updated", generic.readValue())
+        assertEquals("updated", generic.readValueByRef())
+        generic.writeValueByRef("byref-updated")
+        assertEquals("byref-updated", generic.readValue())
     }
 
     @TestAttribute

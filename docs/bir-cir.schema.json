@@ -186,6 +186,7 @@
         "base":       { "$ref": "#/$defs/type", "description": "superclass; absent = none/Object" },
         "interfaces": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "semanticOwner": { "type": "string", "description": "#225 BIR-only lexical Kotlin owner identity. bir2cir consumes this fact and selects the CLR nested owner." },
+        "staticSemanticOwner": { "type": "string", "description": "BIR-only lexical owner of a lifted local/anonymous implementation declared inside a Kotlin-static member. The type does not capture that owner's generic frame; bir2cir consumes this fact when selecting physical ownership." },
         "nestedIn":   { "type": "string", "description": "CIR-only physical CLR enclosing type selected by bir2cir." },
         "kotlinCompanion": {
           "type": "object",
@@ -196,6 +197,13 @@
             "visibility": { "enum": ["public", "private", "protected", "internal"] }
           },
           "required": ["owner", "name", "visibility"],
+          "additionalProperties": false
+        },
+        "staticCarrier": {
+          "type": "object",
+          "$comment": "bir2cir-only explicit association on the non-generic physical carrier of a generic Kotlin owner's companion-block static surface. RoundtripMetadata consumes it into trusted [KotlinStaticCarrier]; dll2klib merges the carrier declarations back into owner.",
+          "properties": { "owner": { "type": "string" } },
+          "required": ["owner"],
           "additionalProperties": false
         },
         "capturedTypeParams": { "type": "array", "items": { "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/typeParam" }] }, "description": "CIR-only enclosing CLR generic slots physically re-declared by a nested type. A bare name is unconstrained; a typeParam object preserves Kotlin outer constraints." },
@@ -236,7 +244,10 @@
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
         "static":     { "type": "boolean", "$comment": "a load-bearing CLR-shape flag, kept scalar (not a Kotlin source modifier)" },
-        "companionReceiver": { "type": "string", "$comment": "#382: the Kotlin type a COMPANION EXTENSION (`companion fun C.foo()`) is semantically associated with, as a serialized type node. Receiverless: the association is not a parameter and nothing is passed at the call. fir2ir erases it, so kotc recovers it from FIR; bir2cir folds it into the method's `attrs` as [KotlinCompanionExtension] and drops the key. A STRING so the CLR type-lowering passes leave the Kotlin identity untouched (as `kotlinType`/`collIdentity` are). Absent on every declaration that is not one." },
+        "kotlinStatic": { "type": "boolean", "$comment": "BIR-only frontend fact distinguishing a Kotlin 2.4 companion-block static from other compiler/static CLR methods. GenericStaticOwnerBinding consumes it when selecting a non-generic physical carrier." },
+        "companionReceiver": { "type": "string", "$comment": "#382: the bare Kotlin classifier a COMPANION EXTENSION (`companion fun C.foo()`) is semantically associated with, as a serialized argument-free fqn type node. Receiverless: the association is not a parameter and nothing is passed at the call. A STRING so CLR type lowering leaves the Kotlin identity untouched." },
+        "companionSourceName": { "type": "string", "$comment": "BIR-only source declaration name for a companion extension. bir2cir may choose a different collision-free physical CLR name; RoundtripMetadata records this source identity in [KotlinCompanionExtension]." },
+        "companionMemberKind": { "enum": ["function", "get", "set"], "$comment": "BIR-only explicit declaration role for companion-extension methods. bir2cir and round-trip consumers must not infer accessor identity from a get_/set_ spelling." },
         "extern":     { "type": "boolean", "$comment": "CIR-only: bodyless CLR extern method. bir2cir uses this for caller-side UnsafeAccessor declarations; ilemit defines the signature/attributes one-to-one and emits no IL body." },
         "virtual":    { "type": "boolean" },
         "clrBridgeRole": { "enum": ["hasNext", "next", "iterator"], "$comment": "reverse-enumerator-bridge role marker bir2cir (IteratorBridgeMarking) stamps so ilemit drives its GetEnumerator adapter off a semantic marker, never the Kotlin FQN/member names — hasNext/next on kotlin.collections.Iterator's members, iterator on a class iterator(). A bir2cir->ilemit resolution HINT (ilemit reads it into TypeInfo.BridgeRoles), never emitted as .NET metadata." },
@@ -259,6 +270,7 @@
         "mods": { "$ref": "#/$defs/mods" }, "vis": { "$ref": "#/$defs/vis" },
         "recv": { "$ref": "#/$defs/type", "description": "extension receiver (ext property)" },
         "get":  { "type": "string" }, "set": { "type": ["string", "null"] },
+        "kotlinStatic": { "type": "boolean", "$comment": "BIR-only frontend fact identifying a Kotlin 2.4 companion-block property. GenericStaticOwnerBinding consumes it when moving the property and its accessors to a non-generic physical carrier." },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the slot's reference-nullable positions (replaces the retired scalar `nullable` flag)." }
       },
       "required": ["name", "type"],
@@ -270,9 +282,15 @@
         "name": { "type": "string" }, "type": { "$ref": "#/$defs/type" },
         "vis": { "$ref": "#/$defs/vis" }, "volatile": { "type": "boolean" },
         "static": { "type": "boolean", "$comment": "the field is storage of the TYPE, not of an instance: a top-level property's file-class field, an `object`/enum-entry singleton, or a Kotlin 2.4 `companion { }` property's backing field. A static field's `init` runs in the type initializer. Like funDecl.static, a CLR-shape flag rather than a Kotlin source modifier." },
+        "kotlinStatic": { "type": "boolean", "$comment": "BIR-only companion-block declaration fact; consumed by GenericStaticOwnerBinding and absent from CIR." },
         "init": { "$ref": "#/$defs/node", "$comment": "the initializer expression of a STATIC field, emitted into the type initializer. An instance field is initialized by its constructor instead and carries no `init`." },
+        "const": { "type": "boolean", "$comment": "BIR-only Kotlin declaration fact. bir2cir requires a static compile-time-constant initializer and consumes both into the CIR `constant` value." },
+        "constant": { "type": ["string", "number", "boolean", "null"], "$comment": "CIR physical field constant. ilemit emits a CLR static literal field and ECMA-335 Constant row; there is no executable initializer." },
+        "lateinit": { "type": "boolean", "$comment": "Kotlin round-trip declaration fact. bir2cir folds it into trusted [KotlinLateinit] field metadata; direct reads remain explicit `lateinitGet` nodes whose CIR form carries the fully bound UninitializedPropertyAccessException construction in `exception`." },
         "readOnly": { "type": "boolean", "$comment": "Kotlin round-trip metadata: the field is not publicly settable (`val`, or `var` with a non-public setter), so a consuming Kotlin module restores it as `val`. bir2cir folds it into [KotlinReadOnly]; distinct from the physical `initOnly` below." },
-        "companionReceiver": { "type": "string", "$comment": "#382: the funDecl twin — the Kotlin type a COMPANION EXTENSION property (`companion val C.bar = 1`) is associated with, as a serialized type node. bir2cir folds it into [KotlinCompanionExtension] and drops the key." },
+        "companionReceiver": { "type": "string", "$comment": "#382: the funDecl twin — the Kotlin type a field-backed COMPANION EXTENSION property (`companion val C.bar = 1`) is associated with, as a serialized type node." },
+        "companionSourceName": { "type": "string", "$comment": "BIR-only source property name retained independently of the collision-free physical field name." },
+        "companionMemberKind": { "const": "field", "$comment": "BIR-only explicit field role; companion property accessors use funDecl get/set instead." },
         "initOnly": { "type": "boolean", "description": "CIR physical field flag: emit CLR initonly (C# readonly). bir2cir authors it only when the CLR storage itself is immutable; distinct from Kotlin readOnly round-trip metadata." },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the slot's reference-nullable positions (replaces the retired scalar `nullable` flag)." }
       },
@@ -285,7 +303,13 @@
       "description": "Every node is a {k}-tagged object. ~60 canonical kinds; k + all field names are lowerCamelCase. A type-valued field always holds a $defs/type. Dispatch on k; never scan a string.",
       "type": "object",
       "required": ["k"],
-      "properties": { "k": { "$ref": "#/$defs/nodeKind" } },
+      "properties": {
+        "k": { "$ref": "#/$defs/nodeKind" },
+        "companionReceiver": { "type": "string", "$comment": "BIR-only use-site identity for a receiverless companion-extension call, delegate, or field access. bir2cir resolves it together with owner, source member name, and explicit operation role, then removes it." },
+        "lateinitSourceName": { "type": "string", "$comment": "bir2cir-only transient source property identity retained when companion-extension binding replaces a lateinitGet's field name with its collision-free physical name. LateinitGetLowering consumes it into the exception message and removes it before CIR." },
+        "volatile": { "type": "boolean", "$comment": "CIR-only access fact. bir2cir authors it on direct field, CLR-field-as-property, and UnsafeAccessor byref dereference nodes; ilemit emits the volatile. prefix one-to-one." },
+        "exception": { "$ref": "#/$defs/node", "$comment": "CIR-only `lateinitGet` failure expression. bir2cir authors the exactly bindable UninitializedPropertyAccessException construction; ilemit evaluates and throws it one-to-one when the loaded value is null." }
+      },
       "allOf": [ { "$ref": "#/$defs/nodeByKind" } ]
     },
     "nodeKind": {
@@ -325,9 +349,9 @@
         { "properties": { "k": { "const": "isInst" }, "e": { "$ref": "#/$defs/node" }, "type": { "$ref": "#/$defs/type" }, "nullMatches": { "type": "boolean", "$comment": "null answers TRUE — the Kotlin type operand was NULLABLE (`x is T?`). Set by bir2cir's NullableIsInstMatch in BIR-space (type lowering erases the `?`, since every CLR reference is nullable); ilemit projects it as the extra `dup; brtrue` before the isinst. Absent = the plain non-null is-test." } }, "required": ["e", "type"], "$comment": "was `isinst`" },
         { "properties": { "k": { "const": "objEq" }, "lhs": { "$ref": "#/$defs/node" }, "rhs": { "$ref": "#/$defs/node" } }, "required": ["lhs", "rhs"] },
         { "properties": { "k": { "const": "cond" }, "cond": { "$ref": "#/$defs/node" }, "then": { "$ref": "#/$defs/node" }, "else": { "$ref": "#/$defs/node" }, "joinNullBranch": { "const": true, "$comment": "BIR-ONLY frontend fact (#86 \u00a73): the frontend resolved this value-position JOIN to a NON-nullable type while some branch yields a literal null. Stamped by kotc on the declaration it MINTS for the join (a try-expression temp, each cond of a when chain); consumed and REMOVED by bir2cir ValueJoinNullWidening, which widens a VALUE join to Nullable<V> and leaves a reference join alone. Never reaches CIR." } }, "required": ["cond", "then"], "$comment": "ternary expression" },
-        { "properties": { "k": { "const": "field" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/node" }, "name": { "type": "string" }, "memberVisibility": { "enum": ["private", "protected"], "$comment": "BIR-only frontend lexical-access fact; consumed by bir2cir UnsafeAccessor lowering." }, "memberOwnerTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberType": { "$ref": "#/$defs/type", "$comment": "BIR-only frontend-resolved field declaration type for cross-module lexical access; never inferred from an assigned value." } }, "required": ["name", "recv"] },
-        { "properties": { "k": { "const": "setField" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/node" }, "name": { "type": "string" }, "value": { "$ref": "#/$defs/node" }, "memberVisibility": { "enum": ["private", "protected"] }, "memberOwnerTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberType": { "$ref": "#/$defs/type" } }, "required": ["name", "value"] },
-        { "properties": { "k": { "const": "staticField" }, "ownerType": { "$ref": "#/$defs/type" }, "name": { "type": "string" }, "memberVisibility": { "enum": ["private", "protected"] }, "memberOwnerTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberType": { "$ref": "#/$defs/type" } }, "required": ["name"] },
+        { "properties": { "k": { "const": "field" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/node" }, "name": { "type": "string" }, "volatile": { "type": "boolean", "$comment": "CIR-only referenced-field access fact; ilemit emits the volatile. prefix one-to-one." }, "memberVisibility": { "enum": ["private", "protected"], "$comment": "BIR-only frontend lexical-access fact; consumed by bir2cir UnsafeAccessor lowering." }, "memberOwnerTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberType": { "$ref": "#/$defs/type", "$comment": "BIR-only frontend-resolved field declaration type for cross-module lexical access; never inferred from an assigned value." } }, "required": ["name", "recv"] },
+        { "properties": { "k": { "const": "setField" }, "ownerType": { "$ref": "#/$defs/type" }, "recv": { "$ref": "#/$defs/node" }, "name": { "type": "string" }, "value": { "$ref": "#/$defs/node" }, "volatile": { "type": "boolean", "$comment": "CIR-only referenced-field access fact; ilemit emits the volatile. prefix one-to-one." }, "memberVisibility": { "enum": ["private", "protected"] }, "memberOwnerTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberType": { "$ref": "#/$defs/type" } }, "required": ["name", "value"] },
+        { "properties": { "k": { "const": "staticField" }, "ownerType": { "$ref": "#/$defs/type" }, "name": { "type": "string" }, "volatile": { "type": "boolean", "$comment": "CIR-only referenced-field access fact; ilemit emits the volatile. prefix one-to-one." }, "memberVisibility": { "enum": ["private", "protected"] }, "memberOwnerTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberType": { "$ref": "#/$defs/type" } }, "required": ["name"] },
         { "properties": { "k": { "const": "new" }, "type": { "$ref": "#/$defs/type" }, "args": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "argTypes": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "memberVisibility": { "enum": ["private", "protected"] }, "memberOwnerTypeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" } }, "memberSignature": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "BIR-only constructor declaration signature, before call-site substitution." } }, "required": ["type", "args"] },
         { "properties": { "k": { "const": "arrayGet" }, "array": { "$ref": "#/$defs/node" }, "index": { "$ref": "#/$defs/node" } }, "required": ["array", "index"] },
         { "properties": { "k": { "const": "arraySet" }, "array": { "$ref": "#/$defs/node" }, "index": { "$ref": "#/$defs/node" }, "value": { "$ref": "#/$defs/node" } }, "required": ["array", "index", "value"] },

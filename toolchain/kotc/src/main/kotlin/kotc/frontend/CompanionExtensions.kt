@@ -1,15 +1,25 @@
-@file:OptIn(org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess::class)
+@file:OptIn(
+	org.jetbrains.kotlin.fir.declarations.DirectDeclarationsAccess::class,
+	org.jetbrains.kotlin.fir.symbols.SymbolInternals::class,
+)
 
 package kotc.frontend
 
 import kotc.bir.TypeNode
 import org.jetbrains.kotlin.fir.FirSession
+import org.jetbrains.kotlin.fir.FirElement
 import org.jetbrains.kotlin.fir.declarations.FirCallableDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirDeclaration
 import org.jetbrains.kotlin.fir.declarations.FirFile
 import org.jetbrains.kotlin.fir.declarations.FirProperty
 import org.jetbrains.kotlin.fir.declarations.utils.isCompanionExtension
 import org.jetbrains.kotlin.fir.resolve.fullyExpandedType
+import org.jetbrains.kotlin.fir.expressions.FirCallableReferenceAccess
+import org.jetbrains.kotlin.fir.expressions.FirFunctionCall
+import org.jetbrains.kotlin.fir.expressions.FirPropertyAccessExpression
+import org.jetbrains.kotlin.fir.expressions.FirQualifiedAccessExpression
+import org.jetbrains.kotlin.fir.references.FirResolvedNamedReference
+import org.jetbrains.kotlin.fir.visitors.FirDefaultVisitorVoid
 import org.jetbrains.kotlin.fir.types.ConeClassLikeType
 import org.jetbrains.kotlin.fir.types.ConeDefinitelyNotNullType
 import org.jetbrains.kotlin.fir.types.ConeFlexibleType
@@ -39,6 +49,11 @@ import org.jetbrains.kotlin.fir.types.coneTypeOrNull
 object ClrCompanionExtensions {
 	/** "<file path>|<end offset>" -> the receiver type of the companion extension declared there, as BIR type JSON. */
 	private val byKey = java.util.concurrent.ConcurrentHashMap<String, String>()
+	private data class UseFact(val start: Int, val end: Int, val receiver: String)
+	private val byUseFile = java.util.concurrent.ConcurrentHashMap<
+		String,
+		java.util.concurrent.ConcurrentLinkedQueue<UseFact>,
+	>()
 
 	/** Keys two different declarations wrote with different contents; monotonic, exactly as in [ClrContextFnTypes]. */
 	private val poisoned = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
@@ -59,6 +74,7 @@ object ClrCompanionExtensions {
 	/** Clear every recorded fact, so a hosted (long-lived) kotc cannot read a previous compilation's entry. */
 	fun reset() {
 		byKey.clear()
+		byUseFile.clear()
 		poisoned.clear()
 	}
 
@@ -66,6 +82,20 @@ object ClrCompanionExtensions {
 	fun receiverTypeJsonAt(file: String?, end: Int): String? {
 		if (file == null || end < 0) return null
 		return byKey[key(file, end)]
+	}
+
+	/** Associated receiver captured on a companion callable-reference expression. */
+	fun receiverTypeJsonAtUse(file: String?, start: Int, end: Int): String? {
+		if (file == null || start < 0 || end < start) return null
+		// This lookup classifies a use as a companion extension, so an enclosing/contained interval is not sufficient:
+		// it may merely be an ordinary call nested around or inside the real companion-extension expression. Use the
+		// exact source expression copied from FIR to IR; declaration-side fallbacks handle lazy external declarations.
+		return byUseFile[file]
+			?.asSequence()
+			?.filter { it.start == start && it.end == end }
+			?.map { it.receiver }
+			?.distinct()
+			?.singleOrNull()
 	}
 
 	/**
@@ -84,6 +114,58 @@ object ClrCompanionExtensions {
 		for (f in files) {
 			val path = f.sourceFile?.path ?: continue
 			for (d in f.declarations) record(session, path, d)
+			f.accept(object : FirDefaultVisitorVoid() {
+				private fun resolved(reference: org.jetbrains.kotlin.fir.references.FirReference): FirCallableDeclaration? =
+					runCatching {
+						(reference as? FirResolvedNamedReference)?.resolvedSymbol?.fir as? FirCallableDeclaration
+					}.getOrNull()
+
+				private fun recordUse(element: FirElement, target: FirCallableDeclaration?) {
+					if (target?.isCompanionExtension != true) return
+					val receiver = target.receiverParameter?.typeRef?.coneTypeOrNull ?: return
+					val source = element.source ?: return
+					if (source.startOffset < 0 || source.endOffset < source.startOffset) return
+					val json = associatedType(session, receiver).toJson()
+					byUseFile.computeIfAbsent(path) { java.util.concurrent.ConcurrentLinkedQueue() }
+						.add(UseFact(source.startOffset, source.endOffset, json))
+				}
+
+				override fun visitElement(element: FirElement) {
+					element.acceptChildren(this)
+				}
+
+				override fun visitQualifiedAccessExpression(qualifiedAccessExpression: FirQualifiedAccessExpression) {
+					recordUse(
+						qualifiedAccessExpression,
+						resolved(qualifiedAccessExpression.calleeReference),
+					)
+					qualifiedAccessExpression.acceptChildren(this)
+				}
+
+				override fun visitFunctionCall(functionCall: FirFunctionCall) {
+					recordUse(
+						functionCall,
+						resolved(functionCall.calleeReference),
+					)
+					functionCall.acceptChildren(this)
+				}
+
+				override fun visitPropertyAccessExpression(propertyAccessExpression: FirPropertyAccessExpression) {
+					recordUse(
+						propertyAccessExpression,
+						resolved(propertyAccessExpression.calleeReference),
+					)
+					propertyAccessExpression.acceptChildren(this)
+				}
+
+				override fun visitCallableReferenceAccess(callableReferenceAccess: FirCallableReferenceAccess) {
+					recordUse(
+						callableReferenceAccess,
+						resolved(callableReferenceAccess.calleeReference),
+					)
+					callableReferenceAccess.acceptChildren(this)
+				}
+			})
 		}
 	}
 

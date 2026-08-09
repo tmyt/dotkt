@@ -15,7 +15,7 @@ using DotKt.Bir;
 // The two must agree or there is no delegate at all. ECMA-335 II.14.6 makes a `ldftn` target compatible with a
 // delegate only when each of its parameters is assignable FROM the delegate's and its return assignable TO the
 // delegate's: `object` and `Nullable<int32>` are assignable in neither direction, so a `Func<object, string>` built
-// over an `__lambda0(Nullable<int32>)` is rejected outright (ilverify DelegateCtor "Unrecognized arguments"; at run
+// over a lifted generated method taking `Nullable<int32>` is rejected outright (ilverify DelegateCtor "Unrecognized arguments"; at run
 // time an InvalidProgramException before the first instruction executes).
 //
 // A target slot FOLLOWS the delegate slot it fills wherever the funcType component is the bare `object` the erasure
@@ -134,7 +134,7 @@ static class DelegateTargetSlotAlignment
 
     // A declaration is the target when its NAME and its own parameter vector are the ones the construction named.
     // The wildcard arm is for a target with no `sig`: kotc omits it only for a target it MINTED — a lifted
-    // `__lambdaN`/`__mrefN` — whose name is unique in the file by construction, so there is no overload to confuse
+    // `dotkt:lambda:<n>`/`dotkt:mref:<n>` — whose name is unique in the file by construction, so there is no overload to confuse
     // it with and nothing for a parameter vector to disambiguate.
     //
     // AMBIGUOUS MEANS NONE. Method generic ARITY is part of the CLI signature (ECMA-335 I.8.6.1.6) and the reference
@@ -175,7 +175,7 @@ static class DelegateTargetSlotAlignment
     //   * A PARAMETER is CONTRAVARIANT — the target's parameter must be assignable FROM the delegate's. The only type
     //     assignable from `object` is `object`, so EVERY non-`object` target parameter follows, reference included:
     //     an `invokeNullable<String>` whose physical parameter is `Func<object, string>` cannot be filled by a lifted
-    //     `__lambda0(string)`, and the erasure makes that slot `object` T-independently.
+    //     a lifted method taking `string`, and the erasure makes that slot `object` T-independently.
     //   * A RETURN is COVARIANT — the target's return must be assignable TO the delegate's. A reference return
     //     already is, so it stays exactly as declared (#189: rewriting a `(…) -> String?` lambda's return to `object`
     //     is what broke the concrete-delegate ctor). Only a value / `Nullable<V>` / type-variable return, which needs

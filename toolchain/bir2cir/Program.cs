@@ -109,6 +109,13 @@ sealed class Pipeline
     {
         var birRoots = birFiles.Select(b => b.Root).ToList();
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
+        // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
+        // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
+        // any module-wide declaration index is captured.
+        GenericStaticOwnerBinding.Materialize(birRoots);
+        // A receiverless companion extension needs its associated Kotlin classifier in the physical member identity.
+        // Consume that explicit declaration/use fact before any name-keyed index or inline payload is captured.
+        var companionExtensionBindings = CompanionExtensionBinding.Apply(birRoots, refs);
         var ownershipFacts = TypeOwnershipLowering.PrepareOwnershipFacts(birRoots);
         // #68 (PART 2): kotc emits the PLAIN Kotlin identity `kotlin.CharSequence` at every CharSequence use site (no CLR
         // synthetic name — kotc knows nothing of the synthetic). Recognizing `kotlin.CharSequence` as a synthesize-target is
@@ -242,7 +249,7 @@ sealed class Pipeline
         // #63 (F4): the app-local file-class method names a `newDelegate` target `ldftn`-resolves against, collected
         // MODULE-WIDE across every input file — ilemit's FindStatic binds a delegate method by bare name against ALL
         // IsFileClass types in the module (and the inline stash spans all files), so a carrier materializing a SIBLING
-        // file's lifted `__lambdaN` is app-local. Pre-collect ONCE (InlineSplice.Apply runs per file) and pass in, so a
+        // file's lifted generated method is app-local. Pre-collect ONCE (InlineSplice.Apply runs per file) and pass in, so a
         // cross-file materialization is not mis-judged non-app-local and refused loud. Nested-TYPE member methods stay
         // excluded (ilemit's file-class-only ldftn universe) — only the FILE scope was wrong (regression from 923a820).
         var appLocalFileClassMethods = InlineSplice.CollectAppLocalMethodNames(birFiles.Select(f => f.Root));
@@ -300,7 +307,8 @@ sealed class Pipeline
             // (before ClosureSynthesis, like RepeatInlineLowering) so nested closures in the spliced body synthesize once.
             if (_options.StdlibMode == BuildStdlibMode.App)
                 CompanionRepresentationLowering.BindSpliceUses(bir.Root, refs);
-            InlineSplice.Apply(bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy);
+            InlineSplice.Apply(
+                bir.Root, refs, appLocalFileClassMethods, inlineDispatchHierarchy, companionExtensionBindings);
             // VALUE-POSITION JOIN WIDENING (#86 §3): a `try`/`catch` or `if/when` join the frontend resolved to a
             // NON-nullable type while one branch yields a literal `null` — kotc records exactly that fact on the
             // declaration it mints for the join, and the physical consequence is decided HERE: a VALUE join widens to
@@ -319,7 +327,14 @@ sealed class Pipeline
             // (the cross-module IrErrorExpression path), and the ref/rt stdlib self-builds reference no DotKt assembly, so no
             // external callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
             // self-build would also disturb its byte-stable RefBodySquash/RoundtripMetadata decl set for zero benefit.
-            if (attributeTopLevelOwner) DefaultArgSplice.Apply(bir.Root, refs);
+            if (attributeTopLevelOwner)
+            {
+                DefaultArgSplice.Apply(bir.Root, refs);
+                // A @KotlinDefault payload is opaque BIR during the module-wide companion-extension pass above.
+                // It has now become an ordinary use subtree, so consume its explicit receiver/name/role facts before
+                // any downstream name-keyed lowering sees it.
+                CompanionExtensionBinding.BindMaterializedUses(bir.Root, companionExtensionBindings, refs);
+            }
             // Inline/default payloads are authored before their consumer lexical owner exists. The splice transfers
             // that exact semanticOwner fact above; now normalize any newly materialized synthClass generic prefix
             // before ClosureSynthesis turns it into a CLR class. The module-wide first pass normalized declarations;
@@ -795,11 +810,19 @@ sealed class Pipeline
         if (!_options.RefBuild)
             GenericDelegateInstantiation.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
-        // GENERIC STATIC OWNER BINDING: a companion/static member on generic `G<T>` has a faithful bare Kotlin owner in
-        // BIR, but CLR MemberRefs require a constructed parent. Canonicalize to `G<Any>` here (the member cannot depend
-        // on T), so ilemit never guesses an instantiation. No source/library names are involved.
-        if (!_options.RefBuild)
-            GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+        // GENERIC STATIC OWNER BINDING: bind the semantic G owner to the explicit non-generic carrier selected above
+        // (or validated from a referenced DotKt assembly). No representative type argument is chosen.
+        GenericStaticOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
+        // Carry the exact IsVolatile representation of local and referenced fields into each CIR access. In
+        // particular, an access through a constructed local generic owner cannot rely on FieldInfo identity at emit
+        // time: anchoring the declaration builder produces a different object. CIR therefore states the prefix itself.
+        VolatileFieldLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+
+        // Kotlin const fields become CLR literal fields. In the reference build the physical scalar/string slot also
+        // carries its exact Kotlin declaration type, because a locally-declared kotlin.String/Int TypeDef is not a
+        // legal Constant-table type. ilemit still receives only final physical facts in either mode.
+        ConstFieldLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs, _options.RefBuild);
 
         // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 1 of 2: kotc names a type-parameter receiver's classifier with
         // a BARE token (`fun <N : Node<N>> N.close()` -> `Node`). Close it from N's own lexical bound, which source
@@ -857,6 +880,11 @@ sealed class Pipeline
             UnsafeAccessorLowering.DropFacts(staged.Select(s => s.Root).ToList());
         else
             UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList());
+
+        // Resolve the Kotlin `lateinitGet` failure path to an ordinary UPAE construction before constructor binding.
+        // This is deliberately after UnsafeAccessorLowering, which can rebuild a private-field lateinitGet around a
+        // byref load, so every surviving node carries one complete physical exception expression into CIR.
+        LateinitGetLowering.ApplyAll(staged.Select(s => s.Root));
 
         // Normalize every local call/delegate descriptor before the module-wide local member binding below. Generic
         // delegate targets may carry a closed function shape while their declaration remains open; bir2cir owns the

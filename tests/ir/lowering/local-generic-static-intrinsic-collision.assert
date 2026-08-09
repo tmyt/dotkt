@@ -1,0 +1,3 @@
++"k":"callStatic","method":"sqrt"
++"owner":{"t":"fqn","name":"LocalGenericStaticIntrinsicProbe$dotkt_statics"}
+-"k":"clrStatic","type":{"t":"fqn","name":"System.Math"}

@@ -10,6 +10,7 @@ import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrValueParameter
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
+import org.jetbrains.kotlin.ir.types.IrType
 
 /**
  * A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) reached ACROSS A MODULE BOUNDARY.
@@ -45,3 +46,15 @@ internal fun isCompanionExtensionCallee(decl: IrDeclaration): Boolean {
 internal fun extensionReceiverParam(fn: IrFunction): IrValueParameter? =
 	if (isCompanionExtensionCallee(fn)) null
 	else fn.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }
+
+/** The semantic associated classifier retained as a phantom receiver by the lazy cross-module IR builder. It is
+ * identity metadata only: [extensionReceiverParam] deliberately excludes it from the physical argument list. */
+internal fun companionExtensionReceiverType(decl: IrDeclaration): IrType? {
+	if (!isCompanionExtensionCallee(decl)) return null
+	val function = when (decl) {
+		is IrProperty -> decl.getter ?: decl.setter
+		is IrSimpleFunction -> decl.correspondingPropertySymbol?.owner?.let { it.getter ?: it.setter } ?: decl
+		else -> null
+	} ?: return null
+	return function.parameters.firstOrNull { it.kind == IrParameterKind.ExtensionReceiver }?.type
+}

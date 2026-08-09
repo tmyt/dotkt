@@ -1,3 +1,4 @@
+#nullable enable
 using System.Collections.Immutable;
 using System.Reflection.Metadata;
 using DotKt.Bir;
@@ -53,6 +54,19 @@ internal sealed class MetadataAttributes
 
     public int? Int32(EntityHandle owner, string name) =>
         Find(owner, name)?.Int32Value;
+
+    public void ValidateCarrierTargets(string name, params HandleKind[] allowedTargets)
+    {
+        var allowed = allowedTargets.ToHashSet();
+        foreach (var handle in _md.CustomAttributes)
+        {
+            var attribute = _md.GetCustomAttribute(handle);
+            if (IsExactTrustedCarrier(attribute, name) && !allowed.Contains(attribute.Parent.Kind))
+                throw new InvalidDataException(
+                    $"trusted [{name}] must annotate a {string.Join(" or ", allowedTargets)} metadata target, " +
+                    $"not {attribute.Parent.Kind}");
+        }
+    }
 
     // A carrier whose payload is a JSON OBJECT rather than a single TypeNode — `[KotlinSupertypes]`, whose body is
     // `{base?, interfaces?, bounds?}` of pre-erasure nodes. Same envelope and same opaque encoding as every other
@@ -150,6 +164,7 @@ internal sealed class MetadataAttributes
         if (name.StartsWith(DotKtNs, StringComparison.Ordinal) &&
             name is not (DotKtNs + "KotlinFileClassAttribute"
                 or DotKtNs + "KotlinReadOnlyAttribute"
+                or DotKtNs + "KotlinLateinitAttribute"
                 or DotKtNs + "KotlinFunInterfaceAttribute"
                 or DotKtNs + "KotlinSealedAttribute"
                 or DotKtNs + "KotlinValueAttribute"

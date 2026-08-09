@@ -403,43 +403,6 @@ sealed partial class Emitter
         return reanchor ? AnchorMethod(owner, cands[0]) : cands[0];
     }
 
-    // A STATIC method declared on a GENERIC emitted class (a Kotlin companion fun of a generic class —
-    // `Result<T>`'s `fun <T> success(value: T)` emitted as a static generic method on `Result`1`) resolved via a
-    // bare owner spec is an open MethodBuilder. Emitting a call with that open-typedef parent from ANOTHER class
-    // is invalid IL (`call kotlin.Result`1::success<T>` -> InvalidProgramException at JIT: a member of a generic
-    // type must be referenced through a constructed typespec). Anchor it onto a concrete instantiation — `object`
-    // for each class param: a Kotlin companion member cannot reference the enclosing class's type parameters, so
-    // every instantiation is signature-identical and `object` is canonical (Codex-confirmed: the documented
-    // TypeBuilder.GetMethod owner-form; ApplyTypeArgs' concrete-owner branch then MakeGenericMethod's the anchored
-    // method with the call's own type args). No-op for non-generic owners and non-builder methods.
-    MethodInfo AnchorOpenGenericOwnerStatic(MethodInfo m)
-    {
-        if (m == null || !m.IsStatic) return m;
-        // LOCAL emitted generic owner: anchor the open MethodBuilder onto the `object`-instantiation.
-        if (m is MethodBuilder mb)
-        {
-            if (mb.DeclaringType is not TypeBuilder tb || !tb.IsGenericTypeDefinition) return m;
-            var constructed = ConstructedType(tb, tb.GetGenericArguments().Select(_ => (Type)Bcl("System.Object")).ToArray());
-            var anchored = AnchorMethod(constructed, mb);
-            // Keep the param-type record visible through the anchored identity (call-site boxing decisions).
-            if (_mparams.TryGetValue(mb, out var ps)) _mparams[anchored] = ps;
-            return anchored;
-        }
-        // EXTERNAL (referenced .NET / rt-stdlib) reflection static on a generic type DEFINITION — the SAME problem for
-        // any cross-assembly call to a static on a generic type (`kotlin.Result`1::success`/`failure`, …): FindMethod
-        // resolves the member on the open `C`1` typedef, and emitting a call scoped to that open typedef is an invalid
-        // memberref (runtime `TypeLoadException: Could not load type 'C`1' from assembly '<app>'`). Anchor onto the
-        // `object`-instantiation exactly like the local path — a Kotlin companion static cannot reference the enclosing
-        // class's type params, so every instantiation is signature-identical and `object` is canonical (this mirrors
-        // the stdlib's OWN emitted IL: `call C`1<object>::success<…>(…)`). Match the constructed owner's member by
-        // (module, metadata token): a method on a constructed RuntimeType instantiation shares its definition's token.
-        // ApplyTypeArgs then MakeGenericMethod's the anchored method with the call's own type args.
-        if (m.DeclaringType is not { IsGenericTypeDefinition: true } odt) return m;
-        var con = ConstructedType(odt, odt.GetGenericArguments().Select(_ => (Type)Bcl("System.Object")).ToArray());
-        return con.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.DeclaredOnly)
-                  .Single(x => x.Module == m.Module && x.MetadataToken == m.MetadataToken);
-    }
-
     MethodInfo ApplyTypeArgs(MethodInfo m, JsonElement e, out Type retType, out Type[] paramTypes)
     {
         // Defense: an unresolved call (FindMethod/FindStatic returned null — e.g. a bad owner the CIR should never carry)
@@ -501,9 +464,8 @@ sealed partial class Emitter
             if ((m is not MethodBuilder && !m.IsGenericMethodDefinition)
                 || m.GetGenericArguments().Length != targs.Length) { retType = m.ReturnType; paramTypes = ps; return m; }
             var inst = ConstructedMethod(m, targs);
-            // A pure-reflection generic method (an EXTERNAL rt-stdlib static, e.g. `Result`1<object>::success<T>`
-            // anchored by AnchorOpenGenericOwnerStatic) carries no `_mparams`/`_methodTypeParams` record, so `sub` is
-            // empty and `ps` is null — read the concrete signature straight off the instantiation instead, so the
+            // A pure-reflection generic method carries no `_mparams`/`_methodTypeParams` record, so `sub` is empty and
+            // `ps` is null — read the concrete signature straight off the instantiation instead, so the
             // return type and value-arg boxing decisions are correct. Gated to reflection instantiations whose owner is
             // NOT a TypeBuilder instantiation (those go through the branches above / can't be reflected pre-bake).
             // ps==null => a REFERENCED method (an emitted MethodBuilder records its params in _mparams). Read the

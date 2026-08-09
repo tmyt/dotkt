@@ -126,7 +126,7 @@ sealed partial class Emitter
                 // CIR -> CIL emission rather than reconstruction of Kotlin member semantics.
                 if (IsValueType(ClrRef(e.GetProperty("ownerType")))) EmitAddr(e.GetProperty("recv"));
                 else EmitExpr(e.GetProperty("recv"));
-                MaybeVolatile(fb);                       // `volatile.` prefix on a @Volatile field (pairs with modreq)
+                MaybeVolatile(fb, e);                    // CIR carries external volatility; local declarations are tracked.
                 EmitField(_il, OpCodes.Ldfld, fb);
                 return RetOr(e, ft);
             }
@@ -147,7 +147,7 @@ sealed partial class Emitter
                 if (IsValueType(ClrRef(e.GetProperty("ownerType")))) EmitAddr(e.GetProperty("recv"));
                 else EmitExpr(e.GetProperty("recv"));
                 EmitStoreCoerced(e.GetProperty("value"), sfet);
-                MaybeVolatile(sfefld);
+                MaybeVolatile(sfefld, e);
                 EmitField(_il, OpCodes.Stfld, sfefld);
                 return Bcl("System.Void");
             }
@@ -161,10 +161,14 @@ sealed partial class Emitter
                 {
                     var fld = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
                     if (e.TryGetProperty("static", out var lgs) && lgs.ValueKind == JsonValueKind.True)
+                    {
+                        MaybeVolatile(fld, e);
                         EmitField(_il, OpCodes.Ldsfld, fld);
+                    }
                     else
                     {
                         EmitExpr(e.GetProperty("recv"));
+                        MaybeVolatile(fld, e);
                         EmitField(_il, OpCodes.Ldfld, fld);
                     }
                     lateinitType = FieldTypeOf(fld);
@@ -173,8 +177,9 @@ sealed partial class Emitter
                 var ok = _il.DefineLabel();
                 _il.Emit(OpCodes.Brtrue, ok);
                 _il.Emit(OpCodes.Pop);
-                _il.Emit(OpCodes.Ldstr, "lateinit property " + e.GetProperty("name").GetString() + " has not been initialized");
-                EmitConstructor(_il, OpCodes.Newobj, Bcl("System.InvalidOperationException").GetConstructor(new[] { Bcl("System.String") }));
+                // bir2cir has resolved Kotlin's failure semantics to an ordinary, exactly-bound constructor expression.
+                // Emitting it here is the same one-to-one CIR path as any other nested expression.
+                EmitExpr(e.GetProperty("exception"));
                 _il.Emit(OpCodes.Throw);
                 _il.MarkLabel(ok);
                 return lateinitType;
@@ -316,9 +321,7 @@ sealed partial class Emitter
             {
                 var name = e.GetProperty("method").GetString();
                 var csig = SigNodes(e);
-                // owner present -> a static method on that named class (companion); else a file-class sibling.
-                // A static on a GENERIC emitted class (a generic class's companion fun) must be anchored onto a
-                // constructed owner — an open-typedef parent token is invalid IL at a foreign call site.
+                // owner present -> a static method on that complete physical owner; else a file-class sibling.
                 // #199/#204 — `owner:null` remains the substitution/recognition axis, while mandatory `calleeOwner`
                 // is the exact dispatch axis. Never global-search by method name: a missing/scoped miss is malformed
                 // CIR and must fail loud instead of silently binding another file class's same-simple-name function.
@@ -333,11 +336,9 @@ sealed partial class Emitter
                 }
                 else
                     resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
-                // A constructed CIR owner is already the complete physical TypeSpec. Canonicalize only a genuinely
-                // bare/open owner; replacing an explicit `G<string>` with `G<object>` violates the CIR contract and
-                // can also violate generic constraints.
-                var mb = ApplyTypeArgs(exactConstructedOwner ? resolved : AnchorOpenGenericOwnerStatic(resolved),
-                    e, out var srt, out var sps);
+                // The owner selected in CIR is complete. A bare generic TypeDef here is malformed CIR; ilemit must not
+                // invent a representative instantiation or reconstruct a retired compiler ABI.
+                var mb = ApplyTypeArgs(resolved, e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
                 EmitMethod(_il, OpCodes.Call, mb);
@@ -345,11 +346,10 @@ sealed partial class Emitter
             }
             case "staticField":
             {
-                // ownerType is already the final CIR TypeSpec (including the canonical instantiation for a static on a
-                // generic owner). Preserve it exactly; collapsing through SlotName/FindField would silently replace
-                // `G<object>` with the open `G<!0>` and manufacture invalid IL in a non-generic caller.
+                // ownerType is already the final CIR TypeSpec. Preserve it exactly: generic-owner companion statics
+                // have already moved to their explicit non-generic carrier, and arbitrary CIR must not be reinterpreted.
                 var f = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out var ft);
-                MaybeVolatile(f);
+                MaybeVolatile(f, e);
                 EmitField(_il, OpCodes.Ldsfld, f);
                 return ft;
             }
@@ -362,12 +362,11 @@ sealed partial class Emitter
             }
             case "staticFieldSet":
             {
-                // Preserve the owner's instantiation exactly, for the same reason as the `staticField` READ above:
-                // collapsing through SlotName replaces `G<object>` with the open `G<!0>` and manufactures invalid IL.
+                // Preserve the exact CIR owner, for the same reason as the `staticField` read above.
                 var sfsf = ResolveField(
                     ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out var sfsft);
                 EmitStoreCoerced(e.GetProperty("value"), sfsft);
-                MaybeVolatile(sfsf);
+                MaybeVolatile(sfsf, e);
                 EmitField(_il, OpCodes.Stsfld, sfsf);
                 return Bcl("System.Void");
             }
@@ -970,6 +969,7 @@ sealed partial class Emitter
                 if (e.TryGetProperty("ptr", out var pointer)) EmitExpr(pointer);
                 else _il.Emit(OpCodes.Ldloc, _locals[e.GetProperty("local").GetString()]);
                 var elem = MapType(e.GetProperty("elem"));
+                MaybeVolatile(null, e);
                 _il.Emit(OpCodes.Ldobj, elem);
                 return elem;
             }
@@ -980,6 +980,7 @@ sealed partial class Emitter
                 else _il.Emit(OpCodes.Ldloc, _locals[e.GetProperty("local").GetString()]);
                 var elem = MapType(e.GetProperty("elem"));
                 EmitArg(e.GetProperty("value"), elem);
+                MaybeVolatile(null, e);
                 _il.Emit(OpCodes.Stobj, elem);
                 return Bcl("System.Void");
             }

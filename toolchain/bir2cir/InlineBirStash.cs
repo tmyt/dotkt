@@ -66,13 +66,21 @@ static class InlineBirStash
     static void StashType(JsonObject type, string fileClass, IReadOnlyDictionary<string, JsonObject> generatedMethods)
     {
         if (Str(type["name"]) is string owner && type["methods"] is JsonArray methods)
-            foreach (var m in methods) if (m is JsonObject mo) StashMethod(owner, mo, fileClass, generatedMethods);
+        {
+            // A generic companion-static declaration has moved to a non-generic physical carrier, but kotc's resolved
+            // callInline still names the semantic generic owner. Index the payload under that explicit association while
+            // retaining the physical owner inside the carrier payload stamped on the actual MethodDef.
+            var lookupOwner = type["staticCarrier"] is JsonObject carrier && Str(carrier["owner"]) is string semantic
+                ? semantic : owner;
+            foreach (var m in methods)
+                if (m is JsonObject mo) StashMethod(owner, mo, fileClass, generatedMethods, lookupOwner);
+        }
         if (type["types"] is JsonArray nested)
             foreach (var t in nested) if (t is JsonObject to) StashType(to, fileClass, generatedMethods);
     }
 
     static void StashMethod(string owner, JsonObject mo, string fileClass,
-        IReadOnlyDictionary<string, JsonObject> generatedMethods)
+        IReadOnlyDictionary<string, JsonObject> generatedMethods, string lookupOwner = null)
     {
         if (mo["mods"] is not JsonObject mods || Bool(mods["inline"]) != true) return;
         if (Str(mo["name"]) is not string name || mo["body"] is not JsonArray) return;
@@ -112,7 +120,7 @@ static class InlineBirStash
         // method holding its body. The executable producer needs that method too, so do not detach it; embed a raw clone
         // in the carrier. Follow generated newDelegate targets transitively so a lifted body may itself create another
         // delegate. User-authored function references are deliberately NOT copied: their calleeOwner continues to name
-        // the referenced assembly method. The structural `generated` fact comes from kotc; no `__lambda` name sniffing.
+        // the referenced assembly method. The structural `generated` fact comes from kotc; no generated-name sniffing.
         var lifted = new JsonArray();
         var seenLifted = new HashSet<string>(StringComparer.Ordinal);
         CollectLifted(payload["body"], fileClass, generatedMethods, seenLifted, lifted);
@@ -121,7 +129,7 @@ static class InlineBirStash
         // §4.2 (#75 S4b): the overload key is `owner|name|pc|ga` -> a LIST of candidates (same-name inline OVERLOADS share
         // it). The call site picks the UNIQUE candidate whose declared `params[i].type` structurally equals the call's
         // `paramSig[i]` (SelectByParamSig). The cross-module reader (ReferenceMetadataIndex) keys + disambiguates the same.
-        var key = $"{owner}|{name}|{pc}|{ga}";
+        var key = $"{lookupOwner ?? owner}|{name}|{pc}|{ga}";
         if (!Index.TryGetValue(key, out var lst)) Index[key] = lst = new List<JsonObject>();
         lst.Add((JsonObject)payload.DeepClone());
 

@@ -1,0 +1,27 @@
+{
+  "fileClass": "RejectOpenGenericStaticAccessKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [{
+    "name": "probe", "static": true, "override": false, "virtual": false, "vis": "public",
+    "params": [], "ret": { "t": "fqn", "name": "kotlin.Int" },
+    "body": [{
+      "k": "return",
+      "value": {
+        "k": "staticField",
+        "ownerType": { "t": "fqn", "name": "OpenGenericStaticOwner" },
+        "name": "perClosedType"
+      }
+    }]
+  }],
+  "types": [{
+    "name": "OpenGenericStaticOwner", "kind": "class", "typeParams": ["T"],
+    "base": null, "interfaces": [], "ctors": [], "methods": [], "properties": [], "attrs": [],
+    "fields": [{
+      "name": "perClosedType", "type": { "t": "fqn", "name": "kotlin.Int" },
+      "static": true, "vis": "public",
+      "init": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }
+    }]
+  }],
+  "refTypes": []
+}

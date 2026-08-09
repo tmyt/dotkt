@@ -11,6 +11,7 @@ import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrFile
+import org.jetbrains.kotlin.ir.declarations.IrField
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
@@ -488,6 +489,40 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun semanticOwnerJson(k: IrClass): String =
 		semanticTypeOwner(k)?.let { ""","semanticOwner":${str(it)}""" } ?: ""
 
+	/**
+	 * A lifted local/anonymous type declared inside a Kotlin-static class member has the class as its semantic owner,
+	 * but it cannot capture that class's type parameters. Carry that negative capture fact explicitly: bir2cir will
+	 * choose the non-generic physical carrier when one is required, without kotc naming or inferring a CLR owner.
+	 */
+	internal fun staticSemanticTypeOwner(k: IrClass): String? {
+		if (!anonNames.containsKey(k)) return null
+		var parent: Any? = k.parent
+		while (parent != null) {
+			when (parent) {
+				is IrSimpleFunction -> {
+					val property = parent.correspondingPropertySymbol?.owner
+					if (isKotlinStaticFunction(parent) ||
+						property?.let(::isKotlinStaticProperty) == true)
+						return semanticOwnerName(parent)
+					parent = parent.parent
+				}
+				is IrProperty -> {
+					if (isKotlinStaticProperty(parent)) return semanticOwnerName(parent)
+					parent = parent.parent
+				}
+				is IrField -> {
+					val property = parent.correspondingPropertySymbol?.owner
+					if (property?.let(::isKotlinStaticProperty) == true) return semanticOwnerName(property)
+					parent = parent.parent
+				}
+				is IrClass, is IrFile -> return null
+				is IrDeclaration -> parent = parent.parent
+				else -> return null
+			}
+		}
+		return null
+	}
+
 	/** Nearest Kotlin type declaration containing a callable-generated declaration; top-level callables use the file facade. */
 	internal fun semanticOwnerName(declaration: IrDeclaration): String {
 		var parent: Any? = declaration.parent
@@ -681,8 +716,8 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		fileEntry = file.fileEntry
 		// Per-FILE lifted state. One BirEmitter instance processes every file in turn, so these MUST be reset here —
 		// otherwise each file's BIR accumulates the previous files' lifted lambdas/types, duplicating them into every
-		// file class (e.g. App.kt's `__lambda*` reappearing in ControlsKt/DslKt/…). The `dotkt$*` types are
-		// de-duplicated by ilemit, but lifted `__lambdaN` are file-class methods that are NOT — so the duplication is
+		// file class (e.g. App.kt's `dotkt:lambda:<n>` reappearing in ControlsKt/DslKt/…). The `dotkt$*` types are
+		// de-duplicated by ilemit, but lifted generated methods are file-class methods that are NOT — so the duplication is
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear(); refTypeByVariable.clear()
 		localFunctionOwnerByVariable.clear(); localFunctionIds.clear()
@@ -745,18 +780,23 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 				regs.isEmpty() || (regs.size == 1 && isArrayType(regs[0].type))
 			}
 		}
-		// Top-level non-const `val`/`var` -> static fields of the file class (const is inlined by the frontend).
+		// Top-level `val`/`var` -> static fields of the file class. Although the frontend inlines reads of a `const`,
+		// its declaration must still cross a DLL/KLIB boundary; preserve the Kotlin const fact so bir2cir can select a
+		// CLR Literal field and dll2klib can project the public declaration for another Kotlin module.
 		val statFields = topProps.mapNotNull { p ->
 			val bf = p.backingField ?: return@mapNotNull null
-			if (p.isConst) return@mapNotNull null
 			val init = (bf.initializer as? IrExpressionBody)?.expression?.let { expr(it) } ?: "null"
+			val const = if (p.isConst) ""","const":true""" else ""
 			// A top-level `val` (or `var` with a non-public setter) -> mark the static field read-only so a downstream
 			// consuming module restores it as `val`, rejecting external writes (#34b, mirrors
 			// the member-field `readOnly` stamp).
 			val ro = if (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")) ""","readOnly":true""" else ""
 			// Delegated storage has the provider type, not the public value type. Its surface is the generated accessor.
-			val vis = if (p.isDelegated) ""","vis":"private"""" else ""
-			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$vis$ro${volatileFieldFlag(p)}${companionReceiverField(p)}}"""
+			// Every other field retains the source declaration's visibility; omitting it means public in BIR/CIR and would
+			// leak a private/internal top-level const into both the CLR surface and the reconstructed reference KLIB.
+			val v = if (p.isDelegated) "private" else visOf(p)
+			val vis = if (v != "public") ""","vis":${str(v)}""" else ""
+			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$const$vis$ro${lateinitFieldFlag(p)}${volatileFieldFlag(p)}${companionReceiverField(p, "field", p.name.asString())}}"""
 		}
 		// Preserve every companion as a separate semantic declaration. Must run BEFORE body emission so every value/type
 		// use resolves to the same representation-neutral identity.

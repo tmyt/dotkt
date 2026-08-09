@@ -816,6 +816,9 @@ identity.
 Only a property whose storage **is** the user-visible member emits no CLR property and therefore keeps its plain field
 name: `lateinit var`, `const`, a delegated property's `p$delegate`, a companion/top-level `val`/`var` (a static field),
 and the `@ClrField` opt-out (§5f-adjacent: `@ClrField` deliberately emits a plain public field instead of a property).
+Reading an uninitialized `lateinit` slot throws Kotlin's `UninitializedPropertyAccessException`, with the Kotlin source
+property name in the message. The stdlib deliberately retains upstream's `DEPRECATION_ERROR` on naming that exception
+type in common source; callers should normally catch a public supertype rather than depend on that implementation type.
 
 ## 5i. A context parameter is an ordinary POSITIONAL parameter (`[__self?] + contexts + regulars`)
 
@@ -1281,7 +1284,9 @@ class is first used" means. A companion-block property on an enum class initiali
 
 A real `companion object` stays what it was (§7a): its own nested carrier type with a singleton value, restored
 through the `[KotlinCompanion]` carrier. A class may declare both, and they remain structurally distinct — the
-block's members are statics of the outer type, the object's are instance members of the carrier.
+block's members are statics of the outer type, while the object's members belong semantically to the carrier.
+An object `const val` is the physical exception required by CLR metadata: it is a static literal field on that
+carrier, but dll2klib clears the physical static bit when restoring the ordinary companion-member declaration.
 
 **Collisions.** A companion-block member and an instance member of the same class cannot share a name — the
 frontend rejects that outright (`CONFLICTING_OVERLOADS` for functions, `REDECLARATION` for properties) — so no
@@ -1293,25 +1298,39 @@ storage is static, so a companion-block property's backing field is renamed to t
 
 **Generic containing classes.** Kotlin forbids a static member from mentioning the enclosing class's type
 parameters, so `class Box<T> { companion { var count: Int } }` declares ONE logical `count`, not one per `T`. The
-CLR's per-closed-generic static storage would give `Box<Int>.count` and `Box<String>.count` separate slots, so
-Kotlin/CLR deliberately collapses every use onto the single canonical `Box<Any>` instantiation. `Box.count` is one
-variable, exactly as the Kotlin source says; this is the same rule that already binds a generic owner's statics.
+CLR's per-closed-generic static storage would give `Box<Int>.count` and `Box<String>.count` separate slots. bir2cir
+therefore moves the block's static surface to a public, compiler-generated, non-generic carrier associated explicitly
+with `Box`; dll2klib merges those declarations back into the semantic owner. No representative type argument is
+invented, so the rule also works for constrained owners that cannot be constructed as `Box<Any>`. A private initializer
+sentinel on the generic owner touches the carrier, so constructing the first `Box<T>` still runs the logical static
+initializer; constructing another closed `Box<U>` cannot run it again. `Box.count` remains one variable, exactly as the
+Kotlin source says. A local or anonymous implementation type declared inside such a static member is likewise nested
+under the non-generic carrier and does not capture the semantic owner's type-parameter frame.
+
+**Constants.** A Kotlin `const val` declaration is emitted as a CLR `static literal` field with an ECMA-335 Constant
+row. This is declaration metadata, not an executable initializer: dll2klib restores `IS_CONST`, `HAS_CONSTANT`, and
+the compile-time value so a second Kotlin module can use the declaration in another constant expression.
 
 ### A companion EXTENSION is a receiverless static associated with a type
 
 `Tag.of("hi")` passes no receiver — the association is not a parameter. Kotlin/CLR gives every companion extension
-one uniform physical representation: an ordinary static member of the declaring file's facade class, with the
-associated type carried in trusted `[KotlinCompanionExtension]` metadata. It is never made a member of the
-associated type, because it must work identically when that type is an external CLR type the compiler cannot add
-members to.
+one uniform physical representation: an ordinary static member of the declaring file's facade class. `bir2cir`
+selects a collision-free physical name from the semantic receiver, source name, and explicit
+`function`/`get`/`set`/`field` role. Trusted `[KotlinCompanionExtension]` metadata carries those same three facts as
+`{receiver, name, kind}`. The member is never made a member of the associated type, because it must work identically
+when that type is an external CLR type the compiler cannot add members to.
 
 Round-trip needs no new encoding. `dll2klib` restores the standard Kotlin shape — the `IS_STATIC_FUNCTION` /
 `IS_STATIC_PROPERTY` flag plus a receiver type — which is precisely what Kotlin means by a companion extension,
-so a second module resolves `Tag.of(...)` from metadata alone. Like any extension, it must be in scope at the use
-site (same package, or `import`ed by name).
+so a second module resolves `Tag.of(...)` from metadata alone. The explicit role prevents an ordinary function such
+as `fun get_x()` from being reclassified as a property accessor; general Kotlin declaration collisions remain the
+frontend's existing concern. Like any extension, it must be in scope at the use site (same package, or `import`ed by
+name).
 
 The frontend restricts the receiver to a bare classifier: no type arguments, no type parameter, no nullable
-receiver, no `object`, no `dynamic`. A typealias receiver is allowed and denotes the class it expands to.
+receiver, no `object`, no `dynamic`. A typealias receiver is allowed and denotes the class it expands to. The trusted
+carrier validator enforces the same bare-classifier shape; compiler-produced metadata does not gain a broader language
+surface on round-trip.
 
 ### Feature enablement
 

@@ -17,8 +17,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   static fields and a `.cctor`) and an enum class; an enum that declares one takes the plain-class shape, because an
   ECMA-335 enum TypeDef may not carry a non-literal static field. Overloads, visibilities, `val`/`var`, `const` and
   callable references (`C::f`, `C::v`) all work, and a real `companion object` remains structurally distinct — a class
-  may declare both. On a generic owner the statics collapse onto the single canonical `Box<Any>` instantiation, so
-  `Box.count` is ONE variable exactly as the Kotlin source says, rather than one per closed generic type.
+  may declare both. On a generic owner the statics live on one explicit non-generic compiler carrier that is merged
+  back into the semantic owner on round-trip, so `Box.count` is ONE variable exactly as the Kotlin source says,
+  rather than one per closed generic type and without inventing an invalid representative type argument.
 
   A top-level `companion fun C.foo()` / `companion val C.bar` gets one uniform physical representation: an ordinary
   receiverless static of the declaring file's facade class, with the associated type carried in trusted
@@ -34,12 +35,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
-- **A static on a referenced GENERIC type reached the emitted IL with an open generic owner (#382).** Two paths
-  produced an owner the CLR cannot use as a MemberRef parent: a static PROPERTY of a referenced generic type was bound
-  without closing its declaring type at all, and a static CALL had its `owner` axis filled from the bare declaring
-  type while only the sibling `ownerType` axis was later closed to the canonical instantiation — leaving the axis
-  `ilemit` actually dispatches from spelling `G\`1`. Both now close from the same rule, so `G.member` from another
-  module loads instead of throwing `TypeLoadException`.
+- **A Kotlin companion-block static on a referenced GENERIC type reached the emitted IL with an open generic owner
+  (#382).** Those statics are now resolved to their trusted non-generic physical carrier before CIR emission, so
+  `ilemit` receives one complete MethodDef/FieldDef owner and never invents a closed generic instantiation. Ordinary
+  CLR statics declared by a foreign generic type continue to use the existing explicit representative TypeSpec.
 
 - **A Kotlin class extending a .NET type re-declared that type's static members (#382).** The frontend materializes a
   member on the subclass so `Sub.Shared` resolves; the CLR does not inherit statics into a derived TypeDef, so

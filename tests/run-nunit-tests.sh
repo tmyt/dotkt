@@ -48,7 +48,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=390
+	["tests/basic"]=391
 	["tests/coroutines"]=157
 	["tests/roundtrip/consumer"]=64
 	["tests/roundtrip/bidirectional/consumer"]=4
@@ -136,6 +136,30 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  COMPANION METADATA NEGATIVE FAIL — see build/nunit-$name.metadata-negative.log"
 			tail -25 "$ROOT/build/nunit-$name.metadata-negative.log"; rc=1
+		fi
+	fi
+	if [[ "$proj" == "tests/interop/consumer" ]]; then
+		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
+		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
+			-- --volatile-consumer "$interop_dll" "MemberShapeTests" \
+			"volatileInstanceGet" "volatileInstanceSet" "volatileStaticGet" "volatileStaticSet" \
+			>"$ROOT/build/nunit-$name.volatile.log" 2>&1; then
+			echo "  referenced CLR volatile field access IL OK"
+		else
+			echo "  VOLATILE FIELD IL FAIL — see build/nunit-$name.volatile.log"
+			tail -25 "$ROOT/build/nunit-$name.volatile.log"; rc=1
+		fi
+	fi
+	if [[ "$proj" == "tests/basic" ]]; then
+		basic_dll="$dir/bin/$CONFIGURATION/net10.0/DotKt.Tests.Basic.dll"
+		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
+			-- --volatile-consumer "$basic_dll" 'GenericVolatileBox`1' \
+			"get_value" "set_value" "readValueByRef" "writeValueByRef" \
+			>"$ROOT/build/nunit-$name.volatile-generic.log" 2>&1; then
+			echo "  local generic volatile field access IL OK"
+		else
+			echo "  GENERIC VOLATILE FIELD IL FAIL — see build/nunit-$name.volatile-generic.log"
+			tail -25 "$ROOT/build/nunit-$name.volatile-generic.log"; rc=1
 		fi
 	fi
 	# The emitted assembly is named after the .ktproj (e.g. DotKt.Tests.Basic.ktproj -> DotKt.Tests.Basic.dll).
