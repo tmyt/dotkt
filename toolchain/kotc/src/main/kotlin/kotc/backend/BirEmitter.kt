@@ -363,6 +363,13 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	internal fun localSlotName(d: IrValueDeclaration): String =
 		if (d is IrVariable) localSlotNames.getOrPut(d) { "dotkt\$local${localSlotCounter++}" }
 		else d.name.asString()
+	// A Property row must identify its exact accessor declarations even when Kotlin overloads two properties by
+	// context/extension receiver. The token is file-local BIR identity only; it is neither a CLR name nor the general
+	// cross-module declaration identity deferred to #395.
+	internal val propertyAssociations = java.util.IdentityHashMap<IrProperty, String>()
+	private var propertyAssociationCounter = 0
+	internal fun propertyAssociation(property: IrProperty): String =
+		propertyAssociations.getOrPut(property) { "p${propertyAssociationCounter++}" }
 	// A call value BOUND by the enclosing call's evaluation plan (§2.7): the `bindRef` READ that renders it. Keyed by
 	// the value EXPRESSION's identity, so every reader of that one IR node — the call's own receiver/argument slot, an
 	// inner-class `new`'s enclosing-instance arg, a spliced default, a reconstructed `copy` field — reaches the ONE
@@ -721,6 +728,7 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// real metadata bloat and a correctness hazard.
 		liftedMethods.clear(); liftedTypes.clear(); refTypes.clear(); refTypeByVariable.clear()
 		localFunctionOwnerByVariable.clear(); localFunctionIds.clear()
+		propertyAssociations.clear(); propertyAssociationCounter = 0
 		indexLocalFunctionOwnership(file)
 		// Compile-time kotlin.clr intrinsics are consumed at their call sites and have no physical CLR method.
 		// Only USER functions (origin DEFINED) — a consuming module's FIR also holds external top-level functions
@@ -800,7 +808,9 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 			// Delegated storage has the provider type, not the public value type. Its surface is the generated accessor.
 			// Every other field retains the source declaration's visibility; omitting it means public in BIR/CIR and would
 			// leak a private/internal top-level const into both the CLR surface and the reconstructed reference KLIB.
-			val v = if (p.isDelegated) "private" else visOf(p)
+				// An accessor-owned top-level surface keeps its field as private implementation storage. Calls on both
+				// accessor roles are routed through the complete method surface emitted below.
+				val v = if (p.isDelegated || accessorRoutedTopLevelProperty(p)) "private" else visOf(p)
 			val vis = if (v != "public") ""","vis":${str(v)}""" else ""
 			"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()},"static":true,"init":$init$const$vis$ro$companionProperty${lateinitFieldFlag(p)}${volatileFieldFlag(p)}${companionReceiverField(p, "field", p.name.asString())}}"""
 		}
@@ -812,25 +822,26 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// Emit functions and types first (this lifts lambdas into liftedMethods/liftedTypes), then append them.
 		val fnMethods = functions.map { method(it, static = true) }
 		// A top-level property's get_/set_<name> as STATIC methods (the receiver, if any, rides `__self`) — emitted
-		// only when the accessor is CUSTOM (not the trivial `field` passthrough). Covers a NO-backing-field property
-		// (an EXTENSION property `val T.p`, or a computed `val p get() = …`) AND a backing-field property that ALSO
-		// carries a custom accessor (`val p = 41; get() = field + 1`, #89), or is delegated — its accessor must be
-		// emitted so the read routes through its body instead of the storage field. A DEFAULT accessor emits none: the field
-		// (above) is read/written directly. Getter and setter are decided independently (a `var` may pair a default
-		// getter with a custom setter).
-		val topPropAccessors = topProps.flatMap { p ->
-			listOfNotNull(
-				p.getter?.takeIf { fieldRoutedProperty(p) && !hasDefaultGetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
-				p.setter?.takeIf { fieldRoutedProperty(p) && !hasDefaultSetter(p) }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
-		}
-		// A top-level delegated property gets an unambiguous CLR Property row. Its backing field is named
-		// `<p>$delegate`, so dll2klib cannot (and must not) infer `p` from storage. Other top-level custom/context
-		// properties retain their established field/accessor reconstruction path; adding a second row would duplicate
-		// their KLIB declarations.
-		val topPropRecords = topProps.filter { it.isDelegated }.joinToString(",") { p ->
-			val n = p.name.asString()
-			val setName = if (p.setter != null && !hasDefaultSetter(p)) str("set_$n") else "null"
-			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()},"get":${str("get_$n")},"set":$setName}"""
+			// for a NO-backing-field property (an EXTENSION property `val T.p`, or a computed `val p get() = …`) and for
+			// every role of a backing-field property once EITHER role is custom. A partial custom `var` must expose both
+			// get and set MethodSemantics so its mutability survives DLL -> KLIB projection; the default half is therefore
+			// emitted as an accessor too, and all same-module uses route through this complete surface.
+			val topPropAccessors = topProps.flatMap { p ->
+				val accessorSurface = accessorRoutedTopLevelProperty(p)
+				listOfNotNull(
+					p.getter?.takeIf { accessorSurface }?.let { topLevelAccessorMethod(it, p.name.asString(), true) },
+					p.setter?.takeIf { accessorSurface }?.let { topLevelAccessorMethod(it, p.name.asString(), false) })
+			}
+		// Every emitted top-level accessor has an explicit property association. The CLR Property row may be
+		// getter-only or setter-only when the other access uses direct field storage; MethodSemantics, rather than the
+		// accessor's eventual physical name, is the authoritative reverse-projection edge for dll2klib.
+			val topPropRecords = topProps.filter { p -> accessorRoutedTopLevelProperty(p) }.joinToString(",") { p ->
+				val n = p.name.asString()
+				val accessors = listOfNotNull(
+					p.getter?.let { "get" },
+					p.setter?.let { "set" },
+			).joinToString(",", prefix = "[", postfix = "]") { str(it) }
+			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()},"kotlinAccessors":$accessors,"propertyAssociation":${str(propertyAssociation(p))}}"""
 		}
 		// Basic enums -> real CLR enums (int-backed, for .NET interop); rich enums -> plain singleton classes.
 		val (richEnums, basicEnums) = enums.partition { isRichEnum(it) }

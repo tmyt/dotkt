@@ -1,0 +1,93 @@
+{
+  "fileClass": "NullableTvPropertyOverloadSignatureKt",
+  "hasMain": false,
+  "fields": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "StaticPropertyOwner", "kind": "class", "base": null, "interfaces": [],
+      "fields": [], "ctors": [], "attrs": [],
+      "properties": [
+        {
+          "name": "selected", "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+          "kotlinAccessors": ["get"], "propertyAssociation": "owned-selected"
+        }
+      ],
+      "methods": [
+        {
+          "name": "selected", "propertyName": "selected", "propertyAccessor": "get",
+          "propertyAssociation": "owned-selected", "static": true,
+          "typeParams": [{ "name": "T" }],
+          "params": [{ "name": "receiver", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+          "ret": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+          "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "void" }, "value": null } }],
+          "attrs": []
+        }
+      ]
+    }
+  ],
+  "properties": [
+    {
+      "name": "selected", "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+      "kotlinAccessors": ["get"], "propertyAssociation": "selected-int"
+    },
+    {
+      "name": "selected", "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+      "kotlinAccessors": ["get"], "propertyAssociation": "selected-string"
+    }
+  ],
+  "methods": [
+    {
+      "name": "selected", "propertyName": "selected", "propertyAccessor": "get",
+      "propertyAssociation": "selected-int", "static": true,
+      "typeParams": [{ "name": "T" }],
+      "params": [{ "name": "receiver", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+      "ret": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "void" }, "value": null } }],
+      "attrs": []
+    },
+    {
+      "name": "selected", "propertyName": "selected", "propertyAccessor": "get",
+      "propertyAssociation": "selected-string", "static": true,
+      "typeParams": [{ "name": "T" }],
+      "params": [{ "name": "receiver", "type": { "t": "fqn", "name": "kotlin.String" } }],
+      "ret": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "void" }, "value": null } }],
+      "attrs": []
+    },
+    {
+      "name": "readSelected", "static": true, "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callStatic", "method": "selected", "prop": "get",
+            "calleeOwner": { "t": "fqn", "name": "NullableTvPropertyOverloadSignatureKt" },
+            "typeArgs": [{ "t": "fqn", "name": "kotlin.Int" }],
+            "shapeTypes": [{ "t": "fqn", "name": "kotlin.Int" }],
+            "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+            "args": [{ "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }]
+          }
+        }
+      ]
+    },
+    {
+      "name": "readOwnedSelected", "static": true, "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callStatic", "ownerType": { "t": "fqn", "name": "StaticPropertyOwner" },
+            "method": "selected", "prop": "get",
+            "typeArgs": [{ "t": "fqn", "name": "kotlin.Int" }],
+            "shapeTypes": [{ "t": "fqn", "name": "kotlin.Int" }],
+            "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+            "args": [{ "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 2 }]
+          }
+        }
+      ]
+    }
+  ]
+}

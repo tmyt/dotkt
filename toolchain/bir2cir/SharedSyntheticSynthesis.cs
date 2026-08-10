@@ -517,9 +517,9 @@ static class SharedSyntheticSynthesis
     // Fixed-shape def transcribed verbatim from kotc's retired charSeqIfaceDefs().
     const string CharSeqDef = """
     {"name":"dotkt$CharSequence","kind":"interface","generated":true,"base":null,"fields":[],"ctors":[],"methods":[
-      {"name":"get_length","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"body":[]},
+      {"name":"length","propertyName":"length","propertyAccessor":"get","propertyAssociation":"charsequence-length","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"body":[]},
       {"name":"get","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"index","type":{"t":"fqn","name":"kotlin.Int"}}],"ret":{"t":"fqn","name":"kotlin.Char"},"body":[]},
       {"name":"subSequence","static":false,"override":false,"virtual":true,"objectOverride":false,"vis":"public","params":[{"name":"startIndex","type":{"t":"fqn","name":"kotlin.Int"}},{"name":"endIndex","type":{"t":"fqn","name":"kotlin.Int"}}],"ret":{"t":"fqn","name":"dotkt$CharSequence"},"body":[]}
-    ]}
+    ],"properties":[{"name":"length","type":{"t":"fqn","name":"kotlin.Int"},"kotlinAccessors":["get"],"propertyAssociation":"charsequence-length"}]}
     """;
 }

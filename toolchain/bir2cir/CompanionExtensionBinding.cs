@@ -128,7 +128,10 @@ static class CompanionExtensionBinding
         var kind = Str(declaration["companionMemberKind"]);
         ValidateKind(kind);
 
-        var physicalName = Prefix(kind) + PhysicalRoot(receiver, sourceName);
+        var physicalRoot = PhysicalRoot(receiver, sourceName);
+        var physicalName = kind is "get" or "set"
+            ? KotlinPropertyAccessors.PhysicalName(physicalRoot, kind)
+            : physicalRoot;
         var key = Key(owner, receiver, kind, sourceName);
         if (bindings.TryGetValue(key, out var prior))
         {
@@ -182,6 +185,22 @@ static class CompanionExtensionBinding
         IReadOnlyDictionary<string, JsonObject> localTypes,
         ReferenceMetadataIndex refs)
     {
+        // Accessors moved into the C# 14 extension container take their CLR Property rows with them. Match the
+        // original BIR row through kotc's exact file-local association, never through its source or physical name.
+        // The signature Property row authored below is the sole MethodSemantics owner after the move.
+        if (declarations.Accessors.Count != 0)
+        {
+            var movedAssociations = declarations.Accessors.Select(accessor =>
+                Str(accessor[KotlinPropertyAccessors.AssociationKey])
+                    ?? throw new InvalidOperationException("companion-extension accessor has no property association"))
+                .ToHashSet(StringComparer.Ordinal);
+            var rootProperties = root["properties"] as JsonArray
+                ?? throw new InvalidOperationException("BIR file has no property declarations");
+            foreach (var property in rootProperties.OfType<JsonObject>().ToArray())
+                if (Str(property[KotlinPropertyAccessors.AssociationKey]) is string association &&
+                    movedAssociations.Contains(association))
+                    rootProperties.Remove(property);
+        }
         var receiverClassifier = ReceiverClassifier(JsonNode.Parse(receiver))
             ?? throw new InvalidOperationException("companion extension receiver is not a classifier type: " + receiver);
         // Preserve the semantic classifier through BirTypeLowering when it has a CLR alias. Exact metadata spelling is
@@ -279,8 +298,10 @@ static class CompanionExtensionBinding
                     $"companion-extension property '{semanticOwner}.{parts.SourceName}' has no getter");
 
             var propertyTypeJson = parts.Getter["ret"]!.ToJsonString();
-            var getterCoreName = blockArity == 0 ? "get_" + parts.SourceName : CoreName("get", parts.SourceName);
-            var setterCoreName = blockArity == 0 ? "set_" + parts.SourceName : CoreName("set", parts.SourceName);
+            var getterPhysicalName = KotlinPropertyAccessors.PhysicalName(parts.SourceName, "get");
+            var setterPhysicalName = KotlinPropertyAccessors.PhysicalName(parts.SourceName, "set");
+            var getterCoreName = blockArity == 0 ? getterPhysicalName : CoreName("get", parts.SourceName);
+            var setterCoreName = blockArity == 0 ? setterPhysicalName : CoreName("set", parts.SourceName);
             AddPropertyBinding(bindings, semanticOwner, receiver, "get", parts.SourceName, containerName, propertyTypeJson,
                 getterCoreName);
             if (parts.Setter != null)
@@ -290,31 +311,40 @@ static class CompanionExtensionBinding
             PrepareImplementationAccessor(parts.Getter, getterCoreName, implementations);
             if (blockArity != 0)
                 implementations.Add(WrapperImplementation(
-                    parts.Getter, "get_" + parts.SourceName, getterCoreName, containerName, receiverTypeParams));
+                    parts.Getter, getterPhysicalName, getterCoreName, containerName, receiverTypeParams));
             if (parts.Setter != null)
             {
                 PrepareImplementationAccessor(parts.Setter, setterCoreName, implementations);
                 if (blockArity != 0)
                     implementations.Add(WrapperImplementation(
-                        parts.Setter, "set_" + parts.SourceName, setterCoreName, containerName, receiverTypeParams));
+                        parts.Setter, setterPhysicalName, setterCoreName, containerName, receiverTypeParams));
             }
 
-            var getterSignature = SignatureAccessor(parts.Getter, "get_" + parts.SourceName, markerSimpleName);
+            var getterSignature = SignatureAccessor(parts.Getter, getterPhysicalName, markerSimpleName);
             signatureDeclarations.Add(getterSignature);
             JsonObject setterSignature = null;
             if (parts.Setter != null)
             {
-                setterSignature = SignatureAccessor(parts.Setter, "set_" + parts.SourceName, markerSimpleName);
+                setterSignature = SignatureAccessor(parts.Setter, setterPhysicalName, markerSimpleName);
                 signatureDeclarations.Add(setterSignature);
             }
-            signatureProperties.Add(new JsonObject
+            var signatureProperty = new JsonObject
             {
                 ["name"] = parts.SourceName,
                 ["type"] = parts.Getter["ret"]!.DeepClone(),
-                ["get"] = "get_" + parts.SourceName,
-                ["set"] = setterSignature == null ? null : "set_" + parts.SourceName,
+                ["get"] = getterPhysicalName,
+                ["getSig"] = AccessorSignature(getterSignature),
+                ["getMethodArity"] = (getterSignature["typeParams"] as JsonArray)?.Count ?? 0,
+                ["set"] = setterSignature == null ? null : setterPhysicalName,
                 ["attrs"] = new JsonArray(ExtensionMarker(markerSimpleName)),
-            });
+            };
+            if (setterSignature != null)
+            {
+                signatureProperty["setSig"] = AccessorSignature(setterSignature);
+                signatureProperty["setMethodArity"] =
+                    (setterSignature["typeParams"] as JsonArray)?.Count ?? 0;
+            }
+            signatureProperties.Add(signatureProperty);
         }
 
         var container = new JsonObject
@@ -501,6 +531,7 @@ static class CompanionExtensionBinding
         var blockArity = blockTypeParams.Count;
         var wrapper = (JsonObject)core.DeepClone();
         wrapper["name"] = wrapperName;
+        KotlinPropertyAccessors.RemoveIdentity(wrapper);
         wrapper["generated"] = true;
         wrapper["mods"] = new JsonObject();
         wrapper.Remove("inlineBir");
@@ -580,7 +611,11 @@ static class CompanionExtensionBinding
         _ => type,
     };
 
-    static string CoreName(string kind, string sourceName) => "dotkt$core$" + Prefix(kind) + sourceName;
+    static string CoreName(string kind, string sourceName)
+    {
+        var root = "dotkt$core$" + sourceName;
+        return kind is "get" or "set" ? KotlinPropertyAccessors.PhysicalName(root, kind) : root;
+    }
 
     static void MaterializeFieldBackedProperty(
         PropertyParts parts,
@@ -634,7 +669,9 @@ static class CompanionExtensionBinding
                 ["name"] = backingName,
             };
         parts.Getter = Accessor(
-            "get_" + sourceName,
+            sourceName,
+            sourceName,
+            "get",
             sourceVisibility,
             new JsonArray(new JsonObject { ["k"] = "return", ["value"] = read }),
             new JsonArray(),
@@ -643,7 +680,9 @@ static class CompanionExtensionBinding
             RoundtripMetadata.StampPropertyStorage(parts.Getter, storageOwner, backingName);
         if (mutable)
             parts.Setter = Accessor(
-                "set_" + sourceName,
+                sourceName,
+                sourceName,
+                "set",
                 setterVisibility,
                 new JsonArray(new JsonObject
                 {
@@ -662,23 +701,27 @@ static class CompanionExtensionBinding
 
     static JsonObject Accessor(
         string name,
+        string propertyName,
+        string propertyAccessor,
         string visibility,
         JsonArray body,
         JsonArray parameters,
         JsonNode returnType) => new()
-    {
-        ["name"] = name,
-        ["static"] = true,
-        ["override"] = false,
-        ["virtual"] = false,
-        ["abstract"] = false,
-        ["specialName"] = false,
-        ["vis"] = visibility,
-        ["params"] = parameters,
-        ["ret"] = returnType,
-        ["body"] = body,
-        ["attrs"] = new JsonArray(),
-    };
+        {
+            ["name"] = name,
+            [KotlinPropertyAccessors.SourceNameKey] = propertyName,
+            [KotlinPropertyAccessors.KindKey] = propertyAccessor,
+            ["static"] = true,
+            ["override"] = false,
+            ["virtual"] = false,
+            ["abstract"] = false,
+            ["specialName"] = false,
+            ["vis"] = visibility,
+            ["params"] = parameters,
+            ["ret"] = returnType,
+            ["body"] = body,
+            ["attrs"] = new JsonArray(),
+        };
 
     static void PrepareImplementationAccessor(JsonObject accessor, string physicalName, JsonArray implementations)
     {
@@ -696,6 +739,7 @@ static class CompanionExtensionBinding
     {
         var signature = (JsonObject)accessor.DeepClone();
         signature["name"] = physicalName;
+        KotlinPropertyAccessors.RemoveIdentity(signature);
         signature["static"] = true;
         signature["override"] = false;
         signature["virtual"] = false;
@@ -710,6 +754,13 @@ static class CompanionExtensionBinding
         RemoveCompanionFacts(signature);
         return signature;
     }
+
+    static JsonArray AccessorSignature(JsonObject accessor) => new(
+        ((accessor["params"] as JsonArray) ?? new JsonArray())
+            .OfType<JsonObject>()
+            .Select(parameter => parameter["type"]?.DeepClone()
+                ?? throw new InvalidOperationException("companion-extension accessor parameter has no type"))
+            .ToArray());
 
     static void RemoveCompanionFacts(JsonObject declaration)
     {
@@ -759,16 +810,10 @@ static class CompanionExtensionBinding
     static string StableId(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)).AsSpan(0, 16));
 
-    static string Prefix(string kind) => kind switch {
-        "get" => "get_",
-        "set" => "set_",
-        "function" or "field" => "",
-        _ => throw new InvalidOperationException("invalid companion extension member kind: " + kind),
-    };
-
     static void ValidateKind(string kind)
     {
-        _ = Prefix(kind);
+        if (kind is not ("get" or "set" or "function" or "field"))
+            throw new InvalidOperationException("invalid companion extension member kind: " + kind);
     }
 
     static string PhysicalRoot(string receiverJson, string sourceName)
@@ -886,12 +931,15 @@ static class CompanionExtensionBinding
                 ?? TypeJson.OwnerName(node["owner"])
                 ?? TypeJson.OwnerName(node["ownerType"]);
             var sourceName = Str(node["method"]);
-            var kind = Str(node["prop"]) switch {
+            var kind = Str(node["prop"]) switch
+            {
                 "get" => "get",
                 "set" => "set",
                 _ => "function",
             };
             var physical = Resolve(owner, receiver, kind, sourceName, bindings, refs, nodeKind);
+            if (kind is "get" or "set")
+                KotlinPropertyAccessors.PreserveCallIdentity(node, sourceName, kind);
             node["method"] = physical.PhysicalName;
             RewriteStaticOwner(node, physical.PhysicalOwner);
             node.Remove("prop");
@@ -928,6 +976,7 @@ static class CompanionExtensionBinding
             node["k"] = "callStatic";
             node["ownerType"] = TypeJson.Fqn(physical.PhysicalOwner);
             node["method"] = physical.PhysicalName;
+            KotlinPropertyAccessors.PreserveCallIdentity(node, sourceName, kind);
             node["sig"] = kind == "set" && physical.ValueType != null
                 ? new JsonArray(JsonNode.Parse(physical.ValueType))
                 : new JsonArray();

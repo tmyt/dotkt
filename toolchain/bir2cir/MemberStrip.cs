@@ -27,14 +27,17 @@ static class MemberStrip
                 // the CLR slot (renamed get_Item/get_Count) that implementers bind to — it is not a throwing bound stub.
                 // (A @ClrTypeAlias interface is dropped whole by AliasHelperHoist anyway.)
                 if ((td["kind"] as JsonValue)?.GetValue<string>() == "interface") continue;
-                var stripped = new HashSet<string>(StringComparer.Ordinal);
+                var strippedPropertyAssociations = new HashSet<string>(StringComparer.Ordinal);
                 var isAlias = ReferenceMetadataIndex.BareOwnerFqn(owner) is string bo && refs.Aliases.ContainsKey(bo);
-                if (td["methods"] is JsonArray methods) StripFrom(methods, owner, refs, stripped, isAlias);
-                if (td["properties"] is JsonArray props && stripped.Count > 0) DropDanglingProps(props, stripped);
+                if (td["methods"] is JsonArray methods)
+                    StripFrom(methods, owner, refs, strippedPropertyAssociations, isAlias);
+                if (td["properties"] is JsonArray props && strippedPropertyAssociations.Count > 0)
+                    DropDanglingProps(props, strippedPropertyAssociations);
             }
     }
 
-    static void StripFrom(JsonArray methods, string owner, ReferenceMetadataIndex refs, HashSet<string> stripped, bool alias)
+    static void StripFrom(JsonArray methods, string owner, ReferenceMetadataIndex refs,
+        HashSet<string> strippedPropertyAssociations, bool alias)
     {
         for (var i = methods.Count - 1; i >= 0; i--)
         {
@@ -48,20 +51,31 @@ static class MemberStrip
             // — carries a REAL Kotlin body that must be PRESERVED and hoisted (else the call would resolve to the
             // semantically-wrong BCL slot). IsRule3Member is exactly that ref.dll signal, so exempt it from the override-drop.
             var drop = refs.IsBoundStub(owner, name, keys)
-                || (alias && mo["overrides"] is JsonArray ovs && DeclarationRename.ResolveSlot(ovs, refs) != null
+                || (alias && mo["overrides"] is JsonArray ovs
+                    && DeclarationRename.ResolveSlot(mo, ovs, refs) != null
                     && !refs.IsRule3Member(owner, name));
-            if (drop) { stripped?.Add(name); methods.RemoveAt(i); }
+            if (drop)
+            {
+                if (strippedPropertyAssociations != null
+                    && KotlinPropertyAccessors.TryIdentity(mo, out _, out _)
+                    && Str(mo[KotlinPropertyAccessors.AssociationKey]) is string association)
+                    strippedPropertyAssociations.Add(association);
+                methods.RemoveAt(i);
+            }
         }
     }
 
-    // A property record whose accessor method was stripped (a bound-stub property) is itself bound — drop the record.
-    static void DropDanglingProps(JsonArray props, HashSet<string> stripped)
+    // A property record whose associated accessor was stripped is itself bound. Association, not the temporary
+    // legacy MethodDef spelling, identifies it: same-name context/extension overloads may share that spelling here.
+    static void DropDanglingProps(JsonArray props, HashSet<string> strippedAssociations)
     {
         for (var i = props.Count - 1; i >= 0; i--)
             if (props[i] is JsonObject po
-                && (((po["get"] as JsonValue)?.GetValue<string>() is string g && stripped.Contains(g))
-                 || ((po["set"] as JsonValue)?.GetValue<string>() is string s && stripped.Contains(s))))
+                && Str(po[KotlinPropertyAccessors.AssociationKey]) is string association
+                && strippedAssociations.Contains(association))
                 props.RemoveAt(i);
     }
-}
 
+    static string Str(JsonNode node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var result) ? result : null;
+}

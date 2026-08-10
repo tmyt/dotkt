@@ -29,6 +29,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
     const string KotlinCompanionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
     const string KotlinCompanionExtensionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionExtensionAttribute";
+    const string KotlinPropertyAccessorAttr = "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute";
     const string KotlinExtensionCoreAttr = "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute";
     const string KotlinStaticCarrierAttr = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
     const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
@@ -590,6 +591,26 @@ sealed partial class ReferenceMetadataIndex
         bcl = null; kind = null; return false;
     }
 
+    public bool TryDeclaresAccessibleInstanceMethod(string sourceOwner, int genericArity, string methodName,
+        out bool declares)
+    {
+        declares = false;
+        if (string.IsNullOrEmpty(methodName)) return false;
+        var owner = TryResolveClrOwner(sourceOwner, out var physicalOwner, out _)
+            ? physicalOwner
+            : BareOwnerFqn(sourceOwner);
+        var type = ResolveNetType(owner, genericArity);
+        if (type == null) return false;
+        try
+        {
+            declares = type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Any(method => method.Name == methodName
+                    && (method.IsPublic || method.IsFamily || method.IsFamilyOrAssembly));
+            return true;
+        }
+        catch { return false; }
+    }
+
     // Resolve a dll2klib-projected .NET owner FQN to its metadata-only reflection Type (A2 / #61), or null when the
     // owner is `kotlin.*` stdlib vocabulary (bound by MemberCallSubstitution off the ref.dll, NOT here), compiler-owned
     // `dotkt$…` synthetic vocabulary, a local app-emitted type, or absent from the compile-reference set.
@@ -644,12 +665,6 @@ sealed partial class ReferenceMetadataIndex
 
         var sourceType = ResolveNetType(BareOwnerFqn(sourceOwner.Name), ownerArgs.Length);
         if (sourceType == null) return false;
-        var methodName = propertyAccess switch
-        {
-            "get" => "get_" + sourceName,
-            "set" => "set_" + sourceName,
-            _ => sourceName,
-        };
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
         var seenTypes = new HashSet<Type>();
         var frontier = new List<Type> { sourceType };
@@ -663,10 +678,18 @@ sealed partial class ReferenceMetadataIndex
                 if (current == null || !seenTypes.Add(current)) continue;
                 try
                 {
-                    candidates.AddRange(current.GetMethods(flags | BindingFlags.DeclaredOnly)
-                        .Where(m => m.Name == methodName
-                            && m.GetGenericArguments().Length == methodArity
-                            && m.GetParameters().Length == callSignature.Count));
+                    var declared = propertyAccess is "get" or "set"
+                        ? current.GetProperties(flags | BindingFlags.DeclaredOnly)
+                            .Where(property => property.Name == sourceName)
+                            .Select(property => propertyAccess == "set"
+                                ? property.GetSetMethod(nonPublic: false)
+                                : property.GetGetMethod(nonPublic: false))
+                            .Where(method => method != null)
+                        : current.GetMethods(flags | BindingFlags.DeclaredOnly)
+                            .Where(method => method.Name == sourceName);
+                    candidates.AddRange(declared.Where(method =>
+                        method.GetGenericArguments().Length == methodArity
+                        && method.GetParameters().Length == callSignature.Count));
                     if (current.BaseType != null) next.Add(current.BaseType);
                     next.AddRange(current.GetInterfaces());
                 }
@@ -1311,18 +1334,22 @@ sealed partial class ReferenceMetadataIndex
     // the emitted existential owner, then select a unique name+arity slot from its actual
     // member table.  The caller retains the Kotlin vocabulary until bir2cir asks this index for the
     // concrete CIR owner/member pair.
-    public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string memberName, int methodArity,
+    public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
+        int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount,
         out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature)
     {
         erasedOwner = erasedMember = null;
         erasedSignature = null;
-        if (sourceOwner == null || memberName == null) return false;
+        if (sourceOwner == null || sourceMember == null) return false;
         if (!TryExistentialPhysicalOwner(sourceOwner.Name, out var candidateOwner)
             || !TryMembersByBirOwner(candidateOwner, out var members)
             || !TryMembersByBirOwner(sourceOwner.Name, out var semanticMembers)) return false;
 
-        var declarations = semanticMembers.Where(m => !m.IsStatic && m.Name == memberName
+        var declarations = semanticMembers.Where(m => !m.IsStatic
+            && (accessorKind is "get" or "set"
+                ? !m.IsPropertyBridge && m.SourcePropertyName == sourceMember && m.AccessorKind == accessorKind
+                : m.SourcePropertyName == null && m.Name == sourceMember)
             && m.MethodArity == methodArity && m.ParamCount == paramCount
             && (authoredSignature == null || m.ParamTypeNodes is { } ps && ps.Length == authoredSignature.Count
                 && (ps.SequenceEqual(authoredSignature)
@@ -1337,12 +1364,13 @@ sealed partial class ReferenceMetadataIndex
         var ordinal = orderedSemantic.IndexOf(declarations[0]);
         if (ordinal < 0) return false;
 
-        var prefix = "$dotkt_star$" + memberName + "$";
+        var physicalDeclarationName = declarations[0].Name;
+        var prefix = "$dotkt_star$" + physicalDeclarationName + "$";
         var bridgeName = prefix + ordinal;
         var bridge = members.Where(m => !m.IsStatic && m.ParamCount == paramCount
             && m.MethodArity == methodArity && m.Name == bridgeName).ToList();
         var candidates = bridge.Count != 0 ? bridge : members.Where(m => !m.IsStatic && m.ParamCount == paramCount
-            && m.MethodArity == methodArity && m.Name == memberName
+            && m.MethodArity == methodArity && m.Name == physicalDeclarationName
             && (declarations[0].ParamTypeNodes == null || m.ParamTypeNodes is { } physical
                 && physical.Length == declarations[0].ParamTypeNodes.Length
                 && physical.Select((p, i) => DeclarationDescribesCall(declarations[0].ParamTypeNodes[i], p)).All(x => x)))
@@ -1412,6 +1440,133 @@ sealed partial class ReferenceMetadataIndex
         }
         access = pick.PropertyAccess; name = pick.PropertyName;
         return true;
+    }
+
+    public bool TryExternalPropertyAccessor(string sourceOwner, string sourcePropertyName, string accessorKind,
+        int paramCount, int methodArity, IReadOnlyList<TypeNode> accessorSignature, TypeNode[] ownerTypeArguments,
+        out string physicalOwner, out string physicalPropertyName, out string physicalMethodName)
+        => TryExternalPropertyAccessorCore(sourceOwner, sourcePropertyName, accessorKind,
+            paramCount, methodArity, accessorSignature, ownerTypeArguments,
+            out physicalOwner, out physicalPropertyName, out physicalMethodName);
+
+    bool TryExternalPropertyAccessorCore(string sourceOwner, string sourcePropertyName, string accessorKind,
+        int paramCount, int methodArity, IReadOnlyList<TypeNode> accessorSignature, TypeNode[] ownerTypeArguments,
+        out string physicalOwner, out string physicalPropertyName, out string physicalMethodName)
+    {
+        physicalOwner = null;
+        physicalPropertyName = null;
+        physicalMethodName = null;
+        if (sourceOwner == null || sourcePropertyName == null || accessorKind is not ("get" or "set")) return false;
+        var bareOwner = BareOwnerFqn(sourceOwner);
+        Type ownerType;
+        if (TryResolveClrOwner(bareOwner, out var aliasOwner, out _))
+        {
+            physicalOwner = aliasOwner;
+            ownerType = ResolveNetType(aliasOwner);
+        }
+        else
+        {
+            physicalOwner = bareOwner;
+            ownerType = ResolveNetType(bareOwner);
+        }
+        if (paramCount < 0 || accessorSignature == null) return false;
+        string exactMethod = null;
+        // A caller carrying the frontend-resolved property signature must never fall back to a name-only sibling.
+        // The reference index records the exact MethodSemantics association for ordinary CLR properties as well as
+        // compiler-authored carriers, so failure here means no physical binding was stated.
+        if (!TryReferencedPropertyPhysicalBinding(bareOwner, sourcePropertyName, accessorKind, paramCount,
+                methodArity, accessorSignature, ownerTypeArguments,
+                new HashSet<string>(StringComparer.Ordinal), out physicalPropertyName, out exactMethod))
+        {
+            return false;
+        }
+        // Metadata indexing may succeed even when reflection cannot load the referenced owner. The exact physical
+        // association is already complete in that case; downstream member resolution re-anchors inherited owners.
+        if (ownerType == null)
+        {
+            physicalMethodName = exactMethod;
+            return true;
+        }
+        var propertyName = physicalPropertyName;
+        try
+        {
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+            MethodInfo AssociatedAccessor(Type type)
+            {
+                var candidates = type.GetProperties(flags)
+                .Where(property => property.Name == propertyName)
+                .Select(property => accessorKind == "set" ? property.GetSetMethod(true) : property.GetGetMethod(true))
+                .Where(method => method != null && (exactMethod == null || method.Name == exactMethod))
+                .GroupBy(method => (method.Module, method.MetadataToken))
+                .Select(group => group.First())
+                .ToList();
+                if (candidates.Count == 1) return candidates[0];
+                // Overloaded CLR Property rows may share one accessor method name.  The caller already selected the
+                // Kotlin declaration by its complete signature; only the physical owner/name are needed here, and a
+                // single agreeing MethodDef spelling is therefore unambiguous.  Different spellings still fail closed.
+                var physicalCandidates = candidates
+                    .GroupBy(method => (method.DeclaringType, method.Name))
+                    .Select(group => group.First()).ToList();
+                return physicalCandidates.Count == 1 ? physicalCandidates[0] : null;
+            }
+            IEnumerable<Type> BaseTypes(Type type)
+            {
+                for (var current = type.BaseType; current != null; current = current.BaseType)
+                    yield return current;
+            }
+
+            // Reflection does not inherit PropertyInfo across interface edges. Prefer the owner's own Property row;
+            // otherwise walk the exact CLR inheritance graph and accept only one MethodSemantics association. This is
+            // metadata consumption, not an accessor-name fallback.
+            var method = AssociatedAccessor(ownerType);
+            if (method == null)
+            {
+                var inheritedTypes = ownerType.IsInterface
+                    ? ownerType.GetInterfaces().AsEnumerable()
+                    : BaseTypes(ownerType).Concat(ownerType.GetInterfaces());
+                var inherited = inheritedTypes.Select(AssociatedAccessor).Where(candidate => candidate != null)
+                    .GroupBy(candidate => (candidate.Module, candidate.MetadataToken))
+                    .Select(group => group.First()).ToList();
+                if (inherited.Count != 1) return false;
+                method = inherited[0];
+            }
+            physicalOwner = StripGenericArity(method.DeclaringType?.FullName ?? method.DeclaringType?.Name
+                ?? physicalOwner);
+            physicalMethodName = method.Name;
+            return true;
+        }
+        catch { return false; }
+    }
+
+    public bool DeclaresConcretePropertyAccessor(string ownerToken, string propertyName, string accessorKind,
+        int paramCount, int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments) =>
+        ownerToken != null && propertyName != null && accessorKind is "get" or "set"
+        && TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)
+        && list.Count(member => !member.IsPropertyBridge
+            && member.SourcePropertyName == propertyName && member.AccessorKind == accessorKind
+            && member.ParamCount == paramCount && member.MethodArity == methodArity
+            && !member.IsAbstract && !member.IsStatic
+            && (signature == null || AccessorSignatureMatches(member, signature, ownerTypeArguments))) == 1;
+
+    public bool TryNullableGenericPropertySlot(string ownerFqn, string propertyName, string accessorKind,
+        bool isStatic, int argCount, int methodArity, IReadOnlyList<TypeNode> accessorSignature,
+        TypeNode[] ownerTypeArguments,
+        out TypeNode declaredRet, out TypeNode[] declaredParams, out bool[] paramsRefused)
+    {
+        declaredRet = null;
+        declaredParams = null;
+        paramsRefused = null;
+        if (ownerFqn == null || propertyName == null || accessorKind is not ("get" or "set")) return false;
+        var path = new HashSet<string>(StringComparer.Ordinal) { BareOwnerFqn(ownerFqn) };
+        if (FindDeclaredSlot(ownerFqn, null, isStatic, argCount, methodArity, path,
+                out var ret, out var parameters, propertyName, accessorKind, accessorSignature,
+                ownerTypeArguments) != SlotLookup.Declared)
+            return false;
+        declaredRet = ret.Node;
+        declaredParams = parameters.Select(parameter => parameter.Node).ToArray();
+        paramsRefused = parameters.Select(parameter => parameter.Refused).ToArray();
+        return declaredRet != null || parameters.Any(parameter => parameter.Node != null || parameter.Refused);
     }
 
     // The @ClrConv numeric-conversion binding for owner.member: its conv TARGET (the callee's own return-type token, a
@@ -1780,6 +1935,38 @@ sealed partial class ReferenceMetadataIndex
         return false;
     }
 
+    public bool TryResolveTopLevelProperty(string propertyName, string accessorKind, string preferredOwner,
+        int paramCount, int methodArity, IReadOnlyList<TypeNode> accessorSignature,
+        out string owner, out string physicalMethodName)
+    {
+        owner = null;
+        physicalMethodName = null;
+        if (propertyName == null || accessorKind is not ("get" or "set")) return false;
+        // A projected KLIB property carries its producer file class explicitly. That dispatch identity is stronger
+        // than a compilation-wide same-name search and must not be discarded merely because the call remains on the
+        // owner-null top-level substitution axis. When no owner was available, the exact source property/role and
+        // complete frontend-resolved signature still select from authoritative MethodSemantics associations.
+        var owners = preferredOwner == null
+            ? _membersByOwner.Where(pair => IsFileClassOwner(pair.Key))
+            : _membersByOwner.Where(pair =>
+                DottedFqn(BareOwnerFqn(pair.Key)) == DottedFqn(BareOwnerFqn(preferredOwner))
+                && IsFileClassOwner(pair.Key));
+        var candidates = owners
+            .SelectMany(pair => pair.Value.Where(member => member.IsStatic
+                && !member.IsPropertyBridge && member.SourcePropertyName == propertyName
+                && member.AccessorKind == accessorKind
+                && member.ParamCount == paramCount && member.MethodArity == methodArity
+                && AccessorSignatureMatches(member, accessorSignature, Array.Empty<TypeNode>()))
+                .Select(member => (Owner: pair.Key, Member: member)))
+            .ToList();
+        var identities = candidates.Select(candidate => (candidate.Owner, candidate.Member.Name))
+            .Distinct().ToList();
+        if (identities.Count != 1) return false;
+        owner = identities[0].Owner;
+        physicalMethodName = identities[0].Name;
+        return true;
+    }
+
     // The declared RETURN type of a bound member (owner.name, matched by arg count then by name), from the ref.dll —
     // used by StaticType (#59) to recover a call / field read whose BIR node carries NO `ret` (kotc emits `ret` only for
     // a GENERIC call). null when the owner/member is unknown or its return type was not structurable (a delegate/gp).
@@ -1901,7 +2088,9 @@ sealed partial class ReferenceMetadataIndex
     }
 
     SlotLookup FindDeclaredSlot(string ownerFqn, string name, bool isStatic, int argCount, int methodArity,
-        HashSet<string> path, out SlotFact declaredRet, out SlotFact[] declaredParams)
+        HashSet<string> path, out SlotFact declaredRet, out SlotFact[] declaredParams,
+        string propertyName = null, string accessorKind = null, IReadOnlyList<TypeNode> accessorSignature = null,
+        TypeNode[] ownerTypeArguments = null)
     {
         declaredRet = default;
         declaredParams = null;
@@ -1909,12 +2098,17 @@ sealed partial class ReferenceMetadataIndex
         if (TryMembersByBirOwner(bare, out var list))
         {
             var shapeMatches = list.Where(m =>
-                    m.Name == name
+                    (propertyName == null
+                        ? m.Name == name
+                        : !m.IsPropertyBridge && m.SourcePropertyName == propertyName
+                            && m.AccessorKind == accessorKind)
                     && m.IsStatic == isStatic
                     && m.ParamCount == argCount
                     && m.MethodArity == methodArity
                     && m.ParamTypeNodes != null
-                    && m.ParamTypeNodes.Length == argCount)
+                    && m.ParamTypeNodes.Length == argCount
+                    && (propertyName == null || AccessorSignatureMatches(
+                        m, accessorSignature, ownerTypeArguments)))
                 .ToArray();
             // Declared HERE, ambiguously: refuse outright rather than walking upward, where an unrelated base member
             // of the same shape would look like an answer to a call this type's own overload set already owns.
@@ -1925,7 +2119,10 @@ sealed partial class ReferenceMetadataIndex
                 declaredRet = DeclaredSlot(member.NullableGenericRet, member.ReturnTypeNode);
                 declaredParams = new SlotFact[argCount];
                 for (var i = 0; i < argCount; i++)
-                    declaredParams[i] = DeclaredSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i]);
+                    declaredParams[i] = propertyName == null
+                        ? DeclaredSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i])
+                        : ExactPropertyParameterSlot(member.NullableGenericParams?[i], member.ParamTypeNodes[i],
+                            accessorSignature?[i]);
                 // DECLARED HERE TERMINATES THE SEARCH, facts or no facts. A concrete member that shadows or
                 // implements an inherited namesake IS the declaration the call binds to; continuing upward because
                 // this one happens to carry no erasure fact would hand the call the BASE's carrier and rewrite a
@@ -1951,8 +2148,10 @@ sealed partial class ReferenceMetadataIndex
             // same-shape interface answer win instead of triggering the disagreement refusal.
             var key = BareOwnerFqn(super.Name);
             if (!path.Add(key)) continue;
+            var superTypeArguments = ConstructedSupertypeArguments(super, ownerTypeArguments);
             var found = FindDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, path,
-                out var sret, out var sps);
+                out var sret, out var sps, propertyName, accessorKind, accessorSignature,
+                superTypeArguments);
             path.Remove(key);
             if (found == SlotLookup.Refused) return SlotLookup.Refused;
             if (found != SlotLookup.Declared) continue;
@@ -2056,6 +2255,14 @@ sealed partial class ReferenceMetadataIndex
     static SlotFact DeclaredSlot(TypeNode carrier, TypeNode physical)
         => new(carrier ?? OpenPhysical(physical), false);
 
+    // An exact property accessor lookup is tied to a Property row and its associated MethodSemantics method, then
+    // checked against the complete frontend-resolved signature in the constructed owner's type frame. For a fixed
+    // parameter the reflection spelling is already CLR vocabulary (`System.String`) while this pass still operates
+    // on BIR vocabulary (`kotlin.String`), so retain that explicit semantic parameter instead of translating the
+    // physical name backward. Open generic positions still come from the declaration and are substituted normally.
+    static SlotFact ExactPropertyParameterSlot(TypeNode carrier, TypeNode physical, TypeNode resolvedSignature)
+        => new(carrier ?? OpenPhysical(physical) ?? resolvedSignature, false);
+
     // The physical declaration of a slot, admitted only while it still says something the call site's type arguments
     // complete — see the refusal reasoning on TryNullableGenericSlot.
     static TypeNode OpenPhysical(TypeNode t) => t != null && ContainsTv(t) ? Canonical(t) : null;
@@ -2115,6 +2322,17 @@ sealed partial class ReferenceMetadataIndex
         return _inlineBacking.TryGetValue(ownerFqn, out var info) && member == info.Getter && (conv = info.Conv) != null;
     }
 
+    public bool TryInlineFieldGetter(string ownerFqn, string propertyName, string accessorKind, out string conv)
+    {
+        conv = null;
+        if (accessorKind != "get" || !_inlineBacking.TryGetValue(ownerFqn, out var info)
+            || !TryMembersByBirOwner(ownerFqn, out var members)) return false;
+        return members.Any(member => member.Name == info.Getter
+                && !member.IsPropertyBridge && member.SourcePropertyName == propertyName
+                && member.AccessorKind == accessorKind)
+            && (conv = info.Conv) != null;
+    }
+
     // Whether the owner is an @JvmInline value class erased to a primitive CLR form (so `new T(arg)` is the inline BOX).
     public bool IsInlineValueClass(string ownerFqn) => _inlineBacking.ContainsKey(ownerFqn);
 
@@ -2125,6 +2343,215 @@ sealed partial class ReferenceMetadataIndex
     public bool IsRule3Member(string ownerFqn, string memberName) =>
         TryMembersByBirOwner(ownerFqn, out var list) &&
         list.Any(m => m.Name == memberName && m.Intrinsic == null && m.PropertyName == null && !m.Conv && !m.IsAbstract);
+
+    public bool TryRule3PropertyAccessor(string ownerFqn, string propertyName, string accessorKind,
+        out string physicalMethodName)
+    {
+        physicalMethodName = null;
+        if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
+        var candidates = list.Where(member => member.SourcePropertyName == propertyName
+            && !member.IsPropertyBridge && member.AccessorKind == accessorKind
+            && member.Intrinsic == null && member.PropertyName == null
+            && !member.Conv && !member.IsAbstract).Select(member => member.Name)
+            .Distinct(StringComparer.Ordinal).ToList();
+        if (candidates.Count != 1) return false;
+        physicalMethodName = candidates[0];
+        return true;
+    }
+
+    // Exact accessor identity carried by a referenced Kotlin declaration's PropertyInfo/MethodSemantics association.
+    // The reference assembly intentionally keeps the Kotlin declaration shape: an implementation such as
+    // ArrayDeque.size is therefore authored as get_size there even though its runtime declaration implements the
+    // @ClrIntrinsic("Count") collection slot as get_Count. Resolve that one-way CLR allocation from the explicit
+    // property identity plus the referenced Kotlin hierarchy/annotation metadata; never infer it from either method
+    // spelling. A property with no explicit CLR binding anywhere in its override hierarchy keeps the exact accessor
+    // method associated with its own Property row.
+    public bool TryKotlinPropertyAccessor(string ownerFqn, string propertyName, string accessorKind, int paramCount,
+        int methodArity, IReadOnlyList<TypeNode> accessorSignature, TypeNode[] ownerTypeArguments,
+        out string physicalMethodName, out bool isVirtual)
+    {
+        physicalMethodName = null;
+        isVirtual = false;
+        if (!TryMembersByBirOwner(BareOwnerFqn(ownerFqn), out var list)) return false;
+        var declarations = list.Where(member => member.SourcePropertyName == propertyName
+                && !member.IsPropertyBridge && member.AccessorKind == accessorKind && member.ParamCount == paramCount
+                && member.MethodArity == methodArity)
+            .ToList();
+        if (accessorSignature == null && declarations.Count > 1) return false;
+        var candidates = declarations.Where(member => AccessorSignatureMatches(
+                member, accessorSignature, ownerTypeArguments))
+            .Select(member => (member.Name, member.IsVirtual)).Distinct().ToList();
+        if (candidates.Count != 1) return false;
+        physicalMethodName = TryReferencedPropertyPhysicalBinding(ownerFqn, propertyName, accessorKind, paramCount,
+            methodArity, accessorSignature, ownerTypeArguments,
+            new HashSet<string>(StringComparer.Ordinal), out _, out var bound)
+            ? bound
+            : candidates[0].Name;
+        isVirtual = candidates[0].IsVirtual;
+        return true;
+    }
+
+    // Property identity and get/set role do not distinguish same-name context/member-extension overloads. The
+    // frontend-resolved accessor signature is the remaining semantic discriminator. Type-variable positions are
+    // completed by the constructed owner/method and therefore do not distinguish declarations here; every nominal
+    // non-variable position must agree. Physical get_/set_ spellings never participate in this decision.
+    static bool AccessorSignatureMatches(MemberBinding member, IReadOnlyList<TypeNode> signature,
+        TypeNode[] ownerTypeArguments)
+    {
+        if (signature == null) return true;
+        if (member.ParamTypeNodes == null || member.ParamTypeNodes.Length != signature.Count) return false;
+        for (var i = 0; i < signature.Count; i++)
+        {
+            var declared = member.NullableGenericParams is { } carriers && i < carriers.Length && carriers[i] != null
+                ? carriers[i]
+                : member.ParamTypeNodes[i];
+            if (declared == null) return false;
+            if (ownerTypeArguments != null)
+                declared = SupertypeGraph.SubstOwnerTvs(declared, ownerTypeArguments);
+            if (!AccessorDeclarationDescribesCall(declared, signature[i])) return false;
+        }
+        return true;
+    }
+
+    internal static bool AccessorDeclarationDescribesCall(TypeNode declaration, TypeNode call)
+    {
+        if (declaration is TypeNode.Tv) return true;
+        if (declaration is TypeNode.Oblivious dOb)
+            return AccessorDeclarationDescribesCall(dOb.Of, call);
+        if (call is TypeNode.Oblivious cOb)
+            return AccessorDeclarationDescribesCall(declaration, cOb.Of);
+        if (declaration is TypeNode.Nullable dn)
+            return call is TypeNode.Nullable cn
+                ? AccessorDeclarationDescribesCall(dn.Of, cn.Of)
+                : AccessorDeclarationDescribesCall(dn.Of, call);
+        if (call is TypeNode.Nullable callNullable)
+            return AccessorDeclarationDescribesCall(declaration, callNullable.Of);
+        if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
+        {
+            if (ParamKey(df) != ParamKey(cf)) return false;
+            if (df.Args == null || cf.Args == null) return df.Args == null && cf.Args == null;
+            return df.Args.Length == cf.Args.Length
+                && df.Args.Select((arg, i) => AccessorDeclarationDescribesCall(arg, cf.Args[i])).All(x => x);
+        }
+        if (declaration is TypeNode.Array da && call is TypeNode.Array ca)
+            return AccessorDeclarationDescribesCall(da.Elem, ca.Elem);
+        if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
+            return AccessorDeclarationDescribesCall(db.Of, cb.Of);
+        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn
+            && dfn.Suspend == cfn.Suspend && dfn.Params.Length == cfn.Params.Length)
+            return AccessorDeclarationDescribesCall(dfn.Ret, cfn.Ret)
+                && dfn.Params.Select((arg, i) => AccessorDeclarationDescribesCall(arg, cfn.Params[i])).All(x => x)
+                && (dfn.Recv == null
+                    ? cfn.Recv == null
+                    : cfn.Recv != null && AccessorDeclarationDescribesCall(dfn.Recv, cfn.Recv));
+        return DeclarationDescribesCall(declaration, call);
+    }
+
+    bool TryReferencedPropertyPhysicalBinding(string ownerFqn, string propertyName, string accessorKind,
+        int paramCount, int methodArity, IReadOnlyList<TypeNode> accessorSignature,
+        TypeNode[] ownerTypeArguments, HashSet<string> path,
+        out string physicalPropertyName, out string physicalMethodName)
+    {
+        physicalPropertyName = null;
+        physicalMethodName = null;
+        var bare = DottedFqn(BareOwnerFqn(ownerFqn));
+        if (!path.Add(bare)) return false;
+        try
+        {
+            (string Property, string Method)? associated = null;
+            if (TryMembersByBirOwner(bare, out var members))
+            {
+                var direct = members.Where(member => member.SourcePropertyName == propertyName
+                        && !member.IsPropertyBridge && member.AccessorKind == accessorKind
+                        && member.ParamCount == paramCount
+                        && member.MethodArity == methodArity
+                        && AccessorSignatureMatches(member, accessorSignature, ownerTypeArguments))
+                    .ToList();
+                if (direct.Count > 1) return false;
+                if (direct.Count == 1)
+                {
+                    var member = direct[0];
+                    if (member.Intrinsic != null)
+                    {
+                        physicalPropertyName = member.Intrinsic;
+                        physicalMethodName = KotlinPropertyAccessors.PhysicalName(member.Intrinsic, accessorKind);
+                        return true;
+                    }
+                    var requiredAccess = accessorKind == "set" ? 2 : 1;
+                    if (member.PropertyName != null && (member.PropertyAccess & requiredAccess) != 0)
+                    {
+                        physicalPropertyName = member.PropertyName;
+                        physicalMethodName = KotlinPropertyAccessors.PhysicalName(member.PropertyName, accessorKind);
+                        return true;
+                    }
+                    // For an ordinary CLR Property, or a compiler-authored property without a separate intrinsic,
+                    // MethodSemantics is the authoritative physical association. SourcePropertyName may come from a
+                    // Kotlin carrier and therefore need not equal the CLR Property row's metadata name.
+                    if (member.AssociatedPropertyName != null)
+                        associated = (member.AssociatedPropertyName, member.Name);
+                }
+            }
+
+            var inherited = new HashSet<(string Property, string Method)>();
+            if (_referenceTypeShapes.TryGetValue(bare, out var shape))
+                foreach (var super in Supertypes(shape))
+                    if (TryReferencedPropertyPhysicalBinding(super.Name, propertyName, accessorKind, paramCount,
+                            methodArity, accessorSignature,
+                            ConstructedSupertypeArguments(super, ownerTypeArguments), path,
+                            out var candidateProperty, out var candidateMethod))
+                        inherited.Add((candidateProperty, candidateMethod));
+            if (inherited.Count == 1)
+            {
+                (physicalPropertyName, physicalMethodName) = inherited.Single();
+                return true;
+            }
+            if (inherited.Count > 1) return false;
+
+            // A source-facing reference Property row may coexist with an inherited CLR binding on an aliased type
+            // (`List.size` is represented as `size` in the reference surface but binds through `Collection` to
+            // `Count` at runtime). Only use the direct MethodSemantics association after the complete explicit CLR
+            // binding hierarchy has had first refusal.
+            if (associated is { } directAssociation)
+            {
+                (physicalPropertyName, physicalMethodName) = directAssociation;
+                return true;
+            }
+
+            // Kotlin permits a new `var` setter to override a getter-only `val`. No setter MethodSemantics row exists
+            // in that ancestor, but the getter still owns the physical CLR Property allocation. Resolve that exact
+            // getter identity (the setter signature without its final value parameter) and allocate the other role of
+            // the same property. The getter walk is one-way and cannot recurse back into this setter fallback.
+            if (accessorKind == "set" && paramCount > 0
+                && (accessorSignature == null || accessorSignature.Count > 0))
+            {
+                var getterSignature = accessorSignature?.Take(accessorSignature.Count - 1).ToArray();
+                if (TryReferencedPropertyPhysicalBinding(ownerFqn, propertyName, "get", paramCount - 1,
+                        methodArity, getterSignature, ownerTypeArguments,
+                        new HashSet<string>(StringComparer.Ordinal),
+                        out var getterProperty, out _))
+                {
+                    physicalPropertyName = getterProperty;
+                    physicalMethodName = KotlinPropertyAccessors.PhysicalName(getterProperty, "set");
+                    return true;
+                }
+            }
+            return false;
+        }
+        finally
+        {
+            path.Remove(bare);
+        }
+    }
+
+    // `super.Args` is expressed in the current owner's declaration frame.  Carry the caller's constructed owner
+    // arguments through that edge before matching an accessor on the referenced supertype.  Without this, a type-scoped
+    // `T` remains a wildcard and can make `Base<T>.p` spuriously collide with a nominal same-name overload.
+    static TypeNode[] ConstructedSupertypeArguments(TypeNode.Fqn super, TypeNode[] ownerTypeArguments)
+    {
+        if (super.Args == null) return Array.Empty<TypeNode>();
+        if (ownerTypeArguments == null) return null;
+        return super.Args.Select(argument => SupertypeGraph.SubstOwnerTvs(argument, ownerTypeArguments)).ToArray();
+    }
 
     // Whether the ref.dll owner DECLARES its own concrete (non-abstract, nullary, instance) `iterator()` — a real slot a
     // `this.iterator()`/`x.iterator()` binds to directly, so MemberCallSubstitution must NOT reroute it to the base-Iterator
@@ -2156,6 +2583,20 @@ sealed partial class ReferenceMetadataIndex
             && ps.Select((p, i) => p == signature[i]).All(x => x)) == 1;
     }
 
+    // Property twin of DeclaresExactInstanceMember. Source property identity and accessor role select the
+    // declaration; the CLR accessor spelling is a later bir2cir output and never participates in lookup.
+    public bool DeclaresExactInstancePropertyAccessor(string ownerToken, string propertyName, string accessorKind,
+        int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments)
+    {
+        if (ownerToken == null || propertyName == null || accessorKind is not ("get" or "set")
+            || IsAliasedOwner(ownerToken)
+            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)) return false;
+        return list.Count(m => !m.IsStatic && !m.IsPropertyBridge && m.SourcePropertyName == propertyName
+            && m.AccessorKind == accessorKind && m.MethodArity == methodArity
+            && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
+            && AccessorSignatureMatches(m, signature, ownerTypeArguments)) == 1;
+    }
+
     // Whether the exact referenced declaration is virtual. When BIR omitted a declaration signature (common for
     // nullary property accessors), accept only a unique name/method-arity/parameter-count match. This is a CLR
     // dispatch fact consumed by bir2cir; ilemit must not rediscover it from reflection while emitting.
@@ -2169,6 +2610,22 @@ sealed partial class ReferenceMetadataIndex
         if (signature != null)
             candidates = candidates.Where(m => m.ParamTypeNodes is { } ps && ps.Length == signature.Count
                 && ps.Select((p, i) => p == signature[i]).All(x => x));
+        var matches = candidates.ToList();
+        return matches.Count == 1 && matches[0].IsVirtual;
+    }
+
+    // Property twin of DeclaresVirtualInstanceMember. With no call signature, require the complete
+    // property/role/generic-arity/parameter-count shape to identify one declaration on this exact owner.
+    public bool DeclaresVirtualInstancePropertyAccessor(string ownerToken, string propertyName, string accessorKind,
+        int methodArity, IReadOnlyList<TypeNode> signature, int paramCount, TypeNode[] ownerTypeArguments)
+    {
+        if (ownerToken == null || propertyName == null || accessorKind is not ("get" or "set")
+            || IsAliasedOwner(ownerToken)
+            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)) return false;
+        var candidates = list.Where(m => !m.IsStatic && !m.IsPropertyBridge && m.SourcePropertyName == propertyName
+            && m.AccessorKind == accessorKind && m.MethodArity == methodArity && m.ParamCount == paramCount);
+        if (signature != null)
+            candidates = candidates.Where(m => AccessorSignatureMatches(m, signature, ownerTypeArguments));
         var matches = candidates.ToList();
         return matches.Count == 1 && matches[0].IsVirtual;
     }
@@ -2457,14 +2914,13 @@ sealed partial class ReferenceMetadataIndex
 
                     // `value`/inline class (marked with [KotlinValue], the 2.4.0 carrier of `mods.value`): its single
                     // instance backing field IS the erased value. Record that property's GETTER + the field's CLR conv
-                    // token so a `get_<prop>()` call collapses to `conv(<recv>)`. NARROWED to EXACTLY ONE instance field
+                    // token so the semantic property getter collapses to `conv(<recv>)`. NARROWED to EXACTLY ONE instance field
                     // — a value class has precisely one property/backing field, so requiring a single field picks the
                     // correct underlying type (and refuses to erase off an arbitrary FirstOrDefault if the shape is
                     // unexpected). The GETTER is the accessor of the PROPERTY that OWNS that field: an accessor-routed
-                    // property's storage carries the compiler-generated `<data>k__BackingField` name
-                    // (BackingFieldRename), which no `"get_" + field.Name` spelling can reach. A field that is NOT an
-                    // auto-property's storage (a plain-field/`@ClrField` shape, or a pre-rename assembly) IS the member
-                    // itself, so its own name stays the accessor stem — the entry is never dropped, in any shape.
+                    // property's storage carries the compiler-generated `<data>k__BackingField` name. The owning
+                    // PropertyInfo and its exact GetMethod association are therefore required; no field-name fallback
+                    // can identify the Kotlin accessor.
                     if (HasAttribute(type.GetCustomAttributesData(), KotlinValueAttr))
                     {
                         var instanceFields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
@@ -2474,12 +2930,39 @@ sealed partial class ReferenceMetadataIndex
                             var owningProp = type
                                 .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)
                                 .FirstOrDefault(p => BackingFieldRename.Mangle(p.Name) == backing.Name);
-                            metadata.InlineBacking[ownerFqn] = (owningProp?.GetMethod?.Name ?? "get_" + backing.Name, conv);
+                            if (owningProp?.GetGetMethod(true) is MethodInfo getter)
+                                metadata.InlineBacking[ownerFqn] = (getter.Name, conv);
                         }
                     }
 
-                    foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    const BindingFlags declaredMemberFlags = BindingFlags.Public | BindingFlags.NonPublic
+                        | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+                    // MethodSemantics is an association table. Index it once per Type instead of rescanning every
+                    // PropertyInfo for every MethodInfo below. A malformed/ambiguous method associated with more than
+                    // one property states no source identity; never select whichever reflection happens to return first.
+                    var propertyAccessors = new Dictionary<int, (string Name, string Kind)?>();
+                    void IndexPropertyAccessor(MethodInfo accessor, string propertyName, string kind)
                     {
+                        if (accessor == null) return;
+                        var association = (propertyName, kind);
+                        if (propertyAccessors.TryGetValue(accessor.MetadataToken, out var existing)
+                            && existing != association)
+                            propertyAccessors[accessor.MetadataToken] = null;
+                        else
+                            propertyAccessors[accessor.MetadataToken] = association;
+                    }
+                    foreach (var property in type.GetProperties(declaredMemberFlags))
+                    {
+                        IndexPropertyAccessor(property.GetGetMethod(true), property.Name, "get");
+                        IndexPropertyAccessor(property.GetSetMethod(true), property.Name, "set");
+                    }
+
+                    foreach (var method in type.GetMethods(declaredMemberFlags))
+                    {
+                        propertyAccessors.TryGetValue(method.MetadataToken, out var owningProperty);
+                        var carriedProperty = dotKtAuthored
+                            ? KotlinPropertyAccessorPayload(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
+                            : null;
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
@@ -2529,7 +3012,12 @@ sealed partial class ReferenceMetadataIndex
                                 ? method.GetParameters().Select(p => CarrierTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly, KotlinNullableGenericAttr)).ToArray()
                                 : null,
                             DeclarationTypeNode(method.ReturnType),
-                            method.MetadataToken));
+                            method.MetadataToken,
+                            carriedProperty?.Name ?? owningProperty?.Name,
+                            carriedProperty?.Kind ?? owningProperty?.Kind,
+                            owningProperty?.Name,
+                            carriedProperty?.Association.StartsWith("dotkt$bridge$property$",
+                                StringComparison.Ordinal) == true));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -2700,6 +3188,9 @@ sealed partial class ReferenceMetadataIndex
             KotlinExtensionCoreAttr,
             HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(
+            KotlinPropertyAccessorAttr,
+            HandleKind.MethodDefinition);
+        attrs.ValidateCarrierTargets(
             KotlinStaticCarrierAttr,
             HandleKind.TypeDefinition);
         foreach (var typeHandle in reader.TypeDefinitions)
@@ -2710,6 +3201,7 @@ sealed partial class ReferenceMetadataIndex
             {
                 using (attrs.CarrierDocument(method, KotlinCompanionExtensionAttr)) { }
                 using (attrs.CarrierDocument(method, KotlinExtensionCoreAttr)) { }
+                using (attrs.CarrierDocument(method, KotlinPropertyAccessorAttr)) { }
             }
             foreach (var field in type.GetFields())
                 using (attrs.CarrierDocument(field, KotlinCompanionExtensionAttr)) { }
@@ -3391,6 +3883,29 @@ sealed partial class ReferenceMetadataIndex
         body.Length == 6 && body[0] == 0x73 && body[^1] == 0x7A;
 
     sealed record CompanionExtensionPayloadInfo(string ReceiverJson, string Name, string Kind);
+    sealed record PropertyAccessorPayloadInfo(string Name, string Kind, string Association);
+
+    static PropertyAccessorPayloadInfo KotlinPropertyAccessorPayload(
+        IList<CustomAttributeData> attrs, Assembly declaringAssembly)
+    {
+        var trusted = attrs.Where(c =>
+            c.AttributeType.FullName == KotlinPropertyAccessorAttr &&
+            c.AttributeType.Assembly == declaringAssembly &&
+            HasAttribute(c.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
+        if (trusted.Length == 0) return null;
+        if (trusted.Length != 1)
+            throw new InvalidDataException("expected exactly one trusted [KotlinPropertyAccessor]");
+        var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinPropertyAccessorAttr) as JsonObject
+            ?? throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
+        if (payload.Count != 3 ||
+            payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name) ||
+            payload["kind"] is not JsonValue kindValue || !kindValue.TryGetValue<string>(out var kind) ||
+            payload["association"] is not JsonValue associationValue ||
+                !associationValue.TryGetValue<string>(out var association) ||
+            string.IsNullOrEmpty(name) || string.IsNullOrEmpty(association) || kind is not ("get" or "set"))
+            throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
+        return new PropertyAccessorPayloadInfo(name, kind, association);
+    }
 
     static string KotlinExtensionCoreName(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly)
@@ -3616,7 +4131,8 @@ sealed partial class ReferenceMetadataIndex
         if (value is not null && jsonValue is null) return null;
         var declaredType = DeclarationTypeNode(type);
         if (declaredType is null) return null;
-        return new JsonObject {
+        return new JsonObject
+        {
             ["k"] = "const",
             ["type"] = TypeJson.Write(declaredType),
             ["value"] = jsonValue,
@@ -3727,10 +4243,20 @@ sealed partial class ReferenceMetadataIndex
     // (kotlin.Int -> "int", kotlin.Byte -> "sbyte", ...). Null if the field is not a primitive ilemit conv'able.
     static string InlineFieldConv(Type fieldType) => fieldType.FullName switch
     {
-        "kotlin.Int" => "int", "kotlin.Long" => "long", "kotlin.Short" => "short", "kotlin.Byte" => "sbyte",
-        "kotlin.Char" => "char", "kotlin.Double" => "double", "kotlin.Float" => "float",
-        "System.Int32" => "int", "System.Int64" => "long", "System.Int16" => "short", "System.SByte" => "sbyte",
-        "System.Char" => "char", "System.Double" => "double", "System.Single" => "float",
+        "kotlin.Int" => "int",
+        "kotlin.Long" => "long",
+        "kotlin.Short" => "short",
+        "kotlin.Byte" => "sbyte",
+        "kotlin.Char" => "char",
+        "kotlin.Double" => "double",
+        "kotlin.Float" => "float",
+        "System.Int32" => "int",
+        "System.Int64" => "long",
+        "System.Int16" => "short",
+        "System.SByte" => "sbyte",
+        "System.Char" => "char",
+        "System.Double" => "double",
+        "System.Single" => "float",
         _ => null,
     };
 
@@ -4132,7 +4658,7 @@ readonly record struct SlotFact(TypeNode Node, bool Refused);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false);
 
 // The exact authored binding selected from a complete declaration identity. Carrying this value across the alias-
 // companion rewrite prevents a later name+arity lookup from silently selecting a different overload.

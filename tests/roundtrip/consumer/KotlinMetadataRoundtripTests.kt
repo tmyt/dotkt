@@ -246,6 +246,11 @@ class KotlinApiShapeRoundtripTests {
         val collectionValue = String::auditSingleton
         ClassicAssert.AreEqual("[one]", collectionValue.get("one").toString())
 
+        // The stdlib declares same-name extension properties in several physical file classes. The projected owner
+        // on this resolved reference, not a global get_/set_ name search, must select the List accessor.
+        val stdlibLastIndex = List<Int>::lastIndex
+        ClassicAssert.AreEqual(1, stdlibLastIndex.get(listOf(10, 20)))
+
         val box = RefBox("before")
         val unboundMutable = RefBox<String>::auditValue
         unboundMutable.set(box, "unbound")

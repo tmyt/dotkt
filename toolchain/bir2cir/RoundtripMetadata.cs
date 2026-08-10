@@ -45,6 +45,7 @@ static class RoundtripMetadata
     const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
+    const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
     internal const string AKExtensionCore = Ns + "KotlinExtensionCoreAttribute";
     const string AKStaticCarrier = Ns + "KotlinStaticCarrierAttribute";
@@ -186,6 +187,13 @@ static class RoundtripMetadata
 
     static void StampMethod(JsonObject mo)
     {
+        // CLR Property rows cannot describe method-generic accessors. The allocator leaves this exact semantic
+        // association only on those MethodDefs; turn it into trusted metadata before the hand-off fact disappears.
+        if (mo[KotlinPropertyAccessors.MetadataCarrierKey] is JsonObject propertyAccessor)
+        {
+            Append(mo, JsonCarrierAttr(AKPropertyAccessor, propertyAccessor));
+            mo.Remove(KotlinPropertyAccessors.MetadataCarrierKey);
+        }
         // [KotlinFunction(flags)] — Kotlin modifiers with no .NET analog. suspendBridge is the bir2cir-synthesized
         // Task<R> bridge that IS the suspend fun's CLR ABI (dll2klib must see it as `suspend fun`).
         int flags = 0;
@@ -430,6 +438,10 @@ static class RoundtripMetadata
         {
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
+            // A method-generic Kotlin property has no representable CLR Property signature. Metadata-bearing builds
+            // consume this exact association into [KotlinPropertyAccessor]; the runtime twin emits no round-trip
+            // metadata, so discard the same pass-local hand-off before CIR reaches ilemit.
+            po.Remove(KotlinPropertyAccessors.MetadataCarrierKey);
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);
@@ -625,6 +637,7 @@ static class RoundtripMetadata
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
+            AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts
             AttrClass(AKExtensionCore, Ctor(Param("System.String"), Param(ByteArrayType()))), // generic C# wrapper -> Kotlin semantic core
             AttrClass(AKStaticCarrier, Ctor(Param("System.String"), Param(ByteArrayType()))), // one physical static surface for a generic Kotlin owner

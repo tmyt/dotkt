@@ -71,7 +71,8 @@ static class EnumMemberBinding
         var owner = TypeJson.OwnerName(obj["ownerType"]);
 
         // (2) GENERIC receiver: `kotlin.Enum.name`/`.toString` -> objMethod ToString (= the declared constant name).
-        if (owner == "kotlin.Enum" && method is "get_name" or "toString" or "get_toString")
+        var propertyAccess = (obj["prop"] as JsonValue)?.TryGetValue<string>(out var access) == true ? access : null;
+        if (owner == "kotlin.Enum" && ((method == "name" && propertyAccess == "get") || method == "toString"))
         {
             ToObjMethod(obj, recv, "ToString", arg: null);
             return;
@@ -80,7 +81,7 @@ static class EnumMemberBinding
         // explicitly: enumOrdinal over the receiver's lexical T asks ilemit only to emit the CIR-authored generic
         // enum reflection sequence. This must happen before generic constrained-member binding; otherwise the bare
         // Kotlin owner is mistaken for a real `System.Enum.get_ordinal` MemberRef.
-        if (owner == "kotlin.Enum" && method is "get_ordinal" or "ordinal")
+        if (owner == "kotlin.Enum" && method == "ordinal" && propertyAccess == "get")
         {
             var ordinal = new JsonObject
             {
@@ -120,7 +121,8 @@ static class EnumMemberBinding
             ["recv"] = recv.DeepClone(),
         };
         if (arg != null) newNode["arg"] = arg.DeepClone();
-        foreach (var key in new[] { "ownerType", "virtual", "method", "args", "arg", "sig", "dynRet", "ret", "overrides", "recv" })
+        foreach (var key in new[] { "ownerType", "virtual", "method", "prop", "propertyName", "propertyAccessor",
+                     "args", "arg", "sig", "dynRet", "ret", "overrides", "recv" })
             obj.Remove(key);
         foreach (var kv in newNode) obj[kv.Key] = kv.Value.DeepClone();
     }

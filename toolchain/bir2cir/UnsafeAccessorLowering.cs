@@ -191,6 +191,7 @@ static class UnsafeAccessorLowering
         if (TypeJson.Read(ownerNode) is not TypeNode.Fqn ownerType
             || Str(access["method"]) is not string targetName)
             return;
+        KotlinPropertyAccessors.TryCallIdentity(access, out var propertyName, out var propertyAccessor);
 
         hosts.TryGetValue(ownerType.Name, out var targetHost);
         if (targetHost != null && DirectPrivateAccessIsValid(caller.Name, targetHost.Name, hosts)) return;
@@ -201,13 +202,23 @@ static class UnsafeAccessorLowering
         if (targetHost != null)
         {
             var candidates = targetHost.LookupMethods
-                .Where(method => Str(method["name"]) == targetName
+                .Where(method => !KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
+                    && (propertyAccessor != null
+                        ? KotlinPropertyAccessors.TryIdentity(method, out var candidateProperty,
+                            out var candidateAccessor)
+                            && candidateProperty == propertyName && candidateAccessor == propertyAccessor
+                        : Str(method["name"]) == targetName
+                            && !KotlinPropertyAccessors.TryIdentity(method, out _, out _))
                     && Bool(method["static"]) == (kind == "callStatic")
                     && (method["params"] is JsonArray parameters ? parameters.Count : 0) == signature.Count
                     && (method["typeParams"] is JsonArray ownParams ? ownParams.Count : 0) == methodArity)
                 .ToArray();
             target = SelectMethod(candidates, signature, ownerType.Args);
             if (target == null || Str(target["vis"]) is not ("private" or "protected")) return;
+            // UnsafeAccessorAttribute names the actual target MethodDef. The call still carries its Kotlin property
+            // identity at this point, while the declaration has already passed through the physical allocator.
+            targetName = Str(target["name"])
+                ?? throw new InvalidOperationException("private Kotlin accessor has no physical method name");
         }
         else if (frontendVisibility is not ("private" or "protected"))
             return;

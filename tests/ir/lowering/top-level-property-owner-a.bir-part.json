@@ -1,0 +1,35 @@
+{
+  "fileClass": "TopLevelPropertyOwnerAKt", "hasMain": false,
+  "fields": [], "refTypes": [], "types": [],
+  "properties": [
+    {
+      "name": "selected", "type": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+      "kotlinAccessors": ["get"], "propertyAssociation": "owner-a-selected"
+    }
+  ],
+  "methods": [
+    {
+      "name": "selected", "propertyName": "selected", "propertyAccessor": "get",
+      "propertyAssociation": "owner-a-selected", "static": true,
+      "typeParams": [{ "name": "T" }],
+      "params": [{ "name": "receiver", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+      "ret": { "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "void" }, "value": null } }],
+      "attrs": []
+    },
+    {
+      "name": "readSelected", "static": true, "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [{
+        "k": "exprStmt", "expr": {
+          "k": "callStatic", "method": "selected", "prop": "get",
+          "calleeOwner": { "t": "fqn", "name": "TopLevelPropertyOwnerAKt" },
+          "typeArgs": [{ "t": "fqn", "name": "kotlin.Int" }],
+          "shapeTypes": [{ "t": "fqn", "name": "kotlin.Int" }],
+          "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
+          "args": [{ "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }]
+        }
+      }]
+    }
+  ]
+}

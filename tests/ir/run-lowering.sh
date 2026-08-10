@@ -116,6 +116,44 @@ for manifest in tests/ir/lowering/reject-multi-*.inputs; do
 	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$log" | sed 's/^/                 /'; else echo "  LOWERING ok    $name (refused)"; fi
 done
 
+# A module-wide accept rule can likewise depend on more than one source root (for example, a frontend-resolved
+# file-facade owner must distinguish otherwise identical top-level declarations). Its manifest and assertion syntax
+# mirror the reject-multi lane, but successful lowering is required.
+for manifest in tests/ir/lowering/accept-multi-*.inputs; do
+	[[ -e "$manifest" ]] || continue
+	cases=$((cases + 1))
+	name="$(basename "$manifest" .inputs)"
+	assert="${manifest%.inputs}.assert"
+	mapfile -t inputs < <(sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$manifest")
+	if [[ ${#inputs[@]} -lt 2 ]]; then
+		echo "  LOWERING FAIL  $name: multi-root manifest needs at least two inputs"; rc=1; continue
+	fi
+	if [[ ! -f "$assert" ]] || ! grep -qE '^[+-].' "$assert"; then
+		echo "  LOWERING FAIL  $name: no effective .assert file"; rc=1; continue
+	fi
+	out="$work/$name"; mkdir -p "$out"
+	if ! log="$(dotnet "$BIR2CIR_DLL" "$out" --compile-refs "$refs" "${inputs[@]}" 2>&1)"; then
+		echo "  LOWERING FAIL  $name: bir2cir refused the multi-root document"
+		printf '%s\n' "$log" | sed 's/^/                 /'
+		rc=1; continue
+	fi
+	cir="$(cat "$out"/*.cir.json | tr -d ' \n\t')"
+	bad=0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		case "$line" in
+			''|'#'*) continue ;;
+			'+'*) if ! printf '%s' "$cir" | grep -qF -- "${line:1}"; then
+					echo "  LOWERING FAIL  $name: the CIR is MISSING ${line:1}"; bad=1
+				fi ;;
+			'-'*) if printf '%s' "$cir" | grep -qF -- "${line:1}"; then
+					echo "  LOWERING FAIL  $name: the CIR CONTAINS ${line:1}"; bad=1
+				fi ;;
+			*) echo "  LOWERING FAIL  $name: malformed assertion line: $line"; bad=1 ;;
+		esac
+	done < "$assert"
+	if [[ $bad -ne 0 ]]; then rc=1; printf '%s\n' "$cir" | sed 's/^/                 /'; else echo "  LOWERING ok    $name"; fi
+done
+
 # --- ACCEPT half: bir2cir lowers the document and the CIR satisfies the +/- assertions ---------------------------
 for bir in tests/ir/lowering/*.bir.json; do
 	[[ -e "$bir" ]] || continue

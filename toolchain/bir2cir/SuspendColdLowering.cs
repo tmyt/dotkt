@@ -272,7 +272,7 @@ static partial class SuspendColdLowering
     // member property), which stays untouched. Lowered to `<current continuation>.get_context` (JVM's <cont>.getContext).
     static bool IsCoroutineContextRead(JsonObject o) =>
         Str(o["k"]) == "callStatic"
-        && Str(o["method"]) is "coroutineContext" or "get_coroutineContext"
+        && KotlinPropertyAccessors.IsCall(o, "coroutineContext", "get")
         && (o["args"] is not JsonArray ar || ar.Count == 0);
 
     const string CoroutineContextFqn = "kotlin.coroutines.CoroutineContext";
@@ -611,7 +611,8 @@ static partial class SuspendColdLowering
             ["ownerType"] = Tw(resultType),
             ["virtual"] = false,
             ["recv"] = LocalValue("result"),
-            ["method"] = "get_value",
+            ["method"] = "value",
+            ["prop"] = "get",
             ["args"] = new JsonArray(),
             ["ret"] = Tw(AnyTn),
         };
@@ -782,7 +783,10 @@ static partial class SuspendColdLowering
                 },
                 new JsonObject
                 {
-                    ["name"] = "get_context",
+                    ["name"] = "context",
+                    [KotlinPropertyAccessors.SourceNameKey] = "context",
+                    [KotlinPropertyAccessors.KindKey] = "get",
+                    [KotlinPropertyAccessors.AssociationKey] = "continuation-context",
                     ["static"] = false,
                     ["override"] = false,
                     ["virtual"] = true,
@@ -813,8 +817,8 @@ static partial class SuspendColdLowering
                 {
                     ["name"] = "context",
                     ["type"] = Tn("kotlin.coroutines.CoroutineContext"),
-                    ["get"] = "get_context",
-                    ["set"] = null,
+                    [KotlinPropertyAccessors.PropertyRolesKey] = new JsonArray("get"),
+                    [KotlinPropertyAccessors.AssociationKey] = "continuation-context",
                 },
             },
             ["attrs"] = new JsonArray(),
@@ -925,71 +929,71 @@ static partial class SuspendColdLowering
         switch (node)
         {
             case JsonObject o:
-            {
-                var k = Str(o["k"]);
-                // F2 — a suspendCoroutine/suspendCoroutineUninterceptedOrReturn call IS a supported cold suspension
-                // point; do NOT descend into its embedded newClosure/newDelegate block arg (which would trip the
-                // LambdaKinds refusal below).
-                if (IsSuspendCoroutineCall(o)) return null;
-                // GAP 2 — a `newSuspendLambda` VALUE built inside a suspend fun (e.g. a member `suspend fun go() =
-                // run1 { … }` that constructs a `this`-capturing suspend lambda and drives it via a suspend-value
-                // call) is SUPPORTED: the lambda is an opaque value whose OWN suspensions become a SEPARATE SM
-                // (SuspendLambdaLowering), and its captures resolve in the enclosing cold SM (a spilled local -> an
-                // SM field, `__outer` -> the member SM's `$this`). Do NOT descend into its body (that is the
-                // lambda's own scope, validated by its own FunGen build) — descending would trip the refusal below.
-                if (k == "newSuspendLambda") return null;
-                // #22 — a PLAIN closure/delegate VALUE (no suspension inside) is a spillable local, not a suspend
-                // lambda: the cold SM holds it in a field across the suspension. This arises when InlineSplice
-                // MATERIALIZES a crossinline lambda param (`§4.4ii`) as a `newClosure` bound to a temp that a nested
-                // suspend-intrinsic closure captures (the issue-#22 `suspendCancellableCoroutine`/`mySuspend` shape).
-                // Admit it (do NOT descend — its body is its own scope, and HasSuspension already proved it holds no
-                // suspension). A genuine SUSPEND lambda is `newSuspendLambda` (above); a `newClosure` that DOES wrap a
-                // suspension stays refused (SuspendLambdaLowering territory).
-                if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return null;
-                // App-build ranges have already become counted `for` and are flattened below. A stdlib self-build
-                // retains `forRange`; reject its suspending body explicitly instead of letting Rewrite hoist the
-                // suspension outside the structured loop.
-                if (k == "forRange" && o["body"] is JsonNode frBody && HasOwnSuspension(frBody))
-                    return "suspension buried in an unsupported 'forRange' loop position";
-                // #82/#98 — a `forEachInline` (GetEnumerator collection loop) or counted `for` whose BODY spans a
-                // suspension is FLATTENED to flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`).
-                // Only forEachInline needs an exemption
-                // from the LambdaKinds refusal below (falling through to the generic child recursion, which validates its
-                // body). A SUSPENSION-FREE forEachInline stays REFUSED — conservatively, not by necessity: the original
-                // reason was that its LambdaKinds subtree was invisible to the promote-all field collection while
-                // Rewrite descended into it, so a loop-interior name colliding with a spilled outer var miscompiled
-                // silently. The liveness analysis that replaced that collection DOES walk the loop body, so the
-                // collision is gone and lifting this refusal is a separate, gate-backed change.
-                // `repeatInline`/`forRange` with a body suspension stay refused (not flattened); app-build ranges have
-                // already become counted `for` nodes and are handled here.
-                // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
-                // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
-                if (k != null && LambdaKinds.Contains(k)
-                    && !(k == "forEachInline" && o["body"] is JsonNode feBody && HasOwnSuspension(feBody)))
-                    return $"suspension buried in an unsupported '{k}' lambda/closure position";
-                if (k == "try")
                 {
-                    // Loop-aware: HasOwnSuspension is forEachInline-BLIND (LambdaKinds), so a try whose body's only
-                    // suspension lives inside a (flattenable) forEachInline would read as non-suspending here — the
-                    // nested-suspending-try refusal would then be bypassed and Build would emit a branch INTO the outer
-                    // protected region (InvalidProgramException). HasLoopBorneSuspension sees through forEachInline.
-                    var bodyHasSusp = o["body"] != null && HasLoopBorneSuspension(o["body"]);
-                    if (SuspensionRefusalReason(o["body"] ?? JsonValue.Create(0), inHandler, bodyHasSusp ? tryDepth + 1 : tryDepth) is string tbr)
-                        return tbr;
-                    // #78 — HoistSuspendingCatches moves suspending catch/finally handlers out of CLR handler
-                    // clauses before segmentation. Recurse here only to retain the other structural refusals.
-                    if (o["catches"] is JsonArray cs)
-                        foreach (var c in cs)
-                            if (c is JsonObject co && SuspensionRefusalReason(co["body"] ?? JsonValue.Create(0), inHandler, tryDepth) is string cbr)
-                                return cbr;
-                    if (o["finally"] != null && SuspensionRefusalReason(o["finally"], inHandler, tryDepth) is string fbr)
-                        return fbr;
+                    var k = Str(o["k"]);
+                    // F2 — a suspendCoroutine/suspendCoroutineUninterceptedOrReturn call IS a supported cold suspension
+                    // point; do NOT descend into its embedded newClosure/newDelegate block arg (which would trip the
+                    // LambdaKinds refusal below).
+                    if (IsSuspendCoroutineCall(o)) return null;
+                    // GAP 2 — a `newSuspendLambda` VALUE built inside a suspend fun (e.g. a member `suspend fun go() =
+                    // run1 { … }` that constructs a `this`-capturing suspend lambda and drives it via a suspend-value
+                    // call) is SUPPORTED: the lambda is an opaque value whose OWN suspensions become a SEPARATE SM
+                    // (SuspendLambdaLowering), and its captures resolve in the enclosing cold SM (a spilled local -> an
+                    // SM field, `__outer` -> the member SM's `$this`). Do NOT descend into its body (that is the
+                    // lambda's own scope, validated by its own FunGen build) — descending would trip the refusal below.
+                    if (k == "newSuspendLambda") return null;
+                    // #22 — a PLAIN closure/delegate VALUE (no suspension inside) is a spillable local, not a suspend
+                    // lambda: the cold SM holds it in a field across the suspension. This arises when InlineSplice
+                    // MATERIALIZES a crossinline lambda param (`§4.4ii`) as a `newClosure` bound to a temp that a nested
+                    // suspend-intrinsic closure captures (the issue-#22 `suspendCancellableCoroutine`/`mySuspend` shape).
+                    // Admit it (do NOT descend — its body is its own scope, and HasSuspension already proved it holds no
+                    // suspension). A genuine SUSPEND lambda is `newSuspendLambda` (above); a `newClosure` that DOES wrap a
+                    // suspension stays refused (SuspendLambdaLowering territory).
+                    if ((k == "newClosure" || k == "newDelegate") && !HasSuspension(o)) return null;
+                    // App-build ranges have already become counted `for` and are flattened below. A stdlib self-build
+                    // retains `forRange`; reject its suspending body explicitly instead of letting Rewrite hoist the
+                    // suspension outside the structured loop.
+                    if (k == "forRange" && o["body"] is JsonNode frBody && HasOwnSuspension(frBody))
+                        return "suspension buried in an unsupported 'forRange' loop position";
+                    // #82/#98 — a `forEachInline` (GetEnumerator collection loop) or counted `for` whose BODY spans a
+                    // suspension is FLATTENED to flat CFG by FlattenSuspendingLoops (like the always-admitted `forArray`).
+                    // Only forEachInline needs an exemption
+                    // from the LambdaKinds refusal below (falling through to the generic child recursion, which validates its
+                    // body). A SUSPENSION-FREE forEachInline stays REFUSED — conservatively, not by necessity: the original
+                    // reason was that its LambdaKinds subtree was invisible to the promote-all field collection while
+                    // Rewrite descended into it, so a loop-interior name colliding with a spilled outer var miscompiled
+                    // silently. The liveness analysis that replaced that collection DOES walk the loop body, so the
+                    // collision is gone and lifting this refusal is a separate, gate-backed change.
+                    // `repeatInline`/`forRange` with a body suspension stay refused (not flattened); app-build ranges have
+                    // already become counted `for` nodes and are handled here.
+                    // ANY OTHER lambda/closure/sequence node -> unsupported (genuine suspend lambdas, which emit a
+                    // `newClosure` and are NOT flagged `suspendCall`, are handled separately by SuspendLambdaLowering).
+                    if (k != null && LambdaKinds.Contains(k)
+                        && !(k == "forEachInline" && o["body"] is JsonNode feBody && HasOwnSuspension(feBody)))
+                        return $"suspension buried in an unsupported '{k}' lambda/closure position";
+                    if (k == "try")
+                    {
+                        // Loop-aware: HasOwnSuspension is forEachInline-BLIND (LambdaKinds), so a try whose body's only
+                        // suspension lives inside a (flattenable) forEachInline would read as non-suspending here — the
+                        // nested-suspending-try refusal would then be bypassed and Build would emit a branch INTO the outer
+                        // protected region (InvalidProgramException). HasLoopBorneSuspension sees through forEachInline.
+                        var bodyHasSusp = o["body"] != null && HasLoopBorneSuspension(o["body"]);
+                        if (SuspensionRefusalReason(o["body"] ?? JsonValue.Create(0), inHandler, bodyHasSusp ? tryDepth + 1 : tryDepth) is string tbr)
+                            return tbr;
+                        // #78 — HoistSuspendingCatches moves suspending catch/finally handlers out of CLR handler
+                        // clauses before segmentation. Recurse here only to retain the other structural refusals.
+                        if (o["catches"] is JsonArray cs)
+                            foreach (var c in cs)
+                                if (c is JsonObject co && SuspensionRefusalReason(co["body"] ?? JsonValue.Create(0), inHandler, tryDepth) is string cbr)
+                                    return cbr;
+                        if (o["finally"] != null && SuspensionRefusalReason(o["finally"], inHandler, tryDepth) is string fbr)
+                            return fbr;
+                        return null;
+                    }
+                    foreach (var kv in o)
+                        if (kv.Value != null && SuspensionRefusalReason(kv.Value, inHandler, tryDepth) is string cr) return cr;
                     return null;
                 }
-                foreach (var kv in o)
-                    if (kv.Value != null && SuspensionRefusalReason(kv.Value, inHandler, tryDepth) is string cr) return cr;
-                return null;
-            }
             case JsonArray a:
                 foreach (var it in a) if (it != null && SuspensionRefusalReason(it, inHandler, tryDepth) is string ar) return ar;
                 return null;
@@ -1682,7 +1686,10 @@ static partial class SuspendColdLowering
         // A `{k:var}` that the storage gate left as a MoveNext LOCAL.
         JsonObject LocalVar(JsonObject v, JsonNode init) => new()
         {
-            ["k"] = "var", ["name"] = Str(v["name"]), ["type"] = Tw(VarType(v)), ["init"] = init,
+            ["k"] = "var",
+            ["name"] = Str(v["name"]),
+            ["type"] = Tw(VarType(v)),
+            ["init"] = init,
         };
 
         // ---- statement lowering ----
@@ -1693,33 +1700,33 @@ static partial class SuspendColdLowering
             switch (Str(o["k"]))
             {
                 case "var":
-                {
-                    var nm = Str(o["name"]);
-                    var init = o["init"];
-                    // An init-less `var` (e.g. kotc's tryExpr `var dotkt_tryvalN`, assigned in the try/catch) default-inits:
-                    // `{k:default}` is the zero value for BOTH a reference (ldnull) and a VALUE type (initobj) — a bare
-                    // NullConst(valueType) would emit a null Int32 (ilemit: "requires Number, target is Null").
-                    var declared = VarType(o);
-                    var val = init == null ? DefaultOf(declared) : Rewrite(init, outp, declared);
-                    if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
-                    else outp.Add(LocalVar(o, val));
-                    break;
-                }
+                    {
+                        var nm = Str(o["name"]);
+                        var init = o["init"];
+                        // An init-less `var` (e.g. kotc's tryExpr `var dotkt_tryvalN`, assigned in the try/catch) default-inits:
+                        // `{k:default}` is the zero value for BOTH a reference (ldnull) and a VALUE type (initobj) — a bare
+                        // NullConst(valueType) would emit a null Int32 (ilemit: "requires Number, target is Null").
+                        var declared = VarType(o);
+                        var val = init == null ? DefaultOf(declared) : Rewrite(init, outp, declared);
+                        if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
+                        else outp.Add(LocalVar(o, val));
+                        break;
+                    }
                 case "setLocal":
-                {
-                    var nm = Str(o["name"]);
-                    var val = Rewrite(o["value"], outp, RequiredSlotType(nm));
-                    if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
-                    else outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = nm, ["value"] = val });
-                    break;
-                }
+                    {
+                        var nm = Str(o["name"]);
+                        var val = Rewrite(o["value"], outp, RequiredSlotType(nm));
+                        if (_fields.Contains(nm)) outp.Add(SetField(nm, val));
+                        else outp.Add(new JsonObject { ["k"] = "setLocal", ["name"] = nm, ["value"] = val });
+                        break;
+                    }
                 case "return":
-                {
-                    var v = o["value"];
-                    outp.Add(v == null ? Ret(NullConst(AnyTn))
-                        : Ret(Rewrite(v, outp, IsUnitTn(_resultType) ? UnitTn : _resultType)));
-                    break;
-                }
+                    {
+                        var v = o["value"];
+                        outp.Add(v == null ? Ret(NullConst(AnyTn))
+                            : Ret(Rewrite(v, outp, IsUnitTn(_resultType) ? UnitTn : _resultType)));
+                        break;
+                    }
                 case "exprStmt":
                     outp.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = Rewrite(o["expr"], outp, UnitTn) });
                     break;
@@ -1845,7 +1852,8 @@ static partial class SuspendColdLowering
                 // ilemit unresolved). Lifted out of the F2-only SubstBlock so EVERY SM-body path (incl. this suspension-
                 // free subtree) is covered. Argless-guarded so a hypothetical user `COROUTINE_SUSPENDED(x)` fn isn't
                 // swallowed. A correctly-owned IntrinsicsKt read normalizes to the identical node.
-                if (Str(o["k"]) == "callStatic" && Str(o["method"]) is "COROUTINE_SUSPENDED" or "get_COROUTINE_SUSPENDED"
+                if (Str(o["k"]) == "callStatic"
+                    && KotlinPropertyAccessors.IsCall(o, "COROUTINE_SUSPENDED", "get")
                     && (o["args"] is not JsonArray csa0 || csa0.Count == 0))
                     return Suspended();
                 if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
@@ -1903,7 +1911,8 @@ static partial class SuspendColdLowering
                 // direct user `suspendCoroutineUninterceptedOrReturn { … ; COROUTINE_SUSPENDED }` tail that flows through
                 // here, not SubstBlock. Argless-guarded so a hypothetical user `COROUTINE_SUSPENDED(x)` fn isn't swallowed.
                 // A correctly-owned IntrinsicsKt read normalizes to the identical node.
-                if (k == "callStatic" && Str(o["method"]) is "COROUTINE_SUSPENDED" or "get_COROUTINE_SUSPENDED"
+                if (k == "callStatic"
+                    && KotlinPropertyAccessors.IsCall(o, "COROUTINE_SUSPENDED", "get")
                     && (o["args"] is not JsonArray csa1 || csa1.Count == 0))
                     return Suspended();
                 if (k == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
@@ -2246,7 +2255,9 @@ static partial class SuspendColdLowering
                 // this.__safe = newSafeContinuation((Continuation<Any?>) this)   — the SM is its own delegate.
                 outp.Add(SetField(safeField, new JsonObject
                 {
-                    ["k"] = "callStatic", ["owner"] = Tn(ThrowOnFailureOwner), ["method"] = "newSafeContinuation",
+                    ["k"] = "callStatic",
+                    ["owner"] = Tn(ThrowOnFailureOwner),
+                    ["method"] = "newSafeContinuation",
                     ["sig"] = new JsonArray { ContAny() },
                     ["args"] = new JsonArray
                     {
@@ -2258,9 +2269,12 @@ static partial class SuspendColdLowering
                 foreach (var s in invBody) EmitStmt(SubstBlock(s, capMap, cParam, cBinding, closureType), outp);
                 tail = new JsonObject
                 {
-                    ["k"] = "callStatic", ["owner"] = Tn(ThrowOnFailureOwner), ["method"] = "safeGetOrThrow",
+                    ["k"] = "callStatic",
+                    ["owner"] = Tn(ThrowOnFailureOwner),
+                    ["method"] = "safeGetOrThrow",
                     ["sig"] = new JsonArray { ContAny() },
-                    ["args"] = new JsonArray { SmSelfField(safeField, ContAnyTn) }, ["ret"] = Tw(AnyTn),
+                    ["args"] = new JsonArray { SmSelfField(safeField, ContAnyTn) },
+                    ["ret"] = Tw(AnyTn),
                 };
             }
             else
@@ -2534,11 +2548,16 @@ static partial class SuspendColdLowering
                     {
                         outp.Add(new JsonObject
                         {
-                            ["k"] = "var", ["name"] = bound, ["type"] = Tw(awaitableType), ["init"] = awaitable,
+                            ["k"] = "var",
+                            ["name"] = bound,
+                            ["type"] = Tw(awaitableType),
+                            ["init"] = awaitable,
                         });
                         awaitable = new JsonObject
                         {
-                            ["k"] = "local", ["name"] = bound, ["sty"] = Tw(awaitableType),
+                            ["k"] = "local",
+                            ["name"] = bound,
+                            ["sty"] = Tw(awaitableType),
                         };
                     }
                 }
@@ -2566,8 +2585,12 @@ static partial class SuspendColdLowering
             // if (this.<aw>.IsCompleted) goto L_state;   (sync fast path — no suspension)
             outp.Add(BrIf(new JsonObject
             {
-                ["k"] = "clrPropGet", ["type"] = Tw(awaiterType), ["name"] = "IsCompleted",
-                ["static"] = false, ["recv"] = FieldOf(awField, awaiterType), ["ret"] = Tw(BoolTn),
+                ["k"] = "clrPropGet",
+                ["type"] = Tw(awaiterType),
+                ["name"] = "IsCompleted",
+                ["static"] = false,
+                ["recv"] = FieldOf(awField, awaiterType),
+                ["ret"] = Tw(BoolTn),
             }, true, afterLabel));
             // this.label = state; this.<aw>.OnCompleted(<callback Action>); return COROUTINE_SUSPENDED;
             outp.Add(SetField("label", IntConst(state)));
@@ -2578,7 +2601,9 @@ static partial class SuspendColdLowering
                 ["k"] = "exprStmt",
                 ["expr"] = new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = Tw(awaiterType), ["method"] = "OnCompleted",
+                    ["k"] = "clrInstance",
+                    ["type"] = Tw(awaiterType),
+                    ["method"] = "OnCompleted",
                     ["recv"] = FieldOf(awField, awaiterType),
                     ["argTypes"] = new JsonArray { Tn(ActionFqn) },
                     ["args"] = new JsonArray
@@ -2601,8 +2626,12 @@ static partial class SuspendColdLowering
             // L_state: <value> = this.<aw>.GetResult();   (throws on a faulted/canceled task)
             var getResult = new JsonObject
             {
-                ["k"] = "clrInstance", ["type"] = Tw(awaiterType), ["method"] = "GetResult",
-                ["recv"] = FieldOf(awField, awaiterType), ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                ["k"] = "clrInstance",
+                ["type"] = Tw(awaiterType),
+                ["method"] = "GetResult",
+                ["recv"] = FieldOf(awField, awaiterType),
+                ["argTypes"] = new JsonArray(),
+                ["args"] = new JsonArray(),
                 ["ret"] = Tw(hasResult ? resultTok : VoidTn),
             };
             if (hasResult)
@@ -2649,31 +2678,31 @@ static partial class SuspendColdLowering
             TypeNode type,
             string scope,
             TypeNode[] arguments) => type switch
-        {
-            TypeNode.Tv tv when tv.Scope == scope
-                && tv.I >= 0 && tv.I < arguments.Length => arguments[tv.I],
-            TypeNode.Fqn f => new TypeNode.Fqn(
-                f.Name,
-                f.Args?.Select(x => SubstituteParameters(x, scope, arguments)).ToArray()),
-            TypeNode.Nullable n => new TypeNode.Nullable(
-                SubstituteParameters(n.Of, scope, arguments)),
-            TypeNode.Oblivious o => new TypeNode.Oblivious(
-                SubstituteParameters(o.Of, scope, arguments)),
-            TypeNode.Array a => new TypeNode.Array(
-                SubstituteParameters(a.Elem, scope, arguments)),
-            TypeNode.ByRef b => new TypeNode.ByRef(
-                SubstituteParameters(b.Of, scope, arguments)),
-            TypeNode.Fn f => new TypeNode.Fn(
-                f.Suspend,
-                SubstituteParameters(f.Ret, scope, arguments),
-                f.Params.Select(x => SubstituteParameters(x, scope, arguments)).ToArray(),
-                f.Recv is null
-                    ? null
-                    : SubstituteParameters(f.Recv, scope, arguments),
-                f.Clr,
-                f.Ctx?.Select(x => SubstituteParameters(x, scope, arguments)).ToArray()),
-            _ => type,
-        };
+            {
+                TypeNode.Tv tv when tv.Scope == scope
+                    && tv.I >= 0 && tv.I < arguments.Length => arguments[tv.I],
+                TypeNode.Fqn f => new TypeNode.Fqn(
+                    f.Name,
+                    f.Args?.Select(x => SubstituteParameters(x, scope, arguments)).ToArray()),
+                TypeNode.Nullable n => new TypeNode.Nullable(
+                    SubstituteParameters(n.Of, scope, arguments)),
+                TypeNode.Oblivious o => new TypeNode.Oblivious(
+                    SubstituteParameters(o.Of, scope, arguments)),
+                TypeNode.Array a => new TypeNode.Array(
+                    SubstituteParameters(a.Elem, scope, arguments)),
+                TypeNode.ByRef b => new TypeNode.ByRef(
+                    SubstituteParameters(b.Of, scope, arguments)),
+                TypeNode.Fn f => new TypeNode.Fn(
+                    f.Suspend,
+                    SubstituteParameters(f.Ret, scope, arguments),
+                    f.Params.Select(x => SubstituteParameters(x, scope, arguments)).ToArray(),
+                    f.Recv is null
+                        ? null
+                        : SubstituteParameters(f.Recv, scope, arguments),
+                    f.Clr,
+                    f.Ctx?.Select(x => SubstituteParameters(x, scope, arguments)).ToArray()),
+                _ => type,
+            };
 
         // `this.<aw> = <getAwaiter>()` for the resolved awaitable pattern. The awaitable is entered in one of two
         // ways, and a captureContext argument inserts one hop before it:
@@ -2703,36 +2732,50 @@ static partial class SuspendColdLowering
                     plan.ConfiguredAwaitableTemplate, awaitableType as TypeNode.Fqn, methodTypeArgs);
                 var configured = new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = Tw(awaitableType), ["method"] = "ConfigureAwait",
-                    ["recv"] = task, ["argTypes"] = new JsonArray { Tw(BoolTn) },
-                    ["args"] = new JsonArray { captureValue }, ["ret"] = Tw(configuredType),
+                    ["k"] = "clrInstance",
+                    ["type"] = Tw(awaitableType),
+                    ["method"] = "ConfigureAwait",
+                    ["recv"] = task,
+                    ["argTypes"] = new JsonArray { Tw(BoolTn) },
+                    ["args"] = new JsonArray { captureValue },
+                    ["ret"] = Tw(configuredType),
                 };
                 if (!plan.ConfiguredGetAwaiterExtension)
                     return new JsonObject
                     {
-                        ["k"] = "clrInstance", ["type"] = Tw(configuredType), ["method"] = "GetAwaiter",
-                        ["recv"] = configured, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                        ["k"] = "clrInstance",
+                        ["type"] = Tw(configuredType),
+                        ["method"] = "GetAwaiter",
+                        ["recv"] = configured,
+                        ["argTypes"] = new JsonArray(),
+                        ["args"] = new JsonArray(),
                         ["ret"] = Tw(awaiterType),
                     };
                 var cfgExtOwner = new TypeNode.Fqn(plan.ConfiguredGetAwaiterExtOwner);
                 if (!plan.ConfiguredGetAwaiterExtGeneric)
                     return new JsonObject
                     {
-                        ["k"] = "clrStatic", ["type"] = Tw(cfgExtOwner), ["method"] = "GetAwaiter",
+                        ["k"] = "clrStatic",
+                        ["type"] = Tw(cfgExtOwner),
+                        ["method"] = "GetAwaiter",
                         ["argTypes"] = new JsonArray { Tw(configuredType) },
-                        ["args"] = new JsonArray { configured }, ["ret"] = Tw(awaiterType),
+                        ["args"] = new JsonArray { configured },
+                        ["ret"] = Tw(awaiterType),
                     };
                 // A GENERIC extension: the plan resolved its type arguments by unifying the declared receiver against
                 // the configured type, and carries that receiver open over `method.tvN` as the `memberSig` ilemit
                 // exact-matches the definition with.
                 return new JsonObject
                 {
-                    ["k"] = "clrGenericStatic", ["type"] = Tw(cfgExtOwner), ["method"] = "GetAwaiter",
+                    ["k"] = "clrGenericStatic",
+                    ["type"] = Tw(cfgExtOwner),
+                    ["method"] = "GetAwaiter",
                     ["typeArgs"] = new JsonArray(plan.ConfiguredGetAwaiterExtTypeArgs
                         .Select(t => TypeJson.Write(CloseAwaitTemplate(t, awaitableType as TypeNode.Fqn, methodTypeArgs)))
                         .ToArray()),
                     ["memberSig"] = new JsonArray { TypeJson.Write(plan.ConfiguredGetAwaiterExtOpenRecv) },
-                    ["args"] = new JsonArray { configured }, ["ret"] = Tw(awaiterType),
+                    ["args"] = new JsonArray { configured },
+                    ["ret"] = Tw(awaiterType),
                 };
             }
             if (plan.GetAwaiterExtension)
@@ -2751,25 +2794,35 @@ static partial class SuspendColdLowering
                         : awaitableType;
                     return new JsonObject
                     {
-                        ["k"] = "clrGenericStatic", ["type"] = Tw(extOwner), ["method"] = "GetAwaiter",
+                        ["k"] = "clrGenericStatic",
+                        ["type"] = Tw(extOwner),
+                        ["method"] = "GetAwaiter",
                         ["typeArgs"] = new JsonArray(
                             methodTypeArgs.Select(TypeJson.Write).ToArray()),
                         ["memberSig"] = new JsonArray { TypeJson.Write(openAwaitable) },
-                        ["args"] = new JsonArray { task }, ["ret"] = Tw(awaiterType),
+                        ["args"] = new JsonArray { task },
+                        ["ret"] = Tw(awaiterType),
                     };
                 }
                 return new JsonObject
                 {
-                    ["k"] = "clrStatic", ["type"] = Tw(extOwner), ["method"] = "GetAwaiter",
-                    ["argTypes"] = new JsonArray { Tw(awaitableType) }, ["args"] = new JsonArray { task },
+                    ["k"] = "clrStatic",
+                    ["type"] = Tw(extOwner),
+                    ["method"] = "GetAwaiter",
+                    ["argTypes"] = new JsonArray { Tw(awaitableType) },
+                    ["args"] = new JsonArray { task },
                     ["ret"] = Tw(awaiterType),
                 };
             }
             // member GetAwaiter — clrInstance on the awaitable.
             return new JsonObject
             {
-                ["k"] = "clrInstance", ["type"] = Tw(awaitableType), ["method"] = "GetAwaiter",
-                ["recv"] = task, ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(),
+                ["k"] = "clrInstance",
+                ["type"] = Tw(awaitableType),
+                ["method"] = "GetAwaiter",
+                ["recv"] = task,
+                ["argTypes"] = new JsonArray(),
+                ["args"] = new JsonArray(),
                 ["ret"] = Tw(awaiterType),
             };
         }
@@ -3487,7 +3540,8 @@ static partial class SuspendColdLowering
             // continuations and implement that physical slot; make the representation narrowing explicit in CIR.
             args.Add(new JsonObject
             {
-                ["k"] = "cast", ["type"] = ContAny(),
+                ["k"] = "cast",
+                ["type"] = ContAny(),
                 ["e"] = new JsonObject { ["k"] = "local", ["name"] = "completion" },
             });
             argTypes.Add(ContAny());
@@ -3724,8 +3778,12 @@ static partial class SuspendColdLowering
             body.Add(BrIf(new JsonObject { ["k"] = "objEq", ["lhs"] = Local("__r"), ["rhs"] = Suspended() }, false, skipL));
             var task = new JsonObject
             {
-                ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
-                ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
+                ["k"] = "clrPropGet",
+                ["type"] = Tw(tcsType),
+                ["name"] = "Task",
+                ["static"] = false,
+                ["recv"] = Local("__tcs"),
+                ["ret"] = Tw(taskType),
             };
             var getAwaiter = BuildGetAwaiter(taskPlan, taskType, awaiterType, task,
                 captureValue: null,
@@ -3736,9 +3794,13 @@ static partial class SuspendColdLowering
                 ["k"] = "exprStmt",
                 ["expr"] = new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = Tw(awaiterType), ["method"] = "GetResult",
+                    ["k"] = "clrInstance",
+                    ["type"] = Tw(awaiterType),
+                    ["method"] = "GetResult",
                     ["recv"] = getAwaiter,
-                    ["argTypes"] = new JsonArray(), ["args"] = new JsonArray(), ["ret"] = Tw(UnitTn),
+                    ["argTypes"] = new JsonArray(),
+                    ["args"] = new JsonArray(),
+                    ["ret"] = Tw(UnitTn),
                 },
             });
             body.Add(Label(skipL));
@@ -3888,8 +3950,12 @@ static partial class SuspendColdLowering
             body.Add(Label(skipL));
             JsonNode tcsTask = new JsonObject
             {
-                ["k"] = "clrPropGet", ["type"] = Tw(tcsType), ["name"] = "Task", ["static"] = false,
-                ["recv"] = Local("__tcs"), ["ret"] = Tw(taskType),
+                ["k"] = "clrPropGet",
+                ["type"] = Tw(tcsType),
+                ["name"] = "Task",
+                ["static"] = false,
+                ["recv"] = Local("__tcs"),
+                ["ret"] = Tw(taskType),
             };
             // Unit: upcast the Task<Unit> (TCS<Unit>.Task) to the non-generic public `Task` return (Task<T> : Task).
             if (isUnit) tcsTask = new JsonObject { ["k"] = "cast", ["type"] = Tw(taskRetType), ["e"] = tcsTask };
@@ -4094,7 +4160,8 @@ static partial class SuspendColdLowering
         {
             ["k"] = "callInstance",
             ["ownerType"] = Tw(new TypeNode.Fqn(smPath ? ContinuationImplFqn : ContinuationFqn)),
-            ["method"] = "get_context",
+            ["method"] = "context",
+            ["prop"] = "get",
             // `context` is a VIRTUAL Kotlin property (override on ContinuationImpl; declared on the Continuation
             // interface for the completion path). A callInstance defaults to a plain `call`, which is INVALID IL for
             // an interface method (Continuation) — so mark it virtual (a callvirt also dispatches to the SM's override).
@@ -4152,7 +4219,8 @@ static partial class SuspendColdLowering
         {
             ["k"] = "callStatic",
             ["owner"] = Tn(IntrinsicsKtFqn),
-            ["method"] = "get_COROUTINE_SUSPENDED",
+            ["method"] = "COROUTINE_SUSPENDED",
+            ["prop"] = "get",
             ["args"] = new JsonArray(),
             ["ret"] = Tw(AnyTn),
         };
@@ -4184,8 +4252,8 @@ static partial class SuspendColdLowering
         static JsonObject Label(int id) => new() { ["k"] = "label", ["id"] = id };
         static JsonObject Goto(int id) => new() { ["k"] = "goto", ["id"] = id };
         static JsonObject BrIf(JsonNode cond, bool on, int id) => new()
-            { ["k"] = "brIf", ["cond"] = cond, ["on"] = on, ["id"] = id };
+        { ["k"] = "brIf", ["cond"] = cond, ["on"] = on, ["id"] = id };
         static JsonObject BinEq(JsonNode l, JsonNode r) => new()
-            { ["k"] = "binOp", ["op"] = "==", ["lhs"] = l, ["rhs"] = r };
+        { ["k"] = "binOp", ["op"] = "==", ["lhs"] = l, ["rhs"] = r };
     }
 }

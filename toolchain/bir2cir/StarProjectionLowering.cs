@@ -150,17 +150,20 @@ static class StarProjectionLowering
         var recvInner = cast["e"];
         JsonObject CastTo(string toIface) => new() { ["k"] = "cast", ["type"] = TypeJson.Fqn(toIface), ["e"] = recvInner.DeepClone() };
         var args = call["args"] as JsonArray;
-        switch (Str(call["method"]))
+        var member = Str(call["method"]);
+        var propertyAccess = Str(call["prop"]);
+        switch (member)
         {
-            case "get_size":
-            case "size":
+            case "size" when propertyAccess == "get":
                 // `.size` -> ICollection/IList/IDictionary.Count.
                 return new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) };
             case "isEmpty":
                 // `.isEmpty()` -> Count == 0 (non-generic interfaces expose no IsEmpty).
                 return new JsonObject
                 {
-                    ["k"] = "binOp", ["op"] = "==", ["type"] = TypeJson.Fqn("System.Boolean"),
+                    ["k"] = "binOp",
+                    ["op"] = "==",
+                    ["type"] = TypeJson.Fqn("System.Boolean"),
                     ["lhs"] = new JsonObject { ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn(iface), ["name"] = "Count", ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = CastTo(iface) },
                     ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
                 };

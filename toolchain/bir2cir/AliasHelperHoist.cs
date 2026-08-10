@@ -284,13 +284,11 @@ static class AliasHelperHoist
             if ((mo["name"] as JsonValue)?.GetValue<string>() is not string mn) continue;
             if ((mo["static"] as JsonValue)?.GetValue<bool>() == true) continue;   // a top-level/companion static, not a member
             if (mo["body"] is not JsonArray mbody) continue;                        // abstract / no body
-            // A property accessor (`get_`/`set_`) is normally a `clrPropGet`/`clrPropSet` on the BCL type, NOT a hoisted
-            // helper — so blanket-skip it. EXCEPTION: a rule-3 accessor whose body binds to a BCL *method* (e.g. Regex's
-            // `val pattern get() = toString()` — the BCL Regex has no `Pattern` property, only `ToString()`). Such an
-            // accessor MUST be hoisted so `re.pattern` routes to `dotkt$ClrH_Regex.get_pattern(recv)`. But hoist it ONLY
-            // when the body reads NO backing field: a rule-3 accessor that reads `{"k":"field"}` (another alias's real
-            // backing field) would NRE ilemit's ResolveField (no such field on the BCL type) — those stay clrPropGet/Set.
-            if ((mn.StartsWith("get_", StringComparison.Ordinal) || mn.StartsWith("set_", StringComparison.Ordinal))
+            // A property accessor normally becomes clrPropGet/clrPropSet on the BCL type, not a hoisted helper.
+            // Exception: a rule-3 accessor whose body binds to a BCL method (for example Regex.pattern -> ToString()).
+            // Hoist it only when the body reads no backing field: an alias accessor reading a Kotlin backing field has
+            // no corresponding field on the BCL type and remains on the property path.
+            if (KotlinPropertyAccessors.TryIdentity(mo, out _, out _)
                 && BodyReadsBackingField(mbody)) continue;
             if (isInlineValue && (mo["objectOverride"] as JsonValue)?.GetValue<bool>() == true) continue;  // see note above
             if (!refs.IsRule3Member(fqn, mn)) continue;   // ref.dll: concrete + intrinsic-less (matches the rule-3 call routing)

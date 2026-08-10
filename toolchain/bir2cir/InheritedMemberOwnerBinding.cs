@@ -105,6 +105,13 @@ static class InheritedMemberOwnerBinding
         if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
             || (!types.ContainsKey(owner.Name) && !refs.TryReferenceTypeShape(owner.Name, out _, out _, out _, out _))) return;
         if (Str(call["method"]) is not string method) return;
+        var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(
+            call, out var propertyName, out var propertyAccessor);
+        if (!hasPropertyIdentity)
+        {
+            propertyName = null;
+            propertyAccessor = null;
+        }
 
         var methodArity = (call["typeArgs"] as JsonArray)?.Count ?? 0;
         var sig = ReadTypes(call["sig"] as JsonArray);
@@ -115,8 +122,12 @@ static class InheritedMemberOwnerBinding
         // virtual in metadata. Consume that declaration fact here. With no BIR signature, require a unique
         // name/method-arity/parameter-count declaration; never guess among overloads.
         if (paramCount >= 0
-            && (DeclaresVirtual(types.GetValueOrDefault(owner.Name), method, methodArity, sig, paramCount)
-                || refs.DeclaresVirtualInstanceMember(owner.Name, method, methodArity, sig, paramCount)))
+            && (DeclaresVirtual(types.GetValueOrDefault(owner.Name), method, methodArity, sig, paramCount,
+                    propertyName, propertyAccessor)
+                || (propertyAccessor != null
+                    ? refs.DeclaresVirtualInstancePropertyAccessor(owner.Name, propertyName, propertyAccessor,
+                        methodArity, sig, paramCount, owner.Args ?? Array.Empty<TypeNode>())
+                    : refs.DeclaresVirtualInstanceMember(owner.Name, method, methodArity, sig, paramCount))))
             call["virtual"] = true;
 
         if (sig == null) return; // inherited owner binding requires the declaration signature
@@ -128,13 +139,17 @@ static class InheritedMemberOwnerBinding
         // the current owner. A local fake override is not emitted as a slot, so it deliberately falls through to the
         // hierarchy search.
         var ownDeclarationSig = ExactDeclarationSignature(
-            types.GetValueOrDefault(owner.Name), method, methodArity, sig, owner.Args);
+            types.GetValueOrDefault(owner.Name), method, methodArity, sig, owner.Args,
+            propertyName, propertyAccessor);
         if (ownDeclarationSig != null)
         {
             call["sig"] = ownDeclarationSig;
             return;
         }
-        if (refs.DeclaresExactInstanceMember(owner.Name, method, methodArity, sig))
+        if (propertyAccessor != null
+                ? refs.DeclaresExactInstancePropertyAccessor(owner.Name, propertyName, propertyAccessor,
+                    methodArity, sig, owner.Args ?? Array.Empty<TypeNode>())
+                : refs.DeclaresExactInstanceMember(owner.Name, method, methodArity, sig))
             return;
 
         var hierarchy = ReachableTypes(owner, types, refs).ToList();
@@ -144,15 +159,22 @@ static class InheritedMemberOwnerBinding
         var overrideOwners = new HashSet<string>(StringComparer.Ordinal);
         if (call["overrides"] is JsonArray ovs)
             foreach (var ov in ovs.OfType<JsonObject>())
-                if ((Str(ov["kind"]) is null or "method") && Str(ov["member"]) == method
+                if ((propertyAccessor == null
+                        ? Str(ov["kind"]) is null or "method"
+                        : Str(ov["kind"]) == (propertyAccessor == "get" ? "getter" : "setter"))
+                    && Str(ov["member"]) == (propertyName ?? method)
                     && Str(ov["owner"]?["name"]) is string declared)
                     overrideOwners.Add(declared);
 
         var candidates = hierarchy
             .Where(r => !r.Type.Equals(owner))
             .Where(r => overrideOwners.Count == 0 || overrideOwners.Contains(r.Type.Name))
-            .Where(r => DeclaresExact(types.GetValueOrDefault(r.Type.Name), method, methodArity, sig, r.Type.Args)
-                || refs.DeclaresExactInstanceMember(r.Type.Name, method, methodArity, sig))
+            .Where(r => DeclaresExact(types.GetValueOrDefault(r.Type.Name), method, methodArity, sig, r.Type.Args,
+                    propertyName, propertyAccessor)
+                || (propertyAccessor != null
+                    ? refs.DeclaresExactInstancePropertyAccessor(r.Type.Name, propertyName, propertyAccessor,
+                        methodArity, sig, r.Type.Args ?? Array.Empty<TypeNode>())
+                    : refs.DeclaresExactInstanceMember(r.Type.Name, method, methodArity, sig)))
             .ToList();
 
         if (overrideOwners.Count > 0)
@@ -167,7 +189,7 @@ static class InheritedMemberOwnerBinding
             if (direct.Count != 1) return;
             call["ownerType"] = TypeJson.Write(direct[0]);
             if (ExactDeclarationSignature(types.GetValueOrDefault(direct[0].Name), method, methodArity,
-                    sig, direct[0].Args) is { } directDeclarationSig)
+                    sig, direct[0].Args, propertyName, propertyAccessor) is { } directDeclarationSig)
                 call["sig"] = directDeclarationSig;
             if (IsInterface(direct[0].Name, types, refs)) call["virtual"] = true;
             if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(direct[0]);
@@ -181,7 +203,7 @@ static class InheritedMemberOwnerBinding
         if (nearest.Count != 1) return;
         call["ownerType"] = TypeJson.Write(nearest[0]);
         if (ExactDeclarationSignature(types.GetValueOrDefault(nearest[0].Name), method, methodArity,
-                sig, nearest[0].Args) is { } nearestDeclarationSig)
+                sig, nearest[0].Args, propertyName, propertyAccessor) is { } nearestDeclarationSig)
             call["sig"] = nearestDeclarationSig;
         if (IsInterface(nearest[0].Name, types, refs)) call["virtual"] = true;
         if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(nearest[0]);
@@ -230,11 +252,13 @@ static class InheritedMemberOwnerBinding
         return type.Args is { } args && args.Length == count ? args : null;
     }
 
-    static bool DeclaresExact(TypeDef def, string name, int methodArity, TypeNode[] callSig, TypeNode[] ownerArgs)
-        => ExactDeclarationSignature(def, name, methodArity, callSig, ownerArgs) != null;
+    static bool DeclaresExact(TypeDef def, string name, int methodArity, TypeNode[] callSig, TypeNode[] ownerArgs,
+        string propertyName, string propertyAccessor)
+        => ExactDeclarationSignature(def, name, methodArity, callSig, ownerArgs,
+            propertyName, propertyAccessor) != null;
 
     static JsonArray ExactDeclarationSignature(TypeDef def, string name, int methodArity,
-        TypeNode[] callSig, TypeNode[] ownerArgs)
+        TypeNode[] callSig, TypeNode[] ownerArgs, string propertyName, string propertyAccessor)
     {
         if (def?.Methods == null) return null;
         ownerArgs ??= def.TypeParamCount == 0 ? Array.Empty<TypeNode>() : null;
@@ -243,7 +267,14 @@ static class InheritedMemberOwnerBinding
         var matches = new List<JsonObject>();
         foreach (var method in def.Methods.OfType<JsonObject>())
         {
-            if (Str(method["name"]) != name) continue;
+            if (KotlinPropertyAccessors.IsPhysicalSlotBridge(method)) continue;
+            if (propertyAccessor != null)
+            {
+                if (!KotlinPropertyAccessors.TryIdentity(method, out var candidateProperty, out var candidateAccessor)
+                    || candidateProperty != propertyName || candidateAccessor != propertyAccessor) continue;
+            }
+            else if (Str(method["name"]) != name
+                || KotlinPropertyAccessors.TryIdentity(method, out _, out _)) continue;
             if (Bool(method["fakeOverride"])) continue;
             if (((method["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) continue;
             if (method["params"] is not JsonArray ps || ps.Count != callSig.Length) continue;
@@ -306,11 +337,16 @@ static class InheritedMemberOwnerBinding
         return IsNestedObjectErasureOf(candidate, source);
     }
 
-    static bool DeclaresVirtual(TypeDef def, string name, int methodArity, TypeNode[] callSig, int paramCount)
+    static bool DeclaresVirtual(TypeDef def, string name, int methodArity, TypeNode[] callSig, int paramCount,
+        string propertyName, string propertyAccessor)
     {
         if (def?.Methods == null) return false;
         var matches = def.Methods.OfType<JsonObject>()
-            .Where(method => Str(method["name"]) == name
+            .Where(method => !KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
+                && (propertyAccessor != null
+                    ? KotlinPropertyAccessors.TryIdentity(method, out var candidateProperty, out var candidateAccessor)
+                        && candidateProperty == propertyName && candidateAccessor == propertyAccessor
+                    : Str(method["name"]) == name && !KotlinPropertyAccessors.TryIdentity(method, out _, out _))
                 && ((method["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
                 && method["params"] is JsonArray ps && ps.Count == paramCount)
             .Where(method => callSig == null || callSig.Length == paramCount

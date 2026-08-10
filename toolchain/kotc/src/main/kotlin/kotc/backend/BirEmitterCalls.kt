@@ -737,20 +737,20 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// A member/top-level delegated property is represented by a real CLR property accessor. Its frontend-generated
 	// accessor body already contains the resolved getValue/setValue call, so ordinary call emission is sufficient.
 	// `Lazy.getValue` alone is @InlineOnly and has no runtime declaration: lower that call, here in the accessor body,
-	// to the real Lazy.value getter. Access sites still call get_<property> and never see the delegate implementation.
+	// to the real Lazy.value getter. Access sites still call the property getter and never see the delegate implementation.
 	if (activeDelegatedAccessor?.backingField?.type?.classFqName?.asString() == "kotlin.Lazy" &&
 		callee.fqNameWhenAvailable?.asString() == "kotlin.getValue") {
 		val delegate = extensionReceiver(call)
 		if (delegate != null) {
 			val owner = ownerSpec(delegate.type.classifierOrNull?.owner as? IrClass, delegate.type)
-			return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":${expr(delegate)},"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, call.type)}}"""
+			return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":${expr(delegate)},"method":"value","prop":"get","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, call.type)}}"""
 		}
 	}
 	// NOTE: kotlin.text.MatchResult.value is a REAL interface property (realized by ClrMatchResult) — it must route
 	// through the ordinary member-call path, NOT a hardcoded System...Match.Value lowering (that leftover forced the
 	// broken MatchResult->Match aliasing above and mis-typed the call).
 	// `.message`/`.cause` on a Throwable subclass is a PLAIN Kotlin property read: kotc emits the ordinary
-	// `callInstance get_message`/`get_cause` (with its `overrides` chain to kotlin.Throwable) below, and bir2cir
+	// semantic getter call (with its `overrides` chain to kotlin.Throwable) below, and bir2cir
 	// substitutes it to `clrPropGet System.Exception.Message`/`.InnerException` off the @ClrProperty binding on the
 	// ref.dll (kotlin.Throwable is @ClrTypeAlias("System.Exception")). No BCL member name lives in kotc (layer purity).
 	// `kotlin.sequences.sequence { yield(…) }` is now ORDINARY library code: it resolves to the real stdlib
@@ -847,7 +847,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// ilemit resolve the real emitted `kotlin.Lazy::get_value` — no CLR (System.Lazy) knowledge in kotc.
 		if (dvar.type.classFqName?.asString() == "kotlin.Lazy" && callee === ldp.getter) {
 			val owner = ownerSpec(dvar.type.classifierOrNull?.owner as? IrClass, dvar.type)
-			return delegateInlined(call, """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$dlocal,"method":"get_value","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, ldp.getter.returnType)}}""")
+			return delegateInlined(call, """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":true,"recv":$dlocal,"method":"value","prop":"get","args":[]${retHint((owner as? TypeNode.Fqn)?.args != null, ldp.getter.returnType)}}""")
 		}
 		// A user delegate class -> its concrete type; a stdlib Read(Write)Property-typed delegate (e.g.
 		// `by Delegates.observable(…)`) -> the REAL generic stdlib interface (mirrors `by lazy` on real
@@ -1037,7 +1037,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// erasure; that whole machine is absent here.) See [[clr-not-jvm-discard-jvmisms]].
 
 	// `T::class.simpleName`/`.qualifiedName` is NOT intercepted here (layer purity): kotc emits the PLAIN Kotlin
-	// property read `kotlin.reflect.KClass::get_simpleName`/`get_qualifiedName` (via the ordinary member-property
+	// property read on `kotlin.reflect.KClass.simpleName`/`.qualifiedName` (via the ordinary member-property
 	// path below), and bir2cir's KClassMemberBinding derives the CLR resolution — a `clrPropGet` on `System.Type`
 	// (`Name`/`FullName`). The `System.Type` knowledge (which BCL member a KClass member maps to) is a Kotlin<->CLR
 	// relation and lives in bir2cir, not in this frontend.
@@ -1121,7 +1121,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// Enum rich API: Color.values()/entries -> Enum.GetValues<T>(); Color.valueOf(s) -> Enum.Parse<T>(s).
 	val enumDeclarationOwner = (callee.parent as? IrClass)
 		?: (callee.correspondingPropertySymbol?.owner?.parent as? IrClass)
-	val enumResultOwner = if (name == "entries" || name == "<get-entries>" || name == "get_entries")
+	val enumResultOwner = if (name == "entries" || name == "<get-entries>")
 		((call.type as? IrSimpleType)?.arguments?.firstOrNull() as? IrTypeProjection)
 			?.type?.classifierOrNull?.owner as? IrClass
 	else null
@@ -1138,7 +1138,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// name still carries the same Kotlin declaration identity.
 		val isEntriesGetter =
 			callee.correspondingPropertySymbol?.owner?.name?.asString() == "entries" ||
-				name == "entries" || name == "<get-entries>" || name == "get_entries"
+				name == "entries" || name == "<get-entries>"
 		// Rich enum -> the synthesized static values()/valueOf() methods on the class.
 		if (isRichEnum(ec)) {
 			if (name == "values" || isEntriesGetter)
@@ -1161,10 +1161,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 	// enumValues" is a Kotlin<->CLR relation, so it lives in bir2cir. (The `.name`/`.ordinal` handling below asks
 	// the IR — `ClassKind.ENUM_CLASS` — not an FQN table, so it stays here.)
 	// `c.code` (Char -> Int code point) is NOT recognized here: kotc emits the FAITHFUL top-level extension-property
-	// getter call `callStatic owner:null method:get_code sig:[kotlin.Char] args:[<char>]` (the plain Kotlin fact) via
+	// getter call `callStatic owner:null method:code prop:get sig:[kotlin.Char] args:[<char>]` via
 	// the general property path. bir2cir's CharCodeInvokeLowering re-emits the `{k:conv, to:kotlin.Int}` node (a
 	// genuine primitive IL op — the char value AS an int, distinct from `.toInt()`'s @ClrConv) off that faithful
-	// call, resolving `get_code`->kotlin.CharCodeKt against the ref.dll. The Kotlin<->CLR relation lives in bir2cir.
+	// call. The Kotlin<->CLR relation lives in bir2cir; no physical accessor name is authored here.
 	// c.name -> toString() (enum name); c.ordinal -> (int)c.  Rich enum -> the __name/__ordinal fields.
 	dispatchReceiver(call)?.takeIf { (it.type.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.ENUM_CLASS }?.let { rc ->
 		val rec = (rc.type.classifierOrNull?.owner as? IrClass)
@@ -1392,14 +1392,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// A2 step 3: the property's OWN Kotlin name IS the .NET slot identity (dll2klib projects the member under
 			// its .NET name), so kotc reads NO CLR name here — it emits the bare property name + the accessor KIND
 			// (`"prop":"get"/"set"`, a frontend fact from correspondingPropertySymbol). bir2cir's NetInteropBinding
-			// applies the .NET `get_`/`set_` accessor convention off the refs.
+			// resolves the exact CLR Property accessor from reference metadata.
 			val pn = prop.name.asString()
 			val recvJson = if (isStatic) "null" else expr(recv!!)
 			// A restored MEMBER extension property (`class C { val T.p }`): no .NET property exists — it's a
-			// `get_p(__self)`/`set_p(__self, v)` method on the dispatch type, the extension receiver as `__self`.
+			// accessor method on the dispatch type, with the extension receiver as `__self`.
 			// A2 (#61): a PLAIN instance call by identity carrying the accessor KIND; bir2cir's NetInteropBinding
-			// finds NO .NET property `p` (it's a synthetic accessor method) and applies the convention -> a clrInstance
-			// get_p/set_p method call.
+			// finds no .NET property `p` and applies the shared forward physical allocation.
 			// The accessor's arg list is the one physical projection: `[__self?] + <positional args>`, where the
 			// positional part carries a restored `context(...)` parameter and, for a setter, the trailing `value`.
 			extensionReceiver(call)?.let { pExt ->
@@ -1416,7 +1415,7 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// bir2cir-produced `clrPropGet` (which after A2 means a real .NET property). It exists ONLY to feed a
 			// `subscribe`: bir2cir's ClrEventSubscriptionBinding consumes the `clrEventGet + call` pair
 			// into an add_/remove_ accessor, so it never reaches ilemit (a bare event read is rejected above). Every
-			// OTHER property is a plain Kotlin-shaped access -> emit the get_/set_ accessor CALL by identity;
+			// OTHER property is a plain Kotlin-shaped access -> emit an accessor call by identity;
 			// NetInteropBinding shapes it to clrPropGet/clrPropSet (a .NET property OR field) off the refs.
 			if (callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent") {
 				return """{"k":"clrEventGet","type":${memberType!!.toJson()},"name":${str(pn)},"static":$isStatic,"recv":$recvJson$companionCallTag}"""
@@ -1467,10 +1466,10 @@ internal fun BirEmitter.call(call: IrCall): String {
 	}
 
 		// An EXTERNAL top-level property (from a DotKt assembly) -> the referenced .NET file class holds it. An
-		// EXTENSION property (`val T.p`) surfaces as get_/set_<name>(__self) statics with the extension receiver
+		// EXTENSION property (`val T.p`) surfaces as an accessor static with the extension receiver
 		// passed as `__self`; a plain field-backed NON-extension property (`val greeting`) is a STATIC FIELD, so
 		// read -> `staticField` / write -> `staticFieldSet` of that referenced file class (#34b). BUT a field-backed
-		// property with a CUSTOM accessor (`val x = 41; get() = field + 1`, #103) additionally emits a `get_`/`set_`
+		// property with a CUSTOM accessor (`val x = 41; get() = field + 1`, #103) additionally emits an accessor
 		// method on the file class — reading/writing the raw field would SKIP it (a silent cross-module miscompile).
 		// (body==null = external declaration.)
 		(callee.correspondingPropertySymbol?.owner)?.let { p ->
@@ -1504,14 +1503,14 @@ internal fun BirEmitter.call(call: IrCall): String {
 					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":${str(if (setter) "set" else "get")}${overloadSigField(callee)},"argTypes":[$argTypes],"ret":$ret,"args":[$args]$tag}"""
 				}
 				// An accessor that takes ANY argument — an extension receiver, or a `context(...)` parameter — is a
-				// `get_/set_<name>(...)` METHOD on the file class, never a static field: route it to the accessor path
+				// method on the file class, never a static field: route it to the accessor path
 				// below. (A plain field-backed property's accessor takes none.)
 				val isExt = p.getter?.parameters?.any { it.kind == IrParameterKind.ExtensionReceiver || isValueParameter(it) } == true
 				if (!isExt) {
 					// #103: a field-backed prop with a CUSTOM getter/setter must INVOKE the accessor (a static
-					// `get_/set_<name>` method on the file class, like the extension-property path below but without a
-					// receiver), NOT read/write the raw static field. bir2cir binds the `prop:get`/`prop:set` marker to
-					// the `get_`/`set_` method by convention. Read/write customness is independent (a `var` may pair a
+					// accessor method on the file class, like the extension-property path below but without a
+					// receiver), not read/write the raw static field. bir2cir binds the explicit get/set role to the
+					// associated method. Read/write customness is independent (a `var` may pair a
 					// custom setter with a default getter, or vice versa); a default accessor stays a raw field access.
 					// dll2klib preserves the standard getter_flags/setter_flags IS_NOT_DEFAULT bit.
 					val customGet = !hasDefaultGetter(p)
@@ -1526,10 +1525,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 					else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}}"""
 				}
 				val recv = extensionReceiver(call)
-				// A2 (#61 / step 3): a top-level EXTENSION property accessor is a static `get_/set_<name>(__self)` METHOD
+				// A2 (#61 / step 3): a top-level extension property accessor is a static method receiving `__self`
 				// on the referenced file class (NOT a .NET property) -> emit the plain static call by identity carrying
-				// the accessor KIND; bir2cir's NetInteropBinding finds no matching .NET property/field and applies the
-				// `get_`/`set_` convention -> a clrStatic method call.
+				// the accessor role; bir2cir finds no matching .NET property/field and applies the shared forward allocation.
 				if (callee === p.setter) {
 					val args = listOfNotNull(recv) + regularArgs(call)
 					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)},"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
@@ -1556,8 +1554,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// build (the owner-null top-level substitution axis — UNTOUCHED). It ALSO carries `calleeOwner` (#199 Design
 			// B, same two-axis contract as a top-level FUNCTION call): a same-module same-simple-name extension property
 			// across two packages disambiguates by the FIR-resolved file-class DISPATCH hint at ilemit, without shadowing
-			// substitution. bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back to
-			// kotc's get_/set_<name> declaration convention when none exists. `sig` disambiguates a same-name overload
+			// substitution. bir2cir binds referenced properties from metadata and allocates local physical names from the
+			// same explicit identity. `sig` disambiguates a same-name overload
 			// by receiver type. A cross-module DESERIALIZED stub can spuriously report a backing field, so an
 			// extension property must NEVER fall to the static-field read below — that dropped the receiver and looked
 			// up `<CurrentFileKt>.<name>` as a field (the C7 `field AppKt.lastIndex not found` crash).
@@ -1593,9 +1591,9 @@ internal fun BirEmitter.call(call: IrCall): String {
 			// A COMPUTED top-level property (`val foo: T get() = ...`, no backing field) OR one that has a backing
 			// field (initializer) but ALSO a CUSTOM accessor (`val foo = 41; get() = field + 1`, #89) -> a static
 			// call by the property's OWN bare Kotlin identity + a `"prop":"get"/"set"` marker (#78/#81), NOT the
-			// baked get_/set_ slot name and NOT a raw static-field load (that would skip the custom accessor).
-			// bir2cir shapes the .NET accessor from the stdlib binding metadata, falling back to kotc's
-			// get_/set_<name> declaration convention when none exists. The read/write decisions are independent: a
+			// physical accessor name and not a raw static-field load (which would skip the custom accessor).
+			// bir2cir binds referenced properties from metadata or applies the shared local forward allocation. The
+			// read/write decisions are independent: a
 			// `var` may pair a default getter (field read) with a custom setter (accessor call), or vice versa.
 			return if (callee === p.setter) {
 				if (!writesAsStaticField(p))
@@ -1614,13 +1612,13 @@ internal fun BirEmitter.call(call: IrCall): String {
 	}
 
 	// `s.length` on a String is NOT intercepted here: it's a real `kotlin.String.length` property read — fall
-	// through to the ordinary property-get path so it emits as a `kotlin.String` `get_length` member call. The
+	// through to the ordinary property-get path as `method:length, prop:get`. The
 	// CLR binding (String.length -> System.String.Length) is stdlib `@ClrIntrinsic("Length")` metadata, applied
 	// by bir2cir's MemberCallSubstitution (the sibling `String.get`->`get_Chars` was cleaned the same way). kotc
 	// carries NO CLR knowledge here (layer boundary — CLAUDE.md §"kotc reads NEITHER @ClrIntrinsic…").
 	// Pair/Triple `.first`/`.second`/`.third` and IndexedValue `.index`/`.value` are NOT intercepted: they are real
 	// `kotlin.Pair`/`kotlin.Triple`/`kotlin.collections.IndexedValue` property reads — fall through to the ordinary
-	// member-property-read path so they emit as `get_first`/`get_index`/... accessor calls. Their stdlib backing
+	// member-property-read path so they emit semantic getter calls. Their stdlib backing
 	// fields are accessor-routed (internal), so a raw cross-assembly field read never binds directly; the faithful
 	// property call is what ilemit already resolves (its external-owner field node re-routes to the getter anyway).
 
@@ -1632,12 +1630,12 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// `Color.entries.size`: entries -> a Color[] (enumValues), so .size is the array length.
 		if (r.type.classFqName?.asString() == "kotlin.enums.EnumEntries") return """{"k":"arrayLen","array":${expr(r)}}"""
 		// kotlin.* collection/map `.size` is NOT intercepted: it's a real `size` property — fall through to the
-		// ordinary property read so it emits as a kotlin.* `get_size` call.
+		// ordinary property read so it emits as a semantic Kotlin property call.
 	}
 	// `kProperty.name` is NOT intercepted here (#70): `kotlin.reflect.KProperty*`/`KCallable.name` is a REAL
 	// emitted stdlib interface member now (kotc's `propertyRef`/`kPropertyStub` materialize real implementations
 	// of it) — it falls through to the ordinary member-property-read path below, emitting the SAME
-	// `callInstance ownerType:kotlin.reflect.KProperty(/KCallable) method:get_name` shape this used to hand-roll,
+	// `callInstance ownerType:kotlin.reflect.KProperty(/KCallable) method:name prop:get` shape this used to hand-roll,
 	// just with the real FQN instead of the retired `dotkt$KProperty` synthetic.
 	if (property != null && declaringClass != null) {
 		val recvExpr = dispatchReceiver(call)
@@ -1645,20 +1643,20 @@ internal fun BirEmitter.call(call: IrCall): String {
 		val ownerStr = ownerSpec(declaringClass, recvExpr?.type)
 		val owner = str(ownerStr)
 		// A property with a custom accessor — OR one overriding an interface property (e.g. CharSequence.length) —
-		// routes through the get_/set_ method, not the backing field. The Kotlin<->CLR slot-name binding (get_length
-		// -> the synthetic dotkt_CharSequence slot / a @ClrIntrinsic member) is bir2cir's, off the `overrides` marker.
-		if (!isLateinitProperty(property) && !isClrField(property)) {   // route through get_/set_ accessor (CLR property model); @ClrField reads/writes the plain field
+		// routes through an accessor, not the backing field. Physical binding belongs to bir2cir and uses the explicit
+		// property identity plus the `overrides` marker.
+		if (!isLateinitProperty(property) && !isClrField(property)) {   // route through accessor; @ClrField reads/writes the plain field
 			val virtual = isVirtualInstanceCall(call, callee)
-			// A MEMBER extension property (`class C { val T.p get() }`): dispatch on the enclosing C, but its `get_p`/
-			// `set_p` method takes the extension receiver as a leading `__self` arg -> prepend it.
+			// A member extension property dispatches on the enclosing C; its accessor takes the extension receiver as a
+			// leading `__self` argument.
 			val pExt = extensionReceiver(call)?.let { expr(it) }
 			// The accessor's arg list is the SAME projection a function call uses: the leading `__self` (member
 			// extension), then the [isValueParameter] sequence — a `context(c: Ctx) val p` accessor's context
 			// parameters, and for a setter the `value` parameter that follows them.
 			val accArgs = (listOfNotNull(pExt) + regularArgs(call).map { expr(it) }).joinToString(",")
 			return if (callee === property.setter)
-				"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("set_" + property.name.asString())}${overloadSigField(callee)},"args":[$accArgs]${overridesJson(callee)}${superTag(call)}}"""
-			else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str("get_" + property.name.asString())}${overloadSigField(callee)},"args":[$accArgs]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}${superTag(call)}}"""
+				"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(property.name.asString())},"prop":"set"${overloadSigField(callee)},"args":[$accArgs]${overridesJson(callee)}${superTag(call)}}"""
+			else """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(property.name.asString())},"prop":"get"${overloadSigField(callee)},"args":[$accArgs]${retHint((ownerStr as? TypeNode.Fqn)?.args != null, call.type)}${overridesJson(callee)}${superTag(call)}}"""
 		}
 		return if (callee === property.setter)
 			"""{"k":"setFieldExpr","ownerType":$owner,"recv":$recv,"name":${str(property.name.asString())},"value":${expr(regularArgs(call).first())}}"""
@@ -2207,15 +2205,21 @@ internal fun BirEmitter.hasDefaultSetter(prop: IrProperty): Boolean {
 // storage, while the frontend-generated accessor body owns getValue/setValue lowering.
 internal fun BirEmitter.fieldRoutedProperty(prop: IrProperty): Boolean =
 	!prop.isConst && !isLateinitProperty(prop) && !isClrField(prop)
+// Once either accessor needs a method, the top-level property has one accessor-owned surface. Emit both roles (for a
+// var) and route both through it; otherwise the default half would remain a public field while the custom half became
+// a CLR Property, and the frontend fact that the declaration is mutable could not survive round-trip metadata.
+internal fun BirEmitter.accessorRoutedTopLevelProperty(prop: IrProperty): Boolean =
+	fieldRoutedProperty(prop) &&
+		(prop.getter?.let { !hasDefaultGetter(prop) } == true || prop.setter?.let { !hasDefaultSetter(prop) } == true)
 // #89: a property READ resolves to a raw static-field load only with a real field AND (for a field-routed
-// property) a default getter. An excluded (const/lateinit/@ClrField) property keeps the pre-fix rule; a delegated
-// property is field-routed because its provider-typed slot is never the value surface.
-private fun BirEmitter.readsAsStaticField(prop: IrProperty): Boolean =
-	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || hasDefaultGetter(prop))
+// property) no accessor-owned surface. An excluded (const/lateinit/@ClrField) property keeps the pre-fix rule; a
+// delegated property is field-routed because its provider-typed slot is never the value surface.
+internal fun BirEmitter.readsAsStaticField(prop: IrProperty): Boolean =
+	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || !accessorRoutedTopLevelProperty(prop))
 // #89: a property WRITE resolves to a raw static-field store only with a real field AND (for a field-routed
-// property) a default setter.
-private fun BirEmitter.writesAsStaticField(prop: IrProperty): Boolean =
-	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || hasDefaultSetter(prop))
+// property) no accessor-owned surface.
+internal fun BirEmitter.writesAsStaticField(prop: IrProperty): Boolean =
+	hasRealStaticField(prop) && (!fieldRoutedProperty(prop) || !accessorRoutedTopLevelProperty(prop))
 
 /** Records that a LOCAL delegated-property access was rendered as the delegate member (locals have no CLR accessor). */
 internal fun BirEmitter.delegateInlined(

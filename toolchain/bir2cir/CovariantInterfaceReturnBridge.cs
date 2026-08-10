@@ -80,12 +80,15 @@ static class CovariantInterfaceReturnBridge
                 var slotRet0 = TypeJson.Read(slot["ret"]);
                 var slotRet = slotRet0 == null ? null : SubstOwnerTvs(slotRet0, ifaceArgs);
                 if (slotParams.Any(p => p == null) || slotRet == null) continue;
+                KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
 
                 var candidates = methods.OfType<JsonObject>().Where(m =>
-                    !Bool(m["static"]) && Str(m["name"]) == name
+                    !Bool(m["static"]) && !KotlinPropertyAccessors.IsPhysicalSlotBridge(m)
+                    && SameIdentity(m, name, propertyName, accessorKind)
                     && ((m["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
                     && ParamsEqual(m, slotParams, ClassOwnArgs(cls))
-                    && Overrides(m, iface.Name, name)).ToList();
+                    && Overrides(m, iface.Name, propertyName ?? name,
+                        accessorKind switch { "get" => "getter", "set" => "setter", _ => "method" })).ToList();
                 if (candidates.Count != 1) continue;
                 var implementation = candidates[0];
                 var implementationRet0 = TypeJson.Read(implementation["ret"]);
@@ -106,6 +109,9 @@ static class CovariantInterfaceReturnBridge
                         $"dotkt$covar${SafeName(name)}${bridgeOrdinal++}");
                     bridges[key] = bridge;
                     methods.Add(bridge);
+                    if (propertyName != null)
+                        KotlinPropertyAccessors.AssociateBridgeProperty(cls.Node, bridge, propertyName, accessorKind,
+                            Str(implementation[KotlinPropertyAccessors.AssociationKey]), slotParams, slotRet);
                 }
                 ((JsonArray)bridge["clrInterfaceImpls"]).Add(ImplDescriptor(ifaceSpec, name, slotParams, slotRet));
             }
@@ -217,10 +223,16 @@ static class CovariantInterfaceReturnBridge
         return true;
     }
 
-    static bool Overrides(JsonObject method, string owner, string member) =>
+    static bool SameIdentity(JsonObject method, string physicalName, string propertyName, string accessorKind) =>
+        propertyName != null
+            ? KotlinPropertyAccessors.TryIdentity(method, out var candidateName, out var candidateKind)
+                && candidateName == propertyName && candidateKind == accessorKind
+            : Str(method["name"]) == physicalName && !KotlinPropertyAccessors.TryIdentity(method, out _, out _);
+
+    static bool Overrides(JsonObject method, string owner, string member, string memberKind) =>
         method["overrides"] is JsonArray overrides && overrides.OfType<JsonObject>().Any(o =>
             TypeJson.Read(o["owner"]) is TypeNode.Fqn f && f.Name == owner
-            && (Str(o["member"]) == member || "get_" + Str(o["member"]) == member || "set_" + Str(o["member"]) == member));
+            && Str(o["member"]) == member && Str(o["kind"]) == memberKind);
 
     static TypeNode[] ClassOwnArgs(Def def) =>
         Enumerable.Range(0, def.Arity).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray();

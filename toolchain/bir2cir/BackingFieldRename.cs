@@ -17,10 +17,11 @@ using System.Text.Json.Nodes;
 // is not user-authored" signal that debuggers, analyzers and serializers key on (C# stamps the same attribute on the
 // same field).
 //
-// DISCRIMINATOR: a field whose owner also declares a `properties` record of the same name. That pairing is a
-// CLR-representation fact read off the CIR type declaration — the property record and the field list are exactly the
-// inputs to "how is this property's storage named on the CLR", which is this layer's decision; it is deliberately NOT
-// a Kotlin-frontend flag. It covers bir2cir's OWN synthesized adapters too (StringCharSequenceBridge's
+// DISCRIMINATOR: a field whose owner also declares a RECEIVERLESS `properties` record of the same name. A Kotlin
+// extension/context property may legally share its source name with an independent field-backed property, so a
+// receiver-bearing Property row does not own that field. The exact accessor descriptors already allocated by bir2cir
+// distinguish those shapes without parsing either member's physical name. This covers bir2cir's synthesized adapters too
+// (StringCharSequenceBridge's
 // `dotkt$StringCharSequence` declares both a `value` field and a `value` property, and had the same clash).
 // (DeclarationRename, which runs earlier, rewrites a property record's `get`/`set` but never its `name`, so the
 // pairing key is stable.)
@@ -31,8 +32,8 @@ using System.Text.Json.Nodes;
 //
 // OUT OF SCOPE — every property whose storage IS the user-visible member emits NO property record, so none of them is
 // touched and every user-visible field keeps its name: a `@ClrField` property (the opt-out that deliberately emits a
-// plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a top-level static field, an
-// `object`'s `INSTANCE`, an enum entry's singleton and every capture/synthetic field. A property with a CUSTOM
+// plain field), a `const`, a `lateinit var`, a delegated property's `<p>$delegate`, a default-only top-level property,
+// an `object`'s `INSTANCE`, an enum entry's singleton and every capture/synthetic field. A property with a CUSTOM
 // accessor that still has a backing field (`val x = 7; get() = field + 1`) IS accessor-routed and IS renamed.
 //
 // Runs GLOBALLY over all staged roots (a `byref(obj.prop)` addresses a sibling file's backing field directly) and in
@@ -62,7 +63,7 @@ static class BackingFieldRename
         var renames = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         var staticRenames = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
         var bases = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var root in roots) CollectTypes(root, renames, staticRenames, bases);
+        foreach (var root in roots) CollectDeclarations(root, renames, staticRenames, bases);
         if (renames.Count == 0 && staticRenames.Count == 0) return;
         foreach (var root in roots) RewriteUses(root, renames, staticRenames, bases);
     }
@@ -70,22 +71,23 @@ static class BackingFieldRename
     // The CLR metadata name for the backing store of property `prop`.
     internal static string Mangle(string prop) => "<" + prop + ">k__BackingField";
 
-    static void CollectTypes(JsonNode node, Dictionary<string, Dictionary<string, string>> renames,
+    static void CollectDeclarations(JsonNode node, Dictionary<string, Dictionary<string, string>> renames,
         Dictionary<string, Dictionary<string, string>> staticRenames, Dictionary<string, string> bases)
     {
-        if (node is not JsonObject obj || obj["types"] is not JsonArray types) return;
+        if (node is not JsonObject obj) return;
+        // A file facade is itself a CLR TypeDef declaration: its fields/properties live on the BIR root rather than in
+        // `types`. Process that declaration before descending into ordinary and nested type declarations.
+        RenameDecls(obj, renames, staticRenames, bases);
+        if (obj["types"] is not JsonArray types) return;
         foreach (var t in types)
             if (t is JsonObject td)
-            {
-                RenameDecls(td, renames, staticRenames, bases);
-                CollectTypes(td, renames, staticRenames, bases);   // a nested `types` array, mirroring the other walkers
-            }
+                CollectDeclarations(td, renames, staticRenames, bases);
     }
 
     static void RenameDecls(JsonObject td, Dictionary<string, Dictionary<string, string>> renames,
         Dictionary<string, Dictionary<string, string>> staticRenames, Dictionary<string, string> bases)
     {
-        if (Str(td["name"]) is not string rawName) return;
+        if ((Str(td["name"]) ?? Str(td["fileClass"])) is not string rawName) return;
         var owner = ReferenceMetadataIndex.BareOwnerFqn(rawName);
         if (TypeJson.OwnerName(td["base"]) is string rawBase)
             bases[owner] = ReferenceMetadataIndex.BareOwnerFqn(rawBase);
@@ -93,7 +95,7 @@ static class BackingFieldRename
 
         var propNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var p in props)
-            if (p is JsonObject po && Str(po["name"]) is string pn) propNames.Add(pn);
+            if (p is JsonObject po && IsReceiverless(po) && Str(po["name"]) is string pn) propNames.Add(pn);
         if (propNames.Count == 0) return;
 
         var declared = new HashSet<string>(StringComparer.Ordinal);
@@ -139,6 +141,16 @@ static class BackingFieldRename
         if (into.TryGetValue(owner, out var existing))
             foreach (var kv in map) existing[kv.Key] = kv.Value;
         else into[owner] = map;
+    }
+
+    // Getter parameters are all index/context/extension slots. A setter has the same prefix plus its final value slot.
+    // Property descriptors are authored before this pass for source declarations and every synthetic property that can
+    // own storage; absence therefore means there is no exact evidence that this Property row owns a same-named field.
+    static bool IsReceiverless(JsonObject property)
+    {
+        if (property["getSig"] is JsonArray getter) return getter.Count == 0;
+        if (property["setSig"] is JsonArray setter) return setter.Count == 1;
+        return false;
     }
 
     // Append the standard [CompilerGenerated] to the field's applied-attribute array. `attrExternal` is required: the

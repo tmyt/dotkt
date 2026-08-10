@@ -67,7 +67,7 @@ static class EnumIntrinsicLowering
         // rather than asking ilemit to find a physical `E.get_entries` method (a CLR enum has no such member).
         if (app && Str(o["k"]) == "callStatic"
             && Str(o["prop"]) == "get"
-            && Str(o["method"]) is "entries" or "get_entries"
+            && Str(o["method"]) == "entries"
             && o["ownerType"] is JsonNode ownerNode
             && (o["args"] as JsonArray)?.Count == 0
             && TypeJson.Read(ownerNode) is TypeNode.Fqn owner

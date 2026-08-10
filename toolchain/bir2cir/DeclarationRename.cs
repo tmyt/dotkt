@@ -31,15 +31,13 @@ static class DeclarationRename
             if ((obj["kind"] as JsonValue)?.GetValue<string>() is string k) inIface = k == "interface";
             if (obj["overrides"] is JsonArray ovs)
             {
-                // A `properties:[{name,get,set,overrides}]` entry (kotc's CLR-property record): rename its accessor
-                // references get_<name>/set_<name> -> get_/set_ + the property intrinsic ("Count"); its `name` stays the
-                // Kotlin property name (matching what annClr emits). Distinguished from a method decl by having `get`.
-                if (obj.ContainsKey("get") && !obj.ContainsKey("params") && ResolveBareIntrinsic(ovs, refs) is string pintr)
-                {
-                    obj["get"] = "get_" + pintr;
-                    if (obj["set"] is JsonValue) obj["set"] = "set_" + pintr;   // null set stays null
-                }
-                else if (ResolveSlot(ovs, refs) is string slot)
+                // Property rows retain only their semantic association here. Their exact physical getter/setter links
+                // are allocated later from the renamed accessor declarations, so this pass has no second Property-link
+                // naming rule and cannot leave a stale link behind.
+                var semanticPropertyCall = (obj["k"] as JsonValue)?.GetValue<string>() == "callInstance"
+                    && KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
+                if (obj[KotlinPropertyAccessors.PropertyRolesKey] is not JsonArray && !semanticPropertyCall
+                    && ResolveSlot(obj, ovs, refs) is string slot)
                 {
                     if ((obj["k"] as JsonValue)?.GetValue<string>() == "callInstance")
                     {
@@ -81,7 +79,8 @@ static class DeclarationRename
                             // the plain override method + its `overrides` marker (its `clrAccessorMethod` producer was
                             // retired in #73 M4); this is the SOLE source of the clrOverride field, derived off the refs.
                             // The guard is defensive (no kotc producer remains to double-stamp).
-                            if (!obj.ContainsKey("clrOverride") && ResolveNetClassOwner(ovs, refs) is string clrBase)
+                            if (!obj.ContainsKey("clrOverride")
+                                && ResolveNetClassOwner(obj, ovs, refs) is string clrBase)
                                 obj["clrOverride"] = TypeJson.Fqn(clrBase);
                         }
                     }
@@ -98,7 +97,7 @@ static class DeclarationRename
     // DefineMethodOverride binds the base virtual slot. A property mapping alone is NOT sufficient: Kotlin's open
     // Throwable.cause maps to the NON-virtual Exception.InnerException getter, so a subclass `override val cause`
     // must remain a Kotlin virtual newslot rather than attempt an impossible CLR .override.
-    static string ResolveNetClassOwner(JsonArray ovs, ReferenceMetadataIndex refs)
+    static string ResolveNetClassOwner(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs)
     {
         foreach (var o in ovs)
         {
@@ -123,7 +122,8 @@ static class DeclarationRename
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var overrideKind = (oo["kind"] as JsonValue)?.GetValue<string>();
             if (refs.TryResolveClrOwner(owner, out var bcl, out var ownerKind) && ownerKind == "class"
-                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out var bclProperty)
+                && TryExactPropertySlot(declaration, refs, owner, member, overrideKind,
+                    out _, out var bclProperty, out _)
                 && refs.ResolveNetType(bcl) is Type nt && HasOverridableAccessor(nt, bclProperty, overrideKind))
                 return bcl;
         }
@@ -142,50 +142,10 @@ static class DeclarationRename
         catch { return false; }
     }
 
-    // The BARE property intrinsic ("Count") for a property record's override closure: the @ClrIntrinsic is on the
-    // get_<name> accessor method in the ref.dll, so look that up (arity 0) and return the raw value (no get_/set_ prefix,
-    // which the caller applies for both accessors). null = the overridden property carries no @ClrIntrinsic.
-    static string ResolveBareIntrinsic(JsonArray ovs, ReferenceMetadataIndex refs)
-    {
-        foreach (var o in ovs)
-        {
-            if (o is not JsonObject oo) continue;
-            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
-            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
-            if (refs.TryMemberIntrinsicExact(owner, "get_" + member, 0, out var intr)) return intr;
-        }
-        // @ClrProperty fallback (issue #24): the property-record's overridden accessor carries no @ClrIntrinsic but an
-        // explicit @ClrProperty binding on a @ClrTypeAlias ancestor (kotlin.Throwable.message -> "Message"). Return the
-        // bare BCL property name (the caller re-applies get_/set_) so the record's `get`/`set` rename to the BCL slot.
-        // Same walk as MemberCallSubstitution Rule 2p-inherited; the @ClrProperty lives on the get_<name> accessor.
-        foreach (var o in ovs)
-        {
-            if (o is not JsonObject oo) continue;
-            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
-            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
-            if (refs.TryResolveClrOwner(owner, out _, out _)
-                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out var bclPropName))
-                return bclPropName;
-        }
-        // REFERENCE-KLIB-PROJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type (not a
-        // stdlib ref.dll alias). dll2klib injects the Kotlin property identity EQUAL to the .NET property name, so the
-        // bare property slot IS `member` (the caller re-applies get_/set_). Confirm the .NET type declares a property/
-        // field of that name so a hand-named override isn't misresolved.
-        foreach (var o in ovs)
-        {
-            if (o is not JsonObject oo) continue;
-            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
-            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
-            if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(owner)) is Type nt
-                && NetInteropBinding.MemberIsPropertyOrField(nt, member)) return member;
-        }
-        return null;
-    }
-
     // The first override entry whose (owner, Kotlin member name, arity) carries an @ClrIntrinsic in the ref.dll, mapped
     // to its CLR slot: a getter/setter -> get_/set_ + the intrinsic; a method -> the intrinsic verbatim. null = no
     // CLR-bound member in the closure (leave the kotc name).
-    internal static string ResolveSlot(JsonArray ovs, ReferenceMetadataIndex refs)
+    internal static string ResolveSlot(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs)
     {
         foreach (var o in ovs)
         {
@@ -201,30 +161,13 @@ static class DeclarationRename
             // A property's @ClrIntrinsic lives on the get_<name> accessor (arity 0) in the ref.dll — for a SETTER too
             // (a `var` overriding a `val` base has no set_<name> to key on), so look up the getter and re-prefix. A plain
             // method's intrinsic is on the method itself by exact arity.
-            var isAccessor = kind is "getter" or "setter";
-            var lookupName = isAccessor ? "get_" + member : member;
-            if (!refs.TryMemberIntrinsicExact(owner, lookupName, isAccessor ? 0 : arity, out var intr)) continue;
-            return kind switch { "getter" => "get_" + intr, "setter" => "set_" + intr, _ => intr };
-        }
-        // @ClrProperty fallback (issue #24) — SYMMETRIC to MemberCallSubstitution's Rule 2p-inherited on the CALL side.
-        // A property override whose CLR-bound ancestor binds the slot via @ClrProperty (not @ClrIntrinsic): the base is a
-        // @ClrTypeAlias owner (kotlin.Throwable) whose `message` accessor carries @ClrProperty(READ,"Message"). Walk the
-        // override closure to that ancestor and return its BCL accessor slot, so the override DECLARATION `get_message`
-        // renames to `get_Message` and the Walk caller stamps `clrOverride` (via ResolveNetClassOwner) — without which
-        // ilemit emits a fresh newslot and the substituted `callvirt System.Exception.get_Message` binds the base value.
-        // The @ClrProperty lives on the get_<name> accessor (arity 0) in the ref.dll for BOTH accessors; a setter
-        // re-prefixes set_. Runs AFTER @ClrIntrinsic (a direct intrinsic wins) and BEFORE the dll2klib .NET fallback
-        // (which would miss anyway — ResolveNetType skips kotlin.* aliases).
-        foreach (var o in ovs)
-        {
-            if (o is not JsonObject oo) continue;
-            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
-            if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
-            var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
-            if (kind is not ("getter" or "setter")) continue;
-            if (refs.TryResolveClrOwner(owner, out _, out _)
-                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(owner), "get_" + member, 0, out _, out var bclPropName))
-                return (kind == "getter" ? "get_" : "set_") + bclPropName;
+            if (kind is "getter" or "setter")
+            {
+                if (TryExactPropertySlot(declaration, refs, owner, member, kind,
+                        out _, out _, out var accessorMethod)) return accessorMethod;
+                continue;
+            }
+            if (refs.TryMemberIntrinsicExact(owner, member, arity, out var intr)) return intr;
         }
         // REFERENCE-KLIB-PROJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
         // refs (NOT a stdlib ref.dll alias — ResolveNetType excludes kotlin.*/dotkt$ synthetics and locals
@@ -242,14 +185,35 @@ static class DeclarationRename
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
             if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(owner)) is not Type nt) continue;
-            var isAccessor = kind is "getter" or "setter";
-            if (isAccessor)
-            {
-                if (!NetInteropBinding.MemberIsPropertyOrField(nt, member)) continue;
-                return (kind == "getter" ? "get_" : "set_") + member;
-            }
+            if (kind is "getter" or "setter") continue;
             if (NetInteropBinding.DeclaresPublicMethodNamed(nt, member)) return member;
         }
         return null;
+    }
+
+    // The overriding declaration already carries the frontend-resolved accessor signature. Pair it with the exact
+    // override edge's source owner/property/role; never select a referenced sibling by physical name or arity alone.
+    // A setter overriding a getter-only `val` is handled inside the reference index by removing the value parameter
+    // and resolving the same exact getter association.
+    static bool TryExactPropertySlot(JsonObject declaration, ReferenceMetadataIndex refs,
+        string owner, string member, string overrideKind,
+        out string physicalOwner, out string physicalProperty, out string physicalMethod)
+    {
+        physicalOwner = null;
+        physicalProperty = null;
+        physicalMethod = null;
+        if (overrideKind is not ("getter" or "setter") || declaration["params"] is not JsonArray parameters)
+            return false;
+        var signature = new List<TypeNode>(parameters.Count);
+        foreach (var parameter in parameters)
+        {
+            var type = TypeJson.Read((parameter as JsonObject)?["type"]);
+            if (type == null) return false;
+            signature.Add(type);
+        }
+        var methodArity = (declaration["typeParams"] as JsonArray)?.Count ?? 0;
+        return refs.TryExternalPropertyAccessor(owner, member,
+            overrideKind == "setter" ? "set" : "get", parameters.Count, methodArity, signature,
+            Array.Empty<TypeNode>(), out physicalOwner, out physicalProperty, out physicalMethod);
     }
 }

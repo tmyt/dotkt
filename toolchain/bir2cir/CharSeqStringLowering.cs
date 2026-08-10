@@ -380,19 +380,28 @@ static class CharSeqStringLowering
     {
         var recv = node["recv"];
         var args = node["args"] as JsonArray;
-        switch (Str(node["method"]))
+        var member = Str(node["method"]);
+        var propertyAccess = Str(node["prop"]);
+        switch (member)
         {
-            case "get_length":
+            case "length" when propertyAccess == "get":
                 return new JsonObject
                 {
-                    ["k"] = "clrPropGet", ["type"] = TypeJson.Fqn("System.String"), ["name"] = "Length",
-                    ["ret"] = TypeJson.Fqn("System.Int32"), ["static"] = false, ["recv"] = recv?.DeepClone(),
+                    ["k"] = "clrPropGet",
+                    ["type"] = TypeJson.Fqn("System.String"),
+                    ["name"] = "Length",
+                    ["ret"] = TypeJson.Fqn("System.Int32"),
+                    ["static"] = false,
+                    ["recv"] = recv?.DeepClone(),
                 };
             case "get":
                 return new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.String"), ["method"] = "get_Chars",
-                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.Char"),
+                    ["k"] = "clrInstance",
+                    ["type"] = TypeJson.Fqn("System.String"),
+                    ["method"] = "get_Chars",
+                    ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32") },
+                    ["ret"] = TypeJson.Fqn("System.Char"),
                     ["recv"] = recv?.DeepClone(),
                     ["args"] = new JsonArray { args != null && args.Count > 0 ? args[0].DeepClone() : null },
                 };
@@ -415,8 +424,11 @@ static class CharSeqStringLowering
                     },
                     ["result"] = new JsonObject
                     {
-                        ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.String"), ["method"] = "Substring",
-                        ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Int32") }, ["ret"] = TypeJson.Fqn("System.String"),
+                        ["k"] = "clrInstance",
+                        ["type"] = TypeJson.Fqn("System.String"),
+                        ["method"] = "Substring",
+                        ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Int32") },
+                        ["ret"] = TypeJson.Fqn("System.String"),
                         ["recv"] = new JsonObject { ["k"] = "local", ["name"] = recvTmp },
                         ["args"] = new JsonArray
                         {
@@ -444,8 +456,11 @@ static class CharSeqStringLowering
         if (IsStaticString(value, env)) return null;
         return new JsonObject
         {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
-            ["sig"] = new JsonArray { TypeJson.Fqn("object") }, ["args"] = new JsonArray { value.DeepClone() },
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"),
+            ["method"] = "toString",
+            ["sig"] = new JsonArray { TypeJson.Fqn("object") },
+            ["args"] = new JsonArray { value.DeepClone() },
         };
     }
 

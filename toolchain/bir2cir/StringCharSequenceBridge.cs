@@ -38,28 +38,28 @@ static class StringCharSequenceBridge
         {"name": "get", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public", "mods": {"operator": true},
          "params": [{"name": "index", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"kotlin.Char"},
          "body": [{"k": "return", "value": {"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "get_Chars", "argTypes": [{"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.Char"},
-           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
+           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []},
            "args": [{"k": "local", "name": "index"}]}}], "attrs": []},
         {"name": "subSequence", "static": false, "override": false, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [{"name": "startIndex", "type": {"t":"fqn","name":"kotlin.Int"}}, {"name": "endIndex", "type": {"t":"fqn","name":"kotlin.Int"}}], "ret": {"t":"fqn","name":"dotkt$CharSequence"},
          "body": [{"k": "return", "value": {"k": "new", "type": {"t":"fqn","name":"dotkt$StringCharSequence"}, "argTypes": [{"t":"fqn","name":"kotlin.String"}],
            "args": [{"k": "clrInstance", "type": {"t":"fqn","name":"System.String"}, "method": "Substring", "argTypes": [{"t":"fqn","name":"System.Int32"}, {"t":"fqn","name":"System.Int32"}], "ret": {"t":"fqn","name":"System.String"},
-             "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []},
+             "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []},
              "args": [{"k": "local", "name": "startIndex"}, {"k": "binOp", "op": "-", "lhs": {"k": "local", "name": "endIndex"}, "rhs": {"k": "local", "name": "startIndex"}}]}]}}], "attrs": []},
-        {"name": "get_value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
+        {"name": "value", "propertyName": "value", "propertyAccessor": "get", "propertyAssociation": "string-value", "static": false, "override": false, "virtual": false, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
          "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]},
-        {"name": "get_length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
+        {"name": "length", "propertyName": "length", "propertyAccessor": "get", "propertyAssociation": "string-length", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": false, "vis": "public",
          "params": [], "ret": {"t":"fqn","name":"kotlin.Int"},
          "body": [{"k": "return", "value": {"k": "clrPropGet", "type": {"t":"fqn","name":"System.String"}, "name": "Length", "ret": {"t":"fqn","name":"System.Int32"}, "static": false,
-           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "get_value", "args": []}}}]},
+           "recv": {"k": "callInstance", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "virtual": false, "recv": {"k": "this"}, "method": "value", "prop": "get", "args": []}}}]},
         {"name": "ToString", "static": false, "override": true, "virtual": true, "abstract": false, "objectOverride": true, "vis": "public",
          "params": [], "ret": {"t":"fqn","name":"kotlin.String"},
          "body": [{"k": "return", "value": {"k": "field", "ownerType": {"t":"fqn","name":"dotkt$StringCharSequence"}, "recv": {"k": "this"}, "name": "value"}}]}
       ],
       "properties": [
-        {"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "get": "get_value", "set": null},
-        {"name": "length", "type": {"t":"fqn","name":"kotlin.Int"}, "get": "get_length", "set": null}
+        {"name": "value", "type": {"t":"fqn","name":"kotlin.String"}, "kotlinAccessors": ["get"], "propertyAssociation": "string-value"},
+        {"name": "length", "type": {"t":"fqn","name":"kotlin.Int"}, "kotlinAccessors": ["get"], "propertyAssociation": "string-length"}
       ],
       "attrs": []
     }
@@ -333,12 +333,18 @@ static class StringCharSequenceBridge
         }
         var sourceRead = new JsonObject
         {
-            ["k"] = "field", ["sty"] = sourceType.DeepClone(), ["ownerType"] = owner.DeepClone(),
-            ["recv"] = new JsonObject { ["k"] = "this" }, ["name"] = "source",
+            ["k"] = "field",
+            ["sty"] = sourceType.DeepClone(),
+            ["ownerType"] = owner.DeepClone(),
+            ["recv"] = new JsonObject { ["k"] = "this" },
+            ["name"] = "source",
         };
         var invoke = new JsonObject
         {
-            ["k"] = "delegateInvoke", ["funcType"] = sourceType.DeepClone(), ["recv"] = sourceRead, ["args"] = invokeArgs,
+            ["k"] = "delegateInvoke",
+            ["funcType"] = sourceType.DeepClone(),
+            ["recv"] = sourceRead,
+            ["args"] = invokeArgs,
         };
         var body = new JsonArray
         {
@@ -466,8 +472,11 @@ static class StringCharSequenceBridge
     {
         var snapshot = new JsonObject
         {
-            ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
-            ["sig"] = new JsonArray { TypeJson.Fqn("object") }, ["args"] = new JsonArray { sbExpr.DeepClone() },
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"),
+            ["method"] = "toString",
+            ["sig"] = new JsonArray { TypeJson.Fqn("object") },
+            ["args"] = new JsonArray { sbExpr.DeepClone() },
         };
         return WrapAdapter(snapshot);
     }
@@ -613,7 +622,8 @@ static class StringCharSequenceBridge
             ["type"] = TypeJson.Fqn(CharSeq),
             ["cond"] = new JsonObject
             {
-                ["k"] = "objEq", ["lhs"] = read.DeepClone(),
+                ["k"] = "objEq",
+                ["lhs"] = read.DeepClone(),
                 ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn(CharSeq), ["value"] = null },
             },
             ["then"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn(CharSeq), ["value"] = null },

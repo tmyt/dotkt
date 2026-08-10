@@ -1093,9 +1093,9 @@ sealed partial class Emitter
             MethodBuilder gm = null;
             MethodBuilder sm = null;
             if (p.TryGetProperty("get", out var g) && g.ValueKind == JsonValueKind.String)
-                ti.Methods.TryGetValue(g.GetString(), out gm);
+                gm = ResolvePropertyAccessor(ti, p, g.GetString(), "get");
             if (p.TryGetProperty("set", out var s) && s.ValueKind == JsonValueKind.String)
-                ti.Methods.TryGetValue(s.GetString(), out sm);
+                sm = ResolvePropertyAccessor(ti, p, s.GetString(), "set");
             // ECMA-335 requires the Property signature to describe the accessor's index parameters. Most Kotlin
             // properties have none, but a context/extension property's getter physically receives those arguments.
             // A setter's final parameter is the value, not an index parameter.
@@ -1111,6 +1111,21 @@ sealed partial class Emitter
             if (sm != null) pb.SetSetMethod(sm);
             StampMemberAttrs(pb.SetCustomAttribute, p);   // [KotlinSuspendFunctionType]/… (bir2cir-generated)
         }
+    }
+
+    MethodBuilder ResolvePropertyAccessor(TypeInfo ti, JsonElement property, string name, string role)
+    {
+        if (!property.TryGetProperty(role + "Sig", out var signature))
+            throw new InvalidOperationException(
+                $"ilemit: Property accessor {ti.TB.FullName}.{name} has no resolved {role}Sig descriptor");
+        var methodArity = property.TryGetProperty(role + "MethodArity", out var arity)
+            ? arity.GetInt32()
+            : 0;
+        var parameterTypes = signature.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
+        if (ti.MethodsBySig.TryGetValue(SigKey(name, methodArity, parameterTypes), out var exact))
+            return exact;
+        throw new InvalidOperationException(
+            $"ilemit: resolved Property accessor descriptor {ti.TB.FullName}.{SigKey(name, methodArity, parameterTypes)} does not link exactly");
     }
 
     // Method-level generic params, keyed by MethodInfo, so call sites can MakeGenericMethod.
