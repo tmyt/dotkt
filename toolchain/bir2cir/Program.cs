@@ -120,6 +120,12 @@ sealed class Pipeline
         // A receiverless companion extension needs its associated Kotlin classifier in the physical member identity.
         // Consume that explicit declaration/use fact before any name-keyed index or inline payload is captured.
         var companionExtensionBindings = CompanionExtensionBinding.Apply(birRoots, refs);
+        // #397: accessor declarations arrive in Kotlin vocabulary (source property identity + get/set role).
+        // Materialize the legacy CLR spelling once, after #389 has selected any companion-extension core/container
+        // representation and before a name-keyed declaration index is captured.  The explicit identity remains on
+        // each declaration for semantic consumers and is stripped only at the BIR->CIR boundary.
+        KotlinPropertyAccessors.AllocateDeclarationsAndProperties(birRoots);
+        var localPropertyDeclarations = MemberCallSubstitution.CollectLocalPropertyAccessors(birRoots);
         var ownershipFacts = TypeOwnershipLowering.PrepareOwnershipFacts(birRoots);
         // #68 (PART 2): kotc emits the PLAIN Kotlin identity `kotlin.CharSequence` at every CharSequence use site (no CLR
         // synthetic name — kotc knows nothing of the synthetic). Recognizing `kotlin.CharSequence` as a synthesize-target is
@@ -629,7 +635,14 @@ sealed class Pipeline
             // sequenced stdlib follow-up, §5g). The System.Type/BCL knowledge lives HERE, never in the kotc frontend
             // (layer purity, mirrors the exception-map / annotation-base migrations). Non-ref only: ref keeps KClass pure.
             if (!_options.RefBuild) hoisted = KClassMemberBinding.Apply(hoisted);
-            var substituted = _options.RefBuild ? PropertyMarkerReconstruct.Apply(hoisted) : MemberCallSubstitution.Apply(hoisted, refs, localTopLevelFns, attributeTopLevelOwner, isValueFqn);
+            // Consume CharSequence property semantics while calls still carry the explicit Kotlin property name and
+            // accessor role. MemberCallSubstitution is the physical binding boundary for those calls; no later pass may
+            // recover `length` from the allocated MethodRef spelling.
+            CharSeqStringLowering.CharSeqRetLambdas charSeqRetLambdas = null;
+            if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
+                hoisted = CharSeqStringLowering.Apply(hoisted, localTopLevelFns, out charSeqRetLambdas);
+            var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
+                localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations);
             // Cross-module half of UncheckedGenericCastReturnErasure.  MemberCallSubstitution has now attributed a
             // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
             // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.
@@ -655,18 +668,9 @@ sealed class Pipeline
             // synthesized in the rt assembly exactly once (dedup), implementing the RT's canonical `dotkt$CharSequence`,
             // so an app that then routes a String op to a real stdlib body works. Skipped only for the ref build (its
             // bodies are squashed to `throw` anyway). Purely additive: only positively-String values are wrapped.
-            // CharSequence -> System.String (the 3-point model, point ①/②). In a "pure" APP assembly (no user
-            // `class S : CharSequence`, so no polymorphic implementer can flow through a CharSequence slot) an app's
-            // OWN CharSequence-typed param/return/local is lowered to `System.String`, its member reads
-            // (length/get/subSequence) resolve to System.String.Length/get_Chars/Substring, and a non-String value
-            // (a StringBuilder) flowing into such a now-`string` slot is snapshot with an implicit `.toString()`.
-            // Runs BEFORE the StringCharSequenceBridge so a now-`string` value flowing into a *stdlib* CharSequence-ext
-            // (whose param stays the synthetic in the un-rebuilt stdlib) is still adapter-wrapped by the bridge — the
-            // two compose. Skipped for the stdlib self-build (attributeTopLevelOwner) and for any assembly that
-            // declares a user CharSequence implementer (hasUserCharSeqImpl) — those keep the synthetic verbatim.
-            CharSeqStringLowering.CharSeqRetLambdas charSeqRetLambdas = null;
-            if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
-                substituted = CharSeqStringLowering.Apply(substituted, localTopLevelFns, out charSeqRetLambdas);
+            // CharSeqStringLowering already selected the pure-app System.String representation while calls still
+            // carried explicit property identity. Materialize any remaining synthetic/StringBuilder adapters after
+            // call substitution; a user CharSequence implementation keeps the synthetic representation verbatim.
             var materializedDelegateAdapter = false;
             if (!_options.RefBuild)
                 substituted = StringCharSequenceBridge.Apply(
@@ -871,6 +875,12 @@ sealed class Pipeline
         // ilemit receives a closed CIR return type and performs no inference.
         ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // Every structural synthesizer has now run. Allocate the complete declaration/property set before any pass
+        // consumes physical Property descriptors: BackingFieldRename distinguishes receiverless storage ownership by
+        // the exact getSig/setSig written here, including on late String/CharSequence adapters. This allocator is the
+        // sole forward Kotlin-property -> CLR-name projection; no consumer reconstructs identity from that name.
+        KotlinPropertyAccessors.AllocateDeclarationsAndProperties(staged.Select(s => s.Root));
+
         // AUTO-PROPERTY BACKING-FIELD RENAME (#228): kotc names an accessor-routed property's storage with the KOTLIN
         // identity, so the emitted type carried a property AND a field of the same name (reflection consumers cannot
         // resolve the pair). Mint the CLR metadata name `<Name>k__BackingField` here — the layer that owns the
@@ -910,6 +920,10 @@ sealed class Pipeline
         // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is
         // repointed to `Key<Element>` for the stdlib's OWN Key; a REFERENCED Key resolves via refs.TvBound instead.
         var starProjBounds = StarProjectionBoundLowering.CollectTypeParamBounds(staged.Select(s => s.Root));
+        // The early semantic index only prevents a local accessor call from being captured by an external ancestor.
+        // Capture the actual post-allocation MethodDef names now, once, for exact call allocation below.
+        var localPropertyAccessors = MemberCallSubstitution.CollectLocalPropertyAccessors(
+            staged.Select(s => s.Root));
 
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
@@ -984,6 +998,7 @@ sealed class Pipeline
             // `sty`, so this is the last point at which the stamp exists to be checked. A stale stamp surviving here
             // is a pass that changed a node's result type without carrying `sty` with it.
             CheckStySanity(outputName, substituted);
+            KotlinPropertyAccessors.AllocateAll(substituted, refs, localPropertyAccessors);
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
                 refs.PhysicalTypeNames, emittedLocalTypes);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can

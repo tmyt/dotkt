@@ -41,7 +41,7 @@ static partial class NullableTvErasureCallRealign
     // Evaluates the arguments as it goes, because one rewrite has to happen BEFORE an argument is evaluated: see the
     // construction case below. Reports the flowed argument types (null when the node has no `args`).
     static TypeNode[] RealignArgs(JsonObject call, TypeNode[] declParams, bool[] declRefused, TypeNode[] ownerArgs,
-        TypeNode[] methodArgs, Ctx ctx)
+        TypeNode[] methodArgs, Ctx ctx, bool exactPropertyTarget = false)
     {
         if (call["args"] is not JsonArray args) return null;
         // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`; a call NetInteropBinding has already
@@ -166,7 +166,8 @@ static partial class NullableTvErasureCallRealign
                      && Subst(slot, ownerArgs, methodArgs) is TypeNode closed
                      && (clrBound || NeedsObjectSeam(closed)))
                 target = closed;
-            if (target != null && args[i] is JsonObject arg && CastForTarget(arg, argTypes[i], target) is JsonNode wrapped)
+            if (target != null && args[i] is JsonObject arg
+                && CastForTarget(arg, argTypes[i], target, exactPropertyTarget) is JsonNode wrapped)
                 args[i] = wrapped;
         }
         return argTypes;
@@ -490,10 +491,15 @@ static partial class NullableTvErasureCallRealign
     //     structural `Nullable<V>` (whose empty case boxes to a genuine null), or a type variable.
     // A difference nested inside a constructed generic is NOT castable in either direction — `Ref<object>` and
     // `Ref<Nullable<int32>>` are unrelated invariant reified generics — and is left to the read-side derivation.
-    static JsonNode CastForTarget(JsonNode value, TypeNode src, TypeNode target)
+    static JsonNode CastForTarget(JsonNode value, TypeNode src, TypeNode target,
+        bool exactPropertyTarget = false)
     {
         if (value is not JsonObject vo || src == null || target == null || src.Equals(target)) return null;
-        var srcObj = IsBareObject(src);
+        // A compiler-generated mutable-property-reference adapter can expose `value: kotlin.Any` even though its
+        // explicitly resolved generic accessor closes to `String` (or another narrower CLR slot). The exact source
+        // property/role/MethodSemantics/signature lookup above makes that target authoritative, so this is an ordinary
+        // runtime narrowing conversion, not an inference from `get_`/`set_` or from a physical object signature.
+        var srcObj = IsBareObject(src) || exactPropertyTarget && IsSemanticObject(src);
         var tgtObj = IsBareObject(target);
         if (srcObj == tgtObj) return null;                                   // neither side is the erased form
         if (srcObj ? IsVoidish(target) : !NeedsObjectSeam(src)) return null;
@@ -511,6 +517,9 @@ static partial class NullableTvErasureCallRealign
     }
 
     static bool IsBareObject(TypeNode t) => t is TypeNode.Fqn { Name: "object", Args: null };
+
+    static bool IsSemanticObject(TypeNode t) =>
+        t is TypeNode.Fqn { Name: "kotlin.Any" or "System.Object", Args: null };
 
     // The arguments the type-argument settle takes NO evidence from — each because the MAIN loop still has to retype
     // it, and would be reconciling a construction against a stale instantiation had this pass evaluated it first.

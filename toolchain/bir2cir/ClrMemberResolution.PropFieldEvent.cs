@@ -71,14 +71,33 @@ static partial class ClrMemberResolution
     // the name is not an accessor (a public field, or absent).
     static MethodInfo FindPropAccessor(Type open, string name, bool write, BindingFlags flags)
     {
+        MethodInfo Accessor(Type type, bool declaredOnly)
+        {
+            try
+            {
+                var property = type.GetProperty(name,
+                    declaredOnly ? flags | BindingFlags.DeclaredOnly : flags);
+                var method = write
+                    ? property?.GetSetMethod(nonPublic: true)
+                    : property?.GetGetMethod(nonPublic: true);
+                return method != null && IsPublicOrProtected(method) ? method : null;
+            }
+            catch { return null; }
+        }
+
+        // PropertyInfo/MethodSemantics is authoritative. Reflection does not inherit PropertyInfo across interface
+        // edges, so walk those edges explicitly while retaining the exact associated accessor MethodInfo.
+        var own = Accessor(open, declaredOnly: false);
+        if (own != null) return own;
+        if ((flags & BindingFlags.Instance) == 0) return null;
         try
         {
-            var pi = open.GetProperty(name, flags);
-            var m = write ? pi?.GetSetMethod(nonPublic: true) : pi?.GetGetMethod(nonPublic: true);
-            if (m != null && IsPublicOrProtected(m)) return m;
+            var hits = MostDerived(SafeInterfaces(open).Select(type => Accessor(type, declaredOnly: true))
+                .Where(method => method != null)
+                .GroupBy(method => (method.Module, method.MetadataToken)).Select(group => group.First()).ToList());
+            return hits.Count == 0 ? null : UniqueAccessor(hits, open, name);
         }
-        catch { }
-        return FindAccessorMethod(open, (write ? "set_" : "get_") + name, write ? 1 : 0, flags);
+        catch { return null; }
     }
 
     // Find the UNIQUE method named `accName` with `argc` params on the owner (own members incl. inherited class members),
@@ -88,9 +107,15 @@ static partial class ClrMemberResolution
     // the pass charter). null when absent.
     static MethodInfo FindAccessorMethod(Type open, string accName, int argc, BindingFlags flags)
     {
-        MethodInfo[] Named(Type t) { try { return t.GetMethods(flags).Where(m =>
-            m.Name == accName && m.GetParameters().Length == argc && IsPublicOrProtected(m)).ToArray(); }
-            catch { return Array.Empty<MethodInfo>(); } }
+        MethodInfo[] Named(Type t)
+        {
+            try
+            {
+                return t.GetMethods(flags).Where(m =>
+            m.Name == accName && m.GetParameters().Length == argc && IsPublicOrProtected(m)).ToArray();
+            }
+            catch { return Array.Empty<MethodInfo>(); }
+        }
         var own = MostDerived(Named(open).ToList());
         if (own.Count > 0) return UniqueAccessor(own, open, accName);
         if ((flags & BindingFlags.Instance) == 0) return null;
@@ -131,7 +156,19 @@ static partial class ClrMemberResolution
         if (!open.IsInterface) return;
         var decl = acc.DeclaringType;
         if (decl == null || SafeDef(decl) == SafeDef(open)) return;
-        node[ownerSlot] = TypeJson.Write(SubstOwnerParams(decl, ownerFqn.Args ?? Array.Empty<TypeNode>()));
+        // The metadata universe resolves an open generic owner through a harmless object-closed probe in a few
+        // reflection paths.  An accessor obtained from that probe may therefore report
+        // `IReadOnlyCollection<object>` even though the owner's actual base edge is
+        // `IReadOnlyList<T> : IReadOnlyCollection<T>`.  Recover the declaration edge from the OPEN owner's own
+        // interface graph before substituting the call site's arguments; the accessor identifies WHICH interface,
+        // while the graph identifies HOW its type parameters relate to the owner.  Using acc.DeclaringType directly
+        // would bake the probe's object into every generic property call.
+        var openDefinition = SafeDef(open) ?? open;
+        var declarationEdge = SafeInterfaces(openDefinition)
+            .Where(iface => SafeDef(iface) == SafeDef(decl))
+            .SingleOrDefault() ?? decl;
+        node[ownerSlot] = TypeJson.Write(SubstOwnerParams(
+            declarationEdge, ownerFqn.Args ?? Array.Empty<TypeNode>()));
     }
 
     // An MLC Type (a base interface instance `IReadOnlyCollection<T_open>`, its args naming the OWNER def's generic
@@ -216,7 +253,7 @@ static partial class ClrMemberResolution
         if (open == null) return;   // LOCAL emitted owner (ref.dll returns null) -> direct backing-field access in ilemit
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         if (name == null) return;
-        var acc = FindAccessorMethod(open, (write ? "set_" : "get_") + name, write ? 1 : 0, BindingFlags.Public | BindingFlags.Instance);
+        var acc = FindPropAccessor(open, name, write, BindingFlags.Public | BindingFlags.Instance);
         if (acc == null)
         {
             // No accessor. A genuine public @ClrField (the field really is declared there) -> direct ldfld/stfld in
@@ -231,7 +268,7 @@ static partial class ClrMemberResolution
             const BindingFlags Any = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
                                      | BindingFlags.Static | BindingFlags.FlattenHierarchy;
             var direct = FindFieldMember(open, name, Any);
-            if (direct == null && FindAccessorMethod(open, (write ? "set_" : "get_") + name, write ? 1 : 0, Any) == null)
+            if (direct == null && FindPropAccessor(open, name, write, Any) == null)
                 throw new InvalidOperationException(
                     $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a get_/set_ accessor on the referenced owner — "
                     + "a cross-assembly property's storage is reachable only through its accessors");

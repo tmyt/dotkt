@@ -50,7 +50,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=391
 	["tests/coroutines"]=157
-	["tests/roundtrip/consumer"]=64
+	["tests/roundtrip/consumer"]=68
 	["tests/roundtrip/bidirectional/consumer"]=7
 	["tests/interop/consumer"]=135
 )
@@ -140,6 +140,15 @@ for proj in "${PROJECTS[@]}"; do
 	fi
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
+		interop_klib="$dir/obj/dotkt-reference-klibs/InteropProducer.klib"
+		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
+			-- --klib-class-properties "$interop_klib" "ExplicitMethodInterop.ExplicitOperations" "Name" \
+			>"$ROOT/build/nunit-$name.explicit-property.log" 2>&1; then
+			echo "  explicit-interface CLR Property/MethodImpl projects once under its simple Kotlin name"
+		else
+			echo "  EXPLICIT PROPERTY KLIB FAIL — see build/nunit-$name.explicit-property.log"
+			tail -25 "$ROOT/build/nunit-$name.explicit-property.log"; rc=1
+		fi
 		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
 			-- --volatile-consumer "$interop_dll" "MemberShapeTests" \
 			"volatileInstanceGet" "volatileInstanceSet" "volatileStaticGet" "volatileStaticSet" \

@@ -24,6 +24,13 @@ if (args.Length >= 4 && args[0] == "--volatile-consumer")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--klib-class-properties")
+{
+    VerifyKlibClassProperties(args[1], args[2], args[3].Split(',', StringSplitOptions.RemoveEmptyEntries));
+    Console.WriteLine("KLIB class property surface: OK");
+    return;
+}
+
 if (args.Length != 7)
     throw new ArgumentException(
         "usage: CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json> <consumer.dll>");
@@ -32,9 +39,71 @@ VerifyLayerBoundary(args[2], args[3]);
 VerifyOwnershipLayerBoundary(args[4], args[5]);
 VerifyDll(args[0]);
 VerifyOwnershipDll(args[0]);
+VerifyCovariantPropertyBridge(args[0]);
 VerifyUnsafeAccessorDll(args[6]);
 VerifyKlib(args[1]);
 Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
+
+static void VerifyKlibClassProperties(string path, string className, IReadOnlyList<string> expectedNames)
+{
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var entry in archive.Entries.Where(entry =>
+                 entry.FullName.EndsWith(".knm", StringComparison.Ordinal)))
+    {
+        using var stream = entry.Open();
+        var fragment = PackageFragment.Parser.ParseFrom(stream);
+        var declaration = fragment.Class.SingleOrDefault(candidate =>
+            QualifiedName(fragment, candidate.FqName) == className);
+        if (declaration is null) continue;
+        var actual = declaration.Property.Select(property => String(fragment, property.Name))
+            .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var expected = expectedNames.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
+            throw new InvalidDataException(
+                $"{className} property surface [{string.Join(", ", actual)}] != [{string.Join(", ", expected)}]");
+        return;
+    }
+    throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyCovariantPropertyBridge(string producerPath)
+{
+    using var stream = File.OpenRead(producerPath);
+    using var pe = new PEReader(stream);
+    var md = pe.GetMetadataReader();
+    Verify("CovariantPropertyImplementation", "covariantValue");
+    Verify("CovariantExtensionPropertyImplementation", "covariantExtensionValue");
+
+    void Verify(string ownerName, string propertyName)
+    {
+        var ownerHandle = md.TypeDefinitions.Single(handle =>
+            md.GetString(md.GetTypeDefinition(handle).Name) == ownerName);
+        var owner = md.GetTypeDefinition(ownerHandle);
+        var bridge = owner.GetMethods().Single(handle =>
+            md.GetString(md.GetMethodDefinition(handle).Name)
+                .StartsWith("dotkt$covar$get_" + propertyName + "$", StringComparison.Ordinal));
+        var associated = owner.GetProperties().Where(handle =>
+                md.GetString(md.GetPropertyDefinition(handle).Name) == propertyName)
+            .Select(handle => md.GetPropertyDefinition(handle).GetAccessors().Getter)
+            .Count(getter => getter == bridge);
+        Require(associated == 1,
+            $"covariant property '{ownerName}.{propertyName}' MethodImpl bridge has no exact CLR Property/MethodSemantics association");
+        Require(md.GetMethodDefinition(bridge).GetCustomAttributes()
+                .Select(md.GetCustomAttribute)
+                .Any(attribute => AttributeName(md, attribute) ==
+                    "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute"),
+            $"covariant property '{ownerName}.{propertyName}' MethodImpl bridge has no exact Kotlin accessor carrier");
+        var methodImplBodies = owner.GetMethodImplementations()
+            .Select(handle => md.GetMethodImplementation(handle).MethodBody)
+            .Where(handle => handle.Kind == HandleKind.MethodDefinition)
+            .Select(handle => (MethodDefinitionHandle)handle)
+            .ToArray();
+        Require(methodImplBodies.Contains(bridge),
+            $"covariant property '{ownerName}.{propertyName}' MethodImpl is not wired to its associated bridge body; bodies: " +
+            string.Join(", ", methodImplBodies.Select(handle =>
+                md.GetString(md.GetMethodDefinition(handle).Name))));
+    }
+}
 
 static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
 {
@@ -426,6 +495,37 @@ static void VerifyDll(string path)
     Require(carriers.Count >= 17, "producer DLL has no complete companion carrier set");
     Require(carriers.Any(c => c.Kind == "sidecar") && carriers.Any(c => c.Kind == "nested"),
         "producer DLL does not witness both companion carrier shapes");
+
+    // Same-name context properties have distinct accessor signatures. Their Property rows must preserve the exact
+    // MethodSemantics association; a name-only ilemit link silently points both rows at the last MethodDef.
+    var companionFacade = md.TypeDefinitions.Single(h =>
+        DefinitionName(md, h) == "roundtrip.companionstatics.CompanionStaticsKt");
+    var contextStateRows = md.GetTypeDefinition(companionFacade).GetProperties()
+        .Where(h => md.GetString(md.GetPropertyDefinition(h).Name) == "contextState")
+        .Select(h => md.GetPropertyDefinition(h).GetAccessors())
+        .ToArray();
+    Require(contextStateRows.Length == 2 &&
+            contextStateRows.All(row => !row.Getter.IsNil) &&
+            contextStateRows.Select(row => row.Getter).Distinct().Count() == 2 &&
+            contextStateRows.Count(row => !row.Setter.IsNil) == 1,
+        "same-name context Property rows lost their exact accessor MethodSemantics association");
+    // File facades are CLR TypeDefs too. A field-backed top-level property with one custom accessor must move its raw
+    // storage away from the Property metadata name, just like the same declaration nested in a class.
+    var memberExtensionFacade = md.TypeDefinitions.Single(h =>
+        DefinitionName(md, h) == "roundtrip.memberextensionsurface.MemberExtensionSurfaceKt");
+    var memberExtensionDefinition = md.GetTypeDefinition(memberExtensionFacade);
+    var memberExtensionFields = memberExtensionDefinition.GetFields()
+        .Select(h => md.GetString(md.GetFieldDefinition(h).Name)).ToHashSet(StringComparer.Ordinal);
+    var memberExtensionProperties = memberExtensionDefinition.GetProperties()
+        .Select(h => md.GetString(md.GetPropertyDefinition(h).Name)).ToHashSet(StringComparer.Ordinal);
+    foreach (var propertyName in new[] { "topLevelCustomGetter", "topLevelCustomSetter" })
+    {
+        Require(memberExtensionProperties.Contains(propertyName),
+            $"file-facade CLR Property '{propertyName}' is missing");
+        Require(!memberExtensionFields.Contains(propertyName) &&
+                memberExtensionFields.Contains($"<{propertyName}>k__BackingField"),
+            $"file-facade CLR Property '{propertyName}' retained same-named backing storage");
+    }
     foreach (var carrier in carriers)
     {
         var def = md.GetTypeDefinition(carrier.Handle);
@@ -585,6 +685,64 @@ static void VerifyKlib(string path)
         "top-level delegated property did not round-trip as one package property");
     Require(fragment.Package.Property.Count(p => String(fragment, p.Name) == "roundtripNullableDelegated") == 1,
         "nullable top-level delegated property did not round-trip as one package property");
+
+    var memberEntry = archive.Entries.Single(e =>
+        e.FullName.EndsWith("/package_roundtrip.memberextensionsurface/0_memberextensionsurface.knm",
+            StringComparison.Ordinal));
+    using var memberStream = memberEntry.Open();
+    var memberSurface = PackageFragment.Parser.ParseFrom(memberStream);
+    var covariant = Class(memberSurface,
+        "roundtrip.memberextensionsurface.CovariantPropertyImplementation");
+    Require(covariant.Property.Count(p => String(memberSurface, p.Name) == "covariantValue") == 1,
+        "covariant property bridge projected a duplicate property");
+    Require(!covariant.Function.Any(f => String(memberSurface, f.Name) == "get_covariantValue"),
+        "covariant property MethodImpl bridge projected as an explicit get_covariantValue function; functions: " +
+        string.Join(", ", covariant.Function.Select(f => String(memberSurface, f.Name))));
+    var covariantExtension = Class(memberSurface,
+        "roundtrip.memberextensionsurface.CovariantExtensionPropertyImplementation");
+    var covariantExtensionProperties = covariantExtension.Property.Where(p =>
+        String(memberSurface, p.Name) == "covariantExtensionValue").ToArray();
+    Require(covariantExtensionProperties.Length == 1 &&
+            covariantExtensionProperties[0].ReceiverType is not null,
+        "covariant extension-property bridge did not round-trip as exactly one receiver-bearing property");
+    foreach (var propertyName in new[] { "topLevelCustomGetter", "topLevelCustomSetter", "topLevelComputed" })
+        Require(memberSurface.Package.Property.Count(p =>
+                String(memberSurface, p.Name) == propertyName) == 1,
+            $"top-level property '{propertyName}' did not round-trip exactly once");
+    var mixedTopLevel = memberSurface.Package.Property.Where(p =>
+        String(memberSurface, p.Name) == "mixedRepresentationStatus").ToArray();
+    Require(mixedTopLevel.Length == 2 && mixedTopLevel.Count(p => p.ReceiverType is null) == 1 &&
+            mixedTopLevel.Count(p => p.ReceiverType is not null) == 1,
+        "same-name top-level field and extension property did not round-trip as two distinct declarations");
+    Require(!memberSurface.Package.Function.Any(f =>
+            String(memberSurface, f.Name) is "get_topLevelCustomGetter" or "set_topLevelCustomSetter" or
+                "get_topLevelComputed"),
+        "receiverless property accessor leaked as a package function");
+    var partialAccessorHolder = Class(memberSurface,
+        "roundtrip.memberextensionsurface.PartialAccessorHolder");
+    foreach (var propertyName in new[] { "customGetter", "customSetter", "computed" })
+        Require(partialAccessorHolder.Property.Count(p =>
+                String(memberSurface, p.Name) == propertyName) == 1,
+            $"member property '{propertyName}' did not round-trip exactly once");
+    var mixedHolder = Class(memberSurface,
+        "roundtrip.memberextensionsurface.MixedRepresentationHolder");
+    var mixedMembers = mixedHolder.Property.Where(p => String(memberSurface, p.Name) == "status").ToArray();
+    Require(mixedMembers.Length == 2 && mixedMembers.Count(p => p.ReceiverType is null) == 1 &&
+            mixedMembers.Count(p => p.ReceiverType is not null) == 1,
+        "same-name member field and extension property did not round-trip as two distinct declarations");
+
+    var extensionEntry = archive.Entries.Single(e =>
+        e.FullName.EndsWith("/package_roundtrip.extpropref/0_extpropref.knm", StringComparison.Ordinal));
+    using var extensionStream = extensionEntry.Open();
+    var extensionSurface = PackageFragment.Parser.ParseFrom(extensionStream);
+    foreach (var propertyName in new[] { "auditLast", "auditSingleton", "auditValue" })
+        Require(extensionSurface.Package.Property.Count(p =>
+                String(extensionSurface, p.Name) == propertyName) == 1,
+            $"method-generic extension property '{propertyName}' did not round-trip exactly once");
+    Require(!extensionSurface.Package.Function.Any(f =>
+            String(extensionSurface, f.Name) is "get_auditLast" or "get_auditSingleton" or
+                "get_auditValue" or "set_auditValue"),
+        "method-generic property accessor carrier leaked an accessor function into KLIB");
 
     var staticsEntry = archive.Entries.Single(e =>
         e.FullName.EndsWith("/package_roundtrip.companionstatics/0_companionstatics.knm", StringComparison.Ordinal));

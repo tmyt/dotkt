@@ -1,0 +1,69 @@
+{
+  "fileClass": "FakeOverridePartialPropertyKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "Base",
+      "kind": "interface",
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "x", "propertyName": "x", "propertyAccessor": "get", "propertyAssociation": "base-x",
+          "static": false, "override": false, "virtual": true, "abstract": true,
+          "params": [], "ret": { "t": "fqn", "name": "kotlin.Int" }, "body": [], "attrs": []
+        },
+        {
+          "name": "x", "propertyName": "x", "propertyAccessor": "set", "propertyAssociation": "base-x",
+          "static": false, "override": false, "virtual": true, "abstract": false,
+          "params": [{ "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "body": [{ "k": "exprStmt", "expr": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 0 } }],
+          "attrs": []
+        }
+      ],
+      "properties": [
+        {
+          "name": "x", "type": { "t": "fqn", "name": "kotlin.Int" },
+          "kotlinAccessors": ["get", "set"], "propertyAssociation": "base-x"
+        }
+      ],
+      "attrs": []
+    },
+    {
+      "name": "Derived",
+      "kind": "interface",
+      "base": null,
+      "interfaces": [{ "t": "fqn", "name": "Base" }],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "x", "propertyName": "x", "propertyAccessor": "get", "propertyAssociation": "derived-x",
+          "static": false, "override": false, "virtual": true, "abstract": true, "fakeOverride": true,
+          "params": [], "ret": { "t": "fqn", "name": "kotlin.Int" }, "body": [], "attrs": [],
+          "overrides": [{ "owner": { "t": "fqn", "name": "Base" }, "member": "x", "kind": "getter", "arity": 0 }]
+        },
+        {
+          "name": "x", "propertyName": "x", "propertyAccessor": "set", "propertyAssociation": "derived-x",
+          "static": false, "override": false, "virtual": true, "abstract": true, "fakeOverride": true,
+          "params": [{ "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" }, "body": [], "attrs": [],
+          "overrides": [{ "owner": { "t": "fqn", "name": "Base" }, "member": "x", "kind": "setter", "arity": 1 }]
+        }
+      ],
+      "properties": [
+        {
+          "name": "x", "type": { "t": "fqn", "name": "kotlin.Int" },
+          "kotlinAccessors": ["get", "set"], "propertyAssociation": "derived-x"
+        }
+      ],
+      "attrs": []
+    }
+  ]
+}

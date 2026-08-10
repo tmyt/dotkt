@@ -2,10 +2,12 @@
 # run-schema.sh — the #37 BIR/CIR freeze ENFORCER test corpus.
 #
 # Runs the structural validator (scripts/verify-schema.py, normative schema docs/bir-cir.schema.json,
-# spec docs/bir-cir-spec.md §5/§7) over the FRESHLY-emitted BIR + CIR and reddens on any drift:
+# spec docs/bir-cir-spec.md §5/§7) plus the #397 property-identity boundary validator over the
+# FRESHLY-emitted BIR + CIR and reddens on any drift:
 #   - a document type slot that is a bare string instead of a {t:...} node (types-are-nodes, §1);
 #   - an unknown/typo'd/retired node kind {k} or type tag {t} (§2.5/§2.6);
 #   - a malformed Type node, or an unknown mods key / vis value.
+#   - inferred/reconstructed property identity, incomplete accessor associations, or BIR identity leaking into CIR.
 #   - a newSuspendLambda whose physical receiver-first params diverge from canonical funcType.recv + funcType.params.
 #   - a §2.7 call-evaluation-plan `bindRef` that resolves to no enclosing plan binding (the nesting rule).
 #
@@ -35,6 +37,17 @@ while IFS= read -r -d '' file; do globs+=("$file"); done < <(
 )
 for d in build/bir-*; do [ -d "$d" ] && globs+=("$d/*.bir.json"); done
 for d in build/cir-*; do [ -d "$d" ] && globs+=("$d/*.cir.json"); done
+
+# Accepted direct-lowering fixtures are authored BIR too. Include them in the #397 boundary lane so a fixture cannot
+# carry a forbidden physical Property link merely because it bypasses kotc's emitted obj directories. Deliberate
+# reject-* malformed inputs remain owned by run-lowering.sh and are not candidates for this positive contract.
+property_globs=("${globs[@]}")
+for file in tests/ir/lowering/*.bir.json; do
+  [[ "$(basename "$file")" == reject-* ]] || property_globs+=("$file")
+done
+for file in tests/ir/lowering/*.bir-part.json; do
+  property_globs+=("$file")
+done
 
 if [ ${#globs[@]} -eq 0 ]; then
   echo "SCHEMA GATE: no emitted BIR/CIR found — run 'make stdlib' and/or 'make verify-tests' first" >&2
@@ -89,5 +102,10 @@ if [ $self_rc -ne 0 ]; then echo "SCHEMA GATE: RED (self-test)"; exit 1; fi
 echo "== verify-schema: validating freshly-emitted BIR/CIR against the frozen #37 contract =="
 "$PY" scripts/verify-schema.py "${globs[@]}"
 rc=$?
+if [ $rc -eq 0 ]; then
+  echo "== verify-schema: enforcing the #397 one-way property-accessor identity boundary =="
+  "$PY" scripts/verify-property-accessor-identity.py "${property_globs[@]}"
+  rc=$?
+fi
 if [ $rc -eq 0 ]; then echo "SCHEMA GATE: GREEN"; else echo "SCHEMA GATE: RED (rc=$rc)"; fi
 exit $rc

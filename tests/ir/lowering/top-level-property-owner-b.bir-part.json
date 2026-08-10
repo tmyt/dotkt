@@ -1,0 +1,21 @@
+{
+  "fileClass": "TopLevelPropertyOwnerBKt", "hasMain": false,
+  "fields": [], "refTypes": [], "types": [],
+  "properties": [
+    {
+      "name": "selected", "type": { "t": "fqn", "name": "kotlin.String" },
+      "kotlinAccessors": ["get"], "propertyAssociation": "owner-b-selected"
+    }
+  ],
+  "methods": [
+    {
+      "name": "selected", "propertyName": "selected", "propertyAccessor": "get",
+      "propertyAssociation": "owner-b-selected", "static": true,
+      "typeParams": [{ "name": "T" }],
+      "params": [{ "name": "receiver", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "b" } }],
+      "attrs": []
+    }
+  ]
+}

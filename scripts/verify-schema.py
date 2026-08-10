@@ -104,6 +104,9 @@ STR_OK = {
     "companionSourceName", "companionMemberKind", # #382: BIR-only source declaration identity and explicit
                                                  # function/get/set/field role. bir2cir selects a collision-free physical
                                                  # name without classifying ordinary get_/set_-prefixed functions.
+    "propertyName", "propertyAccessor", "propertyAssociation", # #397: BIR-only Kotlin property identity,
+                                                 # explicit get/set role, and file-local Property/accessor association.
+                                                 # bir2cir consumes these after every semantic property pass has run.
     "collIdentity", "collIdentityRet",           # #29: PRE-collapse Kotlin collection TypeNodes stashed as canonical-JSON
                                                  # strings by CollectionIdentityRecord. RoundtripMetadata immediately turns
                                                  # them into [KotlinCollectionIdentity] carrier bytes for dll2klib; these
@@ -144,6 +147,7 @@ STRARR_OK = {
                                                 # referenced receiver onto a C# 14 extension grouping/wrapper.
     "memberOwnerTypeParams",                    # #225: declaration-form owner frame carried on a member edge.
     "memberMethodTypeParams",                   # #225: declaration-form method frame carried on a member edge.
+    "kotlinAccessors",                          # #397: BIR-only Property declaration roles (get/set), not Type usages.
 }
 
 MOD_KEYS = {
@@ -352,6 +356,10 @@ class V:
                                       "companionStorageReadOnly"):
                     if companion_key in o:
                         self.err(f, path, f"{companion_key} is a BIR companion fact and must be consumed before CIR")
+                for property_key in ("propertyName", "propertyAccessor", "propertyAssociation", "kotlinAccessors",
+                                     "kotlinPropertyAccessorCarrier"):
+                    if property_key in o:
+                        self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
                 for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):
                     if ownership_key in o:
                         self.err(f, path, f"{ownership_key} is a BIR ownership fact and must be consumed before CIR")
@@ -362,6 +370,12 @@ class V:
             if f.endswith(".bir.json") and "preStmts" in o:
                 self.err(f, path, "preStmts is the bir2cir-authored lowering of a delegation plan and must not appear in BIR")
             if f.endswith(".bir.json"):
+                for property_descriptor in ("getSig", "setSig", "getMethodArity", "setMethodArity"):
+                    if property_descriptor in o:
+                        self.err(
+                            f, path,
+                            f"{property_descriptor} is a bir2cir-authored physical Property descriptor and must not appear in BIR"
+                        )
                 if o.get("k") == "newClrStaticDelegate":
                     self.err(f, path, "newClrStaticDelegate is a bir2cir-authored physical node and must not appear in BIR")
                 if "capturedTypeParams" in o:

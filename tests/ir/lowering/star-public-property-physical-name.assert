@@ -1,0 +1,3 @@
+# A public star-view property whose signature does not mention the owner TV still calls the allocated accessor name.
++"ownerType":{"t":"fqn","name":"PublicStarPropertyBox$dotkt$star"},"virtual":true,"recv":{"k":"const","type":{"t":"fqn","name":"PublicStarPropertyBox$dotkt$star"},"value":null},"method":"get_label","sig":[]
+-"method":"label","sig":[]

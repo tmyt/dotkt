@@ -1,0 +1,73 @@
+{
+  "fileClass": "FakeOverridePropertyOverloadSignatureKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "OverloadedBase",
+      "kind": "interface",
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "item", "propertyName": "item", "propertyAccessor": "get",
+          "propertyAssociation": "base-int-item", "static": false, "override": false,
+          "virtual": true, "abstract": false,
+          "params": [{ "name": "context", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+          "ret": { "t": "fqn", "name": "kotlin.Int" },
+          "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 } }],
+          "attrs": []
+        },
+        {
+          "name": "item", "propertyName": "item", "propertyAccessor": "get",
+          "propertyAssociation": "base-string-item", "static": false, "override": false,
+          "virtual": true, "abstract": true,
+          "params": [{ "name": "context", "type": { "t": "fqn", "name": "kotlin.String" } }],
+          "ret": { "t": "fqn", "name": "kotlin.Int" }, "body": [], "attrs": []
+        }
+      ],
+      "properties": [
+        {
+          "name": "item", "type": { "t": "fqn", "name": "kotlin.Int" },
+          "kotlinAccessors": ["get"], "propertyAssociation": "base-int-item"
+        },
+        {
+          "name": "item", "type": { "t": "fqn", "name": "kotlin.Int" },
+          "kotlinAccessors": ["get"], "propertyAssociation": "base-string-item"
+        }
+      ],
+      "attrs": []
+    },
+    {
+      "name": "OverloadedDerived",
+      "kind": "interface",
+      "base": null,
+      "interfaces": [{ "t": "fqn", "name": "OverloadedBase" }],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "item", "propertyName": "item", "propertyAccessor": "get",
+          "propertyAssociation": "derived-string-item", "static": false, "override": false,
+          "virtual": true, "abstract": true, "fakeOverride": true,
+          "params": [{ "name": "context", "type": { "t": "fqn", "name": "kotlin.String" } }],
+          "ret": { "t": "fqn", "name": "kotlin.Int" }, "body": [], "attrs": [],
+          "overrides": [
+            { "owner": { "t": "fqn", "name": "OverloadedBase" }, "member": "item", "kind": "getter", "arity": 1 }
+          ]
+        }
+      ],
+      "properties": [
+        {
+          "name": "item", "type": { "t": "fqn", "name": "kotlin.Int" },
+          "kotlinAccessors": ["get"], "propertyAssociation": "derived-string-item"
+        }
+      ],
+      "attrs": []
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "fileClass": "ExistentialPropertyOverloadSignatureKt",
+  "hasMain": false,
+  "fields": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "SemanticPropertyBox$dotkt$star",
+      "kind": "interface",
+      "generated": true,
+      "kotlinType": "{\"t\":\"fqn\",\"name\":\"SemanticPropertyBox\",\"args\":[{\"t\":\"star\"}]}",
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "item", "propertyName": "item", "propertyAccessor": "get",
+          "propertyAssociation": "item-int", "static": false, "override": false,
+          "virtual": true, "abstract": true, "vis": "public",
+          "params": [{ "name": "context", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+          "ret": { "t": "fqn", "name": "kotlin.String" }, "body": [], "attrs": []
+        },
+        {
+          "name": "item", "propertyName": "item", "propertyAccessor": "get",
+          "propertyAssociation": "item-string", "static": false, "override": false,
+          "virtual": true, "abstract": true, "vis": "public",
+          "params": [{ "name": "context", "type": { "t": "fqn", "name": "kotlin.String" } }],
+          "ret": { "t": "fqn", "name": "kotlin.String" }, "body": [], "attrs": []
+        }
+      ],
+      "properties": [
+        {
+          "name": "item", "type": { "t": "fqn", "name": "kotlin.String" },
+          "kotlinAccessors": ["get"], "propertyAssociation": "item-int"
+        },
+        {
+          "name": "item", "type": { "t": "fqn", "name": "kotlin.String" },
+          "kotlinAccessors": ["get"], "propertyAssociation": "item-string"
+        }
+      ],
+      "attrs": []
+    }
+  ],
+  "properties": [],
+  "methods": [
+    {
+      "name": "readStringItem", "static": true, "override": false, "virtual": false,
+      "abstract": false, "objectOverride": false, "vis": "public", "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "var", "name": "box",
+          "type": { "t": "fqn", "name": "SemanticPropertyBox$dotkt$star" },
+          "init": {
+            "k": "const", "type": { "t": "fqn", "name": "SemanticPropertyBox$dotkt$star" },
+            "value": null
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "SemanticPropertyBox" },
+            "virtual": true,
+            "recv": { "k": "local", "name": "box" },
+            "method": "item", "prop": "get",
+            "sig": [{ "t": "fqn", "name": "kotlin.String" }],
+            "ret": { "t": "fqn", "name": "kotlin.String" },
+            "args": [{ "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "ctx" }]
+          }
+        }
+      ],
+      "attrs": []
+    }
+  ]
+}

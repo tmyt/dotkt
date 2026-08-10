@@ -1,0 +1,63 @@
+{
+  "fileClass": "StarPublicPropertyPhysicalNameKt",
+  "hasMain": false,
+  "fields": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "PublicStarPropertyBox",
+      "kind": "interface",
+      "vis": "public",
+      "typeParams": [{ "name": "T" }],
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "label", "propertyName": "label", "propertyAccessor": "get",
+          "propertyAssociation": "public-star-label", "static": false, "override": false,
+          "virtual": true, "abstract": true, "vis": "public", "params": [],
+          "ret": { "t": "fqn", "name": "kotlin.String" }, "body": [], "attrs": []
+        }
+      ],
+      "properties": [
+        {
+          "name": "label", "type": { "t": "fqn", "name": "kotlin.String" },
+          "kotlinAccessors": ["get"], "propertyAssociation": "public-star-label"
+        }
+      ],
+      "attrs": []
+    }
+  ],
+  "properties": [],
+  "methods": [
+    {
+      "name": "readLabel", "static": true, "override": false, "virtual": false,
+      "abstract": false, "objectOverride": false, "vis": "public", "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": {
+              "t": "fqn", "name": "PublicStarPropertyBox", "args": [{ "t": "star" }]
+            },
+            "virtual": true,
+            "recv": {
+              "k": "const",
+              "type": {
+                "t": "fqn", "name": "PublicStarPropertyBox", "args": [{ "t": "star" }]
+              },
+              "value": null
+            },
+            "method": "label", "prop": "get", "sig": [],
+            "ret": { "t": "fqn", "name": "kotlin.String" }, "args": []
+          }
+        }
+      ],
+      "attrs": []
+    }
+  ]
+}

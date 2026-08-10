@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // Kotlin IR materializes inherited interface members as fake overrides.  A fake override whose declaration is already
 // supplied by a default interface method is not a new CLR slot: emitting it as an abstract method shadows the inherited
@@ -20,21 +21,33 @@ static class InheritedDefaultFakeOverrideElision
         foreach (var type in local.Values)
         {
             if (Str(type["kind"]) != "interface" || type["methods"] is not JsonArray methods) continue;
-            var removed = new HashSet<string>(StringComparer.Ordinal);
+            var removedAccessors = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
             for (var i = methods.Count - 1; i >= 0; i--)
             {
                 if (methods[i] is not JsonObject method || !Bool(method["fakeOverride"])
                     || method["body"] is not JsonArray body || body.Count != 0
                     || method["overrides"] is not JsonArray overrides) continue;
-                if (!HasConcreteAncestor(overrides, local, refs)) continue;
-                if (Str(method["name"]) is string name) removed.Add(name);
+                if (!HasConcreteAncestor(method, overrides, local, refs)) continue;
+                if (KotlinPropertyAccessors.TryIdentity(method, out _, out var accessorKind)
+                    && Str(method[KotlinPropertyAccessors.AssociationKey]) is string association)
+                {
+                    if (!removedAccessors.TryGetValue(association, out var roles))
+                        removedAccessors[association] = roles = new HashSet<string>(StringComparer.Ordinal);
+                    roles.Add(accessorKind);
+                }
                 methods.RemoveAt(i);
             }
-            if (removed.Count != 0 && type["properties"] is JsonArray properties)
+            if (removedAccessors.Count != 0 && type["properties"] is JsonArray properties)
                 for (var i = properties.Count - 1; i >= 0; i--)
                     if (properties[i] is JsonObject property
-                        && Str(property["get"]) is string getter && removed.Contains(getter))
-                        properties.RemoveAt(i);
+                        && Str(property[KotlinPropertyAccessors.AssociationKey]) is string association
+                        && removedAccessors.TryGetValue(association, out var removedRoles)
+                        && property[KotlinPropertyAccessors.PropertyRolesKey] is JsonArray roles)
+                    {
+                        for (var roleIndex = roles.Count - 1; roleIndex >= 0; roleIndex--)
+                            if (removedRoles.Contains(Str(roles[roleIndex]))) roles.RemoveAt(roleIndex);
+                        if (roles.Count == 0) properties.RemoveAt(i);
+                    }
         }
     }
 
@@ -47,12 +60,18 @@ static class InheritedDefaultFakeOverrideElision
         }
     }
 
-    static bool HasConcreteAncestor(JsonArray overrides, IReadOnlyDictionary<string, JsonObject> local,
-        ReferenceMetadataIndex refs)
+    static bool HasConcreteAncestor(JsonObject fakeOverride, JsonArray overrides,
+        IReadOnlyDictionary<string, JsonObject> local, ReferenceMetadataIndex refs)
     {
+        var signature = (fakeOverride["params"] as JsonArray)?.OfType<JsonObject>()
+            .Select(parameter => TypeJson.Read(parameter["type"]))
+            .ToArray();
+        if (signature?.Any(type => type == null) == true) signature = null;
+        var methodArity = (fakeOverride["typeParams"] as JsonArray)?.Count ?? 0;
         foreach (var node in overrides.OfType<JsonObject>())
         {
-            var owner = TypeJson.OwnerName(node["owner"]);
+            var ownerType = TypeJson.Read(node["owner"]) as TypeNode.Fqn;
+            var owner = ownerType?.Name ?? TypeJson.OwnerName(node["owner"]);
             var member = Str(node["member"]);
             var kind = Str(node["kind"]);
             var paramCount = Int(node["arity"]);
@@ -62,21 +81,42 @@ static class InheritedDefaultFakeOverrideElision
             // stubs, so MethodInfo.IsAbstract alone would otherwise misclassify Collection.iterator (and any
             // equivalent aliased API) as an inherited DIM even though the CLR alias has no such member.
             if (refs.Aliases.ContainsKey(owner)) continue;
-            var clrName = kind switch
-            {
-                "getter" => "get_" + member,
-                "setter" => "set_" + member,
-                _ => member,
-            };
+            var accessorKind = kind switch { "getter" => "get", "setter" => "set", _ => null };
             if (local.TryGetValue(owner, out var declaration)
-                && declaration["methods"] is JsonArray methods
-                && methods.OfType<JsonObject>().Any(m => Str(m["name"]) == clrName
+                && declaration["methods"] is JsonArray methods)
+            {
+                var candidates = methods.OfType<JsonObject>().Where(m => (accessorKind != null
+                        ? KotlinPropertyAccessors.TryIdentity(m, out var propertyName, out var propertyKind)
+                            && propertyName == member && propertyKind == accessorKind
+                        : Str(m["name"]) == member && !KotlinPropertyAccessors.TryIdentity(m, out _, out _))
                     && (m["params"] as JsonArray)?.Count == paramCount
-                    && m["body"] is JsonArray b && b.Count != 0))
-                return true;
-            if (refs.DeclaresConcreteMember(owner, clrName, paramCount)) return true;
+                    && ((m["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
+                    && m["body"] is JsonArray b && b.Count != 0
+                    && SignatureMatches(m, signature, ownerType?.Args)).ToList();
+                if (candidates.Count == 1) return true;
+            }
+            if (accessorKind != null
+                ? refs.DeclaresConcretePropertyAccessor(owner, member, accessorKind, paramCount,
+                    methodArity, signature, ownerType?.Args ?? Array.Empty<TypeNode>())
+                : refs.DeclaresConcreteMember(owner, member, paramCount)) return true;
         }
         return false;
+    }
+
+    static bool SignatureMatches(JsonObject declaration, IReadOnlyList<TypeNode> signature,
+        TypeNode[] ownerTypeArguments)
+    {
+        if (signature == null) return true;
+        if (declaration["params"] is not JsonArray parameters || parameters.Count != signature.Count) return false;
+        for (var i = 0; i < signature.Count; i++)
+        {
+            if (parameters[i] is not JsonObject parameter
+                || TypeJson.Read(parameter["type"]) is not TypeNode declared) return false;
+            if (ownerTypeArguments != null)
+                declared = SupertypeGraph.SubstOwnerTvs(declared, ownerTypeArguments);
+            if (!ReferenceMetadataIndex.AccessorDeclarationDescribesCall(declared, signature[i])) return false;
+        }
+        return true;
     }
 
     static bool Bool(JsonNode node) =>

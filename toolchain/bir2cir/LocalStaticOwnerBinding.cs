@@ -25,6 +25,7 @@ static class LocalStaticOwnerBinding
     {
         public string PhysicalOwner;
         public readonly HashSet<string> Methods = new(System.StringComparer.Ordinal);
+        public readonly Dictionary<string, string> PropertyAccessors = new(System.StringComparer.Ordinal);
     }
 
     /// The static members every type declared in this compilation carries, keyed by the declared type name.
@@ -59,6 +60,8 @@ static class LocalStaticOwnerBinding
                             throw new System.InvalidOperationException(
                                 $"multiple local static owners claim semantic type '{name}'");
                         statics.Methods.Add(mn);
+                        if (KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var accessorKind))
+                            statics.PropertyAccessors[propertyName + "\u001f" + accessorKind] = mn;
                     }
             }
             CollectInto(type, index);
@@ -92,16 +95,20 @@ static class LocalStaticOwnerBinding
         if (Str(node["method"]) is not string method) return;
         if (!index.TryGetValue(owner.Name, out var statics)) return;
         // A static PROPERTY access carries the property IDENTITY plus a `prop` marker rather than a baked accessor
-        // slot name, exactly as the ownerless axis does. Reconstruct kotc's own `get_`/`set_<name>` spelling here so a
-        // local owner never has to travel through the ownerless recognizers to get it — the accessor it names must
-        // itself be a declared static of that type, so the marker cannot manufacture a member.
-        var accessor = Str(node["prop"]) switch { "get" => "get_" + method, "set" => "set_" + method, _ => null };
+        // slot name, exactly as the ownerless axis does. Resolve it through the declared accessor index so a local
+        // owner never has to travel through the ownerless recognizers — the accessor it names must itself be a
+        // declared static of that type, so the marker cannot manufacture a member.
+        var propertyAccess = Str(node["prop"]);
+        var accessor = propertyAccess is "get" or "set"
+            && statics.PropertyAccessors.TryGetValue(method + "\u001f" + propertyAccess, out var physicalAccessor)
+                ? physicalAccessor : null;
         if (accessor != null)
         {
-            if (!statics.Methods.Contains(accessor)) return;
+            KotlinPropertyAccessors.PreserveCallIdentity(node, method, propertyAccess);
             node.Remove("prop");
             node["method"] = accessor;
         }
+        else if (propertyAccess is "get" or "set") return;
         else if (!statics.Methods.Contains(method)) return;
         // The declared parameter list doubles as the overload key, matching how every other resolved static callable
         // reaches ilemit.

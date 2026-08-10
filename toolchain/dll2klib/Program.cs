@@ -122,7 +122,8 @@ internal static class Program
 
         Directory.CreateDirectory(outputDirectory);
         var projectionCatalogPath = Path.Combine(outputDirectory, ".dll2klib-projection-catalog.json");
-        var projectionCatalog = JsonSerializer.Serialize(new {
+        var projectionCatalog = JsonSerializer.Serialize(new
+        {
             Version = 1,
             ArityClashes = arityClashes,
             Delegates = JsonSerializer.Deserialize<JsonElement>(delegateCatalogJson),
@@ -178,7 +179,8 @@ internal static class Program
                 await gate.WaitAsync();
                 try
                 {
-                    var start = new ProcessStartInfo("dotnet") {
+                    var start = new ProcessStartInfo("dotnet")
+                    {
                         UseShellExecute = false,
                         RedirectStandardOutput = true,
                         RedirectStandardError = true,
@@ -441,7 +443,8 @@ internal sealed class DelegateReferenceCatalog
                 if (targetAssembly is null) continue;
                 var metadataName = ExportedName(md, handle);
                 if (!result.TryGet(targetAssembly, metadataName, out var target)) continue;
-                aliases.Add(target with {
+                aliases.Add(target with
+                {
                     AssemblyName = forwardingAssembly,
                     MetadataName = metadataName,
                 });
@@ -546,7 +549,8 @@ internal sealed class DelegateReferenceCatalog
     private static string? ReferenceAssemblyName(MetadataReader md, TypeReferenceHandle handle)
     {
         var scope = md.GetTypeReference(handle).ResolutionScope;
-        return scope.Kind switch {
+        return scope.Kind switch
+        {
             HandleKind.AssemblyReference => md.GetString(
                 md.GetAssemblyReference((AssemblyReferenceHandle)scope).Name),
             HandleKind.TypeReference => ReferenceAssemblyName(md, (TypeReferenceHandle)scope),
@@ -567,7 +571,8 @@ internal sealed class DelegateReferenceCatalog
     private static string? ExportedAssemblyName(MetadataReader md, ExportedTypeHandle handle)
     {
         var implementation = md.GetExportedType(handle).Implementation;
-        return implementation.Kind switch {
+        return implementation.Kind switch
+        {
             HandleKind.AssemblyReference => md.GetString(
                 md.GetAssemblyReference((AssemblyReferenceHandle)implementation).Name),
             HandleKind.ExportedType => ExportedAssemblyName(md, (ExportedTypeHandle)implementation),
@@ -766,7 +771,8 @@ internal sealed class InnerReferenceCatalog
     private static string? ReferenceAssemblyIdentity(MetadataReader md, TypeReferenceHandle handle)
     {
         var scope = md.GetTypeReference(handle).ResolutionScope;
-        return scope.Kind switch {
+        return scope.Kind switch
+        {
             HandleKind.AssemblyReference => AssemblyIdentity(md, (AssemblyReferenceHandle)scope),
             HandleKind.TypeReference => ReferenceAssemblyIdentity(md, (TypeReferenceHandle)scope),
             _ => null,
@@ -783,7 +789,8 @@ internal sealed class InnerReferenceCatalog
 
     private static string AssemblyIdentity(string name, Version version, string culture, byte[] key, bool publicKey)
     {
-        var assembly = new AssemblyName(name) {
+        var assembly = new AssemblyName(name)
+        {
             Version = version,
             CultureName = string.IsNullOrEmpty(culture) ? null : culture,
         };
@@ -809,7 +816,8 @@ internal sealed class InnerReferenceCatalog
     private static string? ExportedAssemblyIdentity(MetadataReader md, ExportedTypeHandle handle)
     {
         var implementation = md.GetExportedType(handle).Implementation;
-        return implementation.Kind switch {
+        return implementation.Kind switch
+        {
             HandleKind.AssemblyReference => AssemblyIdentity(md, (AssemblyReferenceHandle)implementation),
             HandleKind.ExportedType => ExportedAssemblyIdentity(md, (ExportedTypeHandle)implementation),
             _ => null,
@@ -1025,7 +1033,8 @@ internal sealed class CompanionReferenceCatalog
                 if (targetIdentity is null) continue;
                 var metadataName = ExportedName(md, handle);
                 if (!result.TryGet(targetIdentity, metadataName, out var target)) continue;
-                aliases.Add(target with {
+                aliases.Add(target with
+                {
                     AssemblyIdentity = forwardingIdentity,
                     MetadataName = metadataName,
                 });
@@ -1208,7 +1217,8 @@ internal sealed class CompanionReferenceCatalog
         byte[] key,
         bool publicKey)
     {
-        var assembly = new AssemblyName(name) {
+        var assembly = new AssemblyName(name)
+        {
             Version = version,
             CultureName = string.IsNullOrEmpty(culture) ? null : culture,
         };
@@ -1371,6 +1381,9 @@ internal sealed class AssemblyScanner
             MetadataAttributes.DotKtNs + "KotlinPropertyStorageAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinPropertyAccessorAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinExtensionCoreAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
@@ -1513,7 +1526,8 @@ internal sealed class AssemblyScanner
         foreach (var package in visible.OrderBy(x => x.Key, StringComparer.Ordinal))
         {
             var names = new NameTable();
-            var fragment = new PackageFragment {
+            var fragment = new PackageFragment
+            {
                 Package = new Package(),
                 IsEmpty = false,
                 FqName = package.Key,
@@ -1581,7 +1595,8 @@ internal sealed class AssemblyScanner
             .Where(x => x.Definition.GetMethods().Any(h =>
                 _attrs.Has(h, "System.Runtime.CompilerServices.ExtensionAttribute", requireTrust: false)) ||
                 _csharp14Extensions.TryGetContainer(x.Handle, out _))
-            .GroupBy(x => {
+            .GroupBy(x =>
+            {
                 var ns = _md.GetString(x.Definition.Namespace);
                 var simple = _arityNames.Simple(ns, _md.GetString(x.Definition.Name));
                 return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
@@ -1589,7 +1604,8 @@ internal sealed class AssemblyScanner
         {
             var names = new NameTable();
             var package = new Package { PackageFqName = names.Package(group.Key) };
-            var fragment = new PackageFragment {
+            var fragment = new PackageFragment
+            {
                 Package = package,
                 IsEmpty = false,
                 FqName = group.Key,
@@ -1615,7 +1631,8 @@ internal sealed class AssemblyScanner
         if (!result.Any(x => x.PackageName.Length == 0))
         {
             var names = new NameTable();
-            var fragment = new PackageFragment {
+            var fragment = new PackageFragment
+            {
                 Package = new Package { PackageFqName = names.Package("") },
                 IsEmpty = true,
                 FqName = "",
@@ -1701,7 +1718,8 @@ internal sealed class AssemblyScanner
         var modality = isKotlinSealed ? 3
             : kind == 1 || (def.Attributes & TypeAttributes.Abstract) != 0 ? 2
             : (def.Attributes & TypeAttributes.Sealed) == 0 ? 1 : 0;
-        var result = new Class {
+        var result = new Class
+        {
             FqName = semanticClassName ?? ClassName(handle, names),
             Flags = Flags.Declaration(
                 modality,
@@ -1725,10 +1743,12 @@ internal sealed class AssemblyScanner
             var id = gp.Index;
             typeParameterIds[gpHandle] = id;
             if (id < capturedOuterTypeParameters.GetValueOrDefault()) continue;
-            var parameter = new TypeParameter {
+            var parameter = new TypeParameter
+            {
                 Id = id,
                 Name = names.String(_md.GetString(gp.Name)),
-                Variance = (gp.Attributes & GenericParameterAttributes.VarianceMask) switch {
+                Variance = (gp.Attributes & GenericParameterAttributes.VarianceMask) switch
+                {
                     GenericParameterAttributes.Covariant => TypeParameter.Types.Variance.Out,
                     GenericParameterAttributes.Contravariant => TypeParameter.Types.Variance.In,
                     _ => TypeParameter.Types.Variance.Inv,
@@ -1753,20 +1773,32 @@ internal sealed class AssemblyScanner
             AddValueClassRepresentation(handle, def, result, names, signatures, typeContext);
         var accessorPairs = KotlinAccessorPairs(handle, def, typeParameterIds);
         var customFieldAccessors = CustomFieldAccessors(def);
-        var accessorMethods = accessorPairs
-            .SelectMany(x => x.Setter.IsNil ? new[] { x.Getter } : new[] { x.Getter, x.Setter })
-            .Concat(customFieldAccessors.Values.SelectMany(x => x.Handles))
+        var kotlinPropertyAccessorMethods = accessorPairs
+            .SelectMany(x => new[] { x.Getter, x.Setter }.Where(handle => !handle.IsNil))
+            .ToHashSet();
+        var customPropertyAccessorMethods = customFieldAccessors.Values
+            .SelectMany(x => x.Handles)
+            .ToHashSet();
+        var accessorMethods = kotlinPropertyAccessorMethods
+            .Concat(def.GetProperties().SelectMany(propertyHandle =>
+            {
+                var accessors = _md.GetPropertyDefinition(propertyHandle).GetAccessors();
+                return new[] { accessors.Getter, accessors.Setter }.Where(method => !method.IsNil);
+            }))
+            .Concat(customPropertyAccessorMethods)
             .ToHashSet();
         if (isEnum)
         {
             var enumBase = new KType { ClassName = names.Class("kotlin.Enum") };
             var self = new KType { ClassName = result.FqName };
             foreach (var tp in result.TypeParameter)
-                self.Argument.Add(new KType.Types.Argument {
+                self.Argument.Add(new KType.Types.Argument
+                {
                     Projection = KType.Types.Argument.Types.Projection.Inv,
                     Type = new KType { TypeParameter = tp.Id },
                 });
-            enumBase.Argument.Add(new KType.Types.Argument {
+            enumBase.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = self,
             });
@@ -1793,12 +1825,14 @@ internal sealed class AssemblyScanner
                 !IsSystemType(def.BaseType, "System", "Attribute"))
                 result.Supertype.Add(signatures.DecodeEntity(def.BaseType, typeContext, platform: false));
             var implementedInterfaces = def.GetInterfaceImplementations()
-                .Where(implHandle => {
+                .Where(implHandle =>
+                {
                     var entity = _md.GetInterfaceImplementation(implHandle).Interface;
                     return entity.Kind != HandleKind.TypeDefinition
                         || !_existentialCarriers.Contains((TypeDefinitionHandle)entity);
                 })
-                .Select(implHandle => {
+                .Select(implHandle =>
+                {
                     var impl = _md.GetInterfaceImplementation(implHandle);
                     return signatures.DecodeEntity(impl.Interface, typeContext, platform: false);
                 })
@@ -1869,7 +1903,8 @@ internal sealed class AssemblyScanner
             {
                 var parameters = Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context)
                     .Skip(isKotlinInner ? 1 : 0);
-                var constructor = new Constructor {
+                var constructor = new Constructor
+                {
                     Flags = Flags.Visibility(method.Attributes),
                     ValueParameter = { parameters },
                 };
@@ -1889,7 +1924,8 @@ internal sealed class AssemblyScanner
                     sig.ParameterTypes.Length == 1 &&
                     IsSelfType(sig.ParameterTypes[0], result.FqName);
                 if (isComparableSlot) kotlinFlags |= 2;
-                var function = new Function {
+                var function = new Function
+                {
                     Name = names.String(isComparableSlot ? "compareTo" : name),
                     Flags = Flags.Callable(method.Attributes, modalityForMethod,
                         kotlinFlags,
@@ -1930,7 +1966,8 @@ internal sealed class AssemblyScanner
                 continue;
             var parameters = Parameters(
                 methodHandle, method, signature.ParameterTypes, names, signatures, context).ToList();
-            result.Function.Add(new Function {
+            result.Function.Add(new Function
+            {
                 Name = names.String(operatorName),
                 Flags = Flags.Callable(method.Attributes, modality: 0, kotlinFlags: 2) & ~(1 << 18),
                 ReturnType = ProjectReturn(methodHandle, method, signature.ReturnType, names, signatures, context),
@@ -1938,12 +1975,11 @@ internal sealed class AssemblyScanner
             });
         }
 
-        // A DotKt custom accessor is emitted as an ordinary get_/set_ method pair plus its public storage field.
-        // The KLIB declaration must expose the Kotlin property once, routed through those methods; surfacing the field
-        // as a second same-name property lets overload resolution select raw storage and bypasses accessor semantics.
-        var propertyNames = accessorPairs
-            .Select(x => _md.GetString(_md.GetMethodDefinition(x.Getter).Name)[4..])
-            .ToHashSet(StringComparer.Ordinal);
+        // Suppress a public field only when a receiverless CLR Property row below projects that field's own Kotlin
+        // declaration. An extension/context property may legally share the source name with an independent field-backed
+        // property; accessorPairs contains precisely those receiver-bearing declarations, so folding its names into this
+        // set would erase the receiverless property during DLL -> KLIB projection.
+        var propertyNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var propertyHandle in def.GetProperties())
         {
             var property = _md.GetPropertyDefinition(propertyHandle);
@@ -1951,6 +1987,13 @@ internal sealed class AssemblyScanner
             var getter = accessors.Getter.IsNil ? default(MethodDefinition?) : _md.GetMethodDefinition(accessors.Getter);
             var setter = accessors.Setter.IsNil ? default(MethodDefinition?) : _md.GetMethodDefinition(accessors.Setter);
             if (getter is not { } getMethod && setter is not { } setMethod) continue;
+            // A DotKt member extension/context property is already projected below from this exact MethodSemantics
+            // association. Treating its indexed CLR Property signature as a C# indexer as well invents operator
+            // get/set declarations and can collide with a real Kotlin operator on the same class.
+            var representativeHandle = accessors.Getter.IsNil ? accessors.Setter : accessors.Getter;
+            if (kotlinPropertyAccessorMethods.Contains(representativeHandle) ||
+                customPropertyAccessorMethods.Contains(representativeHandle))
+                continue;
             var representative = getter ?? setter!.Value;
             var metadataPropertyName = _md.GetString(property.Name);
             var explicitInterfaceProperty = metadataPropertyName.Contains('.', StringComparison.Ordinal);
@@ -1977,7 +2020,8 @@ internal sealed class AssemblyScanner
                     names,
                     signatures,
                     context);
-            var projected = new Property {
+            var projected = new Property
+            {
                 Name = names.String(name),
                 ReturnType = propertyType,
                 Flags = Flags.Property(
@@ -2019,7 +2063,14 @@ internal sealed class AssemblyScanner
                     typeContext))
                 continue;
             var bodyHandle = (MethodDefinitionHandle)implementation.MethodBody;
-            var declarationName = implementation.MethodDeclaration.Kind switch {
+            // A trusted Kotlin accessor carrier says this MethodImpl body is a physical implementation of an
+            // already-declared Kotlin property, not another declaration to surface. Public/protected accessor bodies
+            // are projected through KotlinAccessorPairs; private compiler bridges forward to that same declaration.
+            // Reconstructing either bridge here would duplicate the property and, for member extension/context
+            // properties, discard its receiver/context prefix by manufacturing a receiverless declaration.
+            if (KotlinPropertyAccessorCarrier(bodyHandle) is not null) continue;
+            var declarationName = implementation.MethodDeclaration.Kind switch
+            {
                 HandleKind.MemberReference => _md.GetString(
                     _md.GetMemberReference((MemberReferenceHandle)implementation.MethodDeclaration).Name),
                 HandleKind.MethodDefinition => _md.GetString(
@@ -2027,9 +2078,11 @@ internal sealed class AssemblyScanner
                 _ => "",
             };
             declarationName = SimpleMethodName(declarationName);
-            var accessorKind = declarationName.StartsWith("get_", StringComparison.Ordinal) ? 1
-                : declarationName.StartsWith("set_", StringComparison.Ordinal) ? 2
-                : 0;
+            var association = PropertyAccessorAssociation(bodyHandle)
+                ?? (implementation.MethodDeclaration.Kind == HandleKind.MethodDefinition
+                    ? PropertyAccessorAssociation((MethodDefinitionHandle)implementation.MethodDeclaration)
+                    : null);
+            var accessorKind = association?.Kind ?? 0;
             if (accessorKind == 0)
             {
                 if (declarationName.Length != 0 &&
@@ -2039,7 +2092,10 @@ internal sealed class AssemblyScanner
                     explicitFunctions.Add((declarationName, bodyHandle));
                 continue;
             }
-            var propertyName = declarationName[4..];
+            // A conventional C# explicit implementation associates its private body with a qualified Property name
+            // (`Namespace.IFoo.Value`). The ordinary Property-row path exposes the simple Kotlin-facing name; normalize
+            // the exact MethodSemantics association identically so the two projection paths deduplicate.
+            var propertyName = SimpleMethodName(association!.Value.Name);
             if (propertyNames.Contains(propertyName)) continue;
             explicitAccessors.TryGetValue(propertyName, out var pair);
             if (accessorKind == 1) pair.Getter = bodyHandle;
@@ -2076,7 +2132,8 @@ internal sealed class AssemblyScanner
                     signatures,
                     context with { Method = pair.Setter });
             }
-            result.Property.Add(new Property {
+            result.Property.Add(new Property
+            {
                 Name = names.String(name),
                 ReturnType = type,
                 Flags = Flags.Property(MethodAttributes.Public, !pair.Setter.IsNil, isStatic: false),
@@ -2099,7 +2156,8 @@ internal sealed class AssemblyScanner
             var body = _md.GetMethodDefinition(bodyHandle);
             var context = new GenericContext(handle, bodyHandle, typeParameterIds);
             var signature = body.DecodeSignature(signatures, context);
-            var function = new Function {
+            var function = new Function
+            {
                 Name = names.String(name),
                 Flags = Flags.Callable(MethodAttributes.Public, modality: 0),
                 ReturnType = ProjectReturn(
@@ -2145,7 +2203,8 @@ internal sealed class AssemblyScanner
             var canWrite = hasCustomAccessors && (custom.Access & 2) != 0 ||
                 (field.Attributes & (FieldAttributes.InitOnly | FieldAttributes.Literal)) == 0 &&
                 !_attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinReadOnlyAttribute");
-            var projected = new Property {
+            var projected = new Property
+            {
                 Name = names.String(name),
                 ReturnType = fieldType,
                 Flags = Flags.Property(field.Attributes, canWrite),
@@ -2170,7 +2229,8 @@ internal sealed class AssemblyScanner
                 projected.Flags |= 1 << 12; // IS_LATEINIT
             if (hasCustomAccessors)
                 ApplyAccessorFlags(projected, custom.Handles);
-            else {
+            else
+            {
                 projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
                 if (isLateinit) projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
                 projected.Flags |= 1;
@@ -2188,19 +2248,25 @@ internal sealed class AssemblyScanner
             if (!IsPublicOrProtected(accessor.Attributes)) continue;
             var handler = signatures.DecodeEntity(ev.Type, typeContext, platform: false);
             var eventType = signatures.NamedType("kotlin.clr.ClrEvent");
-            eventType.Argument.Add(new KType.Types.Argument {
+            eventType.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = handler,
             });
-            result.Property.Add(new Property {
+            result.Property.Add(new Property
+            {
                 Name = names.String(_md.GetString(ev.Name)),
                 ReturnType = eventType,
                 Flags = Flags.Property(accessor.Attributes, canWrite: false, (accessor.Attributes & MethodAttributes.Static) != 0),
             });
         }
         foreach (var pair in accessorPairs)
-            result.Property.Add(KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds,
-                isStatic: (_md.GetMethodDefinition(pair.Getter).Attributes & MethodAttributes.Static) != 0));
+        {
+            var representative = pair.Getter.IsNil ? pair.Setter : pair.Getter;
+            result.Property.Add(KotlinAccessorProperty(handle, pair.Declaration, pair.Name,
+                pair.Getter, pair.Setter, names, signatures, typeParameterIds,
+                isStatic: (_md.GetMethodDefinition(representative).Attributes & MethodAttributes.Static) != 0));
+        }
         AddEnumerableIterator(handle, def, result, names, signatures, typeContext);
         MarkLowPriorityDelegateOverloads(result.Constructor, names);
         MarkLowPriorityDelegateOverloads(result.Function, names);
@@ -2239,7 +2305,8 @@ internal sealed class AssemblyScanner
         SignatureDecoder signatures,
         GenericContext context)
     {
-        var owner = declaration.Kind switch {
+        var owner = declaration.Kind switch
+        {
             HandleKind.MemberReference => _md.GetMemberReference((MemberReferenceHandle)declaration).Parent,
             HandleKind.MethodDefinition => _md.GetMethodDefinition((MethodDefinitionHandle)declaration).GetDeclaringType(),
             _ => default,
@@ -2260,7 +2327,8 @@ internal sealed class AssemblyScanner
         foreach (var gpHandle in method.GetGenericParameters())
         {
             var gp = _md.GetGenericParameter(gpHandle);
-            var parameter = new TypeParameter {
+            var parameter = new TypeParameter
+            {
                 Id = 10000 + gp.Index,
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
@@ -2539,7 +2607,8 @@ internal sealed class AssemblyScanner
         NameTable names,
         SignatureDecoder signatures)
     {
-        var function = new Function {
+        var function = new Function
+        {
             Name = names.String("await"),
             Flags = Flags.Callable(
                 MethodAttributes.Public,
@@ -2551,11 +2620,13 @@ internal sealed class AssemblyScanner
         if (typeParameters is not null)
             function.TypeParameter.Add(typeParameters.Select(x => x.Clone()));
         if (captureContext)
-            function.ValueParameter.Add(new ValueParameter {
+            function.ValueParameter.Add(new ValueParameter
+            {
                 Name = names.String("captureContext"),
                 Type = signatures.NamedType("kotlin.Boolean"),
             });
-        function.FunctionAnnotation.Add(new Annotation {
+        function.FunctionAnnotation.Add(new Annotation
+        {
             Id = names.Class("kotlin.clr.ClrAwaitBridge"),
         });
         function.Flags |= 1;
@@ -2578,9 +2649,11 @@ internal sealed class AssemblyScanner
             return;
         var self = new KType { ClassName = ClassName(handle, names) };
         foreach (var parameter in def.GetGenericParameters())
-            self.Argument.Add(new KType.Types.Argument {
+            self.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
-                Type = new KType {
+                Type = new KType
+                {
                     TypeParameter = _md.GetGenericParameter(parameter).Index,
                 },
             });
@@ -2593,11 +2666,13 @@ internal sealed class AssemblyScanner
             return;
 
         var iterator = signatures.NamedType("kotlin.collections.Iterator");
-        iterator.Argument.Add(new KType.Types.Argument {
+        iterator.Argument.Add(new KType.Types.Argument
+        {
             Projection = KType.Types.Argument.Types.Projection.Inv,
             Type = element,
         });
-        result.Function.Add(new Function {
+        result.Function.Add(new Function
+        {
             Name = names.String("iterator"),
             Flags = Flags.Callable(
                 MethodAttributes.Public |
@@ -2759,7 +2834,8 @@ internal sealed class AssemblyScanner
         NameTable names)
     {
         var existing = declarations.Select(FunctionSurfaceKey).ToHashSet(StringComparer.Ordinal);
-        foreach (var family in methods.GroupBy(x => {
+        foreach (var family in methods.GroupBy(x =>
+        {
             var method = _md.GetMethodDefinition(x.Handle);
             return (
                 Name: _md.GetString(method.Name),
@@ -2770,22 +2846,22 @@ internal sealed class AssemblyScanner
             var variadics = family.Where(x => IsParamsFunction(x.Declaration)).ToList();
             var fixedArity = family.Where(x => x.Declaration.ValueParameter.All(p => p.VarargElementType is null)).ToList();
             foreach (var variadic in variadics)
-            foreach (var fixedMethod in fixedArity)
-            {
-                if (!PhysicalPrefixMatches(fixedMethod.PhysicalParameters, variadic.PhysicalParameters)) continue;
-                var fixedTypes = FunctionParameterTypes(fixedMethod.Declaration);
-                var variadicTypes = FunctionParameterTypes(variadic.Declaration);
-                if (fixedTypes.Count != variadicTypes.Count - 1 ||
-                    !IsStrictOuterNullabilityNarrowing(fixedTypes, variadicTypes))
-                    continue;
+                foreach (var fixedMethod in fixedArity)
+                {
+                    if (!PhysicalPrefixMatches(fixedMethod.PhysicalParameters, variadic.PhysicalParameters)) continue;
+                    var fixedTypes = FunctionParameterTypes(fixedMethod.Declaration);
+                    var variadicTypes = FunctionParameterTypes(variadic.Declaration);
+                    if (fixedTypes.Count != variadicTypes.Count - 1 ||
+                        !IsStrictOuterNullabilityNarrowing(fixedTypes, variadicTypes))
+                        continue;
 
-                var bridge = fixedMethod.Declaration.Clone();
-                ReplaceFunctionParameterTypes(bridge, variadicTypes.Take(fixedTypes.Count));
-                var key = FunctionSurfaceKey(bridge);
-                if (!existing.Add(key)) continue;
-                declarations.Add(bridge);
-                AddLowPriorityAnnotation(fixedMethod.Declaration.FunctionAnnotation, names);
-            }
+                    var bridge = fixedMethod.Declaration.Clone();
+                    ReplaceFunctionParameterTypes(bridge, variadicTypes.Take(fixedTypes.Count));
+                    var key = FunctionSurfaceKey(bridge);
+                    if (!existing.Add(key)) continue;
+                    declarations.Add(bridge);
+                    AddLowPriorityAnnotation(fixedMethod.Declaration.FunctionAnnotation, names);
+                }
         }
     }
 
@@ -2798,23 +2874,23 @@ internal sealed class AssemblyScanner
         var variadics = constructors.Where(x => IsParamsConstructor(x.Declaration)).ToList();
         var fixedArity = constructors.Where(x => x.Declaration.ValueParameter.All(p => p.VarargElementType is null)).ToList();
         foreach (var variadic in variadics)
-        foreach (var fixedConstructor in fixedArity)
-        {
-            if (!PhysicalPrefixMatches(fixedConstructor.PhysicalParameters, variadic.PhysicalParameters)) continue;
-            var fixedTypes = fixedConstructor.Declaration.ValueParameter.Select(p => p.Type).ToList();
-            var variadicTypes = variadic.Declaration.ValueParameter.Select(p => p.Type).ToList();
-            if (fixedTypes.Count != variadicTypes.Count - 1 ||
-                !IsStrictOuterNullabilityNarrowing(fixedTypes, variadicTypes))
-                continue;
+            foreach (var fixedConstructor in fixedArity)
+            {
+                if (!PhysicalPrefixMatches(fixedConstructor.PhysicalParameters, variadic.PhysicalParameters)) continue;
+                var fixedTypes = fixedConstructor.Declaration.ValueParameter.Select(p => p.Type).ToList();
+                var variadicTypes = variadic.Declaration.ValueParameter.Select(p => p.Type).ToList();
+                if (fixedTypes.Count != variadicTypes.Count - 1 ||
+                    !IsStrictOuterNullabilityNarrowing(fixedTypes, variadicTypes))
+                    continue;
 
-            var bridge = fixedConstructor.Declaration.Clone();
-            for (var i = 0; i < fixedTypes.Count; i++)
-                bridge.ValueParameter[i].Type = variadicTypes[i].Clone();
-            var key = ConstructorSurfaceKey(bridge);
-            if (!existing.Add(key)) continue;
-            declarations.Add(bridge);
-            AddLowPriorityAnnotation(fixedConstructor.Declaration.ConstructorAnnotation, names);
-        }
+                var bridge = fixedConstructor.Declaration.Clone();
+                for (var i = 0; i < fixedTypes.Count; i++)
+                    bridge.ValueParameter[i].Type = variadicTypes[i].Clone();
+                var key = ConstructorSurfaceKey(bridge);
+                if (!existing.Add(key)) continue;
+                declarations.Add(bridge);
+                AddLowPriorityAnnotation(fixedConstructor.Declaration.ConstructorAnnotation, names);
+            }
     }
 
     private static void AddLowPriorityAnnotation(
@@ -2824,7 +2900,8 @@ internal sealed class AssemblyScanner
         if (annotations.Any(a =>
             names.ClassName(a.Id) == "kotlin.internal.LowPriorityInOverloadResolution"))
             return;
-        annotations.Add(new Annotation {
+        annotations.Add(new Annotation
+        {
             Id = names.Class("kotlin.internal.LowPriorityInOverloadResolution"),
         });
     }
@@ -3005,7 +3082,8 @@ internal sealed class AssemblyScanner
                 var annotation = annotations(candidate);
                 if (!annotation.Any(a =>
                     names.ClassName(a.Id) == "kotlin.internal.LowPriorityInOverloadResolution"))
-                    annotation.Add(new Annotation {
+                    annotation.Add(new Annotation
+                    {
                         Id = names.Class("kotlin.internal.LowPriorityInOverloadResolution"),
                     });
             }
@@ -3018,7 +3096,8 @@ internal sealed class AssemblyScanner
         return type.ClassName == ownerName;
     }
 
-    private static readonly Dictionary<string, string> OperatorNames = new(StringComparer.Ordinal) {
+    private static readonly Dictionary<string, string> OperatorNames = new(StringComparer.Ordinal)
+    {
         ["op_Addition"] = "plus",
         ["op_Subtraction"] = "minus",
         ["op_Multiply"] = "times",
@@ -3052,7 +3131,8 @@ internal sealed class AssemblyScanner
             var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
             var context = new GenericContext(owner, methodHandle, typeParameterIds);
             var sig = method.DecodeSignature(signatures, context);
-            var function = new Function {
+            var function = new Function
+            {
                 Name = names.String(_md.GetString(method.Name)),
                 Flags = Flags.Callable(method.Attributes, CallableModality(method.Attributes)) & ~(1 << 18),
                 ReturnType = ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
@@ -3063,7 +3143,8 @@ internal sealed class AssemblyScanner
             foreach (var gpHandle in method.GetGenericParameters())
             {
                 var gp = _md.GetGenericParameter(gpHandle);
-                var tp = new TypeParameter {
+                var tp = new TypeParameter
+                {
                     Id = 10000 + gp.Index,
                     Name = names.String(_md.GetString(gp.Name)),
                     Variance = TypeParameter.Types.Variance.Inv,
@@ -3134,7 +3215,8 @@ internal sealed class AssemblyScanner
             var signature = method.DecodeSignature(signatures, context);
             var kotlinFlags = _attrs.Int32(
                 entry.KotlinImplementation, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
-            var function = new Function {
+            var function = new Function
+            {
                 Name = names.String(_md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
                 Flags = (Flags.Callable(
                     method.Attributes,
@@ -3179,6 +3261,8 @@ internal sealed class AssemblyScanner
             var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
             var property = KotlinAccessorProperty(
                 owner,
+                entry.Declaration,
+                _md.GetString(_md.GetPropertyDefinition(entry.Declaration).Name),
                 entry.KotlinGetterImplementation,
                 setterHandle,
                 names,
@@ -3188,7 +3272,6 @@ internal sealed class AssemblyScanner
                 companionReceiver: CSharp14ExtensionReceiver(
                     entry.ReceiverMarker, entry.BlockArity, names, signatures,
                     eraseBlockArguments: entry.KotlinGetterImplementation != entry.GetterImplementation));
-            property.Name = names.String(_md.GetString(_md.GetPropertyDefinition(entry.Declaration).Name));
             ApplyCSharp14PropertyStorageFacts(
                 property, entry.KotlinGetterImplementation, names);
             property.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
@@ -3303,7 +3386,8 @@ internal sealed class AssemblyScanner
         foreach (var gpHandle in method.GetGenericParameters())
         {
             var gp = _md.GetGenericParameter(gpHandle);
-            var parameter = new TypeParameter {
+            var parameter = new TypeParameter
+            {
                 Id = 10000 + gp.Index,
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
@@ -3396,20 +3480,39 @@ internal sealed class AssemblyScanner
         var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
         var accessorPairs = KotlinAccessorPairs(handle, def, typeParameterIds, requireStatic: true);
         var customFieldAccessors = CustomFieldAccessors(def, requireStatic: true);
-        var extensionPropertyAccessors = accessorPairs
-            .SelectMany(x => x.Setter.IsNil ? new[] { x.Getter } : new[] { x.Getter, x.Setter })
-            .Concat(customFieldAccessors.Values.SelectMany(x => x.Handles))
+        var kotlinPropertyAccessorMethods = accessorPairs
+            .SelectMany(x => new[] { x.Getter, x.Setter }.Where(method => !method.IsNil))
+            .ToHashSet();
+        var customPropertyAccessorMethods = customFieldAccessors.Values
+            .SelectMany(x => x.Handles)
+            .ToHashSet();
+        // Every MethodSemantics accessor is excluded from the function surface. Only extension/context pairs and
+        // field-backed custom accessors are excluded from the ordinary CLR Property-row projection: a receiverless
+        // computed property is owned by that row and must not disappear merely because its accessor has no parameters.
+        var methodAccessorMethods = kotlinPropertyAccessorMethods
+            .Concat(def.GetProperties().SelectMany(propertyHandle =>
+            {
+                var accessors = _md.GetPropertyDefinition(propertyHandle).GetAccessors();
+                return new[] { accessors.Getter, accessors.Setter }.Where(method => !method.IsNil);
+            }))
+            .Concat(customPropertyAccessorMethods)
+            .ToHashSet();
+        var separatelyProjectedPropertyAccessors = kotlinPropertyAccessorMethods
+            .Concat(customPropertyAccessorMethods)
             .ToHashSet();
         foreach (var pair in accessorPairs)
         {
-            var companion = CompanionExtension(pair.Getter, signatures, "get");
+            var representative = pair.Getter.IsNil ? pair.Setter : pair.Getter;
+            var representativeRole = pair.Getter.IsNil ? "set" : "get";
+            var companion = CompanionExtension(representative, signatures, representativeRole);
             var setterCompanion = pair.Setter.IsNil ? null : CompanionExtension(pair.Setter, signatures, "set");
             if (!pair.Setter.IsNil && ((companion is null) != (setterCompanion is null) ||
                 (companion is not null && setterCompanion is not null &&
                     (companion.Name != setterCompanion.Name || !companion.Receiver.Equals(setterCompanion.Receiver))))
             )
                 throw new InvalidDataException("inconsistent companion-extension accessor carriers");
-            var property = KotlinAccessorProperty(handle, pair.Getter, pair.Setter, names, signatures, typeParameterIds,
+            var property = KotlinAccessorProperty(handle, pair.Declaration, pair.Name,
+                pair.Getter, pair.Setter, names, signatures, typeParameterIds,
                 isStatic: companion is not null, companionReceiver: companion?.Receiver);
             if (companion is not null)
             {
@@ -3430,14 +3533,15 @@ internal sealed class AssemblyScanner
             var name = _md.GetString(method.Name);
             if (!IsPublicOrProtected(method.Attributes) || name is ".ctor" or ".cctor" ||
                 (method.Attributes & MethodAttributes.SpecialName) != 0 || name.StartsWith('<') ||
-                extensionPropertyAccessors.Contains(methodHandle))
+                methodAccessorMethods.Contains(methodHandle))
                 continue;
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
             var sig = method.DecodeSignature(signatures, context);
             var modality = (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
                 : (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0 ? 1 : 0;
             var companion = CompanionExtension(methodHandle, signatures, "function");
-            var function = new Function {
+            var function = new Function
+            {
                 Name = names.String(companion?.Name ?? name),
                 Flags = Flags.Callable(method.Attributes, modality,
                     _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0,
@@ -3460,7 +3564,8 @@ internal sealed class AssemblyScanner
             foreach (var gpHandle in method.GetGenericParameters())
             {
                 var gp = _md.GetGenericParameter(gpHandle);
-                var tp = new TypeParameter {
+                var tp = new TypeParameter
+                {
                     Id = 10000 + gp.Index,
                     Name = names.String(_md.GetString(gp.Name)),
                     Variance = TypeParameter.Types.Variance.Inv,
@@ -3474,15 +3579,19 @@ internal sealed class AssemblyScanner
             package.Function.Add(function);
         }
 
-        var propertyNames = accessorPairs
-            .Select(x => _md.GetString(_md.GetMethodDefinition(x.Getter).Name)[4..])
-            .ToHashSet(StringComparer.Ordinal);
+        // Only receiverless Property rows suppress a same-named public field. Extension/context accessor pairs are
+        // overloads of an independent receiverless field-backed property, not alternate accessors for that field.
+        var propertyNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var propertyHandle in def.GetProperties())
         {
             var property = _md.GetPropertyDefinition(propertyHandle);
             var accessors = property.GetAccessors();
             var methodHandle = !accessors.Getter.IsNil ? accessors.Getter : accessors.Setter;
             if (methodHandle.IsNil) continue;
+            // Kotlin ordinary-method accessors were already projected above from this exact MethodSemantics row.
+            // The remaining loop is for CLR special-name properties. Projecting the same row twice creates a second
+            // receiverless Kotlin property and makes every context/extension use ambiguous.
+            if (separatelyProjectedPropertyAccessors.Contains(methodHandle)) continue;
             var method = _md.GetMethodDefinition(methodHandle);
             if (!IsPublicOrProtected(method.Attributes)) continue;
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
@@ -3499,7 +3608,8 @@ internal sealed class AssemblyScanner
             var canWrite = !accessors.Setter.IsNil && IsPublicOrProtected(_md.GetMethodDefinition(accessors.Setter).Attributes);
             // The CLR-property twin of the facade field/method paths: a companion extension that emits a real property
             // row (a delegated one) is still a static declaration whose receiver comes from the carrier.
-            var propCompanion = CompanionExtension(methodHandle, signatures, "get");
+            var representativeRole = accessors.Getter.IsNil ? "set" : "get";
+            var propCompanion = CompanionExtension(methodHandle, signatures, representativeRole);
             var propSetterCompanion = accessors.Setter.IsNil
                 ? null
                 : CompanionExtension(accessors.Setter, signatures, "set");
@@ -3509,7 +3619,8 @@ internal sealed class AssemblyScanner
                         !propCompanion.Receiver.Equals(propSetterCompanion.Receiver))))
             )
                 throw new InvalidDataException("inconsistent companion-extension property carriers");
-            var projected = new Property {
+            var projected = new Property
+            {
                 Name = names.String(propCompanion?.Name ?? _md.GetString(property.Name)),
                 ReturnType = type,
                 Flags = Flags.Property(method.Attributes, canWrite, isStatic: propCompanion is not null),
@@ -3546,7 +3657,8 @@ internal sealed class AssemblyScanner
             // `companion val C.bar = 1` stores into a plain static field of this facade; its carrier restores both the
             // static declaration flag and the associated type, exactly as the method path above does.
             var fieldCompanion = CompanionExtension(fieldHandle, signatures, "field");
-            var projected = new Property {
+            var projected = new Property
+            {
                 Name = names.String(fieldCompanion?.Name ?? name),
                 ReturnType = type,
                 Flags = fieldCompanion is null
@@ -3567,7 +3679,8 @@ internal sealed class AssemblyScanner
             projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
             if (hasCustomAccessors)
                 ApplyAccessorFlags(projected, custom.Handles);
-            else {
+            else
+            {
                 projected.PropertyAnnotation.Add(ClrFieldAnnotation(names));
                 if (isLateinit) projected.PropertyAnnotation.Add(ClrLateinitFieldAnnotation(names));
             }
@@ -3585,25 +3698,34 @@ internal sealed class AssemblyScanner
             .Select(h => _md.GetString(_md.GetFieldDefinition(h).Name))
             .ToHashSet(StringComparer.Ordinal);
         var result = new Dictionary<string, (int Access, List<MethodDefinitionHandle> Handles)>(StringComparer.Ordinal);
-        foreach (var handle in def.GetMethods())
+        foreach (var propertyHandle in def.GetProperties())
         {
-            var method = _md.GetMethodDefinition(handle);
-            if ((method.Attributes & MethodAttributes.SpecialName) != 0 ||
-                !IsPublicOrProtected(method.Attributes) ||
-                requireStatic && (method.Attributes & MethodAttributes.Static) == 0)
-                continue;
-            var methodName = _md.GetString(method.Name);
-            var physical = PhysicalParameters(method);
-            var access = methodName.StartsWith("get_", StringComparison.Ordinal) && physical.Count == 0 ? 1
-                : methodName.StartsWith("set_", StringComparison.Ordinal) && physical.Count == 1 ? 2
-                : 0;
-            if (access == 0) continue;
-            var propertyName = methodName[4..];
+            var property = _md.GetPropertyDefinition(propertyHandle);
+            var propertyName = _md.GetString(property.Name);
             if (!fields.Contains(propertyName)) continue;
+            var accessors = property.GetAccessors();
+            // Same-name extension/context properties are independent overloads, not custom accessors for this field.
+            // A getter owns no value slot; a setter owns exactly its final value slot when the Property is receiverless.
+            int ParameterCount(MethodDefinitionHandle handle) => _md.GetMethodDefinition(handle).GetParameters()
+                .Count(parameter => _md.GetParameter(parameter).SequenceNumber != 0);
+            var receiverless = !accessors.Getter.IsNil
+                ? ParameterCount(accessors.Getter) == 0
+                : !accessors.Setter.IsNil && ParameterCount(accessors.Setter) == 1;
+            if (!receiverless) continue;
+            var handles = new[] { accessors.Getter, accessors.Setter }.Where(handle => !handle.IsNil).ToList();
+            var accepted = handles.Where(handle =>
+            {
+                var method = _md.GetMethodDefinition(handle);
+                return IsPublicOrProtected(method.Attributes)
+                    && (!requireStatic || (method.Attributes & MethodAttributes.Static) != 0);
+            }).ToList();
+            var access = (!accessors.Getter.IsNil && accepted.Contains(accessors.Getter) ? 1 : 0)
+                | (!accessors.Setter.IsNil && accepted.Contains(accessors.Setter) ? 2 : 0);
+            if (access == 0) continue;
             if (!result.TryGetValue(propertyName, out var existing))
                 existing = (0, new List<MethodDefinitionHandle>());
             existing.Access |= access;
-            existing.Handles.Add(handle);
+            existing.Handles.AddRange(accepted);
             result[propertyName] = existing;
         }
         return result;
@@ -3700,12 +3822,52 @@ internal sealed class AssemblyScanner
         foreach (var handle in accessors)
         {
             var method = _md.GetMethodDefinition(handle);
-            var name = _md.GetString(method.Name);
-            if (name.StartsWith("get_", StringComparison.Ordinal))
+            var association = PropertyAccessorAssociation(handle);
+            if (association?.Kind == 1)
                 property.GetterFlags = Flags.Accessor(method.Attributes);
-            else if (name.StartsWith("set_", StringComparison.Ordinal))
+            else if (association?.Kind == 2)
                 property.SetterFlags = Flags.Accessor(method.Attributes);
         }
+    }
+
+    private readonly Dictionary<MethodDefinitionHandle, (string Name, int Kind)> _propertyAccessorAssociations = new();
+    private readonly HashSet<MethodDefinitionHandle> _ambiguousPropertyAccessorAssociations = new();
+    private readonly HashSet<TypeDefinitionHandle> _indexedPropertyAccessorTypes = new();
+
+    private (string Name, int Kind)? PropertyAccessorAssociation(MethodDefinitionHandle methodHandle)
+    {
+        if (methodHandle.IsNil) return null;
+        if (KotlinPropertyAccessorCarrier(methodHandle) is { } carrier)
+            return (carrier.Name, carrier.Kind);
+        var typeHandle = _md.GetMethodDefinition(methodHandle).GetDeclaringType();
+        if (typeHandle.IsNil) return null;
+        if (_indexedPropertyAccessorTypes.Add(typeHandle))
+        {
+            void Index(MethodDefinitionHandle accessor, string propertyName, int kind)
+            {
+                if (accessor.IsNil || _ambiguousPropertyAccessorAssociations.Contains(accessor)) return;
+                var association = (propertyName, kind);
+                if (_propertyAccessorAssociations.TryGetValue(accessor, out var existing)
+                    && existing != association)
+                {
+                    _propertyAccessorAssociations.Remove(accessor);
+                    _ambiguousPropertyAccessorAssociations.Add(accessor);
+                }
+                else
+                    _propertyAccessorAssociations[accessor] = association;
+            }
+
+            var type = _md.GetTypeDefinition(typeHandle);
+            foreach (var propertyHandle in type.GetProperties())
+            {
+                var property = _md.GetPropertyDefinition(propertyHandle);
+                var accessors = property.GetAccessors();
+                var propertyName = _md.GetString(property.Name);
+                Index(accessors.Getter, propertyName, 1);
+                Index(accessors.Setter, propertyName, 2);
+            }
+        }
+        return _propertyAccessorAssociations.TryGetValue(methodHandle, out var result) ? result : null;
     }
 
     private void AddCompanion(
@@ -3735,64 +3897,184 @@ internal sealed class AssemblyScanner
         }
     }
 
-    private List<(MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)> KotlinAccessorPairs(
+    private List<(string Name, PropertyDefinitionHandle Declaration,
+        MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)> KotlinAccessorPairs(
         TypeDefinitionHandle owner,
         TypeDefinition def,
         IReadOnlyDictionary<GenericParameterHandle, int> typeParameterIds,
         bool requireStatic = false)
     {
-        var methods = def.GetMethods()
-            .Select(h => (Handle: h, Definition: _md.GetMethodDefinition(h)))
-            .ToList();
-        var result = new List<(MethodDefinitionHandle, MethodDefinitionHandle)>();
-        foreach (var (getterHandle, getter) in methods)
+        var result = new List<(string, PropertyDefinitionHandle, MethodDefinitionHandle, MethodDefinitionHandle)>();
+        var associatedMethods = new HashSet<MethodDefinitionHandle>();
+        foreach (var propertyHandle in def.GetProperties())
         {
-            var name = _md.GetString(getter.Name);
-            if ((getter.Attributes & MethodAttributes.SpecialName) != 0 ||
-                !name.StartsWith("get_", StringComparison.Ordinal) ||
-                !IsPublicOrProtected(getter.Attributes) ||
-                requireStatic && (getter.Attributes & MethodAttributes.Static) == 0)
+            var definition = _md.GetPropertyDefinition(propertyHandle);
+            var accessors = definition.GetAccessors();
+            var getterHandle = accessors.Getter;
+            var setterHandle = accessors.Setter;
+            var representativeHandle = getterHandle.IsNil ? setterHandle : getterHandle;
+            if (representativeHandle.IsNil) continue;
+            var representative = _md.GetMethodDefinition(representativeHandle);
+            if ((representative.Attributes & MethodAttributes.SpecialName) != 0 ||
+                !IsPublicOrProtected(representative.Attributes) ||
+                requireStatic && (representative.Attributes & MethodAttributes.Static) == 0)
                 continue;
-            var physical = PhysicalParameters(getter);
+            var physical = PhysicalParameters(representative);
+            // A setter-only Property row represents a semantic `var` whose getter is inherited.  The final physical
+            // parameter is the value slot and is not part of the Kotlin receiver/context prefix.
+            var propertyPhysical = getterHandle.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
             var hasReceiver = physical.Count > 0 && !physical[0].Row.Name.IsNil &&
                 _md.GetString(physical[0].Row.Name) == "__self";
             // A COMPANION EXTENSION property accessor carries its receiver in trusted metadata instead of a physical
             // `__self` slot (the frontend drops the parameter), so a receiverless zero-argument getter IS an accessor
-            // here when the carrier says so. Without this the getter would surface as a plain `get_<name>` function.
+            // here when the carrier says so. Without this the associated getter would surface as a plain function.
             var hasCompanionReceiver =
-                _attrs.Has(getterHandle, MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute");
+                _attrs.Has(representativeHandle, MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute");
             var contextStart = hasReceiver ? 1 : 0;
-            if (!hasReceiver && !hasCompanionReceiver && physical.Count == 0 ||
-                physical.Skip(contextStart).Any(x =>
+            if (!hasReceiver && !hasCompanionReceiver && propertyPhysical.Count == 0 ||
+                propertyPhysical.Skip(contextStart).Any(x =>
                     !_attrs.Has(x.Handle, MetadataAttributes.DotKtNs + "KotlinContextParameterAttribute")))
                 continue;
-            var getterSignature = getter.DecodeSignature(
-                RawSignatureTypeProvider.Instance,
-                new GenericContext(owner, getterHandle, typeParameterIds));
+            MethodSignature<string>? getterSignature = getterHandle.IsNil
+                ? null
+                : _md.GetMethodDefinition(getterHandle).DecodeSignature(
+                    RawSignatureTypeProvider.Instance,
+                    new GenericContext(owner, getterHandle, typeParameterIds));
             // Context parameters participate in Kotlin property overload resolution. Parameter count alone can pair
             // `context(A) var C.p`'s setter with `context(B) val C.p`'s getter, silently making the latter writable.
             // Compare the complete physical context/receiver prefix and the setter value against the getter result.
-            var setter = methods.FirstOrDefault(x =>
+            if (!getterHandle.IsNil && !setterHandle.IsNil)
             {
-                if (_md.GetString(x.Definition.Name) != "set_" + name[4..] ||
-                    (x.Definition.Attributes & MethodAttributes.SpecialName) != 0 ||
-                    !IsPublicOrProtected(x.Definition.Attributes) ||
-                    (x.Definition.Attributes & MethodAttributes.Static) !=
-                        (getter.Attributes & MethodAttributes.Static))
-                    return false;
-                var setterSignature = x.Definition.DecodeSignature(
+                var setter = _md.GetMethodDefinition(setterHandle);
+                if ((setter.Attributes & MethodAttributes.SpecialName) != 0 ||
+                    !IsPublicOrProtected(setter.Attributes) ||
+                    (setter.Attributes & MethodAttributes.Static) !=
+                        (representative.Attributes & MethodAttributes.Static))
+                {
+                    setterHandle = default;
+                }
+                else
+                {
+                    var setterSignature = setter.DecodeSignature(
                     RawSignatureTypeProvider.Instance,
-                    new GenericContext(owner, x.Handle, typeParameterIds));
-                return getterSignature.GenericParameterCount == setterSignature.GenericParameterCount &&
-                    setterSignature.ParameterTypes.Length == getterSignature.ParameterTypes.Length + 1 &&
-                    getterSignature.ParameterTypes.SequenceEqual(
+                    new GenericContext(owner, setterHandle, typeParameterIds));
+                    if (getterSignature!.Value.GenericParameterCount != setterSignature.GenericParameterCount ||
+                        setterSignature.ParameterTypes.Length != getterSignature.Value.ParameterTypes.Length + 1 ||
+                        !getterSignature.Value.ParameterTypes.SequenceEqual(
+                            setterSignature.ParameterTypes.Take(getterSignature.Value.ParameterTypes.Length),
+                            StringComparer.Ordinal) ||
+                        getterSignature.Value.ReturnType != setterSignature.ParameterTypes[^1])
+                        setterHandle = default;
+                }
+            }
+            result.Add((_md.GetString(definition.Name), propertyHandle, getterHandle, setterHandle));
+            if (!getterHandle.IsNil) associatedMethods.Add(getterHandle);
+            if (!setterHandle.IsNil) associatedMethods.Add(setterHandle);
+        }
+
+        // Method-generic extension accessors cannot be associated through a CLR Property row because that row has no
+        // owner for `!!T`. Consume the exact trusted carrier written by bir2cir and pair only by its opaque association
+        // token. Physical names and erased signatures are deliberately irrelevant.
+        var carrierGroups = new Dictionary<string,
+            (string? Name, MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)>(StringComparer.Ordinal);
+        foreach (var methodHandle in def.GetMethods())
+        {
+            if (associatedMethods.Contains(methodHandle)) continue;
+            var carrier = KotlinPropertyAccessorCarrier(methodHandle);
+            if (carrier is null) continue;
+            var method = _md.GetMethodDefinition(methodHandle);
+            if ((method.Attributes & MethodAttributes.SpecialName) != 0 ||
+                !IsPublicOrProtected(method.Attributes) ||
+                requireStatic && (method.Attributes & MethodAttributes.Static) == 0)
+                continue;
+            carrierGroups.TryGetValue(carrier.Value.Association, out var pair);
+            if (pair.Name is not null && pair.Name != carrier.Value.Name)
+                throw new InvalidDataException("Kotlin property accessor association has inconsistent source names");
+            pair.Name = carrier.Value.Name;
+            if (carrier.Value.Kind == 1)
+            {
+                if (!pair.Getter.IsNil)
+                    throw new InvalidDataException("Kotlin property accessor association has duplicate getters");
+                pair.Getter = methodHandle;
+            }
+            else
+            {
+                if (!pair.Setter.IsNil)
+                    throw new InvalidDataException("Kotlin property accessor association has duplicate setters");
+                pair.Setter = methodHandle;
+            }
+            carrierGroups[carrier.Value.Association] = pair;
+        }
+        foreach (var pair in carrierGroups.Values)
+        {
+            var representativeHandle = pair.Getter.IsNil ? pair.Setter : pair.Getter;
+            if (representativeHandle.IsNil || pair.Name is null) continue;
+            var representative = _md.GetMethodDefinition(representativeHandle);
+            var representativeSignature = representative.DecodeSignature(
+                RawSignatureTypeProvider.Instance,
+                new GenericContext(owner, representativeHandle, typeParameterIds));
+            if (representativeSignature.GenericParameterCount == 0)
+                throw new InvalidDataException(
+                    "[KotlinPropertyAccessor] without a Property row requires a method-generic accessor");
+            if (!pair.Getter.IsNil && !pair.Setter.IsNil)
+            {
+                var getter = _md.GetMethodDefinition(pair.Getter);
+                var setter = _md.GetMethodDefinition(pair.Setter);
+                var getterSignature = getter.DecodeSignature(
+                    RawSignatureTypeProvider.Instance,
+                    new GenericContext(owner, pair.Getter, typeParameterIds));
+                var setterSignature = setter.DecodeSignature(
+                    RawSignatureTypeProvider.Instance,
+                    new GenericContext(owner, pair.Setter, typeParameterIds));
+                if ((getter.Attributes & MethodAttributes.Static) != (setter.Attributes & MethodAttributes.Static)
+                    || getterSignature.GenericParameterCount != setterSignature.GenericParameterCount
+                    || setterSignature.ParameterTypes.Length != getterSignature.ParameterTypes.Length + 1
+                    || !getterSignature.ParameterTypes.SequenceEqual(
                         setterSignature.ParameterTypes.Take(getterSignature.ParameterTypes.Length),
-                        StringComparer.Ordinal) &&
-                    getterSignature.ReturnType == setterSignature.ParameterTypes[^1];
-            });
-            result.Add((getterHandle, setter.Handle));
+                        StringComparer.Ordinal)
+                    || getterSignature.ReturnType != setterSignature.ParameterTypes[^1])
+                    throw new InvalidDataException(
+                        "[KotlinPropertyAccessor] getter/setter signatures are incompatible");
+            }
+            var physical = PhysicalParameters(representative);
+            var propertyPhysical = pair.Getter.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
+            var hasReceiver = propertyPhysical.Count > 0 && !propertyPhysical[0].Row.Name.IsNil &&
+                _md.GetString(propertyPhysical[0].Row.Name) == "__self";
+            var contextStart = hasReceiver ? 1 : 0;
+            if (!hasReceiver && propertyPhysical.Count == 0 ||
+                propertyPhysical.Skip(contextStart).Any(x =>
+                    !_attrs.Has(x.Handle, MetadataAttributes.DotKtNs + "KotlinContextParameterAttribute")))
+                continue;
+            result.Add((pair.Name, default, pair.Getter, pair.Setter));
         }
         return result;
+    }
+
+    private (string Name, int Kind, string Association)? KotlinPropertyAccessorCarrier(
+        MethodDefinitionHandle methodHandle)
+    {
+        using var document = _attrs.CarrierDocument(
+            methodHandle, MetadataAttributes.DotKtNs + "KotlinPropertyAccessorAttribute");
+        if (document is null) return null;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            root.EnumerateObject().Count() != 3 ||
+            !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("kind", out var kindNode) || kindNode.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("association", out var associationNode) ||
+            associationNode.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
+        var name = nameNode.GetString();
+        var association = associationNode.GetString();
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(association))
+            throw new InvalidDataException("empty [KotlinPropertyAccessor] identity");
+        var kind = kindNode.GetString() switch
+        {
+            "get" => 1,
+            "set" => 2,
+            _ => throw new InvalidDataException("invalid [KotlinPropertyAccessor] role"),
+        };
+        return (name, kind, association);
     }
 
     /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor
@@ -3801,6 +4083,8 @@ internal sealed class AssemblyScanner
     /// property has a static accessor and is not a static declaration.
     private Property KotlinAccessorProperty(
         TypeDefinitionHandle owner,
+        PropertyDefinitionHandle propertyHandle,
+        string propertyName,
         MethodDefinitionHandle getterHandle,
         MethodDefinitionHandle setterHandle,
         NameTable names,
@@ -3809,17 +4093,31 @@ internal sealed class AssemblyScanner
         bool isStatic = false,
         KType? companionReceiver = null)
     {
-        var getter = _md.GetMethodDefinition(getterHandle);
-        var physical = PhysicalParameters(getter);
+        var representativeHandle = getterHandle.IsNil ? setterHandle : getterHandle;
+        if (representativeHandle.IsNil)
+            throw new InvalidDataException($"Kotlin accessor property '{propertyName}' has no accessor");
+        var representative = _md.GetMethodDefinition(representativeHandle);
+        var physical = PhysicalParameters(representative);
+        var propertyPhysical = getterHandle.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
         var hasReceiver = physical.Count > 0 && !physical[0].Row.Name.IsNil &&
             _md.GetString(physical[0].Row.Name) == "__self";
-        var context = new GenericContext(owner, getterHandle, typeParameterIds);
-        var signature = getter.DecodeSignature(signatures, context);
-        var type = ProjectReturn(getterHandle, getter, signature.ReturnType, names, signatures, context);
-        var property = new Property {
-            Name = names.String(_md.GetString(getter.Name)[4..]),
+        var context = new GenericContext(owner, representativeHandle, typeParameterIds);
+        var propertySignature = propertyHandle.IsNil
+            ? representative.DecodeSignature(signatures, context)
+            : _md.GetPropertyDefinition(propertyHandle).DecodeSignature(signatures, context);
+        var propertyTypeSignature = propertyHandle.IsNil && getterHandle.IsNil
+            ? propertySignature.ParameterTypes[^1]
+            : propertySignature.ReturnType;
+        var type = !getterHandle.IsNil
+            ? ProjectReturn(getterHandle, representative, propertyTypeSignature,
+                names, signatures, context)
+            : ProjectType(
+                physical[^1].Handle, propertyTypeSignature, owner, names, signatures, context);
+        var property = new Property
+        {
+            Name = names.String(propertyName),
             ReturnType = type,
-            Flags = Flags.Property(getter.Attributes, !setterHandle.IsNil, isStatic),
+            Flags = Flags.Property(representative.Attributes, !setterHandle.IsNil, isStatic),
             SetterValueParameter = setterHandle.IsNil
                 ? null
                 : new ValueParameter { Name = names.String("value"), Type = type.Clone() },
@@ -3833,23 +4131,25 @@ internal sealed class AssemblyScanner
         else if (hasReceiver)
         {
             property.ReceiverType = ProjectType(
-                physical[0].Handle, signature.ParameterTypes[0], owner, names, signatures, context);
+                propertyPhysical[0].Handle, propertySignature.ParameterTypes[0], owner, names, signatures, context);
             contextStart = 1;
         }
-        for (var i = contextStart; i < physical.Count; i++)
+        for (var i = contextStart; i < propertyPhysical.Count; i++)
         {
-            property.ContextParameter.Add(new ValueParameter {
-                Name = names.String(physical[i].Row.Name.IsNil
+            property.ContextParameter.Add(new ValueParameter
+            {
+                Name = names.String(propertyPhysical[i].Row.Name.IsNil
                     ? $"context{i - contextStart}"
-                    : _md.GetString(physical[i].Row.Name)),
+                    : _md.GetString(propertyPhysical[i].Row.Name)),
                 Type = ProjectType(
-                    physical[i].Handle, signature.ParameterTypes[i], owner, names, signatures, context),
+                    propertyPhysical[i].Handle, propertySignature.ParameterTypes[i], owner, names, signatures, context),
             });
         }
-        foreach (var gpHandle in getter.GetGenericParameters())
+        foreach (var gpHandle in representative.GetGenericParameters())
         {
             var gp = _md.GetGenericParameter(gpHandle);
-            var parameter = new TypeParameter {
+            var parameter = new TypeParameter
+            {
                 Id = 10000 + gp.Index,
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
@@ -3872,9 +4172,11 @@ internal sealed class AssemblyScanner
     private static Annotation ClrExternalAnnotation(NameTable names, string owner)
     {
         var annotation = new Annotation { Id = names.Class("kotlin.clr.ClrExternal") };
-        annotation.Argument.Add(new Annotation.Types.Argument {
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
             NameId = names.String("owner"),
-            Value = new Annotation.Types.Argument.Types.Value {
+            Value = new Annotation.Types.Argument.Types.Value
+            {
                 Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
                 StringValue = names.String(owner),
             },
@@ -3906,7 +4208,8 @@ internal sealed class AssemblyScanner
             if (IsPublicOrProtected(getter.Attributes))
             {
                 var sig = getter.DecodeSignature(signatures, context with { Method = accessors.Getter });
-                owner.Function.Add(new Function {
+                owner.Function.Add(new Function
+                {
                     Name = names.String("get"),
                     Flags = Flags.Callable(getter.Attributes, CallableModality(getter.Attributes), kotlinFlags: 2),
                     ReturnType = ProjectReturn(
@@ -3925,7 +4228,8 @@ internal sealed class AssemblyScanner
             var setter = _md.GetMethodDefinition(accessors.Setter);
             var setterContext = context with { Method = accessors.Setter };
             var sig = setter.DecodeSignature(signatures, setterContext);
-            owner.Function.Add(new Function {
+            owner.Function.Add(new Function
+            {
                 Name = names.String("set"),
                 Flags = Flags.Callable(setter.Attributes, CallableModality(setter.Attributes), kotlinFlags: 2),
                 ReturnType = signatures.NamedType("kotlin.Unit"),
@@ -4083,7 +4387,8 @@ internal sealed class AssemblyScanner
         // it remains oblivious/platform for an ordinary CLR assembly.
         if (_attrs.IsDotKtAssembly && contextByte == 0)
             contextByte = 1;
-        result = carrierName switch {
+        result = carrierName switch
+        {
             // This carrier is the exact source type and therefore owns every
             // nullable wrapper in its subtree.
             "KotlinTypeAttribute" => result,
@@ -4108,7 +4413,8 @@ internal sealed class AssemblyScanner
     // REFERENCE nodes only, and `Int` contributes none, so a stripped `Int?` comes back as a non-null `Int`. Where the
     // byte cannot carry it, the carrier keeps it — an erasure bridge's `object` slot over a declared `Int?` is exactly
     // that shape.
-    private static TypeNode StripOuterNullability(TypeNode type, SignatureDecoder signatures) => type switch {
+    private static TypeNode StripOuterNullability(TypeNode type, SignatureDecoder signatures) => type switch
+    {
         TypeNode.Nullable n when signatures.ConsumesOuterNullability(n.Of) => n.Of,
         TypeNode.Oblivious o => o.Of,
         _ => type,
@@ -4120,7 +4426,8 @@ internal sealed class AssemblyScanner
         while (!current.IsNil)
         {
             if (_attrs.Byte(current, MetadataAttributes.NullableContext, requireTrust: false) is byte b) return b;
-            current = current.Kind switch {
+            current = current.Kind switch
+            {
                 HandleKind.MethodDefinition => _md.GetMethodDefinition((MethodDefinitionHandle)current).GetDeclaringType(),
                 HandleKind.TypeDefinition => _md.GetTypeDefinition((TypeDefinitionHandle)current).GetDeclaringType(),
                 _ => default,
@@ -4346,7 +4653,8 @@ internal sealed class AssemblyScanner
                 // Synthesized delegates emitted by ilemit use that compact
                 // form. The signature is authoritative; only the optional
                 // name/attributes are absent.
-                yield return new ValueParameter {
+                yield return new ValueParameter
+                {
                     Name = names.String($"arg{i}"),
                     Type = ProjectType(default(EntityHandle), types[i], methodHandle, names, signatures, context),
                 };
@@ -4357,7 +4665,8 @@ internal sealed class AssemblyScanner
             var projected = ProjectType(entry.Handle, types[i], methodHandle, names, signatures, context);
             var flags = (row.Attributes & (ParameterAttributes.Optional | ParameterAttributes.HasDefault)) != 0 ||
                 _attrs.Has(entry.Handle, "kotlin.clr.KotlinDefault", requireTrust: false) ? 1 << 1 : 0;
-            var value = new ValueParameter {
+            var value = new ValueParameter
+            {
                 Name = names.String(string.IsNullOrEmpty(name) ? $"arg{i}" : name),
                 Type = projected,
                 Flags = flags,
@@ -4416,7 +4725,8 @@ internal sealed class AssemblyScanner
     private bool IsSystemType(EntityHandle handle, string ns, string name)
     {
         if (handle.IsNil) return false;
-        return handle.Kind switch {
+        return handle.Kind switch
+        {
             HandleKind.TypeReference => IsReference(_md.GetTypeReference((TypeReferenceHandle)handle)),
             HandleKind.TypeDefinition => IsDefinition(_md.GetTypeDefinition((TypeDefinitionHandle)handle)),
             _ => false,
@@ -4537,7 +4847,8 @@ internal sealed class NameTable
         var key = (parent, shortName, kind);
         if (_qualified.TryGetValue(key, out var id)) return id;
         id = QualifiedNames.QualifiedName.Count;
-        QualifiedNames.QualifiedName.Add(new QualifiedNameTable.Types.QualifiedName {
+        QualifiedNames.QualifiedName.Add(new QualifiedNameTable.Types.QualifiedName
+        {
             ParentQualifiedName = parent,
             ShortName = shortName,
             Kind = kind,
@@ -4607,7 +4918,8 @@ internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, 
             return ReferenceName(reader, (TypeReferenceHandle)reference.ResolutionScope) + "+" + simple;
         var ns = reader.GetString(reference.Namespace);
         var name = string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
-        var scope = reference.ResolutionScope.Kind switch {
+        var scope = reference.ResolutionScope.Kind switch
+        {
             HandleKind.AssemblyReference =>
                 "asm:" + reader.GetString(reader.GetAssemblyReference((AssemblyReferenceHandle)reference.ResolutionScope).Name),
             HandleKind.ModuleReference =>
@@ -4719,7 +5031,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         if (genericName == "System.Span" && typeArguments.Length == 1)
         {
             var span = Named("kotlin.clr.Span");
-            span.Argument.Add(new KType.Types.Argument {
+            span.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = typeArguments[0].Clone(),
             });
@@ -4739,12 +5052,14 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             semanticTypeArguments = semanticArgumentOrder.Select(index => typeArguments[index]);
         }
         var copy = genericType.Clone();
-        copy.Argument.Add(semanticTypeArguments.Select(t => new KType.Types.Argument {
+        copy.Argument.Add(semanticTypeArguments.Select(t => new KType.Types.Argument
+        {
             Projection = KType.Types.Argument.Types.Projection.Inv,
             Type = t,
         }));
         if (copy.FlexibleUpperBound is { } upper)
-            upper.Argument.Add(semanticTypeArguments.Select(t => new KType.Types.Argument {
+            upper.Argument.Add(semanticTypeArguments.Select(t => new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = t.Clone(),
             }));
@@ -4755,7 +5070,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     public KType GetModifiedType(KType modifier, KType unmodifiedType, bool isRequired) => unmodifiedType;
     public KType GetPinnedType(KType elementType) => elementType;
     public KType GetPointerType(KType elementType) => Any(nullable: true);
-    public KType GetPrimitiveType(PrimitiveTypeCode code) => code switch {
+    public KType GetPrimitiveType(PrimitiveTypeCode code) => code switch
+    {
         PrimitiveTypeCode.Void => Named("kotlin.Unit"),
         PrimitiveTypeCode.Boolean => Named("kotlin.Boolean"),
         PrimitiveTypeCode.Char => Named("kotlin.Char"),
@@ -4936,7 +5252,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         // would merely be appended to the wrong Function0 constructor.
         if (full is "System.Action" or "System.EventHandler" && !metadataName.Contains('`'))
             return KnownDelegate(full, ImmutableArray<KType>.Empty);
-        return full switch {
+        return full switch
+        {
             "System.String" => Platform("kotlin.String"),
             "System.Object" => Platform("kotlin.Any"),
             _ => rawTypeKind == (byte)SignatureTypeKind.Class ? Platform(className) : MarkValueTypeIfStated(rawTypeKind, Named(className)),
@@ -4946,7 +5263,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
 
     public KType DecodeEntity(EntityHandle handle, GenericContext context, bool platform) =>
-        handle.Kind switch {
+        handle.Kind switch
+        {
             HandleKind.TypeDefinition => FromDefinition((TypeDefinitionHandle)handle, platform),
             HandleKind.TypeReference => FromReference((TypeReferenceHandle)handle, platform),
             // Signature decoding derives flexible class types from the raw
@@ -4985,7 +5303,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             array.Argument.Count == 1 &&
             array.Argument[0].Type is { } element)
             return element.Clone();
-        var elementName = name switch {
+        var elementName = name switch
+        {
             "kotlin.BooleanArray" => "kotlin.Boolean",
             "kotlin.CharArray" => "kotlin.Char",
             "kotlin.ByteArray" => "kotlin.Byte",
@@ -5049,7 +5368,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             // byte — or, worse, the enclosing declaration's `[NullableContext]` — as an annotation is what turned
             // `String.Compare(String, String, StringComparison)` into a call taking `StringComparison?`.
             if (consumes && !IsValueType(copy))
-                copy = byteValue switch {
+                copy = byteValue switch
+                {
                     0 => AsPlatform(copy),
                     2 => AsNullable(copy),
                     _ => AsNonNull(copy),
@@ -5088,9 +5408,11 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     {
         var copy = source.Clone();
         var annotation = new Annotation { Id = _names.Class("kotlin.ContextFunctionTypeParams") };
-        annotation.Argument.Add(new Annotation.Types.Argument {
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
             NameId = _names.String("count"),
-            Value = new Annotation.Types.Argument.Types.Value {
+            Value = new Annotation.Types.Argument.Types.Value
+            {
                 Type = Annotation.Types.Argument.Types.Value.Types.Type.Int,
                 IntValue = count,
             },
@@ -5103,7 +5425,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     {
         if (!ConsumesNullability(source) || IsValueType(source)) return source;
         var value = flags is { Length: > 0 } ? flags[0] : context;
-        return value switch {
+        return value switch
+        {
             0 => AsPlatform(source),
             2 => AsNullable(source),
             _ => AsNonNull(source),
@@ -5124,7 +5447,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         if (f.Args is not null)
             type.Argument.Add(f.Args.Select(a => a is TypeNode.Star
                 ? new KType.Types.Argument { Projection = KType.Types.Argument.Types.Projection.Star }
-                : new KType.Types.Argument {
+                : new KType.Types.Argument
+                {
                     Projection = KType.Types.Argument.Types.Projection.Inv,
                     Type = FromTypeNode(a),
                 }));
@@ -5148,29 +5472,34 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         if (function.Ctx is { Length: > 0 })
             result = AsContextFunction(result, function.Ctx.Length);
         foreach (var parameter in parameters)
-            result.Argument.Add(new KType.Types.Argument {
+            result.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = FromTypeNode(parameter),
             });
         if (function.Suspend)
         {
             var continuation = Named("kotlin.coroutines.Continuation");
-            continuation.Argument.Add(new KType.Types.Argument {
+            continuation.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = FromTypeNode(function.Ret),
             });
-            result.Argument.Add(new KType.Types.Argument {
+            result.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = continuation,
             });
-            result.Argument.Add(new KType.Types.Argument {
+            result.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = Any(nullable: true),
             });
         }
         else
         {
-            result.Argument.Add(new KType.Types.Argument {
+            result.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = FromTypeNode(function.Ret),
             });
@@ -5183,7 +5512,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private KType ByRef(KType element)
     {
         var result = Named("kotlin.clr.ClrRef");
-        result.Argument.Add(new KType.Types.Argument {
+        result.Argument.Add(new KType.Types.Argument
+        {
             Projection = KType.Types.Argument.Types.Projection.Inv,
             Type = element,
         });
@@ -5334,7 +5664,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         return result;
     }
     private KType Any(bool nullable) => Named("kotlin.Any", nullable);
-    private KType Array(KType element) {
+    private KType Array(KType element)
+    {
         // A Kotlin specialized array is an array of the NON-NULL primitive: `IntArray` is `int32[]`, while
         // `Array<Int?>` is a different Kotlin type with a different physical form (`object[]` — #86 D2). Collapsing a
         // nullable element onto the specialized name dropped the `?` and re-imported `Array<Int?>` as `IntArray`, so a
@@ -5454,7 +5785,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         var ps = parameters.ToList();
         var result = Named($"kotlin.Function{ps.Count}");
         foreach (var item in ps.Append(returnType))
-            result.Argument.Add(new KType.Types.Argument {
+            result.Argument.Add(new KType.Types.Argument
+            {
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = item.Clone(),
             });
@@ -5477,7 +5809,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private bool IsSystemType(EntityHandle handle, string ns, string name)
     {
         if (handle.IsNil) return false;
-        return handle.Kind switch {
+        return handle.Kind switch
+        {
             HandleKind.TypeReference => MatchReference(_md.GetTypeReference((TypeReferenceHandle)handle)),
             HandleKind.TypeDefinition => MatchDefinition(_md.GetTypeDefinition((TypeDefinitionHandle)handle)),
             _ => false,

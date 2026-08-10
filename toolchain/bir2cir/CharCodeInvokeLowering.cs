@@ -64,9 +64,8 @@ static class CharCodeInvokeLowering
         // Only a TOP-LEVEL call (`owner:null`, no `ownerType`); a member/.NET call carries `ownerType`.
         if (o.ContainsKey("ownerType")) return null;
         if (!o.ContainsKey("owner") || o["owner"] != null) return null;
-        // #81: the getter arrives as the bare property identity `code` + a `"prop":"get"` accessor-KIND marker (it
-        // no longer bakes the `get_code` slot name). Match the marker shape BEFORE MemberCallSubstitution reconstructs
-        // the get_/set_ accessor name (this pass runs earlier); the ref lookup below still keys the accessor `get_code`.
+        // #81/#397: the getter arrives as the bare property identity `code` plus an explicit get role. Consume that
+        // semantic shape before the physical binding boundary; no MethodDef spelling participates in this intrinsic.
         if ((o["method"] as JsonValue)?.GetValue<string>() != "code"
             || (o["prop"] as JsonValue)?.GetValue<string>() != "get") return null;
         if (o["args"] is not JsonArray args || args.Count != 1) return null;
@@ -74,12 +73,11 @@ static class CharCodeInvokeLowering
         if (o["sig"] is not JsonArray sig || sig.Count < 1
             || TypeJson.Read(sig[0]) is not TypeNode.Fqn recvT
             || ReferenceMetadataIndex.BareOwnerFqn(recvT.Name) != "kotlin.Char") return null;
-        // The conv target is the property's return type (kotlin.Int), matching the former kotc-emitted `to`; confirm it
-        // against the ref.dll's kotlin.CharCodeKt.get_code when present (absence does NOT block — the Char-receiver
-        // `get_code` shape is itself the discriminator).
-        var reg = refs?.TryTopLevelReturn("get_code", "kotlin.Char", 1) as TypeNode.Fqn;
-        var convTo = reg != null && ReferenceMetadataIndex.BareOwnerFqn(reg.Name) == "kotlin.Int"
-            ? TypeJson.Write(reg) : TypeJson.Fqn("kotlin.Int");
+        // The frontend-resolved property call already carries its return type. Use that semantic fact directly; the
+        // referenced MethodDef spelling is a later physical concern and is not a lookup key here.
+        var convTo = TypeJson.Read(o["ret"]) is TypeNode.Fqn ret
+            && ReferenceMetadataIndex.BareOwnerFqn(ret.Name) == "kotlin.Int"
+            ? TypeJson.Write(ret) : TypeJson.Fqn("kotlin.Int");
         return new JsonObject { ["k"] = "conv", ["to"] = convTo, ["e"] = args[0]?.DeepClone() };
     }
 

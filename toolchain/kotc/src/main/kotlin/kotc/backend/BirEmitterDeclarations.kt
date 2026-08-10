@@ -126,7 +126,7 @@ internal fun hasStaticPropertyStorage(klass: IrClass, p: IrProperty): Boolean =
  * emitting layer runs a non-literal static field's `init` in the type initializer.
  *
  * Visibility and read-only follow the same rules as an instance backing field: an accessor-routed property keeps
- * its storage private behind get_/set_, a non-routed one (`const`, `lateinit`, `@ClrField`) keeps the source
+ * its storage private behind accessors, while a non-routed one (`const`, `lateinit`, `@ClrField`) keeps the source
  * visibility and is marked read-only when it is not publicly settable.
  */
 internal fun BirEmitter.staticPropertyFields(klass: IrClass): List<String> =
@@ -169,6 +169,16 @@ internal fun isInheritedStaticFunction(fn: IrSimpleFunction): Boolean =
 internal fun isInheritedStaticProperty(p: IrProperty): Boolean =
 	p.getter?.let { isInheritedStaticFunction(it) } == true || p.setter?.let { isInheritedStaticFunction(it) } == true
 
+/** #397: pure Kotlin accessor identity. The physical CLR method name is allocated by bir2cir. */
+private fun BirEmitter.propertyAccessorFact(property: IrProperty, kind: String): String =
+	""","propertyName":${str(property.name.asString())},"propertyAccessor":${str(kind)},"propertyAssociation":${str(propertyAssociation(property))}"""
+
+/** #397: accessor-presence facts for a BIR property record; bir2cir authors its physical get/set links. */
+private fun BirEmitter.kotlinPropertyAccessors(property: IrProperty, hasSetter: Boolean): String {
+	val roles = if (hasSetter) "[\"get\",\"set\"]" else "[\"get\"]"
+	return ""","kotlinAccessors":$roles,"propertyAssociation":${str(propertyAssociation(property))}"""
+}
+
 private fun BirEmitter.kotlinCompanionFact(owner: IrClass, companion: IrClass): String {
 	val ownerName = owner.fqNameWhenAvailable?.asString()
 		?: error("companion owner '${owner.name}' has no Kotlin qualified name")
@@ -180,10 +190,11 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		val savedSemanticOwner = activeSemanticOwner
 		activeSemanticOwner = semanticOwnerName(fn)
 		// C3b reverse direction: a Kotlin interface extending a @Clr interface (Set : Collection->IReadOnlyCollection).
-		// kotc emits the plain Kotlin `get_size` here for both ref and rt — the BCL override-slot rename
-		// (get_size -> get_Count) is bir2cir's DeclarationRename off the ref.dll @ClrIntrinsic.
-		val name = prop?.let { p -> (if (fn == p.getter) "get_" else "set_") + p.name.asString() } ?: fn.name.asString()
+		// kotc emits the source property identity plus accessor role for both ref and runtime builds. bir2cir owns both
+		// local physical allocation and any external CLR override-slot binding.
+		val name = prop?.name?.asString() ?: fn.name.asString()
 		val isSetter = prop != null && fn == prop.setter
+		val accessorFact = prop?.let { propertyAccessorFact(it, if (isSetter) "set" else "get") } ?: ""
 		val ret = if (isSetter) TypeNode.Fqn("kotlin.Unit") else birType(fn.returnType)
 		// Return nullability (`fun <E> get(key): E?`) now rides the `ret` type node itself (`{t:nullable,of:tv}` from
 		// the uniform birType) — the decl-level `retNullable` flag is RETIRED. bir2cir derives the nullable-generic
@@ -227,7 +238,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		val inheritedSynthetic = fn.isFakeOverride || fn.origin == IrDeclarationOrigin.FAKE_OVERRIDE ||
 			(fn.body == null && fn.overriddenSymbols.isNotEmpty() && fn.startOffset < 0)
 		val fakeOverride = if (inheritedSynthetic) ",\"fakeOverride\":true" else ""
-		return """{"name":${str(name)},"static":false,"override":false,"virtual":true$fakeOverride${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${retCtxFnTypeField(fn)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+		return """{"name":${str(name)}$accessorFact,"static":false,"override":false,"virtual":true$fakeOverride${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${retCtxFnTypeField(fn)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 	}
 	val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 		// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR
@@ -264,20 +275,17 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		.filter { isKotlinStaticProperty(it) && it.getter != null && !it.isConst && !isClrField(it) }
 		.joinToString(",") { p ->
 			val n = p.name.asString()
-			val setName = if (p.setter != null) str("set_$n") else "null"
-			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()},"get":${str("get_$n")},"set":$setName,"kotlinStatic":true}"""
+			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, p.setter != null)},"kotlinStatic":true}"""
 		}
 	// Companion declarations are separate representation-neutral types; bir2cir later materializes their nested CLR
 	// carriers, including for an interface owner.
 	val methods = (funMethods + propMethods).distinct().plus(staticMethods).plus(staticAccessors).joinToString(",")
-	// 2B layer 1: a Kotlin interface property -> a REAL CLR property (PropertyBuilder over its get_/set_ interface
-	// methods), so a consumer (dll2klib projecting the ref assembly) sees `size` as a PROPERTY, not a bare get_size
-	// method. The accessor methods are already emitted (propMethods) named get_<n>/set_<n>; wire the property over them.
+	// 2B layer 1: a Kotlin interface property -> a real CLR property. The Property row carries only which accessor roles
+	// exist; bir2cir allocates and links the physical MethodDefs so dll2klib later sees one property association.
 	val ifaceProps = iface.declarations.filterIsInstance<IrProperty>()
 		.filter { it.getter != null && !isKotlinStaticProperty(it) }.joinToString(",") { p ->
 			val n = p.name.asString()
-			val setName = if (p.setter != null) str("set_$n") else "null"
-			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()},"get":${str("get_$n")},"set":$setName}"""
+			"""{"name":${str(n)},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, p.setter != null)}}"""
 		}
 	val allIfaceProps = listOf(ifaceProps, staticProps).filter { it.isNotEmpty() }.joinToString(",")
 	val semanticOwner = semanticOwnerJson(iface)
@@ -339,9 +347,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	val entries = ec.declarations.filterIsInstance<IrEnumEntry>()
 	val primaryCtor = ec.declarations.filterIsInstance<IrConstructor>().first { it.isPrimary }
 	val userParams = primaryCtor.parameters.filter { it.kind == IrParameterKind.Regular }
-	// User properties follow the CLR property model exactly like typeDef: the access site emits
-	// `callInstance get_<name>` (there is no rich-enum special case for user props — only name/ordinal
-	// route to the __name/__ordinal fields), so the class must carry real get_/set_ accessors + a
+	// User properties follow the CLR property model exactly like typeDef: the access site emits an explicit property
+	// identity and role (there is no rich-enum special case for user props — only name/ordinal route to the
+	// __name/__ordinal fields), so the class must carry real accessors plus a
 	// `properties` entry, with the backing field demoted to internal. A bare public field alone crashes
 	// ilemit with "<Enum>.get_<prop> not found".
 	// Only REAL user properties: kotlin.Enum's `name`/`ordinal` ride along as body-less fake overrides and
@@ -364,8 +372,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			p.setter?.takeIf { emitsSet(p) }?.let { accessorMethod(it, p.name.asString(), false) })
 	}
 	val propsList = userProps.filter { emitsGet(it) }.joinToString(",") { p ->
-		val setName = if (emitsSet(p)) str("set_" + p.name.asString()) else "null"
-		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str("get_" + p.name.asString())},"set":$setName}"""
+		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}}"""
 	}
 	val setThis = { f: String, v: String -> """{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":${str(f)},"value":$v}""" }
 	val loc = { n: String -> """{"k":"local","name":${str(n)}}""" }
@@ -444,8 +451,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			p.setter?.takeIf { emitsStaticSet(p) }?.let { accessorMethod(it, p.name.asString(), false) })
 	}
 	val staticPropsList = staticProps.filter { emitsStaticGet(it) }.joinToString(",") { p ->
-		val setName = if (emitsStaticSet(p)) str("set_" + p.name.asString()) else "null"
-		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str("get_" + p.name.asString())},"set":$setName,"kotlinStatic":true}"""
+		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsStaticSet(p))},"kotlinStatic":true}"""
 	}
 	val allPropsList = listOf(propsList, staticPropsList).filter { it.isNotEmpty() }.joinToString(",")
 	val methods = (userMethods + propAccessors + staticPropAccessors + listOf(toStr, valuesM, valueOfM)).joinToString(",")
@@ -747,13 +753,13 @@ internal fun BirEmitter.synthClrEventForwarders(klass: IrClass): Pair<List<Strin
  *  knowledge (no @ClrIntrinsic read, no BCL name). bir2cir (Step 2) consumes this + the ref.dll @ClrIntrinsic to
  *  derive the BCL slot name. Behavior-neutral: bir2cir strips
  *  the `overrides` key, so it never reaches ilemit (Step 1 keeps CIR byte-identical). `member` is the property name
- *  for an accessor (kind getter/setter) so bir2cir can resolve `get_`/`set_` + the property's @ClrIntrinsic. */
+ *  for an accessor (kind getter/setter) so bir2cir can resolve the external Property/MethodSemantics slot. */
 internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 	val prop = fn.correspondingPropertySymbol?.owner
 	val items = if (prop != null) {
 		// An ACCESSOR: walk the PROPERTY's override closure (the setter of a `var size` overriding a `val size` has
 		// NO own overriddenSymbols, but the PROPERTY overrides — so use the property chain, tagged with this accessor's
-		// kind). bir2cir resolves get_/set_ + the property's @ClrIntrinsic (which lives on the get_<name> accessor).
+		// kind). bir2cir resolves that semantic identity against exact property metadata.
 		val kind = if (fn === prop.getter) "getter" else "setter"
 		val ordered = LinkedHashSet<org.jetbrains.kotlin.ir.declarations.IrProperty>()
 		fun walkP(p: org.jetbrains.kotlin.ir.declarations.IrProperty) { for (ov in p.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walkP(o) } }
@@ -776,7 +782,7 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 	return if (items.isEmpty()) "" else ""","overrides":[${items.joinToString(",")}]"""
 }
 
-/** A TOP-LEVEL property's accessor as a STATIC `get_<name>`/`set_<name>` method (extension receiver -> `__self`).
+/** A top-level property's static accessor declaration in Kotlin vocabulary (extension receiver -> `__self`).
  *  Used for extension properties (`val T.p`) and computed top-level properties (no backing field). */
 internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 	val extRecv = extensionReceiverParam(acc)
@@ -790,15 +796,17 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
-	val name = (if (isGetter) "get_" else "set_") + propName
+	val kind = if (isGetter) "get" else "set"
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
-	return """{"name":${str(name)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))}${typeParamsJson(acc.typeParameters)}${companionReceiverField(acc, if (isGetter) "get" else "set", propName)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]}"""
+	val property = acc.correspondingPropertySymbol?.owner
+		?: error("top-level accessor '$propName' has no corresponding property")
+	return """{"name":${str(propName)}${propertyAccessorFact(property, kind)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))}${typeParamsJson(acc.typeParameters)}${companionReceiverField(acc, kind, propName)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]}"""
 }
 
 internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 	val savedSemanticOwner = activeSemanticOwner
 	activeSemanticOwner = semanticOwnerName(acc)
-	val mname = (if (isGetter) "get_" else "set_") + propName
+	val kind = if (isGetter) "get" else "set"
 	// A MEMBER extension property (`class C { val T.p get() }`) has BOTH a dispatch and an extension receiver -> the
 	// extension receiver rides a leading `__self` param (mirrors a member extension function); body refs to it
 	// resolve via selfSubst (by identity, so it isn't confused with the dispatch `<this>`).
@@ -847,7 +855,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// Emit the PROPERTY's annotations (e.g. @ClrIntrinsic) onto its accessor method — the SAME unconditional
 	// pass-through method()/ifaceMethod already do for plain methods (kotc does not filter/select annotations;
 	// attrsJson doctrine). The @ClrIntrinsic is on the property (`@ClrIntrinsic("Length") val length`), so read it
-	// from the corresponding property. bir2cir consumes it from the get_<name> accessor (TryMemberIntrinsic /
+	// from the corresponding property. bir2cir consumes it from the explicitly associated accessor (TryMemberIntrinsic /
 	// DeclarationRename) to lower a `.length` read to clrPropGet Length. In a stdlib build the ref.dll carries the
 	// binding; the rt build strips ALL metadata downstream (ilemit under `--build-stdlib=runtime`) so the rt.dll
 	// never carries it. In an app build these attrs simply ride the accessor as ordinary metadata.
@@ -855,7 +863,9 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	val accAttrs = ""","attrs":[${attrsJson(propAnns)}]"""
 	val kotlinStatic = if (isStatic && acc.correspondingPropertySymbol?.owner?.let { isKotlinStaticProperty(it) } == true)
 		""","kotlinStatic":true""" else ""
-	return """{"name":${str(mname)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+	val property = acc.correspondingPropertySymbol?.owner
+		?: error("accessor '$propName' has no corresponding property")
+	return """{"name":${str(propName)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 }
 
 /** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
@@ -1078,12 +1088,12 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 		// The method twin of `inheritedStatic` below: a static of a BASE type has nothing to emit here.
 		.filter { !isInheritedStaticFunction(it) }
 		.map { method(it, static = isKotlinStaticFunction(it)) }
-	// User custom and frontend-generated delegated accessors -> get_/set_ methods (access sites route through them).
-	// A property optimizes to a plain field; but one implementing a KOTLIN INTERFACE property must emit a get_/set_
+	// User custom and frontend-generated delegated accessors become explicit accessor declarations.
+	// A property optimizes to a plain field; but one implementing a Kotlin interface property must emit an accessor
 	// METHOD to bind the interface slot (property-accessor analog of the method-side overridesIface fix; e.g.
 	// ComparableRange.start over ClosedRange.start). See design-clr-property-model.md. This is ALSO the sole producer
 	// of accessors that OVERRIDE a .NET base-CLASS virtual property (`override val Message` over System.Exception):
-	// accessorMethod emits the plain get_/set_ + the `overrides` marker, and bir2cir's DeclarationRename derives the
+	// accessorMethod emits the source property identity/role plus the `overrides` marker; bir2cir derives the
 	// `clrOverride` field from that marker (kotc emits no clrOverride — A2 / #73 M4.3).
 	fun ovIface(a: IrSimpleFunction) = a.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind == ClassKind.INTERFACE }
 	// A FAKE-OVERRIDE property whose implementation is INHERITED FROM A BASE CLASS (`name` in `Sq : Shape("sq")`)
@@ -1107,13 +1117,11 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 			p.setter?.takeIf { emitsSet(p) }?.let { accessorMethod(it, p.name.asString(), false) })
 	}
 	// Real CLR properties: a `properties` entry per accessor-bearing property -> ilemit DefineProperty's it over
-	// the get_/set_ methods, so a C#/reflection consumer sees a property. (Full "every property -> CLR property +
+	// the associated accessor methods, so a C#/reflection consumer sees a property. (Full "every property -> CLR property +
 	// @ClrField opt-out" is the next phase; field-backed props keep their backing field for now.)
 	val propsList = klass.declarations.filterIsInstance<IrProperty>().filter { emitsGet(it) }.joinToString(",") { p ->
-		val getName = "get_" + p.name.asString()
-		val setName = if (emitsSet(p)) str("set_" + p.name.asString()) else "null"
 		val kotlinStatic = if (isKotlinStaticProperty(p)) ""","kotlinStatic":true""" else ""
-		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()},"get":${str(getName)},"set":$setName$kotlinStatic${overridesJson(p.getter!!)}}"""
+		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}$kotlinStatic${overridesJson(p.getter!!)}}"""
 	}
 	val methods = (instMethods + userAccessors + clrEventMethods + clrEventForwardMethods).joinToString(",")
 	// A .NET base class (`: System.Exception(...)`, incl. a generic `: Collection<Int>()`) -> a `clr:`/`clrg:`

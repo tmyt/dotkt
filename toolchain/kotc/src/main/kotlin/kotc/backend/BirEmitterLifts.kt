@@ -1259,10 +1259,10 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val fn = if (isSetter) setterFn!! else getterFn
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		val args = listOfNotNull(extraArg).joinToString(",")
-		val method = str((if (isSetter) "set_" else "get_") + name)
+		val kind = if (isSetter) "set" else "get"
 		val externalCompanionTag = companionCaptureClass?.takeIf { clrExternalOwner(it) != null }
 			?.let { ""","companionCall":true""" } ?: ""
-		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":$method${overloadSigField(fn)},"args":[$args]$externalCompanionTag}"""
+		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":${str(name)},"prop":${str(kind)}${overloadSigField(fn)},"args":[$args]$externalCompanionTag}"""
 	}
 	// A field-backed member property (`lateinit var`/`@ClrField`) reads/writes its backing field directly — the SAME
 	// `lateinitGet`/`field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
@@ -1294,7 +1294,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		// Deserialized properties can expose a synthetic backingField regardless of producer storage. Across a module
 		// boundary only dll2klib's explicit ClrField marker is authoritative; source IR retains the real field fact.
 		val storage = if (clrExternalOwner(prop) != null) isClrField(prop)
-			else fieldBacked || prop.backingField != null
+			else if (isSetter) writesAsStaticField(prop) else readsAsStaticField(prop)
 		if (storage) {
 			return if (isSetter)
 				"""{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":$valueArg$sourceTag}"""
@@ -1319,9 +1319,9 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 			// file being emitted and name THIS module's facade. dll2klib carries the real physical file class on the
 			// projected declaration; prefer it, exactly as the extension-property path above does.
 			val owner = clrExternalOwner(prop) ?: fileClassOf(prop)
-			if (prop.backingField == null)
-				"""{"k":"return","value":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("get_$name")},"args":[]}}"""
-			else """{"k":"return","value":{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(name)}}}"""
+			if (readsAsStaticField(prop))
+				"""{"k":"return","value":{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(name)}}}"""
+			else """{"k":"return","value":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":"get"${overloadSigField(getterFn)},"args":[]}}"""
 		}
 		else -> """{"k":"return","value":${accessorCall(false, null)}}"""
 	}
@@ -1342,9 +1342,9 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 			declClass != null && fieldBacked -> """{"k":"exprStmt","expr":${fieldAccess(true, """{"k":"local","name":"value"}""")}}"""
 			declClass == null -> {
 				val owner = clrExternalOwner(prop) ?: fileClassOf(prop)
-				if (prop.backingField == null)
-					"""{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str("set_$name")},"args":[{"k":"local","name":"value"}]}}"""
-				else """{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":{"k":"local","name":"value"}}}"""
+				if (writesAsStaticField(prop))
+					"""{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":{"k":"local","name":"value"}}}"""
+				else """{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":"set"${overloadSigField(setterFn!!)},"args":[{"k":"local","name":"value"}]}}"""
 			}
 			else -> """{"k":"exprStmt","expr":${accessorCall(true, """{"k":"local","name":"value"}""")}}"""
 		}

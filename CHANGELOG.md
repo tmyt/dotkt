@@ -35,6 +35,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Property accessors now retain their frontend-resolved Kotlin identity until bir2cir assigns their CLR
+  representation (#397).** Calls, fake overrides, bridges, companion and extension properties, reference metadata,
+  and DLL → KLIB projection use explicit property name, accessor role, association, owner, and signature facts instead
+  of reconstructing semantics from a physical `get_`/`set_` method name. CIR carries exact Property/MethodSemantics
+  links for one-to-one emission, while method-generic extension properties use trusted accessor metadata because CLR
+  Property rows cannot represent method generic parameters.
+
 - **A Kotlin companion-block static on a referenced GENERIC type reached the emitted IL with an open generic owner
   (#382).** Those statics are now resolved to their trusted non-generic physical carrier before CIR emission, so
   `ilemit` receives one complete MethodDef/FieldDef owner and never invents a closed generic instantiation. Ordinary

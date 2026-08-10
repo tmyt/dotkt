@@ -20,7 +20,8 @@ static class ExistentialReceiverBinding
         internal readonly Dictionary<string, string> SemanticOwnerByPhysical = new(StringComparer.Ordinal);
     }
 
-    internal sealed record Member(string Name, TypeNode[] Parameters, int GenericArity)
+    internal sealed record Member(string Name, string SourceName, string AccessorKind,
+        TypeNode[] Parameters, int GenericArity)
     {
         public int ParamCount => Parameters.Length;
     }
@@ -44,12 +45,19 @@ static class ExistentialReceiverBinding
                 var slots = new List<Member>();
                 foreach (var method in methods.OfType<JsonObject>())
                     if (!Bool(method["static"]) && Str(method["name"]) is string mn)
+                    {
+                        var isProperty = KotlinPropertyAccessors.TryIdentity(method,
+                            out var propertyName, out var accessorKind);
                         slots.Add(new Member(
                             mn,
+                            isProperty ? propertyName
+                                : Str(method[FBoundStarProjectionErasure.SourceMemberKey]) ?? mn,
+                            isProperty ? accessorKind : null,
                             (method["params"] as JsonArray)?.OfType<JsonObject>()
                                 .Select(p => TypeJson.Read(p["type"]))
                                 .Where(t => t != null).ToArray() ?? Array.Empty<TypeNode>(),
                             (method["typeParams"] as JsonArray)?.Count ?? 0));
+                    }
                 index.Members[name] = slots;
                 index.SemanticOwnerByPhysical[name] = semanticOwner;
             }
@@ -119,8 +127,12 @@ static class ExistentialReceiverBinding
     static void BindCall(JsonObject call, IReadOnlyDictionary<string, TypeNode> vars,
         Index index, ReferenceMetadataIndex refs)
     {
-        if (Str(call["method"]) is not string sourceMethod || sourceMethod.StartsWith("$dotkt_star$", StringComparison.Ordinal))
+        if (Str(call["method"]) is not string authoredMethod
+            || authoredMethod.StartsWith("$dotkt_star$", StringComparison.Ordinal))
             return;
+        var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
+            out var sourcePropertyName, out var accessorKind);
+        var sourceMethod = propertyCall ? sourcePropertyName : authoredMethod;
         var receiverType = ReceiverType(call["recv"], vars) as TypeNode.Fqn;
         if (receiverType == null || (!index.SemanticOwnerByPhysical.ContainsKey(receiverType.Name)
             && !refs.IsExistentialPhysicalOwner(receiverType.Name))) return;
@@ -137,11 +149,15 @@ static class ExistentialReceiverBinding
 
         if (index.Members.TryGetValue(receiverType.Name, out var members))
         {
-            var prefix = "$dotkt_star$" + sourceMethod + "$";
             var candidates = members
                 .Where(m => m.ParamCount == pc && m.GenericArity == ga
-                    && (m.Name == sourceMethod || m.Name.StartsWith(prefix, StringComparison.Ordinal)))
-                .GroupBy(m => m.Name, StringComparer.Ordinal)
+                    && m.SourceName == sourceMethod && m.AccessorKind == accessorKind
+                    && SignatureMatches(m.Parameters, authoredSignature))
+                // Duplicate roots may describe the same physical slot. Coalesce only an identical name+descriptor;
+                // grouping by name alone discards the frontend-resolved overload signature and selects whichever
+                // same-name accessor was enumerated first.
+                .GroupBy(m => m.Name + "\u001f" + string.Join("\u001f", m.Parameters.Select(p => p.ToString())),
+                    StringComparer.Ordinal)
                 .Select(g => g.First())
                 .ToList();
             if (candidates.Count == 1)
@@ -159,7 +175,8 @@ static class ExistentialReceiverBinding
                 ?? new TypeNode.Fqn(sourceOwner, Array.Empty<TypeNode>());
             if (semanticOwner.Name != sourceOwner)
                 semanticOwner = new TypeNode.Fqn(sourceOwner, semanticOwner.Args);
-            if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, ga, authoredSignature, pc,
+            if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
+                    ga, authoredSignature, pc,
                     out var erasedOwner, out var erasedMethod, out var erasedSignature)
                 && erasedOwner == receiverType.Name)
             {
@@ -171,9 +188,23 @@ static class ExistentialReceiverBinding
         if (physicalMethod == null) return; // ambiguous or absent: never guess a physical slot
         call["ownerType"] = TypeJson.Write(receiverType);
         call["method"] = physicalMethod;
+        if (propertyCall)
+        {
+            KotlinPropertyAccessors.PreserveCallIdentity(call, sourcePropertyName, accessorKind);
+            call.Remove("prop");
+        }
         if (physicalParameters != null)
             call["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray());
         call["virtual"] = true;
+    }
+
+    static bool SignatureMatches(IReadOnlyList<TypeNode> declaration, IReadOnlyList<TypeNode> call)
+    {
+        if (call == null) return true;
+        return declaration.Count == call.Count
+            && declaration.Select((parameter, index) =>
+                    ReferenceMetadataIndex.AccessorDeclarationDescribesCall(parameter, call[index]))
+                .All(match => match);
     }
 
     static TypeNode ReceiverType(JsonNode receiver, IReadOnlyDictionary<string, TypeNode> vars)

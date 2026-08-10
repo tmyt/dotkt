@@ -18,6 +18,18 @@ static class MemberCallSubstitution
     // rerouted to the ClrIteratorBridge (which returns the base `Iterator`, not the declared `MutableIterator`). The
     // reroute is ONLY for the AbstractMutable* bases whose abstract iterator() slot vanished onto the BCL IEnumerable face.
     static HashSet<string> _typesWithConcreteIterator = new(StringComparer.Ordinal);
+    internal readonly record struct LocalPropertyAccessorKey(
+        string Owner, string Property, string Kind, int MethodArity, int ParameterCount);
+
+    internal sealed record LocalPropertyAccessor(string PhysicalName, TypeNode[] Parameters);
+
+    // Module-wide local property declarations, including their complete Kotlin accessor signature. A call on a local
+    // Kotlin override must be recognized before an external ancestor PropertyInfo is considered (notably a Kotlin
+    // newslot overriding a non-virtual CLR property), but its physical name is consumed only after the declaration
+    // rename passes have actually run.
+    static IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> _localPropertyAccessors
+        = new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
+    static IReadOnlySet<string> _localPropertyOwners = new HashSet<string>(StringComparer.Ordinal);
 
     // #76: the four unsigned specialized array value classes -> their SIGNED backing-array element FQN. kotc emits
     // `kotlin.U*Array` as a faithful array identity (like signed IntArray) and STOPS emitting/decomposing the value
@@ -32,8 +44,10 @@ static class MemberCallSubstitution
     // MemberCallSubstitution runs on the !RefBuild path only.
     static readonly IReadOnlyDictionary<string, string> UnsignedArraySignedElem = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["kotlin.UByteArray"] = "kotlin.Byte", ["kotlin.UShortArray"] = "kotlin.Short",
-        ["kotlin.UIntArray"] = "kotlin.Int", ["kotlin.ULongArray"] = "kotlin.Long",
+        ["kotlin.UByteArray"] = "kotlin.Byte",
+        ["kotlin.UShortArray"] = "kotlin.Short",
+        ["kotlin.UIntArray"] = "kotlin.Int",
+        ["kotlin.ULongArray"] = "kotlin.Long",
     };
 
     // #139 site-2: an unsigned specialized array is the SAME native N-bit-integer array as its same-width SIGNED
@@ -45,8 +59,10 @@ static class MemberCallSubstitution
     // should never have known. Sig/args are unchanged, so the resolved method is byte-identical to the former alias.
     static readonly IReadOnlyDictionary<string, string> UnsignedArraySignedOwner = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["kotlin.UByteArray"] = "kotlin.ByteArray", ["kotlin.UShortArray"] = "kotlin.ShortArray",
-        ["kotlin.UIntArray"] = "kotlin.IntArray", ["kotlin.ULongArray"] = "kotlin.LongArray",
+        ["kotlin.UByteArray"] = "kotlin.ByteArray",
+        ["kotlin.UShortArray"] = "kotlin.ShortArray",
+        ["kotlin.UIntArray"] = "kotlin.IntArray",
+        ["kotlin.ULongArray"] = "kotlin.LongArray",
     };
 
     // Rewrite a member-resolving node's unsigned-array owner to the same-width signed-array FQN. A no-op for a node
@@ -89,13 +105,79 @@ static class MemberCallSubstitution
     static Func<string, bool> _isValue = _ => false;
 
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, Func<string, bool> isValue)
+        IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, Func<string, bool> isValue,
+        IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> localPropertyAccessors)
     {
         _localTopLevelFns = localTopLevelFns;
         _attributeTopLevelOwner = attributeTopLevelOwner;
         _isValue = isValue ?? (_ => false);
+        _localPropertyAccessors = localPropertyAccessors
+            ?? new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
+        _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
+            .ToHashSet(StringComparer.Ordinal);
         _typesWithConcreteIterator = CollectConcreteIteratorTypes(root);
         return Rewrite(root, refs, new SubstCtx());
+    }
+
+    public static IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>
+        CollectLocalPropertyAccessors(IEnumerable<JsonNode> roots)
+    {
+        var candidates = new Dictionary<LocalPropertyAccessorKey, List<LocalPropertyAccessor>>();
+        void Walk(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                if (Str(obj["name"]) is string owner && obj["kind"] != null && obj["methods"] is JsonArray methods)
+                    foreach (var method in methods.OfType<JsonObject>())
+                        if (!KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
+                            && KotlinPropertyAccessors.TryIdentity(method, out var property, out var kind)
+                            && Str(method["name"]) is string physical
+                            && method["params"] is JsonArray parameters)
+                        {
+                            var parameterTypes = parameters.OfType<JsonObject>()
+                                .Select(parameter => TypeJson.Read(parameter["type"]))
+                                .ToArray();
+                            if (parameterTypes.Length != parameters.Count || parameterTypes.Any(type => type == null))
+                                continue;
+                            var key = new LocalPropertyAccessorKey(owner, property, kind,
+                                (method["typeParams"] as JsonArray)?.Count ?? 0, parameters.Count);
+                            if (!candidates.TryGetValue(key, out var accessors))
+                                candidates[key] = accessors = new List<LocalPropertyAccessor>();
+                            accessors.Add(new LocalPropertyAccessor(physical, parameterTypes));
+                        }
+                foreach (var child in obj.Select(pair => pair.Value).ToArray())
+                    if (child != null) Walk(child);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.ToArray()) if (child != null) Walk(child);
+        }
+        foreach (var root in roots) Walk(root);
+        return candidates.ToDictionary(pair => pair.Key,
+            pair => (IReadOnlyList<LocalPropertyAccessor>)pair.Value);
+    }
+
+    internal static bool TryResolveLocalPropertyAccessor(
+        IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> accessors,
+        string owner, string property, string kind, int methodArity,
+        int parameterCount, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments,
+        out string physicalName)
+    {
+        physicalName = null;
+        var key = new LocalPropertyAccessorKey(owner, property, kind, methodArity, parameterCount);
+        if (accessors == null || !accessors.TryGetValue(key, out var declared)) return false;
+        var matches = declared.Where(candidate => signature == null || candidate.Parameters
+                .Select(parameter => ownerTypeArguments == null
+                    ? parameter
+                    : SupertypeGraph.SubstOwnerTvs(parameter, ownerTypeArguments))
+                .Select((parameter, index) =>
+                    ReferenceMetadataIndex.AccessorDeclarationDescribesCall(parameter, signature[index]))
+                .All(match => match))
+            .Select(candidate => candidate.PhysicalName)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (matches.Length != 1) return false;
+        physicalName = matches[0];
+        return true;
     }
 
     // Local type FQNs that DECLARE a concrete nullary `iterator()` of their own (a real slot, so a self-call binds to it
@@ -727,22 +809,15 @@ static class MemberCallSubstitution
                 node["sig"] ??= injectedClassSignature.DeepClone();
                 return node;
             }
-            // #81/#157: an owner-null top-level PROPERTY accessor read carries the bare property IDENTITY + a
-            // `"prop":"get"/"set"` marker instead of a baked `get_`/`set_` slot name (the #78 static-axis convention
-            // extended to the owner-null axis). Two producers, ONE reconstruction: a top-level EXTENSION property
+            // #81/#157: an owner-null top-level PROPERTY accessor carries the bare property identity plus an explicit
+            // `"prop":"get"/"set"` role. Two producers share this path: a top-level extension property
             // (#81/C7: `val List<T>.lastIndex`, `val Int.absoluteValue` — resolves via the recvKey branch), and a
             // plain (non-extension) cross-module top-level val deserialized from a metadata klib whose parent is a
             // package fragment (#157: `COROUTINE_SUSPENDED` — resolves via the zero-arg single-candidate branch;
-            // this replaced a COROUTINE_SUSPENDED-specific owner-rebind band-aid, deleted as redundant). There is no
-            // bare-name binding index, so reconstruct kotc's OWN `get_`/`set_<name>` accessor convention BEFORE every
-            // owner-null resolver below (`TryExtMemberIntrinsic` keyed `get_lastIndex|recv|count`,
-            // `TryResolveTopLevelStatic` keyed `get_lastIndex`/`get_COROUTINE_SUSPENDED`) — byte-identical to the baked emission.
-            if ((node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var tlProp)
-            {
-                node.Remove("prop");
-                fn = (tlProp == "set" ? "set_" : "get_") + fn;
-                node["method"] = fn;
-            }
+            // this replaced a COROUTINE_SUSPENDED-specific owner-rebind band-aid, deleted as redundant). Referenced
+            // properties bind through their exact metadata association; local properties retain the semantic role until
+            // the common forward allocator runs.
+            var topLevelPropertyAccess = Str(node["prop"]);
             // Collection/array FACTORY (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
             // @ClrCollectionFactory/@ClrArrayFactory marker on the ref.dll top-level fun -> re-emit the
             // newList/newSet/newMap/newArray/newArraySized CONSTRUCTION node (the recognition kotc used to do via its
@@ -752,6 +827,33 @@ static class MemberCallSubstitution
             if (TryFactorySubst(node, refs, fn) is JsonNode factoryNode) return factoryNode;
             var args0 = node["args"] as JsonArray ?? new JsonArray();
             var sigParts0 = SplitSig(node);
+            if (topLevelPropertyAccess is "get" or "set")
+            {
+                KotlinPropertyAccessors.PreserveCallIdentity(node, fn, topLevelPropertyAccess);
+                // A same-compilation top-level declaration carries its exact semantic file owner. Keep the call ownerless
+                // for ilemit's local file-class lookup and let the final forward allocator name its accessor. A referenced
+                // property may carry a projected file-class owner; otherwise it must be attributed from authoritative
+                // reference metadata here.
+                if (TypeJson.OwnerName(node["calleeOwner"]) != null) return null;
+                var projectedOwner = TypeJson.OwnerName(node["ownerType"]);
+                if (projectedOwner != null && !refs.IsFileClassOwner(projectedOwner)) projectedOwner = null;
+                var propertySignature = sigParts0.Count == args0.Count ? sigParts0.ToArray() : null;
+                var propertyMethodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+                if (_attributeTopLevelOwner && refs.TryResolveTopLevelProperty(fn, topLevelPropertyAccess,
+                    projectedOwner, args0.Count, propertyMethodArity, propertySignature,
+                    out var propertyOwner, out var physicalAccessor))
+                {
+                    node.Remove("prop");
+                    node["method"] = fn = physicalAccessor;
+                    node["owner"] = TypeJson.Fqn(propertyOwner);
+                    PromoteGenericShapeToSig(node);
+                }
+                else if (!_attributeTopLevelOwner) return null;
+                else
+                    throw new InvalidOperationException(
+                        $"bir2cir: unresolved top-level property accessor '{fn}' ({topLevelPropertyAccess}) — "
+                        + "the frontend-resolved property has no exact reference MethodSemantics association");
+            }
             // STAR-PROJECTED Map<*,*> cross-module extension (#74a): `m[key]`/`m.containsKey(key)` on a star-projected
             // `Map<*,*>` receiver is NOT dispatched as the Map interface MEMBER (a star receiver's `K`-typed param
             // isn't a viable member-call argument) — Kotlin instead resolves the top-level `@kotlin.internal.
@@ -770,11 +872,13 @@ static class MemberCallSubstitution
                 && starTypeArgs.All(t => IsErasedAny(TypeJson.Read(t))))
                 return new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
+                    ["k"] = "clrInstance",
+                    ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
                     ["method"] = fn == "get" ? "get_Item" : "Contains",
                     ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
                     ["ret"] = TypeJson.Fqn(fn == "get" ? "System.Object" : "System.Boolean"),
-                    ["recv"] = args0[0]?.DeepClone(), ["args"] = new JsonArray { args0[1]?.DeepClone() },
+                    ["recv"] = args0[0]?.DeepClone(),
+                    ["args"] = new JsonArray { args0[1]?.DeepClone() },
                 };
             // A top-level @ClrIntrinsic bound to a FQ BCL static. Resolve the EXACT overload by the call's full
             // ParamKey signature first (sqrt/abs/pow -> System.Math.* for Double/Int/Long but System.MathF.* for
@@ -898,7 +1002,7 @@ static class MemberCallSubstitution
         // the backing-field read as a property getter callInstance rather than a raw `{k:field}`. Same erasure as
         // TransformStorageField: reinterpret the receiver to the SIGNED array. Handled BEFORE the CLR-owner gate below
         // (kotlin.U*Array is not @ClrTypeAlias-bound, so it would otherwise return null unresolved).
-        if (instance && (node["method"] as JsonValue)?.GetValue<string>() == "get_storage"
+        if (instance && KotlinPropertyAccessors.IsCall(node, "storage", "get")
             && UnsignedArraySignedElem.TryGetValue(ownerToken, out var storageSignedElem))
             return new JsonObject
             {
@@ -906,6 +1010,41 @@ static class MemberCallSubstitution
                 ["type"] = TypeJson.Write(new TypeNode.Array(new TypeNode.Fqn(storageSignedElem))),
                 ["e"] = node["recv"]?.DeepClone(),
             };
+
+        // A declaration in this compilation owns this semantic accessor. Bind the physical name allocated from that
+        // declaration before an external ancestor property is considered. Ambiguous same-identity declarations were
+        // deliberately omitted from the module-wide index and continue through the ordinary exact-resolution path.
+        if (instance && !refs.TryResolveClrOwner(ownerToken, out _, out _)
+            && KotlinPropertyAccessors.TryCallIdentity(node, out var localProperty, out var localAccessor))
+        {
+            var owner = ReferenceMetadataIndex.BareOwnerFqn(ownerToken);
+            var paramCount = (node["args"] as JsonArray)?.Count ?? 0;
+            var signatureNode = node["sig"] as JsonArray ?? node["argTypes"] as JsonArray;
+            var accessorSignature = signatureNode?.Select(TypeJson.Read).ToArray();
+            if (accessorSignature != null &&
+                (accessorSignature.Length != paramCount || accessorSignature.Any(type => type == null)))
+                accessorSignature = null;
+            var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+            var isLocal = TryResolveLocalPropertyAccessor(_localPropertyAccessors,
+                owner, localProperty, localAccessor, methodArity, paramCount, accessorSignature,
+                ownerFqnNode.Args ?? Array.Empty<TypeNode>(), out var localPhysicalAccessor);
+            // A local declaration owns this call, but its final physical name is deliberately not predicted here.
+            // DeclarationRename and every synthesis/move pass run before the final module-wide accessor index is
+            // collected; KotlinPropertyAccessors.AllocateAll consumes that exact result at the physical boundary.
+            if (isLocal) return null;
+            var referencedVirtual = false;
+            var isReferenced = refs.TryKotlinPropertyAccessor(owner, localProperty, localAccessor,
+                paramCount, methodArity, accessorSignature, ownerFqnNode.Args ?? Array.Empty<TypeNode>(),
+                out localPhysicalAccessor, out referencedVirtual);
+            if (isReferenced)
+            {
+                KotlinPropertyAccessors.PreserveCallIdentity(node, localProperty, localAccessor);
+                node.Remove("prop");
+                node["method"] = localPhysicalAccessor;
+                if (referencedVirtual) node["virtual"] = true;
+                return null;
+            }
+        }
 
         // Rule 2p-inherited (property-accessor override chain): a `.message`/`.cause` read dispatches through a subclass
         // receiver whose STATIC owner is either a USER class (`AppErr : Exception`) — not CLR-bound at all — or a
@@ -919,15 +1058,34 @@ static class MemberCallSubstitution
         {
             var pmember = (node["method"] as JsonValue)?.GetValue<string>();
             var pargs = node["args"] as JsonArray ?? new JsonArray();
+            KotlinPropertyAccessors.TryCallIdentity(node, out var sourceProperty, out var sourceAccessorKind);
             var directHasProp = instance && !string.IsNullOrEmpty(pmember)
                 && refs.TryResolveClrOwner(ownerToken, out _, out _)
-                && refs.TryMemberProperty(ReferenceMetadataIndex.BareOwnerFqn(memberOwnerToken), pmember, pargs.Count, out _, out _);
+                && sourceProperty != null
+                && refs.TryExternalPropertyAccessor(memberOwnerToken, sourceProperty, sourceAccessorKind,
+                    pargs.Count, companionMethodArity, companionSignature,
+                    ownerFqnNode.Args ?? Array.Empty<TypeNode>(),
+                    out _, out _, out _);
             if (instance && !directHasProp && !string.IsNullOrEmpty(pmember) && node["overrides"] is JsonArray povChain)
                 foreach (var o in povChain)
                     if (o is JsonObject oo && TypeJson.OwnerName(oo["owner"]) is string ovOwner
-                        && refs.TryResolveClrOwner(ovOwner, out var ovBcl, out _)
-                        && refs.TryMemberProperty(ovOwner, pmember, pargs.Count, out var povAccess, out var povName))
-                        return ClrPropNode(node, ClrOwnerType(refs, new TypeNode.Fqn(ovOwner)) ?? new TypeNode.Fqn(ovBcl), povName, povAccess, pmember, pargs);
+                        && Str(oo["member"]) == sourceProperty
+                        && Str(oo["kind"]) == (sourceAccessorKind == "set" ? "setter" : "getter")
+                        // A stdlib runtime self-build reads the reference twin of its own declarations. The module's
+                        // local owner is authoritative; never reinterpret that twin as an external CLR property.
+                        && !_localPropertyOwners.Contains(ovOwner)
+                        && refs.TryExternalPropertyAccessor(ovOwner, sourceProperty, sourceAccessorKind,
+                            pargs.Count, companionMethodArity, companionSignature,
+                            Array.Empty<TypeNode>(), out var ovBcl, out var povName, out _))
+                        // When the direct semantic owner is itself CLR-bound, keep its constructed type. The
+                        // override entry names only the bare Kotlin declaration (`Collection.size`) and therefore
+                        // cannot carry the derived owner's type-argument substitution (`List<T>`). The CLR member
+                        // resolver will re-anchor the property to its exact declaring base interface while preserving
+                        // that constructed edge. A non-CLR user subclass still starts from the bound ancestor.
+                        return ClrPropNode(node, ClrOwnerType(refs, ownerFqnNode)
+                            ?? ClrOwnerType(refs, new TypeNode.Fqn(ovOwner)) ?? new TypeNode.Fqn(ovBcl), povName,
+                            sourceAccessorKind == "set" ? ClrPropWrite : ClrPropRead, pmember, pargs,
+                            sourceAccessorKind);
         }
 
         // A Kotlin-collection `iterator()` on an EMITTED (non-@ClrTypeAlias) collection type — a `kotlin.collections.
@@ -950,13 +1108,10 @@ static class MemberCallSubstitution
 
         if (!refs.TryResolveClrOwner(ownerToken, out var bcl, out var kind))
         {
-            // A property-accessor call whose enclosing type carries NO @ClrTypeAlias binding at all — the
-            // overwhelmingly common case (an ordinary user or stdlib property with no CLR binding). kotc emits the
-            // bare property IDENTITY + a `"prop":"get"/"set"` marker (the accessor KIND) instead of baking the
-            // `get_`/`set_` slot name, on BOTH axes: the STATIC companion axis (#78) AND the INSTANCE axis
-            // (`callInstance ownerType=… method=<p> prop=get/set`). Reconstruct kotc's OWN `get_`/`set_<name>`
-            // declaration-side convention (the CLR property model — every Kotlin property's accessor is CIL-named
-            // that way regardless of CLR-boundness) so the call resolves to the REAL emitted accessor:
+            // A property-accessor call whose enclosing type carries no @ClrTypeAlias binding — the overwhelmingly
+            // common ordinary Kotlin property. kotc emits its bare property identity plus an explicit get/set role on
+            // both axes. Preserve that identity, then apply the common forward physical-name allocation so the call
+            // resolves to the emitted accessor:
             //   • SAME-module owner -> ilemit's `_types` FindMethod finds the emitted `get_<p>`/`set_<p>`.
             //   • RE-IMPORTED cross-module Kotlin owner (#17: a `--ref` Kotlin assembly whose type is skipped by
             //     NetInteropBinding's ResolveNetType because it is stdlib/compiler-synthetic vocabulary) -> ilemit's
@@ -964,14 +1119,14 @@ static class MemberCallSubstitution
             //     `get_<p>`/`set_<p>` accessor off the referenced dll. Without this the bare `method:"<p>",prop:"get"`
             //     reaches ilemit and its ResolveMethod looks for a literal method `<p>` -> "method …value() not found".
             // A normally-packaged cross-module Kotlin owner (`shapes.Rectangle.area`) never reaches here — NetInterop-
-            // Binding already reshaped it to clrPropGet/clrPropSet. A get/set marker is CONSUMED here (renamed to the
-            // accessor slot); it is not BIR/CIR vocabulary. (An `index-get`/`index-set` marker is NetInteropBinding's
-            // domain and never reaches this get/set-only reconstruction.)
+            // Binding already reshaped it to clrPropGet/clrPropSet. The `prop` carrier is consumed only after copying
+            // its facts to the explicit identity fields. `index-get`/`index-set` belongs to NetInteropBinding.
             if ((node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var uProp
                 && (node["method"] as JsonValue)?.GetValue<string>() is string uMember)
             {
+                KotlinPropertyAccessors.PreserveCallIdentity(node, uMember, uProp);
                 node.Remove("prop");
-                node["method"] = (uProp == "set" ? "set_" : "get_") + uMember;
+                node["method"] = KotlinPropertyAccessors.PhysicalName(uMember, uProp);
             }
             return null;
         }
@@ -983,7 +1138,11 @@ static class MemberCallSubstitution
         // #78: the STATIC property-accessor marker for a call whose owner IS CLR-bound — carried down to Rule 2p
         // (below) so the explicit @ClrProperty binding is tried on the static axis too, not just instance.
         var staticPropMarker = !instance ? (node["prop"] as JsonValue)?.GetValue<string>() : null;
-        if (staticPropMarker != null) node.Remove("prop");   // the marker is not BIR/CIR vocabulary — consumed here
+        if (staticPropMarker != null)
+        {
+            KotlinPropertyAccessors.PreserveCallIdentity(node, member, staticPropMarker);
+            node.Remove("prop");
+        }
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
         // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit `{k:conv, to:<callee return type>, e:<receiver>}`, the
@@ -999,7 +1158,11 @@ static class MemberCallSubstitution
         // `conv` of the receiver to the field's declared type (never a `ldfld data` — System.UInt32 has no `data`). This
         // is the GENERAL inline-erasure rule, not a UInt.toInt special-case; it fixes both the inlined `x.data` and the
         // rule-3 helper body's `self.data`, after which all the unsigned conversions fold to a plain cast.
-        if (instance && refs.TryInlineFieldGetter(ownerFqn, member, out var inlineConv))
+        var inlineFieldGetter = KotlinPropertyAccessors.TryCallIdentity(node,
+            out var inlineProperty, out var inlineAccessor)
+            ? refs.TryInlineFieldGetter(ownerFqn, inlineProperty, inlineAccessor, out var inlineConv)
+            : refs.TryInlineFieldGetter(ownerFqn, member, out inlineConv);
+        if (instance && inlineFieldGetter)
             return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(inlineConv), ["e"] = node["recv"]?.DeepClone() };
 
         // The CLR owner TYPE the call addresses (a ClrRef-resolvable BCL token; see ClrOwnerType).
@@ -1018,12 +1181,11 @@ static class MemberCallSubstitution
             {
                 var canRead = (exactCompanionBinding.PropertyAccess & ClrPropRead) != 0;
                 var canWrite = (exactCompanionBinding.PropertyAccess & ClrPropWrite) != 0;
-                var writes = canWrite && (!canRead
-                    || member.StartsWith("set_", StringComparison.Ordinal) || args.Count == 1);
+                var writes = canWrite && (!canRead || args.Count == 1);
                 exactPropMarker = writes ? "set" : "get";
             }
             var exactProp = (JsonObject)ClrPropNode(node, clrOwner, exactCompanionBinding.PropertyName,
-                exactCompanionBinding.PropertyAccess, member, args, exactPropMarker);
+                exactCompanionBinding.PropertyAccess, member, args, exactPropMarker, forceStatic: true);
             return CallEvalLowering.PreserveUnreadValueBefore(mappedCompanionRecv, exactProp,
                 $"mapped companion property '{companionOwnerFqn}.{member}'");
         }
@@ -1034,19 +1196,34 @@ static class MemberCallSubstitution
         // ticks) is neither routed as a plain method nor hoisted as a rule-3 body. #78: also tried on the STATIC axis
         // (a companion computed property carrying the `"prop":"get"/"set"` marker) — a @ClrProperty binding is keyed
         // purely by owner+bare-name+argcount, with no instance/static distinction of its own.
-        if ((instance || staticPropMarker is "get" or "set") && refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
+        var hasSemanticProperty = KotlinPropertyAccessors.TryCallIdentity(
+            node, out var semanticProperty, out var semanticAccessor);
+        if (hasSemanticProperty)
         {
-            var prop = (JsonObject)ClrPropNode(node, clrOwner, pName, pAccess, member, args, staticPropMarker);
+            var hasPhysicalProperty = refs.TryExternalPropertyAccessor(
+                ownerFqn, semanticProperty, semanticAccessor,
+                args.Count, companionMethodArity, companionSignature,
+                ownerFqnNode.Args ?? Array.Empty<TypeNode>(),
+                out _, out var semanticClrProperty, out _);
+            if (hasPhysicalProperty)
+            {
+                var prop = (JsonObject)ClrPropNode(node, clrOwner, semanticClrProperty,
+                    semanticAccessor == "set" ? ClrPropWrite : ClrPropRead, member, args, semanticAccessor,
+                    forceStatic: mappedCompanionRecv != null);
+                return CallEvalLowering.PreserveUnreadValueBefore(
+                    mappedCompanionRecv, prop, $"mapped companion property '{companionOwnerFqn}.{member}'");
+            }
+        }
+        // A standalone Kotlin function may intentionally carry @ClrProperty without being a property accessor. Only
+        // that no-semantic-identity case may use the legacy function-name index.
+        if (!hasSemanticProperty && (instance || staticPropMarker is "get" or "set") &&
+            refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
+        {
+            var prop = (JsonObject)ClrPropNode(node, clrOwner, pName, pAccess, member, args, staticPropMarker,
+                forceStatic: mappedCompanionRecv != null);
             return CallEvalLowering.PreserveUnreadValueBefore(
                 mappedCompanionRecv, prop, $"mapped companion property '{companionOwnerFqn}.{member}'");
         }
-        // #78: the static-axis marker found no @ClrProperty binding — probe a bare @ClrIntrinsic under the SAME bare
-        // name (Rule 2, reached again unconditionally below) before Rule 3/4 ever see this bare name; when NEITHER
-        // binds, reconstruct kotc's own get_/set_<name> declaration-side convention (byte-identical to the pre-#78
-        // baked emission) so every rule below proceeds exactly as it did before this call carried a marker at all.
-        if (staticPropMarker is "get" or "set" && !refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out _))
-            node["method"] = member = (staticPropMarker == "set" ? "set_" : "get_") + member;
-
         // PRE-Rule-2 semantic override: MutableCollection.add is @ClrIntrinsic("Add") (the binding drives the
         // implementor-side DeclarationRename), but the CALL semantics diverge — Kotlin `add` returns the
         // changed-Boolean while `ICollection<T>.Add` is VOID (a brIf on the phantom result was a stack underflow),
@@ -1092,9 +1269,13 @@ static class MemberCallSubstitution
                     ? CompareToBclTarget(rf.Name) : null)) is string primBcl)
             return new JsonObject
             {
-                ["k"] = "clrInstance", ["type"] = TypeJson.Fqn(primBcl), ["method"] = "CompareTo",
-                ["argTypes"] = new JsonArray { TypeJson.Fqn(primBcl) }, ["ret"] = TypeJson.Fqn("System.Int32"),
-                ["recv"] = node["recv"]?.DeepClone(), ["args"] = args.DeepClone(),
+                ["k"] = "clrInstance",
+                ["type"] = TypeJson.Fqn(primBcl),
+                ["method"] = "CompareTo",
+                ["argTypes"] = new JsonArray { TypeJson.Fqn(primBcl) },
+                ["ret"] = TypeJson.Fqn("System.Int32"),
+                ["recv"] = node["recv"]?.DeepClone(),
+                ["args"] = args.DeepClone(),
             };
 
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
@@ -1124,6 +1305,11 @@ static class MemberCallSubstitution
         // are abstract in source (no helper is emitted for it — confirmed: every emitted dotkt$ClrH_* is a class), so
         // its abstract collection members (isEmpty/contains/iterator/...) need the ClrCollectionDefaults routing (Rule 5), not
         // a non-existent helper. (The ref.dll mis-reports these as non-abstract, so IsRule3Member alone false-positives.)
+        if (kind != "interface" && KotlinPropertyAccessors.TryCallIdentity(node,
+                out var rule3Property, out var rule3Accessor)
+            && refs.TryRule3PropertyAccessor(ownerFqn, rule3Property, rule3Accessor,
+                out var rule3AccessorMethod))
+            return Rule3HelperCall(node, refs, ownerFqnNode, rule3AccessorMethod, args, instance);
         if (kind != "interface" && refs.IsRule3Member(ownerFqn, member))
             return Rule3HelperCall(node, refs, ownerFqnNode, member, args, instance);
 
@@ -1138,9 +1324,16 @@ static class MemberCallSubstitution
                 if (o is JsonObject oo
                     && TypeJson.OwnerName(oo["owner"]) is string ovOwner
                     && (oo["member"] as JsonValue)?.GetValue<string>() is string ovMember
-                    && refs.TryResolveClrOwner(ovOwner, out _, out var ovKind) && ovKind != "interface"
-                    && refs.IsRule3Member(ovOwner, ovMember))
-                    return Rule3HelperCall(node, refs, new TypeNode.Fqn(ovOwner), ovMember, args, instance);
+                    && refs.TryResolveClrOwner(ovOwner, out _, out var ovKind) && ovKind != "interface")
+                {
+                    var overrideKind = Str(oo["kind"]);
+                    var propertyAccessor = overrideKind switch { "getter" => "get", "setter" => "set", _ => null };
+                    if (propertyAccessor != null && refs.TryRule3PropertyAccessor(ovOwner, ovMember,
+                        propertyAccessor, out var inheritedAccessor))
+                        return Rule3HelperCall(node, refs, new TypeNode.Fqn(ovOwner), inheritedAccessor, args, instance);
+                    if (propertyAccessor == null && refs.IsRule3Member(ovOwner, ovMember))
+                        return Rule3HelperCall(node, refs, new TypeNode.Fqn(ovOwner), ovMember, args, instance);
+                }
 
         // Rule 5m (MAP-interface defaults): Map/MutableMap both alias IDictionary<K,V> (see the stdlib rationale), but
         // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
@@ -1165,43 +1358,46 @@ static class MemberCallSubstitution
             if (FaithfulHints.IsStarProjectedColl(ownerFqnNode) && args.Count >= 1 && member is "get" or "containsKey")
                 return new JsonObject
                 {
-                    ["k"] = "clrInstance", ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
+                    ["k"] = "clrInstance",
+                    ["type"] = TypeJson.Fqn("System.Collections.IDictionary"),
                     ["method"] = member == "get" ? "get_Item" : "Contains",
                     ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Object") },
                     ["ret"] = TypeJson.Fqn(member == "get" ? "System.Object" : "System.Boolean"),
-                    ["recv"] = node["recv"]?.DeepClone(), ["args"] = new JsonArray { args[0].DeepClone() },
+                    ["recv"] = node["recv"]?.DeepClone(),
+                    ["args"] = new JsonArray { args[0].DeepClone() },
                 };
             var mutable = ownerFqn == "kotlin.collections.MutableMap";
-            var helper = (member, args.Count, mutable) switch
+            var semanticPropertyAccess = Str(node[KotlinPropertyAccessors.KindKey]) ?? Str(node["prop"]);
+            var helper = (member, semanticPropertyAccess, args.Count, mutable) switch
             {
-                ("get", 1, _) => "clrMapGet",
+                ("get", _, 1, _) => "clrMapGet",
                 // size / containsKey are UNBOUND (no @ClrIntrinsic) — a direct Count/ContainsKey reads through the
                 // INVARIANT generic IDictionary<K,V> and throws EntryPointNotFound on a value-type-mismatched map (a
                 // groupBy result). Route to the covariance-safe non-generic helpers (ICollection.Count / IDictionary
                 // .Contains). This also makes mapValues' transitive `mapCapacity(this.size)` covariance-safe.
-                ("get_size", 0, _) => "clrMapSize",
-                ("containsKey", 1, _) => "clrMapContainsKey",
-                ("isEmpty", 0, _) => "clrMapIsEmpty",
-                ("containsValue", 1, _) => "clrMapContainsValue",
-                ("getOrDefault", 2, _) => "clrMapGetOrDefault",
-                ("get_keys", 0, false) => "clrMapKeys",
-                ("get_values", 0, false) => "clrMapValues",
-                ("get_entries", 0, false) => "clrMapEntries",
-                ("get_entries", 0, true) => "clrMapMutableEntries",
-                ("put", 2, true) => "clrMapPut",
-                ("remove", 1, true) => "clrMapRemove",
-                ("remove", 2, true) => "clrMapRemoveKV",
-                ("putAll", 1, true) => "clrMapPutAll",
-                ("putIfAbsent", 2, true) => "clrMapPutIfAbsent",
-                ("replace", 2, true) => "clrMapReplace",
-                ("replace", 3, true) => "clrMapReplaceKVV",
-                ("merge", 3, true) => "clrMapMerge",
+                ("size", "get", 0, _) => "clrMapSize",
+                ("containsKey", _, 1, _) => "clrMapContainsKey",
+                ("isEmpty", _, 0, _) => "clrMapIsEmpty",
+                ("containsValue", _, 1, _) => "clrMapContainsValue",
+                ("getOrDefault", _, 2, _) => "clrMapGetOrDefault",
+                ("keys", "get", 0, false) => "clrMapKeys",
+                ("values", "get", 0, false) => "clrMapValues",
+                ("entries", "get", 0, false) => "clrMapEntries",
+                ("entries", "get", 0, true) => "clrMapMutableEntries",
+                ("put", _, 2, true) => "clrMapPut",
+                ("remove", _, 1, true) => "clrMapRemove",
+                ("remove", _, 2, true) => "clrMapRemoveKV",
+                ("putAll", _, 1, true) => "clrMapPutAll",
+                ("putIfAbsent", _, 2, true) => "clrMapPutIfAbsent",
+                ("replace", _, 2, true) => "clrMapReplace",
+                ("replace", _, 3, true) => "clrMapReplaceKVV",
+                ("merge", _, 3, true) => "clrMapMerge",
                 _ => null,
             };
             if (helper != null)
                 return MapDefaultCall(node, helper, ownerFqnNode, args, refs, ctx);
-            if (mutable && args.Count == 0 && member is "get_keys" or "get_values")
-                return ClrPropNode(node, clrOwner, member == "get_keys" ? "Keys" : "Values", ClrPropRead, member, args);
+            if (mutable && semanticPropertyAccess == "get" && args.Count == 0 && member is "keys" or "values")
+                return ClrPropNode(node, clrOwner, member == "keys" ? "Keys" : "Values", ClrPropRead, member, args, "get");
             // else fall through to Rule 4: an already-BCL member name on the aliased IDictionary owner.
         }
 
@@ -1239,7 +1435,16 @@ static class MemberCallSubstitution
                 return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", helperMethod, elem, args);
         }
 
-        // Rule 4 (already-BCL member name): kotc emits the BCL member NAME for a member it knows is CLR-bound — both the
+        // A frontend-resolved property call may reach the general alias rules only while a specialized intrinsic,
+        // helper, or exact PropertyInfo/MethodSemantics binding is still able to consume it. Falling through as a plain
+        // method would discard the semantic identity and recreate the old get_/set_ convention lookup. Compiler-owned
+        // artifacts without the required association are unsupported, so fail at this boundary instead.
+        if (hasSemanticProperty)
+            throw new InvalidOperationException(
+                $"bir2cir: unresolved CLR property accessor '{ownerFqn}.{semanticProperty}' ({semanticAccessor}) — "
+                + "the frontend-resolved property has no exact CLR property, intrinsic, or helper binding");
+
+        // Rule 4 (already-resolved CLR member name): earlier bir2cir binding supplies the exact member name — both the
         // universal object/comparable renames (compareTo/equals/hashCode/toString -> CompareTo/Equals/GetHashCode/
         // ToString) and the collection accessors/methods (get_Item/get_Count/Add/set_Item/RemoveAt/Insert/Remove/Clear/
         // GetEnumerator/...). The ref.dll member is kept under its Kotlin name (`get`/`compareTo`), so rules 2/3 miss by
@@ -1257,17 +1462,18 @@ static class MemberCallSubstitution
         // CLR-bound NON-interface owner (a concrete BCL class) is an UNBOUND Kotlin member with no BCL equivalent by that
         // name AND no @ClrIntrinsic/@ClrProperty/rule-3 binding: it is a genuine routing MISS. Left unrefused it would
         // emit a clrInstance that ilemit can neither resolve statically nor (post-gate) dispatch dynamically → an opaque
-        // runtime NRE. Refuse it here, at compile time, naming `owner.member`. Allow only a BCL-shaped name (PascalCase
-        // or a get_/set_ accessor) or an interface owner (the legit dynamic-dispatch case). Instance-only: a static
-        // lowercase miss already throws loudly at ilemit (no dynamic-dispatch path is instance-gated there).
+        // runtime NRE. Refuse it here, at compile time, naming `owner.member`. A concrete owner must declare the exact
+        // reflected method when that CLR owner can be resolved. An unresolved owner is not evidence of a miss and an
+        // interface retains the intentional dynamic-dispatch path. A static miss already throws loudly at ilemit (the
+        // dynamic path is instance-only).
         if (instance && kind != "interface" && !string.IsNullOrEmpty(member)
-            && !char.IsUpper(member[0])
-            && !member.StartsWith("get_", StringComparison.Ordinal)
-            && !member.StartsWith("set_", StringComparison.Ordinal))
+            && refs.TryDeclaresAccessibleInstanceMethod(
+                ownerFqn, ownerFqnNode?.Args?.Length ?? 0, member, out var declaresMember)
+            && !declaresMember)
             throw new InvalidOperationException(
-                $"bir2cir: unresolved CLR member '{ownerFqn}.{member}' — a lowercase-camelCase member on the CLR-bound "
+                $"bir2cir: unresolved CLR member '{ownerFqn}.{member}' — the CLR-bound "
                 + $"{kind} owner '{ownerToken}' has no @ClrIntrinsic/@ClrProperty/rule-3 binding and is not a BCL member "
-                + "name (BCL members are PascalCase). This is a routing MISS: fix the stdlib binding or the owner alias, "
+                + "declared by that exact name. This is a routing MISS: fix the stdlib binding or the owner alias, "
                 + "do not let it fall to a silent runtime dynamic-dispatch NRE.");
         return Constrainify(ClrCallNode(node, clrOwner, member, member, args, instance), node, refs, ctx, ownerToken);
     }
@@ -1276,8 +1482,8 @@ static class MemberCallSubstitution
         ReferenceMetadataIndex refs, TypeNode.Fqn semanticOwner)
     {
         // A generic Kotlin owner's companion-block properties live on the trusted non-generic carrier. Give that
-        // explicit declaring identity first refusal before the owner-null top-level accessor index sees get_/set_<name>;
-        // otherwise an unrelated top-level property with the same accessor name can silently capture the call.
+        // explicit declaring identity first refusal before the owner-null top-level property index; otherwise an
+        // unrelated top-level property with the same source identity can silently capture the call.
         if (refs.TryGenericStaticCarrier(semanticOwner.Name, out var carrier))
             return (TypeJson.Fqn(carrier), refs.ResolveRefType(carrier, 0));
         return (TypeJson.Write(semanticOwner),
@@ -1704,36 +1910,38 @@ static class MemberCallSubstitution
     }
 
     // @ClrProperty(access) flag values (mirror `kotlin.clr.READ`/`WRITE`): a get accessor / a set accessor; `READ|WRITE`
-    // (both bits) is a get+set property whose specific call is disambiguated by the accessor member prefix / arg count.
+    // (both bits) is a get+set property whose specific call is disambiguated by its explicit role or argument count.
     const int ClrPropRead = 1, ClrPropWrite = 2;
 
     // Build a clrPropGet/clrPropSet node for a .NET property `prop` on the BCL owner `bcl`. Used by BOTH the explicit
-    // @ClrProperty accessor (Rule 2p; `prop` is the bare BCL property "Length") and the genuine `val X` member-prefix
-    // accessor (trigger ①), where `prop` may arrive as the full BCL accessor name kotc emits for a CLR-bound property
-    // (Rule 4: `get_Count`) — strip a leading get_/set_ so the clrProp `name` is the bare property. `access` = READ/WRITE
-    // flags; when BOTH are set (a var property) the accessor member prefix (`set_` -> write) or arg count (1 = write)
+    // @ClrProperty accessor (Rule 2p; `prop` is the bare BCL property "Length") and an exact reflected PropertyInfo
+    // binding. `access` = READ/WRITE flags; when both are set, the explicit role or arg count (1 = write)
     // picks the direction. WRITE takes the single value arg; READ carries the return type. On the STATIC axis a non-null
     // `propMarker` ("get"/"set", #78/#81) OVERRIDES the arg-count heuristic (it encodes the accessor kind explicitly),
     // and a leading `__self` extension-receiver arg makes the accessor an INSTANCE property on __self (WRITE value = args[^1]).
-    static JsonNode ClrPropNode(JsonObject node, TypeNode clrOwner, string prop, int access, string member, JsonArray args, string propMarker = null)
+    static JsonNode ClrPropNode(JsonObject node, TypeNode clrOwner, string prop, int access, string member, JsonArray args,
+        string propMarker = null, bool forceStatic = false)
     {
-        if (prop.StartsWith("get_", StringComparison.Ordinal) || prop.StartsWith("set_", StringComparison.Ordinal))
-            prop = prop[4..];
         var wantRead = (access & ClrPropRead) != 0;
         var wantWrite = (access & ClrPropWrite) != 0;
         // #81: the STATIC-axis `"prop":"get"/"set"` marker encodes the accessor KIND explicitly — trust it over the
         // `args.Count == 1` heuristic, which mis-reads an EXTENSION getter's lone `__self` arg (count 1) as a WRITE.
         // The heuristic stays for the instance axis (no marker), where args are pure value args.
-        var write = propMarker is "get" or "set"
-            ? propMarker == "set"
+        var explicitKind = propMarker;
+        if (explicitKind == null && KotlinPropertyAccessors.TryCallIdentity(node, out _, out var preservedKind))
+            explicitKind = preservedKind;
+        var write = explicitKind is "get" or "set"
+            ? explicitKind == "set"
             : wantRead && wantWrite
-                ? (member.StartsWith("set_", StringComparison.Ordinal) || args.Count == 1)
+                ? args.Count == 1
                 : wantWrite;
         // #81: a STATIC EXTENSION property accessor prepends its extension receiver as the LEADING arg (getter
         // `[__self]`; setter `[__self, value]`) rather than in node["recv"]. Detect it by arg count past the
         // direction the marker fixed (getter with 1 arg / setter with 2 args carries a `__self`) — it becomes the
         // .NET receiver, so the accessor is an INSTANCE property on `__self`, not a static.
-        var extRecv = propMarker is "get" or "set" && args.Count > (write ? 1 : 0) ? args[0] : null;
+        var staticAxis = forceStatic || Str(node["k"]) == "callStatic";
+        var extRecv = staticAxis && propMarker is ("get" or "set") && args.Count > (write ? 1 : 0)
+            ? args[0] : null;
         var pg = new JsonObject
         {
             ["k"] = write ? "clrPropSet" : "clrPropGet",
@@ -1741,7 +1949,7 @@ static class MemberCallSubstitution
             ["name"] = prop,
             // A marker-bound static computed property (no __self) is a genuine STATIC accessor; an extension binds
             // on __self (instance); the instance axis (no marker) stays instance.
-            ["static"] = propMarker != null && extRecv == null,
+            ["static"] = staticAxis && propMarker != null && extRecv == null,
             ["recv"] = (extRecv ?? node["recv"])?.DeepClone(),
         };
         if (!write && RetToken(node) is JsonNode ret) pg["ret"] = ret;
@@ -1756,10 +1964,9 @@ static class MemberCallSubstitution
         return pg;
     }
 
-    // A clrInstance / clrStatic node. A property-accessor call whose MEMBER carries the `get_`/`set_` prefix (kotc's
-    // property convention: a `val length` -> the accessor call `get_length`, intrinsic bare "Length") emits clrPropGet/
-    // clrPropSet on the bare intrinsic; otherwise a plain method call. A standalone accessor FUN bound to a property is
-    // routed EXPLICITLY by @ClrProperty (Rule 2p) BEFORE this node is built, so there is no intrinsic-prefix sniff here.
+    // A clrInstance / clrStatic node. A call carrying explicit Kotlin property identity emits clrPropGet/clrPropSet on
+    // the resolved bare CLR Property name; otherwise this is a plain method call. A standalone function bound to a
+    // property is routed explicitly by @ClrProperty (Rule 2p) before this node is built.
     // Prefix `byref:` onto the argTypes at each @ClrRefArgument position (idempotent), so ilemit resolves the `ref`/`out`
     // BCL overload and emits the address-load for that arg (the byref shape a `ref`/`out` parameter needs).
     static void WrapByref(JsonArray argTypes, int[] byrefPositions)
@@ -1781,14 +1988,12 @@ static class MemberCallSubstitution
         WrapByref(argTypes, byrefPositions);
         var ret = RetToken(node);
 
-        // Trigger ①: a genuine `val X` accessor — kotc emits the call on the MEMBER as `get_x`/`set_x`. The intrinsic is
-        // the bare property name (convention: property @ClrIntrinsic values are bare, e.g. "Length"), so it becomes the
-        // clrProp `name` verbatim. (Indexers reaching here have member "get"/"set" with an index arg -> args.Count != 0/1,
-        // so they fall through to the method call below, not this branch.)
-        var isGet = member.StartsWith("get_", StringComparison.Ordinal) && args.Count == 0;
-        var isSet = member.StartsWith("set_", StringComparison.Ordinal) && args.Count == 1;
-        if (instance && (isGet || isSet))
-            return ClrPropNode(node, clrOwner, intrinsic, isSet ? ClrPropWrite : ClrPropRead, member, args);
+        // A genuine property call carries the source identity and get/set role explicitly. The resolved intrinsic is
+        // the bare CLR Property name (for example "Length"), so it becomes the clrProp name verbatim.
+        if (instance && KotlinPropertyAccessors.TryCallIdentity(node, out _, out var accessorKind)
+            && args.Count == (accessorKind == "set" ? 1 : 0))
+            return ClrPropNode(node, clrOwner, intrinsic,
+                accessorKind == "set" ? ClrPropWrite : ClrPropRead, member, args, accessorKind);
 
         var call = new JsonObject
         {
@@ -1838,8 +2043,11 @@ static class MemberCallSubstitution
             {
                 args[i] = new JsonObject
                 {
-                    ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"), ["method"] = "toString",
-                    ["sig"] = new JsonArray { TypeJson.Fqn("object") }, ["args"] = new JsonArray { a.DeepClone() },
+                    ["k"] = "callStatic",
+                    ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"),
+                    ["method"] = "toString",
+                    ["sig"] = new JsonArray { TypeJson.Fqn("object") },
+                    ["args"] = new JsonArray { a.DeepClone() },
                 };
                 argTypes[i] = TypeJson.Fqn("kotlin.String");
             }
@@ -1975,6 +2183,9 @@ static class MemberCallSubstitution
             if (node[key] is JsonNode n && TypeJson.Read(n) is TypeNode) return n.DeepClone();
         return null;
     }
+
+    static string Str(JsonNode node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var result) ? result : null;
 
     // A ret slot is an UNBOUND type parameter (`Tv`) — the guard on carrying a `retType` hint (an open `gp:` token
     // buys no conversion at the call site and, when the callee return is object-erased, would unbox.any a null).

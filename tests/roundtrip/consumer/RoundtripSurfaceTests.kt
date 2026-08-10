@@ -41,7 +41,21 @@ import roundtrip.higherorder.mapBox
 import roundtrip.higherorder.pipe
 import roundtrip.higherorder.times
 import roundtrip.memberextensionsurface.ExtensionLibrary
+import roundtrip.memberextensionsurface.InheritedPropertyLeaf
+import roundtrip.memberextensionsurface.InheritedPropertyMiddle
+import roundtrip.memberextensionsurface.RemappedMutableProperty
+import roundtrip.memberextensionsurface.CovariantPropertyImplementation
+import roundtrip.memberextensionsurface.CovariantPropertySlot
+import roundtrip.memberextensionsurface.CovariantPropertyValue
+import roundtrip.memberextensionsurface.CovariantExtensionPropertyImplementation
+import roundtrip.memberextensionsurface.CovariantExtensionPropertySlot
+import roundtrip.memberextensionsurface.NumberContext
+import roundtrip.memberextensionsurface.PartialAccessorHolder
+import roundtrip.memberextensionsurface.TextContext
 import roundtrip.memberextensionsurface.ValueBox
+import roundtrip.memberextensionsurface.topLevelComputed
+import roundtrip.memberextensionsurface.topLevelCustomGetter
+import roundtrip.memberextensionsurface.topLevelCustomSetter
 import roundtrip.propertytypes.PropertyHolder
 import roundtrip.receiverfunctions.Panel
 import roundtrip.receiverfunctions.PanelBuilder
@@ -78,6 +92,49 @@ private class ProtectedCompanionConsumer : ProtectedCompanionHost() {
 }
 
 class RoundtripSurfaceTests {
+    @TestAttribute
+    fun referencedInheritedPropertyKeepsDeclarationOwnerAndVirtualDispatch() {
+        val value: InheritedPropertyMiddle = InheritedPropertyLeaf()
+        ClassicAssert.AreEqual(2, value.inheritedValue)
+
+    }
+
+    @TestAttribute
+    fun referencedVarOverValSetterUsesTheGetterPropertyAllocation() {
+        val value = RemappedMutableProperty()
+        ClassicAssert.AreEqual(2, value.size)
+        value.size = 9
+        ClassicAssert.AreEqual(9, value.size)
+    }
+
+    @TestAttribute
+    fun covariantPropertyBridgeKeepsPropertyIdentityAcrossModules() {
+        val concrete = CovariantPropertyImplementation()
+        ClassicAssert.AreEqual("narrow", concrete.covariantValue.text)
+        val slot: CovariantPropertySlot<CovariantPropertyValue> = concrete
+        ClassicAssert.AreEqual("narrow", slot.covariantValue.text)
+
+        val extensionConcrete = CovariantExtensionPropertyImplementation()
+        with(extensionConcrete) {
+            ClassicAssert.AreEqual("extension-7", ValueBox(7).covariantExtensionValue.text)
+        }
+        val extensionSlot: CovariantExtensionPropertySlot<CovariantPropertyValue> = extensionConcrete
+        with(extensionSlot) {
+            ClassicAssert.AreEqual("extension-8", ValueBox(8).covariantExtensionValue.text)
+        }
+    }
+
+    @TestAttribute
+    fun topLevelCustomAccessorPropertyReferencesUseTheAccessorSurface() {
+        val getter = ::topLevelCustomGetter
+        getter.set(10)
+        ClassicAssert.AreEqual(11, getter.get())
+
+        val setter = ::topLevelCustomSetter
+        setter.set(5)
+        ClassicAssert.AreEqual(7, setter.get())
+    }
+
     @TestAttribute
     fun higherOrderGenericShapesRoundTrip() {
         val convert: (Box<Int>) -> Box<String> = { Box(it.value.toString() + "!") }
@@ -120,15 +177,36 @@ class RoundtripSurfaceTests {
 
     @TestAttribute
     fun memberExtensionPropertiesAndSuspendFunctionsRoundTrip() {
+        topLevelCustomGetter = 100
+        ClassicAssert.AreEqual(101, topLevelCustomGetter)
+        topLevelCustomSetter = 100
+        ClassicAssert.AreEqual(102, topLevelCustomSetter)
+        ClassicAssert.AreEqual(33, topLevelComputed)
+
+        val partial = PartialAccessorHolder()
+        partial.customGetter = 100
+        ClassicAssert.AreEqual(103, partial.customGetter)
+        partial.customSetter = 100
+        ClassicAssert.AreEqual(104, partial.customSetter)
+        ClassicAssert.AreEqual(55, partial.computed)
+
         val library = ExtensionLibrary(10)
         with(library) {
             ClassicAssert.AreEqual("value=17", ValueBox(7).label)
+            ClassicAssert.AreEqual("operator=17", this[ValueBox(7)])
             ClassicAssert.AreEqual(30, ValueBox(3).scaled)
             ValueBox(0).scaled = 5
             ClassicAssert.AreEqual(15, last)
+            with(TextContext("!")) {
+                ClassicAssert.AreEqual("text=17!", ValueBox(7).contextual)
+            }
+            with(NumberContext(3)) {
+                ClassicAssert.AreEqual("number=20", ValueBox(7).contextual)
+            }
             ClassicAssert.AreEqual(15, runCrossModuleSuspend { ValueBox(5).fetch() })
         }
         ClassicAssert.AreEqual(210, runCrossModuleSuspend { library.useHidden(ValueBox(2)) })
+
     }
 
     @TestAttribute

@@ -1,0 +1,3 @@
+# A concrete same-name/same-arity sibling does not satisfy the abstract String-context accessor.
++"name":"OverloadedDerived"
++"name":"get_item","static":false,"override":false,"virtual":true,"abstract":true,"params":[{"name":"context","type":{"t":"fqn","name":"System.String"}}]

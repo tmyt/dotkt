@@ -30,12 +30,16 @@
         {
           "name": "held",
           "type": { "t": "nullable", "of": { "t": "tv", "scope": "type", "i": 0 } },
-          "get": "get_held"
+          "kotlinAccessors": ["get"],
+          "propertyAssociation": "held-property"
         }
       ],
       "methods": [
         {
-          "name": "get_held",
+          "name": "held",
+          "propertyName": "held",
+          "propertyAccessor": "get",
+          "propertyAssociation": "held-property",
           "params": [],
           "ret": { "t": "nullable", "of": { "t": "tv", "scope": "type", "i": 0 } },
           "body": [

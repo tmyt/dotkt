@@ -86,14 +86,21 @@ static class BirTypeLowering
     // map to derive the sized ctor + the array intrinsics' element.
     public static readonly IReadOnlyDictionary<string, string> PrimArrayElem = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        ["kotlin.IntArray"] = "kotlin.Int", ["kotlin.LongArray"] = "kotlin.Long", ["kotlin.DoubleArray"] = "kotlin.Double",
-        ["kotlin.FloatArray"] = "kotlin.Float", ["kotlin.BooleanArray"] = "kotlin.Boolean", ["kotlin.CharArray"] = "kotlin.Char",
-        ["kotlin.ByteArray"] = "kotlin.Byte", ["kotlin.ShortArray"] = "kotlin.Short",
+        ["kotlin.IntArray"] = "kotlin.Int",
+        ["kotlin.LongArray"] = "kotlin.Long",
+        ["kotlin.DoubleArray"] = "kotlin.Double",
+        ["kotlin.FloatArray"] = "kotlin.Float",
+        ["kotlin.BooleanArray"] = "kotlin.Boolean",
+        ["kotlin.CharArray"] = "kotlin.Char",
+        ["kotlin.ByteArray"] = "kotlin.Byte",
+        ["kotlin.ShortArray"] = "kotlin.Short",
         // #76: the unsigned specialized arrays lower to the UNSIGNED native array (byte[]/ushort[]/uint[]/ulong[]),
         // uniformly with signed. Their value-class `.storage` backing (the SIGNED array) + the wrap-ctor over a
         // signed array are erased to a same-underlying-primitive reinterpret cast in MemberCallSubstitution.
-        ["kotlin.UByteArray"] = "kotlin.UByte", ["kotlin.UShortArray"] = "kotlin.UShort",
-        ["kotlin.UIntArray"] = "kotlin.UInt", ["kotlin.ULongArray"] = "kotlin.ULong",
+        ["kotlin.UByteArray"] = "kotlin.UByte",
+        ["kotlin.UShortArray"] = "kotlin.UShort",
+        ["kotlin.UIntArray"] = "kotlin.UInt",
+        ["kotlin.ULongArray"] = "kotlin.ULong",
     };
 
     // Every JSON key whose string (or string[]) value is a TYPE reference, across signatures, expressions and
@@ -248,68 +255,68 @@ static class BirTypeLowering
         switch (t)
         {
             case TypeNode.Fqn f:
-            {
-                // A SIGNED primitive array (`kotlin.IntArray`) -> `Array(elem)` in EVERY build (ref included): this is
-                // the array REPRESENTATION, not a primitive substitution, so it fires before the refBuild passthrough.
-                // The element then lowers on the recursive call (kotlin.Int -> System.Int32 in app/rt, verbatim in ref).
-                if (f.Args == null && PrimArrayElem.TryGetValue(f.Name, out var arrElemFq))
-                    return new TypeNode.Array(LowerType(new TypeNode.Fqn(arrElemFq), refBuild, force, typeArg: false));
-                // `kotlin.clr.Span<T>` -> the real `System.Span<T>` in EVERY build (ref included). A synthetic interop
-                // marker with NO ref.dll @ClrTypeAlias definition; kotc emits the FAITHFUL `kotlin.clr.Span` identity
-                // and bir2cir OWNS the BCL substitution (M11 — the last naked `System.*` name left in kotc). Placed
-                // before the refBuild passthrough so the ref build substitutes it too, matching the former kotc birType
-                // (which emitted `System.Span` unconditionally); the element lowers like any generic type-arg.
-                if (f.Name == SpanIntrinsicFqn && f.Args != null)
-                    return new TypeNode.Fqn(SpanClrFqn, f.Args.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray());
-                // The reference build keeps Kotlin type semantics verbatim, but CIR must still name an external
-                // DotKt TypeDef by its exact CLR metadata identity. This matters for nested types under generic owners:
-                // `Outer.Nested` physically lives at `Outer`1+Nested` even when Nested itself declares no arguments.
-                if (!force && refBuild)
-                    return new TypeNode.Fqn(PhysicalName(f.Name),
-                        f.Args?.Select(a => LowerType(a, refBuild, force: false, typeArg: true)).ToArray());
-                // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
-                // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
-                if (ErasesGenericApplicationToNonGenericClassifier(f.Name) && f.Args != null)
-                    return new TypeNode.Fqn("System.Enum");
-                var methodSlotCarrier = f.Args != null && InterfaceMethodSlotCarriers.Contains(f.Name);
-                var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force,
-                    typeArg: methodSlotCarrier ? false : true)).ToArray();
-                if (loweredArgs == null)
                 {
-                    // A leaf: a foundational primitive (numeric/bool/char + String/Any/Nothing + the unsigned set)
-                    // lowers to the CLR type in EVERY position — a type-arg primitive reifies as the CLR value type
-                    // (`List<Int>` -> IReadOnlyList<System.Int32>), the CLR-idiomatic form (the boxed `kotlin.*` isn't an
-                    // emitted type in the substitute/app build; the ref build keeps kotlin.* via the refBuild passthrough).
-                    // #55: the non-force path reads the primitive's `@ClrTypeAlias("System.Int32")` straight from the
-                    // ref.dll index (AliasBcl below) — the hardcoded KotlinToClr shadow was DELETED. The force/attribute-
-                    // blob path keeps KotlinAllToClr: a custom-attribute blob needs a concrete System.* even in the ref
-                    // build, which has no ref.dll to read.
-                    if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
-                    // A @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) OR a non-primitive BCL
-                    // (StringBuilder/Regex/IComparable/…) -> the BCL FQN, read from the ref.dll alias index.
-                    if (AliasBcl(f.Name) is string bclNonGen) return new TypeNode.Fqn(bclNonGen);
-                    return new TypeNode.Fqn(PhysicalName(f.Name));
-                    // user / stdlib / in-assembly names stay unchanged; trusted external DotKt identities become
-                    // their exact physical metadata names.
+                    // A SIGNED primitive array (`kotlin.IntArray`) -> `Array(elem)` in EVERY build (ref included): this is
+                    // the array REPRESENTATION, not a primitive substitution, so it fires before the refBuild passthrough.
+                    // The element then lowers on the recursive call (kotlin.Int -> System.Int32 in app/rt, verbatim in ref).
+                    if (f.Args == null && PrimArrayElem.TryGetValue(f.Name, out var arrElemFq))
+                        return new TypeNode.Array(LowerType(new TypeNode.Fqn(arrElemFq), refBuild, force, typeArg: false));
+                    // `kotlin.clr.Span<T>` -> the real `System.Span<T>` in EVERY build (ref included). A synthetic interop
+                    // marker with NO ref.dll @ClrTypeAlias definition; kotc emits the FAITHFUL `kotlin.clr.Span` identity
+                    // and bir2cir OWNS the BCL substitution (M11 — the last naked `System.*` name left in kotc). Placed
+                    // before the refBuild passthrough so the ref build substitutes it too, matching the former kotc birType
+                    // (which emitted `System.Span` unconditionally); the element lowers like any generic type-arg.
+                    if (f.Name == SpanIntrinsicFqn && f.Args != null)
+                        return new TypeNode.Fqn(SpanClrFqn, f.Args.Select(a => LowerType(a, refBuild, force, typeArg: true)).ToArray());
+                    // The reference build keeps Kotlin type semantics verbatim, but CIR must still name an external
+                    // DotKt TypeDef by its exact CLR metadata identity. This matters for nested types under generic owners:
+                    // `Outer.Nested` physically lives at `Outer`1+Nested` even when Nested itself declares no arguments.
+                    if (!force && refBuild)
+                        return new TypeNode.Fqn(PhysicalName(f.Name),
+                            f.Args?.Select(a => LowerType(a, refBuild, force: false, typeArg: true)).ToArray());
+                    // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
+                    // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
+                    if (ErasesGenericApplicationToNonGenericClassifier(f.Name) && f.Args != null)
+                        return new TypeNode.Fqn("System.Enum");
+                    var methodSlotCarrier = f.Args != null && InterfaceMethodSlotCarriers.Contains(f.Name);
+                    var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force,
+                        typeArg: methodSlotCarrier ? false : true)).ToArray();
+                    if (loweredArgs == null)
+                    {
+                        // A leaf: a foundational primitive (numeric/bool/char + String/Any/Nothing + the unsigned set)
+                        // lowers to the CLR type in EVERY position — a type-arg primitive reifies as the CLR value type
+                        // (`List<Int>` -> IReadOnlyList<System.Int32>), the CLR-idiomatic form (the boxed `kotlin.*` isn't an
+                        // emitted type in the substitute/app build; the ref build keeps kotlin.* via the refBuild passthrough).
+                        // #55: the non-force path reads the primitive's `@ClrTypeAlias("System.Int32")` straight from the
+                        // ref.dll index (AliasBcl below) — the hardcoded KotlinToClr shadow was DELETED. The force/attribute-
+                        // blob path keeps KotlinAllToClr: a custom-attribute blob needs a concrete System.* even in the ref
+                        // build, which has no ref.dll to read.
+                        if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
+                        // A @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) OR a non-primitive BCL
+                        // (StringBuilder/Regex/IComparable/…) -> the BCL FQN, read from the ref.dll alias index.
+                        if (AliasBcl(f.Name) is string bclNonGen) return new TypeNode.Fqn(bclNonGen);
+                        return new TypeNode.Fqn(PhysicalName(f.Name));
+                        // user / stdlib / in-assembly names stay unchanged; trusted external DotKt identities become
+                        // their exact physical metadata names.
+                    }
+                    // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
+                    if (AliasBcl(f.Name) is string bcl)
+                    {
+                        // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant;
+                        // no value type is IComparable<object>). A concrete arg keeps the generic form.
+                        if (bcl == "System.IComparable" && loweredArgs.Length == 1 && IsObjectish(loweredArgs[0]))
+                            return new TypeNode.Fqn("System.IComparable");
+                        // ARG-POSITION VARIANCE COLLAPSE (Root V): at generic-arg depth >= 1 (typeArg), a covariant readonly
+                        // collection interface -> its INVARIANT sibling, so a concrete invariant value inhabits the nested
+                        // slot EXACTLY. The HEAD (depth-0) keeps the covariant alias; CollectionViewCallCoercion materializes
+                        // any resulting call-site seam as an explicit CIR cast. RefBuild is `kotlin.*` verbatim (line 191); `!refBuild`
+                        // also spares a `force` attribute-blob.
+                        if (typeArg && !refBuild && InvariantSibling.TryGetValue(f.Name, out var inv))
+                            return new TypeNode.Fqn(inv, loweredArgs);
+                        return new TypeNode.Fqn(bcl, loweredArgs);
+                    }
+                    return new TypeNode.Fqn(PhysicalName(f.Name), loweredArgs);
                 }
-                // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
-                if (AliasBcl(f.Name) is string bcl)
-                {
-                    // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant;
-                    // no value type is IComparable<object>). A concrete arg keeps the generic form.
-                    if (bcl == "System.IComparable" && loweredArgs.Length == 1 && IsObjectish(loweredArgs[0]))
-                        return new TypeNode.Fqn("System.IComparable");
-                    // ARG-POSITION VARIANCE COLLAPSE (Root V): at generic-arg depth >= 1 (typeArg), a covariant readonly
-                    // collection interface -> its INVARIANT sibling, so a concrete invariant value inhabits the nested
-                    // slot EXACTLY. The HEAD (depth-0) keeps the covariant alias; CollectionViewCallCoercion materializes
-                    // any resulting call-site seam as an explicit CIR cast. RefBuild is `kotlin.*` verbatim (line 191); `!refBuild`
-                    // also spares a `force` attribute-blob.
-                    if (typeArg && !refBuild && InvariantSibling.TryGetValue(f.Name, out var inv))
-                        return new TypeNode.Fqn(inv, loweredArgs);
-                    return new TypeNode.Fqn(bcl, loweredArgs);
-                }
-                return new TypeNode.Fqn(PhysicalName(f.Name), loweredArgs);
-            }
             case TypeNode.Tv:
                 return t;   // scope+i preserved; ilemit maps scope:"type"->!i / scope:"method"->!!i
             case TypeNode.Fn fn:
@@ -323,19 +330,19 @@ static class BirTypeLowering
                 // state machine before this pass runs. Coverage: roundtrip's cross-module invokeWideSuspend23.
                 return fn.Suspend ? ObjectType : LowerFnDelegate(fn, refBuild, force);
             case TypeNode.Nullable n:
-            {
-                // #37/#48: a VALUE `T?` stays `System.Nullable<T>` (ilemit builds it — the inner is kept verbatim in the
-                // ref build, lowered to the CLR primitive otherwise); a REFERENCE `T?` is STRIPPED to the bare lowered
-                // inner in EVERY build — a CLR reference is nullable in IL regardless, and its `?` was already emitted as
-                // an NRT byte by the decl walk. NEVER produce `Nullable<referenceType>` (ilemit's MapNullable asserts the
-                // inner is a value type, in the ref build too). Decided on the SEMANTIC inner via the struct-ness oracle.
-                // Only VALUE inners reach here (so `typeArg` is moot): bir2cir's ReferenceNullableStrip (Program.cs) removes
-                // every reference-`T?` wrapper — INCLUDING nested type-args — BEFORE this pass, so a nullable collection
-                // type-arg (`Map<K, List<V>?>`) already had its `?` stripped and collapses via the bare-List path (Root-V).
-                // (This is why the #100/H3 "propagate typeArg through Nullable" idea was a no-op — the smuggle can't occur here.)
-                var lowered = LowerType(n.Of, refBuild, force, typeArg: false);
-                return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
-            }
+                {
+                    // #37/#48: a VALUE `T?` stays `System.Nullable<T>` (ilemit builds it — the inner is kept verbatim in the
+                    // ref build, lowered to the CLR primitive otherwise); a REFERENCE `T?` is STRIPPED to the bare lowered
+                    // inner in EVERY build — a CLR reference is nullable in IL regardless, and its `?` was already emitted as
+                    // an NRT byte by the decl walk. NEVER produce `Nullable<referenceType>` (ilemit's MapNullable asserts the
+                    // inner is a value type, in the ref build too). Decided on the SEMANTIC inner via the struct-ness oracle.
+                    // Only VALUE inners reach here (so `typeArg` is moot): bir2cir's ReferenceNullableStrip (Program.cs) removes
+                    // every reference-`T?` wrapper — INCLUDING nested type-args — BEFORE this pass, so a nullable collection
+                    // type-arg (`Map<K, List<V>?>`) already had its `?` stripped and collapses via the bare-List path (Root-V).
+                    // (This is why the #100/H3 "propagate typeArg through Nullable" idea was a no-op — the smuggle can't occur here.)
+                    var lowered = LowerType(n.Of, refBuild, force, typeArg: false);
+                    return IsValueNullableInner(n.Of) ? new TypeNode.Nullable(lowered) : lowered;
+                }
             case TypeNode.Array a:
                 return new TypeNode.Array(LowerType(a.Elem, refBuild, force, typeArg: false));
             case TypeNode.ByRef b:
@@ -452,14 +459,17 @@ static class BirTypeLowering
                 // STEP-1 clrName migration: kotc emits a pure-Kotlin `overrides` marker (the override closure) so a
                 // future bir2cir decl-rename pass can derive BCL slot names from the ref.dll @ClrIntrinsic. It is
                 // bir2cir-internal metadata — strip it here so it never reaches the CIR/ilemit (keeps emit byte-identical).
-                if (kv.Key is "overrides" or "fakeOverride") continue;
+                if (kv.Key is "overrides" or "fakeOverride"
+                    or KotlinPropertyAccessors.SourceNameKey or KotlinPropertyAccessors.KindKey
+                    or KotlinPropertyAccessors.PropertyRolesKey or KotlinPropertyAccessors.AssociationKey
+                    or FBoundStarProjectionErasure.SourceMemberKey) continue;
                 // #122: the frontend static-type stamp `sty` is bir2cir-internal (consumed by StaticType up through the
                 // CharSequence bridge). Strip it here so it never reaches CIR/ilemit — a consumed hint, not a CIR slot.
                 if (kv.Key == "sty") continue;
                 if (kv.Value == null) { copy[kv.Key] = null; continue; }
                 if (kv.Key == "attrs")
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata
-                else if (kv.Key == "sig")
+                else if (kv.Key is "sig" or "getSig" or "setSig")
                     copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here);   // sig = param types
                 else if (ReturnKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerReturnValued(kv.Value, refBuild, here);   // Unit-in-return -> void (uniform)

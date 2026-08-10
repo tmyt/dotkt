@@ -50,9 +50,9 @@ static class RangeForLowering
     {
         o.Remove("rangeType");
         o["accessOwner"] = TypeJson.Fqn("kotlin.ranges.IntProgression");
-        o["firstM"] = "get_first";
-        o["lastM"] = "get_last";
-        o["stepM"] = "get_step";
+        o["firstM"] = KotlinPropertyAccessors.PhysicalName("first", "get");
+        o["lastM"] = KotlinPropertyAccessors.PhysicalName("last", "get");
+        o["stepM"] = KotlinPropertyAccessors.PhysicalName("step", "get");
     }
 
     // app build: rewrite the `forRange` in place into block{ var __rng; for{ get_first .. get_last, step 1 } }.
@@ -66,25 +66,34 @@ static class RangeForLowering
         var range = o["range"];
         var body = o["body"] as JsonArray ?? new JsonArray();
 
-        JsonObject Acc(string m) => new JsonObject
+        JsonObject Acc(string property) => new JsonObject
         {
             ["k"] = "callInstance",
             ["ownerType"] = TypeJson.Fqn("kotlin.ranges.IntProgression"),
             ["virtual"] = true,
             ["recv"] = new JsonObject { ["k"] = "local", ["name"] = rng },
-            ["method"] = m,
+            ["method"] = property,
+            ["prop"] = "get",
             ["args"] = new JsonArray(),
         };
 
         var varStmt = new JsonObject
         {
-            ["k"] = "var", ["name"] = rng, ["type"] = rangeType?.DeepClone(), ["init"] = range?.DeepClone(),
+            ["k"] = "var",
+            ["name"] = rng,
+            ["type"] = rangeType?.DeepClone(),
+            ["init"] = range?.DeepClone(),
         };
         var forStmt = new JsonObject
         {
-            ["k"] = "for", ["label"] = label?.DeepClone(), ["var"] = loopVar,
-            ["from"] = Acc("get_first"), ["to"] = Acc("get_last"),
-            ["cmp"] = "<=", ["step"] = 1, ["body"] = body.DeepClone(),
+            ["k"] = "for",
+            ["label"] = label?.DeepClone(),
+            ["var"] = loopVar,
+            ["from"] = Acc("first"),
+            ["to"] = Acc("last"),
+            ["cmp"] = "<=",
+            ["step"] = 1,
+            ["body"] = body.DeepClone(),
         };
 
         foreach (var key in o.Select(kv => kv.Key).ToList()) o.Remove(key);

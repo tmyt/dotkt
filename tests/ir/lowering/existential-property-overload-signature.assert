@@ -1,0 +1,3 @@
+# The frontend-selected String-context accessor, not the first same-name physical accessor, supplies the slot.
++"ownerType":{"t":"fqn","name":"SemanticPropertyBox$dotkt$star"},"virtual":true,"recv":{"k":"local","name":"box"},"method":"get_item","sig":[{"t":"fqn","name":"System.String"}]
+-"method":"get_item","sig":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"System.String"},"args":[{"k":"const","type":{"t":"fqn","name":"System.String"},"value":"ctx"}]

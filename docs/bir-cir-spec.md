@@ -172,6 +172,27 @@ suspend captures, not Type slots, and must be consumed before CIR. The schema ga
 `capturedTypeParams` are forbidden in BIR. A CIR `newClrStaticDelegate` must already carry the resolved
 `memberSig`/`memberOwner` descriptors required by ilemit.
 
+Kotlin property accessors follow the same phase ownership (#397). In BIR, each accessor declaration carries the
+source `propertyName`, an explicit `propertyAccessor` role (`get` or `set`), and a file-local `propertyAssociation`;
+the Property declaration carries the same association plus its `kotlinAccessors` role list. The association is needed
+because properties may be overloaded by context or extension receiver while sharing a source name and accessor role;
+it is limited to linking one Property record to its own accessors and is not a general declaration identity. kotc does
+not author CLR MethodDef names or Property getter/setter links.
+Property calls continue to use the bare Kotlin property name plus the existing `prop:get|set` role. bir2cir is the
+only layer that projects those facts to physical MethodDef/MethodRef names and exact Property links (physical name,
+method generic arity, and parameter signature). ilemit consumes that descriptor one-to-one. For this format version
+the physical rule remains `get_<name>` / `set_<name>`, but that spelling is one-way output: no pass may parse it to
+recover Kotlin meaning. External CLR properties are read through Property/MethodSemantics metadata. The four BIR-only
+identity fields (`propertyName`, `propertyAccessor`, `propertyAssociation`, `kotlinAccessors`) and `prop:get|set`
+calls are forbidden in final CIR.
+
+A CLR Property signature has no method-generic parameter owner, so a method-generic extension accessor cannot be
+attached to a valid Property row when its receiver or context mentions `!!T`. bir2cir omits that unrepresentable row
+and stamps each accessor MethodDef with the exact source name, role, and opaque association in the trusted
+`KotlinPropertyAccessor` carrier. `dll2klib` reconstructs the Kotlin property from that carrier without inspecting the
+physical method name or re-resolving an erased signature. Representable properties continue to use ordinary
+Property/MethodSemantics metadata; synthesized override bridges receive the same exact association.
+
 Control flow: the structured `for*` family and the CFG `label`/`brIf`/`goto` while-family coexist
 (mid-migration, audit D8) — the freeze picks the CFG form as canonical for lowered output; the structured
 `for*` may remain as a kotc-emit sugar that bir2cir lowers. [finalize in impl]

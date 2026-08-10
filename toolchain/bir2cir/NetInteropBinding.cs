@@ -192,9 +192,7 @@ static class NetInteropBinding
         // A declaration loaded from a standard reference KLIB surfaces a CLR event as an ordinary read-only
         // `ClrEvent<T>` property. Recover its CLR shape here from the authoritative reference metadata.
         var projectedPropKind = Str(node["prop"]);
-        var projectedEventName = method != null && method.StartsWith("get_", StringComparison.Ordinal)
-            ? method[4..]
-            : projectedPropKind == "get" ? method : null;
+        var projectedEventName = projectedPropKind == "get" ? method : null;
         if (projectedEventName != null &&
             _refs.TryClrEventIsStatic(bare, projectedEventName, out var eventIsStatic))
         {
@@ -277,17 +275,18 @@ static class NetInteropBinding
             && (method == "name" || method == "ordinal"))
         {
             var recv0 = Take("recv");
-            if (method == "name") { node["k"] = "objMethod"; node["method"] = "ToString"; node["recv"] = recv0; }
-            else { node["k"] = "enumOrdinal"; node["e"] = recv0; node["type"] = owner; }
+            var replacement = method == "name"
+                ? new JsonObject { ["k"] = "objMethod", ["method"] = "ToString", ["recv"] = recv0 }
+                : new JsonObject { ["k"] = "enumOrdinal", ["e"] = recv0, ["type"] = owner };
+            node.Clear();
+            foreach (var pair in replacement) node[pair.Key] = pair.Value?.DeepClone();
             return;
         }
 
         // PROPERTY ACCESSOR by the frontend get/set KIND (A2 step 3): kotc emits the BARE property NAME + a
-        // `"prop":"get"/"set"` marker (the accessor KIND — a frontend fact from correspondingPropertySymbol), NOT the
-        // `get_`/`set_` .NET accessor slot. bir2cir APPLIES the .NET accessor convention off the refs: a real non-indexed
-        // .NET property/field of that bare name -> clrPropGet/clrPropSet (the SAME node the legacy get_-prefix path
-        // produces); otherwise (a synthetic member-extension / top-level-extension accessor with no matching .NET member)
-        // reconstruct the `get_`/`set_<name>` plain method call and fall through — byte-identical to the old kotc emission.
+        // `"prop":"get"/"set"` role (a frontend fact from correspondingPropertySymbol), not a CLR accessor name.
+        // A real non-indexed Property/field of that bare name becomes clrPropGet/clrPropSet; otherwise a synthetic
+        // accessor method receives its physical name through KotlinPropertyAccessors' one-way allocation rule.
         var propKind = Str(Take("prop"));
         // Standard KLIB metadata has an operator bit but no CLR-indexer side channel, so kotc emits plain operator
         // `get`/`set` calls. A real default indexed property and absence of a literal same-name method is sufficient
@@ -342,40 +341,9 @@ static class NetInteropBinding
                 if (!isStatic) CarrySuper();
                 return;
             }
-            // No matching .NET property/field -> a synthetic accessor METHOD: apply the get_/set_ convention and fall
-            // through to the plain instance/static method path (byte-identical to the old kotc-baked get_/set_<name>).
-            method = (isSet ? "set_" : "get_") + method;
-        }
-
-        // PROPERTY / FIELD accessor: a `get_X`/`set_X` that names a real .NET property (non-indexed) or field ->
-        // clrPropGet/clrPropSet (ilemit emits the accessor call or an ldsfld/ldfld for a field-backed one). A `get_X`
-        // that names NEITHER (a hand-written `get_`-prefixed method, an indexer `get_Item`, a synthetic
-        // member-extension accessor) falls through to the plain method path below — exactly as kotc emitted before.
-        if (method != null && (method.StartsWith("get_", StringComparison.Ordinal) || method.StartsWith("set_", StringComparison.Ordinal))
-            && method.Length > 4 && MemberIsPropertyOrField(netType, method.Substring(4)))
-        {
-            var propName = method.Substring(4);
-            if (method.StartsWith("get_", StringComparison.Ordinal))
-            {
-                node["k"] = "clrPropGet";
-                node["type"] = owner;
-                node["name"] = propName;
-                node["ret"] = Take("ret");
-                node["static"] = isStatic;
-                node["recv"] = isStatic ? null : Take("recv");
-                if (!isStatic) CarrySuper();
-                return;
-            }
-            node["k"] = "clrPropSet";
-            node["type"] = owner;
-            node["name"] = propName;
-            node["static"] = isStatic;
-            node["recv"] = isStatic ? null : Take("recv");
-            JsonNode value = null;
-            if (args.Count > 0) { value = args[0]; args.RemoveAt(0); }   // detach args[0] from the (already-detached) array
-            node["value"] = value;
-            if (!isStatic) CarrySuper();
-            return;
+            // No matching .NET property/field -> a synthetic accessor method. Apply the shared forward allocation and
+            // fall through to the plain instance/static method path.
+            method = KotlinPropertyAccessors.PhysicalName(method, propKind);
         }
 
         // .NET OPERATOR: kotc emits a .NET-type operator (`Vec2 + Vec2`, `-a`) as the PLAIN Kotlin operator identity
@@ -697,9 +665,15 @@ static class NetInteropBinding
     // static-method slot. kotc emits the Kotlin identity; this pass reconstructs the .NET operator off the refs.
     static readonly Dictionary<string, string> OperatorToNet = new(StringComparer.Ordinal)
     {
-        ["plus"] = "op_Addition", ["minus"] = "op_Subtraction", ["times"] = "op_Multiply", ["div"] = "op_Division",
-        ["rem"] = "op_Modulus", ["unaryMinus"] = "op_UnaryNegation", ["unaryPlus"] = "op_UnaryPlus",
-        ["inc"] = "op_Increment", ["dec"] = "op_Decrement",
+        ["plus"] = "op_Addition",
+        ["minus"] = "op_Subtraction",
+        ["times"] = "op_Multiply",
+        ["div"] = "op_Division",
+        ["rem"] = "op_Modulus",
+        ["unaryMinus"] = "op_UnaryNegation",
+        ["unaryPlus"] = "op_UnaryPlus",
+        ["inc"] = "op_Increment",
+        ["dec"] = "op_Decrement",
     };
 
     // True iff the resolved owner is a .NET `enum` type (#107) — its members (name/ordinal) bind to the CLR enum
@@ -940,7 +914,9 @@ static class NetInteropBinding
         var name = "__rxopt$" + System.Threading.Interlocked.Increment(ref _rxCounter);
         var decl = new JsonObject
         {
-            ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Fqn("kotlin.Int"),
+            ["k"] = "var",
+            ["name"] = name,
+            ["type"] = TypeJson.Fqn("kotlin.Int"),
             ["init"] = new JsonObject { ["k"] = "enumOrdinal", ["e"] = optArg },
         };
         JsonNode chain = ConstInt(0);
@@ -949,13 +925,17 @@ static class NetInteropBinding
             var (ord, bit) = RegexOptionBits[i];
             chain = new JsonObject
             {
-                ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Int"),
+                ["k"] = "cond",
+                ["type"] = TypeJson.Fqn("kotlin.Int"),
                 ["cond"] = new JsonObject
                 {
-                    ["k"] = "binOp", ["op"] = "==",
-                    ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = name }, ["rhs"] = ConstInt(ord),
+                    ["k"] = "binOp",
+                    ["op"] = "==",
+                    ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = name },
+                    ["rhs"] = ConstInt(ord),
                 },
-                ["then"] = ConstInt(bit), ["else"] = chain,
+                ["then"] = ConstInt(bit),
+                ["else"] = chain,
             };
         }
         return new JsonObject { ["k"] = "valueBlock", ["stmts"] = new JsonArray { decl }, ["result"] = chain };
@@ -970,16 +950,21 @@ static class NetInteropBinding
         var name = "__rxopts$" + System.Threading.Interlocked.Increment(ref _rxCounter);
         var decl = new JsonObject
         {
-            ["k"] = "var", ["name"] = name, ["type"] = setType.DeepClone(), ["init"] = setArg,
+            ["k"] = "var",
+            ["name"] = name,
+            ["type"] = setType.DeepClone(),
+            ["init"] = setArg,
         };
         JsonNode result = null;
         foreach (var (ord, bit) in RegexOptionBits)
         {
             var test = new JsonObject
             {
-                ["k"] = "cond", ["type"] = TypeJson.Fqn("kotlin.Int"),
+                ["k"] = "cond",
+                ["type"] = TypeJson.Fqn("kotlin.Int"),
                 ["cond"] = ContainsOption(name, ord, setType),
-                ["then"] = ConstInt(bit), ["else"] = ConstInt(0),
+                ["then"] = ConstInt(bit),
+                ["else"] = ConstInt(0),
             };
             result = result == null
                 ? (JsonNode)test

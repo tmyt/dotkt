@@ -81,8 +81,9 @@ static class KClassMemberBinding
         // ownerType is `kotlin.reflect.KClass` (its type-arg, if any, is dropped by OwnerName — we key on the identity).
         if (TypeJson.OwnerName(node["ownerType"]) != "kotlin.reflect.KClass") return null;
         var member = Str(node["method"]);
-        bool simple = member == "get_simpleName";
-        if (!simple && member != "get_qualifiedName") return null;
+        if (Str(node["prop"]) != "get") return null;
+        bool simple = member == "simpleName";
+        if (!simple && member != "qualifiedName") return null;
         if (node["recv"] is not JsonObject recv) return null;   // the ::class receiver (a System.Type value)
 
         // Const-fold when the receiver's Kotlin type identity is statically known (see the file header).
