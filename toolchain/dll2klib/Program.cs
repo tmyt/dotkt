@@ -1387,6 +1387,9 @@ internal sealed class AssemblyScanner
             MetadataAttributes.DotKtNs + "KotlinSourceMethodAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinDeclarationIdentityAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinExtensionCoreAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
@@ -1898,7 +1901,8 @@ internal sealed class AssemblyScanner
                     requireTrust: false))
                 continue;
             if (!IsPublicOrProtected(method.Attributes)) continue;
-            var name = _md.GetString(method.Name);
+            var declarationIdentity = KotlinDeclarationIdentityCarrier(methodHandle);
+            var name = declarationIdentity?.Name ?? _md.GetString(method.Name);
             if (accessorMethods.Contains(methodHandle)) continue;
             var context = new GenericContext(handle, methodHandle, typeParameterIds);
             var sig = method.DecodeSignature(signatures, context);
@@ -1934,12 +1938,20 @@ internal sealed class AssemblyScanner
                     Flags = Flags.Callable(method.Attributes, modalityForMethod,
                         kotlinFlags,
                         isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")),
-                    ReturnType = ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
-                    ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context) },
+                    ReturnType = declarationIdentity?.ReturnType is TypeNode semanticReturn
+                        ? signatures.FromTypeNode(semanticReturn)
+                        : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
+                    ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
+                        declarationIdentity?.Parameters) },
                 };
                 PromoteContextParameters(method, function);
                 PromoteReceiver(methodHandle, method, function);
                 AddMethodTypeParameters(method, function, names, signatures, context);
+                // A member's declaring-class path already carries its physical owner. Preserve only the exact
+                // frontend identity; ClrExternal is the top-level declaration transport.
+                if (declarationIdentity is { } identity)
+                    function.FunctionAnnotation.Add(
+                        KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
                 result.Function.Add(function);
                 projectedFunctions.Add(new ProjectedFunction(
                     methodHandle,
@@ -3216,6 +3228,7 @@ internal sealed class AssemblyScanner
         {
             var method = _md.GetMethodDefinition(entry.KotlinImplementation);
             if (!IsPublicOrProtected(method.Attributes)) continue;
+            var declarationIdentity = KotlinDeclarationIdentityCarrier(entry.KotlinImplementation);
             var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
             var context = new GenericContext(owner, entry.KotlinImplementation, typeParameterIds);
             var signature = method.DecodeSignature(signatures, context);
@@ -3223,7 +3236,8 @@ internal sealed class AssemblyScanner
                 entry.KotlinImplementation, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
             var function = new Function
             {
-                Name = names.String(_md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
+                Name = names.String(declarationIdentity?.Name ??
+                    _md.GetString(_md.GetMethodDefinition(entry.Declaration).Name)),
                 Flags = (Flags.Callable(
                     method.Attributes,
                     CallableModality(method.Attributes),
@@ -3232,10 +3246,13 @@ internal sealed class AssemblyScanner
                         entry.KotlinImplementation,
                         MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18)) |
                     (1 << 18),
-                ReturnType = ProjectReturn(
-                    entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
+                ReturnType = declarationIdentity?.ReturnType is TypeNode semanticReturn
+                    ? signatures.FromTypeNode(semanticReturn)
+                    : ProjectReturn(
+                        entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
                 ValueParameter = {
-                    Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context)
+                    Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context,
+                        declarationIdentity?.Parameters)
                 },
                 ReceiverType = CSharp14ExtensionReceiver(
                     entry.ReceiverMarker, entry.BlockArity, names, signatures,
@@ -3244,6 +3261,9 @@ internal sealed class AssemblyScanner
             PromoteContextParameters(method, function);
             AddCSharp14MethodTypeParameters(method, function.TypeParameter, names, signatures, context);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
+            if (declarationIdentity is { } identity)
+                function.FunctionAnnotation.Add(
+                    KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
             function.Flags |= 1;
             package.Function.Add(function);
             projectedFunctions.Add(new ProjectedFunction(
@@ -3536,7 +3556,8 @@ internal sealed class AssemblyScanner
                     "System.Runtime.CompilerServices.CompilerGeneratedAttribute",
                     requireTrust: false))
                 continue;
-            var name = _md.GetString(method.Name);
+            var declarationIdentity = KotlinDeclarationIdentityCarrier(methodHandle);
+            var name = declarationIdentity?.Name ?? _md.GetString(method.Name);
             if (!IsPublicOrProtected(method.Attributes) || name is ".ctor" or ".cctor" ||
                 (method.Attributes & MethodAttributes.SpecialName) != 0 || name.StartsWith('<') ||
                 methodAccessorMethods.Contains(methodHandle))
@@ -3553,8 +3574,11 @@ internal sealed class AssemblyScanner
                 Flags = Flags.Callable(method.Attributes, modality,
                     _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0,
                     isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18),
-                ReturnType = ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
-                ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context) },
+                ReturnType = declarationIdentity?.ReturnType is TypeNode semanticReturn
+                    ? signatures.FromTypeNode(semanticReturn)
+                    : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
+                ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
+                    declarationIdentity?.Parameters) },
             };
             PromoteContextParameters(method, function);
             // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
@@ -3582,6 +3606,9 @@ internal sealed class AssemblyScanner
                 function.TypeParameter.Add(tp);
             }
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
+            if (declarationIdentity is { } identity)
+                function.FunctionAnnotation.Add(
+                    KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
             function.Flags |= 1;
             package.Function.Add(function);
         }
@@ -3645,7 +3672,16 @@ internal sealed class AssemblyScanner
                 projected.ReceiverType = ProjectType(receiverHandle, sig.ParameterTypes[0], handle, names, signatures, context);
             }
             ApplyAccessorFlags(projected, accessors.Getter, accessors.Setter);
+            var getterIdentity = accessors.Getter.IsNil
+                ? null
+                : KotlinDeclarationIdentityCarrier(accessors.Getter)?.Id;
+            var setterIdentity = accessors.Setter.IsNil
+                ? null
+                : KotlinDeclarationIdentityCarrier(accessors.Setter)?.Id;
             projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
+            if (getterIdentity is not null || setterIdentity is not null)
+                projected.PropertyAnnotation.Add(KotlinDeclarationIdentityAnnotation(
+                    names, getterIdentity ?? "", setterIdentity ?? ""));
             projected.Flags |= 1;
             package.Property.Add(projected);
             propertyNames.Add(KotlinPropertySourceName(property, accessors));
@@ -4127,6 +4163,43 @@ internal sealed class AssemblyScanner
         return nameNode.GetString();
     }
 
+    private sealed record DeclarationIdentityCarrier(
+        string Id,
+        string Name,
+        IReadOnlyList<TypeNode>? Parameters,
+        TypeNode? ReturnType);
+
+    private DeclarationIdentityCarrier? KotlinDeclarationIdentityCarrier(MethodDefinitionHandle methodHandle)
+    {
+        using var document = _attrs.CarrierDocument(
+            methodHandle, MetadataAttributes.DotKtNs + "KotlinDeclarationIdentityAttribute");
+        if (document is null) return null;
+        var root = document.RootElement;
+        var propertyCount = root.ValueKind == JsonValueKind.Object ? root.EnumerateObject().Count() : 0;
+        if (propertyCount is not (2 or 3) ||
+            !root.TryGetProperty("id", out var idNode) || idNode.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
+            propertyCount == 3 && (!root.TryGetProperty("signature", out var signatureNode) ||
+                signatureNode.ValueKind != JsonValueKind.Object))
+            throw new InvalidDataException("malformed [KotlinDeclarationIdentity] payload");
+        var id = idNode.GetString();
+        var name = nameNode.GetString();
+        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
+            throw new InvalidDataException("empty [KotlinDeclarationIdentity] payload");
+        if (propertyCount == 2)
+            return new DeclarationIdentityCarrier(id, name, null, null);
+        if (!root.TryGetProperty("signature", out signatureNode))
+            throw new InvalidDataException("missing [KotlinDeclarationIdentity] semantic signature");
+        if (signatureNode.EnumerateObject().Count() != 2 ||
+            !signatureNode.TryGetProperty("params", out var paramsNode) || paramsNode.ValueKind != JsonValueKind.Array ||
+            !signatureNode.TryGetProperty("ret", out var retNode) || TypeNode.Read(retNode) is not { } returnType)
+            throw new InvalidDataException("malformed [KotlinDeclarationIdentity] semantic signature");
+        var parameters = paramsNode.EnumerateArray().Select(parameter =>
+            TypeNode.Read(parameter) ?? throw new InvalidDataException(
+                "malformed [KotlinDeclarationIdentity] semantic parameter type")).ToArray();
+        return new DeclarationIdentityCarrier(id, name, parameters, returnType);
+    }
+
     /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor
     /// is a Kotlin static exactly when its CLR accessor is static (a `companion { }` property), while a FILE-FACADE
     /// accessor is static only when the trusted companion-extension carrier says so — every ordinary top-level
@@ -4147,6 +4220,8 @@ internal sealed class AssemblyScanner
         if (representativeHandle.IsNil)
             throw new InvalidDataException($"Kotlin accessor property '{propertyName}' has no accessor");
         var representative = _md.GetMethodDefinition(representativeHandle);
+        var declarationIdentity = KotlinDeclarationIdentityCarrier(representativeHandle);
+        var semanticPropertyName = PropertyAccessorAssociation(representativeHandle)?.Name ?? propertyName;
         var physical = PhysicalParameters(representative);
         var propertyPhysical = getterHandle.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
         var hasReceiver = physical.Count > 0 && !physical[0].Row.Name.IsNil &&
@@ -4155,17 +4230,28 @@ internal sealed class AssemblyScanner
         var propertySignature = propertyHandle.IsNil
             ? representative.DecodeSignature(signatures, context)
             : _md.GetPropertyDefinition(propertyHandle).DecodeSignature(signatures, context);
+        if (declarationIdentity?.Parameters is { } semanticParameters &&
+            semanticParameters.Count != representative.DecodeSignature(signatures, context).ParameterTypes.Length)
+            throw new InvalidDataException(
+                $"[KotlinDeclarationIdentity] signature parameter count does not match property accessor '{propertyName}'");
         var propertyTypeSignature = propertyHandle.IsNil && getterHandle.IsNil
             ? propertySignature.ParameterTypes[^1]
             : propertySignature.ReturnType;
-        var type = !getterHandle.IsNil
-            ? ProjectReturn(getterHandle, representative, propertyTypeSignature,
-                names, signatures, context)
-            : ProjectType(
-                physical[^1].Handle, propertyTypeSignature, owner, names, signatures, context);
+        var type = declarationIdentity is { ReturnType: { } semanticReturn } && !getterHandle.IsNil
+            ? signatures.FromTypeNode(semanticReturn)
+            : declarationIdentity?.Parameters is { Count: > 0 } setterSemanticParameters && getterHandle.IsNil
+                ? signatures.FromTypeNode(setterSemanticParameters[^1])
+                : !getterHandle.IsNil
+                    ? ProjectReturn(getterHandle, representative, propertyTypeSignature,
+                        names, signatures, context)
+                    : ProjectType(
+                        physical[^1].Handle, propertyTypeSignature, owner, names, signatures, context);
         var property = new Property
         {
-            Name = names.String(propertyName),
+            // The CLR Property row may have a stable physical suffix when two Kotlin properties erase to the same
+            // CLI signature. #397's exact accessor association owns the semantic property spelling; never leak or
+            // reverse-parse either the physical Property name or the accessor MethodDef name into KLIB.
+            Name = names.String(semanticPropertyName),
             ReturnType = type,
             Flags = Flags.Property(representative.Attributes, !setterHandle.IsNil, isStatic),
             SetterValueParameter = setterHandle.IsNil
@@ -4173,6 +4259,11 @@ internal sealed class AssemblyScanner
                 : new ValueParameter { Name = names.String("value"), Type = type.Clone() },
         };
         ApplyAccessorFlags(property, getterHandle, setterHandle);
+        var getterIdentity = getterHandle.IsNil ? null : KotlinDeclarationIdentityCarrier(getterHandle)?.Id;
+        var setterIdentity = setterHandle.IsNil ? null : KotlinDeclarationIdentityCarrier(setterHandle)?.Id;
+        if (getterIdentity is not null || setterIdentity is not null)
+            property.PropertyAnnotation.Add(KotlinDeclarationIdentityAnnotation(
+                names, getterIdentity ?? "", setterIdentity ?? ""));
         var contextStart = 0;
         // A COMPANION EXTENSION has no physical receiver slot at all — the frontend drops it — so its associated
         // type comes from the carrier rather than from a leading `__self` parameter.
@@ -4180,8 +4271,10 @@ internal sealed class AssemblyScanner
             property.ReceiverType = companionReceiver;
         else if (hasReceiver)
         {
-            property.ReceiverType = ProjectType(
-                propertyPhysical[0].Handle, propertySignature.ParameterTypes[0], owner, names, signatures, context);
+            property.ReceiverType = declarationIdentity?.Parameters is { Count: > 0 } receiverSemanticParameters
+                ? signatures.FromTypeNode(receiverSemanticParameters[0])
+                : ProjectType(
+                    propertyPhysical[0].Handle, propertySignature.ParameterTypes[0], owner, names, signatures, context);
             contextStart = 1;
         }
         for (var i = contextStart; i < propertyPhysical.Count; i++)
@@ -4191,8 +4284,10 @@ internal sealed class AssemblyScanner
                 Name = names.String(propertyPhysical[i].Row.Name.IsNil
                     ? $"context{i - contextStart}"
                     : _md.GetString(propertyPhysical[i].Row.Name)),
-                Type = ProjectType(
-                    propertyPhysical[i].Handle, propertySignature.ParameterTypes[i], owner, names, signatures, context),
+                Type = declarationIdentity?.Parameters is { } contextSemanticParameters
+                    ? signatures.FromTypeNode(contextSemanticParameters[i])
+                    : ProjectType(
+                        propertyPhysical[i].Handle, propertySignature.ParameterTypes[i], owner, names, signatures, context),
             });
         }
         foreach (var gpHandle in representative.GetGenericParameters())
@@ -4229,6 +4324,31 @@ internal sealed class AssemblyScanner
             {
                 Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
                 StringValue = names.String(owner),
+            },
+        });
+        return annotation;
+    }
+
+    private static Annotation KotlinDeclarationIdentityAnnotation(
+        NameTable names, string id, string setterId)
+    {
+        var annotation = new Annotation { Id = names.Class("kotlin.clr.KotlinDeclarationIdentity") };
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String("id"),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                StringValue = names.String(id),
+            },
+        });
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String("setterId"),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                StringValue = names.String(setterId),
             },
         });
         return annotation;
@@ -4691,8 +4811,12 @@ internal sealed class AssemblyScanner
         ImmutableArray<KType> types,
         NameTable names,
         SignatureDecoder signatures,
-        GenericContext context)
+        GenericContext context,
+        IReadOnlyList<TypeNode>? semanticTypes = null)
     {
+        if (semanticTypes is not null && semanticTypes.Count != types.Length)
+            throw new InvalidDataException(
+                $"[KotlinDeclarationIdentity] signature parameter count does not match '{_md.GetString(method.Name)}'");
         var rows = method.GetParameters().Select(h => (Handle: h, Row: _md.GetParameter(h)))
             .Where(p => p.Row.SequenceNumber > 0).ToDictionary(p => p.Row.SequenceNumber);
         for (var i = 0; i < types.Length; i++)
@@ -4706,13 +4830,17 @@ internal sealed class AssemblyScanner
                 yield return new ValueParameter
                 {
                     Name = names.String($"arg{i}"),
-                    Type = ProjectType(default(EntityHandle), types[i], methodHandle, names, signatures, context),
+                    Type = semanticTypes is null
+                        ? ProjectType(default(EntityHandle), types[i], methodHandle, names, signatures, context)
+                        : signatures.FromTypeNode(semanticTypes[i]),
                 };
                 continue;
             }
             var row = entry.Row;
             var name = row.Name.IsNil ? $"arg{i}" : _md.GetString(row.Name);
-            var projected = ProjectType(entry.Handle, types[i], methodHandle, names, signatures, context);
+            var projected = semanticTypes is null
+                ? ProjectType(entry.Handle, types[i], methodHandle, names, signatures, context)
+                : signatures.FromTypeNode(semanticTypes[i]);
             var flags = (row.Attributes & (ParameterAttributes.Optional | ParameterAttributes.HasDefault)) != 0 ||
                 _attrs.Has(entry.Handle, "kotlin.clr.KotlinDefault", requireTrust: false) ? 1 << 1 : 0;
             var value = new ValueParameter

@@ -109,7 +109,10 @@ static class DefaultArgSplice
         var method = Str(node["method"]);
         if (owner == null || method == null) return;
         var sigKey = string.Join(",", sig.Select(t => ReferenceMetadataIndex.ParamKey(t)));
-        var defaults = refs.KotlinDefaultsFor(owner, method, sig.Count, sigKey);
+        var declarationId = Str(node[DeclarationIdentityBinding.Key]);
+        var defaults = declarationId != null
+            ? refs.KotlinDefaultsForDeclarationIdentity(declarationId)
+            : refs.KotlinDefaultsFor(owner, method, sig.Count, sigKey);
         if (defaults == null) return;
 
         // Parse the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
@@ -214,7 +217,10 @@ static class DefaultArgSplice
         }
         // The callee as a DIAGNOSTIC names itself: `.ctor` is a key component, not something to show a reader.
         var label = isNew ? owner + " constructor" : method;
-        var defaults = refs.KotlinDefaultsFor(owner, method, sigCount, sigKey);
+        var declarationId = !isNew ? Str(node[DeclarationIdentityBinding.Key]) : null;
+        var defaults = declarationId != null
+            ? refs.KotlinDefaultsForDeclarationIdentity(declarationId)
+            : refs.KotlinDefaultsFor(owner, method, sigCount, sigKey);
         if (defaults == null)
         {
             if (refs.KotlinDefaultsAmbiguous(owner, method, sigCount))

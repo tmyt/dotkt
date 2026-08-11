@@ -1,0 +1,85 @@
+{
+  "fileClass": "PhysicalObjectSpellingCollisionKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "physicalObjectCollision",
+      "declarationId": "fixture-physical-object",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "params": [{ "name": "value", "type": { "t": "fqn", "name": "System.Object" } }],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 } }]
+    },
+    {
+      "name": "physicalObjectCollision",
+      "declarationId": "fixture-physical-suspend",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "params": [{
+        "name": "value",
+        "type": {
+          "t": "fn",
+          "suspend": true,
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "params": []
+        }
+      }],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 2 } }]
+    },
+    {
+      "name": "physicalObjectProperty",
+      "declarationId": "fixture-property-object",
+      "propertyName": "physicalObjectProperty",
+      "propertyAccessor": "get",
+      "propertyAssociation": "p-object",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "params": [{ "name": "value", "type": { "t": "fqn", "name": "System.Object" } }],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 3 } }]
+    },
+    {
+      "name": "physicalObjectProperty",
+      "declarationId": "fixture-property-suspend",
+      "propertyName": "physicalObjectProperty",
+      "propertyAccessor": "get",
+      "propertyAssociation": "p-suspend",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "params": [{
+        "name": "value",
+        "type": {
+          "t": "fn",
+          "suspend": true,
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "params": []
+        }
+      }],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 4 } }]
+    }
+  ],
+  "properties": [
+    {
+      "name": "physicalObjectProperty",
+      "type": { "t": "fqn", "name": "kotlin.Int" },
+      "kotlinAccessors": ["get"],
+      "propertyAssociation": "p-object"
+    },
+    {
+      "name": "physicalObjectProperty",
+      "type": { "t": "fqn", "name": "kotlin.Int" },
+      "kotlinAccessors": ["get"],
+      "propertyAssociation": "p-suspend"
+    }
+  ]
+}

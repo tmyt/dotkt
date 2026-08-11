@@ -328,7 +328,8 @@ static class FBoundStarProjectionErasure
                 // deterministic forwarding bridge as an owner-T-dependent signature. The bridge is declared on the
                 // original owner, so it can invoke a private implementation without changing source visibility.
                 var dependent = ContainsOwnerTvInSignature(method) || !IsPublic(method);
-                var slot = InterfaceSlot(method, dependent ? StarMethodName(owner, method) : null, owners, refs);
+                var slot = InterfaceSlot(method, dependent ? StarMethodName(owner, method) : null,
+                    owner.Name, owners, refs);
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
@@ -355,7 +356,7 @@ static class FBoundStarProjectionErasure
             {
                 if (HasOwnerDependentMethodConstraint(method)) continue;
                 var bridgeName = BaseStarMethodName(declaringName, defs[declaringName], method);
-                var slot = InterfaceSlot(method, bridgeName, owners, refs);
+                var slot = InterfaceSlot(method, bridgeName, owner.Name, owners, refs);
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
@@ -415,7 +416,7 @@ static class FBoundStarProjectionErasure
             target.Add(TypeJson.Write(inherited));
     }
 
-    static JsonObject InterfaceSlot(JsonObject method, string replacementName,
+    static JsonObject InterfaceSlot(JsonObject method, string replacementName, string semanticCarrierOwner,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         var slot = new JsonObject
@@ -435,6 +436,12 @@ static class FBoundStarProjectionErasure
         };
         if (method["typeParams"] is JsonArray tps && tps.Count > 0)
             slot["typeParams"] = EraseOwnerTypeParamConstraints(tps, owners, refs);
+        if (ExistentialSlotIdentity(method, semanticCarrierOwner) is string physicalIdentity)
+        {
+            slot[DeclarationIdentityBinding.Key] = physicalIdentity;
+            slot["declarationSourceName"] = method["declarationSourceName"]?.DeepClone()
+                ?? method["name"]?.DeepClone();
+        }
         // A dependent existential slot may need a distinct physical name, but later override/bridge passes still need
         // the source declaration identity. Property accessors retain their explicit #397 identity; ordinary methods
         // carry this pass-local source edge. Neither consumer recovers meaning from the replacement spelling.
@@ -501,6 +508,11 @@ static class FBoundStarProjectionErasure
             ["ret"] = TypeJson.Write(originalRet),
             ["args"] = args,
         };
+        // The existential bridge is only a representation of this already-selected source member. Preserve #395's
+        // exact declaration key on the forwarding edge so later suspend/collision lowering retargets the same
+        // MethodDef; the bridge itself remains compiler-generated and does not become a second Kotlin declaration.
+        if (Str(method[DeclarationIdentityBinding.Key]) is string declarationId)
+            call[DeclarationIdentityBinding.Key] = declarationId;
         if (method["typeParams"] is JsonArray methodTypeParams && methodTypeParams.Count > 0)
         {
             var typeArgs = new JsonArray();
@@ -560,6 +572,12 @@ static class FBoundStarProjectionErasure
         CopyResultFacts(method, bridge, owners, refs);
         return bridge;
     }
+
+    static string ExistentialSlotIdentity(JsonObject declaration, string semanticCarrierOwner) =>
+        Str(declaration[DeclarationIdentityBinding.Key]) is string declarationId
+            ? DeclarationIdentityBinding.PhysicalOnlyId(
+                declarationId, "existential-slot:" + semanticCarrierOwner)
+            : null;
 
     // This pass runs after declaration-side erasure has recorded semantic return facts but before suspend lowering.
     // A synthesized existential slot/bridge is a declaration in its own right, so it must carry the same facts in
@@ -693,16 +711,29 @@ static class FBoundStarProjectionErasure
 
     static bool ContainsOwnerTvInSignature(JsonObject method)
     {
+        // NullableGenericErasure runs before this pass. Its physical object slot no longer contains the owner Tv, but
+        // the preserved Kotlin slot still does and therefore still requires a distinct existential bridge. Ignoring
+        // that fact makes `G<T>.f(T?)` and `G<T>.f(Any?)` collapse again on G<*>, after #395 separated the source slots.
+        if (EncodedContainsOwnerTv(method["nullableGenericRet"])
+            || EncodedContainsOwnerTv(method["nullableGenericSuspendRet"])) return true;
         if (TypeJson.Read(method["ret"]) is TypeNode ret && ContainsOwnerTv(ret)) return true;
         if (method["params"] is JsonArray ps)
             foreach (var p in ps.OfType<JsonObject>())
-                if (TypeJson.Read(p["type"]) is TypeNode pt && ContainsOwnerTv(pt)) return true;
+                if (EncodedContainsOwnerTv(p["nullableGeneric"])
+                    || TypeJson.Read(p["type"]) is TypeNode pt && ContainsOwnerTv(pt)) return true;
         if (method["typeParams"] is JsonArray mtps)
             foreach (var tp in mtps.OfType<JsonObject>())
                 if (tp["constraints"] is JsonArray cs)
                     foreach (var c in cs)
                         if (TypeJson.Read(c) is TypeNode ct && ContainsOwnerTv(ct)) return true;
         return false;
+    }
+
+    static bool EncodedContainsOwnerTv(JsonNode node)
+    {
+        if (Str(node) is not string encoded) return false;
+        try { return ContainsOwnerTv(TypeNode.Parse(encoded)); }
+        catch { return false; }
     }
 
     static bool HasOwnerDependentMethodConstraint(JsonObject method)
@@ -768,13 +799,24 @@ static class FBoundStarProjectionErasure
     static void BindInheritedStarMember(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
     {
-        if (Str(call["k"]) != "callInstance"
+        var useKind = Str(call["k"]);
+        if (useKind is not ("callInstance" or "newBoundDelegate")
             || TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn { Args: { } args } f
             || Str(call["method"]) is not string authoredMethod) return;
+
+        void BindOwner(string physicalOwner)
+        {
+            var ownerType = TypeJson.Write(new TypeNode.Fqn(physicalOwner));
+            call["ownerType"] = ownerType;
+            // A bound delegate carries both the receiver seam and the declaring MethodDef owner. Once the selected
+            // Kotlin member is projected onto an existential slot, both facts must name that same physical carrier.
+            if (useKind == "newBoundDelegate") call["calleeOwner"] = ownerType.DeepClone();
+        }
 
         var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
             out var sourcePropertyName, out var accessorKind);
         var sourceMember = propertyCall ? sourcePropertyName : authoredMethod;
+        var declarationId = Str(call[DeclarationIdentityBinding.Key]);
 
         owners.TryGetValue(f.Name, out var start);
         var starOwner = args.Any(a => a is TypeNode.Star);
@@ -792,27 +834,31 @@ static class FBoundStarProjectionErasure
             .Select(TypeJson.Read).ToArray();
         if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
         if (start != null && start.Needed
-            && FindDeclaringOwner(start, sourceMember, accessorKind, pc, ga, authoredSignature, owners) is { } found)
+            && FindDeclaringOwner(start, sourceMember, accessorKind, pc, ga, authoredSignature,
+                declarationId, owners) is { } found)
         {
             var (declaring, declaration) = found;
-            call["ownerType"] = TypeJson.Write(new TypeNode.Fqn(declaring.ErasedName));
+            BindOwner(declaring.ErasedName);
             call["virtual"] = true; // erased owner is an interface; CIR must carry callvirt explicitly
             if (ContainsOwnerTvInSignature(declaration) || !IsPublic(declaration))
                 call["method"] = StarMethodName(declaring, declaration);
             call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
-            MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind);
+            MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
+                ExistentialSlotIdentity(declaration, declaring.Name));
             return;
         }
 
         if (start != null && start.Needed
-            && FindInheritedConcreteBaseMember(start, sourceMember, accessorKind, pc, ga, owners, defs) is { } baseFound)
+            && FindInheritedConcreteBaseMember(start, sourceMember, accessorKind, pc, ga,
+                declarationId, owners, defs) is { } baseFound)
         {
             var (bridgeOwner, declaringName, declaration) = baseFound;
-            call["ownerType"] = TypeJson.Write(new TypeNode.Fqn(bridgeOwner.ErasedName));
+            BindOwner(bridgeOwner.ErasedName);
             call["method"] = BaseStarMethodName(declaringName, defs[declaringName], declaration);
             call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
             call["virtual"] = true;
-            MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind);
+            MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
+                ExistentialSlotIdentity(declaration, bridgeOwner.Name));
             return;
         }
 
@@ -820,9 +866,10 @@ static class FBoundStarProjectionErasure
         // authority for the physical existential slot; no reference-assembly or namespace special case
         // participates in the decision.
         if (refs.TryStarProjectionMember(f, sourceMember, accessorKind, ga, authoredSignature, pc,
+                declarationId,
                 out var erasedOwner, out var erasedMethod, out var erasedSignature))
         {
-            call["ownerType"] = TypeJson.Write(new TypeNode.Fqn(erasedOwner));
+            BindOwner(erasedOwner);
             call["method"] = erasedMethod;
             call["sig"] = new JsonArray(erasedSignature.Select(TypeJson.Write).ToArray());
             call["virtual"] = true;
@@ -837,8 +884,13 @@ static class FBoundStarProjectionErasure
     }
 
     static void MarkPhysicalPropertyCall(JsonObject call, bool propertyCall,
-        string sourcePropertyName, string accessorKind)
+        string sourcePropertyName, string accessorKind, string physicalIdentity = null)
     {
+        // This call now targets the synthesized existential slot/bridge, not the frontend-selected source MethodDef.
+        // Consume that source identity exactly where the dedicated representation is chosen; otherwise #395's final
+        // local binder would retarget the carrier call back to the generic source declaration.
+        if (physicalIdentity != null) call[DeclarationIdentityBinding.Key] = physicalIdentity;
+        else call.Remove(DeclarationIdentityBinding.Key);
         if (!propertyCall) return;
         KotlinPropertyAccessors.PreserveCallIdentity(call, sourcePropertyName, accessorKind);
         call.Remove("prop");
@@ -852,7 +904,8 @@ static class FBoundStarProjectionErasure
 
     static (Owner Owner, JsonObject Method)? FindDeclaringOwner(Owner start, string sourceMember,
         string accessorKind, int pc, int ga,
-        IReadOnlyList<TypeNode> authoredSignature, IReadOnlyDictionary<string, Owner> owners)
+        IReadOnlyList<TypeNode> authoredSignature, string declarationId,
+        IReadOnlyDictionary<string, Owner> owners)
     {
         var frontier = new List<Owner> { start };
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -866,10 +919,13 @@ static class FBoundStarProjectionErasure
                     foreach (var m in methods.OfType<JsonObject>())
                         // Synthesize() exposes every non-static source member through a public forwarding
                         // bridge when needed, including private members used by lifted nested classes.
-                        if (MatchesSourceMember(m, sourceMember, accessorKind) && !Bool(m["static"])
+                        if ((declarationId != null
+                                ? Str(m[DeclarationIdentityBinding.Key]) == declarationId
+                                : MatchesSourceMember(m, sourceMember, accessorKind))
+                            && !Bool(m["static"])
                             && ((m["params"] as JsonArray)?.Count ?? 0) == pc
                             && ((m["typeParams"] as JsonArray)?.Count ?? 0) == ga
-                            && SignatureMatches(m, authoredSignature))
+                            && (declarationId != null || SignatureMatches(m, authoredSignature)))
                             matches.Add((owner, m));
             }
             if (matches.Count == 1) return matches[0];
@@ -906,6 +962,7 @@ static class FBoundStarProjectionErasure
 
     static (Owner BridgeOwner, string DeclaringName, JsonObject Method)? FindInheritedConcreteBaseMember(
         Owner start, string sourceMember, string accessorKind, int pc, int ga,
+        string declarationId,
         IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs)
     {
@@ -918,7 +975,9 @@ static class FBoundStarProjectionErasure
             {
                 if (!seenOwners.Add(owner.Name)) continue;
                 foreach (var (declaringName, candidate) in InheritedConcreteBaseMethods(owner, owners, defs))
-                    if (MatchesSourceMember(candidate, sourceMember, accessorKind)
+                    if ((declarationId != null
+                            ? Str(candidate[DeclarationIdentityBinding.Key]) == declarationId
+                            : MatchesSourceMember(candidate, sourceMember, accessorKind))
                         && !Bool(candidate["static"]) && !IsPrivate(candidate)
                         && ((candidate["params"] as JsonArray)?.Count ?? 0) == pc
                         && ((candidate["typeParams"] as JsonArray)?.Count ?? 0) == ga)

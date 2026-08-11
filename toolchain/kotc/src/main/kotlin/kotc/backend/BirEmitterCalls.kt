@@ -729,7 +729,89 @@ private fun delegatedOperatorTarget(accessor: IrSimpleFunction): IrSimpleFunctio
 private fun BirEmitter.delegatedOperatorSig(accessor: IrSimpleFunction): String =
 	delegatedOperatorTarget(accessor)?.let { overloadSigField(it) } ?: overloadSigField(accessor)
 
+internal fun TypeNode.containsStarProjection(): Boolean = when (this) {
+	TypeNode.Star -> true
+	is TypeNode.Fqn -> args?.any { it.containsStarProjection() } == true
+	is TypeNode.Fn -> ret.containsStarProjection() || params.any { it.containsStarProjection() } ||
+		recv?.containsStarProjection() == true || ctx.any { it.containsStarProjection() }
+	is TypeNode.Nullable -> of.containsStarProjection()
+	is TypeNode.Oblivious -> of.containsStarProjection()
+	is TypeNode.Array -> elem.containsStarProjection()
+	is TypeNode.ByRef -> of.containsStarProjection()
+	is TypeNode.Tv -> false
+}
+
 internal fun BirEmitter.call(call: IrCall): String {
+	val rendered = callWithoutDeclarationIdentity(call)
+	// A dedicated semantic lowering may deliberately materialize a different physical declaration while retaining
+	// the source spelling (rich-enum `values()` is the canonical example). Such a lowering explicitly consumes the
+	// frontend selection; do not attach that source declaration's identity to the replacement MethodDef.
+	val consumedIdentityMarker = ",\"dotktFrontendDeclarationConsumed\":true"
+	if (rendered.endsWith("$consumedIdentityMarker}"))
+		return rendered.removeSuffix("$consumedIdentityMarker}") + "}"
+	// A fake-override view is not itself emitted. Carry the frontend-resolved real declaration's identity. A
+	// dll2klib-projected CLR static appears as a fake override on the semantic class, but its trusted identity
+	// annotation is the exact selected MethodDef and there need not be an overridden-symbol edge to resolve. Prefer
+	// that carried identity; resolve an ordinary fake override only when the view itself has no physical identity.
+	// A local delegated property has no emitted accessor: callWithoutDeclarationIdentity rewrites it to the exact
+	// getValue/setValue operator selected by FIR. Use that operator as the semantic target too; attaching the synthetic
+	// local accessor's identity would either miss the method-name guard or retarget the generated call incorrectly.
+	val selectedTarget = (delegateInlinedAccess?.takeIf { it.first === call }?.second as? IrSimpleFunction)
+		?: call.symbol.owner
+	// Enum-class API declarations synthesized by FIR are consumed inside callWithoutDeclarationIdentity. Their
+	// physical methods are authored later by bir2cir rather than emitted from these IrFunctions, so there is no
+	// frontend declaration identity to carry into physical allocation. In particular, rich-enum `values()` keeps
+	// the same surface spelling after lowering; comparing only the rendered method name cannot detect consumption.
+	val selectedId = declarationIdForPhysicalAllocation(selectedTarget)
+	val identityTarget = if (selectedTarget.isFakeOverride && selectedId == null)
+		selectedTarget.resolveFakeOverride() ?: return rendered else selectedTarget
+	val id = selectedId ?: declarationIdForPhysicalAllocation(identityTarget) ?: return rendered
+	if (rendered.startsWith("{\"k\":\"callInline\""))
+		return rendered.dropLast(1) + ""","declarationId":${str(id)}}"""
+	if (!(rendered.startsWith("{\"k\":\"callStatic\"") ||
+			rendered.startsWith("{\"k\":\"callInstance\""))) return rendered
+	val semanticMethod = identityTarget.correspondingPropertySymbol?.owner?.name?.asString()
+		?: identityTarget.name.asString()
+	// Dedicated semantic lowerings may return a different call altogether (`Lazy.getValue` -> `Lazy.value`). The
+	// original declaration has already been consumed there and must not retarget the replacement physical member.
+	// Inspect only the OUTER node's method field: a receiver or argument can itself contain a call to the semantic
+	// method, and a subtree-wide substring test would then attach this declaration's identity to the replacement.
+	if (!topLevelJsonStringFieldEquals(rendered, "method", str(semanticMethod))) return rendered
+	return rendered.dropLast(1) + ""","declarationId":${str(id)}}"""
+}
+
+/** Compare a string-valued field on the root JSON object emitted by this backend without inspecting nested calls.
+ * The emitter owns this JSON text and [str] owns value escaping; this scanner only locates the root member boundary. */
+private fun topLevelJsonStringFieldEquals(json: String, field: String, encodedValue: String): Boolean {
+	val encodedField = "\"$field\""
+	var depth = 0
+	var index = 0
+	while (index < json.length) {
+		when (json[index]) {
+			'{', '[' -> { depth++; index++ }
+			'}', ']' -> { depth--; index++ }
+			'"' -> {
+				val start = index++
+				var escaped = false
+				while (index < json.length) {
+					val ch = json[index++]
+					if (escaped) escaped = false
+					else if (ch == '\\') escaped = true
+					else if (ch == '"') break
+				}
+				if (depth != 1 || json.substring(start, index) != encodedField) continue
+				while (index < json.length && json[index].isWhitespace()) index++
+				if (index >= json.length || json[index++] != ':') return false
+				while (index < json.length && json[index].isWhitespace()) index++
+				return json.startsWith(encodedValue, index)
+			}
+			else -> index++
+		}
+	}
+	return false
+}
+
+private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	// A `tailrec` self-tail-call -> a back-jump to the method entry (TCO, §2b) instead of a recursive call. Matched
 	// by IR identity against the frontend-validated tail-call set installed by `method()`.
 	tailrecCtx?.let { ctx -> if (call in ctx.calls) return tailrecJump(call, ctx) }
@@ -1142,8 +1224,8 @@ internal fun BirEmitter.call(call: IrCall): String {
 		// Rich enum -> the synthesized static values()/valueOf() methods on the class.
 		if (isRichEnum(ec)) {
 			if (name == "values" || isEntriesGetter)
-				return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"values","args":[]}"""
-			if (name == "valueOf") return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"valueOf","sig":[${fqnJson("kotlin.String")}],"args":[${expr(regularArgs(call).first())}]}"""
+				return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"values","args":[],"dotktFrontendDeclarationConsumed":true}"""
+			if (name == "valueOf") return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"valueOf","sig":[${fqnJson("kotlin.String")}],"args":[${expr(regularArgs(call).first())}],"dotktFrontendDeclarationConsumed":true}"""
 		}
 		// Basic enum -> the semantic enumValues/enumParse node carrying the enum's FAITHFUL FQN identity (a
 		// structured Type, never the banned `@Name` type-token). bir2cir/ilemit resolve it to the local enum type,

@@ -905,7 +905,7 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
 	val property = acc.correspondingPropertySymbol?.owner
 		?: error("top-level accessor '$propName' has no corresponding property")
-	return """{"name":${str(propName)}${propertyAccessorFact(property, kind)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))}${typeParamsJson(acc.typeParameters)}${companionReceiverField(acc, kind, propName)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]}"""
+	return """{"name":${str(propName)}${declarationIdField(acc)}${propertyAccessorFact(property, kind)},"static":true,"override":false,"virtual":false,"abstract":false,"objectOverride":false,"vis":${str(visOf(acc))}${typeParamsJson(acc.typeParameters)}${companionReceiverField(acc, kind, propName)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]}"""
 }
 
 internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
@@ -970,7 +970,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 		""","kotlinStatic":true""" else ""
 	val property = acc.correspondingPropertySymbol?.owner
 		?: error("accessor '$propName' has no corresponding property")
-	return """{"name":${str(propName)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+	return """{"name":${str(propName)}${declarationIdField(acc)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 }
 
 /** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
@@ -1545,7 +1545,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	// Return nullability (`fun f(): String?`) rides the `ret` type node (`{t:nullable,of:...}` from the uniform
 	// birType) — the decl-level `retNullable` flag is RETIRED. bir2cir/ilemit derive .NET NRT from the type node.
 	val kotlinStatic = if (static && isKotlinStaticFunction(fn)) ""","kotlinStatic":true""" else ""
-	return """{"name":${str(emitName)},"static":$static$kotlinStatic,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${isAnySlot},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$mods${resultTypeJson(fn)}${companionReceiverField(fn, "function", fn.name.asString())},"params":[$ps],"ret":${birType(fn.returnType).toJson()}${retCtxFnTypeField(fn)},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}${posJson(fn)}}"""
+	return """{"name":${str(emitName)}${declarationIdField(fn)},"static":$static$kotlinStatic,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${isAnySlot},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$mods${resultTypeJson(fn)}${companionReceiverField(fn, "function", fn.name.asString())},"params":[$ps],"ret":${birType(fn.returnType).toJson()}${retCtxFnTypeField(fn)},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}${posJson(fn)}}"""
 }
 
 /** Structured declaration-modifier object (spec §2.1): a single `"mods":{name:true,…}` carrying ONLY the set flags
@@ -1758,7 +1758,14 @@ internal fun BirEmitter.companionReceiverField(
 internal fun BirEmitter.companionReceiverCallTag(
 	decl: org.jetbrains.kotlin.ir.IrElement,
 	use: org.jetbrains.kotlin.ir.IrElement? = null,
-): String {
+): String = companionReceiverCallJson(decl, use)?.let {
+	""","companionReceiver":${str(it)}"""
+} ?: ""
+
+internal fun BirEmitter.companionReceiverCallJson(
+	decl: org.jetbrains.kotlin.ir.IrElement,
+	use: org.jetbrains.kotlin.ir.IrElement? = null,
+): String? {
 	val receiver = companionReceiverJson(decl)
 		?: (decl as? org.jetbrains.kotlin.ir.declarations.IrDeclaration)
 			?.let { companionExtensionReceiverType(it) }
@@ -1766,7 +1773,7 @@ internal fun BirEmitter.companionReceiverCallTag(
 		?: use?.let {
 		kotc.frontend.ClrCompanionExtensions.receiverTypeJsonAtUse(sourcePathOf(it), it.startOffset, it.endOffset)
 	}
-	return receiver?.let { ""","companionReceiver":${str(it)}""" } ?: ""
+	return receiver
 }
 
 /** Callable-reference use-site twin. fir2ir's reference wrapper does not retain declaration offsets. */

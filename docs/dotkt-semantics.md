@@ -631,10 +631,11 @@ Consequences (deliberate, declared):
   added/removed after taking the view is not reflected in it. `MutableMap.keys`/`values` bind directly to
   `IDictionary.Keys`/`.Values` (their `MutableSet`/`MutableCollection` slots lower to `ICollection`, which
   KeyCollection/ValueCollection implement); mutating THOSE views does not write back either (BCL contract: they throw).
-- **`MutableMap.iterator()` degrades to the `Map.iterator()` shape**: both extensions collapse to the same lowered
-  signature (same receiver type), and duplicate `(name, params)` overloads keep only the FIRST under the clean name
-  (the second is `$dupN`-mangled). Destructuring `for ((k,v) in m)` works for both; calling `remove()` on the
-  iterator, or `setValue` through the *mutable* entry-set element of a `Map`-typed receiver, is where the edges are.
+- **`Map.iterator()` and `MutableMap.iterator()` retain their Kotlin-selected declarations** even though both
+  receivers lower to the same `IDictionary<K,V>` CLR type. The frontend declaration identity selects distinct,
+  stable physical MethodDef names after erasure; neither declaration order nor an emitter-local `$dupN` repair
+  chooses the call target. Destructuring `for ((k,v) in m)` therefore follows the overload selected by Kotlin for
+  the receiver's static type.
 - A **user class implementing `Map`/`MutableMap` in pure Kotlin** must satisfy the full `IDictionary` surface; today
   only the `@ClrIntrinsic`-renamed slots are generated, so such classes (stdlib `AbstractMap`, `MapWithDefaultImpl`)
   fail to LOAD when touched — the known under-tested pure-Kotlin dual-rep path (`dual-representation-stdlib-types`).
@@ -965,7 +966,7 @@ runtime.
 | `infix` / `operator` | `[KotlinFunction(Infix\|Operator)]` |
 | `suspend` (a `suspend fun`) | `[KotlinFunction(Suspend)]` (+ `Task<T>`→`T` unwrap) |
 | a `suspend (…) -> T` **function TYPE** (parameter / return / property / field) | `[KotlinSuspendFunctionType("sfunc:<ret>:<args>")]` preserves the pre-erasure shape because the CLR slot itself erases to `object`. bir2cir records it, ilemit stamps it, dll2klib reads it, and kotc restores `kotlin.coroutines.SuspendFunctionN`. All four positions are covered by the roundtrip NUnit suite. |
-| top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. Same-name overloads that live in **different** source files of the same package (`foo()` in `UtilsKt`, `foo(Int)` in `HelpersKt`) each route back to their **own** file-facade class — resolved by the call's arity, so no cross-file mis-routing. |
+| top-level functions | `[KotlinFileClass]` on the `<File>Kt` facade → restored as package-level functions. `[KotlinDeclarationIdentity]` links each restored declaration to its exact physical MethodDef, including same-name overloads in different file facades and Kotlin signatures that share one erased CLR signature. |
 | a Kotlin `companion object` | `kotc` preserves only its semantic owner/name; `bir2cir` creates a compiler-reserved nested singleton carrier and stamps `[KotlinCompanion(version, bytes)]` with the source name plus its exact physical owner. `dll2klib` writes the standard KLIB `companion_object_name` and nested-class link from this validated fact; no CLR suffix/name heuristic is used. |
 | `inline` (with a lambda) | `[KotlinInline(birJson)]` (only for cross-module non-local return; see §3) |
 | a **context parameter** (`context(s: S) fun f()`) | `[KotlinContextParameter]` on the emitted positional parameter — a bare marker. The parameter is physically ordinary (§5i), so without it the consumer would restore a plain leading value parameter and `with(s) { f() }` would stop resolving. Covers functions and property accessors, top-level and member. |
@@ -975,6 +976,33 @@ runtime.
 | parameter names (named-argument calls) | emitted via `DefineParameter` (were dropped before; not a FIR limitation) |
 
 Deep dive: `docs/design-kotlin-metadata-attributes.md`.
+
+### Frontend-selected overloads remain authoritative after CLR erasure
+
+Kotlin may distinguish two callable declarations that the CLR cannot distinguish by signature. This includes
+top-level extensions and independent final, non-overriding members. For example, `Map<String, String>` and
+`MutableMap<String, String>` both project to the same `IDictionary<String, String>` parameter; `String` and
+`String?` both project to `System.String`. FIR nevertheless selects one exact Kotlin declaration at every call,
+property access, and callable reference.
+
+`kotc` writes that selected declaration identity into BIR. `bir2cir` lowers an isolated signature projection to find
+the declarations that actually collide, assigns each a stable compiler-reserved MethodDef name derived from its
+identity, and rewrites declarations and uses from the same map. A colliding CLR Property row receives the same stable
+physical partition because Property metadata has its own name-and-signature identity; its exact accessor association
+retains the unsuffixed Kotlin property name for round-trip. It does not search the erased overload set again.
+A declaration in an erased collision set additionally carries its pre-erasure Kotlin parameter and return types in
+`[KotlinDeclarationIdentity]`; `dll2klib` uses those facts to restore the original overload set and identity in a
+consuming module. The set includes pairs that live in different file facades and therefore do not collide as CLR
+MethodDefs: dll2klib merges those facades back into one Kotlin package. Ordinary declarations continue through their
+existing specialized metadata paths. Older compiler-produced artifacts are not inferred or repaired.
+
+The compiler-reserved suffix is visible to reflection and to CLR consumers that inspect method names. It is used when
+distinct Kotlin declarations would otherwise occupy the same physical link slot, including different open owner type
+parameters that can close to the same CLR type; source order does not choose the winner. `ilemit` receives the completed
+physical names and rejects a duplicate CIR signature rather than applying a late `$dupN` rename that call sites could
+not follow. An open/override family needs one slot-wide physical allocation;
+until such a family has a complete representation rule, a duplicate projected signature fails closed instead of being
+renamed independently or silently bound to the wrong body.
 
 ## 7. Default arguments — a two-tier rule (native metadata, else a carried BIR expression)
 

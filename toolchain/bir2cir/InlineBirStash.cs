@@ -40,7 +40,14 @@ static class InlineBirStash
     // owner-less inline fn cannot exist — kotc names user owners).
     public static readonly Dictionary<string, List<JsonObject>> OwnerlessIndex = new(StringComparer.Ordinal);
 
-    public static void Reset() { Index.Clear(); OwnerlessIndex.Clear(); }
+    // #395: frontend-selected declaration identity is the authoritative overload key. The structural indexes remain
+    // for CLR imports and untagged compiler intrinsics; a Kotlin call carrying an identity never re-resolves by shape.
+    public static readonly Dictionary<string, JsonObject> ByDeclarationId = new(StringComparer.Ordinal);
+
+    public static void Reset() { Index.Clear(); OwnerlessIndex.Clear(); ByDeclarationId.Clear(); }
+
+    public static JsonObject Declaration(string id) =>
+        id != null && ByDeclarationId.TryGetValue(id, out var payload) ? payload : null;
 
     // The same-module owner-less candidates for name|pc|ga (kotlin.* across owners), or null. InlineSplice selects the
     // unique paramSig match and reads the winner's `owner`.
@@ -115,6 +122,8 @@ static class InlineBirStash
             ["ret"] = mo["ret"]?.DeepClone(),
             ["body"] = mo["body"].DeepClone(),
         };
+        if (Str(mo[DeclarationIdentityBinding.Key]) is string declarationId)
+            payload[DeclarationIdentityBinding.Key] = declarationId;
         // #43: close the raw inline term over compiler-generated file-class methods. A non-capturing lambda /
         // callable-reference adapter is represented by `newDelegate(method, calleeOwner)` plus a generated top-level
         // method holding its body. The executable producer needs that method too, so do not detach it; embed a raw clone
@@ -125,6 +134,9 @@ static class InlineBirStash
         var seenLifted = new HashSet<string>(StringComparer.Ordinal);
         CollectLifted(payload["body"], fileClass, generatedMethods, seenLifted, lifted);
         payload["lifted"] = lifted;
+        if (Str(payload[DeclarationIdentityBinding.Key]) is string declarationIdKey
+            && !ByDeclarationId.TryAdd(declarationIdKey, (JsonObject)payload.DeepClone()))
+            throw new InvalidOperationException($"duplicate inline declaration identity '{declarationIdKey}'");
 
         // §4.2 (#75 S4b): the overload key is `owner|name|pc|ga` -> a LIST of candidates (same-name inline OVERLOADS share
         // it). The call site picks the UNIQUE candidate whose declared `params[i].type` structurally equals the call's

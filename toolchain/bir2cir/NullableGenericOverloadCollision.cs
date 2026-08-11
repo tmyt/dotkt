@@ -78,6 +78,18 @@ static class NullableGenericOverloadCollision
                 // stdlib's `contains` pair does exactly that; keying on names would read them as distinct and refuse
                 // a pair that has always emitted as one signature.
                 if (SourceKey(prior) == SourceKey(mo)) continue;
+                // #395 gives distinct frontend declarations an explicit identity. DeclarationIdentityBinding runs
+                // module-wide after every file has completed type lowering and allocates two different MethodDef
+                // names from these keys, so this pair no longer shares a physical slot. Keep the refusal only for
+                // malformed/legacy BIR that omitted the authoritative identity; no structural fallback is invented.
+                var priorId = Str(prior[DeclarationIdentityBinding.Key]);
+                var currentId = Str(mo[DeclarationIdentityBinding.Key]);
+                if (!string.IsNullOrEmpty(priorId) && !string.IsNullOrEmpty(currentId)
+                    && !StringComparer.Ordinal.Equals(priorId, currentId))
+                {
+                    seen[key] = mo;
+                    continue;
+                }
                 throw new InvalidOperationException(
                     $"bir2cir: {file}: {ownerName}: two declarations of '{name}' erase to one CLR signature. "
                     + $"A nullable generic 'T?' is emitted as System.Object (#86), so '{Render(prior, name, ownerTps)}' "

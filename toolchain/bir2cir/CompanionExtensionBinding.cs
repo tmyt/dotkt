@@ -237,6 +237,7 @@ static class CompanionExtensionBinding
 
             var signature = (JsonObject)declaration.DeepClone();
             signature["name"] = sourceName;
+            SetPhysicalOnlyIdentity(signature, declaration, "signature");
             signature["static"] = true;
             signature["override"] = false;
             signature["virtual"] = false;
@@ -531,6 +532,7 @@ static class CompanionExtensionBinding
         var blockArity = blockTypeParams.Count;
         var wrapper = (JsonObject)core.DeepClone();
         wrapper["name"] = wrapperName;
+        SetPhysicalOnlyIdentity(wrapper, core, "wrapper");
         KotlinPropertyAccessors.RemoveIdentity(wrapper);
         wrapper["generated"] = true;
         wrapper["mods"] = new JsonObject();
@@ -577,6 +579,13 @@ static class CompanionExtensionBinding
             ["args"] = args,
             ["ret"] = wrapper["ret"]!.DeepClone(),
         };
+        if (Str(core[DeclarationIdentityBinding.Key]) is string coreIdentity)
+        {
+            call[DeclarationIdentityBinding.Key] = coreIdentity;
+            wrapper["extensionCoreDeclarationId"] = coreIdentity;
+        }
+        else
+            RoundtripMetadata.StampExtensionCore(wrapper, coreName);
         var ownArity = ownTypeParams?.Count ?? 0;
         if (ownArity != 0)
             call["typeArgs"] = new JsonArray(Enumerable.Range(0, ownArity)
@@ -588,7 +597,6 @@ static class CompanionExtensionBinding
                 new JsonObject { ["k"] = "exprStmt", ["expr"] = call },
                 new JsonObject { ["k"] = "return" })
             : new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call });
-        RoundtripMetadata.StampExtensionCore(wrapper, coreName);
         return wrapper;
     }
 
@@ -739,6 +747,7 @@ static class CompanionExtensionBinding
     {
         var signature = (JsonObject)accessor.DeepClone();
         signature["name"] = physicalName;
+        SetPhysicalOnlyIdentity(signature, accessor, "signature");
         KotlinPropertyAccessors.RemoveIdentity(signature);
         signature["static"] = true;
         signature["override"] = false;
@@ -767,6 +776,12 @@ static class CompanionExtensionBinding
         declaration.Remove("companionReceiver");
         declaration.Remove("companionSourceName");
         declaration.Remove("companionMemberKind");
+    }
+
+    static void SetPhysicalOnlyIdentity(JsonObject target, JsonObject declaration, string role)
+    {
+        if (Str(declaration[DeclarationIdentityBinding.Key]) is string id)
+            target[DeclarationIdentityBinding.Key] = DeclarationIdentityBinding.PhysicalOnlyId(id, role);
     }
 
     static JsonArray ThrowStubBody() => new(new JsonObject
@@ -909,6 +924,37 @@ static class CompanionExtensionBinding
         // Only use sites have a receiver tag without declaration identity.
         if (node["companionSourceName"] != null || node["companionMemberKind"] != null) return;
         var nodeKind = Str(node["k"]);
+
+        // A referenced DotKt declaration already has the exact MethodDef selected by FIR. The companion tag only
+        // supplies semantic association; it must never send an identified use back through the erased source-name
+        // index. Local identities are absent from refs and continue through the local companion-container pass below.
+        if (Str(node[DeclarationIdentityBinding.Key]) is string declarationId &&
+            refs.TryDeclarationIdentity(
+                declarationId, out var exactName, out var exactOwner, out var intrinsic, out _) &&
+            intrinsic == null)
+        {
+            switch (nodeKind)
+            {
+                case "callInline":
+                    node["owner"] = TypeJson.Fqn(exactOwner);
+                    node["callee"] = TypeJson.Fqn(exactOwner + "." + exactName);
+                    break;
+                case "callStatic":
+                    node["method"] = exactName;
+                    RewriteStaticOwner(node, exactOwner);
+                    node.Remove("prop");
+                    break;
+                case "newDelegate":
+                    node["method"] = exactName;
+                    node["calleeOwner"] = TypeJson.Fqn(exactOwner);
+                    break;
+                default:
+                    throw new InvalidOperationException(
+                        $"identified companion extension appears on unsupported BIR node '{nodeKind ?? "<missing>"}'");
+            }
+            node.Remove("companionReceiver");
+            return;
+        }
 
         if (nodeKind == "callInline")
         {

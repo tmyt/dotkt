@@ -86,6 +86,7 @@ import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
 import org.jetbrains.kotlin.ir.IrBuiltIns
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * D1.1 — Backend IR (BIR) emitter.
@@ -115,6 +116,102 @@ private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
 
 class BirEmitter(internal val messageCollector: MessageCollector? = null, internal val irBuiltIns: IrBuiltIns? = null) {
 
+	/** Frontend-authoritative callable identity. The JVM-oriented FIR2IR pipeline does not populate IdSignature for
+	 * every source declaration, so kotc authors an equivalent stable fingerprint from the PRE-CLR Kotlin declaration
+	 * itself. Calls read the selected IrSymbol through this identity map; bir2cir never reconstructs it after erasure. */
+	private val declarationIds = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, String>()
+	internal fun declarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+		declarationIds.getOrPut(fn) {
+			carriedDeclarationId(fn) ?: computeDeclarationId(fn, companionReceiverJson(fn)
+				?: companionExtensionReceiverType(fn)?.let { birType(it).toJson() })
+		}
+
+	private fun carriedDeclarationId(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? {
+		val property = (fn as? IrSimpleFunction)?.correspondingPropertySymbol?.owner
+		val annotations: List<IrConstructorCall> = fn.annotations + property?.annotations.orEmpty()
+		val identity = annotations.singleOrNull {
+			it.type.classFqName?.asString() == "kotlin.clr.KotlinDeclarationIdentity"
+		}
+		val setter = property?.setter === fn
+		val identityArgument = identity?.let { regularArgs(it).getOrNull(if (setter) 1 else 0) }
+		val direct = (identityArgument as? IrConst)
+			?.value
+			?.let { it as? String }
+			?.takeIf { it.isNotEmpty() }
+		return direct
+	}
+
+	/** Declaration families for which #395 owns a complete CLR allocation rule.
+	 *
+	 * Top-level/file-facade callables are always covered. A final, non-overriding class member is also an independent
+	 * MethodDef identity: renaming it cannot disturb an override slot. Open/abstract/override members need a slot-wide
+	 * allocation shared by the whole override chain; until that exists, duplicate CIR signatures fail closed in
+	 * ilemit. Imported Kotlin members from the compiler-owned frontend KLIB use the same semantic fingerprint as their
+	 * reference-DLL MethodDef. A projected CLR member participates only when dll2klib carried an identity, leaving
+	 * arbitrary CLR alias members on their existing bir2cir representation path. */
+	internal fun declarationIdForPhysicalAllocation(
+		fn: org.jetbrains.kotlin.ir.declarations.IrFunction,
+	): String? {
+		val projectedClrOwner = clrExternalOwner(fn)
+			?: (fn.parent as? IrClass)?.let { clrExternalOwner(it) }
+		if (fn.parent is org.jetbrains.kotlin.ir.declarations.IrPackageFragment) {
+			val carried = carriedDeclarationId(fn)
+			// A source/KLIB Kotlin declaration has a stable Kotlin identity even when its frontend KLIB predates the
+			// physical CLR carrier (the compiler-owned stdlib frontend KLIB is the important case). A dll2klib-projected
+			// CLR declaration is different: [ClrExternal] says its identity is the CLR member itself, so only a trusted
+			// [KotlinDeclarationIdentity] carrier may opt it into this allocation. Never fingerprint an arbitrary C#
+			// extension and then ask bir2cir to find a DotKt MethodDef that cannot exist.
+			// A projected CLR declaration is identified only by dll2klib's trusted carrier. Its IR origin is not a
+			// reliable discriminator (some projected stubs report DEFINED); minting a Kotlin fingerprint for it creates
+			// an ID the referenced CLR MethodDef can never advertise.
+			if (projectedClrOwner != null) return carried
+			return carried ?: declarationId(fn)
+		}
+		val simple = fn as? IrSimpleFunction ?: return null
+		val owner = fn.parent as? IrClass ?: return null
+		// Native array and compile-time-handle classifiers deliberately have no MethodDefs in the emitted module.
+		if (owner.defaultType.isUnsignedArray() ||
+			owner.fqNameWhenAvailable?.asString() in CLR_COMPILE_TIME_INTRINSIC_CLASSES) return null
+		// A dll2klib-projected Kotlin member can be virtual because its already allocated MethodDef participates in an
+		// interface/override slot. Its trusted metadata identity is nevertheless the exact FIR-selected declaration and
+		// must survive at every call site; rejecting it on modality sends the backend back to erased-signature overload
+		// resolution. The restriction below applies only to locally authored members whose whole override chain has not
+		// yet received a shared physical allocation.
+		val carried = carriedDeclarationId(fn)
+		if (carried != null) return carried
+		if (simple.modality != Modality.FINAL || simple.overriddenSymbols.isNotEmpty()) return null
+		if (projectedClrOwner != null) return null
+		return declarationId(fn)
+	}
+
+	private fun computeDeclarationId(
+		fn: org.jetbrains.kotlin.ir.declarations.IrFunction,
+		companionReceiver: String?,
+	): String {
+			val owner = when (val parent = fn.parent) {
+				is IrClass -> typeName(parent)
+				is IrFile -> if (visOf(fn) == "private")
+					parent.packageFqName.asString() + "|file:" + fileClassName(parent)
+					else parent.packageFqName.asString()
+				is org.jetbrains.kotlin.ir.declarations.IrPackageFragment -> parent.packageFqName.asString()
+				else -> semanticOwnerName(fn)
+			}
+			val declaration = buildString {
+				append("dotkt-declaration-v1|").append(owner).append('|').append(fn.name.asString())
+				// fir2ir removes a companion extension's receiver parameter. Its frontend-captured receiver fact is
+				// therefore part of the declaration identity just as an ordinary extension-receiver parameter is.
+				companionReceiver?.let { append("|companionReceiver:").append(it) }
+				append('|').append(typeParamsJson(fn.typeParameters))
+				for (parameter in fn.parameters)
+					append('|').append(parameter.kind.name).append(':').append(birType(parameter.type).toJson())
+				append("|ret:").append(birType(fn.returnType).toJson())
+			}
+			val digest = MessageDigest.getInstance("SHA-256").digest(declaration.toByteArray(Charsets.UTF_8))
+			return "dotkt-declaration-v1:" + digest.joinToString("") { "%02x".format(it) }
+	}
+
+	internal fun declarationIdField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+		declarationIdForPhysicalAllocation(fn)?.let { ""","declarationId":${str(it)}""" } ?: ""
 	// Diagnostics: a construct the .NET backend can't lower yet is a COMPILE-TIME error with source location
 	// (file:line:col) — never a silent BIR node that crashes ilemit later. `hadError` fails the build.
 	var hadError = false; internal set

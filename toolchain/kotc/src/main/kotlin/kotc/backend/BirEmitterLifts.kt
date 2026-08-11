@@ -505,6 +505,21 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	val dispatchIdx = fn.parameters.indexOfFirst { it.kind == IrParameterKind.DispatchReceiver }
 	val hasExt = (extensionReceiverParam(fn) != null)
 	val ownerClass = fn.parent as? IrClass
+	// The callable-reference symbol may be a use-site-substituted wrapper. Its reflection target is the
+	// frontend-selected declaration and is therefore the authoritative source of the identity. Keep using `fn`
+	// for the substituted callable shape below; only the declaration fingerprint comes from here. Unlike a MethodDef
+	// emission decision, a use site always fingerprints the selected Kotlin declaration; bir2cir decides whether that
+	// identity has a physical carrier in the current/reference module.
+	val identityDeclaration = (node.reflectionTarget?.owner as? IrSimpleFunction) ?: fn
+	val selectedDeclarationId = declarationIdForPhysicalAllocation(identityDeclaration)
+	val physicalIdentityDeclaration = if (identityDeclaration.isFakeOverride && selectedDeclarationId == null)
+		identityDeclaration.resolveFakeOverride() ?: identityDeclaration else identityDeclaration
+	// Kotlin static/companion-block references expose the semantic companion member as reflectionTarget, while the
+	// receiverless callable symbol is the class-owned declaration that kotc actually emits. The former deliberately
+	// has no independent CLR allocation; use the emitted declaration's identity in that representation only.
+	val memberDeclarationIdentityTag = selectedDeclarationId
+		?.let { ""","declarationId":${str(it)}""" }
+		?: declarationIdField(physicalIdentityDeclaration).ifEmpty { declarationIdField(fn) }
 	// A suspend function reference (`::suspendFn`, typed KSuspendFunctionN) -> a `newSuspendLambda` ADAPTER: the
 	// suspend lambda `{ args -> target(args) }` whose body is a suspendCall to the target. A plain `newDelegate`
 	// cannot carry the cold-suspend protocol (bir2cir has no suspend-delegate lowering; it DOES build a SuspendLambda
@@ -575,7 +590,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 		val argTypes = regs.joinToString(",") { birType(it.type).toJson() }
 		val anySlotTag = if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""
-		val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"argTypes":[$argTypes],"ret":${resolvedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag}"""
+		val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"argTypes":[$argTypes],"ret":${resolvedFuncType.ret.toJson()},"args":[$argsJson]$anySlotTag$memberDeclarationIdentityTag}"""
 		val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$callE}"""
 			else """{"k":"return","value":$callE}"""
 		val freeTps = freeTypeParams(listOf(node.type))
@@ -587,6 +602,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	if (dispatchIdx < 0 && !hasExt) {
 		val targetName = fn.name.asString()
 		val companionExtensionTag = companionReceiverCallTag(fn, node)
+		// The companion receiver is an association fact, not overload identity. Keep both: bir2cir first uses the
+		// association to choose the physical extension container, then uses the FIR-selected declaration identity to
+		// bind the exact MethodDef when two overloads erase to the same CLR signature.
+		val declarationIdentityTag = declarationIdField(fn)
 		// A generic top-level callable reference has already been instantiated by FIR at this use site. Preserve those
 		// type arguments just like an ordinary call and an extension reference do; the declared `sig` alone selects the
 		// generic definition but cannot close it for ldftn (`::handle<T>` otherwise reaches ilemit as an open method).
@@ -610,7 +629,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				"""{"name":${str(p.name.asString())},"type":${t.toJson()}}"""
 			}
 			val argsJson = valueParams.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
-			val call = """{"k":"callStatic","owner":null,"method":${str(targetName)}${overloadSigField(fn)}$refTa,"args":[$argsJson],"ret":${refFuncType.ret.toJson()}${calleeOwnerTag(fn)}$companionExtensionTag}"""
+			val call = """{"k":"callStatic","owner":null,"method":${str(targetName)}${overloadSigField(fn)}$refTa,"args":[$argsJson],"ret":${refFuncType.ret.toJson()}${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
 			val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$call}"""
 				else """{"k":"return","value":$call}"""
 			val freeTps = freeTypeParams(listOf(node.type))
@@ -619,7 +638,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${refFuncType.ret.toJson()},"body":[$body]}""")
 			return """{"k":"newDelegate","method":${str(lname)},"funcType":${refFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
 		}
-		return """{"k":"newDelegate","method":${str(targetName)}${overloadSigField(fn)},"funcType":${refFuncType.toJson()}$refTa${calleeOwnerTag(fn)}$companionExtensionTag}"""
+		return """{"k":"newDelegate","method":${str(targetName)}${overloadSigField(fn)},"funcType":${refFuncType.toJson()}$refTa${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
 	}
 	// `Type::extFn` — an EXTENSION-function reference (G8). The delegate's target is a lifted static forwarder whose
 	// BODY is the faithful extension CALL — the SAME shape a DIRECT call to this callee would emit (`owner:null` for a
@@ -682,13 +701,19 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	if (boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass)) {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		val owner = ownerSpec(ownerClass, boundRecv.type).toJson()
-		val rendered = """{"k":"newBoundDelegate","ownerType":$owner,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""},"calleeOwner":$owner}"""
+		// A star-projected receiver changes the later CLR owner to the existential carrier, but it does not erase
+		// which Kotlin declaration FIR selected. bir2cir consumes this source identity while choosing the exact slot.
+		val effectiveIdentityTag = memberDeclarationIdentityTag
+		val base = """{"k":"newBoundDelegate","ownerType":$owner,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""},"calleeOwner":$owner}"""
+		val rendered = if (effectiveIdentityTag.isEmpty()) base
+			else base.dropLast(1) + effectiveIdentityTag + "}"
 		return memberVisibilityStamped(fn, rendered)
 	}
 	// `Class::method` (UNbound) -> a lifted static `__mref(self, args) = self.method(args)`; the receiver
 	// becomes the delegate's first parameter. User classes only (`Func<UserType,…>` resolves via DelegateCtor).
 	if (dispatchIdx >= 0 && boundRecv == null && !hasExt && ownerClass != null && !isExternalNetType(ownerClass)) {
 		val selfT = birType(fn.parameters[dispatchIdx].type)
+		val effectiveIdentityTag = memberDeclarationIdentityTag
 		val ps = fn.parameters.filter { it.kind == IrParameterKind.Regular }
 		val lname = freshLiftedMethodName("mref")
 		val psJson = (listOf("""{"name":"__self","type":${str(selfT)}}""") +
@@ -696,9 +721,11 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val argsJson = ps.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		val callE = """{"k":"callInstance","ownerType":${fqnJson(typeName(ownerClass))},"virtual":$virtual,"recv":{"k":"local","name":"__self"},"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
+		val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
+			else callE.dropLast(1) + effectiveIdentityTag + "}"
 		val retVoid = fn.returnType.isUnit()
 		val retT = birType(fn.returnType)
-		val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+		val body = if (retVoid) """{"k":"exprStmt","expr":$identityCallE}""" else """{"k":"return","value":$identityCallE}"""
 		val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + ps.map { it.type } + listOf(fn.returnType))
 		val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 		liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
@@ -726,7 +753,9 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val retVoid = fn.returnType.isUnit()
 			val retT = birType(fn.returnType)
 			val callE = """{"k":"callStatic","ownerType":${fqnJson(clrOwner)},"method":${str(member)},"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"args":[$argsJson]$anySlotTag}"""
-			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+			val identityCallE = if (memberDeclarationIdentityTag.isEmpty()) callE
+				else callE.dropLast(1) + memberDeclarationIdentityTag + "}"
+			val body = if (retVoid) """{"k":"exprStmt","expr":$identityCallE}""" else """{"k":"return","value":$identityCallE}"""
 			val freeTps = freeTypeParams(regs.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
@@ -734,7 +763,16 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		}
 		if (boundRecv != null) {
 			val companionCallTag = if (ownerClass.isCompanion) ""","companionCall":true""" else ""
-			return """{"k":"newBoundDelegate","ownerType":${fqnJson(clrOwner)},"method":${str(member)}$referenceTypeArgs,"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}$anySlotTag,"calleeOwner":${fqnJson(clrOwner)}$companionCallTag}"""
+			val receiverType = birType(boundRecv.type)
+			// A dll2klib-restored DotKt member is CLR-external to kotc, but its trusted declaration identity and
+			// semantic star owner must reach bir2cir's existential projection. Arbitrary foreign CLR members have no
+			// such identity and remain on the reflection/runtime representation path.
+			val trustedStarMember = receiverType.containsStarProjection() && memberDeclarationIdentityTag.isNotEmpty()
+			val physicalOwner = if (trustedStarMember) receiverType.toJson() else fqnJson(clrOwner)
+			val base = """{"k":"newBoundDelegate","ownerType":$physicalOwner,"method":${str(member)}$referenceTypeArgs,"argTypes":[$argTypes],"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}$anySlotTag,"calleeOwner":$physicalOwner$companionCallTag}"""
+			val effectiveIdentityTag = if (!receiverType.containsStarProjection() || trustedStarMember)
+				memberDeclarationIdentityTag else ""
+			return if (effectiveIdentityTag.isEmpty()) base else base.dropLast(1) + effectiveIdentityTag + "}"
 		}
 		if (dispatchIdx >= 0) {
 			val selfT = birType(fn.parameters[dispatchIdx].type)
@@ -748,7 +786,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			// (A kotlin.collections `Iterable::iterator` never reaches here: clrOwner is null for a jar-sourced stdlib
 			// collection interface, so the enumerator-bridge routing lives in bir2cir Rule 5, not this clrOwner!=null path.)
 			val callE = """{"k":"callInstance","ownerType":${fqnJson(clrOwner)},"method":${str(member)}$referenceTypeArgs,"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]$anySlotTag}"""
-			val body = if (retVoid) """{"k":"exprStmt","expr":$callE}""" else """{"k":"return","value":$callE}"""
+			val effectiveIdentityTag = if (!selfT.containsStarProjection()) memberDeclarationIdentityTag else ""
+			val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
+				else callE.dropLast(1) + effectiveIdentityTag + "}"
+			val body = if (retVoid) """{"k":"exprStmt","expr":$identityCallE}""" else """{"k":"return","value":$identityCallE}"""
 			val freeTps = freeTypeParams(listOf(fn.parameters[dispatchIdx].type) + regs.map { it.type } + listOf(fn.returnType))
 			val typeArgs = if (freeTps.isEmpty()) "" else ""","typeArgs":[${freeTps.joinToString(",") { tvOf(it).toJson() }}]"""
 			liftedMethods.add("""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$psJson],"ret":${str(retT)},"body":[$body]}""")
@@ -797,6 +838,15 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 	val extIdx = if (extParam == null) -1 else fn.parameters.indexOf(extParam)
 	val boundExt = if (extIdx >= 0) node.arguments.getOrNull(extIdx) else null
 	val ownerClass = fn.parent as? IrClass
+	val identityDeclaration = (node.reflectionTarget?.owner as? IrSimpleFunction) ?: fn
+	val selectedDeclarationId = declarationIdForPhysicalAllocation(identityDeclaration)
+	val physicalIdentityDeclaration = if (identityDeclaration.isFakeOverride && selectedDeclarationId == null)
+		identityDeclaration.resolveFakeOverride() ?: identityDeclaration else identityDeclaration
+	val declarationIdentityTag = selectedDeclarationId
+		?.let { ""","declarationId":${str(it)}""" }
+		?: declarationIdField(physicalIdentityDeclaration).ifEmpty { declarationIdField(fn) }
+	fun declarationBoundCall(call: String, identityTag: String = declarationIdentityTag): String =
+		if (identityTag.isEmpty()) call else call.dropLast(1) + identityTag + "}"
 	val companionClass =
 		(boundRecv as? IrGetObjectValue)?.symbol?.owner?.takeIf { it.isCompanion }
 			?: ownerClass?.takeIf { it.isCompanion }
@@ -864,11 +914,14 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 			capValues = expr(boundRecv)
 			val semanticOwner = companionClass ?: ownerClass
 			val externalCompanionOwner = companionClass?.let { clrExternalOwner(it) }
+			val receiverType = birType(boundRecv.type)
+			val trustedStarOwner = receiverType.containsStarProjection() && declarationIdentityTag.isNotEmpty()
 			val owner = externalCompanionOwner?.let { fqnJson(it) }
 				?: semanticCompanionType?.toJson()
-				?: ownerSpec(semanticOwner, boundRecv.type).toJson()
+				?: if (trustedStarOwner) receiverType.toJson() else ownerSpec(semanticOwner, boundRecv.type).toJson()
 			val companionCallTag = if (externalCompanionOwner != null) ""","companionCall":true""" else ""
-			bodyCall = """{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":${localArg("__recv")},"method":${str(member)}${overloadSigField(fn)}$referenceTypeArgs,"args":[$args]$anySlotTag,"suspendCall":true$companionCallTag}"""
+			val effectiveIdentityTag = declarationIdentityTag
+			bodyCall = declarationBoundCall("""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":${localArg("__recv")},"method":${str(member)}${overloadSigField(fn)}$referenceTypeArgs,"args":[$args]$anySlotTag,"suspendCall":true$companionCallTag}""", effectiveIdentityTag)
 		}
 		dispatchIdx >= 0 && boundRecv == null && ownerClass != null -> {
 			// Unbound member `Type::m` — the leading lambda param is the receiver, the rest are the target's regular args.
@@ -877,7 +930,8 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 					"its inferred type carries no dispatch-receiver parameter")
 			val args = paramNames.drop(1).joinToString(",") { localArg(it) }
 			captures = ""; capValues = null
-			bodyCall = """{"k":"callInstance","ownerType":${ownerSpec(ownerClass, fn.parameters[dispatchIdx].type).toJson()},"virtual":$virtual,"recv":${localArg(paramNames.first())},"method":${str(member)}${overloadSigField(fn)}$referenceTypeArgs,"args":[$args]$anySlotTag,"suspendCall":true}"""
+			val effectiveIdentityTag = declarationIdentityTag
+			bodyCall = declarationBoundCall("""{"k":"callInstance","ownerType":${ownerSpec(ownerClass, fn.parameters[dispatchIdx].type).toJson()},"virtual":$virtual,"recv":${localArg(paramNames.first())},"method":${str(member)}${overloadSigField(fn)}$referenceTypeArgs,"args":[$args]$anySlotTag,"suspendCall":true}""", effectiveIdentityTag)
 		}
 		dispatchIdx < 0 && extIdx < 0 && ownerClass != null &&
 			(isExternalNetType(ownerClass) || isKotlinStaticFunction(fn)) -> {
@@ -890,13 +944,13 @@ internal fun BirEmitter.suspendFunctionRef(node: IrFunctionReference, fn: IrSimp
 					"its declaring owner identity is missing")
 			val args = paramNames.joinToString(",") { localArg(it) }
 			captures = ""; capValues = null
-			bodyCall = """{"k":"callStatic","ownerType":${fqnJson(staticOwner)},"method":${str(member)}${overloadSigField(fn)}$referenceTypeArgs,"args":[$args],"suspendCall":true}"""
+			bodyCall = declarationBoundCall("""{"k":"callStatic","ownerType":${fqnJson(staticOwner)},"method":${str(member)}${overloadSigField(fn)}$referenceTypeArgs,"args":[$args],"suspendCall":true}""")
 		}
 		dispatchIdx < 0 -> {
 			// Top-level `::fn` — all lambda params are the target's regular args; an owner:null static call.
 			val args = paramNames.joinToString(",") { localArg(it) }
 			captures = ""; capValues = null
-			bodyCall = """{"k":"callStatic","owner":null,"method":${str(member)}${overloadSigField(fn)}$referenceTypeArgs,"args":[$args],"suspendCall":true${calleeOwnerTag(fn)}$companionExtensionTag}"""
+			bodyCall = declarationBoundCall("""{"k":"callStatic","owner":null,"method":${str(member)}${overloadSigField(fn)}$referenceTypeArgs,"args":[$args],"suspendCall":true${calleeOwnerTag(fn)}$companionExtensionTag}""")
 		}
 		else -> return unsupported(node, "a suspend function reference",
 			"its receiver could not be resolved to a supported (top-level or user-member) suspend target")
@@ -943,17 +997,20 @@ internal fun BirEmitter.extensionReferenceCall(
 	val refTa = if (!hasRefTa) "" else
 		""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
 	val suspendTag = if (suspending) ""","suspendCall":true""" else ""
+	// A companion-extension association and the selected accessor/function identity are orthogonal. The former
+	// chooses the CLR container; the latter prevents overload re-resolution after receiver/parameter erasure.
+	val declarationIdentityTag = declarationIdField(fn)
 	val externalFileClass = clrExternalOwner(fn)
 	if (externalFileClass != null) {
 		val extRecvParam = extensionReceiverParam(fn)!!
 		val declShapeTypes = (listOf(extRecvParam) + regularParams(fn))
 			.joinToString(",") { birType(it.type).toJson() }
 		return if (hasRefTa)
-			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]$suspendTag}"""
+			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())}$refTa,"shapeTypes":[$declShapeTypes],"args":[$callArgs]$suspendTag$declarationIdentityTag}"""
 		else
-			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${ret.toJson()},"args":[$callArgs]$suspendTag}"""
+			"""{"k":"callStatic","ownerType":${fqnJson(externalFileClass)},"method":${str(fn.name.asString())},"argTypes":[$declShapeTypes],"ret":${ret.toJson()},"args":[$callArgs]$suspendTag$declarationIdentityTag}"""
 	}
-	return """{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, ret)},"args":[$callArgs]$suspendTag${calleeOwnerTag(fn)}}"""
+	return """{"k":"callStatic","owner":null,"method":${str(fn.name.asString())}${overloadSigField(fn)}$refTa${retHintStr(hasRefTa, ret)},"args":[$callArgs]$suspendTag${calleeOwnerTag(fn)}$declarationIdentityTag}"""
 }
 
 /**
@@ -1235,6 +1292,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		// getter's is [recv]. Using the getter's sig for `prop:set` would key a same-name `var`-ext-property overload
 		// to the wrong slot.
 		val sigFn = if (isSetter) setterFn!! else getterFn
+		val declarationIdentityTag = declarationIdField(sigFn)
 		// A generic extension property reference carries the property accessor's OWN resolved type arguments on the
 		// reference node (`List<Int>::lastIndex` -> T=Int). Thread them onto the forwarded accessor call exactly as the
 		// direct value-read path does, so bir2cir/ilemit close the generic method rather than seeing an open `!!T`.
@@ -1249,11 +1307,11 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 			val declShapeTypes = (listOf(extRecvParam) + regularParams(sigFn))
 				.joinToString(",") { birType(it.type).toJson() }
 			return if (hasRefTa)
-				"""{"k":"callStatic","ownerType":${fqnJson(externalExtPropFileClass)},"method":${str(name)},"prop":${str(kind)}$refTa,"shapeTypes":[$declShapeTypes],"args":[$args]}"""
+				"""{"k":"callStatic","ownerType":${fqnJson(externalExtPropFileClass)},"method":${str(name)},"prop":${str(kind)}$refTa,"shapeTypes":[$declShapeTypes],"args":[$args]$declarationIdentityTag}"""
 			else
-				"""{"k":"callStatic","ownerType":${fqnJson(externalExtPropFileClass)},"method":${str(name)},"prop":${str(kind)},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$args]}"""
+				"""{"k":"callStatic","ownerType":${fqnJson(externalExtPropFileClass)},"method":${str(name)},"prop":${str(kind)},"argTypes":[$declShapeTypes],"ret":${retT.toJson()},"args":[$args]$declarationIdentityTag}"""
 		}
-		return """{"k":"callStatic","owner":null,"method":${str(name)},"prop":${str(kind)}${overloadSigField(sigFn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$args]${calleeOwnerTag(sigFn)}}"""
+		return """{"k":"callStatic","owner":null,"method":${str(name)},"prop":${str(kind)}${overloadSigField(sigFn)}$refTa${retHintStr(hasRefTa, retT)},"args":[$args]${calleeOwnerTag(sigFn)}$declarationIdentityTag}"""
 	}
 	fun accessorCall(isSetter: Boolean, extraArg: String?): String {
 		val fn = if (isSetter) setterFn!! else getterFn

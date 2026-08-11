@@ -1,0 +1,35 @@
+{
+  "fileClass": "SuspendBoundCollisionOrderBKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "bounded",
+      "declarationId": "fixture-suspend-bound-b",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "mods": { "suspend": true },
+      "typeParams": [{ "name": "T", "constraints": [{ "t": "fqn", "name": "System.IFormattable" }] }],
+      "params": [{ "name": "value", "type": { "t": "tv", "scope": "method", "i": 0 } }],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 2 } }]
+    },
+    {
+      "name": "bounded",
+      "declarationId": "fixture-suspend-bound-a",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "mods": { "suspend": true },
+      "typeParams": [{ "name": "T", "constraints": [{ "t": "fqn", "name": "System.IComparable" }] }],
+      "params": [{ "name": "value", "type": { "t": "tv", "scope": "method", "i": 0 } }],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 } }]
+    }
+  ]
+}

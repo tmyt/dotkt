@@ -518,9 +518,7 @@ internal fun BirEmitter.clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnn
 	return clrExternalOwner(decl)
 }
 
-/** The opaque CLR declaration owner written by dll2klib into standard KLIB annotations.
- * kotc does not interpret the owner or choose a CLR shape; it merely forwards the already
- * resolved origin fact into BIR, where bir2cir owns physical binding. */
+/** The CLR owner written by dll2klib. Exact declaration linkage is carried independently. */
 internal fun BirEmitter.clrExternalOwner(
 	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
 ): String? {
@@ -528,7 +526,7 @@ internal fun BirEmitter.clrExternalOwner(
 	val annotation = host.annotations.firstOrNull {
 		it.type.classFqName?.asString() == "kotlin.clr.ClrExternal"
 	} ?: return null
-	return (regularArgs(annotation).firstOrNull() as? IrConst)?.value as? String
+	return (regularArgs(annotation).singleOrNull() as? IrConst)?.value as? String
 }
 
 /** Boolean ORIGIN-GATE: is `decl` an external .NET/CLR type (vs a pure-Kotlin/stdlib type)? The truthiness

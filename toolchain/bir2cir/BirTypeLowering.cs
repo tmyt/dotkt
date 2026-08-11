@@ -540,18 +540,20 @@ static class BirTypeLowering
                     or KotlinPropertyAccessors.InheritedImplementationKey
                     or KotlinPropertyAccessors.InheritedDefaultAccessorsKey
                     or KotlinPropertyAccessors.InheritedDefaultMethodsKey
-                    or KotlinPropertyAccessors.PhysicalSlotBridgeKey
                     or KotlinPropertyAccessors.SuspendSourceParamsKey
                     or KotlinPropertyAccessors.SuspendSourceRetKey
                     or KotlinPropertyAccessors.SuspendTaskResultKey
-                    or KotlinPropertyAccessors.SourceNameKey or KotlinPropertyAccessors.KindKey
-                    or KotlinPropertyAccessors.PropertyRolesKey or KotlinPropertyAccessors.AssociationKey
                     or FBoundStarProjectionErasure.SourceMemberKey) continue;
                 // #122: the frontend static-type stamp `sty` is bir2cir-internal (consumed by StaticType up through the
                 // CharSequence bridge). Strip it here so it never reaches CIR/ilemit — a consumed hint, not a CIR slot.
                 if (kv.Key == "sty") continue;
                 if (kv.Value == null) { copy[kv.Key] = null; continue; }
-                if (kv.Key == "attrs")
+                // #395: this is an opaque snapshot of the frontend declaration signature. It exists precisely because
+                // the ordinary signature below may erase to the same CLR shape as another Kotlin overload, so applying
+                // this transform to the snapshot would destroy the only authoritative cross-module distinction.
+                if (kv.Key == DeclarationIdentityBinding.SemanticSignatureKey)
+                    copy[kv.Key] = kv.Value.DeepClone();
+                else if (kv.Key == "attrs")
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, force: true);   // attribute application -> blob metadata
                 else if (kv.Key is "sig" or "getSig" or "setSig")
                     copy[kv.Key] = LowerSigValue(kv.Value, refBuild, here);   // sig = param types

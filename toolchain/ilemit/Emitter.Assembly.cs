@@ -1117,24 +1117,16 @@ sealed partial class Emitter
         foreach (var g in map.Values) _emittedMethodTps.Add(g);
     }
 
-    // Body-phase occurrence counter for duplicate (name, method generic arity, params) defs — mirrors
-    // DeclareMethod's $dupN mangling.
-    readonly Dictionary<(TypeInfo, MethodSigKey), int> _bodyDupSeen = new();
-
     void DeclareMethod(TypeInfo ti, JsonElement m, bool isStatic)
     {
         var logicalName = m.GetProperty("name").GetString();
         var name = PhysicalMethodName(m);
-        // Preserve the pre-#393 fallback for same-kind declarations that collapse to one CLR signature. Resolving
-        // those semantic identities is #395; the dedicated property-accessor naming rule does not depend on this
-        // declaration-order suffix.
+        // bir2cir owns physical method allocation (#395). A duplicate CIR signature is therefore malformed input;
+        // ilemit must not invent an order-dependent `$dupN` name that declarations and use sites cannot share.
         var dupKey = SigKey(name, m);
         if (ti.MethodsBySig.ContainsKey(dupKey))
-        {
-            var n = 2;
-            while (ti.MethodsBySig.ContainsKey(SigKey(name + "$dup" + n, m))) n++;
-            name = name + "$dup" + n;
-        }
+            throw new InvalidOperationException(
+                $"ilemit: duplicate physical method signature {ti.TB?.FullName}.{name}; bir2cir must allocate a unique MethodDef name");
         var interfaceAbstract = false;
         var interfaceSlot = ti.IsInterface
             && !(isStatic || (m.TryGetProperty("static", out var declaredStatic) && declaredStatic.GetBoolean()));
