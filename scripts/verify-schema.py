@@ -654,6 +654,25 @@ class V:
                 # the DURABLE facts instead: a constructor delegating to a non-local base, and a method carrying
                 # `clrOverride`. Removing the owners without writing that rule leaves 2,310 sites unenforced
                 # while the gate still reports green.
+                # An APPLIED EXTERNAL attribute is a call into the assembly that declares it, and `attrExternal`
+                # is a durable bir2cir fact rather than a transitional descriptor — so unlike the pairs below,
+                # this rule survives the migration that deletes them. It is also the rule that would have
+                # caught 496 return-position attributes going unresolved while the walk that resolves them
+                # looked complete.
+                if o.get("attrExternal") is True:
+                    ref = o.get("memberRef")
+                    if not isinstance(ref, dict):
+                        self.err(f, path, "an external applied attribute must carry the resolved memberRef of the constructor it invokes")
+                    else:
+                        if ref.get("kind") != "ctor":
+                            self.err(f, path, f"an applied attribute's memberRef must be a ctor, got {ref.get('kind')!r}")
+                        attr_type = o.get("attr")
+                        if (isinstance(attr_type, dict) and isinstance(ref.get("declaringType"), dict)
+                                and attr_type.get("name") != ref["declaringType"].get("name")):
+                            self.err(f, path, "an applied attribute's memberRef must be declared by the attribute type itself")
+                        declared = o.get("argTypes")
+                        if isinstance(declared, list) and len(declared) != len(ref.get("parameterTypes") or []):
+                            self.err(f, path, "an applied attribute's memberRef takes a different number of arguments than the application states")
                 for owner_key, ref_key in DECLARATION_REF_PAIRS:
                     if owner_key in o and ref_key not in o:
                         self.err(f, path, f"{owner_key} is present without the resolved {ref_key} beside it")

@@ -652,6 +652,17 @@ static partial class ClrMemberResolution
         return applicable.Count == 1 ? applicable[0] : null;
     }
 
+    // The same two tiers for a CONSTRUCTOR set. Constructors are never inherited, so there is no most-derived
+    // question to ask: a set of them either narrows to one declaration or it does not.
+    static ConstructorInfo TryPickUniqueCtor(List<ConstructorInfo> cands, List<TypeNode> sig, TypeNode[] ownerArgs)
+    {
+        var scored = cands.Select(c => (c, m: Match(c.GetParameters(), sig, ownerArgs)))
+            .Where(x => x.m != MatchKind.No).ToList();
+        var exact = scored.Where(x => x.m == MatchKind.Exact).Select(x => x.c).ToList();
+        if (exact.Count > 0) return exact.Count == 1 ? exact[0] : null;
+        return scored.Count == 1 ? scored[0].c : null;
+    }
+
     // ---- bound .NET method-reference (newBoundClrDelegate) --------------------------------------
 
     // W1-S5 (#46/#183) — RESOLVED-CLR-IR carry for a BOUND .NET method-reference (`netObj::method`, produced by
