@@ -1,0 +1,1 @@
+type 'mod' is a CIR-only ECMA signature carrier and must not appear in kotc BIR

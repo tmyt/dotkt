@@ -111,8 +111,8 @@
         "t":    { "const": "array" },
         "elem": { "$ref": "#/$defs/type" },
         "rank": {
-          "type": "integer", "minimum": 2,
-          "description": "CIR-only: the ECMA multi-dimensional ARRAY rank. ABSENT is the SZARRAY `T[]` — the only shape Kotlin source can spell — so a rank of 1 is a malformed document, not a vector. Present only where an external member declares `T[,…]`, whose signature differs from `T[]`; collapsing the two would make such overloads indistinguishable. kotc MUST omit it."
+          "type": "integer", "minimum": 2, "maximum": 32,
+          "description": "CIR-only: the ECMA multi-dimensional ARRAY rank (the CLR caps it at 32). ABSENT is the SZARRAY `T[]` — the only shape Kotlin source can spell — so a rank of 1 is a malformed document, not a vector. Present only where an external member declares `T[,…]`, whose signature differs from `T[]`; collapsing the two would make such overloads indistinguishable. kotc MUST omit it."
         }
       },
       "required": ["t", "elem"],
@@ -161,16 +161,16 @@
           "description": "What the member IS. Selects the lookup family (method/constructor/field) and records the accessor role; the get-vs-set / add-vs-remove ROLE stays on the node kind, never re-derived from a get_/add_ spelling."
         },
         "assembly": {
-          "type": "string",
+          "type": "string", "minLength": 1,
           "description": "Simple name of the assembly that must own the emitted reference. This is the PHYSICAL identity, not the file bir2cir happened to read: fixing the physical CLR representation is bir2cir's job, so where a reference twin and its runtime twin differ in name this already names the runtime one. Full version/culture/PKT identity is deliberately NOT carried — a reference-pack and its implementation assembly legitimately differ there."
         },
         "declaringType": {
-          "$ref": "#/$defs/type",
+          "$ref": "#/$defs/tFqn",
           "description": "The exact DECLARING type: an fqn whose name is the open definition's metadata FullName VERBATIM (arity backtick and `+` nesting included — the physical name the target universe is keyed by, so nothing downstream re-derives either) and whose `args`, when present, are the use-site instantiation of that declaring type. The declarer is stated, never derived — a member the receiver merely inherits is anchored on the type that declares it, so no base walk or most-derived rule is needed downstream."
         },
         "name": {
-          "type": "string",
-          "description": "The exact metadata member name: `.ctor` for a constructor, get_X/set_X/add_X/remove_X for an accessor, otherwise verbatim."
+          "type": "string", "minLength": 1,
+          "description": "The exact metadata member name: `.ctor` for a constructor (and ONLY for a constructor), get_X/set_X/add_X/remove_X for an accessor, otherwise verbatim."
         },
         "genericArity": {
           "type": "integer", "minimum": 0,
@@ -191,7 +191,7 @@
       },
       "required": ["kind", "assembly", "declaringType", "name", "genericArity", "returnType"],
       "additionalProperties": false,
-      "$comment": "A field carries neither `callingConvention` nor `parameterTypes`; every other kind carries both. A ctor is named `.ctor`, is `instance`, has arity 0 and returns void. The validator pins these; the schema's per-kind conditionals would only restate them less readably."
+      "$comment": "A field carries neither `callingConvention` nor `parameterTypes`; every other kind carries both. A ctor is named `.ctor`, is `instance`, has arity 0 and returns void, and no other kind may bear that name. ONE SPELLING PER SHAPE, since a consumer compares these exactly: a non-generic declarer omits `args` rather than carrying an empty list, and a signature carries no `oblivious` or `star` — those are Kotlin type-system facts, not physical CLR shapes. `declaringType.args` is FLATTENED over the enclosing-type chain, matching tv{scope:type}. The validator pins all of this; the schema's per-kind conditionals would only restate it less readably."
     },
 
     "//== MODIFIERS (§2.1) + VISIBILITY ==//": null,

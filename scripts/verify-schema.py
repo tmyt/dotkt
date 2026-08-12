@@ -293,6 +293,37 @@ class V:
                 self.err(f, path, f"type {t!r} is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
             if t == "array" and "rank" in o:
                 self.err(f, path, "array.rank is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
+        # …and they belong to a MEMBER REFERENCE, nowhere else. Ordinary type slots are rewritten by many
+        # lowering passes that reconstruct an array as a vector and know nothing of pointers or modifiers, so
+        # one of these outside a reference would be silently flattened — re-creating the very collisions the
+        # carriers exist to prevent. Confining them to the reference keeps those passes correct by construction.
+        if (t in ("ptr", "mod") or (t == "array" and "rank" in o)) and "/memberRef" not in path:
+            carrier = "array.rank" if t == "array" else t
+            self.err(f, path, f"type {carrier} may only appear inside a memberRef signature, not in an ordinary type slot")
+        # The other direction: a member reference is a PHYSICAL identity, so the Kotlin type-system facts have
+        # no place in one. `oblivious` is a nullability annotation the CLR signature does not carry, and `star`
+        # is a Kotlin projection; either inside a signature would be a second spelling of a physical shape, and
+        # two spellings of one member are two members to a consumer that compares them exactly.
+        if "/memberRef" in path and t in ("oblivious", "star"):
+            self.err(f, path, f"type {t!r} is a Kotlin type-system fact and has no place in a physical member signature")
+
+    def member_ref_carrier(self, f, path, key, val):
+        """A frozen memberRef carrier key holds ONE reference — never a list of them.
+
+        A candidate SET reaching a consumer is the failure mode this whole shape exists to remove: whoever
+        received it would have to choose, and choosing is the decision that belongs to the producer. Each
+        element of such a list validates perfectly well on its own, so nothing else here would notice.
+        """
+        if not isinstance(val, dict):
+            self.err(f, path, f"{key} must be ONE member reference object, got {type(val).__name__} "
+                              "(a candidate set is member selection deferred downstream)")
+            return
+        # NOTE for a later step: a carrier that legitimately holds SEVERAL references (a MethodImpl list, say)
+        # is a different shape and needs its own arm here — each element one reference, the list itself not a
+        # candidate set. Until such a carrier is registered, a list under any carrier is the smuggling above.
+        self.member_ref(f, path, val)
+        if f.endswith(".bir.json"):
+            self.err(f, path, "memberRef is a bir2cir-authored resolved member identity and must not appear in kotc BIR")
 
     def member_ref(self, f, path, o):
         """#370: a memberRef must be a COMPLETE member identity — the point of the shape (spec §2.2.2).
@@ -307,6 +338,8 @@ class V:
         for required in ("kind", "assembly", "declaringType", "name", "genericArity", "returnType"):
             if required not in o:
                 self.err(f, path, f"memberRef missing required field {required!r}")
+        if kind != "ctor" and o.get("name") == ".ctor":
+            self.err(f, path, f"memberRef.name `.ctor` names a constructor, but kind is {kind!r}")
         allowed = {"kind", "assembly", "declaringType", "name", "genericArity", "returnType",
                    "callingConvention", "parameterTypes"}
         for extra in set(o) - allowed:
@@ -316,6 +349,11 @@ class V:
         declaring = o.get("declaringType")
         if not isinstance(declaring, dict) or declaring.get("t") != "fqn":
             self.err(f, path, "memberRef.declaringType must be an fqn Type node")
+        elif "args" in declaring and not declaring["args"]:
+            # One spelling per shape: a non-generic declarer OMITS args. An empty list would be a second way
+            # to say the same thing, and two spellings of one identity are two identities to a consumer that
+            # compares them.
+            self.err(f, path, "memberRef.declaringType must omit `args` when the declarer is non-generic, not carry an empty list")
         if not isinstance(o.get("name"), str) or not o["name"]:
             self.err(f, path, "memberRef.name must be a non-empty metadata member name")
         arity = o.get("genericArity")
@@ -396,16 +434,20 @@ class V:
                 self.err(f, path, f"object carries BOTH k={o.get('k')!r} and t={o.get('t')!r} (node/type roles are disjoint)")
             elif "t" in o:
                 self.type_node(f, path, o)
+            # #370, two independent triggers, because either one alone leaves a hole. The KEY is authoritative:
+            # whatever sits under a frozen carrier is a member reference and is checked as one, so a reference
+            # that dropped a required field cannot escape validation by no longer looking like one. And
+            # `declaringType` — which no other document shape has — catches a resolved identity smuggled in
+            # under a key nobody registered, i.e. a second member-identity vocabulary growing beside this one.
+            for carrier_key in MEMBER_REF_KEYS & set(o):
+                self.member_ref_carrier(f, path + "/" + carrier_key, carrier_key, o[carrier_key])
             if "declaringType" in o:
-                # #370: `declaringType` appears in exactly one shape, so it identifies a resolved member
-                # reference wherever it sits — including under a key nobody registered, which is how a
-                # parallel member-identity spelling would otherwise creep back in beside the scalar one.
-                self.member_ref(f, path, o)
                 carrier = path.rsplit("/", 1)[-1].split("[")[0]
                 if carrier not in MEMBER_REF_KEYS:
+                    self.member_ref(f, path, o)
                     self.err(f, path, f"a resolved member identity must ride on a frozen memberRef carrier key, not {carrier!r}")
-                if f.endswith(".bir.json"):
-                    self.err(f, path, "memberRef is a bir2cir-authored resolved member identity and must not appear in kotc BIR")
+                    if f.endswith(".bir.json"):
+                        self.err(f, path, "memberRef is a bir2cir-authored resolved member identity and must not appear in kotc BIR")
             if isinstance(o.get("k"), str):
                 k = o["k"]
                 self.kinds_seen.add(k)

@@ -110,6 +110,13 @@ public sealed record MemberRefNode(
         if (string.IsNullOrEmpty(Assembly)) throw new FormatException("memberRef.assembly must be a non-empty simple assembly name");
         if (DeclaringType is not TypeNode.Fqn) throw new FormatException("memberRef.declaringType must be an fqn type node");
         if (string.IsNullOrEmpty(Name)) throw new FormatException("memberRef.name must be a non-empty metadata member name");
+        // A non-generic declarer OMITS its args. An empty list would be a second spelling of the same shape,
+        // and this record's structural equality treats "absent" and "empty" as different — so one member
+        // would acquire two identities that never compare equal.
+        if (DeclaringType is TypeNode.Fqn { Args: { Length: 0 } })
+            throw new FormatException("memberRef.declaringType must omit `args` when the declarer is non-generic, not carry an empty list");
+        if (Kind != Kinds.Ctor && Name == CtorName)
+            throw new FormatException($"memberRef.name `{CtorName}` names a constructor, but kind is `{Kind}`");
         if (GenericArity < 0) throw new FormatException($"memberRef.genericArity must be >= 0, got {GenericArity}");
         if (GenericArity > 0 && Kind != Kinds.Method)
             throw new FormatException($"memberRef.genericArity must be 0 for kind `{Kind}` (only a method has its own generic parameters)");
@@ -141,12 +148,14 @@ public sealed record MemberRefNode(
         var node = new MemberRefNode(
             Kind: Str(e, "kind"),
             Assembly: Str(e, "assembly"),
-            DeclaringType: TypeNode.Read(e.GetProperty("declaringType")),
+            DeclaringType: TypeNode.Read(Required(e, "declaringType")),
             Name: Str(e, "name"),
-            GenericArity: e.GetProperty("genericArity").GetInt32(),
-            ReturnType: TypeNode.Read(e.GetProperty("returnType")),
-            CallingConvention: e.TryGetProperty("callingConvention", out var cc) ? cc.GetString() : null,
-            ParameterTypes: e.TryGetProperty("parameterTypes", out var ps) ? ReadTypes(ps) : null);
+            GenericArity: Int(e, "genericArity"),
+            ReturnType: TypeNode.Read(Required(e, "returnType")),
+            // A key present with a JSON null is NOT the same as an absent key: it states the field and states
+            // nothing, which is how a producer half-writes a reference. Absence is the only way to omit one.
+            CallingConvention: Optional(e, "callingConvention")?.GetString(),
+            ParameterTypes: Optional(e, "parameterTypes") is { } ps ? ReadTypes(ps) : null);
         node.Validate();
         return node;
     }
@@ -155,10 +164,25 @@ public sealed record MemberRefNode(
     public static MemberRefNode? ReadOptional(JsonElement owner, string key) =>
         owner.ValueKind == JsonValueKind.Object && owner.TryGetProperty(key, out var e) ? Read(e) : null;
 
+    // Every read failure is a FormatException naming the field: a reference is read at a layer boundary, and
+    // a KeyNotFoundException from a raw GetProperty tells the operator nothing about which document is wrong.
+    static JsonElement Required(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null
+            ? v
+            : throw new FormatException($"memberRef missing required field `{name}`");
+
+    static JsonElement? Optional(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null ? v : null;
+
     static string Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
             ? v.GetString()!
             : throw new FormatException($"memberRef missing required string field `{name}`");
+
+    static int Int(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i)
+            ? i
+            : throw new FormatException($"memberRef missing required integer field `{name}`");
 
     static TypeNode[] ReadTypes(JsonElement e)
     {
@@ -334,8 +358,25 @@ public static class MemberRefNodeSelfTest
         Refuse("ctor returning a value", () => new MemberRefNode(MemberRefNode.Kinds.Ctor, "A", new TypeNode.Fqn("T"),
             MemberRefNode.CtorName, 0, new TypeNode.Fqn("T"), MemberRefNode.Instance,
             System.Array.Empty<TypeNode>()).Validate());
+        Refuse("`.ctor` under a non-ctor kind", () => new MemberRefNode(MemberRefNode.Kinds.Method, "A",
+            new TypeNode.Fqn("T"), MemberRefNode.CtorName, 0, MemberRefNode.Void, MemberRefNode.Instance,
+            System.Array.Empty<TypeNode>()).Validate());
+        Refuse("an empty declaring-args list", () => new MemberRefNode(MemberRefNode.Kinds.Method, "A",
+            new TypeNode.Fqn("T", System.Array.Empty<TypeNode>()), "m", 0, MemberRefNode.Void,
+            MemberRefNode.Instance, System.Array.Empty<TypeNode>()).Validate());
 
-        Console.WriteLine($"[C# MemberRefNode] self-test OK ({cases.Length} fixture cases + identity + 10 refusals)");
+        // A key present with a JSON null states the field and states nothing — the shape a half-written
+        // reference takes. Absence is the only way to omit an optional field.
+        Refuse("an explicitly null required field", () => MemberRefNode.Parse(
+            "{\"kind\":\"method\",\"assembly\":\"A\",\"declaringType\":null,\"name\":\"m\"," +
+            "\"genericArity\":0,\"returnType\":{\"t\":\"fqn\",\"name\":\"void\"}," +
+            "\"callingConvention\":\"static\",\"parameterTypes\":[]}"));
+        Refuse("an explicitly null calling convention", () => MemberRefNode.Parse(
+            "{\"kind\":\"method\",\"assembly\":\"A\",\"declaringType\":{\"t\":\"fqn\",\"name\":\"T\"}," +
+            "\"name\":\"m\",\"genericArity\":0,\"returnType\":{\"t\":\"fqn\",\"name\":\"void\"}," +
+            "\"callingConvention\":null,\"parameterTypes\":[]}"));
+
+        Console.WriteLine($"[C# MemberRefNode] self-test OK ({cases.Length} fixture cases + identity + 15 refusals)");
     }
 
     static void Refuse(string what, Action act)

@@ -386,9 +386,26 @@ names the runtime one. A vararg signature is refused at the producer rather than
 this source language reaches one and a wrong convention would produce a valid-looking reference to the wrong
 member.
 
+**ONE SPELLING PER SHAPE.** A consumer compares these references exactly, so two ways to write one physical
+member would be two members to it. The rules, all validator-enforced:
+
+- a non-generic declarer **omits** `args`; it never carries an empty list;
+- `declaringType.args` is **flattened** over the enclosing-type chain, matching `tv{scope:"type"}` (§1) —
+  `Outer\`1+Inner\`1` carries the outer argument first;
+- a signature carries no `oblivious` and no `star`: those are Kotlin type-system facts, and a physical CLR
+  signature has neither. `nullable` appears only as the `System.Nullable\`1` value-type collapse;
+- `.ctor` names a constructor and nothing else;
+- the CIR-only carriers `ptr`, `mod` and `array.rank` appear **only** inside a `memberRef`. Ordinary type
+  slots are rewritten by lowering passes that reconstruct an array as a vector and know nothing of pointers
+  or modifiers, so one outside a reference would be silently flattened — re-creating exactly the collisions
+  those carriers exist to prevent.
+
 Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
 built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature
 table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
+
+A carrier key holds ONE reference, never a list. A candidate set reaching a consumer is precisely the failure
+this shape removes: whoever received it would have to choose, and choosing is the producer's decision.
 
 ### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
 The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/

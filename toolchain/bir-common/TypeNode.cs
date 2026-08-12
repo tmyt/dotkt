@@ -107,6 +107,9 @@ public abstract record TypeNode
     /// </summary>
     public sealed record Array(TypeNode Elem, int Rank = 1) : TypeNode;
 
+    /// <summary>The CLR's own limit on array rank; a document beyond it describes no representable type.</summary>
+    public const int MaxArrayRank = 32;
+
     /// <summary>`byRef`: a CLR by-ref <c>ref T</c>.</summary>
     public sealed record ByRef(TypeNode Of) : TypeNode;
 
@@ -170,8 +173,11 @@ public abstract record TypeNode
             case "array":
             {
                 int rank = e.TryGetProperty("rank", out var rk) ? rk.GetInt32() : 1;
-                if (rank < 2 && e.TryGetProperty("rank", out _))
-                    throw new FormatException($"array.rank must be >= 2 (an SZ array omits it), got {rank}");
+                // An SZ array omits `rank`; a stated rank names the multi-dimensional array, whose rank the
+                // CLR caps at 32. Either bound refuses a document nothing can represent rather than passing
+                // it to a metadata writer that would.
+                if (e.TryGetProperty("rank", out _) && (rank < 2 || rank > MaxArrayRank))
+                    throw new FormatException($"array.rank must be between 2 and {MaxArrayRank} (an SZ array omits it), got {rank}");
                 return new Array(Read(e.GetProperty("elem")), rank);
             }
             case "byRef":
@@ -229,7 +235,8 @@ public abstract record TypeNode
                 return new JsonObject { ["t"] = "oblivious", ["of"] = Write(ob.Of) };
             case Array a:
             {
-                if (a.Rank < 1) throw new ArgumentException($"array rank must be >= 1, got {a.Rank}");
+                if (a.Rank < 1 || a.Rank > MaxArrayRank)
+                    throw new ArgumentException($"array rank must be between 1 and {MaxArrayRank}, got {a.Rank}");
                 var o = new JsonObject { ["t"] = "array", ["elem"] = Write(a.Elem) };
                 if (a.Rank > 1) o["rank"] = a.Rank;
                 return o;
@@ -375,6 +382,12 @@ public static class TypeNodeSelfTest
         {
             TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":1}");
             throw new Exception("[C# TypeNode] expected a FormatException for array rank 1");
+        }
+        catch (FormatException) { /* expected */ }
+        try
+        {
+            TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":99999}");
+            throw new Exception("[C# TypeNode] expected a FormatException for an array rank beyond the CLR limit");
         }
         catch (FormatException) { /* expected */ }
         // An SZ array must NOT acquire a rank key on the way out, or every existing array node changes bytes.
