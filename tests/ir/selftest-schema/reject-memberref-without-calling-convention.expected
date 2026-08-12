@@ -1,1 +1,1 @@
-must be `static` or `instance`
+must be one of ['instance', 'static', 'varargInstance', 'varargStatic']

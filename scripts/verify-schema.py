@@ -18,7 +18,7 @@
 # exercised end-to-end by the ProjectReference roundtrip NUnit suite. This document validator scopes to document nodes;
 # the decoded carrier BODY is itself a node/type that also appears inline in the emitting
 # method's body (validated here). See spec §7.
-import json, sys, glob, os
+import json, re, sys, glob, os
 
 TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "mod"}
 
@@ -29,6 +29,15 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 MEMBER_REF_KEYS = {"memberRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
+
+# HASTHIS, plus whether the signature is vararg — a vararg member is a DIFFERENT member from its fixed-arity
+# neighbour, so the convention states it rather than the producer refusing to describe it.
+MEMBER_REF_CONVENTIONS = {"static", "instance", "varargStatic", "varargInstance"}
+
+
+def arity_of_name(full_name):
+    """The generic arity a metadata FullName encodes, summed over the nesting chain (`Outer`1+Inner`1` = 2)."""
+    return sum(int(n) for n in re.findall(r"`(\d+)", full_name))
 
 # #370 co-presence: the CIR node kinds whose external member is ALREADY authored as a scalar `memberRef`.
 # While the transitional descriptors still exist, a node of one of these kinds carrying the old identity but
@@ -367,6 +376,13 @@ class V:
             # to say the same thing, and two spellings of one identity are two identities to a consumer that
             # compares them.
             self.err(f, path, "memberRef.declaringType must omit `args` when the declarer is non-generic, not carry an empty list")
+        elif isinstance(declaring.get("name"), str):
+            # The declarer's name states its own arity, so any other argument count describes an instantiation
+            # that type cannot have — which is what a projection that ran short or long produces: an identity
+            # that still looks coherent and names nothing.
+            want, got = arity_of_name(declaring["name"]), len(declaring.get("args") or [])
+            if want != got:
+                self.err(f, path, f"memberRef.declaringType `{declaring['name']}` declares {want} generic parameter(s) but carries {got} argument(s)")
         if not isinstance(o.get("name"), str) or not o["name"]:
             self.err(f, path, "memberRef.name must be a non-empty metadata member name")
         arity = o.get("genericArity")
@@ -381,15 +397,15 @@ class V:
                 if absent in o:
                     self.err(f, path, f"memberRef.{absent} must be absent for a field")
         elif kind in MEMBER_REF_KINDS:
-            if o.get("callingConvention") not in ("static", "instance"):
-                self.err(f, path, f"memberRef.callingConvention={o.get('callingConvention')!r} must be `static` or `instance`")
+            if o.get("callingConvention") not in MEMBER_REF_CONVENTIONS:
+                self.err(f, path, f"memberRef.callingConvention={o.get('callingConvention')!r} must be one of {sorted(MEMBER_REF_CONVENTIONS)}")
             if not isinstance(o.get("parameterTypes"), list):
                 self.err(f, path, f"memberRef.parameterTypes must be a Type-node array for kind {kind!r}")
         if kind == "ctor":
             if o.get("name") != ".ctor":
                 self.err(f, path, f"memberRef.name for a ctor must be `.ctor`, got {o.get('name')!r}")
-            if o.get("callingConvention") != "instance":
-                self.err(f, path, "a ctor memberRef must be `instance`")
+            if o.get("callingConvention") not in ("instance", "varargInstance"):
+                self.err(f, path, "a ctor memberRef must be an instance convention")
             if o.get("returnType") != {"t": "fqn", "name": "void"}:
                 self.err(f, path, "a ctor memberRef must return void")
 

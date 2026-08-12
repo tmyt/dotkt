@@ -302,6 +302,39 @@
               ]
             }
           }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrStatic",
+            "type": {
+              "t": "fqn",
+              "name": "System.Math"
+            },
+            "method": "Abs",
+            "args": [],
+            "memberRef": {
+              "kind": "method",
+              "assembly": "Probe",
+              "declaringType": {
+                "t": "fqn",
+                "name": "Probe.Variadic"
+              },
+              "name": "Printf",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Int32"
+              },
+              "callingConvention": "varargStatic",
+              "parameterTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.String"
+                }
+              ]
+            }
+          }
         }
       ]
     }

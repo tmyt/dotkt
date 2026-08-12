@@ -4,20 +4,25 @@
 // so that no later layer re-combines pieces of an identity. Re-combining candidates is member selection, and
 // that decision is settled here, against the compile-reference universe, or it is not settled at all.
 //
-// Two deliberate differences from the transitional `memberSig` vocabulary next door:
+// EVERY NAME IN HERE IS THE TARGET'S OWN. The transitional `memberSig` vocabulary next door spells a type
+// the way the rest of the document does — arity backtick stripped, `+` nesting flattened to `.`, delegates
+// rewritten as Kotlin function types, `System.Nullable`1` collapsed to a nullability wrapper. That is the
+// right vocabulary for a document about a Kotlin program, and the wrong one for an identity, because it is
+// LOSSY in exactly the places identity lives:
 //
-//   * FIDELITY. `MemberSigOf` flattens shapes Kotlin cannot spell — every array becomes an SZ array, a
-//     pointer becomes the FQN string "System.Int32*", and custom modifiers are dropped. Each of those makes
-//     two distinct members look like one, which is survivable for a descriptor that is only one half of a
-//     structural match but fatal for an identity that must select on its own. So the reference walks types
-//     with `ptr`, array `rank` and in-position `mod` intact. `MemberSigOf` itself is left ALONE: changing
-//     what it emits would change the bytes of every existing descriptor, and this reference is what replaces
-//     it, not a reason to churn it.
+//   * `Outer`1+Inner` loses its nested half — stripping at the first backtick leaves plain `Outer`, a name
+//     that either resolves to a different type or to none. This is not hypothetical; it was in the corpus.
+//   * `Ns.Outer+Inner` and a genuine `Ns.Outer.Inner` become the same string.
+//   * A pointer degrades to the FQN "System.Int32*", every array to a vector, custom modifiers vanish — each
+//     one a way for two distinct members to look like one.
 //
-//   * THE DECLARING HEAD IS PHYSICAL. A signature leaf is an ordinary CIR type node (the stripped-arity
-//     spelling every other type slot uses); the declaring type's own name is the target's verbatim metadata
-//     FullName, arity backtick and `+` nesting included — exactly what `memberOwner` already carries. That is
-//     the key the target universe is indexed by, so a consumer resolves it directly instead of probing arities.
+// So a reference spells every type — the declaring head, every parameter, the return, every generic argument
+// and every custom modifier — as the target's VERBATIM metadata FullName, with `ptr`, array `rank` and
+// in-position `mod` intact. The one spelling that is not verbatim is the void return, which names a type
+// that can appear nowhere else in a signature and therefore makes no member ambiguous.
+//
+// `MemberSigOf` is deliberately left alone. Changing what it emits would change the bytes of every existing
+// descriptor, and this reference is what replaces it — not a reason to churn it.
 //
 // The DECLARER, not the receiver, is what gets named. A member the receiver merely inherits is anchored on
 // the type that declares it, with the receiver's type arguments projected along the declaration edge — which
@@ -44,11 +49,6 @@ static partial class ClrMemberResolution
         var method = member as MethodInfo;
         if (ctor == null && method == null)
             throw new InvalidOperationException($"bir2cir: cannot reference '{member}' — neither a method nor a constructor (#370)");
-        // A vararg signature is refused rather than encoded: nothing in this source language reaches one, and a
-        // silently wrong convention would produce a valid-looking reference to a member nobody meant.
-        if ((member.CallingConvention & CallingConventions.VarArgs) != 0)
-            throw new InvalidOperationException(
-                $"bir2cir: '{DescribeMember(member)}' has a vararg calling convention, which a member reference does not encode (#370)");
         var node = new MemberRefNode(
             Kind: kind,
             Assembly: PhysicalAssemblyOf(member),
@@ -58,7 +58,7 @@ static partial class ClrMemberResolution
             ReturnType: ctor != null
                 ? MemberRefNode.Void
                 : RefReturnOf(method),
-            CallingConvention: member.IsStatic ? MemberRefNode.Static : MemberRefNode.Instance,
+            CallingConvention: ConventionOf(member),
             ParameterTypes: RefParamsOf(member));
         node.Validate();
         return node;
@@ -81,11 +81,28 @@ static partial class ClrMemberResolution
 
     // ---- the identity's three parts -----------------------------------------------------------------
 
+    // The convention bit. A vararg member is RECORDED rather than refused: the frontend accepted the program,
+    // so a backend that aborts here would be rejecting source over a fact it could simply state. Whether such
+    // a signature can be emitted is the emitter's question, asked where it can be answered.
+    static string ConventionOf(MethodBase member) =>
+        (member.CallingConvention & CallingConventions.VarArgs) != 0
+            ? (member.IsStatic ? MemberRefNode.VarargStatic : MemberRefNode.VarargInstance)
+            : (member.IsStatic ? MemberRefNode.Static : MemberRefNode.Instance);
+
+    // The DEFINITION of the type that declares the member, alias-resolved once. Both the assembly and the
+    // declaring head are facts about this one type, and computing it twice is how the two drift apart.
+    static Type DeclaringDefOf(MemberInfo member) => SafeDef(AliasResolve(DeclaringTypeOf(member)));
+
     // The assembly the EMITTED reference must be scoped to. Resolution reads whichever file this tool was
     // given; the program loads whatever ships. ManagedReferenceCatalog owns the one place those differ.
+    //
+    // NOTE for the consuming step: during a stdlib self-build the reference stdlib is on --compile-refs while
+    // the assembly being emitted IS its runtime twin, so a member resolved there would name the module under
+    // construction. No such member occurs in the corpus today; the emitter is where that has to become "this
+    // is a TypeDef", because only the emitter knows what it is building.
     static string PhysicalAssemblyOf(MemberInfo member)
     {
-        var declaring = SafeDef(AliasResolve(DeclaringTypeOf(member)));
+        var declaring = DeclaringDefOf(member);
         var name = declaring.Assembly?.GetName()?.Name;
         if (string.IsNullOrEmpty(name))
             throw new InvalidOperationException(
@@ -104,7 +121,7 @@ static partial class ClrMemberResolution
     // fallbacks came from.
     static TypeNode DeclaringTypeRef(MemberInfo member, Type openOwner, TypeNode[] ownerArgs)
     {
-        var declaring = SafeDef(AliasResolve(DeclaringTypeOf(member)));
+        var declaring = DeclaringDefOf(member);
         var head = PhysicalTypeName(declaring);
         var args = ownerArgs ?? Array.Empty<TypeNode>();
         var openDefinition = openOwner == null ? null : SafeDef(openOwner);
@@ -116,7 +133,7 @@ static partial class ClrMemberResolution
         var edge = DeclarationEdge(openDefinition, declaring);
         if (edge != null && edge.IsGenericType)
         {
-            var projected = edge.GetGenericArguments().Select(a => SubstOwnerParams(a, args)).ToArray();
+            var projected = edge.GetGenericArguments().Select(a => SubstOwnerParamsPhysical(a, args)).ToArray();
             return new TypeNode.Fqn(head, projected);
         }
         // A generic declarer reached through no edge we can read (a probe-closed owner, a synthetic view): name
@@ -132,14 +149,40 @@ static partial class ClrMemberResolution
 
     // The constructed ancestor of <paramref name="openOwner"/> whose definition is the declarer, with its
     // arguments still expressed over the owner definition's own parameters.
+    // Both sides are alias-resolved before comparison: an @ClrTypeAlias'd base or interface resolves to its BCL
+    // twin exactly as the declaring type did, and comparing a resolved declarer against an unresolved graph
+    // would find no edge and silently fall back to naming the declarer over its own parameters.
     static Type DeclarationEdge(Type openOwner, Type declaringDef)
     {
         if (openOwner == null) return null;
         for (var b = openOwner; b != null; b = SafeBase(b))
-            if (SafeDef(b) == declaringDef) return b;
+            if (SafeDef(AliasResolve(b)) == declaringDef) return b;
         foreach (var iface in SafeInterfaces(openOwner))
-            if (SafeDef(iface) == declaringDef) return iface;
+            if (SafeDef(AliasResolve(iface)) == declaringDef) return iface;
         return null;
+    }
+
+    // `SubstOwnerParams`'s projection in the reference's own spelling: an owner-definition generic parameter
+    // becomes the receiver's argument at that position, everything else keeps the target's verbatim name.
+    static TypeNode SubstOwnerParamsPhysical(Type t, TypeNode[] ownerArgs)
+    {
+        t = AliasResolve(t);
+        if (t.IsGenericParameter)
+            return t.GenericParameterPosition < ownerArgs.Length
+                ? ownerArgs[t.GenericParameterPosition]
+                : new TypeNode.Tv("type", t.GenericParameterPosition);
+        if (t.IsByRef) return new TypeNode.ByRef(SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
+        if (t.IsPointer) return new TypeNode.Ptr(SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
+        if (t.IsArray)
+        {
+            var elem = SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs);
+            int rank = SafeArrayRank(t);
+            return rank > 1 ? new TypeNode.Array(elem, rank) : new TypeNode.Array(elem);
+        }
+        if (t.IsGenericType && !t.IsGenericTypeDefinition)
+            return new TypeNode.Fqn(PhysicalTypeName(t.GetGenericTypeDefinition()),
+                t.GetGenericArguments().Select(a => SubstOwnerParamsPhysical(a, ownerArgs)).ToArray());
+        return new TypeNode.Fqn(PhysicalTypeName(t));
     }
 
     static Type SafeBase(Type t) { try { return t.BaseType; } catch { return null; } }
@@ -155,7 +198,10 @@ static partial class ClrMemberResolution
     static TypeNode RefReturnOf(MethodInfo method)
     {
         var ret = method.ReturnType;
-        var node = ret == null || ret == typeof(void) || ret.FullName is "System.Void" or "kotlin.Unit"
+        // `void` is the canonical spelling of System.Void and nothing else. A member that genuinely returns
+        // kotlin.Unit returns a CLASS, and normalizing it here would erase the very distinction a return type
+        // is carried to make.
+        var node = ret == null || ret == typeof(void) || ret.FullName == "System.Void"
             ? MemberRefNode.Void
             : RefTypeOf(ret);
         var rp = method.ReturnParameter;
@@ -163,10 +209,14 @@ static partial class ClrMemberResolution
             : Modified(node, rp.GetRequiredCustomModifiers(), rp.GetOptionalCustomModifiers());
     }
 
-    // Custom modifiers wrap the position they modify, outermost-last in the order reflection reports them —
-    // the same two lists, read the same way, on the writing and the reading side. `in DateTime` is
-    // modreq(InAttribute) around a by-ref DateTime, and dropping it makes that member identical to the
-    // by-value overload next to it.
+    // Custom modifiers wrap the position they modify: `in DateTime` is modreq(InAttribute) around a by-ref
+    // DateTime, and dropping it makes that member identical to the by-value overload next to it.
+    //
+    // Reflection exposes modifiers as two SETS, required and optional, not as the interleaved sequence the
+    // metadata blob carries — so the nesting here is required-inside-optional by construction, not by
+    // metadata order. Both sides of this pipeline read the same two lists the same way, which is what makes
+    // the shape comparable; it is not a faithful rendering of the blob's order, and a member distinguished
+    // ONLY by the interleaving of a modreq and a modopt would be beyond what reflection can tell us.
     static TypeNode Modified(TypeNode node, Type[] required, Type[] optional)
     {
         foreach (var m in required) node = new TypeNode.Mod(true, RefTypeOf(m), node);
@@ -174,8 +224,10 @@ static partial class ClrMemberResolution
         return node;
     }
 
-    // A resolved member's declared type in the CIR type vocabulary, with the shapes `MemberSigOf` flattens
-    // kept intact (see the header): pointers, array rank, and — via Modified above — custom modifiers.
+    // A resolved member's declared type, spelled as the TARGET spells it (see the header). No arity stripping,
+    // no `+`-to-`.` flattening, no delegate rewritten as a Kotlin function type, no `System.Nullable`1`
+    // collapsed to a nullability wrapper: each of those is a document convention for talking about a Kotlin
+    // program, and each one merges types this reference has to keep apart.
     static TypeNode RefTypeOf(Type t)
     {
         t = AliasResolve(t);
@@ -192,21 +244,17 @@ static partial class ClrMemberResolution
         }
         if (t.IsGenericParameter)
             return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
-        if (IsShapeDelegate(t)) return DelegateFn(t);
         if (t.IsGenericType && !t.IsGenericTypeDefinition)
-        {
-            var def = t.GetGenericTypeDefinition();
-            var args = t.GetGenericArguments().Select(RefTypeOf).ToArray();
-            if (def.FullName == "System.Nullable`1") return new TypeNode.Nullable(args[0]);
-            return new TypeNode.Fqn(StripArity(Dotted(def.FullName ?? def.Name)), args);
-        }
-        return new TypeNode.Fqn(StripArity(Dotted(t.FullName ?? t.Name)));
+            return new TypeNode.Fqn(PhysicalTypeName(t.GetGenericTypeDefinition()),
+                t.GetGenericArguments().Select(RefTypeOf).ToArray());
+        return new TypeNode.Fqn(PhysicalTypeName(t));
     }
 
     static int SafeArrayRank(Type t) { try { return t.GetArrayRank(); } catch { return 1; } }
 
-    // The declarer's own metadata name, verbatim: this one is a lookup key in the target universe, not a
-    // document type spelling, so neither the arity backtick nor `+` nesting is normalized away.
+    // A type's own metadata name, verbatim. Every name inside a reference is a lookup key in the target
+    // universe rather than a document type spelling, so neither the arity backtick nor `+` nesting is
+    // normalized away — normalizing either is what merged `Outer`1+Inner` into `Outer`.
     static string PhysicalTypeName(Type t) => t.FullName ?? t.Name;
 
     static string DescribeMember(MemberInfo member)

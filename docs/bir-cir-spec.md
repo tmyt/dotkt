@@ -354,7 +354,7 @@ A reference to a member of ANOTHER assembly is a single scalar object, not a set
   "declaringType": { "t": "fqn", "name": "System.Collections.Generic.List`1", "args": [T…] },   // metadata FullName VERBATIM
   "name": "Add",                             // exact metadata name (".ctor", "get_X", "add_X", …)
   "genericArity": 0,
-  "callingConvention": "static|instance",    // absent for a field
+  "callingConvention": "static|instance|varargStatic|varargInstance",   // absent for a field
   "parameterTypes": [T…],                    // OPEN declared params; absent for a field
   "returnType": T                            // OPEN declared return; the field TYPE when kind is `field`
 }
@@ -382,14 +382,24 @@ Method instantiation rides on the node's own `typeArgs` and owner instantiation 
 substituted vector would collapse distinct overloads (`M(!0)` and `M(!1)` become one). `assembly` is the
 simple name only: a reference-pack assembly and its implementation legitimately differ in version/culture/PKT,
 and it is the PHYSICAL identity — where a reference twin and its runtime twin differ in name, this already
-names the runtime one. A vararg signature is refused at the producer rather than encoded, since nothing in
-this source language reaches one and a wrong convention would produce a valid-looking reference to the wrong
-member.
+names the runtime one. A vararg signature is a DIFFERENT member from its fixed-arity neighbour, so the
+convention states it rather than the producer refusing to describe it; whether such a signature can be
+emitted is a question for the emitter, asked where it can be answered.
+
+**EVERY NAME IS THE TARGET'S OWN.** Inside a reference — the declaring head, every parameter, the return,
+every generic argument, every custom modifier — a type is spelled as the target's **verbatim metadata
+FullName**: arity backtick and `+` nesting kept, delegates not rewritten as `fn`, `System.Nullable` not
+collapsed to a nullability wrapper. The document's ordinary spelling (§1) is the right vocabulary for talking
+about a Kotlin program and the wrong one for an identity, because it merges types a reference must keep
+apart — stripping at the first backtick turns a type nested in a generic outer into its outer alone, and
+`Ns.Outer+Inner` and `Ns.Outer.Inner` become one string. The single exception is the void return, which names
+a type that appears nowhere else in a signature and so makes no member ambiguous.
 
 **ONE SPELLING PER SHAPE.** A consumer compares these references exactly, so two ways to write one physical
 member would be two members to it. The rules, all validator-enforced:
 
-- a non-generic declarer **omits** `args`; it never carries an empty list;
+- a non-generic declarer **omits** `args`; it never carries an empty list, and the length of `args` equals
+  the arity the name itself states;
 - `declaringType.args` is **flattened** over the enclosing-type chain, matching `tv{scope:"type"}` (§1) —
   `Outer\`1+Inner\`1` carries the outer argument first;
 - a signature carries no `oblivious` and no `star`: those are Kotlin type-system facts, and a physical CLR
