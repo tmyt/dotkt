@@ -1,0 +1,33 @@
+{
+  "types": [
+    {
+      "name": "Probe",
+      "kind": "class",
+      "methods": [
+        {
+          "name": "toString",
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "System.String"
+          },
+          "clrOverride": {
+            "t": "fqn",
+            "name": "System.Object"
+          },
+          "clrOverrideMember": "ToString",
+          "clrOverrideSig": [],
+          "clrOverrideRet": {
+            "t": "fqn",
+            "name": "System.String"
+          },
+          "clrOverrideOwner": {
+            "t": "fqn",
+            "name": "System.Object"
+          },
+          "body": []
+        }
+      ]
+    }
+  ]
+}

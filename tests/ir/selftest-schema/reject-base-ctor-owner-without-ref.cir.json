@@ -1,0 +1,28 @@
+{
+  "types": [
+    {
+      "name": "Probe",
+      "kind": "class",
+      "base": {
+        "t": "fqn",
+        "name": "System.Exception"
+      },
+      "ctors": [
+        {
+          "params": [],
+          "baseArgs": [],
+          "baseMemberSig": [
+            {
+              "t": "fqn",
+              "name": "System.String"
+            }
+          ],
+          "baseMemberOwner": {
+            "t": "fqn",
+            "name": "System.Exception"
+          }
+        }
+      ]
+    }
+  ]
+}

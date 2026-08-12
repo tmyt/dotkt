@@ -26,7 +26,7 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 # member of another assembly. Frozen like KINDS/TYPE_TAGS, so a new carrier key is a deliberate vocabulary
 # change. `declaringType` is the shape's discriminator (no other document shape has it), which is what
 # catches a parallel member-identity spelling invented under some other key.
-MEMBER_REF_KEYS = {"memberRef"}
+MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -624,6 +624,13 @@ class V:
                     self.err(f, path, "newClrStaticDelegate.memberSig must be a resolved Type-node array in CIR")
                 if not isinstance(o.get("memberOwner"), dict) or "t" not in o["memberOwner"]:
                     self.err(f, path, "newClrStaticDelegate.memberOwner must be a resolved Type node in CIR")
+            if f.endswith(".cir.json"):
+                # The declaration-side pair. A base-constructor delegation and an external override target are
+                # resolved by the same pass and stated in the same transitional pieces, so they answer to the
+                # same rule: the owner is the marker that a declaration was read.
+                for owner_key, ref_key in (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner", "clrOverrideRef")):
+                    if owner_key in o and ref_key not in o:
+                        self.err(f, path, f"{owner_key} is present without the resolved {ref_key} beside it")
             if f.endswith(".cir.json") and o.get("k") in MEMBER_REF_AUTHORED_KINDS and "memberRef" not in o:
                 # The transitional descriptor and the scalar reference must travel TOGETHER for a migrated kind:
                 # each one alone resolves to a member, so a node that lost the new half would keep working while

@@ -1,0 +1,90 @@
+{
+  "types": [
+    {
+      "name": "Probe",
+      "kind": "class",
+      "base": {
+        "t": "fqn",
+        "name": "System.Exception"
+      },
+      "ctors": [
+        {
+          "params": [],
+          "baseArgs": [],
+          "baseMemberSig": [
+            {
+              "t": "fqn",
+              "name": "System.String"
+            }
+          ],
+          "baseMemberOwner": {
+            "t": "fqn",
+            "name": "System.Exception"
+          },
+          "baseCtorRef": {
+            "kind": "ctor",
+            "assembly": "System.Runtime",
+            "declaringType": {
+              "t": "fqn",
+              "name": "System.Exception"
+            },
+            "name": ".ctor",
+            "genericArity": 0,
+            "returnType": {
+              "t": "fqn",
+              "name": "void"
+            },
+            "callingConvention": "instance",
+            "parameterTypes": [
+              {
+                "t": "fqn",
+                "name": "System.String"
+              }
+            ]
+          }
+        }
+      ],
+      "methods": [
+        {
+          "name": "toString",
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "System.String"
+          },
+          "clrOverride": {
+            "t": "fqn",
+            "name": "System.Object"
+          },
+          "clrOverrideMember": "ToString",
+          "clrOverrideSig": [],
+          "clrOverrideRet": {
+            "t": "fqn",
+            "name": "System.String"
+          },
+          "clrOverrideOwner": {
+            "t": "fqn",
+            "name": "System.Object"
+          },
+          "clrOverrideRef": {
+            "kind": "method",
+            "assembly": "System.Runtime",
+            "declaringType": {
+              "t": "fqn",
+              "name": "System.Object"
+            },
+            "name": "ToString",
+            "genericArity": 0,
+            "returnType": {
+              "t": "fqn",
+              "name": "System.String"
+            },
+            "callingConvention": "instance",
+            "parameterTypes": []
+          },
+          "body": []
+        }
+      ]
+    }
+  ]
+}

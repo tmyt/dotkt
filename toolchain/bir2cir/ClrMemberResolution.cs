@@ -250,6 +250,7 @@ static partial class ClrMemberResolution
                 }
                 ctor["baseMemberSig"] = MemberSig(winner.GetParameters());
                 ctor["baseMemberOwner"] = DeclaringTypeDescriptor(winner);
+                ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
             }
         }
     }

@@ -417,6 +417,13 @@ table). The presence of a `memberRef` is therefore itself the external-vs-emitte
 A carrier key holds ONE reference, never a list. A candidate set reaching a consumer is precisely the failure
 this shape removes: whoever received it would have to choose, and choosing is the producer's decision.
 
+The carriers are `memberRef` on a node, and on a DECLARATION `baseCtorRef` (a constructor's delegation to an
+external base) and `clrOverrideRef` (the external base virtual a method overrides — the MethodImpl target).
+The declaration-side pair answers to the same rule as the node-side one, and for the same reason: a MethodImpl
+target and a base-constructor delegation are stated in transitional pieces — a name here, a parameter vector
+there, an owner and a return elsewhere — and reassembling those pieces into a member is the selection this
+reference exists to prevent.
+
 ### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
 The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/
 `funcType`/`base`/`interfaces`/`sig` slot is a structured `Type` node or an array of them. But TWO

@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A base-constructor delegation and an override's base slot become one identity each (#370, step 4).** Both
+  were stated in pieces — a name here, a parameter vector there, an owner and a return elsewhere — and a
+  MethodImpl target is exactly the place where reassembling those pieces into a member is the selection this
+  work removes. The pass that already resolves each of them now serializes what it picked, and the schema gate
+  reddens if the transitional owner appears without it.
+
 - **Generic external calls carry the resolved member reference too (#370, step 3).** A generic call's parameter
   vector arrives from the frontend, so it is present whether or not a declaration was ever found; the resolved
   declaration is the separate answer this pass computes, and it is now serialized like any other. The
