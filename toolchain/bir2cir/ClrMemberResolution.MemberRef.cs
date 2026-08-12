@@ -72,14 +72,17 @@ static partial class ClrMemberResolution
     /// </summary>
     internal static JsonNode ParameterlessBaseCtorRef(ReferenceMetadataIndex refs, string ownerFqn)
     {
-        _refs ??= refs;
+        // One index per run, and this resolves against the SAME one every other site used. Assign it rather
+        // than coalescing: `??=` would say "only if nobody set it", which is the opposite of the invariant —
+        // if two indexes ever coexisted, silently keeping the first is the bug, not the safeguard.
+        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var owner = new TypeNode.Fqn(ownerFqn);
         var open = ResolveOwnerType(owner)
             ?? throw new InvalidOperationException($"bir2cir: synthesized base owner '{ownerFqn}' does not resolve to a .NET type (#370)");
         // Protected is the usual shape for an abstract base's constructor (System.Attribute's is), so the probe
         // must see non-public declarations; the parameter count is what selects, and one match is required.
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(c => c.GetParameters().Length == 0 && !c.IsPrivate).ToList();
+            .Where(c => c.GetParameters().Length == 0 && IsPublicOrProtected(c)).ToList();
         if (ctors.Count != 1)
             throw new InvalidOperationException(
                 $"bir2cir: '{ownerFqn}' has {ctors.Count} parameterless constructors; a synthesized delegation needs exactly one (#370)");

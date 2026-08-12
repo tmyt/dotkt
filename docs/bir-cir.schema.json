@@ -166,7 +166,7 @@
         },
         "declaringType": {
           "$ref": "#/$defs/tFqn",
-          "description": "The exact DECLARING type: an fqn whose name is the open definition's metadata FullName VERBATIM (arity backtick and `+` nesting included — the physical name the target universe is keyed by, so nothing downstream re-derives either) and whose `args`, when present, are the use-site instantiation of that declaring type. The declarer is stated, never derived — a member the receiver merely inherits is anchored on the type that declares it, so no base walk or most-derived rule is needed downstream."
+          "description": "The exact DECLARING type: an fqn whose name is the open definition's metadata FullName VERBATIM (arity backtick and `+` nesting included — the physical name the target universe is keyed by, so nothing downstream re-derives either) and whose `args`, when present, are the USE SITE's instantiation of that declaring type, projected along the declaration edge. Those arguments are ordinary document type nodes in the document's vocabulary — they are not something the target declares — and a consumer resolves them exactly as it resolves any other type slot. The declarer is stated, never derived — a member the receiver merely inherits is anchored on the type that declares it, so no base walk or most-derived rule is needed downstream."
         },
         "name": {
           "type": "string", "minLength": 1,
