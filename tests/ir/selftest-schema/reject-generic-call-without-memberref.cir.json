@@ -29,11 +29,7 @@
                 "t": "fqn",
                 "name": "System.Collections.IEnumerable"
               }
-            ],
-            "memberOwner": {
-              "t": "fqn",
-              "name": "System.Linq.Enumerable"
-            }
+            ]
           }
         }
       ]

@@ -39,19 +39,23 @@ def arity_of_name(full_name):
     """The generic arity a metadata FullName encodes, summed over the nesting chain (`Outer`1+Inner`1` = 2)."""
     return sum(int(n) for n in re.findall(r"`(\d+)", full_name))
 
-# #370 co-presence: the CIR node kinds whose external member is ALREADY authored as a scalar `memberRef`.
-# While the transitional descriptors still exist, a node of one of these kinds carrying the old identity but
-# not the new one is a writer this migration missed — exactly the drift a corpus-wide gate exists to catch,
-# since the old descriptor keeps working and nothing else would notice. The set GROWS one authoring step at a
-# time; a kind absent from it is simply not migrated yet, and saying which is which here is what keeps the
-# claim honest.
-MEMBER_REF_AUTHORED_KINDS = {
-    "clrStatic", "clrInstance", "newClr", "new",
-    "clrGenericStatic", "clrGenericInstance",
-    "clrPropGet", "clrPropSet", "clrEventAdd", "clrEventRemove",
-    "field", "setField", "setFieldExpr",
+# #370: the CIR node kinds that EXIST only because a member of another assembly was resolved. bir2cir mints
+# them nowhere else (its own ResolvedOnlyKinds), and ilemit already refuses one that arrives without a
+# resolved owner — so for these, a reference is not merely expected, it is what the node is made of. Requiring
+# it unconditionally puts the failure at the layer that dropped the identity instead of several stages later,
+# and keeps the rule independent of the transitional descriptors this migration deletes.
+#
+# The set GROWS one authoring step at a time; a kind absent from it is simply not migrated yet.
+MEMBER_REF_REQUIRED_KINDS = {
+    "newClr", "clrStatic", "clrInstance", "clrGenericStatic", "clrGenericInstance",
     "newBoundClrDelegate", "newClrStaticDelegate",
+    "clrPropGet", "clrPropSet", "clrEventAdd", "clrEventRemove",
 }
+
+# Kinds that are external only SOMETIMES — a field access or a construction whose owner may equally be a type
+# this compilation is emitting, which has no assembly identity yet and correctly carries no reference. For
+# these the transitional identity is the evidence that this particular node's member WAS resolved.
+MEMBER_REF_CONDITIONAL_KINDS = {"new", "field", "setField", "setFieldExpr"}
 
 # Keys that legitimately hold a bare STRING scalar: format vocabulary (k/t tags, enums),
 # object-language NAME payloads, and the documented owner/member/attribute reference
@@ -624,19 +628,21 @@ class V:
                     self.err(f, path, "newClrStaticDelegate.memberSig must be a resolved Type-node array in CIR")
                 if not isinstance(o.get("memberOwner"), dict) or "t" not in o["memberOwner"]:
                     self.err(f, path, "newClrStaticDelegate.memberOwner must be a resolved Type node in CIR")
-            if f.endswith(".cir.json") and o.get("k") in MEMBER_REF_AUTHORED_KINDS and "memberRef" not in o:
-                # The transitional descriptor and the scalar reference must travel TOGETHER for a migrated kind:
-                # each one alone resolves to a member, so a node that lost the new half would keep working while
-                # silently reverting the guarantee, and nothing else would notice.
-                #
-                # `memberOwner` is what proves a member was RESOLVED — bir2cir writes it exactly where it read a
-                # declaring type. `memberSig` does NOT prove it: on a generic call the parameter vector comes from
-                # the frontend and is present whether or not a declaration was ever found. `member` is the same
-                # proof for a property or field, which carry a discriminator instead of a signature.
-                if "memberOwner" in o:
-                    self.err(f, path, f"{o['k']} carries the transitional memberOwner without the resolved memberRef beside it")
-                elif o.get("member") in ("accessor", "field"):
-                    self.err(f, path, f"{o['k']} carries member={o['member']!r} without the resolved memberRef beside it")
+            if f.endswith(".cir.json") and "memberRef" not in o:
+                kind = o.get("k")
+                if kind in MEMBER_REF_REQUIRED_KINDS:
+                    # A node of this kind IS a reference to another assembly's member. One without a resolved
+                    # identity has nothing for a consumer to link, which is why ilemit refuses it — and refusing
+                    # it here names the layer that dropped it rather than the one that noticed.
+                    self.err(f, path, f"{kind} is an external member reference and must carry a resolved memberRef")
+                elif kind in MEMBER_REF_CONDITIONAL_KINDS:
+                    # Sometimes external, sometimes a member of the assembly being built. The transitional
+                    # identity is what says WHICH this node is: `memberOwner` where a declaring type was read,
+                    # `member` for a property or field, which carry a discriminator instead of a signature.
+                    if "memberOwner" in o:
+                        self.err(f, path, f"{kind} carries the transitional memberOwner without the resolved memberRef beside it")
+                    elif o.get("member") in ("accessor", "field"):
+                        self.err(f, path, f"{kind} carries member={o['member']!r} without the resolved memberRef beside it")
             if isinstance(o.get("mods"), dict):
                 for mk in o["mods"]:
                     if mk not in MOD_KEYS:
