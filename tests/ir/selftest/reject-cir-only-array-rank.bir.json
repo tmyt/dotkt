@@ -1,0 +1,25 @@
+{
+  "methods": [
+    {
+      "name": "probe",
+      "params": [
+        {
+          "name": "p",
+          "type": {
+            "t": "array",
+            "elem": {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            },
+            "rank": 2
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "void"
+      },
+      "body": []
+    }
+  ]
+}

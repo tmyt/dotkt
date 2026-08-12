@@ -1,0 +1,47 @@
+{
+  "methods": [
+    {
+      "name": "probe",
+      "params": [],
+      "ret": {
+        "t": "fqn",
+        "name": "void"
+      },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrStatic",
+            "type": {
+              "t": "fqn",
+              "name": "System.Math"
+            },
+            "method": "Abs",
+            "args": [],
+            "memberRef": {
+              "kind": "method",
+              "assembly": "System.Runtime",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.Math"
+              },
+              "name": "Abs",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Int32"
+              },
+              "callingConvention": "static",
+              "parameterTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.Int32"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

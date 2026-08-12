@@ -13,6 +13,9 @@
     <!-- Shared single-source Type read/write helper of the BIR/CIR freeze (#37). Linked (not a project ref)
          so all three C# tools compile the SAME contract with no build-order dependency. -->
     <Compile Include="../bir-common/TypeNode.cs" Link="TypeNode.cs" />
+    <!-- Shared #370 scalar member reference: the ONE fully resolved external-member identity bir2cir authors and
+         ilemit looks up exactly. Linked for the same reason as TypeNode — one compiled contract, no build order. -->
+    <Compile Include="../bir-common/MemberRefNode.cs" Link="MemberRefNode.cs" />
     <!-- Shared JSON depth bound for BIR/CIR read/write (#147: default MaxDepth 64 crashes on deeply-nested lambdas). -->
     <Compile Include="../bir-common/BirJson.cs" Link="BirJson.cs" />
     <!-- Shared layer-agnostic IR SANITY invariants (#84 P4 / #112 P4). Run by BOTH bir2cir (on its CIR output) and

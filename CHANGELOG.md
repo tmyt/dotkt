@@ -7,6 +7,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A single scalar CIR member reference, and the ECMA signature vocabulary it needs (#370, step 1).** The BIR/CIR
+  contract gains `memberRef`: one complete, already-resolved reference to a member of another assembly (kind,
+  physical defining assembly, exact declaring type and its instantiation, metadata name, generic arity, calling
+  convention, open parameter vector, return type). It exists so a consumer never has to re-combine pieces of an
+  identity, because re-combining candidates is member selection and that decision belongs to bir2cir. Zero exact
+  matches is a target mismatch that must name the complete reference; more than one is an identity defect.
+  Alongside it the type vocabulary gains three CIR-only carriers for shapes external metadata can declare but
+  Kotlin cannot spell — a pointer `T*`, a multi-dimensional array rank, and in-position custom modifiers —
+  without which `void V(in DateTime)` and `void V(DateTime)`, or `T[,]` and `T[]`, are indistinguishable
+  references. Nothing authors or consumes a `memberRef` yet: this step lands the shared model, the normative
+  schema, the validator rules and the self-tests that hold them.
+
 - **Explicit CLR callable names and fail-closed physical signature collisions (#402).** `@ClrName` (with `@JvmName`
   as a compatibility alias) now travels as an explicit BIR fact to bir2cir's post-erasure MethodDef allocation.
   User declarations no longer receive automatic `$dotkt$<hash>` names: an unresolved or still-colliding explicit

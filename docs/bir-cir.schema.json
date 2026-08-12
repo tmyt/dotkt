@@ -18,7 +18,7 @@
 
     "//== TYPE (§1) — the universal type representation ==//": null,
     "type": {
-      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Eight variants; `star` is BIR-only and bir2cir must eliminate it before CIR.",
+      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Ten variants; `star` is BIR-only and bir2cir must eliminate it before CIR, while `ptr`, `mod` and tArray.rank are CIR-only signature carriers bir2cir authors so a #370 memberRef can spell any signature the target metadata can declare.",
       "oneOf": [
         { "$ref": "#/$defs/tFqn" },
         { "$ref": "#/$defs/tTv" },
@@ -27,7 +27,9 @@
         { "$ref": "#/$defs/tNullable" },
         { "$ref": "#/$defs/tOblivious" },
         { "$ref": "#/$defs/tArray" },
-        { "$ref": "#/$defs/tByRef" }
+        { "$ref": "#/$defs/tByRef" },
+        { "$ref": "#/$defs/tPtr" },
+        { "$ref": "#/$defs/tMod" }
       ]
     },
     "tFqn": {
@@ -107,7 +109,11 @@
       "description": "Array<T> (this-assembly array). Replaces array:X.",
       "properties": {
         "t":    { "const": "array" },
-        "elem": { "$ref": "#/$defs/type" }
+        "elem": { "$ref": "#/$defs/type" },
+        "rank": {
+          "type": "integer", "minimum": 2,
+          "description": "CIR-only: the ECMA multi-dimensional ARRAY rank. ABSENT is the SZARRAY `T[]` — the only shape Kotlin source can spell — so a rank of 1 is a malformed document, not a vector. Present only where an external member declares `T[,…]`, whose signature differs from `T[]`; collapsing the two would make such overloads indistinguishable. kotc MUST omit it."
+        }
       },
       "required": ["t", "elem"],
       "additionalProperties": false
@@ -121,6 +127,71 @@
       },
       "required": ["t", "of"],
       "additionalProperties": false
+    },
+    "tPtr": {
+      "type": "object",
+      "description": "CIR-only: a CLR unmanaged pointer `T*`. Kotlin source cannot spell one, but an external member can DECLARE one, and without this variant such a parameter degrades to the FQN string \"System.Int32*\" — an identity that names no type. kotc MUST omit it.",
+      "properties": {
+        "t":  { "const": "ptr" },
+        "of": { "$ref": "#/$defs/type" }
+      },
+      "required": ["t", "of"],
+      "additionalProperties": false
+    },
+    "tMod": {
+      "type": "object",
+      "description": "CIR-only: an ECMA custom modifier (II.7.1.1) applied AT ITS SIGNATURE POSITION. Part of member identity — `void V(in DateTime)` and `void V(DateTime)` differ only by modreq(InAttribute) on a by-ref parameter, so a reference that drops the modifier cannot select between them. Nesting (rather than a sidecar modifier list) is what keeps each modifier attached to the exact position it modifies. kotc MUST omit it.",
+      "properties": {
+        "t":   { "const": "mod" },
+        "req": { "type": "boolean", "description": "true = modreq (required), false = modopt (optional)" },
+        "m":   { "$ref": "#/$defs/type", "description": "the modifier type, e.g. System.Runtime.InteropServices.InAttribute" },
+        "of":  { "$ref": "#/$defs/type", "description": "the modified type" }
+      },
+      "required": ["t", "req", "m", "of"],
+      "additionalProperties": false
+    },
+
+    "//== MEMBER REFERENCE (#370) — one resolved external-member identity ==//": null,
+    "memberRef": {
+      "type": "object",
+      "description": "CIR-only: ONE complete, already-resolved reference to a member of another assembly, authored by bir2cir and consumed by ilemit as an EXACT lookup. It carries every fact needed to construct the intended ECMA MemberRef/MethodSpec, so no consumer performs member SELECTION: zero target matches is a CIR/target mismatch and more than one is a schema/identity defect — neither is a cue to fall back on name, arity, applicability, assignability or most-derived rules. The signature is the OPEN declared one (II.9.8: a MemberRef carries the UNINSTANTIATED signature); method instantiation rides on the node's own `typeArgs` and owner instantiation on `declaringType.args`.",
+      "properties": {
+        "kind": {
+          "enum": ["method", "ctor", "field", "propertyAccessor", "eventAccessor"],
+          "description": "What the member IS. Selects the lookup family (method/constructor/field) and records the accessor role; the get-vs-set / add-vs-remove ROLE stays on the node kind, never re-derived from a get_/add_ spelling."
+        },
+        "assembly": {
+          "type": "string",
+          "description": "Simple name of the assembly that must own the emitted reference. This is the PHYSICAL identity, not the file bir2cir happened to read: fixing the physical CLR representation is bir2cir's job, so where a reference twin and its runtime twin differ in name this already names the runtime one. Full version/culture/PKT identity is deliberately NOT carried — a reference-pack and its implementation assembly legitimately differ there."
+        },
+        "declaringType": {
+          "$ref": "#/$defs/type",
+          "description": "The exact DECLARING type: an fqn whose name is the open definition's metadata FullName VERBATIM (arity backtick and `+` nesting included — the physical name the target universe is keyed by, so nothing downstream re-derives either) and whose `args`, when present, are the use-site instantiation of that declaring type. The declarer is stated, never derived — a member the receiver merely inherits is anchored on the type that declares it, so no base walk or most-derived rule is needed downstream."
+        },
+        "name": {
+          "type": "string",
+          "description": "The exact metadata member name: `.ctor` for a constructor, get_X/set_X/add_X/remove_X for an accessor, otherwise verbatim."
+        },
+        "genericArity": {
+          "type": "integer", "minimum": 0,
+          "description": "The member's OWN generic-parameter count; 0 for everything but a generic method. Stated rather than inferred from a call site's type-argument count."
+        },
+        "callingConvention": {
+          "enum": ["static", "instance"],
+          "description": "The HASTHIS bit. Absent for a field. A vararg signature is refused at the producer rather than encoded: nothing in this compiler's source language can reach one, and a silently wrong convention would produce a valid-looking MemberRef to the wrong member."
+        },
+        "parameterTypes": {
+          "type": "array", "items": { "$ref": "#/$defs/type" },
+          "description": "The OPEN declared parameter vector (positional `tv`, byref/pointer/array-rank and in-position `mod` modifiers all preserved). Absent for a field."
+        },
+        "returnType": {
+          "$ref": "#/$defs/type",
+          "description": "The OPEN declared return type — the void fqn for a void method AND for a constructor, and the declared FIELD type when kind is `field`. Part of member identity: an inherited slot can be shadowed by a redeclaration that differs only in return type."
+        }
+      },
+      "required": ["kind", "assembly", "declaringType", "name", "genericArity", "returnType"],
+      "additionalProperties": false,
+      "$comment": "A field carries neither `callingConvention` nor `parameterTypes`; every other kind carries both. A ctor is named `.ctor`, is `instance`, has arity 0 and returns void. The validator pins these; the schema's per-kind conditionals would only restate them less readably."
     },
 
     "//== MODIFIERS (§2.1) + VISIBILITY ==//": null,

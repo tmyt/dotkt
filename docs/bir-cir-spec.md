@@ -44,10 +44,20 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
 | `nullable` | `of:T` | `T?` (NRT-annotated nullable, `NullableAttribute`=2) | `nullable:X` |
 | `oblivious` | `of:T` | `T!` — an NRT-*oblivious* flexible type `(T..T?)` (`NullableAttribute`=0); the CLR term, not the Kotlin-consumer "platform" name | the META `!` platform suffix |
-| `array` | `elem:T` | `Array<T>` (this-assembly array) | `array:X` |
+| `array` | `elem:T`, `rank?:int≥2` | `Array<T>`; **CIR-only** `rank` names the multi-dimensional ECMA ARRAY `T[,…]` (absent = the SZ vector `T[]`) | `array:X` |
 | `byRef` | `of:T` | a CLR by-ref `ref T` | `byRef:X` |
+| `ptr` | `of:T` | **CIR-only**: a CLR unmanaged pointer `T*` | no Kotlin form |
+| `mod` | `req:bool`, `m:T`, `of:T` | **CIR-only**: an ECMA custom modifier (II.7.1.1) at its signature position — `req` selects modreq from modopt | no Kotlin form |
 
 Notes:
+- **The three CIR-only ECMA signature carriers** (`ptr`, `mod`, `array.rank`) exist for one reason: a §2.2.2
+  `memberRef` must be able to spell any signature the *target metadata* can declare, and these three shapes
+  are declarable there while being unspeakable in Kotlin. They are not new expressiveness for the source
+  language — kotc MUST omit all three, and the validator refuses them in BIR. Dropping them is not neutral:
+  `T*` degrades to the FQN string `"System.Int32*"`, an identity naming no type; `T[,]` collapses onto `T[]`;
+  and `void V(in DateTime)` becomes indistinguishable from `void V(DateTime)`, since `modreq(InAttribute)` on
+  a by-ref parameter is the only thing separating them. Each is a way for two distinct members to look like
+  one, which is exactly what a resolved reference must never allow.
 - **No CLR-resolution marker in kotc output.** kotc emits `{t:"fqn",name:"kotlin.Int"}` — the *identity*
   only. bir2cir DERIVES the CLR form (primitive opcode, generic construction, referenced-type resolution).
   `clr:`/`clrg:`/`@`/shorthand are DELETED; the resolution decision lives below the kotc boundary.
@@ -333,6 +343,52 @@ referenced declaration, applies the selected runtime actual/type-alias represent
 declaration shape to CIR. Compiler-generated alias helpers also remap the aliased class and member type variables
 onto the helper method's flattened generic-parameter space. ilemit consumes a present CIR `sig` exactly: zero or
 multiple structural matches are ABI errors, never a request to retry by name and arity.
+
+### 2.2.2 `memberRef` — ONE resolved external-member identity (CIR-only, #370)
+A reference to a member of ANOTHER assembly is a single scalar object, not a set of adjacent fields:
+
+```jsonc
+"memberRef": {
+  "kind": "method|ctor|field|propertyAccessor|eventAccessor",
+  "assembly": "System.Runtime",              // PHYSICAL defining-assembly simple name
+  "declaringType": { "t": "fqn", "name": "System.Collections.Generic.List`1", "args": [T…] },   // metadata FullName VERBATIM
+  "name": "Add",                             // exact metadata name (".ctor", "get_X", "add_X", …)
+  "genericArity": 0,
+  "callingConvention": "static|instance",    // absent for a field
+  "parameterTypes": [T…],                    // OPEN declared params; absent for a field
+  "returnType": T                            // OPEN declared return; the field TYPE when kind is `field`
+}
+```
+
+The shape follows from one rule: **bir2cir resolves a Kotlin operation to exactly one declaration, and CIR
+serializes that answer.** Split the answer across a parameter vector, an owner name and a few flags and the
+consumer has to re-combine them — and re-combining candidates *is* member selection, which belongs upstream.
+So a consumer performs an EXACT lookup (resolve `declaringType` in `assembly`, then take the one
+`DeclaredOnly` member whose signature equals this one) and encodes it. Zero matches is a CIR/target mismatch
+and MUST name the complete reference; more than one is a schema/identity defect. Neither is a cue to fall
+back on name, arity, applicability, assignability, most-derived rules, host reflection or declaration order.
+
+Field-by-field, each entry is there because its absence would force a search: without `assembly` the
+consumer scans every loaded assembly for a name; without `returnType` it cannot separate an inherited slot
+from a redeclaration that shadows it by return type alone; without `callingConvention` a static and an
+instance member of the same shape are one candidate; without `genericArity` the arity has to be guessed from
+a call site's type-argument count. `declaringType` names the DECLARER — a member the receiver merely
+inherits is anchored on the type that declares it — spelled as the target's own metadata FullName (arity
+backtick and `+` nesting verbatim, since that is the key the target universe is indexed by), and carries the
+use-site instantiation in `args`, so no base walk or owner projection is needed downstream.
+
+The signature is the **OPEN declared** one (ECMA II.9.8: a MemberRef carries the uninstantiated signature).
+Method instantiation rides on the node's own `typeArgs` and owner instantiation on `declaringType.args`; a
+substituted vector would collapse distinct overloads (`M(!0)` and `M(!1)` become one). `assembly` is the
+simple name only: a reference-pack assembly and its implementation legitimately differ in version/culture/PKT,
+and it is the PHYSICAL identity — where a reference twin and its runtime twin differ in name, this already
+names the runtime one. A vararg signature is refused at the producer rather than encoded, since nothing in
+this source language reaches one and a wrong convention would produce a valid-looking reference to the wrong
+member.
+
+Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
+built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature
+table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
 
 ### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
 The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/
