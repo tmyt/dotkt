@@ -215,10 +215,10 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 
 	/** Explicit source-authored CLR MethodDef name. This is only a Kotlin annotation fact; bir2cir decides whether the
 	 * declaration can be allocated independently, applies the name after CLR lowering, and validates collisions. */
-	internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean =
-		fn.annotations.any {
-			it.type.classFqName?.asString() in setOf("kotlin.clr.ClrName", "kotlin.jvm.JvmName")
-		}
+internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean {
+	val fqns = setOf("kotlin.clr.ClrName", "kotlin.jvm.JvmName")
+	return fn.annotations.any { it.type.classFqName?.asString() in fqns }
+}
 
 	internal fun explicitClrNameValue(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? {
 		fun values(annotationFqn: String): List<String?> = fn.annotations
