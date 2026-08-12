@@ -1132,6 +1132,26 @@ sealed partial class ReferenceMetadataIndex
 
     // The shared MLC probe (cache + candidate spellings + forwarder collapse) — the caller applies the owner-universe
     // policy (ResolveNetType excludes kotlin.*/dotkt$ synthetics/local; ResolveRefType excludes only the latter two).
+    /// <summary>
+    /// The type named by <paramref name="fqn"/> as DECLARED BY a specific reference assembly (#370). An applied
+    /// external attribute may state its declaring scope precisely because the FQN alone is ambiguous — a
+    /// compiler-synthesized attribute can share it with a private lookalike — so the stated scope selects
+    /// rather than the ordinary probe guessing.
+    /// </summary>
+    public Type ResolveRefTypeIn(string fqn, string assemblySimpleName)
+    {
+        if (string.IsNullOrEmpty(fqn) || string.IsNullOrEmpty(assemblySimpleName)) return null;
+        EnsureNetMlc();
+        if (_netMlc == null) return null;
+        foreach (var asm in _netRefAsms)
+        {
+            if (!string.Equals(asm.GetName().Name, assemblySimpleName, StringComparison.OrdinalIgnoreCase)) continue;
+            var match = SafeGetType(asm, fqn);
+            if (match != null) return match;
+        }
+        return null;
+    }
+
     Type ProbeNetType(string fqn, int genericArity)
     {
         // CLR permits a non-generic and one or more generic TypeDefs to share the same source-facing FQN (Task and
