@@ -1,0 +1,20 @@
+{
+  "fileClass": "GeneratedMethodDuplicateKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "duplicate", "generated": true, "static": true, "override": false, "virtual": false,
+      "params": [], "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 } }]
+    },
+    {
+      "name": "duplicate", "generated": true, "static": true, "override": false, "virtual": false,
+      "params": [], "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 2 } }]
+    }
+  ],
+  "properties": []
+}

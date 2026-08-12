@@ -16,6 +16,7 @@ using DotKt.Bir;
 static class DeclarationIdentityBinding
 {
     internal const string Key = "declarationId";
+    internal const string ExplicitNameKey = "explicitClrName";
     internal const string SemanticSignatureKey = "declarationSemanticSignature";
     internal const string ReferencedIntrinsicKey = "declarationReferencedIntrinsic";
     internal const string ReferencedFactoryKey = "declarationReferencedFactory";
@@ -255,48 +256,90 @@ static class DeclarationIdentityBinding
         IEnumerable<JsonNode> physicalProjectionRoots,
         out IReadOnlySet<string> semanticCarrierIds)
     {
-        static List<(JsonObject Method, string Owner, string Package, string Id, string Name, string SourceName, string Sig)> Collect(
+        static List<(JsonObject Method, string Owner, string Package, string Id, string Name, string SourceName,
+            string Sig, string ExplicitName, bool Generated)> Collect(
             IEnumerable<JsonNode> sourceRoots)
         {
-            var result = new List<(JsonObject Method, string Owner, string Package, string Id, string Name, string SourceName, string Sig)>();
+            var result = new List<(JsonObject Method, string Owner, string Package, string Id, string Name,
+                string SourceName, string Sig, string ExplicitName, bool Generated)>();
 
-            void CollectMethods(JsonObject owner, string ownerName, string packageName)
+            void CollectMethods(JsonObject owner, string ownerName, string packageName, bool generatedOwner)
             {
                 if (owner["methods"] is JsonArray methods)
                     foreach (var method in methods.OfType<JsonObject>())
-                        if (Str(method[Key]) is string id && Str(method["name"]) is string name)
-                            result.Add((method, ownerName, packageName, id, name,
-                                Str(method["declarationSourceName"]) ?? name, PhysicalSignature(method)));
+                        if (Str(method["name"]) is string name)
+                            result.Add((method, ownerName, packageName, Str(method[Key]), name,
+                                Str(method["declarationSourceName"]) ?? name, PhysicalSignature(method),
+                                Str(method[ExplicitNameKey]), generatedOwner || Bool(method["generated"])));
                 if (owner["types"] is JsonArray types)
                     foreach (var type in types.OfType<JsonObject>())
-                        CollectMethods(type, Str(type["name"]) ?? ownerName + "/<anonymous>", null);
+                        CollectMethods(type, Str(type["name"]) ?? ownerName + "/<anonymous>", null,
+                            generatedOwner || Bool(type["generated"]));
             }
 
             foreach (var root in sourceRoots.OfType<JsonObject>())
             {
                 var fileClass = Str(root["fileClass"]) ?? "<file>";
                 var separator = fileClass.LastIndexOf('.');
-                CollectMethods(root, fileClass, separator < 0 ? "" : fileClass[..separator]);
+                CollectMethods(root, fileClass, separator < 0 ? "" : fileClass[..separator],
+                    Bool(root["generated"]));
             }
             return result;
         }
 
-        var declarations = Collect(physicalProjectionRoots);
+        var allDeclarations = Collect(physicalProjectionRoots);
+        var declarations = allDeclarations.Where(declaration => declaration.Id != null).ToArray();
         var carrierIds = new HashSet<string>(StringComparer.Ordinal);
-        var candidatesById = declarations
-            .GroupBy(d => (d.Owner, d.Name, d.Sig))
-            .SelectMany(group =>
-            {
-                var ids = group.Select(d => d.Id).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToArray();
-                if (ids.Length == 1) return ids.Select(id => (Id: id, Name: group.Key.Name));
+        foreach (var group in declarations.GroupBy(d => (d.Owner, d.Name, d.Sig)))
+        {
+            var ids = group.Select(d => d.Id).Distinct(StringComparer.Ordinal).ToArray();
+            if (ids.Length > 1)
                 foreach (var id in ids) carrierIds.Add(id);
-                // A C# 14 signature stub is a second physical declaration of the same Kotlin implementation. Its
-                // allocation-only key must remain distinct in the map, but both halves need the same suffix so the
-                // standard extension graph can associate them by physical method name.
-                return ids.Select(id => (Id: id,
-                    Name: group.Key.Name + "$dotkt$" + StableSuffix(AllocationIdentity(id))));
-            })
-            .GroupBy(x => x.Id, StringComparer.Ordinal);
+        }
+
+        foreach (var declaration in allDeclarations.Where(declaration => declaration.ExplicitName != null))
+        {
+            ValidateExplicitName(declaration.ExplicitName, declaration.Owner, declaration.SourceName);
+            if (declaration.Id == null)
+                throw new InvalidOperationException(
+                    $"bir2cir: @ClrName on '{declaration.Owner}.{declaration.SourceName}' cannot be applied " +
+                    "independently because the frontend supplied no allocatable declaration identity (for example, " +
+                    "an open/override family or a local implementation artifact); complete slot-wide explicit-name " +
+                    "propagation is not supported");
+        }
+
+        var explicitByAllocationId = declarations
+            .Where(declaration => declaration.ExplicitName != null)
+            .GroupBy(declaration => AllocationIdentity(declaration.Id), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group =>
+            {
+                var names = group.Select(declaration => declaration.ExplicitName)
+                    .Distinct(StringComparer.Ordinal).ToArray();
+                if (names.Length != 1)
+                    throw new InvalidOperationException(
+                        $"bir2cir: declaration identity '{group.Key}' carries conflicting explicit CLR names: " +
+                        string.Join(", ", names.Select(name => $"'{name}'")));
+                return names[0];
+            }, StringComparer.Ordinal);
+
+        string AllocatedName(
+            (JsonObject Method, string Owner, string Package, string Id, string Name, string SourceName,
+                string Sig, string ExplicitName, bool Generated) declaration)
+        {
+            if (declaration.ExplicitName != null) return declaration.ExplicitName;
+            var allocationId = AllocationIdentity(declaration.Id);
+            // A physical-only signature/existential copy of the source declaration shares an explicit source name
+            // only when it retained the source spelling. Compiler-owned bridges/wrappers with their own structured
+            // name remain in that separate generated naming domain.
+            if (explicitByAllocationId.TryGetValue(allocationId, out var explicitName)
+                && (declaration.Id == allocationId || declaration.Name == declaration.SourceName))
+                return explicitName;
+            return declaration.Name;
+        }
+
+        var candidatesById = declarations
+            .Select(declaration => (declaration.Id, Name: AllocatedName(declaration)))
+            .GroupBy(candidate => candidate.Id, StringComparer.Ordinal);
         var physicalById = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var candidates in candidatesById)
         {
@@ -308,11 +351,8 @@ static class DeclarationIdentityBinding
             physicalById.Add(candidates.Key, names[0]);
         }
         // A non-owner-dependent existential slot is the same CLR contract as its source MethodDef, not a second
-        // independently named implementation. Either owner can be the place where erasure first exposes a collision:
-        // nullable-T vs Any can collide on the generic owner while two otherwise distinct constructed parameters can
-        // collide only on the non-generic star carrier. Promote both manifestations to the same stable suffixed name
-        // whenever either collision set requires one. This is declaration-identity propagation, not a post-erasure
-        // overload lookup; owner-dependent slots have a distinct bridge spelling (Name != SourceName) and stay out.
+        // independently named implementation. Propagate an explicit source name to that slot; an unresolved collision
+        // is rejected below instead of receiving an automatic declaration-id hash.
         var existentialMarker = PhysicalOnlySuffix + "|existential-slot:";
         foreach (var slot in declarations.Where(declaration =>
                      declaration.Id.Contains(existentialMarker, StringComparison.Ordinal)
@@ -322,10 +362,8 @@ static class DeclarationIdentityBinding
             if (!physicalById.TryGetValue(sourceId, out var sourcePhysical)
                 || !physicalById.TryGetValue(slot.Id, out var slotPhysical))
                 continue;
-            if (sourcePhysical == slot.SourceName && slotPhysical == slot.SourceName) continue;
-            var sharedPhysical = slot.SourceName + "$dotkt$" + StableSuffix(sourceId);
-            physicalById[sourceId] = sharedPhysical;
-            physicalById[slot.Id] = sharedPhysical;
+            if (sourcePhysical != slot.SourceName && slotPhysical == slot.SourceName)
+                physicalById[slot.Id] = sourcePhysical;
         }
         // CLR MethodDef collisions are owner-local, but dll2klib merges file facades back into one Kotlin package.
         // Preserve semantic signatures for a same-package/source-name pair that shares a physical signature across
@@ -340,8 +378,138 @@ static class DeclarationIdentityBinding
             if (owners.Length < 2 || ids.Length < 2) continue;
             foreach (var id in ids) carrierIds.Add(id);
         }
+
+        var finalDeclarations = allDeclarations.Select(declaration =>
+        {
+            var finalName = declaration.Id != null
+                ? physicalById.TryGetValue(declaration.Id, out var allocated)
+                    ? allocated
+                    : throw new InvalidOperationException(
+                        $"bir2cir: declaration identity '{declaration.Id}' has no physical allocation")
+                : declaration.Name;
+            return (Declaration: declaration, FinalName: finalName);
+        });
+        var collisionDiagnostics = new List<string>();
+        foreach (var collision in finalDeclarations
+            .GroupBy(candidate => (candidate.Declaration.Owner, candidate.FinalName, candidate.Declaration.Sig)))
+        {
+            // Shared synthesized types are projected into each per-file collision root and hoisted/deduplicated later.
+            // Count that repeated generated declaration once, while retaining every independently authored method.
+            var collisionCandidates = collision.Where(candidate => !candidate.Declaration.Generated)
+                .Concat(collision.Where(candidate => candidate.Declaration.Generated).Take(1))
+                .ToArray();
+            if (collisionCandidates.Length < 2) continue;
+            var parts = collision.Key.Sig.Split('|', 2);
+            var arity = parts[0];
+            var parameters = parts.Length == 2 ? parts[1] : "";
+            var declarationsText = string.Join(", ", collisionCandidates.Select(candidate =>
+                candidate.Declaration.Generated
+                    ? $"compiler-generated '{candidate.Declaration.Name}'"
+                    : $"Kotlin declaration '{candidate.Declaration.SourceName}'" +
+                      (candidate.Declaration.Id == null ? " (open/override family)" : "")));
+            collisionDiagnostics.Add(
+                $"CLR physical signature collision at " +
+                $"'{collision.Key.Owner}.{collision.Key.FinalName}' (generic arity {arity}; parameters [{parameters}]): " +
+                $"{declarationsText}. Assign a distinct @ClrName to an independently allocatable user declaration; " +
+                "declaration order and automatic hash suffixes are not used");
+        }
+        if (collisionDiagnostics.Count != 0)
+            throw new InvalidOperationException(
+                "bir2cir: unresolved CLR physical signature collisions:" + Environment.NewLine +
+                string.Join(Environment.NewLine, collisionDiagnostics));
         semanticCarrierIds = carrierIds;
         return physicalById;
+    }
+
+    // Phase-3 representation passes may synthesize additional MethodDefs after source declaration allocation. Check
+    // the actual final emission unit as a whole so a generated bridge can neither duplicate another generated bridge
+    // nor silently collide with an explicitly named user declaration. This is validation only: no late renaming is
+    // allowed because every call/MethodImpl/property association has already been physically bound.
+    public static void ValidateFinalPhysicalNames(IEnumerable<JsonNode> roots)
+    {
+        var rootList = roots.OfType<JsonObject>().ToList();
+        var declarations = new List<(string Owner, string Name, string Sig,
+            bool GeneratedOwner, bool GeneratedMethod)>();
+        var properties = new List<(string Owner, string Name, string Sig)>();
+
+        void CollectMethods(JsonObject owner, string ownerName, bool generatedOwner)
+        {
+            if (owner["ctors"] is JsonArray constructors)
+                foreach (var constructor in constructors.OfType<JsonObject>())
+                    declarations.Add((ownerName, ".ctor", PhysicalSignature(constructor),
+                        generatedOwner, Bool(constructor["generated"])));
+            if (owner["methods"] is JsonArray methods)
+                foreach (var method in methods.OfType<JsonObject>())
+                    if (Str(method["name"]) is string name)
+                        declarations.Add((ownerName, name, PhysicalSignature(method),
+                            generatedOwner, Bool(method["generated"])));
+            if (owner["properties"] is JsonArray propertyRows)
+                foreach (var property in propertyRows.OfType<JsonObject>())
+                    if (Str(property["name"]) is string name)
+                        properties.Add((ownerName, name, PhysicalPropertySignature(property)));
+        }
+
+        foreach (var root in rootList)
+            // ilemit merges equal file facades and emits every method from every contributing CIR root. A root is
+            // therefore never a generated TypeDef occurrence eligible for the first-wins rule below.
+            CollectMethods(root, Str(root["fileClass"]) ?? "<file>", generatedOwner: false);
+
+        // Match ilemit's owner pass before validating methods. File facades are defined first. A later generated
+        // TypeDef is skipped whenever any prior owner already occupies its name; only methods on the emitted first
+        // occurrence belong to the final MethodDef table. An ordinary duplicate TypeDef is a separate malformed-CIR
+        // failure in ilemit, so it contributes no second MethodDef table here.
+        var definedOwners = new HashSet<string>(rootList
+            .Where(root => (root["methods"] as JsonArray)?.Count > 0
+                           || (root["fields"] as JsonArray)?.Count > 0)
+            .Select(root => Str(root["fileClass"]) ?? "<file>"), StringComparer.Ordinal);
+        foreach (var root in rootList)
+            if (root["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>())
+                {
+                    var ownerName = Str(type["name"]) ?? "<anonymous>";
+                    if (!definedOwners.Add(ownerName)) continue;
+                    CollectMethods(type, ownerName, Bool(type["generated"]));
+                }
+
+        var collisions = declarations
+            .GroupBy(declaration => (declaration.Owner, declaration.Name, declaration.Sig))
+            .Select(group => new
+            {
+                group.Key,
+                Candidates = group.ToArray(),
+            })
+            .Where(group => group.Candidates.Length > 1)
+            .Select(group =>
+            {
+                var parts = group.Key.Sig.Split('|', 2);
+                var arity = parts[0];
+                var parameters = parts.Length == 2 ? parts[1] : "";
+                var kinds = string.Join(", ", group.Candidates.Select(declaration =>
+                    declaration.GeneratedOwner || declaration.GeneratedMethod
+                        ? "compiler-generated declaration"
+                        : "user declaration"));
+                return $"CLR physical signature collision at '{group.Key.Owner}.{group.Key.Name}' " +
+                       $"(generic arity {arity}; parameters [{parameters}]): {kinds}";
+            })
+            .ToArray();
+        if (collisions.Length != 0)
+            throw new InvalidOperationException(
+                "bir2cir: final CIR contains duplicate MethodDef signatures; late collision repair is forbidden:" +
+                Environment.NewLine + string.Join(Environment.NewLine, collisions));
+
+        // Equal file facades are separate CIR roots until ilemit merges them. Validate the Property table with the
+        // same physical-owner model as methods so a duplicate row cannot hide merely by living in a sibling root.
+        var propertyCollisions = properties
+            .GroupBy(property => (property.Owner, property.Name, property.Sig))
+            .Where(group => group.Count() > 1)
+            .Select(group =>
+                $"CLR physical PropertyDef collision at '{group.Key.Owner}.{group.Key.Name}' " +
+                $"(signature [{group.Key.Sig}])")
+            .ToArray();
+        if (propertyCollisions.Length != 0)
+            throw new InvalidOperationException(
+                "bir2cir: final CIR contains duplicate PropertyDef signatures; late collision repair is forbidden:" +
+                Environment.NewLine + string.Join(Environment.NewLine, propertyCollisions));
     }
 
     public static void ApplyLocal(
@@ -491,48 +659,57 @@ static class DeclarationIdentityBinding
         return arity + "|" + parameters;
     }
 
+    static string PhysicalPropertySignature(JsonObject property)
+    {
+        var propertyType = PhysicalPropertyTypeSignature(TypeJson.Read(property["type"])
+            ?? throw new InvalidOperationException("bir2cir: final PropertyDef has no physical type"));
+        IEnumerable<JsonNode> indexParameters = property["getSig"] is JsonArray getSig
+            ? getSig
+            : property["setSig"] is JsonArray setSig
+                ? setSig.Take(Math.Max(0, setSig.Count - 1))
+                : throw new InvalidOperationException("bir2cir: final PropertyDef has no accessor signature");
+        return propertyType + "|" + string.Join(";", indexParameters.Select(parameter =>
+            PhysicalPropertyTypeSignature(TypeJson.Read(parameter)
+                ?? throw new InvalidOperationException(
+                    "bir2cir: final PropertyDef has an untyped physical index parameter"))));
+    }
+
     // A declaration is allocated only after BirTypeLowering, so this key describes the actual CLI parameter types,
     // not their remaining JSON spellings. In particular, suspend-function values erase to the shorthand `object`
     // while an Any parameter normally arrives as `System.Object`; raw JSON comparison would miss that collision and
     // leave two MethodDefs with one CLR signature. Keep this nominal projection aligned with ilemit's MapType rules.
-    internal static string PhysicalTypeSignature(TypeNode type) =>
-        PhysicalTypeSignature(type, exactTypeVariables: false);
+    internal static string PhysicalTypeSignature(TypeNode type) => type switch
+    {
+        TypeNode.Fqn { Args: null } f => PhysicalTypeName(f.Name),
+        TypeNode.Fqn f => PhysicalTypeName(f.Name) + "[" +
+            string.Join(",", f.Args!.Select(PhysicalTypeSignature)) + "]",
+        // Generic-parameter scope and index are part of an open CLR MethodDef signature (`!0` and `!1`, or `!0` and
+        // `!!0`, are distinct). Constructing an owner with equal arguments does not merge its MethodDef rows.
+        TypeNode.Tv tv => "gp:" + tv.Scope + ":" + tv.I,
+        TypeNode.Fn fn => PhysicalDelegateSignature(fn),
+        TypeNode.Nullable n => "System.Nullable[" + PhysicalTypeSignature(n.Of) + "]",
+        TypeNode.Oblivious o => PhysicalTypeSignature(o.Of),
+        TypeNode.Array a => "array:" + PhysicalTypeSignature(a.Elem),
+        TypeNode.ByRef b => "byref:" + PhysicalTypeSignature(b.Of),
+        TypeNode.Star => throw new InvalidOperationException(
+            "bir2cir: unresolved star projection reached final CLR MethodDef signature allocation"),
+        _ => throw new InvalidOperationException(
+            $"bir2cir: unsupported type node '{type.GetType().Name}' reached final CLR MethodDef signature allocation"),
+    };
 
     // A PropertyDef signature retains the declaring type-parameter scope and index (`!0` vs `!1`). Unlike a
     // call-side MethodDef key, it must not collapse those slots merely because a closed owner could substitute the
     // same concrete type for both. The associated accessor MethodDefs already have independently allocated names,
     // and MethodSemantics binds the Property row to that exact declaration.
-    internal static string PhysicalPropertyTypeSignature(TypeNode type) =>
-        PhysicalTypeSignature(type, exactTypeVariables: true);
+    internal static string PhysicalPropertyTypeSignature(TypeNode type) => PhysicalTypeSignature(type);
 
-    static string PhysicalTypeSignature(TypeNode type, bool exactTypeVariables) => type switch
+    static string PhysicalDelegateSignature(TypeNode.Fn fn)
     {
-        TypeNode.Fqn { Args: null } f => PhysicalTypeName(f.Name),
-        TypeNode.Fqn f => PhysicalTypeName(f.Name) + "[" +
-            string.Join(",", f.Args!.Select(arg => PhysicalTypeSignature(arg, exactTypeVariables))) + "]",
-        // A type parameter is an open substitution slot. Two declarations that differ only by which enclosing slot
-        // they reference can acquire the same concrete parameter type on a closed owner (G<Int, Int>), and ilemit's
-        // local-link key intentionally represents every such slot as one wildcard. Allocate distinct physical names
-        // here so declaration and call binding remain exact even for that closure; ilemit never has to choose between
-        // two wildcard-equivalent MethodDefs.
-        TypeNode.Tv tv => exactTypeVariables ? "gp:" + tv.Scope + ":" + tv.I : "gp:T",
-        TypeNode.Fn fn => PhysicalDelegateSignature(fn, exactTypeVariables),
-        TypeNode.Nullable n => "System.Nullable[" + PhysicalTypeSignature(n.Of, exactTypeVariables) + "]",
-        TypeNode.Oblivious o => PhysicalTypeSignature(o.Of, exactTypeVariables),
-        TypeNode.Array a => "array:" + PhysicalTypeSignature(a.Elem, exactTypeVariables),
-        TypeNode.ByRef b => "byref:" + PhysicalTypeSignature(b.Of, exactTypeVariables),
-        // Star is not legal CIR. If malformed input reaches this post-lowering boundary, match ilemit's existing
-        // fallback to System.Object rather than creating a second signature relation here.
-        _ => "System.Object",
-    };
-
-    static string PhysicalDelegateSignature(TypeNode.Fn fn, bool exactTypeVariables)
-    {
-        var args = fn.DelegateParams.Select(arg => PhysicalTypeSignature(arg, exactTypeVariables)).ToList();
-        var returnsVoid = PhysicalTypeSignature(fn.Ret, exactTypeVariables) == "System.Void";
+        var args = fn.DelegateParams.Select(PhysicalTypeSignature).ToList();
+        var returnsVoid = PhysicalTypeSignature(fn.Ret) == "System.Void";
         var family = fn.Clr ?? throw new InvalidOperationException(
             "bir2cir: declaration identity physical signature contains an unresolved function type");
-        if (!returnsVoid) args.Add(PhysicalTypeSignature(fn.Ret, exactTypeVariables));
+        if (!returnsVoid) args.Add(PhysicalTypeSignature(fn.Ret));
         return family switch
         {
             "System.Action" when returnsVoid && args.Count == 0 => "System.Action",
@@ -581,4 +758,29 @@ static class DeclarationIdentityBinding
 
     static string Str(JsonNode node) =>
         (node as JsonValue)?.TryGetValue<string>(out var value) == true ? value : null;
+
+    static bool Bool(JsonNode node) =>
+        (node as JsonValue)?.TryGetValue<bool>(out var value) == true && value;
+
+    static void ValidateExplicitName(string name, string owner, string sourceName)
+    {
+        if (name.Length == 0)
+            throw new InvalidOperationException(
+                $"bir2cir: malformed @ClrName on '{owner}.{sourceName}': the CLR method name must not be empty");
+        if (name.IndexOf('\0') >= 0)
+            throw new InvalidOperationException(
+                $"bir2cir: malformed @ClrName on '{owner}.{sourceName}': the CLR method name must not contain NUL");
+        if (name is ".ctor" or ".cctor")
+            throw new InvalidOperationException(
+                $"bir2cir: malformed @ClrName on '{owner}.{sourceName}': '{name}' is a reserved CLR constructor name");
+        try
+        {
+            _ = new UTF8Encoding(false, true).GetByteCount(name);
+        }
+        catch (EncoderFallbackException)
+        {
+            throw new InvalidOperationException(
+                $"bir2cir: malformed @ClrName on '{owner}.{sourceName}': the CLR method name is not valid Unicode");
+        }
+    }
 }

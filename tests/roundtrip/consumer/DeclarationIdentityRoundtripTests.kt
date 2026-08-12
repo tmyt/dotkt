@@ -7,6 +7,7 @@ import roundtrip.identity.roundtripNullableProperty
 import roundtrip.identity.roundtripMutableIdentityProperty
 import roundtrip.identity.roundtripInlineIdentity
 import roundtrip.identity.roundtripDefaultIdentity
+import roundtrip.identity.roundtripDefaultNamedProperty
 import roundtrip.identity.roundtripCrossFileIdentity
 import roundtrip.identity.RoundtripMemberIdentity
 import roundtrip.identity.RoundtripStaticMemberIdentity
@@ -39,6 +40,7 @@ class DeclarationIdentityRoundtripTests {
         assertEquals(310, mutable.roundtripInlineIdentity())
         assertEquals(311, readOnly.roundtripDefaultIdentity())
         assertEquals(312, mutable.roundtripDefaultIdentity())
+        assertEquals(333, roundtripDefaultNamedProperty)
         assertEquals(325, readOnly.roundtripCrossFileIdentity())
         assertEquals(326, mutable.roundtripCrossFileIdentity())
         val crossFileReadRef: (Map<Int, Int>) -> Int = Map<Int, Int>::roundtripCrossFileIdentity
@@ -84,6 +86,8 @@ class DeclarationIdentityRoundtripTests {
         assertEquals(330, nullableGeneric.selected("s"))
         val nullableGenericStar: RoundtripNullableGenericIdentity<*> = nullableGeneric
         assertEquals(null, nullableGenericStar.selectedProperty)
+        val selectedPropertyRef = nullableGenericStar::selectedProperty
+        assertEquals(null, selectedPropertyRef.get())
         assertEquals(330, nullableGenericStar.selected("s"))
         assertEquals(331, nullableGeneric.selectedMap(readOnly))
         assertEquals(332, nullableGeneric.selectedMap(mutable))
@@ -105,10 +109,12 @@ class DeclarationIdentityRoundtripTests {
         val mutableProperty = MutableMap<Int, Int>::roundtripIdentityProperty
         val readMutableProperty = Map<Int, Int>::roundtripMutableIdentityProperty
         val mutableMutableProperty = MutableMap<Int, Int>::roundtripMutableIdentityProperty
+        val defaultNamedProperty = ::roundtripDefaultNamedProperty
         assertEquals(305, readFunction(readOnly))
         assertEquals(306, mutableFunction(mutable))
         assertEquals(301, readProperty.get(readOnly))
         assertEquals(302, mutableProperty.get(mutable))
+        assertEquals(333, defaultNamedProperty.get())
         readMutableProperty.set(readOnly, 15)
         mutableMutableProperty.set(mutable, 16)
         assertEquals(615, readMutableProperty.get(readOnly))

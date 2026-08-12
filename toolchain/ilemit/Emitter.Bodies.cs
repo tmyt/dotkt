@@ -105,7 +105,7 @@ sealed partial class Emitter
         // Pick THIS def's own MethodBuilder by signature (overloads share `mname`; the name-keyed map holds only the
         // last, so emitting by name alone routes a body into the wrong overload — the WinUI `text(String)` /
         // `text(()->String)` bug).
-        if (!ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var mb))
+        if (!ti.MethodsBySig.TryGetValue(DefinitionSigKey(mname, m), out var mb))
             throw new InvalidOperationException($"ilemit: method body {ti.TB.FullName}.{mname} has no exact declared signature match");
         // Abstract-slot body invariant (#92): a MethodBuilder DECLARED Abstract has NO IL body — GetILGenerator would
         // throw "Method body should not exist". Trust the DECLARED attribute (mb.IsAbstract, the single source of

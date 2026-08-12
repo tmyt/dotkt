@@ -1,0 +1,7 @@
++"name":"physicalMethodA"
++"name":"physicalMethodB"
++"name":"physicalPropertyA","type":{"t":"fqn","name":"System.Int32"}
++"name":"physicalPropertyB","type":{"t":"fqn","name":"System.Int32"}
++"get":"physicalPropertyA"
++"get":"physicalPropertyB"
+-explicitClrName

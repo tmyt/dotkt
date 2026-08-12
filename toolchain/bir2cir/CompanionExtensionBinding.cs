@@ -299,8 +299,13 @@ static class CompanionExtensionBinding
                     $"companion-extension property '{semanticOwner}.{parts.SourceName}' has no getter");
 
             var propertyTypeJson = parts.Getter["ret"]!.ToJsonString();
-            var getterPhysicalName = KotlinPropertyAccessors.PhysicalName(parts.SourceName, "get");
-            var setterPhysicalName = KotlinPropertyAccessors.PhysicalName(parts.SourceName, "set");
+            // The C# 14 signature PropertyDef, its implementation binding, and every generated wrapper must name the
+            // same final accessor MethodDef. The common allocator applies explicitClrName later, so state that known
+            // final name here as well instead of freezing the pre-allocation prop_get/prop_set descriptor.
+            var getterPhysicalName = Str(parts.Getter[DeclarationIdentityBinding.ExplicitNameKey])
+                ?? KotlinPropertyAccessors.PhysicalName(parts.SourceName, "get");
+            var setterPhysicalName = Str(parts.Setter?[DeclarationIdentityBinding.ExplicitNameKey])
+                ?? KotlinPropertyAccessors.PhysicalName(parts.SourceName, "set");
             var getterCoreName = blockArity == 0 ? getterPhysicalName : CoreName("get", parts.SourceName);
             var setterCoreName = blockArity == 0 ? setterPhysicalName : CoreName("set", parts.SourceName);
             AddPropertyBinding(bindings, semanticOwner, receiver, "get", parts.SourceName, containerName, propertyTypeJson,
@@ -684,6 +689,13 @@ static class CompanionExtensionBinding
             new JsonArray(new JsonObject { ["k"] = "return", ["value"] = read }),
             new JsonArray(),
             propertyType.DeepClone());
+        if (Str(field["companionGetterExplicitClrName"]) is string getterExplicitName)
+            parts.Getter[DeclarationIdentityBinding.ExplicitNameKey] = getterExplicitName;
+        if (Str(field["companionGetterDeclarationId"]) is string getterDeclarationId)
+        {
+            parts.Getter[DeclarationIdentityBinding.Key] = getterDeclarationId;
+            parts.Getter["declarationSourceName"] = sourceName;
+        }
         if (isConst || field["lateinit"]?.GetValue<bool>() == true)
             RoundtripMetadata.StampPropertyStorage(parts.Getter, storageOwner, backingName);
         if (mutable)
@@ -705,6 +717,19 @@ static class CompanionExtensionBinding
                 }),
                 new JsonArray(new JsonObject { ["name"] = "value", ["type"] = propertyType.DeepClone() }),
                 TypeJson.Fqn("kotlin.Unit"));
+        if (parts.Setter != null &&
+            Str(field["companionSetterExplicitClrName"]) is string setterExplicitName)
+            parts.Setter[DeclarationIdentityBinding.ExplicitNameKey] = setterExplicitName;
+        if (parts.Setter != null &&
+            Str(field["companionSetterDeclarationId"]) is string setterDeclarationId)
+        {
+            parts.Setter[DeclarationIdentityBinding.Key] = setterDeclarationId;
+            parts.Setter["declarationSourceName"] = sourceName;
+        }
+        field.Remove("companionGetterExplicitClrName");
+        field.Remove("companionSetterExplicitClrName");
+        field.Remove("companionGetterDeclarationId");
+        field.Remove("companionSetterDeclarationId");
     }
 
     static JsonObject Accessor(

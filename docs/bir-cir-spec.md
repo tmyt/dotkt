@@ -218,8 +218,29 @@ ordinary MethodDef requires a bridge but the frontend-selected external implemen
 target. It must not be "fixed" by selecting a different default from names or hierarchy. DotKt-produced interfaces do not have this limitation because their public source
 accessor remains callable while the private exact bridge supplies only the declaration-side MethodImpl identity.
 
-When bir2cir assigns an ordinary Kotlin method a different CLR slot name, it records the exact Kotlin source name in
-the trusted `KotlinSourceMethod` carrier on that MethodDef. An explicit MethodImpl bridge carries the same identity so
+`@kotlin.clr.ClrName("physicalName")` is the canonical source instruction for an independently allocatable function,
+getter, or setter; `@kotlin.jvm.JvmName` is accepted as a compatibility alias. kotc carries the selected constant
+string as BIR-only `explicitClrName`. Identical values coalesce; malformed arguments or different values on the same
+declaration are errors. bir2cir applies that fact only after CLR type lowering and consumes it before CIR. An explicit
+name always applies, even without a collision. Open/override families are rejected until the frontend can supply one
+slot-wide naming decision rather than letting bir2cir infer propagation from hierarchy or names.
+For an ordinary field-backed top-level property, an explicit accessor name makes that accessor a MethodDef-backed
+surface even when its Kotlin body is default. A field-backed companion extension remains a bir2cir-owned physical
+representation: kotc carries the getter/setter name and declaration identity as paired BIR field facts, and bir2cir
+transfers them to the synthesized accessor MethodDefs. None of those hand-off facts survive in CIR.
+
+The final MethodDef identity is declaring type, physical name, method generic arity, and lowered parameter vector.
+Return type, nullability metadata, constraints, and declaration order do not distinguish a CLR overload. If two
+independently authored declarations occupy one such identity, bir2cir rejects them unless their explicit names make
+the identities distinct; it never appends a declaration hash. Explicit names that still collide are rejected too.
+Generic-parameter scope and index remain part of the lowered parameter vector: `!0`, `!1`, and `!!0` are distinct
+MethodDef signature elements even if a constructed owner later supplies equal concrete arguments for two slots.
+Compiler-generated physical artifacts may use documented role-based unspeakable names and deterministic suffixes,
+but collision suffixes do not contain the compiler product name and no consumer may reconstruct a missing fact from
+an old `$dotkt$<hash>` spelling.
+
+Whenever the physical name differs from the Kotlin source name, bir2cir records the exact source identity in the
+trusted `KotlinSourceMethod` carrier on that MethodDef. An explicit MethodImpl bridge carries the same identity so
 `dll2klib` can re-surface the implemented function under its Kotlin name. `ReferenceMetadataIndex` ignores that
 compiler-generated bridge copy and uses the source declaration's carrier to map a frontend-selected declaration back
 to its physical MethodDef. Neither consumer derives source identity from capitalization, a known method-name table,

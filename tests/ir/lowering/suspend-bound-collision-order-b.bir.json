@@ -8,6 +8,7 @@
     {
       "name": "bounded",
       "declarationId": "fixture-suspend-bound-b",
+      "explicitClrName": "boundedFormattable",
       "static": true,
       "override": false,
       "virtual": false,

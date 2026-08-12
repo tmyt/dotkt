@@ -1138,6 +1138,10 @@ sealed class Pipeline
         // clean as one inside the loop.
         ForeignNullableGenericCrossing.CheckImplementedSlots(loweredRoots, refs);
 
+        // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
+        // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
+        DeclarationIdentityBinding.ValidateFinalPhysicalNames(loweredRoots.Select(file => file.Root));
+
         // SERIALIZATION IS THE LAST THING, and not the tail of the loop above. The check that just ran asks each
         // Kotlin body which slot it fills, and the answer is a pass-to-pass record on the declaration that must not
         // reach CIR — so the check consumes it, and it can only do that once every file has been lowered and read.

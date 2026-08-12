@@ -134,6 +134,7 @@ build_tool() { # <name> — UNCONDITIONAL build (the verify gates use this: they
 KOTC_INSTALL_DIR="$ROOT/toolchain/kotc/build/install/kotc"
 STDLIB_SRC_DIR="$ROOT/libraries/stdlib"
 STDLIB_BUILD_LIB="$ROOT/scripts/lib.sh"
+STDLIB_CLR_NAME_OVERLAY="$ROOT/libraries/stdlib/clr/overlays/explicit-clr-names.patch"
 
 # _toolstamp <path>... — fingerprint the given input files/dirs. Missing paths contribute nothing (a build
 # that truly lacks an input fails loudly on its own). Sort the NUL-delimited absolute paths, hash each file,
@@ -176,12 +177,25 @@ need_stdlib_rt() { # the stdlib RUNTIME dll; rebuild if missing OR toolchain cha
 }
 
 # --- stdlib source sets (shared by build-stdlib-ref.sh / build-stdlib-rt.sh) -----------------------
+# The checked-in common/source trees remain byte-aligned with upstream. CLR-only physical-name annotations are applied
+# to a disposable source overlay before kotc sees them; regeneration/upstream sync therefore never has to preserve
+# hand-edited platform ABI facts in generated or shared Kotlin sources.
 # Sets the arrays STDLIB_COMMON/STDLIB_SRC/STDLIB_UNSIGNED/STDLIB_CLR and STDLIB_COMMON_CSV.
 # Common = the multiplatform expect/impl source; Platform(CLR) = the clr/ actuals (NOT common sources).
 collect_stdlib_sources() {
-	mapfile -t STDLIB_COMMON   < <(find "$ROOT/libraries/stdlib/common/src" -name '*.kt')
-	mapfile -t STDLIB_SRC      < <(find "$ROOT/libraries/stdlib/src" -name '*.kt')
-	mapfile -t STDLIB_UNSIGNED < <(find "$ROOT/libraries/stdlib/unsigned/src" -name '*.kt')
+	local overlay
+	overlay="$(mktemp -d "$ROOT/build/stdlib-source-overlay.XXXXXX")"
+	STDLIB_SOURCE_OVERLAY="$overlay"
+	trap 'rm -rf -- "$STDLIB_SOURCE_OVERLAY"' EXIT
+	mkdir -p "$overlay/common" "$overlay/unsigned"
+	cp -a "$ROOT/libraries/stdlib/common/src" "$overlay/common/"
+	cp -a "$ROOT/libraries/stdlib/src" "$overlay/"
+	cp -a "$ROOT/libraries/stdlib/unsigned/src" "$overlay/unsigned/"
+	patch --batch --forward --fuzz=0 -s -d "$overlay" -p3 < "$STDLIB_CLR_NAME_OVERLAY" \
+		|| die "failed to apply CLR stdlib physical-name overlay"
+	mapfile -t STDLIB_COMMON   < <(find "$overlay/common/src" -name '*.kt')
+	mapfile -t STDLIB_SRC      < <(find "$overlay/src" -name '*.kt')
+	mapfile -t STDLIB_UNSIGNED < <(find "$overlay/unsigned/src" -name '*.kt')
 	mapfile -t STDLIB_CLR      < <(find "$ROOT/libraries/stdlib/clr" -name '*.kt')
 	local all=("${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}")
 	STDLIB_COMMON_CSV="$(IFS=,; echo "${all[*]}")"

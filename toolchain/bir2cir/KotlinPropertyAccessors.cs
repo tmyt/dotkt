@@ -121,33 +121,56 @@ static class KotlinPropertyAccessors
     // associated MethodDef names and consume the BIR-only facts. No get_/set_ spelling is parsed in either direction.
     public static void FinalizePhysicalProperties(IEnumerable<JsonNode> roots)
     {
-        foreach (var root in roots) Finalize(root);
+        var rootObjects = roots.OfType<JsonObject>().ToArray();
 
-        static void Finalize(JsonNode node)
+        // Equal file facades remain separate CIR roots until ilemit merges their MethodDef and PropertyDef tables.
+        // Allocate their top-level Property rows as one physical owner too; otherwise distinct explicit accessor
+        // names can repair a collision within one source file but not the identical collision across two files.
+        foreach (var owners in rootObjects.GroupBy(root => Str(root["fileClass"]) ?? "<file>"))
+            FinalizeOwners(owners.ToArray());
+
+        foreach (var root in rootObjects) Finalize(root, allocateCurrentOwner: false);
+
+        static void FinalizeOwners(IReadOnlyList<JsonObject> owners)
+        {
+            var propertyOwners = new List<(JsonObject Property, IReadOnlyList<JsonObject> Methods)>();
+            foreach (var owner in owners)
+            {
+                var methods = owner["methods"] is JsonArray methodArray
+                    ? methodArray.OfType<JsonObject>().ToArray()
+                    : Array.Empty<JsonObject>();
+                if (owner["properties"] is not JsonArray propertyArray) continue;
+                foreach (var property in propertyArray.OfType<JsonObject>())
+                {
+                    // Associations are file-local frontend facts. Resolve each row only against its own root before
+                    // combining the resulting physical PropertyDef identities under the shared file-facade owner.
+                    if (property[PropertyRolesKey] is JsonArray)
+                        AllocateProperty(property, methods, stripIdentity: false);
+                    propertyOwners.Add((property, methods));
+                }
+            }
+            // Property rows without a Kotlin accessor association are already physical CIR declarations. They are
+            // not candidates for source-name allocation; the final module-wide validator still rejects duplicates.
+            AllocatePhysicalPropertyNames(propertyOwners
+                .Where(candidate => Str(candidate.Property[AssociationKey]) != null)
+                .ToArray());
+            foreach (var (property, _) in propertyOwners)
+            {
+                property.Remove(PropertyRolesKey);
+                property.Remove(AssociationKey);
+            }
+        }
+
+        static void Finalize(JsonNode node, bool allocateCurrentOwner = true)
         {
             if (node is JsonObject obj)
             {
-                var methods = obj["methods"] is JsonArray methodArray
-                    ? methodArray.OfType<JsonObject>().ToArray()
-                    : Array.Empty<JsonObject>();
-                if (obj["properties"] is JsonArray properties)
-                {
-                    foreach (var property in properties.OfType<JsonObject>())
-                    {
-                        if (property[PropertyRolesKey] is JsonArray)
-                            AllocateProperty(property, methods, stripIdentity: false);
-                    }
-                    AllocatePhysicalPropertyNames(properties.OfType<JsonObject>().ToArray(), methods);
-                    foreach (var property in properties.OfType<JsonObject>())
-                    {
-                        property.Remove(PropertyRolesKey);
-                        property.Remove(AssociationKey);
-                    }
-                }
+                if (allocateCurrentOwner) FinalizeOwners(new[] { obj });
                 foreach (var child in obj.Select(pair => pair.Value).ToArray())
                     if (child != null) Finalize(child);
                 if (TryIdentity(obj, out _, out _)) RemoveIdentity(obj);
                 obj.Remove(PhysicalSlotBridgeKey);
+                obj.Remove(DeclarationIdentityBinding.ExplicitNameKey);
             }
             else if (node is JsonArray array)
                 foreach (var child in array.ToArray()) if (child != null) Finalize(child);
@@ -158,10 +181,9 @@ static class KotlinPropertyAccessors
     // Renaming only the associated MethodDefs is therefore insufficient when two Kotlin extension properties erase
     // to the same CLI signature. Allocate the Property spelling from the same frontend declaration identity, after
     // type lowering and after the exact accessor association has been finalized. dll2klib restores the Kotlin source
-    // name from the accessor's [KotlinDeclarationIdentity] carrier; it never reverse-engineers this physical suffix.
+    // name from the accessor's [KotlinDeclarationIdentity] carrier; it never reverse-engineers the physical name.
     static void AllocatePhysicalPropertyNames(
-        IReadOnlyList<JsonObject> properties,
-        IReadOnlyList<JsonObject> methods)
+        IReadOnlyList<(JsonObject Property, IReadOnlyList<JsonObject> Methods)> properties)
     {
         string PropertySignature(JsonObject property)
         {
@@ -180,7 +202,8 @@ static class KotlinPropertyAccessors
                     ?? throw new InvalidOperationException("Kotlin property record has an untyped physical index parameter"))));
         }
 
-        bool TryPropertyDeclarationId(JsonObject property, out string declarationId)
+        bool TryPropertyDeclarationId(JsonObject property, IReadOnlyList<JsonObject> methods,
+            out string declarationId)
         {
             var association = Str(property[AssociationKey])
                 ?? throw new InvalidOperationException("Kotlin property record has no accessor association");
@@ -202,17 +225,40 @@ static class KotlinPropertyAccessors
             return true;
         }
 
-        foreach (var group in properties.GroupBy(property =>
-            (Name: Str(property["name"]) ?? throw new InvalidOperationException("property has no name"),
-             Signature: PropertySignature(property))))
+        string ExplicitPropertyName(JsonObject property, IReadOnlyList<JsonObject> methods)
+        {
+            var association = Str(property[AssociationKey])
+                ?? throw new InvalidOperationException("Kotlin property record has no accessor association");
+            // A CLR Property row has one name even when its getter and setter MethodDefs have intentionally different
+            // explicit names. The getter is the canonical property-name carrier; a setter-only projected shape uses
+            // its setter. This is role-based and never depends on declaration order.
+            var getter = methods.SingleOrDefault(method =>
+                Str(method[AssociationKey]) == association && Str(method[KindKey]) == "get");
+            if (getter != null && Str(getter[DeclarationIdentityBinding.ExplicitNameKey]) != null)
+                return Str(getter["name"]);
+            if (getter != null) return null;
+            var setter = methods.SingleOrDefault(method =>
+                Str(method[AssociationKey]) == association && Str(method[KindKey]) == "set");
+            return setter != null && Str(setter[DeclarationIdentityBinding.ExplicitNameKey]) != null
+                ? Str(setter["name"])
+                : null;
+        }
+
+        foreach (var group in properties.GroupBy(candidate =>
+            (Name: Str(candidate.Property["name"]) ?? throw new InvalidOperationException("property has no name"),
+             Signature: PropertySignature(candidate.Property))))
         {
             var colliding = group.ToArray();
             if (colliding.Length < 2) continue;
-            var allocation = colliding.Select(property =>
+            var allocation = colliding.Select(candidate =>
             {
+                var property = candidate.Property;
+                var methods = candidate.Methods;
                 var association = Str(property[AssociationKey])!;
                 return (Property: property, Association: association,
-                    HasDeclarationId: TryPropertyDeclarationId(property, out var id), DeclarationId: id,
+                    Methods: methods,
+                    HasDeclarationId: TryPropertyDeclarationId(property, methods, out var id), DeclarationId: id,
+                    ExplicitName: ExplicitPropertyName(property, methods),
                     IsBridge: association.StartsWith("dotkt$bridge$property$", StringComparison.Ordinal));
             }).ToArray();
             var unidentifiedDeclarations = allocation.Where(candidate =>
@@ -229,10 +275,11 @@ static class KotlinPropertyAccessors
                 var sourceName = group.Key.Name;
                 if (candidate.HasDeclarationId)
                 {
-                    // Once the Property row receives a physical suffix, MethodSemantics alone can only report that
+                    // Once the Property row receives a different physical name, MethodSemantics alone can only report that
                     // physical spelling. Preserve #397's already-resolved semantic association explicitly on each
                     // accessor so dll2klib restores the source property without parsing either physical name.
-                    foreach (var method in methods.Where(method => Str(method[AssociationKey]) == association))
+                    foreach (var method in candidate.Methods.Where(method =>
+                                 Str(method[AssociationKey]) == association))
                     {
                         var kind = Str(method[KindKey])
                             ?? throw new InvalidOperationException(
@@ -249,14 +296,37 @@ static class KotlinPropertyAccessors
                 // select. Its exact bridge association is therefore the authoritative physical identity. If the
                 // collision set contains one ordinary declaration without a frontend identity, keep its existing
                 // spelling and move only the bridge(s); two such declarations are refused above rather than guessed.
-                var suffixBasis = candidate.HasDeclarationId ? candidate.DeclarationId
-                    : candidate.IsBridge ? association
-                    : null;
-                if (suffixBasis != null)
-                    property["name"] = group.Key.Name + "$dotkt$" +
-                        DeclarationIdentityBinding.StableSuffix(suffixBasis);
+                if (candidate.ExplicitName != null)
+                    property["name"] = candidate.ExplicitName;
+                else if (candidate.IsBridge)
+                    property["name"] = group.Key.Name + "$bridge$" +
+                        DeclarationIdentityBinding.StableSuffix(association);
             }
+            var remaining = allocation.GroupBy(candidate =>
+                    Str(candidate.Property["name"])
+                    ?? throw new InvalidOperationException("property has no physical name"))
+                .Where(names => names.Count() > 1)
+                .ToArray();
+            if (remaining.Length != 0)
+                throw new InvalidOperationException(
+                    $"bir2cir: CLR physical property signature collision for '{group.Key.Name}' " +
+                    $"with signature '{group.Key.Signature}': " +
+                    string.Join(", ", remaining.Select(names => $"'{names.Key}'")) +
+                    ". Assign distinct @get:ClrName values (and @set:ClrName values for colliding setters); " +
+                    "automatic hash suffixes are not used");
         }
+        var crossGroupCollisions = properties.GroupBy(candidate =>
+                (Name: Str(candidate.Property["name"])
+                    ?? throw new InvalidOperationException("property has no final physical name"),
+                 Signature: PropertySignature(candidate.Property)))
+            .Where(group => group.Count() > 1)
+            .ToArray();
+        if (crossGroupCollisions.Length != 0)
+            throw new InvalidOperationException(
+                "bir2cir: final CLR PropertyDef identities collide after explicit accessor naming: " +
+                string.Join(", ", crossGroupCollisions.Select(group =>
+                    $"'{group.Key.Name}' with signature '{group.Key.Signature}'")) +
+                ". Assign distinct @get:ClrName values; automatic hash suffixes are not used");
     }
 
     static void Walk(JsonNode node, bool allocateCalls, ReferenceMetadataIndex refs,

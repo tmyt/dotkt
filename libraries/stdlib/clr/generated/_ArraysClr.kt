@@ -143,6 +143,7 @@ public actual inline infix fun <T> Array<out T>.contentDeepEquals(other: Array<o
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("contentDeepEqualsNullable")
 public actual inline infix fun <T> Array<out T>?.contentDeepEquals(other: Array<out T>?): Boolean = contentDeepEqualsImpl(this, other)
 
 @SinceKotlin("1.1")
@@ -152,6 +153,7 @@ public actual inline fun <T> Array<out T>.contentDeepHashCode(): Int = contentDe
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("contentDeepHashCodeNullable")
 public actual inline fun <T> Array<out T>?.contentDeepHashCode(): Int = contentDeepHashCodeImpl(this)
 
 @SinceKotlin("1.1")
@@ -161,6 +163,7 @@ public actual inline fun <T> Array<out T>.contentDeepToString(): String = conten
 
 @SinceKotlin("1.4")
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("contentDeepToStringNullable")
 public actual inline fun <T> Array<out T>?.contentDeepToString(): String = contentDeepToStringImpl(this)
 
 @SinceKotlin("1.4")

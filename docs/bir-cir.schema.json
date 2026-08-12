@@ -343,6 +343,7 @@
         "clrOverrideOwner": { "$ref": "#/$defs/type", "$comment": "CIR-only exact metadata declaring owner of the resolved external base slot." },
         "declarationId": { "type": "string", "$comment": "#395 BIR-only frontend-authoritative stable Kotlin declaration fingerprint. bir2cir allocates the physical MethodDef and binds uses from this key after CLR erasure; RoundtripMetadata consumes it into [KotlinDeclarationIdentity]." },
         "declarationSourceName": { "type": "string", "$comment": "#395 bir2cir hand-off preserving the Kotlin source name when declarationId receives a different physical CLR name. Consumed into [KotlinDeclarationIdentity] before CIR." },
+        "explicitClrName": { "type": "string", "$comment": "#402 BIR-only source-authored physical MethodDef name from @ClrName or its @JvmName compatibility alias. bir2cir validates and consumes it during final CLR signature allocation; it is forbidden in CIR." },
         "extern":     { "type": "boolean", "$comment": "CIR-only: bodyless CLR extern method. bir2cir uses this for caller-side UnsafeAccessor declarations; ilemit defines the signature/attributes one-to-one and emits no IL body." },
         "bodyTerminates": { "type": "boolean", "$comment": "CIR-only proof that the authored body cannot fall through. ilemit therefore emits no synthetic trailing return." },
         "virtual":    { "type": "boolean" },
@@ -397,6 +398,10 @@
         "companionPropertyMutable": { "type": "boolean", "$comment": "BIR-only Kotlin val/var fact for a field-backed companion extension. Unlike readOnly, this remains true for a var whose setter is non-public; bir2cir consumes it when synthesizing the physical setter." },
         "companionSetterVisibility": { "$ref": "#/$defs/vis", "$comment": "BIR-only visibility of a field-backed companion extension var's default setter. Required when companionPropertyMutable is true and consumed by bir2cir." },
         "companionStorageReadOnly": { "type": "boolean", "$comment": "BIR-only storage-mutability fact. Distinct from the public Kotlin readOnly surface: a private-set var remains mutable storage, while delegated storage is assigned once. bir2cir consumes it into CIR initOnly." },
+        "companionGetterExplicitClrName": { "type": "string", "$comment": "#402 BIR-only @ClrName/@JvmName value for the default getter synthesized by bir2cir for a field-backed companion extension." },
+        "companionSetterExplicitClrName": { "type": "string", "$comment": "#402 BIR-only @ClrName/@JvmName value for the default setter synthesized by bir2cir for a field-backed companion extension." },
+        "companionGetterDeclarationId": { "type": "string", "$comment": "#402 BIR-only frontend declaration identity paired with companionGetterExplicitClrName; transferred to the synthesized getter MethodDef." },
+        "companionSetterDeclarationId": { "type": "string", "$comment": "#402 BIR-only frontend declaration identity paired with companionSetterExplicitClrName; transferred to the synthesized setter MethodDef." },
         "initOnly": { "type": "boolean", "description": "CIR physical field flag: emit CLR initonly (C# readonly). bir2cir authors it only when the CLR storage itself is immutable; distinct from Kotlin readOnly round-trip metadata." },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "#48: bir2cir-derived flattened NullableAttribute bytes for the slot's reference-nullable positions (replaces the retired scalar `nullable` flag)." }
       },

@@ -1,0 +1,16 @@
+{
+  "fileClass": "SharedPropertyFacade", "hasMain": false,
+  "fields": [], "refTypes": [], "types": [],
+  "properties": [{
+    "name": "physicalProperty", "type": { "t": "fqn", "name": "kotlin.Int" },
+    "kotlinAccessors": ["set"], "propertyAssociation": "property-b"
+  }],
+  "methods": [{
+    "name": "physicalProperty", "declarationId": "property-set-b",
+    "propertyName": "physicalProperty", "propertyAccessor": "set",
+    "propertyAssociation": "property-b",
+    "static": true, "override": false, "virtual": false,
+    "params": [{ "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+    "ret": { "t": "fqn", "name": "kotlin.Unit" }, "body": [], "attrs": []
+  }]
+}
