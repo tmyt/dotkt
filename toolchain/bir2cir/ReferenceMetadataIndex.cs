@@ -2045,9 +2045,22 @@ sealed partial class ReferenceMetadataIndex
     // + parameter count normally identify one overload; when several remain, accept an exact/ABI-equivalent semantic
     // shape only. Identical duplicate declarations collapse to one structural shape. No first-pick is performed.
     public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity,
-        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature)
+        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature) =>
+        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, callSignature, out declarationSignature,
+            out _, out _);
+
+    /// <summary>
+    /// As above, and also hands back the DECLARATION it selected (#370). The parameter vector was the only
+    /// thing this ever returned, which left the caller describing a member it had in its hand — and a
+    /// description has to be turned back into a member by whoever reads it.
+    /// </summary>
+    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity,
+        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature,
+        out MethodInfo declaration, out Type declaringOwner)
     {
         declarationSignature = null;
+        declaration = null;
+        declaringOwner = null;
         if (ownerFqn == null || name == null || callSignature == null)
             return false;
         var bareOwner = BareOwnerFqn(ownerFqn);
@@ -2058,25 +2071,30 @@ sealed partial class ReferenceMetadataIndex
         var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
             .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
                 && m.GetParameters().Length == callSignature.Count)
-            .Select(m => m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray())
-            .Where(ps => ps.All(p => p != null))
+            .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
+            .Where(c => c.ps.All(p => p != null))
             .ToList();
         if (candidates.Count == 0)
             return false;
 
-        var exact = candidates.Where(ps => ps.SequenceEqual(callSignature)).ToList();
+        var exact = candidates.Where(c => c.ps.SequenceEqual(callSignature)).ToList();
         var compatible = exact.Count > 0
             ? exact
-            : candidates.Where(ps => ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
+            : candidates.Where(c => c.ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
                 .ToList();
         var source = compatible.Count > 0 ? compatible : candidates;
+        // Declarations that render to the SAME signature are the same member to every reader of one — the
+        // duplicate expect/actual rows a merged stdlib produces. Collapsing them is not a choice between
+        // members; keeping more than one distinct shape would be, which is why that still refuses.
         var shapes = source
-            .GroupBy(ps => string.Join(",", ps.Select(TypeNode.ToJson)), StringComparer.Ordinal)
+            .GroupBy(c => string.Join(",", c.ps.Select(TypeNode.ToJson)), StringComparer.Ordinal)
             .Select(g => g.First())
             .ToList();
         if (shapes.Count != 1)
             return false;
-        declarationSignature = shapes[0];
+        declarationSignature = shapes[0].ps;
+        declaration = shapes[0].method;
+        declaringOwner = owner;
         return true;
     }
 

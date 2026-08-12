@@ -416,9 +416,14 @@ static partial class ClrMemberResolution
         if (callSig.Length != selectionSig.Count) return;
         var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         if (!_refs.TryResolveStaticMemberSignature(
-                ownerFqn.Name, name, methodArity, callSig, out var declarationSig))
+                ownerFqn.Name, name, methodArity, callSig, out var declarationSig,
+                out var declaration, out var declaringOwner))
             return;
         node["sig"] = new JsonArray(declarationSig.Select(TypeJson.Write).ToArray());
+        // A previously-compiled DotKt assembly is another assembly: its members are external, and the reason
+        // this call kept a parameter vector rather than an identity was only that the vector was all this
+        // resolution used to return.
+        node["memberRef"] = MemberRefJson(declaration, MemberRefNode.Kinds.Method, declaringOwner, ownerFqn.Args);
     }
 
     static void DropKotlinSigSnapshots(JsonNode node)
