@@ -47,6 +47,7 @@ def arity_of_name(full_name):
 # claim honest.
 MEMBER_REF_AUTHORED_KINDS = {
     "clrStatic", "clrInstance", "newClr", "new",
+    "clrGenericStatic", "clrGenericInstance",
     "clrPropGet", "clrPropSet", "clrEventAdd", "clrEventRemove",
     "field", "setField", "setFieldExpr",
     "newBoundClrDelegate", "newClrStaticDelegate",
@@ -626,10 +627,14 @@ class V:
             if f.endswith(".cir.json") and o.get("k") in MEMBER_REF_AUTHORED_KINDS and "memberRef" not in o:
                 # The transitional descriptor and the scalar reference must travel TOGETHER for a migrated kind:
                 # each one alone resolves to a member, so a node that lost the new half would keep working while
-                # silently reverting the guarantee. Both spellings of the old identity count — `memberSig` for a
-                # signature-carrying node, `member` for the accessor/field discriminator on a property or field.
-                if "memberSig" in o:
-                    self.err(f, path, f"{o['k']} carries the transitional memberSig without the resolved memberRef beside it")
+                # silently reverting the guarantee, and nothing else would notice.
+                #
+                # `memberOwner` is what proves a member was RESOLVED — bir2cir writes it exactly where it read a
+                # declaring type. `memberSig` does NOT prove it: on a generic call the parameter vector comes from
+                # the frontend and is present whether or not a declaration was ever found. `member` is the same
+                # proof for a property or field, which carry a discriminator instead of a signature.
+                if "memberOwner" in o:
+                    self.err(f, path, f"{o['k']} carries the transitional memberOwner without the resolved memberRef beside it")
                 elif o.get("member") in ("accessor", "field"):
                     self.err(f, path, f"{o['k']} carries member={o['member']!r} without the resolved memberRef beside it")
             if isinstance(o.get("mods"), dict):

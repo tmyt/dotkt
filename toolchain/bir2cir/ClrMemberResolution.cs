@@ -612,6 +612,9 @@ static partial class ClrMemberResolution
             if (win != null)
             {
                 node["memberOwner"] = DeclaringTypeDescriptor(win);
+                // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
+                // as an ECMA MethodSpec wraps a MemberRef to the uninstantiated signature.
+                node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
                 StampMemberRet(node, win.ReturnType);
             }
             else StampMemberRetUnresolved(node);
