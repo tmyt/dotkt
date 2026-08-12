@@ -1,0 +1,21 @@
+{
+  "fileClass": "SharedExplicitFacade", "hasMain": false,
+  "fields": [], "refTypes": [], "types": [],
+  "properties": [{
+    "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" },
+    "kotlinAccessors": ["get"], "propertyAssociation": "property-b"
+  }],
+  "methods": [
+    {
+      "name": "colliding", "declarationId": "method-b", "explicitClrName": "physicalMethodB",
+      "static": true, "override": false, "virtual": false,
+      "params": [], "ret": { "t": "fqn", "name": "kotlin.Int" }, "body": [], "attrs": []
+    },
+    {
+      "name": "value", "declarationId": "property-getter-b", "explicitClrName": "physicalPropertyB",
+      "propertyName": "value", "propertyAccessor": "get", "propertyAssociation": "property-b",
+      "static": true, "override": false, "virtual": false,
+      "params": [], "ret": { "t": "fqn", "name": "kotlin.Int" }, "body": [], "attrs": []
+    }
+  ]
+}

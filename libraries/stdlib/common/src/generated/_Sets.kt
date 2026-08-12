@@ -62,6 +62,7 @@ public operator fun <T> Set<T>.minus(elements: Iterable<T>): Set<T> {
  * 
  * The returned set preserves the element iteration order of the original set.
  */
+@kotlin.clr.ClrName("minusSequence")
 public operator fun <T> Set<T>.minus(elements: Sequence<T>): Set<T> {
     val result = LinkedHashSet<T>(this)
     result.removeAll(elements)
@@ -121,6 +122,7 @@ public operator fun <T> Set<T>.plus(elements: Iterable<T>): Set<T> {
  * 
  * The returned set preserves the element iteration order of the original set.
  */
+@kotlin.clr.ClrName("plusSequence")
 public operator fun <T> Set<T>.plus(elements: Sequence<T>): Set<T> {
     val result = LinkedHashSet<T>(mapCapacity(this.size * 2))
     result.addAll(this)
@@ -137,4 +139,3 @@ public operator fun <T> Set<T>.plus(elements: Sequence<T>): Set<T> {
 public inline fun <T> Set<T>.plusElement(element: T): Set<T> {
     return plus(element)
 }
-

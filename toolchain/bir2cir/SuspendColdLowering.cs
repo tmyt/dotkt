@@ -1210,6 +1210,7 @@ static partial class SuspendColdLowering
         readonly string _companionMemberKind;
         readonly string _declarationId;
         readonly string _declarationSourceName;
+        readonly string _explicitClrName;
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
         readonly List<(string name, TypeNode type)> _fieldDecls = new();
         // Declared type of every `{k:var}` of this body, INCLUDING the ones the storage gate leaves as MoveNext
@@ -1239,6 +1240,7 @@ static partial class SuspendColdLowering
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _declarationId = Str(m[DeclarationIdentityBinding.Key]);
             _declarationSourceName = Str(m["declarationSourceName"]);
+            _explicitClrName = Str(m[DeclarationIdentityBinding.ExplicitNameKey]);
             _staticMember = staticMember;
             _generated = Bool(m["generated"]);
             _isMember = ownerClass != null && !staticMember;   // an INSTANCE member (static/companion members are top-level-shaped)
@@ -1259,7 +1261,10 @@ static partial class SuspendColdLowering
             // Exact-signature cold collisions are allocated later from the frontend declaration identity, just like
             // their hot Task bridges. Pre-mangling by traversal order would partition the collision set before the
             // common allocator sees it and make the cold ABI source-order dependent.
-            _coldName = name + "$dotkt_suspend";
+            // The cold entry is a generated projection of the public declaration, so its role suffix is applied to
+            // the explicitly selected physical base name. This is not collision repair: two unresolved cold shapes
+            // still fail the final MethodDef check instead of receiving a hash or traversal-order suffix.
+            _coldName = (_explicitClrName ?? name) + "$dotkt_suspend";
             // #37/#48: the result nullability now rides the `suspendRet` TYPE NODE (`{t:nullable,of:R}`), not a retired
             // scalar `retNullable` flag. Strip the outer `?` so `_resultType` is the bare R (as it always was for the
             // reference case) and record it in `_resultNullable` for the Task-bridge NRT walk.
@@ -3997,6 +4002,8 @@ static partial class SuspendColdLowering
                     am["declarationSourceName"] = _declarationSourceName
                         ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
                 }
+                if (_explicitClrName != null)
+                    am[DeclarationIdentityBinding.ExplicitNameKey] = _explicitClrName;
                 // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
                 // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
                 // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).
@@ -4120,6 +4127,8 @@ static partial class SuspendColdLowering
                 method["declarationSourceName"] = _declarationSourceName
                     ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
             }
+            if (_explicitClrName != null)
+                method[DeclarationIdentityBinding.ExplicitNameKey] = _explicitClrName;
             // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
             // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
             // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).

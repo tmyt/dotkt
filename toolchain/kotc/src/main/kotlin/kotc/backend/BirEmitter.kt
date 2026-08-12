@@ -212,6 +212,48 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 
 	internal fun declarationIdField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
 		declarationIdForPhysicalAllocation(fn)?.let { ""","declarationId":${str(it)}""" } ?: ""
+
+	/** Explicit source-authored CLR MethodDef name. This is only a Kotlin annotation fact; bir2cir decides whether the
+	 * declaration can be allocated independently, applies the name after CLR lowering, and validates collisions. */
+internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): Boolean {
+	val fqns = setOf("kotlin.clr.ClrName", "kotlin.jvm.JvmName")
+	return fn.annotations.any { it.type.classFqName?.asString() in fqns }
+}
+
+	internal fun explicitClrNameValue(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String? {
+		fun values(annotationFqn: String): List<String?> = fn.annotations
+			.filter { it.type.classFqName?.asString() == annotationFqn }
+			.map { annotation ->
+				(regularArgs(annotation).singleOrNull() as? IrConst)?.value as? String
+			}
+
+		val clrValues = values("kotlin.clr.ClrName")
+		val jvmValues = values("kotlin.jvm.JvmName")
+		if ((clrValues + jvmValues).any { it == null }) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"@ClrName/@JvmName requires exactly one constant String argument", locationOf(fn))
+			return null
+		}
+		val distinct = (clrValues + jvmValues).filterNotNull().distinct()
+		if (distinct.size > 1) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"conflicting @ClrName/@JvmName values on '${fn.name}': " +
+					distinct.joinToString { "'$it'" }, locationOf(fn))
+			return null
+		}
+		if (distinct.singleOrNull()?.let { !Charsets.UTF_8.newEncoder().canEncode(it) } == true) {
+			hadError = true
+			messageCollector?.report(CompilerMessageSeverity.ERROR,
+				"malformed @ClrName/@JvmName: the CLR method name must be valid Unicode", locationOf(fn))
+			return null
+		}
+		return distinct.singleOrNull()
+	}
+
+	internal fun explicitClrNameField(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+		explicitClrNameValue(fn)?.let { ""","explicitClrName":${str(it)}""" } ?: ""
 	// Diagnostics: a construct the .NET backend can't lower yet is a COMPILE-TIME error with source location
 	// (file:line:col) — never a silent BIR node that crashes ilemit later. `hadError` fails the build.
 	var hadError = false; internal set
@@ -896,7 +938,22 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 				val setterVisibility = p.setter?.let { visOf(it) } ?: visOf(p)
 				val setter = if (p.isVar) ""","companionSetterVisibility":${str(setterVisibility)}""" else ""
 				val storageReadOnly = !p.isVar || p.isDelegated
-				""","companionPropertyMutable":${p.isVar},"companionStorageReadOnly":$storageReadOnly$setter"""
+				// A default field-backed companion extension has no accessor declaration for kotc to annotate. Preserve
+				// each accessor's source annotation separately; bir2cir owns the synthesized CLR MethodDefs and consumes
+				// these facts while materializing them.
+				val getterExplicitName = p.getter?.let { explicitClrNameValue(it) }
+				val setterExplicitName = p.setter?.let { explicitClrNameValue(it) }
+				val getterName = getterExplicitName
+					?.let { ""","companionGetterExplicitClrName":${str(it)}""" } ?: ""
+				val setterName = setterExplicitName
+					?.let { ""","companionSetterExplicitClrName":${str(it)}""" } ?: ""
+				val getterId = getterExplicitName?.let { p.getter }
+					?.let { declarationIdForPhysicalAllocation(it) }
+					?.let { ""","companionGetterDeclarationId":${str(it)}""" } ?: ""
+				val setterId = setterExplicitName?.let { p.setter }
+					?.let { declarationIdForPhysicalAllocation(it) }
+					?.let { ""","companionSetterDeclarationId":${str(it)}""" } ?: ""
+				""","companionPropertyMutable":${p.isVar},"companionStorageReadOnly":$storageReadOnly$setter$getterName$setterName$getterId$setterId"""
 			} else ""
 			// A top-level `val` (or `var` with a non-public setter) -> mark the static field read-only so a downstream
 			// consuming module restores it as `val`, rejecting external writes (#34b, mirrors

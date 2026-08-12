@@ -15257,7 +15257,7 @@ public inline fun CharArray.forEachIndexed(action: (index: Int, Char) -> Unit): 
  * @sample samples.collections.Collections.Aggregates.maxMinFloating
  */
 @SinceKotlin("1.7")
-@kotlin.jvm.JvmName("maxOrThrow")
+@kotlin.jvm.JvmName("maxOrThrowBoxed")
 @Suppress("CONFLICTING_OVERLOADS")
 public fun Array<out Double>.max(): Double {
     if (isEmpty()) throw NoSuchElementException()
@@ -15279,7 +15279,7 @@ public fun Array<out Double>.max(): Double {
  * @sample samples.collections.Collections.Aggregates.maxMinFloating
  */
 @SinceKotlin("1.7")
-@kotlin.jvm.JvmName("maxOrThrow")
+@kotlin.jvm.JvmName("maxOrThrowBoxed")
 @Suppress("CONFLICTING_OVERLOADS")
 public fun Array<out Float>.max(): Float {
     if (isEmpty()) throw NoSuchElementException()
@@ -17769,6 +17769,7 @@ public inline fun <R> CharArray.maxOfWithOrNull(comparator: Comparator<in R>, se
  * @sample samples.collections.Collections.Aggregates.maxMinFloating
  */
 @SinceKotlin("1.4")
+@kotlin.clr.ClrName("maxOrNullBoxed")
 public fun Array<out Double>.maxOrNull(): Double? {
     if (isEmpty()) return null
     var max = this[0]
@@ -17787,6 +17788,7 @@ public fun Array<out Double>.maxOrNull(): Double? {
  * @sample samples.collections.Collections.Aggregates.maxMinFloating
  */
 @SinceKotlin("1.4")
+@kotlin.clr.ClrName("maxOrNullBoxed")
 public fun Array<out Float>.maxOrNull(): Float? {
     if (isEmpty()) return null
     var max = this[0]
@@ -18229,7 +18231,7 @@ public fun CharArray.maxWithOrNull(comparator: Comparator<in Char>): Char? {
  * @sample samples.collections.Collections.Aggregates.maxMinFloating
  */
 @SinceKotlin("1.7")
-@kotlin.jvm.JvmName("minOrThrow")
+@kotlin.jvm.JvmName("minOrThrowBoxed")
 @Suppress("CONFLICTING_OVERLOADS")
 public fun Array<out Double>.min(): Double {
     if (isEmpty()) throw NoSuchElementException()
@@ -18251,7 +18253,7 @@ public fun Array<out Double>.min(): Double {
  * @sample samples.collections.Collections.Aggregates.maxMinFloating
  */
 @SinceKotlin("1.7")
-@kotlin.jvm.JvmName("minOrThrow")
+@kotlin.jvm.JvmName("minOrThrowBoxed")
 @Suppress("CONFLICTING_OVERLOADS")
 public fun Array<out Float>.min(): Float {
     if (isEmpty()) throw NoSuchElementException()
@@ -20741,6 +20743,7 @@ public inline fun <R> CharArray.minOfWithOrNull(comparator: Comparator<in R>, se
  * @sample samples.collections.Collections.Aggregates.maxMinFloating
  */
 @SinceKotlin("1.4")
+@kotlin.clr.ClrName("minOrNullBoxed")
 public fun Array<out Double>.minOrNull(): Double? {
     if (isEmpty()) return null
     var min = this[0]
@@ -20759,6 +20762,7 @@ public fun Array<out Double>.minOrNull(): Double? {
  * @sample samples.collections.Collections.Aggregates.maxMinFloating
  */
 @SinceKotlin("1.4")
+@kotlin.clr.ClrName("minOrNullBoxed")
 public fun Array<out Float>.minOrNull(): Float? {
     if (isEmpty()) return null
     var min = this[0]
@@ -26955,4 +26959,3 @@ public fun DoubleArray.sum(): Double {
     }
     return sum
 }
-

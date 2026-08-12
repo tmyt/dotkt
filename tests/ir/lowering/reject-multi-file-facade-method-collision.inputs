@@ -1,0 +1,2 @@
+tests/ir/lowering/reject-multi-file-facade-method-collision-a.bir-part.json
+tests/ir/lowering/reject-multi-file-facade-method-collision-b.bir-part.json

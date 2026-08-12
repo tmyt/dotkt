@@ -59,10 +59,10 @@ static class IteratorConsumerNormalization
                 // MUTABLE-MAP for-in REROUTE (bundle-6 BUG-2): `for ((k,v) in mm)` desugars to
                 // `MutableMap.iterator(): MutableIterator<MutableEntry>`, which lowers to the SAME signature
                 // `MapsKt.iterator(IDictionary<K,V>)` as the immutable `Map.iterator(): Iterator<Map.Entry>` — a genuine
-                // COLLISION. ilemit binds the app's `iterator` call by name to the IMMUTABLE overload (the mutable one
-                // is emitted as `iterator$dup2`), whose runtime iterator is `Iterator<Map.Entry>` — so hasNext/next
-                // (typed MutableEntry from kotc) dispatch on a generic instantiation the object doesn't implement ->
-                // EntryPointNotFound. Sidestep the collision: reroute the init to the SAME entries-based iterator that
+                // COLLISION. The stdlib source gives the mutable overload its explicit `mutableIterator` physical
+                // name, but this representation pass must still produce an iterator implementing the exact
+                // `Iterator<MutableEntry>` contract expected by the loop's consumers. Reroute the init to the SAME
+                // entries-based iterator that
                 // `for (e in mm.entries)` already uses successfully — `iteratorOverEnumerable(clrMapMutableEntries(mm))`
                 // — which yields a genuine `Iterator<MutableEntry>` (KotlinIteratorOverEnumerator over the live
                 // ClrMutableMapEntry snapshot). Everything then stays consistently typed on MutableEntry (ilverify-clean),

@@ -1123,7 +1123,7 @@ sealed partial class Emitter
         var name = PhysicalMethodName(m);
         // bir2cir owns physical method allocation (#395). A duplicate CIR signature is therefore malformed input;
         // ilemit must not invent an order-dependent `$dupN` name that declarations and use sites cannot share.
-        var dupKey = SigKey(name, m);
+        var dupKey = DefinitionSigKey(name, m);
         if (ti.MethodsBySig.ContainsKey(dupKey))
             throw new InvalidOperationException(
                 $"ilemit: duplicate physical method signature {ti.TB?.FullName}.{name}; bir2cir must allocate a unique MethodDef name");

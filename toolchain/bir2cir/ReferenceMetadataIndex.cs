@@ -1480,14 +1480,14 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // Resolve the physical member exposed by a referenced generic's compiler-generated existential. A member whose
-    // signature mentions an owner type parameter cannot reuse the
-    // Kotlin name: on G<object> the erased bridge would collide with the real closed-generic slot, so
-    // FBoundStarProjectionErasure gives it a deterministic `$dotkt_star$<name>$<ordinal>` name.
+    // signature mentions an owner type parameter cannot reuse the Kotlin name: on G<object> the erased bridge would
+    // collide with the real closed-generic slot, so FBoundStarProjectionErasure gives it an unspeakable physical name.
     //
     // This is reference metadata, not a spelling guess: the trusted type-level [KotlinType(G<*,...>)] relation names
     // the emitted existential owner, then select a unique name+arity slot from its actual
     // member table.  The caller retains the Kotlin vocabulary until bir2cir asks this index for the
-    // concrete CIR owner/member pair.
+    // concrete CIR owner/member pair. The index must consume the source-member/property carrier on that MethodDef;
+    // reconstructing a generated spelling would make an unrelated source declaration rename change this binding.
     public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
         int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
@@ -1515,30 +1515,15 @@ sealed partial class ReferenceMetadataIndex
             .ToList();
         if (declarations.Count != 1) return false;
 
-        // Generated bridge names carry the source MethodDef ordinal. Derive it from metadata row order, never from
-        // reflection enumeration order, then validate the resulting name against the trusted carrier's actual table.
-        var orderedSemantic = semanticMembers.OrderBy(m => m.MetadataToken).ToList();
-        var ordinal = orderedSemantic.IndexOf(declarations[0]);
-        if (ordinal < 0) return false;
-
-        // #395 may have suffixed the source MethodDef after this existential carrier was synthesized. The carrier's
-        // slot/bridge was authored from the declaration's original CLR method spelling. For a property accessor,
-        // project that spelling forward from the exact property association carried by #397; never parse a physical
-        // get_/set_ name to reconstruct Kotlin semantics. Ordinary methods use the preserved Kotlin declaration name.
-        var physicalDeclarationName = accessorKind is "get" or "set"
-            ? KotlinPropertyAccessors.PhysicalName(sourceMember, accessorKind)
-            : declarations[0].DeclarationSourceName ?? declarations[0].Name;
-        var suffix = declarationId == null ? null
-            : "$dotkt$" + DeclarationIdentityBinding.StableSuffix(declarationId);
-        var bridgeName = "$dotkt_star$" + physicalDeclarationName + "$" + ordinal;
-        var expectedNames = new HashSet<string>(StringComparer.Ordinal) { bridgeName, physicalDeclarationName };
-        if (suffix != null)
-        {
-            expectedNames.Add(bridgeName + suffix);
-            expectedNames.Add(physicalDeclarationName + suffix);
-        }
+        // Select the actual MethodDef on the trusted existential owner through its explicit source identity. Its Name
+        // is already the final physical link target; neither the source declaration's allocated name nor an ordinal is
+        // sufficient to derive it. In particular, an explicit @ClrName changes the source MethodDef but not the
+        // compiler-owned dependent-slot spelling.
         var candidates = members.Where(m => !m.IsStatic && m.ParamCount == paramCount
-            && m.MethodArity == methodArity && expectedNames.Contains(m.Name)
+            && m.MethodArity == methodArity
+            && (accessorKind is "get" or "set"
+                ? !m.IsPropertyBridge && m.SourcePropertyName == sourceMember && m.AccessorKind == accessorKind
+                : m.SourcePropertyName == null && (m.SourceMethodName ?? m.Name) == sourceMember)
             && (declarations[0].ParamTypeNodes == null || m.ParamTypeNodes is { } physical
                 && physical.Length == declarations[0].ParamTypeNodes.Length
                 && physical.Select((p, i) => DeclarationDescribesCall(declarations[0].ParamTypeNodes[i], p)).All(x => x)))

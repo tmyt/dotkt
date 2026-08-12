@@ -111,6 +111,11 @@ STR_OK = {
                                                  # bir2cir consumes these after every semantic property pass has run.
     "declarationId", "declarationSourceName",    # #395: frontend declaration fingerprint + original Kotlin callable name;
                                                  # consumed by physical member allocation / round-trip metadata.
+    "explicitClrName",                           # #402: BIR-only source-authored MethodDef name from @ClrName/@JvmName;
+                                                 # bir2cir consumes it during physical allocation.
+    "companionGetterExplicitClrName", "companionSetterExplicitClrName",
+    "companionGetterDeclarationId", "companionSetterDeclarationId", # #402: BIR-only default companion-accessor
+                                                 # naming facts transferred from field storage to synthesized MethodDefs.
     "collIdentity", "collIdentityRet",           # #29: PRE-collapse Kotlin collection TypeNodes stashed as canonical-JSON
                                                  # strings by CollectionIdentityRecord. RoundtripMetadata immediately turns
                                                  # them into [KotlinCollectionIdentity] carrier bytes for dll2klib; these
@@ -365,7 +370,9 @@ class V:
                 for companion_key in ("kotlinCompanion", "companionCaptureOwner", "externalCompanionOwner",
                                       "companionReceiver", "companionSourceName", "companionMemberKind",
                                       "companionPropertyMutable", "companionSetterVisibility",
-                                      "companionStorageReadOnly"):
+                                      "companionStorageReadOnly", "companionGetterExplicitClrName",
+                                      "companionSetterExplicitClrName", "companionGetterDeclarationId",
+                                      "companionSetterDeclarationId"):
                     if companion_key in o:
                         self.err(f, path, f"{companion_key} is a BIR companion fact and must be consumed before CIR")
                 for property_key in ("propertyName", "propertyAccessor", "propertyAssociation", "kotlinAccessors",
@@ -374,7 +381,7 @@ class V:
                                      "inheritedDefaultMethods"):
                     if property_key in o:
                         self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
-                for declaration_key in ("declarationId", "declarationSourceName"):
+                for declaration_key in ("declarationId", "declarationSourceName", "explicitClrName"):
                     if declaration_key in o:
                         self.err(f, path, f"{declaration_key} is a BIR declaration-identity fact and must be consumed before CIR")
                 for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):

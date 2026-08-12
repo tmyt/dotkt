@@ -16,7 +16,7 @@ using DotKt.Bir;
 // older toolchain is unsupported: `G<Any>` is always the concrete Kotlin type and is never guessed back into `G<*>`.
 static class FBoundStarProjectionErasure
 {
-    const string CarrierMark = "$dotkt$star";
+    const string CarrierMark = "$star";
     internal const string SourceMemberKey = "existentialSourceMember";
 
     sealed class Owner
@@ -447,15 +447,29 @@ static class FBoundStarProjectionErasure
         // carry this pass-local source edge. Neither consumer recovers meaning from the replacement spelling.
         if (KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var propertyAccessor))
         {
-            slot[KotlinPropertyAccessors.SourceNameKey] = propertyName;
-            slot[KotlinPropertyAccessors.KindKey] = propertyAccessor;
-            slot[KotlinPropertyAccessors.AssociationKey] =
-                Str(method[KotlinPropertyAccessors.AssociationKey])
+            var association = Str(method[KotlinPropertyAccessors.AssociationKey])
                 ?? throw new InvalidOperationException(
                     $"property accessor '{MethodDisplay(method)}' has no source association");
+            slot[KotlinPropertyAccessors.SourceNameKey] = propertyName;
+            slot[KotlinPropertyAccessors.KindKey] = propertyAccessor;
+            slot[KotlinPropertyAccessors.AssociationKey] = association;
+            // An existential interface has no semantic PropertyDef of its own, so MethodSemantics cannot preserve the
+            // slot's Kotlin accessor identity. Carry that already-known association on the exact generated MethodDef;
+            // a consuming bir2cir can then select the physical row without reconstructing its unspeakable name.
+            slot[KotlinPropertyAccessors.MetadataCarrierKey] = new JsonObject
+            {
+                ["name"] = propertyName,
+                ["kind"] = propertyAccessor,
+                ["association"] = association,
+            };
         }
         else if (replacementName != null)
+        {
             slot[SourceMemberKey] = method["name"]?.DeepClone();
+            RoundtripMetadata.AddSourceMethodIdentity(slot,
+                Str(method["name"])
+                ?? throw new InvalidOperationException("existential interface slot has no source method name"));
+        }
         // `suspend` is still a Kotlin declaration fact at this point.  The existential slot must
         // participate in the same later SuspendColdLowering as the generic declaration; dropping
         // mods here would cold-lower the call while leaving only an unlowered interface member.
@@ -668,7 +682,7 @@ static class FBoundStarProjectionErasure
     {
         var methods = owner.Def["methods"] as JsonArray;
         var ordinal = methods == null ? 0 : methods.TakeWhile(m => !ReferenceEquals(m, method)).Count();
-        return "$dotkt_star$" + Str(method["name"]) + "$" + ordinal;
+        return "$star$" + Str(method["name"]) + "$" + ordinal;
     }
 
     static string BaseStarMethodName(string declaringName, JsonObject declaringDef, JsonObject method)
@@ -676,7 +690,7 @@ static class FBoundStarProjectionErasure
         var methods = declaringDef["methods"] as JsonArray;
         var ordinal = methods == null ? 0 : methods.TakeWhile(m => !ReferenceEquals(m, method)).Count();
         var ownerToken = new string(declaringName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
-        return "$dotkt_star$base$" + ownerToken + "$" + Str(method["name"]) + "$" + ordinal;
+        return "$star$base$" + ownerToken + "$" + Str(method["name"]) + "$" + ordinal;
     }
 
     static IEnumerable<(string DeclaringName, JsonObject Method)> InheritedConcreteBaseMethods(Owner owner,

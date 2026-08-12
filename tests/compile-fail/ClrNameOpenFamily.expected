@@ -1,0 +1,3 @@
+@ClrName on 'ClrNameOpenBase.member' cannot be applied independently
+open/override family
+slot-wide explicit-name propagation is not supported

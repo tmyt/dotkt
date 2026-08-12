@@ -3471,6 +3471,7 @@ public operator fun <T> Iterable<T>.minus(elements: Iterable<T>): List<T> {
 /**
  * Returns a list containing all elements of the original collection except the elements contained in the given [elements] sequence.
  */
+@kotlin.clr.ClrName("minusSequence")
 public operator fun <T> Iterable<T>.minus(elements: Sequence<T>): List<T> {
     val other = elements.toList()
     if (other.isEmpty())
@@ -3578,6 +3579,7 @@ public operator fun <T> Collection<T>.plus(elements: Iterable<T>): List<T> {
 /**
  * Returns a list containing all elements of the original collection and then all elements of the given [elements] sequence.
  */
+@kotlin.clr.ClrName("plusSequence")
 public operator fun <T> Iterable<T>.plus(elements: Sequence<T>): List<T> {
     val result = ArrayList<T>()
     result.addAll(this)
@@ -3588,6 +3590,7 @@ public operator fun <T> Iterable<T>.plus(elements: Sequence<T>): List<T> {
 /**
  * Returns a list containing all elements of the original collection and then all elements of the given [elements] sequence.
  */
+@kotlin.clr.ClrName("plusSequence")
 public operator fun <T> Collection<T>.plus(elements: Sequence<T>): List<T> {
     val result = ArrayList<T>(this.size + 10)
     result.addAll(this)
@@ -3993,4 +3996,3 @@ public fun Iterable<Double>.sum(): Double {
     }
     return sum
 }
-

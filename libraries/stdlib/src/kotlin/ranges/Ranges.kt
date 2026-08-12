@@ -272,6 +272,7 @@ public inline operator fun <T, R> R.contains(element: T?): Boolean where T : Com
 )
 @SinceKotlin("1.3")
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("containsClosedAny")
 public inline operator fun <T, R> R.contains(element: T?): Boolean where T : Any, R : ClosedRange<T>, R : Iterable<T> =
     element != null && contains(element)
 
@@ -283,6 +284,7 @@ public inline operator fun <T, R> R.contains(element: T?): Boolean where T : Any
 @SinceKotlin("2.3")
 @WasExperimental(ExperimentalStdlibApi::class)
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("containsOpenComparable")
 public inline operator fun <T, R> R.contains(element: T?): Boolean where T : Comparable<T>, R : OpenEndRange<T>, R : Iterable<T> =
     element != null && contains(element)
 
@@ -299,6 +301,7 @@ public inline operator fun <T, R> R.contains(element: T?): Boolean where T : Com
 )
 @SinceKotlin("1.9")
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("containsOpenAny")
 public inline operator fun <T, R> R.contains(element: T?): Boolean where T : Any, R : OpenEndRange<T>, R : Iterable<T> =
     element != null && contains(element)
 

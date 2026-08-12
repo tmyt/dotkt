@@ -1,0 +1,4 @@
+unresolved CLR physical signature collisions
+samePhysicalName
+Assign a distinct @ClrName
+automatic hash suffixes are not used

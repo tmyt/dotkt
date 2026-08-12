@@ -914,6 +914,8 @@ sealed partial class Emitter
                     if (reflected != null) return reflected;
                     continue;
                 }
+                if (sig != null && iti.MethodsBySig.TryGetValue(
+                        DefinitionSigKey(name, methodArity, sig), out var exact)) return exact;
                 if (sig != null && iti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)) return ms;
                 var inherited = FindInInterfaces(iti);
                 if (inherited != null) return inherited;
@@ -971,6 +973,8 @@ sealed partial class Emitter
         // resolved base type so inherited .NET members are still found.
         for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
         {
+            if (sig != null && ti.MethodsBySig.TryGetValue(
+                    DefinitionSigKey(name, methodArity, sig), out var exact)) return exact;
             if (sig != null && ti.MethodsBySig.TryGetValue(SigKey(name, methodArity, sig), out var ms)) return ms;
             // NAME-ONLY is the last resort, and only where it cannot pick the wrong member: this type declares a
             // single member by that name, or the node carries no descriptor at all. With a carried `sig` that missed

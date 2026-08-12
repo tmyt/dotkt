@@ -2292,7 +2292,20 @@ internal fun BirEmitter.fieldRoutedProperty(prop: IrProperty): Boolean =
 // a CLR Property, and the frontend fact that the declaration is mutable could not survive round-trip metadata.
 internal fun BirEmitter.accessorRoutedTopLevelProperty(prop: IrProperty): Boolean =
 	fieldRoutedProperty(prop) &&
-		(prop.getter?.let { !hasDefaultGetter(prop) } == true || prop.setter?.let { !hasDefaultSetter(prop) } == true)
+		(prop.getter?.let { !hasDefaultGetter(prop) } == true ||
+			prop.setter?.let { !hasDefaultSetter(prop) } == true ||
+			// A physical method name requires a MethodDef even when the Kotlin accessor body is default. A
+			// field-backed companion extension is different: bir2cir owns that representation and receives the two
+			// accessor-name facts on its field declaration instead.
+			(companionReceiverJson(prop) == null &&
+				(prop.getter?.let { hasExplicitClrNameAnnotation(it) } == true ||
+					prop.setter?.let { hasExplicitClrNameAnnotation(it) } == true)) ||
+			// A compiler-produced DLL -> KLIB property with a trusted accessor identity represents an existing
+			// MethodDef surface even when FIR reconstructs its accessor as default. Keep that surface method-routed so
+			// declarationId can bind direct calls and callable references to the exact referenced MethodDef.
+			(clrExternalOwner(prop) != null &&
+				(prop.getter?.let { declarationIdForPhysicalAllocation(it) } != null ||
+					prop.setter?.let { declarationIdForPhysicalAllocation(it) } != null)))
 // #89: a property READ resolves to a raw static-field load only with a real field AND (for a field-routed
 // property) no accessor-owned surface. An excluded (const/lateinit/@ClrField) property keeps the pre-fix rule; a
 // delegated property is field-routed because its provider-typed slot is never the value surface.

@@ -4,4 +4,5 @@ interface SuspendConstraintA
 interface SuspendConstraintB
 
 suspend fun <T : SuspendConstraintA> genericConstraintSuspendOverload(value: T): T = value
+@kotlin.clr.ClrName("genericConstraintSuspendOverloadB")
 suspend fun <T : SuspendConstraintB> genericConstraintSuspendOverload(value: T): T = value

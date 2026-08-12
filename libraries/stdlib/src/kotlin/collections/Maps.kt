@@ -600,6 +600,7 @@ public fun <K, V> MutableMap<in K, in V>.putAll(pairs: Iterable<Pair<K, V>>): Un
 /**
  * Puts all the elements of the given sequence into this [MutableMap] with the first component in the pair being the key and the second the value.
  */
+@kotlin.clr.ClrName("putAllSequence")
 public fun <K, V> MutableMap<in K, in V>.putAll(pairs: Sequence<Pair<K, V>>): Unit {
     for ((key, value) in pairs) {
         put(key, value)
@@ -767,12 +768,14 @@ public fun <K, V, M : MutableMap<in K, in V>> Array<out Pair<K, V>>.toMap(destin
  * The returned map preserves the entry iteration order of the original sequence.
  * If any of two pairs would have the same key the last one gets added to the map.
  */
+@kotlin.clr.ClrName("toMapSequence")
 public fun <K, V> Sequence<Pair<K, V>>.toMap(): Map<K, V> = toMap(LinkedHashMap<K, V>()).optimizeReadOnlyMap()
 
 /**
  * Populates and returns the [destination] mutable map with key-value pairs from the given sequence of pairs.
  */
 @IgnorableReturnValue
+@kotlin.clr.ClrName("toMapSequence")
 public fun <K, V, M : MutableMap<in K, in V>> Sequence<Pair<K, V>>.toMap(destination: M): M =
     destination.apply { putAll(this@toMap) }
 
@@ -837,6 +840,7 @@ public operator fun <K, V> Map<out K, V>.plus(pairs: Array<out Pair<K, V>>): Map
  * The returned map preserves the entry iteration order of the original map.
  * Those [pairs] with unique keys are iterated in the end in the order of [pairs] sequence.
  */
+@kotlin.clr.ClrName("plusSequence")
 public operator fun <K, V> Map<out K, V>.plus(pairs: Sequence<Pair<K, V>>): Map<K, V> =
     LinkedHashMap(this).apply { putAll(pairs) }.optimizeReadOnlyMap()
 
@@ -878,6 +882,7 @@ public inline operator fun <K, V> MutableMap<in K, in V>.plusAssign(pairs: Array
  * Appends or replaces all pairs from the given sequence of [pairs] in this mutable map.
  */
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("plusAssignSequence")
 public inline operator fun <K, V> MutableMap<in K, in V>.plusAssign(pairs: Sequence<Pair<K, V>>) {
     putAll(pairs)
 }
@@ -926,6 +931,7 @@ public operator fun <K, V> Map<out K, V>.minus(keys: Array<out K>): Map<K, V> =
  * The returned map preserves the entry iteration order of the original map.
  */
 @SinceKotlin("1.1")
+@kotlin.clr.ClrName("minusSequence")
 public operator fun <K, V> Map<out K, V>.minus(keys: Sequence<K>): Map<K, V> =
     this.toMutableMap().apply { minusAssign(keys) }.optimizeReadOnlyMap()
 
@@ -961,6 +967,7 @@ public inline operator fun <K, V> MutableMap<K, V>.minusAssign(keys: Array<out K
  */
 @SinceKotlin("1.1")
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("minusAssignSequence")
 public inline operator fun <K, V> MutableMap<K, V>.minusAssign(keys: Sequence<K>) {
     this.keys.removeAll(keys)
 }

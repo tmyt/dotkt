@@ -1318,9 +1318,10 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		val args = listOfNotNull(extraArg).joinToString(",")
 		val kind = if (isSetter) "set" else "get"
+		val declarationIdentityTag = declarationIdField(fn)
 		val externalCompanionTag = companionCaptureClass?.takeIf { clrExternalOwner(it) != null }
 			?.let { ""","companionCall":true""" } ?: ""
-		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":${str(name)},"prop":${str(kind)}${overloadSigField(fn)},"args":[$args]$externalCompanionTag}"""
+		return """{"k":"callInstance","ownerType":${memberOwner.toJson()},"virtual":$virtual,"recv":${recvExprIn()},"method":${str(name)},"prop":${str(kind)}${overloadSigField(fn)},"args":[$args]$externalCompanionTag$declarationIdentityTag}"""
 	}
 	// A field-backed member property (`lateinit var`/`@ClrField`) reads/writes its backing field directly — the SAME
 	// `lateinitGet`/`field`/`setFieldExpr` shapes the ordinary member-access path emits — over the lift's receiver
@@ -1340,10 +1341,11 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 			"""{"k":"lateinitGet","ownerType":$owner,"static":true,"name":${str(name)}}"""
 		else """{"k":"staticField","ownerType":$owner,"name":${str(name)},"ret":${vType.toJson()}}"""
 		val kind = if (isSetter) "set" else "get"
+		val fn = if (isSetter) setterFn!! else getterFn
 		val args = valueArg ?: ""
 		val argTypes = if (isSetter) vType.toJson() else ""
 		val ret = if (isSetter) TypeNode.Fqn("kotlin.Unit") else vType
-		return """{"k":"callStatic","ownerType":$owner,"method":${str(name)},"prop":${str(kind)},"argTypes":[$argTypes],"ret":${ret.toJson()},"args":[$args]}"""
+		return """{"k":"callStatic","ownerType":$owner,"method":${str(name)},"prop":${str(kind)},"argTypes":[$argTypes],"ret":${ret.toJson()},"args":[$args]${declarationIdField(fn)}}"""
 	}
 	fun companionExtensionAccess(isSetter: Boolean, valueArg: String?): String {
 		val owner = clrExternalOwner(prop) ?: fileClassOf(prop)
@@ -1362,7 +1364,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		}
 		val fn = targetAccessor
 		val args = valueArg ?: ""
-		return """{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":${str(if (isSetter) "set" else "get")}${overloadSigField(fn)},"args":[$args]$sourceTag}"""
+		return """{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":${str(if (isSetter) "set" else "get")}${overloadSigField(fn)},"args":[$args]$sourceTag${declarationIdField(fn)}}"""
 	}
 
 	val readBody: String = when {
@@ -1379,7 +1381,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 			val owner = clrExternalOwner(prop) ?: fileClassOf(prop)
 			if (readsAsStaticField(prop))
 				"""{"k":"return","value":{"k":"staticField","ownerType":${fqnJson(owner)},"name":${str(name)}}}"""
-			else """{"k":"return","value":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":"get"${overloadSigField(getterFn)},"args":[]}}"""
+			else """{"k":"return","value":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":"get"${overloadSigField(getterFn)},"args":[]${declarationIdField(getterFn)}}}"""
 		}
 		else -> """{"k":"return","value":${accessorCall(false, null)}}"""
 	}
@@ -1402,7 +1404,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 				val owner = clrExternalOwner(prop) ?: fileClassOf(prop)
 				if (writesAsStaticField(prop))
 					"""{"k":"exprStmt","expr":{"k":"staticFieldSet","ownerType":${fqnJson(owner)},"name":${str(name)},"value":{"k":"local","name":"value"}}}"""
-				else """{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":"set"${overloadSigField(setterFn!!)},"args":[{"k":"local","name":"value"}]}}"""
+				else """{"k":"exprStmt","expr":{"k":"callStatic","owner":${fqnJson(owner)},"method":${str(name)},"prop":"set"${overloadSigField(setterFn!!)},"args":[{"k":"local","name":"value"}]${declarationIdField(setterFn!!)}}}"""
 			}
 			else -> """{"k":"exprStmt","expr":${accessorCall(true, """{"k":"local","name":"value"}""")}}"""
 		}

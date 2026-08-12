@@ -1,0 +1,9 @@
+{
+  "fileClass": "SharedMethodFacade", "hasMain": false,
+  "fields": [], "properties": [], "refTypes": [], "types": [],
+  "methods": [{
+    "name": "colliding", "declarationId": "method-a",
+    "static": true, "override": false, "virtual": false,
+    "params": [], "ret": { "t": "fqn", "name": "kotlin.Int" }, "body": [], "attrs": []
+  }]
+}

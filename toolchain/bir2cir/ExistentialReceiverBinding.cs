@@ -128,7 +128,7 @@ static class ExistentialReceiverBinding
         Index index, ReferenceMetadataIndex refs)
     {
         if (Str(call["method"]) is not string authoredMethod
-            || authoredMethod.StartsWith("$dotkt_star$", StringComparison.Ordinal))
+            || authoredMethod.StartsWith("$star$", StringComparison.Ordinal))
             return;
         var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
             out var sourcePropertyName, out var accessorKind);

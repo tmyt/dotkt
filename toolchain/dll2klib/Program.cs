@@ -4248,7 +4248,7 @@ internal sealed class AssemblyScanner
                         physical[^1].Handle, propertyTypeSignature, owner, names, signatures, context);
         var property = new Property
         {
-            // The CLR Property row may have a stable physical suffix when two Kotlin properties erase to the same
+            // The CLR Property row may have a different physical name when two Kotlin properties erase to the same
             // CLI signature. #397's exact accessor association owns the semantic property spelling; never leak or
             // reverse-parse either the physical Property name or the accessor MethodDef name into KLIB.
             Name = names.String(semanticPropertyName),

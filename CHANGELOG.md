@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **Explicit CLR callable names and fail-closed physical signature collisions (#402).** `@ClrName` (with `@JvmName`
+  as a compatibility alias) now travels as an explicit BIR fact to bir2cir's post-erasure MethodDef allocation.
+  User declarations no longer receive automatic `$dotkt$<hash>` names: an unresolved or still-colliding explicit
+  name is a compile error, while unavoidable generated collision suffixes are deterministic and unbranded.
+
 - **Kotlin 2.4 `companion { }` blocks and `companion` extensions are supported as native Kotlin/CLR static
   declarations (#382).** Both spellings now compile, run and survive a DLL → KLIB → second-module round trip, with no
   CLR-specific source annotation involved.
