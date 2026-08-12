@@ -386,10 +386,17 @@ names the runtime one. A vararg signature is a DIFFERENT member from its fixed-a
 convention states it rather than the producer refusing to describe it; whether such a signature can be
 emitted is a question for the emitter, asked where it can be answered.
 
-**EVERY NAME IS THE TARGET'S OWN.** Inside a reference — the declaring head, every parameter, the return,
-every generic argument, every custom modifier — a type is spelled as the target's **verbatim metadata
+**WHAT THE TARGET DECLARES IS SPELLED AS THE TARGET SPELLS IT.** The declaring head, every parameter, the
+return and every custom modifier are read off the target declaration, so they carry its **verbatim metadata
 FullName**: arity backtick and `+` nesting kept, delegates not rewritten as `fn`, `System.Nullable` not
-collapsed to a nullability wrapper. The document's ordinary spelling (§1) is the right vocabulary for talking
+collapsed to a nullability wrapper.
+
+`declaringType.args` are the exception, and deliberately: they are not something the target declares, they
+are the **use site's** instantiation of it — the caller's own type arguments, projected along the declaration
+edge. Those are ordinary document type nodes in the document's vocabulary, resolved by a consumer exactly as
+every other type slot is. Reading a type slot is not member selection; the rule this whole section exists to
+protect is that nobody chooses a *member*, and choosing an instantiation the document already states is not
+that. The document's ordinary spelling (§1) is the right vocabulary for talking
 about a Kotlin program and the wrong one for an identity, because it merges types a reference must keep
 apart — stripping at the first backtick turns a type nested in a generic outer into its outer alone, and
 `Ns.Outer+Inner` and `Ns.Outer.Inner` become one string. The single exception is the void return, which names

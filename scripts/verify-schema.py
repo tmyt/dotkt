@@ -30,6 +30,22 @@ MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
+# What each carrier is allowed to hold. A carrier names a specific ROLE — a base-constructor delegation, an
+# override target — and a reference of the wrong kind under it is a complete, well-formed, unusable identity.
+MEMBER_REF_KIND_BY_CARRIER = {
+    "baseCtorRef": {"ctor"},
+    "clrOverrideRef": {"method", "propertyAccessor", "eventAccessor"},
+}
+
+# The transitional owner descriptor each declaration-side carrier travels with, in BOTH directions: one
+# without the other is half a migration, and each half resolves on its own so nothing else would notice.
+DECLARATION_REF_PAIRS = (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner", "clrOverrideRef"))
+
+
+def in_member_ref(path):
+    """True when `path` points inside ANY member-reference carrier (derived, never a literal key name)."""
+    return any(("/" + key) in path for key in MEMBER_REF_KEYS)
+
 # HASTHIS, plus whether the signature is vararg — a vararg member is a DIFFERENT member from its fixed-arity
 # neighbour, so the convention states it rather than the producer refusing to describe it.
 MEMBER_REF_CONVENTIONS = {"static", "instance", "varargStatic", "varargInstance"}
@@ -320,14 +336,14 @@ class V:
         # lowering passes that reconstruct an array as a vector and know nothing of pointers or modifiers, so
         # one of these outside a reference would be silently flattened — re-creating the very collisions the
         # carriers exist to prevent. Confining them to the reference keeps those passes correct by construction.
-        if (t in ("ptr", "mod") or (t == "array" and "rank" in o)) and "/memberRef" not in path:
+        if (t in ("ptr", "mod") or (t == "array" and "rank" in o)) and not in_member_ref(path):
             carrier = "array.rank" if t == "array" else t
             self.err(f, path, f"type {carrier} may only appear inside a memberRef signature, not in an ordinary type slot")
         # The other direction: a member reference is a PHYSICAL identity, so the Kotlin type-system facts have
         # no place in one. `oblivious` is a nullability annotation the CLR signature does not carry, and `star`
         # is a Kotlin projection; either inside a signature would be a second spelling of a physical shape, and
         # two spellings of one member are two members to a consumer that compares them exactly.
-        if "/memberRef" in path and t in ("oblivious", "star"):
+        if in_member_ref(path) and t in ("oblivious", "star"):
             self.err(f, path, f"type {t!r} is a Kotlin type-system fact and has no place in a physical member signature")
 
     def member_ref_carrier(self, f, path, key, val):
@@ -345,6 +361,9 @@ class V:
         # is a different shape and needs its own arm here — each element one reference, the list itself not a
         # candidate set. Until such a carrier is registered, a list under any carrier is the smuggling above.
         self.member_ref(f, path, val)
+        allowed = MEMBER_REF_KIND_BY_CARRIER.get(key)
+        if allowed is not None and val.get("kind") not in allowed:
+            self.err(f, path, f"{key} must hold a reference of kind {sorted(allowed)}, got {val.get('kind')!r}")
         if f.endswith(".bir.json"):
             self.err(f, path, "memberRef is a bir2cir-authored resolved member identity and must not appear in kotc BIR")
 
@@ -625,12 +644,23 @@ class V:
                 if not isinstance(o.get("memberOwner"), dict) or "t" not in o["memberOwner"]:
                     self.err(f, path, "newClrStaticDelegate.memberOwner must be a resolved Type node in CIR")
             if f.endswith(".cir.json"):
-                # The declaration-side pair. A base-constructor delegation and an external override target are
-                # resolved by the same pass and stated in the same transitional pieces, so they answer to the
-                # same rule: the owner is the marker that a declaration was read.
-                for owner_key, ref_key in (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner", "clrOverrideRef")):
+                # The declaration-side pair, checked in BOTH directions. A base-constructor delegation and an
+                # external override target are resolved by the same pass and stated in the same transitional
+                # pieces; either half alone still resolves to a member, so a document that lost one would keep
+                # working while silently reverting the guarantee.
+                #
+                # WHEN THE TRANSITIONAL OWNERS ARE DELETED this rule has nothing left to key on — a declaration
+                # carries no `k`, so the node-side kind rule has no counterpart here. Its successor must key on
+                # the DURABLE facts instead: a constructor delegating to a non-local base, and a method carrying
+                # `clrOverride`. Removing the owners without writing that rule leaves 2,310 sites unenforced
+                # while the gate still reports green.
+                for owner_key, ref_key in DECLARATION_REF_PAIRS:
                     if owner_key in o and ref_key not in o:
                         self.err(f, path, f"{owner_key} is present without the resolved {ref_key} beside it")
+                    if ref_key in o and owner_key not in o:
+                        # ilemit still reads the owner descriptor, so a reference without it validates clean
+                        # here and dies at emit — the failure lands one layer past the document that caused it.
+                        self.err(f, path, f"{ref_key} is present without the {owner_key} the emitter still reads")
             if f.endswith(".cir.json") and o.get("k") in MEMBER_REF_AUTHORED_KINDS and "memberRef" not in o:
                 # The transitional descriptor and the scalar reference must travel TOGETHER for a migrated kind:
                 # each one alone resolves to a member, so a node that lost the new half would keep working while
