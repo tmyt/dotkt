@@ -194,6 +194,7 @@ static class InlineSplice
         int pc = Int(o["pc"]);
         int ga = Int(o["ga"]);
         var paramSig = o["paramSig"] as JsonArray;   // §4.2 overload key: the callee's DECLARED param type nodes (kotc-emitted)
+        var declarationId = Str(o[DeclarationIdentityBinding.Key]);
 
         if (depth > 32) { FailLoud(o, owner, name, pc, ga, "inline splice depth > 32 (recursive-inline data corruption)"); return; }
 
@@ -207,7 +208,29 @@ static class InlineSplice
         //    `sameModule` gates the §4.6 newDelegate guard.
         JsonObject payload;
         bool sameModule;
-        if (owner != null)
+        if (declarationId != null)
+        {
+            var local = InlineBirStash.Declaration(declarationId);
+            if (local != null)
+            {
+                payload = (JsonObject)local.DeepClone();
+                sameModule = true;
+            }
+            else
+            {
+                var referenced = _refs?.InlineByDeclarationIdentity(declarationId);
+                if (referenced == null)
+                {
+                    FailLoud(o, owner, name, pc, ga,
+                        $"no [KotlinInline] payload for frontend declaration identity '{declarationId}'");
+                    return;
+                }
+                payload = referenced;
+                sameModule = false;
+            }
+            owner = Str(payload["owner"]);
+        }
+        else if (owner != null)
         {
             var r = ResolveInlinePayload(owner, name, pc, ga, paramSig);
             if (r.payload == null) { FailLoud(o, owner, name, pc, ga, r.diag); return; }

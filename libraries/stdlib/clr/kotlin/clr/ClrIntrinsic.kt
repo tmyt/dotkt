@@ -8,10 +8,9 @@
 //  - on a TOP-LEVEL fun -> a STATIC .NET method, splitting "Namespace.Type.Method" at the last '.'.
 package kotlin.clr
 
-// Opaque provenance attached by dll2klib to a projected CLR class or top-level
-// declaration. kotc only forwards `owner` into BIR as the declaration's resolved
-// external identity; bir2cir remains the sole layer that interprets that CLR
-// owner and chooses a physical call/property/field/operator shape.
+// CLR owner provenance attached by dll2klib to a projected CLR class or top-level declaration. bir2cir remains the
+// sole layer that interprets this owner and chooses a physical call/property/field/operator shape. Exact Kotlin
+// declaration identity is a separate compiler fact carried by KotlinDeclarationIdentity below.
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 @Retention(AnnotationRetention.BINARY)
 public annotation class ClrExternal(val owner: String)
@@ -38,6 +37,11 @@ public annotation class ClrField
 @Target(AnnotationTarget.PROPERTY)
 @Retention(AnnotationRetention.BINARY)
 internal annotation class ClrLateinitField
+
+// Compiler-internal DLL -> KLIB linkage for members. Properties carry getter and setter identities separately.
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
+@Retention(AnnotationRetention.BINARY)
+public annotation class KotlinDeclarationIdentity(val id: String, val setterId: String)
 
 @Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 public annotation class ClrIntrinsic(val name: String)

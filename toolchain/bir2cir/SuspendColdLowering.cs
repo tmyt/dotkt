@@ -270,7 +270,7 @@ static partial class SuspendColdLowering
     // the accessor to `get_coroutineContext` before this pass. Recognized by k=callStatic + the (get_)coroutineContext
     // method name (both spellings) + no args. EXCLUDES kotlinx's own `CoroutineScope.coroutineContext` (a callInstance
     // member property), which stays untouched. Lowered to `<current continuation>.get_context` (JVM's <cont>.getContext).
-    static bool IsCoroutineContextRead(JsonObject o) =>
+    internal static bool IsCoroutineContextRead(JsonObject o) =>
         Str(o["k"]) == "callStatic"
         && KotlinPropertyAccessors.IsCall(o, "coroutineContext", "get")
         && (o["args"] is not JsonArray ar || ar.Count == 0);
@@ -460,18 +460,6 @@ static partial class SuspendColdLowering
                 smSuffix[members[i]] = "_" + (unique ? cands[i] : "ov" + i);
         }
 
-        // A stricter collision remains when Kotlin overloads have identical value-parameter TypeNodes and differ
-        // only in generic bounds. Their public bridges are physically renamed by ilemit's general `$dupN` policy.
-        // Give the corresponding cold entries the same ordinal here so each bridge drives its own constrained
-        // implementation instead of resolving the first same-signature cold entry.
-        var coldSuffix = new Dictionary<FunKey, string>();
-        foreach (var g in entries.Keys.GroupBy(k => (k.Owner, k.FileClass, k.Name, k.Sig)))
-        {
-            var members = g.ToList();
-            for (var i = 0; i < members.Count; i++)
-                coldSuffix[members[i]] = i == 0 ? "" : "$dup" + (i + 1);
-        }
-
         // 2. Transform each declared suspend fun, splicing the cold entry (into its declaring container) and the
         //    SM type (into its file's top-level types).
         JsonObject rootContinuationHost = null;
@@ -508,8 +496,15 @@ static partial class SuspendColdLowering
             if (e.Root["methods"] is JsonArray flm)
                 foreach (var lm in flm)
                     if (lm is JsonObject lmo && Str(lmo["name"]) is string lmn) fileLambdas[lmn] = lmo;
+            // An interface member (kotc emits interface `suspend fun`s with `virtual:true` but WITHOUT the
+            // `abstract` flag — unlike an abstract-CLASS member) with no body is abstract by definition (an
+            // interface method with no default). Treat it exactly like the abstract-class case so its cold entry
+            // AND Task bridge are emitted ABSTRACT (no body), rather than a concrete bridge whose non-virtual
+            // `call` to the (interface-abstract) cold entry is unverifiable (ilverify CallAbstract). Concrete
+            // implementations in classes fill both slots — ilemit's interface-impl pass binds them by name/sig.
             var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl,
-                ownerTpDecls, closures, smSuffix[key], coldSuffix[key], fileLambdas, staticMember);
+                ownerTpDecls, closures, smSuffix[key], fileLambdas,
+                e.TypeNode != null && Str(e.TypeNode["kind"]) == "interface", staticMember);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -1213,6 +1208,8 @@ static partial class SuspendColdLowering
         readonly string _companionReceiver;
         readonly string _companionSourceName;
         readonly string _companionMemberKind;
+        readonly string _declarationId;
+        readonly string _declarationSourceName;
         readonly HashSet<string> _fields = new(StringComparer.Ordinal);
         readonly List<(string name, TypeNode type)> _fieldDecls = new();
         // Declared type of every `{k:var}` of this body, INCLUDING the ones the storage gate leaves as MoveNext
@@ -1235,11 +1232,13 @@ static partial class SuspendColdLowering
         public FunGen(JsonObject m, string name, string fileClass, string ownerClass,
             Dictionary<string, TypeNode> calleeRet, bool baseIsLocal, string tcsBcl = null, string taskBcl = null,
             JsonArray ownerTypeParamDecls = null, IReadOnlyDictionary<string, JsonObject> closures = null,
-            string smNameSuffix = "", string coldNameSuffix = "",
+            string smNameSuffix = "",
             IReadOnlyDictionary<string, JsonObject> lambdaMethods = null,
-            bool staticMember = false)
+            bool ownerIsInterface = false, bool staticMember = false)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
+            _declarationId = Str(m[DeclarationIdentityBinding.Key]);
+            _declarationSourceName = Str(m["declarationSourceName"]);
             _staticMember = staticMember;
             _generated = Bool(m["generated"]);
             _isMember = ownerClass != null && !staticMember;   // an INSTANCE member (static/companion members are top-level-shaped)
@@ -1249,14 +1248,18 @@ static partial class SuspendColdLowering
             _lambdaMethods = lambdaMethods ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _ownerTypeParamDecls = ownerTypeParamDecls?.DeepClone() as JsonArray ?? new JsonArray();
             _ownerTypeParams = ReadTypeParamNames(_ownerTypeParamDecls);
-            // Virtuality of the source member (kept in lockstep on the cold entry): the frontend-stated abstract
-            // modality produces an abstract cold entry; an override/open member produces an override/virtual entry.
-            // An empty concrete interface body is still a valid DIM and must never be reclassified here.
-            _memberAbstract = _isMember && Bool(m["abstract"]);
+            // Virtuality of the source member (kept in lockstep on the cold entry). An interface declaration with no
+            // body is abstract even when kotc omitted the explicit abstract bit; a concrete DIM remains concrete.
+            var interfaceAbstract = ownerIsInterface
+                && (m["body"] is not JsonArray interfaceBody || interfaceBody.Count == 0);
+            _memberAbstract = _isMember && (Bool(m["abstract"]) || interfaceAbstract);
             _memberOverride = _isMember && Bool(m["override"]);
             _memberVirtual = _isMember && Bool(m["virtual"]);
             _smType = (ownerClass ?? fileClass) + "_" + name + smNameSuffix + "$sm";
-            _coldName = name + "$dotkt_suspend" + coldNameSuffix;
+            // Exact-signature cold collisions are allocated later from the frontend declaration identity, just like
+            // their hot Task bridges. Pre-mangling by traversal order would partition the collision set before the
+            // common allocator sees it and make the cold ABI source-order dependent.
+            _coldName = name + "$dotkt_suspend";
             // #37/#48: the result nullability now rides the `suspendRet` TYPE NODE (`{t:nullable,of:R}`), not a retired
             // scalar `retNullable` flag. Strip the outer `?` so `_resultType` is the bare R (as it always was for the
             // reference case) and record it in `_resultNullable` for the Task-bridge NRT walk.
@@ -3019,6 +3022,8 @@ static partial class SuspendColdLowering
 
             var k = Str(callNode["k"]);
             var method = Str(callNode["method"]) + "$dotkt_suspend";
+            var coldDeclarationId = Str(callNode[DeclarationIdentityBinding.Key]) is string sourceDeclarationId
+                ? sourceDeclarationId + "|cold" : null;
             var isClr = k is "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance";
             var isGeneric = k is "clrGenericStatic" or "clrGenericInstance";
             // Evaluate recv (instance) then args LEFT-TO-RIGHT, over the shared operand description. Stage 0 has
@@ -3045,9 +3050,9 @@ static partial class SuspendColdLowering
                 // R1b (#100) — the clr* rewrite assumes the referenced owner exposes a `<name>$dotkt_suspend` cold
                 // entry. Under R1's unconditional-declaration invariant that holds for any DotKt assembly built with
                 // the cold ABI, advertised on the ref.dll via the [KotlinFunction(Suspend)] flag (MemberBinding.Suspend)
-                // — the metadata linkage; the cold-entry NAME is a convention ilemit resolves against the rt.dll (the
-                // ref.dll itself carries NO cold entry — the transform is skipped in the ref build). Consult that flag
-                // through the referenced owner's reflected hierarchy (a suspend member declared on a super is inherited).
+                // — the metadata linkage. The provisional cold-entry name is replaced through the selected declaration
+                // identity with the independently allocated MethodDef carried by both reference and runtime twins.
+                // Consult the suspend flag through the reflected hierarchy (a member declared on a super is inherited).
                 // ABSENT => the callee is not a cold-ABI Kotlin suspend member (a pre-cold-ABI DotKt lib, or a
                 // hand-written assembly): a HARD actionable error, not a silent rewrite to a nonexistent method (the
                 // #100 emit-time resolution failure this guard replaces). The CLR await bridge marker + suspendCoroutine
@@ -3074,6 +3079,7 @@ static partial class SuspendColdLowering
                     ["ret"] = Tw(AnyTn),
                 };
                 if (isInstance) clr["recv"] = recvRw;
+                if (coldDeclarationId != null) clr[DeclarationIdentityBinding.Key] = coldDeclarationId;
                 if (isGeneric)
                 {
                     // clrGeneric* resolves by the structured `memberSig` descriptor (W1-S1 #46). Preserve typeArgs; append
@@ -3124,6 +3130,7 @@ static partial class SuspendColdLowering
                 };
             }
             if (callNode["typeArgs"] is JsonArray ta) call["typeArgs"] = ta.DeepClone();
+            if (coldDeclarationId != null) call[DeclarationIdentityBinding.Key] = coldDeclarationId;
             if (!isInstance)
                 ClrMemberResolution.CarryReferencedStaticCallSignatureSnapshot(callNode, call);
             // BUG Y — overload disambiguation. `<method>$dotkt_suspend` may be one of several same-named IL
@@ -3662,6 +3669,10 @@ static partial class SuspendColdLowering
                 ["ret"] = Tw(AnyTn),
                 ["body"] = body,
                 ["attrs"] = new JsonArray(),
+                // Physical coroutine implementation entry, never a second Kotlin source declaration. In particular,
+                // the reference DLL now retains this MethodDef so consumers can bind `id|cold` exactly; dll2klib must
+                // still omit it from the projected KLIB surface.
+                ["generated"] = true,
             };
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
@@ -3669,6 +3680,12 @@ static partial class SuspendColdLowering
             CarrySourceDeclaration(method);
             CarryOverrideMarkers(method);
             CarryPhysicalSlotFacts(method, coldEntry: true);
+            if (_declarationId != null)
+            {
+                method[DeclarationIdentityBinding.Key] = _declarationId + "|cold";
+                method["declarationSourceName"] = _declarationSourceName
+                    ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
+            }
             return method;
         }
 
@@ -3788,6 +3805,7 @@ static partial class SuspendColdLowering
                 ["ret"] = Tw(AnyTn),
                 ["body"] = new JsonArray(),
                 ["attrs"] = new JsonArray(),
+                ["generated"] = true,
             };
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
@@ -3795,6 +3813,12 @@ static partial class SuspendColdLowering
             CarrySourceDeclaration(method);
             CarryOverrideMarkers(method);
             CarryPhysicalSlotFacts(method, coldEntry: true);
+            if (_declarationId != null)
+            {
+                method[DeclarationIdentityBinding.Key] = _declarationId + "|cold";
+                method["declarationSourceName"] = _declarationSourceName
+                    ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
+            }
             return method;
         }
 
@@ -3967,6 +3991,12 @@ static partial class SuspendColdLowering
                 if (_companionReceiver != null) am["companionReceiver"] = _companionReceiver;
                 if (_companionSourceName != null) am["companionSourceName"] = _companionSourceName;
                 if (_companionMemberKind != null) am["companionMemberKind"] = _companionMemberKind;
+                if (_declarationId != null)
+                {
+                    am[DeclarationIdentityBinding.Key] = _declarationId;
+                    am["declarationSourceName"] = _declarationSourceName
+                        ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
+                }
                 // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
                 // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
                 // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).
@@ -4080,6 +4110,16 @@ static partial class SuspendColdLowering
             if (_companionReceiver != null) method["companionReceiver"] = _companionReceiver;
             if (_companionSourceName != null) method["companionSourceName"] = _companionSourceName;
             if (_companionMemberKind != null) method["companionMemberKind"] = _companionMemberKind;
+            // This Task bridge is the physical hot form of the frontend-selected suspend declaration. Keep the
+            // source identity on it so the common post-erasure allocator can distinguish overloads whose Kotlin
+            // signatures collapse to one CLR signature. The original BIR declaration is replaced by this bridge;
+            // dropping the fact here would force ilemit to rediscover (or arbitrarily repair) the overload.
+            if (_declarationId != null)
+            {
+                method[DeclarationIdentityBinding.Key] = _declarationId;
+                method["declarationSourceName"] = _declarationSourceName
+                    ?? throw new InvalidOperationException("suspend declaration identity has no frontend source name");
+            }
             // #151 — a `suspend fun f(): Nothing` bridge (Task<Nothing>): carry the pre-erasure Nothing fact so
             // RoundtripMetadata stamps [KotlinNothing] on the return (BirTypeLowering erases the inner Nothing to
             // object, so its own bare-Fqn IsNothingRet check can't see it on the Task<...> return — set it here).
@@ -4184,6 +4224,11 @@ static partial class SuspendColdLowering
                 for (var i = 0; i < _typeParams.Count; i++) ta.Add(Tw(new TypeNode.Tv("method", i)));
                 call["typeArgs"] = ta;
             }
+            // The generated bridge is also a use of the exact cold implementation derived from the same Kotlin
+            // declaration. Bind it by the derived identity after cold signatures have been projected, rather than
+            // selecting an erased overload by the provisional `$dotkt_suspend` spelling.
+            if (_declarationId != null)
+                call[DeclarationIdentityBinding.Key] = _declarationId + "|cold";
             return call;
         }
 

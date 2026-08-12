@@ -1,0 +1,5 @@
+# The source override has no independent declaration identity; it keeps the ordinary Property name. The explicit
+# MethodImpl bridge is a bir2cir physical declaration and receives a stable suffix from its bridge association.
++"name":"map","type":{"t":"fqn","name":"System.Collections.Generic.IDictionary"
++"name":"map$dotkt$9ca46becc1babf26"
++"name":"dotkt$covar$prop_get_map_$0"

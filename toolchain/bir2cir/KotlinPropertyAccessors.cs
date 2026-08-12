@@ -114,11 +114,155 @@ static class KotlinPropertyAccessors
     public static void AllocateAll(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
             IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> localAccessors) =>
-        Walk(root, allocateCalls: true, refs, localAccessors);
+        Walk(root, allocateCalls: true, refs, localAccessors, stripPropertyIdentity: false);
+
+    // #395 may rename an accessor only after CLR type lowering exposes its real MethodDef collision set. Keep #397's
+    // exact association alive until that allocation is complete, then rebuild the Property descriptor from the
+    // associated MethodDef names and consume the BIR-only facts. No get_/set_ spelling is parsed in either direction.
+    public static void FinalizePhysicalProperties(IEnumerable<JsonNode> roots)
+    {
+        foreach (var root in roots) Finalize(root);
+
+        static void Finalize(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                var methods = obj["methods"] is JsonArray methodArray
+                    ? methodArray.OfType<JsonObject>().ToArray()
+                    : Array.Empty<JsonObject>();
+                if (obj["properties"] is JsonArray properties)
+                {
+                    foreach (var property in properties.OfType<JsonObject>())
+                    {
+                        if (property[PropertyRolesKey] is JsonArray)
+                            AllocateProperty(property, methods, stripIdentity: false);
+                    }
+                    AllocatePhysicalPropertyNames(properties.OfType<JsonObject>().ToArray(), methods);
+                    foreach (var property in properties.OfType<JsonObject>())
+                    {
+                        property.Remove(PropertyRolesKey);
+                        property.Remove(AssociationKey);
+                    }
+                }
+                foreach (var child in obj.Select(pair => pair.Value).ToArray())
+                    if (child != null) Finalize(child);
+                if (TryIdentity(obj, out _, out _)) RemoveIdentity(obj);
+                obj.Remove(PhysicalSlotBridgeKey);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.ToArray()) if (child != null) Finalize(child);
+        }
+    }
+
+    // A CLR Property row has its own metadata identity: owner + name + property type + index-parameter types.
+    // Renaming only the associated MethodDefs is therefore insufficient when two Kotlin extension properties erase
+    // to the same CLI signature. Allocate the Property spelling from the same frontend declaration identity, after
+    // type lowering and after the exact accessor association has been finalized. dll2klib restores the Kotlin source
+    // name from the accessor's [KotlinDeclarationIdentity] carrier; it never reverse-engineers this physical suffix.
+    static void AllocatePhysicalPropertyNames(
+        IReadOnlyList<JsonObject> properties,
+        IReadOnlyList<JsonObject> methods)
+    {
+        string PropertySignature(JsonObject property)
+        {
+            var type = TypeJson.Read(property["type"])
+                ?? throw new InvalidOperationException("Kotlin property record has no physical type");
+            IEnumerable<JsonNode> indexParameters;
+            if (property["getSig"] is JsonArray getSig)
+                indexParameters = getSig;
+            else if (property["setSig"] is JsonArray setSig)
+                indexParameters = setSig.Take(Math.Max(0, setSig.Count - 1));
+            else
+                throw new InvalidOperationException("Kotlin property record has no physical accessor signature");
+            return DeclarationIdentityBinding.PhysicalPropertyTypeSignature(type) + "|" + string.Join(";",
+                indexParameters.Select(node => DeclarationIdentityBinding.PhysicalPropertyTypeSignature(
+                    TypeJson.Read(node)
+                    ?? throw new InvalidOperationException("Kotlin property record has an untyped physical index parameter"))));
+        }
+
+        bool TryPropertyDeclarationId(JsonObject property, out string declarationId)
+        {
+            var association = Str(property[AssociationKey])
+                ?? throw new InvalidOperationException("Kotlin property record has no accessor association");
+            var ids = methods.Where(method => Str(method[AssociationKey]) == association)
+                .Select(method => Str(method[DeclarationIdentityBinding.Key]))
+                .Where(id => id != null)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (ids.Length == 0)
+            {
+                declarationId = null!;
+                return false;
+            }
+            // A var has distinct getter/setter declaration identities. The getter is the stable representative;
+            // a setter-only metadata shape (not authored by Kotlin source) falls back to its sole accessor.
+            var getter = methods.SingleOrDefault(method =>
+                Str(method[AssociationKey]) == association && Str(method[KindKey]) == "get");
+            declarationId = Str(getter?[DeclarationIdentityBinding.Key]) ?? ids[0]!;
+            return true;
+        }
+
+        foreach (var group in properties.GroupBy(property =>
+            (Name: Str(property["name"]) ?? throw new InvalidOperationException("property has no name"),
+             Signature: PropertySignature(property))))
+        {
+            var colliding = group.ToArray();
+            if (colliding.Length < 2) continue;
+            var allocation = colliding.Select(property =>
+            {
+                var association = Str(property[AssociationKey])!;
+                return (Property: property, Association: association,
+                    HasDeclarationId: TryPropertyDeclarationId(property, out var id), DeclarationId: id,
+                    IsBridge: association.StartsWith("dotkt$bridge$property$", StringComparison.Ordinal));
+            }).ToArray();
+            var unidentifiedDeclarations = allocation.Where(candidate =>
+                !candidate.HasDeclarationId && !candidate.IsBridge).ToArray();
+            if (unidentifiedDeclarations.Length > 1)
+                throw new InvalidOperationException(
+                    $"Kotlin properties named '{group.Key.Name}' with physical signature '{group.Key.Signature}' " +
+                    $"collide without frontend declaration identity: " +
+                    string.Join(", ", unidentifiedDeclarations.Select(candidate => candidate.Association)));
+            foreach (var candidate in allocation)
+            {
+                var property = candidate.Property;
+                var association = candidate.Association;
+                var sourceName = group.Key.Name;
+                if (candidate.HasDeclarationId)
+                {
+                    // Once the Property row receives a physical suffix, MethodSemantics alone can only report that
+                    // physical spelling. Preserve #397's already-resolved semantic association explicitly on each
+                    // accessor so dll2klib restores the source property without parsing either physical name.
+                    foreach (var method in methods.Where(method => Str(method[AssociationKey]) == association))
+                    {
+                        var kind = Str(method[KindKey])
+                            ?? throw new InvalidOperationException(
+                                $"Kotlin property association '{association}' has an accessor without a role");
+                        method[MetadataCarrierKey] = new JsonObject
+                        {
+                            ["name"] = sourceName,
+                            ["kind"] = kind,
+                            ["association"] = association,
+                        };
+                    }
+                }
+                // A MethodImpl bridge is a physical declaration synthesized by bir2cir, not a declaration FIR can
+                // select. Its exact bridge association is therefore the authoritative physical identity. If the
+                // collision set contains one ordinary declaration without a frontend identity, keep its existing
+                // spelling and move only the bridge(s); two such declarations are refused above rather than guessed.
+                var suffixBasis = candidate.HasDeclarationId ? candidate.DeclarationId
+                    : candidate.IsBridge ? association
+                    : null;
+                if (suffixBasis != null)
+                    property["name"] = group.Key.Name + "$dotkt$" +
+                        DeclarationIdentityBinding.StableSuffix(suffixBasis);
+            }
+        }
+    }
 
     static void Walk(JsonNode node, bool allocateCalls, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<MemberCallSubstitution.LocalPropertyAccessorKey,
-            IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> localAccessors)
+            IReadOnlyList<MemberCallSubstitution.LocalPropertyAccessor>> localAccessors,
+        bool stripPropertyIdentity = false)
     {
         if (node is JsonObject obj)
         {
@@ -183,7 +327,7 @@ static class KotlinPropertyAccessors
                     : Array.Empty<JsonObject>();
                 var unrepresentable = new List<JsonObject>();
                 foreach (var property in properties.OfType<JsonObject>())
-                    if (!AllocateProperty(property, ownerMethods, allocateCalls))
+                    if (!AllocateProperty(property, ownerMethods, stripPropertyIdentity))
                         unrepresentable.Add(property);
                 if (allocateCalls)
                     foreach (var property in unrepresentable)
@@ -191,11 +335,11 @@ static class KotlinPropertyAccessors
             }
 
             foreach (var child in obj.Select(pair => pair.Value).ToArray())
-                if (child != null) Walk(child, allocateCalls, refs, localAccessors);
+                if (child != null) Walk(child, allocateCalls, refs, localAccessors, stripPropertyIdentity);
         }
         else if (node is JsonArray array)
             foreach (var child in array.ToArray())
-                if (child != null) Walk(child, allocateCalls, refs, localAccessors);
+                if (child != null) Walk(child, allocateCalls, refs, localAccessors, stripPropertyIdentity);
     }
 
     // Returns whether this semantic Kotlin property has a representable CLR Property signature. A MethodDef may own

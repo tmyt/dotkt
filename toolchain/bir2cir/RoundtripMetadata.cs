@@ -47,6 +47,7 @@ static class RoundtripMetadata
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
     const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
     const string AKSourceMethod = Ns + "KotlinSourceMethodAttribute";
+    const string AKDeclarationIdentity = Ns + "KotlinDeclarationIdentityAttribute";
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
     internal const string AKExtensionCore = Ns + "KotlinExtensionCoreAttribute";
     const string AKStaticCarrier = Ns + "KotlinStaticCarrierAttribute";
@@ -188,6 +189,25 @@ static class RoundtripMetadata
 
     static void StampMethod(JsonObject mo)
     {
+        // [KotlinDeclarationIdentity(version, bytes)] (#395) — the exact frontend declaration fingerprint and source spelling.
+        // bir2cir may have assigned a different MethodDef name after CLR erasure; dll2klib restores `name`, while a
+        // consuming bir2cir binds `id` directly to this physical method without structural overload resolution.
+        if ((mo[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var declarationId) == true)
+        {
+            var sourceName = (mo["declarationSourceName"] as JsonValue)?.GetValue<string>()
+                ?? throw new InvalidOperationException(
+                    $"declaration identity '{declarationId}' on physical method '{mo["name"]}' has no source name");
+            var identity = new JsonObject {
+                ["id"] = declarationId,
+                ["name"] = sourceName,
+            };
+            if (mo[DeclarationIdentityBinding.SemanticSignatureKey] is JsonObject semanticSignature)
+                identity["signature"] = semanticSignature.DeepClone();
+            Append(mo, JsonCarrierAttr(AKDeclarationIdentity, identity));
+            mo.Remove(DeclarationIdentityBinding.Key);
+            mo.Remove("declarationSourceName");
+            mo.Remove(DeclarationIdentityBinding.SemanticSignatureKey);
+        }
         // CLR Property rows cannot describe method-generic accessors. The allocator leaves this exact semantic
         // association only on those MethodDefs; turn it into trusted metadata before the hand-off fact disappears.
         StampPropertyAccessorCarrier(mo);
@@ -451,6 +471,9 @@ static class RoundtripMetadata
             // consume this exact association into [KotlinPropertyAccessor]; the runtime twin emits no round-trip
             // metadata, so discard the same pass-local hand-off before CIR reaches ilemit.
             po.Remove(KotlinPropertyAccessors.MetadataCarrierKey);
+            po.Remove(DeclarationIdentityBinding.Key);
+            po.Remove("declarationSourceName");
+            po.Remove(DeclarationIdentityBinding.SemanticSignatureKey);
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);
@@ -655,6 +678,7 @@ static class RoundtripMetadata
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association
             AttrClass(AKSourceMethod, Ctor(Param("System.String"), Param(ByteArrayType()))), // renamed CLR method -> Kotlin source identity
+            AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #395 — frontend callable identity + source name
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts
             AttrClass(AKExtensionCore, Ctor(Param("System.String"), Param(ByteArrayType()))), // generic C# wrapper -> Kotlin semantic core
             AttrClass(AKStaticCarrier, Ctor(Param("System.String"), Param(ByteArrayType()))), // one physical static surface for a generic Kotlin owner

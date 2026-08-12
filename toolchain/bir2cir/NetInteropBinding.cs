@@ -576,6 +576,11 @@ static class NetInteropBinding
         var recv = Take("recv");
         if (!isStatic) node["recv"] = recv;
         node["funcType"] = Take("funcType");
+        // The reshape changes only CLR call shape. The frontend-selected Kotlin declaration remains authoritative and
+        // is consumed by DeclarationIdentityBinding after this pass; dropping it here would make the CLR delegate
+        // resolver search the erased overload set again.
+        if (Take(DeclarationIdentityBinding.Key) is JsonNode declarationId)
+            node[DeclarationIdentityBinding.Key] = declarationId;
         // Preserve evaluation when a real trusted nested companion member is explicitly authored as a CLR static
         // binding. The receiver is a real singleton value even though the selected physical member is static.
         if (isStatic && recv != null && exactBoundCompanion)

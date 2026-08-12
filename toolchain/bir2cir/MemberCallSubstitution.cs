@@ -638,8 +638,26 @@ static class MemberCallSubstitution
     {
         var args = node["args"] as JsonArray ?? new JsonArray();
         var typeArgs = node["typeArgs"] as JsonArray;
+        var exactFactory = (node[DeclarationIdentityBinding.ReferencedFactoryKey] as JsonValue)?
+            .TryGetValue<bool>(out var selectedFactory) == true && selectedFactory;
+        string collKind;
+        string arrKind;
+        string arrElemHint;
+        if (exactFactory)
+        {
+            if (Str(node[DeclarationIdentityBinding.Key]) is not string selectedId
+                || !refs.TryDeclarationFactory(selectedId, out collKind, out arrKind, out arrElemHint))
+                throw new InvalidOperationException(
+                    $"bir2cir: selected referenced declaration identity '{node[DeclarationIdentityBinding.Key]}' lost its factory binding");
+        }
+        else
+        {
+            collKind = refs.CollectionFactoryKind(fn);
+            arrKind = refs.ArrayFactoryKind(fn);
+            arrElemHint = refs.ArrayFactoryElemHint(fn);
+        }
 
-        if (refs.CollectionFactoryKind(fn) is string collKind)
+        if (collKind != null)
         {
             if (collKind == "map")
             {
@@ -672,7 +690,7 @@ static class MemberCallSubstitution
             return new JsonObject { ["k"] = collKind == "set" ? "newSet" : "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems };
         }
 
-        if (refs.ArrayFactoryKind(fn) is string arrKind)
+        if (arrKind != null)
         {
             if (arrKind == "sized")                                             // arrayOfNulls<T>(size) -> newArraySized
             {
@@ -705,7 +723,7 @@ static class MemberCallSubstitution
             // does not reach: with no wrapper there are no elements to copy, so the substitution builds an EMPTY array.
             var wrapper = args.Count == 1 && args[0] is JsonObject w && (w["k"] as JsonValue)?.GetValue<string>() == "newArray" ? w : null;
             var arrElem = TypeArgAt(typeArgs, 0) ?? wrapper?["elem"]
-                ?? (refs.ArrayFactoryElemHint(fn) is string hint ? TypeJson.Fqn(hint) : null);
+                ?? (arrElemHint is string hint ? TypeJson.Fqn(hint) : null);
             if (arrElem == null) return null;                                   // no element source -> plain call
             var arrElems = new JsonArray();
             foreach (var el in (wrapper?["elems"] as JsonArray) ?? new JsonArray()) arrElems.Add(el.DeepClone());
@@ -824,9 +842,39 @@ static class MemberCallSubstitution
             // LIST/SET/MAP/ARRAY_FACTORY tables). Handled first so a factory never falls through to the plain top-level
             // owner-attribution below. A non-decomposable form (`mapOf(pairVariable)` — not a `to`-Pair literal) returns
             // null here and stays a plain call to the real factory body.
+            var exactFactory = (node[DeclarationIdentityBinding.ReferencedFactoryKey] as JsonValue)?
+                .TryGetValue<bool>(out var selectedFactory) == true && selectedFactory;
             if (TryFactorySubst(node, refs, fn) is JsonNode factoryNode) return factoryNode;
+            // A selected factory that cannot be represented as a construction (notably mapOf(pairVariable)) must call
+            // that exact declaration's body. Keep its semantic node intact for the late identity binder instead of
+            // falling through to any erased owner/name/signature resolver in this pass.
+            if (exactFactory) return null;
             var args0 = node["args"] as JsonArray ?? new JsonArray();
             var sigParts0 = SplitSig(node);
+            // #395: the early declaration-identity binder has already selected this exact ref.dll declaration.
+            // Resolve only that declaration's @ClrIntrinsic representation; never repeat overload resolution from
+            // owner/name/signature after erasure. Local declarations do not carry this transient marker.
+            if ((node[DeclarationIdentityBinding.ReferencedIntrinsicKey] as JsonValue)?.TryGetValue<bool>(out var exact)
+                    == true && exact
+                && Str(node[DeclarationIdentityBinding.Key]) is string selectedId)
+            {
+                if (!refs.TryDeclarationIdentity(selectedId, out _, out _, out var selectedIntrinsic,
+                        out var selectedByref)
+                    || string.IsNullOrEmpty(selectedIntrinsic))
+                    throw new InvalidOperationException(
+                        $"bir2cir: selected referenced declaration identity '{selectedId}' lost its intrinsic binding");
+                if (selectedIntrinsic.LastIndexOf('.') is var selectedDot && selectedDot > 0)
+                    return ClrCallNode(node,
+                        new TypeNode.Fqn(selectedIntrinsic[..selectedDot]),
+                        selectedIntrinsic[(selectedDot + 1)..], selectedIntrinsic[(selectedDot + 1)..],
+                        args0, instance: false, selectedByref);
+                if (sigParts0.Count >= 1)
+                    return TopLevelExtensionInstance(node, refs, selectedIntrinsic, args0, sigParts0, ctx)
+                        ?? throw new InvalidOperationException(
+                            $"bir2cir: selected intrinsic declaration '{selectedId}' has no extension receiver");
+                throw new InvalidOperationException(
+                    $"bir2cir: selected intrinsic declaration '{selectedId}' has unsupported binding '{selectedIntrinsic}'");
+            }
             if (topLevelPropertyAccess is "get" or "set")
             {
                 KotlinPropertyAccessors.PreserveCallIdentity(node, fn, topLevelPropertyAccess);

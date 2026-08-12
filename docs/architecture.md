@@ -53,6 +53,11 @@ The split prevents frontend declarations, binding metadata, and executable imple
    by receiver and authors the released C# 14 extension graph. For a generic receiver it also separates the
    source-named, receiver-parameterized C# wrapper from the receiverless Kotlin semantic core; `ilemit` emits both
    descriptions one-to-one and does not reconstruct that relationship.
+9. A Kotlin call carries the exact declaration selected by FIR through BIR. `bir2cir` maps that identity to one
+   physical CLR member before erased signatures can become ambiguous, and rewrites the declaration and every use from
+   the same map. It may use erasure to allocate a stable physical name, but must never use the erased owner/name/signature
+   to repeat Kotlin overload resolution. Duplicate CIR method signatures are malformed input; `ilemit` refuses them
+   instead of inventing an order-dependent name.
 
 ## Build modes
 

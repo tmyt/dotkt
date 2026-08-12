@@ -109,6 +109,8 @@ STR_OK = {
     "propertyName", "propertyAccessor", "propertyAssociation", # #397: BIR-only Kotlin property identity,
                                                  # explicit get/set role, and file-local Property/accessor association.
                                                  # bir2cir consumes these after every semantic property pass has run.
+    "declarationId", "declarationSourceName",    # #395: frontend declaration fingerprint + original Kotlin callable name;
+                                                 # consumed by physical member allocation / round-trip metadata.
     "collIdentity", "collIdentityRet",           # #29: PRE-collapse Kotlin collection TypeNodes stashed as canonical-JSON
                                                  # strings by CollectionIdentityRecord. RoundtripMetadata immediately turns
                                                  # them into [KotlinCollectionIdentity] carrier bytes for dll2klib; these
@@ -372,6 +374,9 @@ class V:
                                      "inheritedDefaultMethods"):
                     if property_key in o:
                         self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
+                for declaration_key in ("declarationId", "declarationSourceName"):
+                    if declaration_key in o:
+                        self.err(f, path, f"{declaration_key} is a BIR declaration-identity fact and must be consumed before CIR")
                 for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):
                     if ownership_key in o:
                         self.err(f, path, f"{ownership_key} is a BIR ownership fact and must be consumed before CIR")

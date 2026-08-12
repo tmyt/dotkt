@@ -33,6 +33,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinCompanionExtensionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionExtensionAttribute";
     const string KotlinPropertyAccessorAttr = "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute";
     const string KotlinSourceMethodAttr = "DotKt.Runtime.CompilerServices.KotlinSourceMethodAttribute";
+    const string KotlinDeclarationIdentityAttr = "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute";
     const string KotlinExtensionCoreAttr = "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute";
     const string KotlinStaticCarrierAttr = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
     const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
@@ -105,6 +106,41 @@ sealed partial class ReferenceMetadataIndex
     // Kotlin default implementation was selected; this index contributes only the referenced DLL's physical slot
     // allocation for a trusted accessor bridge. No hierarchy/default-body inference is performed here.
     readonly Dictionary<(string Owner, int BodyToken), List<MethodImplBinding>> _methodImplsByBody = new();
+    readonly Dictionary<string, MemberBinding> _declarationById = new(StringComparer.Ordinal);
+
+    public bool TryDeclarationIdentity(
+        string id,
+        out string physicalName,
+        out string owner,
+        out string intrinsic,
+        out int[] byrefPositions)
+    {
+        physicalName = null;
+        owner = null;
+        intrinsic = null;
+        byrefPositions = null;
+        if (id == null || !_declarationById.TryGetValue(id, out var binding)) return false;
+        physicalName = binding.Name;
+        owner = binding.DeclarationPhysicalOwner ?? binding.Owner;
+        intrinsic = binding.Intrinsic;
+        byrefPositions = binding.ByrefPositions;
+        return true;
+    }
+    public bool TryDeclarationFactory(
+        string id,
+        out string collectionKind,
+        out string arrayKind,
+        out string arrayElementHint)
+    {
+        collectionKind = null;
+        arrayKind = null;
+        arrayElementHint = null;
+        if (id == null || !_declarationById.TryGetValue(id, out var binding)) return false;
+        collectionKind = binding.CollectionFactoryKind;
+        arrayKind = binding.ArrayFactoryKind;
+        arrayElementHint = binding.ArrayFactoryElementHint;
+        return collectionKind != null || arrayKind != null;
+    }
     // ownerFqn -> declared parameter count -> the ctor declarations of that arity (#86 D1). A list, because a
     // same-arity overload set must be REFUSED rather than resolved by arity alone.
     readonly Dictionary<string, Dictionary<int, List<CtorBinding>>> _ctorsByOwner = new(StringComparer.Ordinal);
@@ -132,6 +168,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _arrayFactories = new(StringComparer.Ordinal);       // @ClrArrayFactory fun name -> "vararg"/"sized"
     readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaults = new(StringComparer.Ordinal); // "owner|name|paramCount" -> (argPos -> default BIR)
+    readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
     // MemberCallSubstitution attributes the owner), so the omitted call is still `owner:null method:col2 sig:[…]`.
     // Built from _kotlinDefaults: a key with a SINGLE owner, or several owners whose defaults AGREE, maps to those
@@ -154,6 +191,7 @@ sealed partial class ReferenceMetadataIndex
     // call's `paramSig`; the winning payload's own `owner` field names the host. Restricted to `kotlin.*` so a user-lib
     // inline fn sharing a name|pc|ga cannot leak in.
     readonly Dictionary<string, List<string>> _ownerlessInlineCandidates = new(StringComparer.Ordinal);
+    readonly Dictionary<string, string> _inlinePayloadByDeclarationId = new(StringComparer.Ordinal);
 
     // ---- .NET-interop resolution (A2 / #61): the LONG-LIVED metadata universe over the exact compile references.
     // NetInteropBinding resolves a dll2klib-projected owner FQN
@@ -279,7 +317,7 @@ sealed partial class ReferenceMetadataIndex
             {
                 if (!_companionExtensionMembers.TryAdd(kv.Key, kv.Value) &&
                     _companionExtensionMembers[kv.Key] != kv.Value)
-                    throw new InvalidOperationException($"conflicting Kotlin companion-extension member '{kv.Key}'");
+                    _companionExtensionMembers[kv.Key] = "";
             }
             foreach (var kv in asm.DotKt.CompanionPhysicalOwnerBySemanticType)
             {
@@ -310,6 +348,19 @@ sealed partial class ReferenceMetadataIndex
             foreach (var s in asm.DotKt.RestrictsSuspensionTypes) _restrictsSuspension.Add(s);
             foreach (var m in asm.DotKt.MemberBindings)
             {
+                if (m.DeclarationId is string declarationId
+                    && !_declarationById.TryAdd(declarationId, m))
+                {
+                    var prior = _declarationById[declarationId];
+                    // The same Kotlin module can be present through runtime/reference twins or repeated project
+                    // references. Identity-derived physical names are identical; accepting that exact duplicate does
+                    // not select between overloads or infer source meaning.
+                    if (SameDeclarationBinding(prior, m))
+                        continue;
+                    throw new InvalidOperationException(
+                        $"conflicting Kotlin declaration identity '{declarationId}': "
+                        + $"'{prior.Owner}.{prior.Name}' and '{m.Owner}.{m.Name}'");
+                }
                 if (!_membersByOwner.TryGetValue(m.Owner, out var list))
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
                 list.Add(m);
@@ -375,6 +426,10 @@ sealed partial class ReferenceMetadataIndex
                 }
                 else _kotlinDefaultsOwnerless[np] = kv.Value;
             }
+            foreach (var kv in asm.DotKt.KotlinDefaultsByDeclarationId)
+                if (!_kotlinDefaultsByDeclarationId.TryAdd(kv.Key, kv.Value)
+                    && !SameDefaults(_kotlinDefaultsByDeclarationId[kv.Key], kv.Value))
+                    throw new InvalidOperationException($"conflicting defaults for Kotlin declaration identity '{kv.Key}'");
             foreach (var kv in asm.DotKt.CollectionFactories) _collectionFactories.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ArrayFactories) _arrayFactories.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ArrayFactoryElemHints) _arrayFactoryElemHints.TryAdd(kv.Key, kv.Value);
@@ -385,6 +440,10 @@ sealed partial class ReferenceMetadataIndex
                 if (!_inlinePayloads.TryGetValue(kv.Key, out var lst)) _inlinePayloads[kv.Key] = lst = new List<string>();
                 lst.AddRange(kv.Value);
             }
+            foreach (var kv in asm.DotKt.InlinePayloadsByDeclarationId)
+                if (!_inlinePayloadByDeclarationId.TryAdd(kv.Key, kv.Value)
+                    && _inlinePayloadByDeclarationId[kv.Key] != kv.Value)
+                    throw new InvalidOperationException($"conflicting inline declaration identity '{kv.Key}'");
         }
         // Build the owner-less candidate index (S3, §4.2): "name|pc|ga" -> the candidate payload JSONs across every `kotlin.*`
         // file-class hosting that shape. The owner is NOT resolvable from the bare key (it collides across owners) — the call
@@ -415,6 +474,13 @@ sealed partial class ReferenceMetadataIndex
     // InlineSplice selects the unique paramSig match; the winner's own `owner` field names the host file class.
     public List<JsonObject> OwnerlessInlineCandidates(string name, int pc, int ga) =>
         name == null ? null : ParseCandidates(_ownerlessInlineCandidates.GetValueOrDefault($"{name}|{pc}|{ga}"));
+
+    public JsonObject InlineByDeclarationIdentity(string id)
+    {
+        if (id == null || !_inlinePayloadByDeclarationId.TryGetValue(id, out var json)) return null;
+        return JsonNode.Parse(json) as JsonObject
+            ?? throw new InvalidDataException($"malformed inline payload for declaration identity '{id}'");
+    }
 
     static List<JsonObject> ParseCandidates(List<string> jsons)
     {
@@ -476,6 +542,9 @@ sealed partial class ReferenceMetadataIndex
         }
         return _kotlinDefaultsOwnerless.TryGetValue(method + "|" + paramCount, out var ownerless) ? ownerless : null;
     }
+
+    public Dictionary<int, string> KotlinDefaultsForDeclarationIdentity(string id) =>
+        id != null ? _kotlinDefaultsByDeclarationId.GetValueOrDefault(id) : null;
     // True when the name+arity cannot identify ONE set of defaults: a genuinely ownerless name carried by >1 owner that
     // disagree, or an OWNERFUL key two same-arity declarations (ctor overloads) carry with different defaults.
     public bool KotlinDefaultsAmbiguous(string owner, string method, int paramCount) =>
@@ -489,6 +558,35 @@ sealed partial class ReferenceMetadataIndex
         foreach (var kv in a) if (!b.TryGetValue(kv.Key, out var v) || v != kv.Value) return false;
         return true;
     }
+
+    static bool SameDeclarationBinding(MemberBinding a, MemberBinding b) =>
+        a.Owner == b.Owner && a.Name == b.Name && a.ParamCount == b.ParamCount
+        && a.Intrinsic == b.Intrinsic && a.IsAbstract == b.IsAbstract && a.IsStatic == b.IsStatic
+        && Same(a.ParamTypes, b.ParamTypes) && a.PropertyAccess == b.PropertyAccess
+        && a.PropertyName == b.PropertyName && Same(a.ByrefPositions, b.ByrefPositions)
+        && a.Suspend == b.Suspend && a.Conv == b.Conv && a.ConvTo == b.ConvTo
+        && Same(a.ReturnType, b.ReturnType) && a.MethodArity == b.MethodArity
+        && Same(a.ParamTypeNodes, b.ParamTypeNodes) && a.IsVirtual == b.IsVirtual
+        && Same(a.KotlinReturnType, b.KotlinReturnType) && Same(a.NullableGenericRet, b.NullableGenericRet)
+        && Same(a.NullableGenericParams, b.NullableGenericParams) && Same(a.ReturnTypeNode, b.ReturnTypeNode)
+        && a.MetadataToken == b.MetadataToken && a.SourcePropertyName == b.SourcePropertyName
+        && a.AccessorKind == b.AccessorKind && a.AssociatedPropertyName == b.AssociatedPropertyName
+        && a.IsPropertyBridge == b.IsPropertyBridge && a.DeclarationId == b.DeclarationId
+        && a.DeclarationSourceName == b.DeclarationSourceName
+        && a.DeclarationPhysicalOwner == b.DeclarationPhysicalOwner
+        && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
+        && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint;
+
+    static bool Same<T>(T[] a, T[] b) where T : IEquatable<T> =>
+        ReferenceEquals(a, b) || a != null && b != null && a.SequenceEqual(b);
+
+    static bool Same(TypeNode a, TypeNode b) =>
+        ReferenceEquals(a, b) || a != null && b != null
+        && TypeNode.ToJson(a) == TypeNode.ToJson(b);
+
+    static bool Same(TypeNode[] a, TypeNode[] b) =>
+        ReferenceEquals(a, b) || a != null && b != null && a.Length == b.Length
+        && a.Select(TypeNode.ToJson).SequenceEqual(b.Select(TypeNode.ToJson));
 
     // Cross-assembly suspend-call resolution (bundle-6 P3 wave 2a): does the referenced owner declare a suspend
     // member of this name? The cold entry is the naming-convention linkage (`<name>$dotkt_suspend` on the same
@@ -1277,9 +1375,15 @@ sealed partial class ReferenceMetadataIndex
     }
 
     public bool TryCompanionExtensionMember(
-        string owner, string receiverJson, string kind, string sourceName, out string physicalName) =>
-        _companionExtensionMembers.TryGetValue(
-            CompanionExtensionKey(owner, receiverJson, kind, sourceName), out physicalName);
+        string owner, string receiverJson, string kind, string sourceName, out string physicalName)
+    {
+        if (_companionExtensionMembers.TryGetValue(
+                CompanionExtensionKey(owner, receiverJson, kind, sourceName), out physicalName) &&
+            !string.IsNullOrEmpty(physicalName))
+            return true;
+        physicalName = null;
+        return false;
+    }
 
     static string CompanionExtensionKey(string owner, string receiverJson, string kind, string sourceName)
     {
@@ -1386,7 +1490,7 @@ sealed partial class ReferenceMetadataIndex
     // concrete CIR owner/member pair.
     public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
         int methodArity,
-        IReadOnlyList<TypeNode> authoredSignature, int paramCount,
+        IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
         out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature)
     {
         erasedOwner = erasedMember = null;
@@ -1397,11 +1501,14 @@ sealed partial class ReferenceMetadataIndex
             || !TryMembersByBirOwner(sourceOwner.Name, out var semanticMembers)) return false;
 
         var declarations = semanticMembers.Where(m => !m.IsStatic
-            && (accessorKind is "get" or "set"
-                ? !m.IsPropertyBridge && m.SourcePropertyName == sourceMember && m.AccessorKind == accessorKind
-                : m.SourcePropertyName == null && (m.SourceMethodName ?? m.Name) == sourceMember)
+            && (declarationId != null
+                ? m.DeclarationId == declarationId
+                : accessorKind is "get" or "set"
+                    ? !m.IsPropertyBridge && m.SourcePropertyName == sourceMember && m.AccessorKind == accessorKind
+                    : m.SourcePropertyName == null && (m.SourceMethodName ?? m.Name) == sourceMember)
             && m.MethodArity == methodArity && m.ParamCount == paramCount
-            && (authoredSignature == null || m.ParamTypeNodes is { } ps && ps.Length == authoredSignature.Count
+            && (declarationId != null || authoredSignature == null
+                || m.ParamTypeNodes is { } ps && ps.Length == authoredSignature.Count
                 && (ps.SequenceEqual(authoredSignature)
                     || ps.Select((p, i) => ForeignStarDeclarationDescribesCall(
                         p, authoredSignature[i], sourceOwner.Args ?? Array.Empty<TypeNode>())).All(x => x))))
@@ -1414,13 +1521,24 @@ sealed partial class ReferenceMetadataIndex
         var ordinal = orderedSemantic.IndexOf(declarations[0]);
         if (ordinal < 0) return false;
 
-        var physicalDeclarationName = declarations[0].Name;
-        var prefix = "$dotkt_star$" + physicalDeclarationName + "$";
-        var bridgeName = prefix + ordinal;
-        var bridge = members.Where(m => !m.IsStatic && m.ParamCount == paramCount
-            && m.MethodArity == methodArity && m.Name == bridgeName).ToList();
-        var candidates = bridge.Count != 0 ? bridge : members.Where(m => !m.IsStatic && m.ParamCount == paramCount
-            && m.MethodArity == methodArity && m.Name == physicalDeclarationName
+        // #395 may have suffixed the source MethodDef after this existential carrier was synthesized. The carrier's
+        // slot/bridge was authored from the declaration's original CLR method spelling. For a property accessor,
+        // project that spelling forward from the exact property association carried by #397; never parse a physical
+        // get_/set_ name to reconstruct Kotlin semantics. Ordinary methods use the preserved Kotlin declaration name.
+        var physicalDeclarationName = accessorKind is "get" or "set"
+            ? KotlinPropertyAccessors.PhysicalName(sourceMember, accessorKind)
+            : declarations[0].DeclarationSourceName ?? declarations[0].Name;
+        var suffix = declarationId == null ? null
+            : "$dotkt$" + DeclarationIdentityBinding.StableSuffix(declarationId);
+        var bridgeName = "$dotkt_star$" + physicalDeclarationName + "$" + ordinal;
+        var expectedNames = new HashSet<string>(StringComparer.Ordinal) { bridgeName, physicalDeclarationName };
+        if (suffix != null)
+        {
+            expectedNames.Add(bridgeName + suffix);
+            expectedNames.Add(physicalDeclarationName + suffix);
+        }
+        var candidates = members.Where(m => !m.IsStatic && m.ParamCount == paramCount
+            && m.MethodArity == methodArity && expectedNames.Contains(m.Name)
             && (declarations[0].ParamTypeNodes == null || m.ParamTypeNodes is { } physical
                 && physical.Length == declarations[0].ParamTypeNodes.Length
                 && physical.Select((p, i) => DeclarationDescribesCall(declarations[0].ParamTypeNodes[i], p)).All(x => x)))
@@ -3215,9 +3333,24 @@ sealed partial class ReferenceMetadataIndex
                             !HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)
                             ? KotlinSourceMethodName(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
                             : null;
+                        // Declaration identity is also required for a non-public target embedded in a public default
+                        // argument/inline carrier. The consumer must retarget the generated UnsafeAccessor to the
+                        // producer's allocated MethodDef without resolving again from its erased signature.
+                        var declarationIdentity = dotKtAuthored
+                            ? KotlinDeclarationIdentityPayload(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
+                            : null;
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
+                        var collectionFactoryKind = isFileClass && method.IsStatic
+                            ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory")
+                            : null;
+                        var arrayFactoryKind = isFileClass && method.IsStatic
+                            ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrArrayFactory")
+                            : null;
+                        var arrayFactoryElementHint = arrayFactoryKind == null
+                            ? null
+                            : ArrayElemHint(method.ReturnType);
                         // @ClrConv (numeric primitive conversion): the call lowers to a CIL `conv` to the callee's OWN
                         // declared return type (toLong -> the emitted `kotlin.Long` type, ...). Read the marker + capture
                         // the return-type token here (the pre-lowering Kotlin FQN, from THIS reference/metadata dll), so
@@ -3230,7 +3363,12 @@ sealed partial class ReferenceMetadataIndex
                         // const expression. The reference KLIB carries only DECLARES_DEFAULT_VALUE for frontend
                         // resolution, never either payload.
                         if (CallableDefaultsOf(method) is Dictionary<int, string> defaults)
+                        {
                             AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults);
+                            if (declarationIdentity?.Id is string declarationId
+                                && !metadata.KotlinDefaultsByDeclarationId.TryAdd(declarationId, defaults))
+                                throw new InvalidDataException($"duplicate defaults for Kotlin declaration identity '{declarationId}'");
+                        }
                         // The `suspend` bit from the DotKt round-trip [KotlinFunction(flags)] attribute (Suspend = 4,
                         // the flag word ilemit stamps; the dead Assembly.LoadFrom scan read it, this live scan didn't).
                         // Channelled into MemberBinding.Suspend for the coroutine bundle (bundle 6) — no consumer yet.
@@ -3274,7 +3412,13 @@ sealed partial class ReferenceMetadataIndex
                             carriedProperty?.SourceAssociation,
                             sourceMethodName,
                             new JsonArray(method.GetGenericArguments()
-                                .Select(GenericParamDeclaration).ToArray())));
+                                .Select(GenericParamDeclaration).ToArray()),
+                            declarationIdentity?.Id,
+                            declarationIdentity?.Name,
+                            declarationIdentity == null ? null : ExactPhysicalMetadataName(type),
+                            collectionFactoryKind,
+                            arrayFactoryKind,
+                            arrayFactoryElementHint));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -3299,6 +3443,9 @@ sealed partial class ReferenceMetadataIndex
                                 var ikey = indexedOwnerFqn + "|" + method.Name + "|" + method.GetParameters().Length + "|" + method.GetGenericArguments().Length;
                                 if (!metadata.InlinePayloads.TryGetValue(ikey, out var ilst)) metadata.InlinePayloads[ikey] = ilst = new List<string>();
                                 ilst.Add(json);
+                                if (declarationIdentity?.Id is string declarationId
+                                    && !metadata.InlinePayloadsByDeclarationId.TryAdd(declarationId, json))
+                                    throw new InvalidDataException($"duplicate inline declaration identity '{declarationId}'");
                             }
                             catch (Exception ex)
                             {
@@ -3363,9 +3510,9 @@ sealed partial class ReferenceMetadataIndex
                         // factory name agrees on the kind, so a name key is enough.
                         if (isFileClass && method.IsStatic)
                         {
-                            if (AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory") is string cf)
+                            if (collectionFactoryKind is string cf)
                                 metadata.CollectionFactories[method.Name] = cf;
-                            if (AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrArrayFactory") is string af)
+                            if (arrayFactoryKind is string af)
                             {
                                 metadata.ArrayFactories[method.Name] = af;
                                 // Element hint for a concrete primitive factory (`intArrayOf`), which carries NO type
@@ -3375,7 +3522,7 @@ sealed partial class ReferenceMetadataIndex
                                 // not, brings its own wrapper. Captured from the factory's array return type
                                 // (`kotlin.IntArray` -> element `kotlin.Int`); null for the generic `arrayOf<T>`
                                 // (whose element is a type variable — typeArgs[0] covers it there).
-                                if (ArrayElemHint(method.ReturnType) is string ah)
+                                if (arrayFactoryElementHint is string ah)
                                     metadata.ArrayFactoryElemHints[method.Name] = ah;
                             }
                         }
@@ -3451,6 +3598,9 @@ sealed partial class ReferenceMetadataIndex
             KotlinSourceMethodAttr,
             HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(
+            KotlinDeclarationIdentityAttr,
+            HandleKind.MethodDefinition);
+        attrs.ValidateCarrierTargets(
             KotlinStaticCarrierAttr,
             HandleKind.TypeDefinition);
         foreach (var typeHandle in reader.TypeDefinitions)
@@ -3463,6 +3613,8 @@ sealed partial class ReferenceMetadataIndex
                 using (attrs.CarrierDocument(method, KotlinExtensionCoreAttr)) { }
                 using (attrs.CarrierDocument(method, KotlinPropertyAccessorAttr)) { }
                 using (attrs.CarrierDocument(method, KotlinSourceMethodAttr)) { }
+                using (attrs.CarrierDocument(method, KotlinSourceMethodAttr)) { }
+                using (attrs.CarrierDocument(method, KotlinDeclarationIdentityAttr)) { }
             }
             foreach (var field in type.GetFields())
                 using (attrs.CarrierDocument(field, KotlinCompanionExtensionAttr)) { }
@@ -4282,6 +4434,22 @@ sealed partial class ReferenceMetadataIndex
     sealed record CompanionExtensionPayloadInfo(string ReceiverJson, string Name, string Kind);
     sealed record PropertyAccessorPayloadInfo(string Name, string Kind, string Association,
         string SourceAssociation);
+    sealed record DeclarationIdentityPayloadInfo(string Id, string Name);
+
+    static DeclarationIdentityPayloadInfo KotlinDeclarationIdentityPayload(
+        IList<CustomAttributeData> attrs, Assembly declaringAssembly)
+    {
+        var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinDeclarationIdentityAttr) as JsonObject;
+        if (payload == null) return null;
+        if (payload.Count is not (2 or 3) ||
+            payload["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
+            payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name)
+            || payload.Count == 3 && payload["signature"] is not JsonObject
+            || string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
+            throw new InvalidDataException(
+                $"malformed [KotlinDeclarationIdentity] payload: {payload.ToJsonString()}");
+        return new DeclarationIdentityPayloadInfo(id, name);
+    }
 
     static PropertyAccessorPayloadInfo KotlinPropertyAccessorPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly)
@@ -4384,8 +4552,10 @@ sealed partial class ReferenceMetadataIndex
         var key = CompanionExtensionKey(owner, payload.ReceiverJson, payload.Kind, payload.Name);
         if (!metadata.CompanionExtensionMembers.TryAdd(key, physicalName) &&
             metadata.CompanionExtensionMembers[key] != physicalName)
-            throw new InvalidDataException(
-                $"conflicting companion-extension physical members for '{owner}.{payload.Name}'");
+            // The source-name index is intentionally incomplete: Kotlin overloads may erase to distinct physical
+            // names under #395. Mark that structural key ambiguous; frontend-selected declaration identity remains
+            // the authoritative cross-module binding and name-only consumers fail closed.
+            metadata.CompanionExtensionMembers[key] = "";
     }
 
     static JsonObject TrustedStaticCarrierPayload(Type carrierType, Assembly declaringAssembly)
@@ -5018,6 +5188,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> InnerSemanticOwner = new(StringComparer.Ordinal);
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the candidate decoded carrier JSONs (one per overload).
     public readonly Dictionary<string, List<string>> InlinePayloads = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, string> InlinePayloadsByDeclarationId = new(StringComparer.Ordinal);
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);
@@ -5053,6 +5224,7 @@ sealed class ReferenceDotKtMetadata
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
     // is coerced exactly like an explicit arg). Rides the ref.dll only (param attrs stripped in the rt build).
     public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaults = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     // Keys of [KotlinDefaults] that TWO declarations of the same owner+name+arity carry with DIFFERENT defaults — the key
     // cannot tell them apart, so the splice must refuse instead of filling whichever was enumerated last. Populated for
     // both METHODS and CONSTRUCTORS (same-arity overloads are common; #235).
@@ -5088,7 +5260,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);

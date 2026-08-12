@@ -102,12 +102,9 @@ sealed partial class Emitter
         _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m); _curTi = ti;   // #112 P2: decl source pos
         var mname = PhysicalMethodName(m);
         _ctxMethod = mname;
-        // Same-kind erasure collisions retain ilemit's existing declaration-order fallback pending #395. Walk the
-        // same declaration order as DeclareMethod so each body reaches the MethodBuilder created for that occurrence.
-        var dupKey = SigKey(mname, m);
-        var dupCount = _bodyDupSeen.TryGetValue((ti, dupKey), out var seen) ? seen : 0;
-        _bodyDupSeen[(ti, dupKey)] = dupCount + 1;
-        if (dupCount > 0) mname = mname + "$dup" + (dupCount + 1);
+        // Pick THIS def's own MethodBuilder by signature (overloads share `mname`; the name-keyed map holds only the
+        // last, so emitting by name alone routes a body into the wrong overload — the WinUI `text(String)` /
+        // `text(()->String)` bug).
         if (!ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var mb))
             throw new InvalidOperationException($"ilemit: method body {ti.TB.FullName}.{mname} has no exact declared signature match");
         // Abstract-slot body invariant (#92): a MethodBuilder DECLARED Abstract has NO IL body — GetILGenerator would

@@ -176,7 +176,7 @@ static class ExistentialReceiverBinding
             if (semanticOwner.Name != sourceOwner)
                 semanticOwner = new TypeNode.Fqn(sourceOwner, semanticOwner.Args);
             if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
-                    ga, authoredSignature, pc,
+                    ga, authoredSignature, pc, Str(call[DeclarationIdentityBinding.Key]),
                     out var erasedOwner, out var erasedMethod, out var erasedSignature)
                 && erasedOwner == receiverType.Name)
             {

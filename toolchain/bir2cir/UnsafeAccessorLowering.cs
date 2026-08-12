@@ -245,12 +245,15 @@ static class UnsafeAccessorLowering
             callReturnType = TypeJson.Write(openReturn);
         }
         callReturnType ??= declaredAccessorReturn.DeepClone();
+        var targetDeclarationId = Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]);
         var key = $"{caller.Name}|method|{ownerType.Name}|{targetName}|{targetStatic}|{methodArity}|" +
-                  string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredAccessorReturn);
+                  string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredAccessorReturn) +
+                  "|declaration:" + targetDeclarationId;
         var definition = EnsureAccessor(caller, accessors, key, targetName, targetStatic ? 2 : 1,
             ownerNode, PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
             methodTypeParams ?? target?["typeParams"] as JsonArray,
-            declaredAccessorReturn, signature, includeTarget: true);
+            declaredAccessorReturn, signature, includeTarget: true,
+            targetDeclarationId: targetDeclarationId);
 
         var args = new JsonArray();
         if (targetStatic)
@@ -452,7 +455,8 @@ static class UnsafeAccessorLowering
         var definition = EnsureAccessor(caller, accessors, key, targetName, 1, access["ownerType"],
             PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
             methodTypeParams ?? target?["typeParams"] as JsonArray, declaredReturnType,
-            signature, includeTarget: true);
+            signature, includeTarget: true,
+            targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]));
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
 
         var replacement = new JsonObject
@@ -534,7 +538,7 @@ static class UnsafeAccessorLowering
     static AccessorDefinition EnsureAccessor(Host caller,
         Dictionary<string, AccessorDefinition> accessors, string key, string targetName, int kind,
         JsonNode ownerNode, JsonArray ownerTypeParams, JsonArray methodTypeParams, JsonNode returnType,
-        JsonArray signature, bool includeTarget)
+        JsonArray signature, bool includeTarget, string targetDeclarationId = null)
     {
         if (accessors.TryGetValue(key, out var existing)) return existing;
         if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner)
@@ -556,6 +560,7 @@ static class UnsafeAccessorLowering
         if (ownerCount == 0)
         {
             var accessor = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
+            if (targetDeclarationId != null) accessor["unsafeTargetDeclarationId"] = targetDeclarationId;
             if (methodParams != null) accessor["typeParams"] = methodParams.DeepClone();
             caller.Methods.Add(accessor);
             var direct = new AccessorDefinition(accessorName, null,
@@ -573,6 +578,7 @@ static class UnsafeAccessorLowering
         var holderName = "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
         var holderTypeParams = RenamedTypeParams(ownerTypeParams, "__owner");
         var externMethod = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
+        if (targetDeclarationId != null) externMethod["unsafeTargetDeclarationId"] = targetDeclarationId;
         if (methodParams != null) externMethod["typeParams"] = methodParams.DeepClone();
         var entryName = accessorName + "$invoke";
         var wrapper = WrapperDeclaration(entryName, accessorName, holderName, holderTypeParams.Count,

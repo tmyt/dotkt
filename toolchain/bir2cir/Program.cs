@@ -113,6 +113,10 @@ sealed class Pipeline
     List<CirFile> TransformFiles(IReadOnlyList<BirFile> birFiles, ReferenceMetadataIndex refs)
     {
         var birRoots = birFiles.Select(b => b.Root).ToList();
+        // #395: snapshot frontend declaration identity before ANY Kotlin-to-CLR representation pass can rename,
+        // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
+        var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
+        var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
@@ -639,6 +643,9 @@ sealed class Pipeline
             CharSeqStringLowering.CharSeqRetLambdas charSeqRetLambdas = null;
             if (!_options.RefBuild && attributeTopLevelOwner && !hasUserCharSeqImpl)
                 hoisted = CharSeqStringLowering.Apply(hoisted, localTopLevelFns, out charSeqRetLambdas);
+            // #395: bind an externally selected FIR declaration before MemberCallSubstitution can consult the erased
+            // receiver/signature overload set. Local identities remain untouched for the module-wide allocator below.
+            DeclarationIdentityBinding.BindReferenced(hoisted, refs, localDeclarationIds, deferUnknown: true);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
                 localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations);
             // Cross-module half of UncheckedGenericCastReturnErasure.  MemberCallSubstitution has now attributed a
@@ -755,15 +762,13 @@ sealed class Pipeline
         // kotlin.* type tokens flow through BirTypeLowering). Declaration is UNCONDITIONAL: a non-segmentable v1 shape
         // gets a call-time-throw cold entry, not a drop — no `suspend:true` survives to ilemit in app builds.
         //
-        // GATE: runs in BOTH the app build AND the rt-stdlib build — the real SequenceBuilder cold coroutine code is
-        // stdlib code that must be cold-transformed in the rt build. Skipped ONLY in the REFERENCE build (metadata-
-        // only; its bodies are body-squashed — so the ref.dll carries the [KotlinFunction(Suspend)] flag but no cold
-        // entry, which is what R1b's cross-assembly guard consults). The rt-stdlib's CLR-interop suspend fns
-        // Reference-KLIB await bridges are declaration-only call-site facts and never enter this build's method set.
-        IReadOnlyDictionary<string, DotKt.Bir.TypeNode> suspendCalleeRet = null;
-        if (!_options.RefBuild)
-            suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-                localTypeFqns, attributeTopLevelOwner, localExistentialOwners);
+        // Runs in app, runtime-stdlib, AND reference builds. Reference emission replaces bodies with throw stubs, but
+        // must retain every declaration signature and trusted identity carrier, including the independently allocated
+        // `id|cold` entry. Otherwise a consuming module can preserve the frontend-selected suspend overload only until
+        // cold lowering, then has no authoritative physical binding and falls back to the erased overload set. The
+        // runtime and reference builds therefore execute the same declaration transform and physical allocation.
+        var suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
+            localTypeFqns, attributeTopLevelOwner, localExistentialOwners);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
@@ -935,6 +940,12 @@ sealed class Pipeline
         // WHOLE compilation at once: a Kotlin interface declared in one file may be the only path from a class in
         // another to the .NET declaration whose slot it cannot fill.
         var loweredRoots = new List<(JsonNode Root, string File)>();
+        // Reference assemblies retain Kotlin type vocabulary, but their MethodDef names must match the runtime twin.
+        // Derive the collision set from an isolated runtime-physical projection in every build mode.
+        var declarationCollisionProjection = new List<JsonNode>();
+        var finalLocalDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(staged.Select(s => s.Root));
+        var declarationCollisionAliases = DeclarationIdentityBinding.CollisionAliases(
+            staged.Select(s => s.Root), refs.Aliases);
         foreach (var (substituted, outputName) in staged)
         {
             // §11 CONTINUATION-ERASURE (bundle-6 bug #5 ROOT): make the coroutine ABI monomorphic on
@@ -962,6 +973,9 @@ sealed class Pipeline
             // The selected declaration then follows the ordinary nullable/alias/type transform into physical CIR.
             // App-only: stdlib metadata/runtime builds own their kotlin.* facades in this assembly.
             ClrMemberResolution.EnsurePlainCallDescriptors(substituted);
+            // Fail closed if a late materialization introduced an identity-bearing external call after the early
+            // binding boundary; the same authoritative ID lookup applies and no erased overload search is permitted.
+            DeclarationIdentityBinding.BindReferenced(substituted, refs, finalLocalDeclarationIds);
             if (attributeTopLevelOwner) ClrMemberResolution.ResolveReferencedStaticCalls(substituted, refs);
             // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
             // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
@@ -1003,6 +1017,10 @@ sealed class Pipeline
             // is a pass that changed a node's result type without carrying `sty` with it.
             CheckStySanity(outputName, substituted);
             KotlinPropertyAccessors.AllocateAll(substituted, refs, localPropertyAccessors);
+            var collisionProjection = substituted.DeepClone();
+            declarationCollisionProjection.Add(BirTypeLowering.Lower(
+                collisionProjection, refBuild: false, declarationCollisionAliases, isValueFqn, outputName,
+                refs.PhysicalTypeNames, emittedLocalTypes));
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
                 refs.PhysicalTypeNames, emittedLocalTypes);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
@@ -1013,6 +1031,16 @@ sealed class Pipeline
             NullableGenericOverloadCollision.Check(lowered, outputName);
             loweredRoots.Add((lowered, outputName));
         }
+
+        // #395: Kotlin declarations that were distinct before type lowering may now occupy one CLI signature.
+        // Allocate their MethodDef names from the common runtime-physical projection and rewrite all local uses from
+        // the frontend-selected declaration identity before any module-wide member binding consults declarations.
+        var declarationPhysicalNames = DeclarationIdentityBinding.AllocatePhysicalNames(
+            declarationCollisionProjection, out var declarationSemanticCarrierIds);
+        DeclarationIdentityBinding.ApplyLocal(
+            loweredRoots.Select(s => s.Root), declarationPhysicalNames,
+            declarationSemanticCarrierIds, declarationSemanticSignatures, refs);
+        KotlinPropertyAccessors.FinalizePhysicalProperties(loweredRoots.Select(s => s.Root));
 
         // SAME-UNIT CONSTRUCTOR BINDING: resolve `new`, `this(...)`, and local `super(...)` to declaration indices
         // while every source file is visible together. This deliberately follows physical type lowering and its

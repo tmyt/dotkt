@@ -1,0 +1,94 @@
+{
+  "fileClass": "PropertyBridgeErasureCollisionKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "ReadMap",
+      "kind": "interface",
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "map",
+          "propertyName": "map",
+          "propertyAccessor": "get",
+          "propertyAssociation": "p0",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": true,
+          "params": [],
+          "ret": { "t": "fqn", "name": "kotlin.collections.Map", "args": [
+            { "t": "fqn", "name": "kotlin.Int" },
+            { "t": "fqn", "name": "kotlin.Int" }
+          ] },
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [
+        {
+          "name": "map",
+          "type": { "t": "fqn", "name": "kotlin.collections.Map", "args": [
+            { "t": "fqn", "name": "kotlin.Int" },
+            { "t": "fqn", "name": "kotlin.Int" }
+          ] },
+          "kotlinAccessors": ["get"],
+          "propertyAssociation": "p0"
+        }
+      ],
+      "attrs": []
+    },
+    {
+      "name": "MutableMapImpl",
+      "kind": "class",
+      "base": null,
+      "interfaces": [{ "t": "fqn", "name": "ReadMap" }],
+      "fields": [],
+      "ctors": [{ "params": [], "baseArgs": null, "thisArgs": null, "vis": "public", "body": [] }],
+      "methods": [
+        {
+          "name": "map",
+          "propertyName": "map",
+          "propertyAccessor": "get",
+          "propertyAssociation": "p1",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": false,
+          "vis": "public",
+          "params": [],
+          "ret": { "t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
+            { "t": "fqn", "name": "kotlin.Int" },
+            { "t": "fqn", "name": "kotlin.Int" }
+          ] },
+          "overrides": [
+            { "owner": { "t": "fqn", "name": "ReadMap" }, "member": "map", "kind": "getter", "arity": 0 }
+          ],
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [
+        {
+          "name": "map",
+          "type": { "t": "fqn", "name": "kotlin.collections.MutableMap", "args": [
+            { "t": "fqn", "name": "kotlin.Int" },
+            { "t": "fqn", "name": "kotlin.Int" }
+          ] },
+          "kotlinAccessors": ["get"],
+          "propertyAssociation": "p1",
+          "overrides": [
+            { "owner": { "t": "fqn", "name": "ReadMap" }, "member": "map", "kind": "getter", "arity": 0 }
+          ]
+        }
+      ],
+      "attrs": []
+    }
+  ]
+}
