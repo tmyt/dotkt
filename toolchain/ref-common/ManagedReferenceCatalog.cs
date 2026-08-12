@@ -216,6 +216,23 @@ sealed class ManagedReferenceCatalog
         return new ManagedReferenceCatalog(entries, refStdlibAliasesRuntime);
     }
 
+    /// <summary>
+    /// The PHYSICAL assembly identity an emitted reference to a member of <paramref name="definingSimpleName"/>
+    /// must be scoped to (#370 memberRef.assembly).
+    /// <para>
+    /// A ref-reader resolves members against the files IT was given, but what the emitted assembly must
+    /// reference is what the program will LOAD. Those are the same identity everywhere except at the one
+    /// documented ref/runtime split above: a ref-reader holds <c>DotKt.Private.Stdlib</c> while the shipped
+    /// assembly is <c>DotKt.Stdlib</c>. This is the exact inverse of the alias the constructor installs for
+    /// the reading direction — the SAME single stdlib-specific mapping, not a fuzzy name match — so the
+    /// physical identity is derived here rather than re-decided by each caller.
+    /// </para>
+    /// </summary>
+    public static string PhysicalAssemblyName(string definingSimpleName) =>
+        string.Equals(definingSimpleName, RefStdlibName, StringComparison.OrdinalIgnoreCase)
+            ? RuntimeStdlibName
+            : definingSimpleName;
+
     // Given several physical files that all share ONE full identity (the lib + runtimes/<rid>/lib builds of a
     // RID-impl package), pick the one the TARGET runtime would actually load (#51).  Priority = the TARGET RID's
     // ordered fallback chain (the portable RID graph's transitive #import closure, most specific first), then the

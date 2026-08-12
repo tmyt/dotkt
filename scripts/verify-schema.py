@@ -30,6 +30,19 @@ MEMBER_REF_KEYS = {"memberRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
+# #370 co-presence: the CIR node kinds whose external member is ALREADY authored as a scalar `memberRef`.
+# While the transitional descriptors still exist, a node of one of these kinds carrying the old identity but
+# not the new one is a writer this migration missed — exactly the drift a corpus-wide gate exists to catch,
+# since the old descriptor keeps working and nothing else would notice. The set GROWS one authoring step at a
+# time; a kind absent from it is simply not migrated yet, and saying which is which here is what keeps the
+# claim honest.
+MEMBER_REF_AUTHORED_KINDS = {
+    "clrStatic", "clrInstance", "newClr", "new",
+    "clrPropGet", "clrPropSet", "clrEventAdd", "clrEventRemove",
+    "field", "setField", "setFieldExpr",
+    "newBoundClrDelegate", "newClrStaticDelegate",
+}
+
 # Keys that legitimately hold a bare STRING scalar: format vocabulary (k/t tags, enums),
 # object-language NAME payloads, and the documented owner/member/attribute reference
 # strings (spec §2.2.1 — a type IDENTITY used as a resolution key, not a document value-type
@@ -594,6 +607,15 @@ class V:
                     self.err(f, path, "newClrStaticDelegate.memberSig must be a resolved Type-node array in CIR")
                 if not isinstance(o.get("memberOwner"), dict) or "t" not in o["memberOwner"]:
                     self.err(f, path, "newClrStaticDelegate.memberOwner must be a resolved Type node in CIR")
+            if f.endswith(".cir.json") and o.get("k") in MEMBER_REF_AUTHORED_KINDS and "memberRef" not in o:
+                # The transitional descriptor and the scalar reference must travel TOGETHER for a migrated kind:
+                # each one alone resolves to a member, so a node that lost the new half would keep working while
+                # silently reverting the guarantee. Both spellings of the old identity count — `memberSig` for a
+                # signature-carrying node, `member` for the accessor/field discriminator on a property or field.
+                if "memberSig" in o:
+                    self.err(f, path, f"{o['k']} carries the transitional memberSig without the resolved memberRef beside it")
+                elif o.get("member") in ("accessor", "field"):
+                    self.err(f, path, f"{o['k']} carries member={o['member']!r} without the resolved memberRef beside it")
             if isinstance(o.get("mods"), dict):
                 for mk in o["mods"]:
                     if mk not in MOD_KEYS:

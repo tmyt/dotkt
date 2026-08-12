@@ -457,6 +457,7 @@ static partial class ClrMemberResolution
         CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerFqn.Args);
         node["memberSig"] = MemberSig(win.GetParameters());
         node["memberOwner"] = DeclaringTypeDescriptor(win);
+        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerFqn.Args);
         // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
         // chokepoint can tell "no return" from "nobody stamped one".
         StampMemberRet(node, typeof(void));
@@ -552,6 +553,7 @@ static partial class ClrMemberResolution
         }
         node["memberSig"] = MemberSig(win.GetParameters());
         node["memberOwner"] = DeclaringTypeDescriptor(win);
+        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
         if (instance)
@@ -665,6 +667,7 @@ static partial class ClrMemberResolution
             $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberSig"] = MemberSig(win.GetParameters());
         node["memberOwner"] = DeclaringTypeDescriptor(win);
+        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
     }
@@ -690,6 +693,7 @@ static partial class ClrMemberResolution
             $"newClrStaticDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberSig"] = MemberSig(win.GetParameters());
         node["memberOwner"] = DeclaringTypeDescriptor(win);
+        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
     }

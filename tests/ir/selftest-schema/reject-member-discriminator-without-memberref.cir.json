@@ -1,0 +1,27 @@
+{
+  "methods": [
+    {
+      "name": "probe",
+      "params": [],
+      "ret": {
+        "t": "fqn",
+        "name": "void"
+      },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrPropGet",
+            "type": {
+              "t": "fqn",
+              "name": "System.Math"
+            },
+            "member": "field",
+            "name": "PI",
+            "args": []
+          }
+        }
+      ]
+    }
+  ]
+}
