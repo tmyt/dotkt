@@ -2091,11 +2091,13 @@ sealed partial class ReferenceMetadataIndex
             : candidates.Where(c => c.ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
                 .ToList();
         var source = compatible.Count > 0 ? compatible : candidates;
-        // Declarations that render to the SAME signature are the same member to every reader of one — the
-        // duplicate expect/actual rows a merged stdlib produces. Collapsing them is not a choice between
-        // members; keeping more than one distinct shape would be, which is why that still refuses.
+        // Declarations that are the SAME MEMBER collapse to one — the duplicate expect/actual rows a merged
+        // stdlib produces. Sameness is judged on the physical metadata identity, not on the rendered parameter
+        // vector: that vector strips generic arity, flattens `+` nesting, drops array rank and knows nothing of
+        // custom modifiers, so grouping by it would merge declarations that ARE different members and then
+        // hand one of them over as an exact identity. Two distinct members still refuse, which is the point.
         var shapes = source
-            .GroupBy(c => string.Join(",", c.ps.Select(TypeNode.ToJson)), StringComparer.Ordinal)
+            .GroupBy(c => c.method.DeclaringType?.FullName + "|" + MetadataSignatureKey(c.method), StringComparer.Ordinal)
             .Select(g => g.First())
             .ToList();
         if (shapes.Count != 1)
@@ -2104,6 +2106,47 @@ sealed partial class ReferenceMetadataIndex
         declaration = shapes[0].method;
         declaringOwner = owner;
         return true;
+    }
+
+    // A member's physical signature as metadata states it: the parameter and return types by their own names,
+    // with by-ref, pointer, array rank and custom modifiers intact. Used to decide whether two declarations are
+    // one member; the document's rendered vector cannot answer that because it is lossy in exactly those places.
+    static string MetadataSignatureKey(MethodInfo method)
+    {
+        var sb = new StringBuilder();
+        sb.Append(method.Name).Append('`').Append(method.GetGenericArguments().Length).Append('(');
+        foreach (var p in method.GetParameters())
+        {
+            AppendMetadataType(sb, p.ParameterType);
+            foreach (var m in p.GetRequiredCustomModifiers()) sb.Append(" modreq(").Append(m.FullName).Append(')');
+            foreach (var m in p.GetOptionalCustomModifiers()) sb.Append(" modopt(").Append(m.FullName).Append(')');
+            sb.Append(',');
+        }
+        sb.Append("):");
+        AppendMetadataType(sb, method.ReturnType);
+        return sb.ToString();
+    }
+
+    static void AppendMetadataType(StringBuilder sb, Type t)
+    {
+        if (t == null) { sb.Append("<null>"); return; }
+        if (t.IsByRef) { AppendMetadataType(sb, t.GetElementType()); sb.Append('&'); return; }
+        if (t.IsPointer) { AppendMetadataType(sb, t.GetElementType()); sb.Append('*'); return; }
+        if (t.IsArray)
+        {
+            AppendMetadataType(sb, t.GetElementType());
+            int rank; try { rank = t.GetArrayRank(); } catch { rank = 1; }
+            sb.Append('[').Append(rank).Append(']');
+            return;
+        }
+        if (t.IsGenericParameter) { sb.Append(t.DeclaringMethod != null ? "!!" : "!").Append(t.GenericParameterPosition); return; }
+        sb.Append(t.FullName ?? t.Name);
+        if (t.IsGenericType && !t.IsGenericTypeDefinition)
+        {
+            sb.Append('<');
+            foreach (var a in t.GetGenericArguments()) { AppendMetadataType(sb, a); sb.Append(','); }
+            sb.Append('>');
+        }
     }
 
     // BIR's resolved Kotlin descriptor can retain semantic nullability that the metadata-only ref declaration has

@@ -429,6 +429,65 @@ class V:
             if o.get("returnType") != {"t": "fqn", "name": "void"}:
                 self.err(f, path, "a ctor memberRef must return void")
 
+    def check_local_over_reference(self, files):
+        """A member reference must never name a type THIS compilation emits (#15 local-over-ref, #370).
+
+        A reference carries an assembly, so naming a locally-emitted type points the call at some other
+        assembly's copy of it — the precedence bug #15 exists to prevent, and the shape a regression fixture in
+        this repo was written to catch. It stayed invisible while the mis-binding produced only a signature;
+        once it produces a named member, an emitter that resolves the reference exactly emits the wrong call.
+
+        This is a WHOLE-ASSEMBLY question, so it runs over the file set rather than per document: a type
+        declared in one file is local to a call in any other file of the same output directory.
+        """
+        from collections import defaultdict
+        by_dir = defaultdict(list)
+        for f in files:
+            if f.endswith(".cir.json"):
+                by_dir[os.path.dirname(f)].append(f)
+        for directory, group in by_dir.items():
+            docs = []
+            local = set()
+            for f in group:
+                try:
+                    d = json.load(open(f))
+                except Exception:
+                    continue
+                docs.append((f, d))
+                # A file class is emitted by this compilation as surely as a declared type; it simply has no
+                # row in `types`, which is exactly how it went missing from the producer's own local set.
+                if isinstance(d.get("fileClass"), str):
+                    local.add(d["fileClass"])
+                self.collect_declared(d.get("types"), local)
+            for f, d in docs:
+                self.walk_local_refs(f, d, "", local)
+
+    def collect_declared(self, node, into):
+        if isinstance(node, dict):
+            if isinstance(node.get("name"), str) and "kind" in node:
+                into.add(node["name"])
+            for v in node.values():
+                self.collect_declared(v, into)
+        elif isinstance(node, list):
+            for x in node:
+                self.collect_declared(x, into)
+
+    def walk_local_refs(self, f, o, path, local):
+        if isinstance(o, dict):
+            for key in MEMBER_REF_KEYS & set(o):
+                ref = o[key]
+                if isinstance(ref, dict) and isinstance(ref.get("declaringType"), dict):
+                    name = ref["declaringType"].get("name")
+                    if name in local:
+                        self.err(f, path + "/" + key,
+                                 f"{key} names `{name}`, which this compilation emits — a reference scoped to "
+                                 f"`{ref.get('assembly')}` would call another assembly's copy of it")
+            for key, val in o.items():
+                self.walk_local_refs(f, val, path + "/" + key, local)
+        elif isinstance(o, list):
+            for i, x in enumerate(o):
+                self.walk_local_refs(f, x, path + f"[{i}]", local)
+
     def plan_scope(self, f, o, path, bound):
         """§2.7 NESTING RULE: every `bindRef` resolves OUTWARD to an enclosing plan's binding.
 
@@ -761,6 +820,7 @@ def main(argv):
         v.walk(f, d, "")
         if f.endswith(".bir.json"):
             v.plan_scope(f, d, "", frozenset())
+    v.check_local_over_reference(files)
     # report
     if v.viol:
         # group by message-prefix for a readable summary; cap examples per kind

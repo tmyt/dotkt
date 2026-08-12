@@ -170,10 +170,20 @@ sealed class Pipeline
         // (app build -> clr: base + clrOverride linkage).
         var localTypeFqns = new HashSet<string>(StringComparer.Ordinal);
         foreach (var b in birFiles)
-            if (b.Root is JsonObject ro && ro["types"] is JsonArray ts)
+        {
+            if (b.Root is not JsonObject ro) continue;
+            if (ro["types"] is JsonArray ts)
                 foreach (var t in ts)
                     if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
                         localTypeFqns.Add(tn);
+            // A FILE CLASS is a type this compilation emits just as much as a declared one — it simply has no
+            // row in `types`, because ilemit builds it from the file's top-level members. Leaving it out let a
+            // reference assembly declaring the same file class win over the source in front of us, which is
+            // precisely the precedence #15 exists to fix; it stayed invisible only while the mis-binding
+            // produced a signature rather than a named member.
+            if ((ro["fileClass"] as JsonValue)?.GetValue<string>() is string fileClass && fileClass.Length > 0)
+                localTypeFqns.Add(fileClass);
+        }
         // LOCAL-OVER-REF (#15): tell the refs index which FQNs are this-assembly-emitted, so ResolveNetType refuses to
         // bind a locally-declared type to a referenced dll of the same identity — `new`/callInstance/callStatic/field
         // on a source-compiled `demo.Plain` route to the emitted type, not `newClr`/`clr*` against the ref copy.
