@@ -1,0 +1,10 @@
+<Project Sdk="DotKt.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../property-slot-producer/RoundtripPropertySlot.csproj" />
+  </ItemGroup>
+</Project>

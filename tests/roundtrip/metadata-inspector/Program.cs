@@ -81,7 +81,7 @@ static void VerifyCovariantPropertyBridge(string producerPath)
         var owner = md.GetTypeDefinition(ownerHandle);
         var bridge = owner.GetMethods().Single(handle =>
             md.GetString(md.GetMethodDefinition(handle).Name)
-                .StartsWith("dotkt$covar$get_" + propertyName + "$", StringComparison.Ordinal));
+                .StartsWith("dotkt$covar$prop_get_" + propertyName + "_$", StringComparison.Ordinal));
         var associated = owner.GetProperties().Where(handle =>
                 md.GetString(md.GetPropertyDefinition(handle).Name) == propertyName)
             .Select(handle => md.GetPropertyDefinition(handle).GetAccessors().Getter)
@@ -266,18 +266,18 @@ static void VerifyOwnershipDll(string path)
 
     var valueGetter = ownerDef.GetMethods()
         .Select(h => md.GetMethodDefinition(h))
-        .Single(x => md.GetString(x.Name) == "get_value");
+        .Single(x => md.GetString(x.Name) == "prop_get<value>");
     Require((valueGetter.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
-        "nested private access still widened Owner.get_value");
+        "nested private access still widened Owner.prop_get<value>");
 
     var privateDefaultOwner = md.TypeDefinitions.Single(h =>
         StripArities(DefinitionName(md, h)) == "roundtrip.nc.PrivateDefaultOwner");
     var privateDefaultMethods = md.GetTypeDefinition(privateDefaultOwner).GetMethods()
         .Select(h => md.GetMethodDefinition(h))
         .ToArray();
-    var secretGetter = privateDefaultMethods.Single(method => md.GetString(method.Name) == "get_secret");
+    var secretGetter = privateDefaultMethods.Single(method => md.GetString(method.Name) == "prop_get<secret>");
     Require((secretGetter.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Private,
-        "default carrier widened PrivateDefaultOwner.get_secret");
+        "default carrier widened PrivateDefaultOwner.prop_get<secret>");
     Require(!privateDefaultMethods.Any(method =>
             md.GetString(method.Name).StartsWith("dotkt$access$", StringComparison.Ordinal)),
         "producer still exposes a compatibility access bridge for a private default");
@@ -339,8 +339,8 @@ static void VerifyUnsafeAccessorDll(string path)
         "consumer access to a referenced @Volatile field omitted the CIR-carried volatile. prefix");
 
     var secretAccessors = accessors.Where(pair =>
-        md.GetString(pair.Definition.Name).Contains("$get_secret", StringComparison.Ordinal)).ToArray();
-    Require(secretAccessors.Length == 6, "unexpected get_secret UnsafeAccessor set");
+        md.GetString(pair.Definition.Name).Contains("$prop_get_secret_", StringComparison.Ordinal)).ToArray();
+    Require(secretAccessors.Length == 6, "unexpected prop_get<secret> UnsafeAccessor set");
     Require(secretAccessors.Count(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Count == 1) == 5,
         "generic owner slots were not preserved on generic UnsafeAccessor holder types");
     Require(secretAccessors.Any(pair => md.GetTypeDefinition(pair.TypeHandle).GetGenericParameters().Any(handle =>
@@ -509,6 +509,16 @@ static void VerifyDll(string path)
             contextStateRows.Select(row => row.Getter).Distinct().Count() == 2 &&
             contextStateRows.Count(row => !row.Setter.IsNil) == 1,
         "same-name context Property rows lost their exact accessor MethodSemantics association");
+
+    var ownerTypeVariableProperties = md.TypeDefinitions.Single(h =>
+        DefinitionName(md, h) == "roundtrip.ctxparams.OwnerTypeVariableProperties`2");
+    var ownerSlotGetters = md.GetTypeDefinition(ownerTypeVariableProperties).GetProperties()
+        .Where(handle => md.GetString(md.GetPropertyDefinition(handle).Name) == "ownerSlot")
+        .Select(handle => md.GetPropertyDefinition(handle).GetAccessors().Getter)
+        .ToArray();
+    Require(ownerSlotGetters.Length == 2 && ownerSlotGetters.All(handle => !handle.IsNil)
+            && ownerSlotGetters.Distinct().Count() == 2,
+        "owner-type-variable Property rows lost their exact !0/!1 accessor MethodSemantics association");
     // File facades are CLR TypeDefs too. A field-backed top-level property with one custom accessor must move its raw
     // storage away from the Property metadata name, just like the same declaration nested in a class.
     var memberExtensionFacade = md.TypeDefinitions.Single(h =>
@@ -647,7 +657,7 @@ static void VerifyDll(string path)
     var protectedCarrier = carriers.Single(c => c.Owner == Ns + "ProtectedCompanionHost");
     var protectedMethods = md.GetTypeDefinition(protectedCarrier.Handle).GetMethods()
         .Select(md.GetMethodDefinition)
-        .Where(m => md.GetString(m.Name) is "marker" or "get_token")
+        .Where(m => md.GetString(m.Name) is "marker" or "prop_get<token>")
         .ToArray();
     Require(protectedMethods.Length == 2 && protectedMethods.All(m =>
             (m.Attributes & MethodAttributes.MemberAccessMask) == MethodAttributes.Public),
@@ -695,8 +705,8 @@ static void VerifyKlib(string path)
         "roundtrip.memberextensionsurface.CovariantPropertyImplementation");
     Require(covariant.Property.Count(p => String(memberSurface, p.Name) == "covariantValue") == 1,
         "covariant property bridge projected a duplicate property");
-    Require(!covariant.Function.Any(f => String(memberSurface, f.Name) == "get_covariantValue"),
-        "covariant property MethodImpl bridge projected as an explicit get_covariantValue function; functions: " +
+    Require(!covariant.Function.Any(f => String(memberSurface, f.Name) == "prop_get<covariantValue>"),
+        "covariant property MethodImpl bridge projected as an explicit prop_get<covariantValue> function; functions: " +
         string.Join(", ", covariant.Function.Select(f => String(memberSurface, f.Name))));
     var covariantExtension = Class(memberSurface,
         "roundtrip.memberextensionsurface.CovariantExtensionPropertyImplementation");
@@ -715,8 +725,8 @@ static void VerifyKlib(string path)
             mixedTopLevel.Count(p => p.ReceiverType is not null) == 1,
         "same-name top-level field and extension property did not round-trip as two distinct declarations");
     Require(!memberSurface.Package.Function.Any(f =>
-            String(memberSurface, f.Name) is "get_topLevelCustomGetter" or "set_topLevelCustomSetter" or
-                "get_topLevelComputed"),
+            String(memberSurface, f.Name) is "prop_get<topLevelCustomGetter>" or "prop_set<topLevelCustomSetter>" or
+                "prop_get<topLevelComputed>"),
         "receiverless property accessor leaked as a package function");
     var partialAccessorHolder = Class(memberSurface,
         "roundtrip.memberextensionsurface.PartialAccessorHolder");
@@ -740,8 +750,8 @@ static void VerifyKlib(string path)
                 String(extensionSurface, p.Name) == propertyName) == 1,
             $"method-generic extension property '{propertyName}' did not round-trip exactly once");
     Require(!extensionSurface.Package.Function.Any(f =>
-            String(extensionSurface, f.Name) is "get_auditLast" or "get_auditSingleton" or
-                "get_auditValue" or "set_auditValue"),
+            String(extensionSurface, f.Name) is "prop_get<auditLast>" or "prop_get<auditSingleton>" or
+                "prop_get<auditValue>" or "prop_set<auditValue>"),
         "method-generic property accessor carrier leaked an accessor function into KLIB");
 
     var staticsEntry = archive.Entries.Single(e =>

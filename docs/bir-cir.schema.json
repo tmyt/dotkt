@@ -9,7 +9,7 @@
   "properties": {
     "types":    { "type": "array", "items": { "$ref": "#/$defs/typeDecl" } },
     "topLevel": { "type": "array", "items": { "$ref": "#/$defs/decl" }, "description": "top-level funs/props (the file-class members)" },
-    "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" }, "description": "top-level accessor-routed properties, explicitly linked to their file-class get_/set_ methods" },
+    "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" }, "description": "top-level accessor-routed properties, explicitly linked to their file-class accessor methods" },
     "refTypes": { "type": "array", "items": { "type": "object", "properties": { "name": { "type": "string" }, "elem": { "$ref": "#/$defs/type" }, "declaringLocalFunctionId": { "type": "string" } }, "required": ["name", "elem"] }, "$comment": "#52 BIR-ONLY transient: the heap-ref-cell registry ({name, element type, optional lexical local-function declaration owner}). bir2cir's SharedSyntheticSynthesis ASSEMBLES each `dotkt$<scope>$Ref$<elem>{ var v }` cell class from it, then DROPS the key — absent in CIR." }
   },
   "additionalProperties": true,
@@ -216,6 +216,45 @@
         "capturedTypeParams": { "type": "array", "items": { "oneOf": [{ "type": "string" }, { "$ref": "#/$defs/typeParam" }] }, "description": "CIR-only enclosing CLR generic slots physically re-declared by a nested type. A bare name is unconstrained; a typeParam object preserves Kotlin outer constraints." },
         "outerTypeParamCount": { "type": "integer", "minimum": 0, "description": "#225 BIR-only number of typeParams inherited semantically from the lexical Kotlin owner. bir2cir projects these declarations to the leading capturedTypeParams CLR slots." },
         "outerTypeParamOffset": { "type": "integer", "minimum": 0, "description": "#225 BIR-only start of the outerTypeParamCount segment in semantic typeParams order. Absent means zero; lifted local/anonymous implementations keep own params before lexical-owner params until bir2cir chooses CLR slot order." },
+        "inheritedDefaultAccessors": {
+          "type": "array",
+          "$comment": "BIR-only frontend-selected inherited default property implementations on a class. Each entry states the class-frame Kotlin signature and exact Kotlin declaration identity; bir2cir consumes it when deciding whether CLR MethodImpl allocation is required and never re-resolves the implementation from hierarchy bodies or names.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "propertyName": { "type": "string" },
+              "propertyAccessor": { "enum": ["get", "set"] },
+              "params": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+              "ret": { "$ref": "#/$defs/type" },
+              "implementation": {
+                "type": "object",
+                "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "enum": ["getter", "setter"] }, "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." } },
+                "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
+              }
+            },
+            "required": ["propertyName", "propertyAccessor", "params", "ret", "implementation"],
+            "additionalProperties": false
+          }
+        },
+        "inheritedDefaultMethods": {
+          "type": "array",
+          "$comment": "BIR-only frontend-selected inherited default ordinary-function implementations on a class. This is the method twin of inheritedDefaultAccessors and is consumed only for explicit CLR MethodImpl allocation when another physical method would capture the DIM slot.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "member": { "type": "string" },
+              "params": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+              "ret": { "$ref": "#/$defs/type" },
+              "implementation": {
+                "type": "object",
+                "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "const": "method" }, "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." } },
+                "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
+              }
+            },
+            "required": ["member", "params", "ret", "implementation"],
+            "additionalProperties": false
+          }
+        },
         "fields":     { "type": "array", "items": { "$ref": "#/$defs/fieldDecl" } },
         "ctors":      { "type": "array", "items": { "$ref": "#/$defs/ctorDecl" } },
         "methods":    { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
@@ -223,6 +262,21 @@
         "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries" },
         "pos":        { "$ref": "#/$defs/pos" }
       },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "interface" } }, "required": ["kind"] },
+          "then": {
+            "properties": {
+              "methods": {
+                "items": {
+                  "if": { "properties": { "static": { "const": false } } },
+                  "then": { "required": ["abstract"] }
+                }
+              }
+            }
+          }
+        }
+      ],
       "required": ["name", "kind"],
       "additionalProperties": true
     },
@@ -239,6 +293,20 @@
     },
     "decl": {
       "oneOf": [ { "$ref": "#/$defs/funDecl" }, { "$ref": "#/$defs/propDecl" }, { "$ref": "#/$defs/fieldDecl" } ]
+    },
+    "methodImplDescriptor": {
+      "type": "object",
+      "$comment": "CIR-only exact ECMA-335 MethodImpl declaration identity authored by bir2cir and consumed one-to-one by ilemit.",
+      "properties": {
+        "owner": { "$ref": "#/$defs/type" },
+        "member": { "type": "string" },
+        "arity": { "type": "integer", "minimum": 0 },
+        "params": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+        "ret": { "$ref": "#/$defs/type" },
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Optional exact generic-parameter declarations, including constraints, when CLR overloads otherwise share member/arity/params/ret." }
+      },
+      "required": ["owner", "member", "arity", "params", "ret"],
+      "additionalProperties": false
     },
     "funDecl": {
       "type": "object",
@@ -258,9 +326,25 @@
         "propertyName": { "type": "string", "$comment": "#397 BIR-only Kotlin source property identity carried by every accessor declaration. bir2cir allocates the CLR MethodDef name from this plus propertyAccessor; consumers must never recover it from a physical method spelling." },
         "propertyAccessor": { "enum": ["get", "set"], "$comment": "#397 BIR-only explicit getter/setter role. It survives every semantic bir2cir consumer and is removed at the CIR boundary." },
         "propertyAssociation": { "type": "string", "$comment": "#397 BIR-only file-local association shared by one Property record and its exact accessor declaration(s). This disambiguates same-name accessors with different context/extension receivers without introducing the general declaration identity deferred to #395." },
+        "inheritedImplementation": {
+          "type": "object",
+          "$comment": "BIR-only concrete Kotlin declaration selected by frontend fake-override resolution. Presence means this fake override inherits an implementation; bir2cir consumes the fact directly instead of inspecting ancestor bodies or CLR metadata.",
+          "properties": { "owner": { "$ref": "#/$defs/type" }, "member": { "type": "string" }, "kind": { "enum": ["method", "getter", "setter"] }, "arity": { "type": "integer", "minimum": 0, "$comment": "method generic arity" }, "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Exact frontend-selected target declarations, including generic constraints." } },
+          "required": ["owner", "member", "kind", "arity", "typeParams"], "additionalProperties": false
+        },
+        "physicalSlotBridge": { "type": "boolean", "$comment": "bir2cir-internal role fact: this generated declaration exists only as a CLR MethodImpl forwarding body and must not participate in Kotlin declaration binding. Descriptor presence alone is insufficient because a source accessor may directly carry a MethodImpl for an external property slot." },
+        "clrInterfaceSlotBridge": { "type": "boolean", "$comment": "CIR-only instruction: this private interface MethodDef is the final forwarding body of an explicit MethodImpl. ilemit maps it to Private|Virtual|Final|NewSlot without inferring the role from its name or body." },
+        "clrInterfaceImpls": { "type": "array", "items": { "$ref": "#/$defs/methodImplDescriptor" }, "$comment": "CIR-only exact interface declaration slots implemented by this MethodDef." },
+        "clrBaseImpls": { "type": "array", "items": { "$ref": "#/$defs/methodImplDescriptor" }, "$comment": "CIR-only exact base-class declaration slots implemented by this MethodDef." },
+        "clrOverride": { "$ref": "#/$defs/type", "$comment": "bir2cir-resolved external base owner selected from the frontend override closure." },
+        "clrOverrideMember": { "type": "string", "$comment": "CIR-only exact external base-class virtual slot name when the implementing MethodDef deliberately has another physical name. ilemit combines it with clrOverride/clrOverrideSig/clrOverrideOwner and emits the resolved MethodImpl one-to-one." },
+        "clrOverrideRet": { "$ref": "#/$defs/type", "$comment": "CIR-only exact external base-class virtual slot return type. Return type is part of CLR MethodDef identity and must be matched together with clrOverrideSig." },
+        "clrOverrideSig": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "CIR-only exact external base-class virtual slot parameter vector." },
+        "clrOverrideOwner": { "$ref": "#/$defs/type", "$comment": "CIR-only exact metadata declaring owner of the resolved external base slot." },
         "extern":     { "type": "boolean", "$comment": "CIR-only: bodyless CLR extern method. bir2cir uses this for caller-side UnsafeAccessor declarations; ilemit defines the signature/attributes one-to-one and emits no IL body." },
         "bodyTerminates": { "type": "boolean", "$comment": "CIR-only proof that the authored body cannot fall through. ilemit therefore emits no synthetic trailing return." },
         "virtual":    { "type": "boolean" },
+        "abstract":   { "type": "boolean", "$comment": "Declaration modality fact. In particular, a concrete interface Unit method may have an empty body array, so consumers must never derive abstractness from body presence." },
         "clrBridgeRole": { "enum": ["hasNext", "next", "iterator"], "$comment": "reverse-enumerator-bridge role marker bir2cir (IteratorBridgeMarking) stamps so ilemit drives its GetEnumerator adapter off a semantic marker, never the Kotlin FQN/member names — hasNext/next on kotlin.collections.Iterator's members, iterator on a class iterator(). A bir2cir->ilemit resolution HINT (ilemit reads it into TypeInfo.BridgeRoles), never emitted as .NET metadata." },
         "objectOverride": { "type": "boolean" },
         "_syntheticTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "#68 BIR-ONLY transient correspondence between a synthetic declaration's dense typeParams and the lexical frame from which they were captured. kotc authors it on a lexical local `fun`; bir2cir's ClosureSynthesis derives it for a lifted closure class. Consumers use it for owner-slot partition and shared synthetic identity. Consumed and DROPPED before CIR." },

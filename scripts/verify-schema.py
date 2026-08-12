@@ -42,6 +42,8 @@ STR_OK = {
                                                 # bir2cir DECISION (W1-S2 #46), NOT a type slot; ilemit emits the opcode
                                                 # verbatim (no re-derivation from reflected IsVirtual/IsFinal)
     "member", "method", "get", "set", "event",  # member/accessor/event NAME references (reflection/override — §2.2.1)
+    "clrOverrideMember",                         # CIR-only exact external base MethodDef name paired with the
+                                                # implementing declaration's differently named Kotlin accessor.
     "accessor",                                  # W1-S3 (#46/#121): the ref.dll-resolved get_/set_/add_/remove_ accessor
                                                 # METHOD NAME ilemit links (clrPropGet/Set, clrEvent*, external field) — a
                                                 # bir2cir resolution decision, NOT a type slot (paired with `member`+`dispatch`)
@@ -299,6 +301,14 @@ class V:
 
     def walk(self, f, o, path):
         if isinstance(o, dict):
+            if o.get("kind") == "interface" and isinstance(o.get("methods"), list):
+                for i, method in enumerate(o["methods"]):
+                    if (not isinstance(method, dict)
+                            or (method.get("static") is not True and not isinstance(method.get("abstract"), bool))):
+                        self.err(
+                            f, f"{path}/methods[{i}]",
+                            "interface method must carry the explicit frontend/bir2cir abstract modality fact"
+                        )
             if "t" in o and "k" in o:
                 # disjoint structural roles (Codex-confirmed blind spot): a type node has `t`, an IR node has `k`;
                 # an object carrying BOTH is ill-formed and must not slip past as either.
@@ -357,7 +367,9 @@ class V:
                     if companion_key in o:
                         self.err(f, path, f"{companion_key} is a BIR companion fact and must be consumed before CIR")
                 for property_key in ("propertyName", "propertyAccessor", "propertyAssociation", "kotlinAccessors",
-                                     "kotlinPropertyAccessorCarrier"):
+                                     "kotlinPropertyAccessorCarrier", "physicalSlotBridge",
+                                     "inheritedImplementation", "inheritedDefaultAccessors",
+                                     "inheritedDefaultMethods"):
                     if property_key in o:
                         self.err(f, path, f"{property_key} is a BIR property-accessor fact and must be consumed before CIR")
                 for ownership_key in ("semanticOwner", "staticSemanticOwner", "outerTypeParamCount", "outerTypeParamOffset", "typeParamDecls", "lexicalOwnerTypeParamCount"):
@@ -376,12 +388,69 @@ class V:
                             f, path,
                             f"{property_descriptor} is a bir2cir-authored physical Property descriptor and must not appear in BIR"
                         )
+                if "inheritedImplementation" in o:
+                    implementation = o["inheritedImplementation"]
+                    required = {"owner", "member", "kind", "arity", "typeParams"}
+                    if not isinstance(implementation, dict) or set(implementation) != required:
+                        self.err(
+                            f, path + "/inheritedImplementation",
+                            "inheritedImplementation must contain exact owner/member/kind/arity/typeParams facts"
+                        )
+                    else:
+                        if (not isinstance(implementation.get("owner"), dict)
+                                or implementation["owner"].get("t") != "fqn"):
+                            self.err(f, path + "/inheritedImplementation/owner", "inheritedImplementation owner must be an fqn Type node")
+                        if not isinstance(implementation.get("member"), str) or not implementation["member"]:
+                            self.err(f, path + "/inheritedImplementation/member", "inheritedImplementation member must be a non-empty string")
+                        if implementation.get("kind") not in ("method", "getter", "setter"):
+                            self.err(f, path + "/inheritedImplementation/kind", "inheritedImplementation kind must be method/getter/setter")
+                        if not isinstance(implementation.get("arity"), int) or implementation["arity"] < 0:
+                            self.err(f, path + "/inheritedImplementation/arity", "inheritedImplementation arity must be non-negative")
+                        if (not isinstance(implementation.get("typeParams"), list)
+                                or len(implementation["typeParams"]) != implementation.get("arity")):
+                            self.err(
+                                f, path + "/inheritedImplementation/typeParams",
+                                "inheritedImplementation typeParams must match its generic arity"
+                            )
                 if o.get("k") == "newClrStaticDelegate":
                     self.err(f, path, "newClrStaticDelegate is a bir2cir-authored physical node and must not appear in BIR")
                 if "capturedTypeParams" in o:
                     self.err(f, path, "capturedTypeParams is a bir2cir-authored nested CLR declaration fact and must not appear in BIR")
                 if "nestedIn" in o:
                     self.err(f, path, "nestedIn is a bir2cir-authored physical CLR ownership fact and must not appear in BIR")
+                for method_impl_key in ("clrInterfaceImpls", "clrBaseImpls", "clrOverrideSig", "clrOverrideOwner"):
+                    if method_impl_key in o:
+                        self.err(f, path, f"{method_impl_key} is a bir2cir-authored MethodImpl fact and must not appear in BIR")
+            for method_impl_key in ("clrInterfaceImpls", "clrBaseImpls"):
+                if method_impl_key not in o:
+                    continue
+                descriptors = o[method_impl_key]
+                if not isinstance(descriptors, list):
+                    self.err(f, path, f"{method_impl_key} must be an array of exact MethodImpl descriptors")
+                    continue
+                for index, descriptor in enumerate(descriptors):
+                    descriptor_path = path + f"/{method_impl_key}[{index}]"
+                    if not isinstance(descriptor, dict):
+                        self.err(f, descriptor_path, "MethodImpl descriptor must be an object")
+                        continue
+                    required = {"owner", "member", "arity", "params", "ret"}
+                    allowed = required | {"typeParams"}
+                    if not required.issubset(descriptor) or not set(descriptor).issubset(allowed):
+                        self.err(f, descriptor_path, "MethodImpl descriptor must contain owner/member/arity/params/ret and optional typeParams")
+                    if not isinstance(descriptor.get("owner"), dict) or descriptor["owner"].get("t") != "fqn":
+                        self.err(f, descriptor_path, "MethodImpl descriptor owner must be an fqn Type node")
+                    if not isinstance(descriptor.get("member"), str) or not descriptor["member"]:
+                        self.err(f, descriptor_path, "MethodImpl descriptor member must be a non-empty string")
+                    if not isinstance(descriptor.get("arity"), int) or descriptor["arity"] < 0:
+                        self.err(f, descriptor_path, "MethodImpl descriptor arity must be a non-negative integer")
+                    if not isinstance(descriptor.get("params"), list):
+                        self.err(f, descriptor_path, "MethodImpl descriptor params must be a Type-node array")
+                    if not isinstance(descriptor.get("ret"), dict) or "t" not in descriptor["ret"]:
+                        self.err(f, descriptor_path, "MethodImpl descriptor ret must be a Type node")
+                    if "typeParams" in descriptor:
+                        type_params = descriptor["typeParams"]
+                        if not isinstance(type_params, list) or len(type_params) != descriptor.get("arity"):
+                            self.err(f, descriptor_path, "MethodImpl descriptor typeParams must match its generic arity")
             if o.get("k") == "newClrStaticDelegate" and f.endswith(".cir.json"):
                 if not isinstance(o.get("memberSig"), list):
                     self.err(f, path, "newClrStaticDelegate.memberSig must be a resolved Type-node array in CIR")

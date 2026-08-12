@@ -58,6 +58,15 @@ suspend fun suspendDispatchConstructedUse(source: SuspendDispatchConstructedSour
     return value + 2
 }
 
+// The generic interface declaration erases T? to object, while the Int implementation uses Nullable<Int>.
+// Both the public Task method and continuation cold entry therefore require their own exact MethodImpl bridge.
+interface SuspendDispatchNullableSource<T> { suspend fun echo(value: T?): T? }
+class SuspendDispatchNullableIntSource : SuspendDispatchNullableSource<Int> {
+    override suspend fun echo(value: Int?): Int? = value
+}
+suspend fun suspendDispatchNullableUse(source: SuspendDispatchNullableSource<Int>, value: Int?): Int =
+    source.echo(value) ?: -1
+
 // ---- il-coldstaticmember: a static/companion suspend member's cold-entry declaration (M3) --------------------
 suspend fun suspendDispatchStaticMemberBump(x: Int): Int = x + 1
 class SuspendDispatchStaticMemberCalc {
@@ -96,6 +105,13 @@ class SuspendDispatchTests {
     @TestAttribute
     fun constructedGenericSuspendResult() {
         assertEquals(42, blockOn { suspendDispatchConstructedUse(SuspendDispatchConstructedIntSource(40)) })
+    }
+
+    @TestAttribute
+    fun nullableGenericInterfaceOverrideProjectsBothSlots() {
+        val source: SuspendDispatchNullableSource<Int> = SuspendDispatchNullableIntSource()
+        assertEquals(42, blockOn { suspendDispatchNullableUse(source, 42) })
+        assertEquals(-1, blockOn { suspendDispatchNullableUse(source, null) })
     }
 
     @TestAttribute

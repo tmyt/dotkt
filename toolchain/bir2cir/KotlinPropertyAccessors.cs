@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // Kotlin property accessor identity is an explicit BIR fact.  This is the sole forward projection from that
-// identity to the legacy CLR accessor spelling retained for #397; #393 changes this one rule.  No caller may parse
+// identity to the dedicated CLR accessor spelling. No caller may parse
 // the resulting method name to recover the property or accessor role.
 static class KotlinPropertyAccessors
 {
@@ -13,14 +13,34 @@ static class KotlinPropertyAccessors
     internal const string KindKey = "propertyAccessor";
     internal const string PropertyRolesKey = "kotlinAccessors";
     internal const string AssociationKey = "propertyAssociation";
+    // Frontend-selected Kotlin override facts. bir2cir consumes these while allocating CLR slots and never attempts
+    // to recover the selected implementation from hierarchy bodies or physical names.
+    internal const string InheritedImplementationKey = "inheritedImplementation";
+    internal const string InheritedDefaultAccessorsKey = "inheritedDefaultAccessors";
+    internal const string InheritedDefaultMethodsKey = "inheritedDefaultMethods";
+    // Suspend lowering projects one Kotlin declaration into a public Task method and a continuation cold entry.
+    // These bir2cir-only carriers preserve the frontend declaration signature on each physical projection so later
+    // slot allocation can consume the selected declaration identity without reconstructing it from either ABI shape.
+    internal const string SuspendSourceParamsKey = "suspendSourceParams";
+    internal const string SuspendSourceRetKey = "suspendSourceRet";
+    // A bare result erasure on a logical suspend override becomes a nested Task<R> erasure after suspend lowering.
+    // The early slot pass states that required physical Task result explicitly so the generated TCS/body and the
+    // eventual MethodDef signature are authored together; the late pass must never rewrite only the signature.
+    internal const string SuspendTaskResultKey = "suspendTaskResult";
+    // A declaration synthesized solely to carry a CLR MethodImpl is not a Kotlin declaration candidate. MethodImpl
+    // descriptors may also live directly on a source accessor when only its physical name differs from an external
+    // property slot, so descriptor presence alone cannot distinguish the two roles.
+    internal const string PhysicalSlotBridgeKey = "physicalSlotBridge";
+    // CIR instruction: a private forwarding MethodDef declared on an interface is the final body of an explicit
+    // MethodImpl. The CLR requires that interface MethodImpl body to be final; ilemit maps this fact one-to-one.
+    internal const string ClrInterfaceSlotBridgeKey = "clrInterfaceSlotBridge";
     // A CLR Property signature cannot own method generic parameters. Generic top-level extension properties therefore
     // carry their exact accessor association on the MethodDef instead of emitting an invalid Property row.
     internal const string MetadataCarrierKey = "kotlinPropertyAccessorCarrier";
-
     internal static string PhysicalName(string sourceName, string kind) => kind switch
     {
-        "get" => "get_" + sourceName,
-        "set" => "set_" + sourceName,
+        "get" => "prop_get<" + sourceName + ">",
+        "set" => "prop_set<" + sourceName + ">",
         _ => throw new InvalidOperationException($"invalid Kotlin property accessor role '{kind}'"),
     };
 
@@ -38,8 +58,9 @@ static class KotlinPropertyAccessors
     // selected property call may bind to.  It deliberately carries the source identity for MethodSemantics and
     // round-trip metadata, so every source-declaration index must exclude it by this explicit physical-role fact.
     internal static bool IsPhysicalSlotBridge(JsonObject declaration) =>
-        declaration["clrInterfaceImpls"] is JsonArray { Count: > 0 }
-        || declaration["clrBaseImpls"] is JsonArray { Count: > 0 };
+        declaration[PhysicalSlotBridgeKey] is JsonValue value
+        && value.TryGetValue<bool>(out var physicalSlotBridge)
+        && physicalSlotBridge;
 
     internal static void PreserveCallIdentity(JsonObject call, string sourceName, string kind)
     {
@@ -150,8 +171,8 @@ static class KotlinPropertyAccessors
                     {
                         var current = Str(method["name"]);
                         // A representation pass such as #389 may already have allocated a narrower core/container
-                        // identity through SetPhysicalName.  Ordinary kotc declarations still carry their semantic
-                        // source name here and receive the uniform legacy ABI spelling now.
+                        // identity through SetPhysicalName. Ordinary kotc declarations still carry their semantic
+                        // source name here and receive the uniform dedicated accessor spelling now.
                         if (current == sourceName) SetPhysicalName(method, PhysicalName(sourceName, kind));
                     }
 
@@ -206,14 +227,27 @@ static class KotlinPropertyAccessors
         }
         var representable = resolved.All(item =>
             ((item.Method["typeParams"] as JsonArray)?.Count ?? 0) == 0);
-        if (!representable)
-            foreach (var (method, role) in resolved)
-                method[MetadataCarrierKey] = new JsonObject
-                {
-                    ["name"] = sourceName,
-                    ["kind"] = role,
-                    ["association"] = association,
-                };
+        // Preserve the opaque declaration association when MethodSemantics cannot carry it, or when a synthesized
+        // bridge explicitly points back to this source association. A referenced signature-changing MethodImpl body
+        // cannot be paired back to its source by comparing their deliberately different physical signatures.
+        var isBridgeSource = methods.Any(candidate =>
+            Str((candidate[MetadataCarrierKey] as JsonObject)?["sourceAssociation"]) == association);
+        foreach (var (method, role) in resolved)
+        {
+            var sourceAssociation = Str((method[MetadataCarrierKey] as JsonObject)?["sourceAssociation"]);
+            if (representable && sourceAssociation == null && !isBridgeSource) continue;
+            var carrier = new JsonObject
+            {
+                ["name"] = sourceName,
+                ["kind"] = role,
+                ["association"] = association,
+            };
+            // AssociateBridgeProperty installs this explicit source relation before the final allocation sweep.
+            // Rebuilding the bridge's physical Property descriptor must not collapse its four-field carrier back to
+            // an ordinary source accessor's three fields.
+            if (sourceAssociation != null) carrier["sourceAssociation"] = sourceAssociation;
+            method[MetadataCarrierKey] = carrier;
+        }
 
         foreach (var (method, role) in resolved)
         {
@@ -290,6 +324,7 @@ static class KotlinPropertyAccessors
             ["name"] = propertyName,
             ["kind"] = accessorKind,
             ["association"] = association,
+            ["sourceAssociation"] = sourceAssociation,
         };
         var properties = owner["properties"] as JsonArray;
         if (properties == null)
@@ -315,8 +350,41 @@ static class KotlinPropertyAccessors
             || !existingType.Equals(propertyType)
             || property[PropertyRolesKey] is not JsonArray propertyRoles
             || propertyRoles.Any(role => Str(role) == accessorKind))
-            throw new InvalidOperationException("property override bridges do not form one unique CLR Property shape");
+        {
+            var associatedMethods = owner["methods"] is JsonArray ownerMethods
+                ? string.Join(",", ownerMethods.OfType<JsonObject>()
+                    .Where(method => Str(method[AssociationKey]) == association)
+                    .Select(method => Str(method["name"])))
+                : "";
+            throw new InvalidOperationException(
+                $"property override bridges do not form one unique CLR Property shape: " +
+                $"owner={Str(owner["name"]) ?? "<file>"}, property={propertyName}, accessor={accessorKind}, " +
+                $"bridge={Str(bridge["name"])}, association={association}, methods={associatedMethods}");
+        }
         propertyRoles.Add(accessorKind);
+    }
+
+    // An exact-signature interface bridge exists only because the source accessor and external CLR accessor have
+    // different physical names. Preserve its Kotlin role for round-trip de-duplication without emitting a second,
+    // duplicate CLR Property row for the same source property shape.
+    internal static void MarkExactInterfaceBridgeProperty(JsonObject bridge, string propertyName,
+        string accessorKind, string sourceAssociation)
+    {
+        if (accessorKind is not ("get" or "set"))
+            throw new InvalidOperationException("property override bridge has no getter/setter role");
+        if (string.IsNullOrEmpty(sourceAssociation))
+            throw new InvalidOperationException("property override bridge has no source association");
+        var association = "dotkt$bridge$property$" + sourceAssociation + "|exact-interface";
+        bridge[SourceNameKey] = propertyName;
+        bridge[KindKey] = accessorKind;
+        bridge[AssociationKey] = association;
+        bridge[MetadataCarrierKey] = new JsonObject
+        {
+            ["name"] = propertyName,
+            ["kind"] = accessorKind,
+            ["association"] = association,
+            ["sourceAssociation"] = sourceAssociation,
+        };
     }
 
     static string Str(JsonNode node) =>

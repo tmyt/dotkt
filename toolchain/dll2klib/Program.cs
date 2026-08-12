@@ -1384,6 +1384,9 @@ internal sealed class AssemblyScanner
             MetadataAttributes.DotKtNs + "KotlinPropertyAccessorAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinSourceMethodAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinExtensionCoreAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
@@ -1919,6 +1922,7 @@ internal sealed class AssemblyScanner
                 var modalityForMethod = (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
                     : (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0 ? 1 : 0;
                 var kotlinFlags = _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
+                var sourceMethodName = KotlinSourceMethodName(methodHandle);
                 var isComparableSlot = _attrs.IsDotKtAssembly &&
                     name == "CompareTo" &&
                     sig.ParameterTypes.Length == 1 &&
@@ -1926,7 +1930,7 @@ internal sealed class AssemblyScanner
                 if (isComparableSlot) kotlinFlags |= 2;
                 var function = new Function
                 {
-                    Name = names.String(isComparableSlot ? "compareTo" : name),
+                    Name = names.String(sourceMethodName ?? (isComparableSlot ? "compareTo" : name)),
                     Flags = Flags.Callable(method.Attributes, modalityForMethod,
                         kotlinFlags,
                         isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")),
@@ -1996,13 +2000,14 @@ internal sealed class AssemblyScanner
                 continue;
             var representative = getter ?? setter!.Value;
             var metadataPropertyName = _md.GetString(property.Name);
+            var sourcePropertyName = KotlinPropertySourceName(property, accessors);
             var explicitInterfaceProperty = metadataPropertyName.Contains('.', StringComparison.Ordinal);
             if (!IsPublicOrProtected(representative.Attributes) && !explicitInterfaceProperty) continue;
             var context = new GenericContext(handle, accessors.Getter.IsNil ? accessors.Setter : accessors.Getter, typeParameterIds);
             var signature = property.DecodeSignature(signatures, context);
             var name = explicitInterfaceProperty
                 ? metadataPropertyName[(metadataPropertyName.LastIndexOf('.') + 1)..]
-                : metadataPropertyName;
+                : sourcePropertyName;
             var canWrite = setter is { } sm &&
                 (IsPublicOrProtected(sm.Attributes) || explicitInterfaceProperty);
             var isStatic = (representative.Attributes & MethodAttributes.Static) != 0;
@@ -2085,11 +2090,12 @@ internal sealed class AssemblyScanner
             var accessorKind = association?.Kind ?? 0;
             if (accessorKind == 0)
             {
-                if (declarationName.Length != 0 &&
+                var sourceFunctionName = KotlinSourceMethodName(bodyHandle) ?? declarationName;
+                if (sourceFunctionName.Length != 0 &&
                     !declarationName.StartsWith("add_", StringComparison.Ordinal) &&
                     !declarationName.StartsWith("remove_", StringComparison.Ordinal) &&
                     !declarationName.StartsWith("op_", StringComparison.Ordinal))
-                    explicitFunctions.Add((declarationName, bodyHandle));
+                    explicitFunctions.Add((sourceFunctionName, bodyHandle));
                 continue;
             }
             // A conventional C# explicit implementation associates its private body with a qualified Property name
@@ -3540,9 +3546,10 @@ internal sealed class AssemblyScanner
             var modality = (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
                 : (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0 ? 1 : 0;
             var companion = CompanionExtension(methodHandle, signatures, "function");
+            var sourceMethodName = KotlinSourceMethodName(methodHandle);
             var function = new Function
             {
-                Name = names.String(companion?.Name ?? name),
+                Name = names.String(companion?.Name ?? sourceMethodName ?? name),
                 Flags = Flags.Callable(method.Attributes, modality,
                     _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0,
                     isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18),
@@ -3621,7 +3628,7 @@ internal sealed class AssemblyScanner
                 throw new InvalidDataException("inconsistent companion-extension property carriers");
             var projected = new Property
             {
-                Name = names.String(propCompanion?.Name ?? _md.GetString(property.Name)),
+                Name = names.String(propCompanion?.Name ?? KotlinPropertySourceName(property, accessors)),
                 ReturnType = type,
                 Flags = Flags.Property(method.Attributes, canWrite, isStatic: propCompanion is not null),
                 SetterValueParameter = canWrite ? new ValueParameter { Name = names.String("value"), Type = type.Clone() } : null,
@@ -3641,7 +3648,7 @@ internal sealed class AssemblyScanner
             projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
             projected.Flags |= 1;
             package.Property.Add(projected);
-            propertyNames.Add(_md.GetString(property.Name));
+            propertyNames.Add(KotlinPropertySourceName(property, accessors));
         }
         foreach (var fieldHandle in def.GetFields())
         {
@@ -3967,31 +3974,39 @@ internal sealed class AssemblyScanner
                         setterHandle = default;
                 }
             }
-            result.Add((_md.GetString(definition.Name), propertyHandle, getterHandle, setterHandle));
+            result.Add((KotlinPropertySourceName(definition, accessors),
+                propertyHandle, getterHandle, setterHandle));
             if (!getterHandle.IsNil) associatedMethods.Add(getterHandle);
             if (!setterHandle.IsNil) associatedMethods.Add(setterHandle);
         }
 
         // Method-generic extension accessors cannot be associated through a CLR Property row because that row has no
-        // owner for `!!T`. Consume the exact trusted carrier written by bir2cir and pair only by its opaque association
-        // token. Physical names and erased signatures are deliberately irrelevant.
+        // owner for `!!T`. A signature-changing MethodImpl bridge can likewise own the one physical Property row while
+        // its source accessor remains the Kotlin declaration. Consume the exact trusted carriers written by bir2cir
+        // and pair only by their opaque associations; physical names and erased signatures are irrelevant.
         var carrierGroups = new Dictionary<string,
             (string? Name, MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)>(StringComparer.Ordinal);
-        foreach (var methodHandle in def.GetMethods())
+        var carrierMethods = def.GetMethods()
+            .Select(methodHandle => (Method: methodHandle, Carrier: KotlinPropertyAccessorCarrier(methodHandle)))
+            .Where(item => item.Carrier is not null).ToArray();
+        var bridgeSourceAssociations = carrierMethods
+            .Select(item => item.Carrier!.Value.SourceAssociation)
+            .Where(association => association is not null)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var (methodHandle, carrierValue) in carrierMethods)
         {
             if (associatedMethods.Contains(methodHandle)) continue;
-            var carrier = KotlinPropertyAccessorCarrier(methodHandle);
-            if (carrier is null) continue;
+            var carrier = carrierValue!.Value;
             var method = _md.GetMethodDefinition(methodHandle);
             if ((method.Attributes & MethodAttributes.SpecialName) != 0 ||
                 !IsPublicOrProtected(method.Attributes) ||
                 requireStatic && (method.Attributes & MethodAttributes.Static) == 0)
                 continue;
-            carrierGroups.TryGetValue(carrier.Value.Association, out var pair);
-            if (pair.Name is not null && pair.Name != carrier.Value.Name)
+            carrierGroups.TryGetValue(carrier.Association, out var pair);
+            if (pair.Name is not null && pair.Name != carrier.Name)
                 throw new InvalidDataException("Kotlin property accessor association has inconsistent source names");
-            pair.Name = carrier.Value.Name;
-            if (carrier.Value.Kind == 1)
+            pair.Name = carrier.Name;
+            if (carrier.Kind == 1)
             {
                 if (!pair.Getter.IsNil)
                     throw new InvalidDataException("Kotlin property accessor association has duplicate getters");
@@ -4003,9 +4018,9 @@ internal sealed class AssemblyScanner
                     throw new InvalidDataException("Kotlin property accessor association has duplicate setters");
                 pair.Setter = methodHandle;
             }
-            carrierGroups[carrier.Value.Association] = pair;
+            carrierGroups[carrier.Association] = pair;
         }
-        foreach (var pair in carrierGroups.Values)
+        foreach (var (association, pair) in carrierGroups)
         {
             var representativeHandle = pair.Getter.IsNil ? pair.Setter : pair.Getter;
             if (representativeHandle.IsNil || pair.Name is null) continue;
@@ -4013,9 +4028,11 @@ internal sealed class AssemblyScanner
             var representativeSignature = representative.DecodeSignature(
                 RawSignatureTypeProvider.Instance,
                 new GenericContext(owner, representativeHandle, typeParameterIds));
-            if (representativeSignature.GenericParameterCount == 0)
+            if (representativeSignature.GenericParameterCount == 0
+                && !bridgeSourceAssociations.Contains(association))
                 throw new InvalidDataException(
-                    "[KotlinPropertyAccessor] without a Property row requires a method-generic accessor");
+                    $"[KotlinPropertyAccessor] without a Property row requires a method-generic accessor: " +
+                    $"{MetadataTypeName(owner)}::{_md.GetString(representative.Name)}");
             if (!pair.Getter.IsNil && !pair.Setter.IsNil)
             {
                 var getter = _md.GetMethodDefinition(pair.Getter);
@@ -4050,20 +4067,26 @@ internal sealed class AssemblyScanner
         return result;
     }
 
-    private (string Name, int Kind, string Association)? KotlinPropertyAccessorCarrier(
+    private (string Name, int Kind, string Association, string? SourceAssociation)? KotlinPropertyAccessorCarrier(
         MethodDefinitionHandle methodHandle)
     {
         using var document = _attrs.CarrierDocument(
             methodHandle, MetadataAttributes.DotKtNs + "KotlinPropertyAccessorAttribute");
         if (document is null) return null;
         var root = document.RootElement;
+        var propertyCount = root.ValueKind == JsonValueKind.Object
+            ? root.EnumerateObject().Count() : 0;
         if (root.ValueKind != JsonValueKind.Object ||
-            root.EnumerateObject().Count() != 3 ||
+            propertyCount is not (3 or 4) ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("kind", out var kindNode) || kindNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("association", out var associationNode) ||
             associationNode.ValueKind != JsonValueKind.String)
             throw new InvalidDataException("malformed [KotlinPropertyAccessor] payload");
+        var hasSourceAssociation = root.TryGetProperty("sourceAssociation", out var sourceAssociationNode);
+        if (hasSourceAssociation != (propertyCount == 4) || hasSourceAssociation &&
+            (sourceAssociationNode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(sourceAssociationNode.GetString())))
+            throw new InvalidDataException("malformed [KotlinPropertyAccessor] source association");
         var name = nameNode.GetString();
         var association = associationNode.GetString();
         if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(association))
@@ -4074,7 +4097,34 @@ internal sealed class AssemblyScanner
             "set" => 2,
             _ => throw new InvalidDataException("invalid [KotlinPropertyAccessor] role"),
         };
-        return (name, kind, association);
+        return (name, kind, association, hasSourceAssociation ? sourceAssociationNode.GetString() : null);
+    }
+
+    private string KotlinPropertySourceName(PropertyDefinition property, PropertyAccessors accessors)
+    {
+        var carriedNames = new[] { accessors.Getter, accessors.Setter }
+            .Where(handle => !handle.IsNil)
+            .Select(KotlinPropertyAccessorCarrier)
+            .Where(carrier => carrier is not null)
+            .Select(carrier => carrier!.Value.Name)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (carriedNames.Length > 1)
+            throw new InvalidDataException("Property accessors carry inconsistent Kotlin source names");
+        return carriedNames.Length == 1 ? carriedNames[0] : _md.GetString(property.Name);
+    }
+
+    private string? KotlinSourceMethodName(MethodDefinitionHandle methodHandle)
+    {
+        using var document = _attrs.CarrierDocument(
+            methodHandle, MetadataAttributes.DotKtNs + "KotlinSourceMethodAttribute");
+        if (document is null) return null;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 1 ||
+            !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
+            string.IsNullOrEmpty(nameNode.GetString()))
+            throw new InvalidDataException("malformed [KotlinSourceMethod] payload");
+        return nameNode.GetString();
     }
 
     /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor

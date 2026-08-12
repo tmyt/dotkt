@@ -5,6 +5,10 @@ import org.jetbrains.kotlin.backend.common.collectTailRecursionCalls
 import org.jetbrains.kotlin.descriptors.ClassKind
 import org.jetbrains.kotlin.descriptors.Modality
 import org.jetbrains.kotlin.descriptors.Visibilities
+import org.jetbrains.kotlin.fir.backend.FirMetadataSource
+import org.jetbrains.kotlin.fir.containingClassLookupTag
+import org.jetbrains.kotlin.fir.declarations.FirCallableDeclaration
+import org.jetbrains.kotlin.fir.declarations.FirDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationOrigin
 import org.jetbrains.kotlin.ir.declarations.IrDeclaration
 import org.jetbrains.kotlin.ir.declarations.IrDeclarationWithVisibility
@@ -179,6 +183,83 @@ private fun BirEmitter.kotlinPropertyAccessors(property: IrProperty, hasSetter: 
 	return ""","kotlinAccessors":$roles,"propertyAssociation":${str(propertyAssociation(property))}"""
 }
 
+/** Whether FIR2IR explicitly materialized [fn] as an inherited declaration rather than a source declaration. */
+private fun isInheritedSynthetic(fn: IrSimpleFunction): Boolean {
+	// Delegation is a frontend-authored concrete forwarding declaration, never an inherited implementation. Its FIR
+	// symbol is derived from the overridden member and can therefore retain supertype provenance even though the IR
+	// declaration owns a real body in this class.
+	if (fn.origin == IrDeclarationOrigin.DELEGATED_MEMBER) return false
+	if (fn.isFakeOverride || fn.origin == IrDeclarationOrigin.FAKE_OVERRIDE) return true
+	// Kotlin 2.4 can lose the IR convenience flag on a materialized declaration, notably across a reference KLIB.
+	// FIR still owns and retains the semantic answer: substitution/intersection overrides say they came from supertypes,
+	// while a "fake fake override" backed by the original declaration has a FIR owner different from its materialized IR
+	// owner. This also keeps a real body-generating declaration such as DELEGATED_MEMBER out of the inherited-default
+	// path; source offsets, bodies, and physical names are deliberately irrelevant.
+	val fir = (fn.metadata as? FirMetadataSource.Function)?.fir as? FirCallableDeclaration
+	if (fir?.origin == FirDeclarationOrigin.Delegated) return false
+	if (fir?.origin?.fromSupertypes == true) return true
+	val firOwner = fir?.containingClassLookupTag() ?: return false
+	val irOwnerFir = ((fn.parent as? IrClass)?.metadata as? FirMetadataSource.Class)?.fir ?: return false
+	return firOwner != irOwnerFir.symbol.toLookupTag()
+}
+
+/**
+ * The concrete Kotlin declaration selected by frontend override resolution for an inherited member. This is a
+ * frontend semantic fact: no CLR name, slot, or layout is projected here. A null result means that the inherited
+ * member is still abstract.
+ */
+private fun selectedInheritedImplementation(fn: IrSimpleFunction): IrSimpleFunction? {
+	if (!isInheritedSynthetic(fn)) return null
+	return fn.resolveFakeOverride(::isInheritedSynthetic)?.takeIf { it.modality != Modality.ABSTRACT }
+}
+
+/** Preserve the frontend-selected implementation identity instead of rediscovering it from ancestor bodies. */
+private fun BirEmitter.inheritedImplementationFact(fn: IrSimpleFunction): String {
+	val target = selectedInheritedImplementation(fn) ?: return ""
+	val owner = (target.parent as? IrClass)?.fqNameWhenAvailable?.asString() ?: return ""
+	val property = target.correspondingPropertySymbol?.owner
+	val member = property?.name?.asString() ?: target.name.asString()
+	val kind = when {
+		property == null -> "method"
+		target === property.getter -> "getter"
+		else -> "setter"
+	}
+	return ""","inheritedImplementation":{"owner":${fqnJson(owner)},"member":${str(member)},"kind":${str(kind)},"arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}"""
+}
+
+/**
+ * A class emits no declaration for an accessor inherited from a default interface member. Keep the selected accessor
+ * and its class-frame signature as a type-level BIR fact so bir2cir can decide whether CLR representation needs a
+ * MethodImpl bridge, without re-resolving Kotlin override semantics.
+ */
+private fun BirEmitter.inheritedDefaultAccessorFact(property: IrProperty, accessor: IrSimpleFunction?, kind: String): String? {
+	if (accessor == null || !isInheritedSynthetic(accessor)) return null
+	val target = selectedInheritedImplementation(accessor) ?: return null
+	val targetOwner = target.parent as? IrClass ?: return null
+	if (targetOwner.kind != ClassKind.INTERFACE) return null
+	val targetProperty = target.correspondingPropertySymbol?.owner ?: return null
+	val targetKind = if (target === targetProperty.getter) "getter" else "setter"
+	val targetOwnerName = targetOwner.fqNameWhenAvailable?.asString() ?: return null
+	val extRecv = extensionReceiverParam(accessor)
+	val parameterTypes = (listOfNotNull(extRecv?.type) + accessor.parameters.filter { isValueParameter(it) }.map { it.type })
+		.joinToString(",") { birType(it).toJson() }
+	val ret = if (kind == "get") birType(accessor.returnType) else TypeNode.Fqn("kotlin.Unit")
+	return """{"propertyName":${str(property.name.asString())},"propertyAccessor":${str(kind)},"params":[$parameterTypes],"ret":${ret.toJson()},"implementation":{"owner":${fqnJson(targetOwnerName)},"member":${str(targetProperty.name.asString())},"kind":${str(targetKind)},"arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}}"""
+}
+
+/** Ordinary-function twin of [inheritedDefaultAccessorFact]. */
+private fun BirEmitter.inheritedDefaultMethodFact(fn: IrSimpleFunction): String? {
+	if (fn.correspondingPropertySymbol != null || !isInheritedSynthetic(fn)) return null
+	val target = selectedInheritedImplementation(fn) ?: return null
+	val targetOwner = target.parent as? IrClass ?: return null
+	if (targetOwner.kind != ClassKind.INTERFACE) return null
+	val targetOwnerName = targetOwner.fqNameWhenAvailable?.asString() ?: return null
+	val extRecv = extensionReceiverParam(fn)
+	val parameterTypes = (listOfNotNull(extRecv?.type) + fn.parameters.filter { isValueParameter(it) }.map { it.type })
+		.joinToString(",") { birType(it).toJson() }
+	return """{"member":${str(fn.name.asString())},"params":[$parameterTypes],"ret":${birType(fn.returnType).toJson()},"implementation":{"owner":${fqnJson(targetOwnerName)},"member":${str(target.name.asString())},"kind":"method","arity":${target.typeParameters.size},"typeParams":${typeParamDeclarationsJson(target.typeParameters)}}}"""
+}
+
 private fun BirEmitter.kotlinCompanionFact(owner: IrClass, companion: IrClass): String {
 	val ownerName = owner.fqNameWhenAvailable?.asString()
 		?: error("companion owner '${owner.name}' has no Kotlin qualified name")
@@ -232,13 +313,18 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// decision: bir2cir uses it to distinguish a genuinely declared abstract override from an inherited member
 		// that FIR/IR materialized on the derived interface.  Previously both shapes became identical empty methods,
 		// forcing ilemit to rediscover the hierarchy and synthesize DIM forwarders.
-		// Kotlin 2.4 does not consistently expose inherited declarations through the isFakeOverride convenience flag
-		// after FIR2IR (notably for an interface inheriting a declaration loaded from a KLIB). Prefer its typed IR
-		// origin when present; otherwise the shape is still unambiguous: an override closure, no body, and no source offset.
-		val inheritedSynthetic = fn.isFakeOverride || fn.origin == IrDeclarationOrigin.FAKE_OVERRIDE ||
-			(fn.body == null && fn.overriddenSymbols.isNotEmpty() && fn.startOffset < 0)
+		// The frontend's fake-override flag/origin is authoritative. A real declaration restored from KLIB also has no IR
+		// body and no source offset; classifying it from that physical absence would skip the selected DIM declaration.
+		val inheritedSynthetic = isInheritedSynthetic(fn)
 		val fakeOverride = if (inheritedSynthetic) ",\"fakeOverride\":true" else ""
-		return """{"name":${str(name)}$accessorFact,"static":false,"override":false,"virtual":true$fakeOverride${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${retCtxFnTypeField(fn)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+		val abstract = fn.modality == Modality.ABSTRACT
+		val inheritedImplementation = inheritedImplementationFact(fn)
+		// A concrete body-less interface declaration is meaningful only when Frontend override resolution selected an
+		// inherited implementation. Do not let a missing fact become an empty CLR DIM body or invite a later hierarchy
+		// search: fail at the Kotlin-semantics boundary that owns this decision.
+		if (!abstract && !hasDefault && inheritedImplementation.isEmpty())
+			error("concrete interface member '${iface.name}.${fn.name}' has neither a body nor a frontend-selected inherited implementation")
+		return """{"name":${str(name)}$accessorFact,"static":false,"override":false,"virtual":true,"abstract":$abstract$fakeOverride$inheritedImplementation${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${retCtxFnTypeField(fn)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 	}
 	val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 		// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR
@@ -248,11 +334,10 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// A `companion { }` member is a static of the interface, not an abstract slot: it carries a body and no
 		// implementer overrides it. Emitted below alongside the interface's static fields.
 		.filterNot { isKotlinStaticFunction(it) }
-		// A FAKE-OVERRIDE of a DEFAULT interface method (a DIM body lives in a supertype, e.g. Map.getOrDefault) must
-		// NOT be re-emitted as an abstract slot here — that shadows the inherited DIM, so concrete implementers
-		// (EmptyMap/MapWithDefaultImpl) "do not have an implementation". Abstract fake-overrides (no body anywhere, the
-		// C3a size/get case) are KEPT (resolveFakeOverride has no body), so the BCL member binding still emits.
-		.filterNot { it.isFakeOverride && it.resolveFakeOverride()?.body != null }
+		// Keep inherited declarations in BIR. ifaceMethod records the frontend-selected concrete implementation as an
+		// explicit inheritedImplementation fact; bir2cir then elides only declarations carrying that fact. In particular,
+		// neither layer guesses DIM-ness from whether an IR/BIR body happens to be present (referenced declarations may
+		// legitimately have no body). Abstract fake overrides carry no selected implementation and remain as slots.
 		.map { ifaceMethod(it) }
 	val propMethods = iface.declarations.filterIsInstance<IrProperty>()
 		.filterNot { isKotlinStaticProperty(it) }
@@ -754,6 +839,26 @@ internal fun BirEmitter.synthClrEventForwarders(klass: IrClass): Pair<List<Strin
  *  derive the BCL slot name. Behavior-neutral: bir2cir strips
  *  the `overrides` key, so it never reaches ilemit (Step 1 keeps CIR byte-identical). `member` is the property name
  *  for an accessor (kind getter/setter) so bir2cir can resolve the external Property/MethodSemantics slot. */
+private fun BirEmitter.overrideOwnerJson(fn: IrSimpleFunction, owner: IrClass): String {
+	val currentOwner = (fn.parent as? IrClass)
+		?: (fn.correspondingPropertySymbol?.owner?.parent as? IrClass)
+	val directOwner = currentOwner?.superTypes?.firstOrNull { superType ->
+		val superClass = superType.classifierOrNull?.owner as? IrClass
+		superClass != null && (superClass === owner || typeName(superClass) == typeName(owner))
+	}
+	val instantiatedOwner = directOwner
+		?: currentOwner?.defaultType?.let { correspondingSupertypeInstantiation(it, owner) }
+	// The constructed supertype is a frontend type-system fact. Preserve it when available so bir2cir can distinguish
+	// CLR generic definitions that share a source-facing FQN and can compare the inherited declaration in the
+	// overriding class's type frame. A missing type-system answer stays a bare identity; do not invent type arguments.
+	// Use the frontend's constructed supertype itself. External IR stubs may not expose their declaration type
+	// parameters even though the subclass supertype carries concrete arguments; ownerSpec intentionally treats such
+	// declarations as non-generic and would discard those arguments.
+	return (instantiatedOwner?.let { birType(it) }
+		?: TypeNode.Fqn(owner.fqNameWhenAvailable?.asString()
+			?: error("override owner '${owner.name}' has no Kotlin qualified name"))).toJson()
+}
+
 internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 	val prop = fn.correspondingPropertySymbol?.owner
 	val items = if (prop != null) {
@@ -766,18 +871,18 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 		walkP(prop)
 		// `arity` is the count of EMITTED parameters of this accessor — `[__self?] + contexts + regulars` ([isValueParameter],
 		// the same sequence `accessorMethod`/`topLevelAccessorMethod` lay out) — because every consumer compares it against a
-		// physical parameter count (bir2cir's InheritedDefaultFakeOverrideElision against `params.Count` / reflection, and
-		// DeclarationRename against the @ClrIntrinsic arity). A plain `val` override still reports 0 and a plain `var`
+		// physical parameter count (DeclarationRename compares it against the @ClrIntrinsic arity). A plain `val`
+		// override still reports 0 and a plain `var`
 		// setter 1, exactly as the emitted accessors have.
 		val accArity = emittedParamCount(fn)
-		ordered.mapNotNull { p -> (p.parent as? IrClass)?.fqNameWhenAvailable?.asString()?.let { owner ->
-			"""{"owner":${fqnJson(owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":$accArity}""" } }
+		ordered.mapNotNull { p -> (p.parent as? IrClass)?.let { owner ->
+			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":$accArity}""" } }
 	} else {
 		val ordered = LinkedHashSet<IrSimpleFunction>()
 		fun walk(f: IrSimpleFunction) { for (ov in f.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walk(o) } }
 		walk(fn)
-		ordered.mapNotNull { m -> (m.parent as? IrClass)?.fqNameWhenAvailable?.asString()?.let { owner ->
-			"""{"owner":${fqnJson(owner)},"member":${str(m.name.asString())},"kind":"method","arity":${emittedParamCount(m)}}""" } }
+		ordered.mapNotNull { m -> (m.parent as? IrClass)?.let { owner ->
+			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(m.name.asString())},"kind":"method","arity":${emittedParamCount(m)}}""" } }
 	}
 	return if (items.isEmpty()) "" else ""","overrides":[${items.joinToString(",")}]"""
 }
@@ -865,7 +970,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 		""","kotlinStatic":true""" else ""
 	val property = acc.correspondingPropertySymbol?.owner
 		?: error("accessor '$propName' has no corresponding property")
-	return """{"name":${str(propName)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
+	return """{"name":${str(propName)}${propertyAccessorFact(property, kind)},"static":$isStatic$kotlinStatic,"override":$isOverrideClass,"virtual":$virtual,"abstract":$isAbstract,"objectOverride":false,"vis":${str(vis)}${typeParamsJson(acc.typeParameters)},"params":[$ps],"ret":${str(ret)}${retCtxFnTypeField(acc)}${funModsJson(acc)},"body":[$body]$accAttrs${overridesJson(acc)}}"""
 }
 
 /** A user `annotation class Ann(val v: Int, …)` -> a plain BIR class carrying the pure-Kotlin `"annotation":true`
@@ -1102,15 +1207,22 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	// fake-override resolved only to an INTERFACE member (AbstractMutableList.size over MutableList.size) is KEPT:
 	// the CLR requires the (abstract) class to re-declare the unimplemented interface slot.
 	fun implementationInherited(a: IrSimpleFunction?): Boolean {
-		val resolved = a?.resolveFakeOverride() ?: return false
+		val resolved = a?.let(::selectedInheritedImplementation) ?: return false
 		return (resolved.parent as? IrClass)?.kind == ClassKind.CLASS || resolved.modality != Modality.ABSTRACT
 	}
-	fun dropFake(p: IrProperty) = p.isFakeOverride && implementationInherited(p.getter)
+	fun dropFake(a: IrSimpleFunction?) = a?.let(::isInheritedSynthetic) == true && implementationInherited(a)
 	fun inheritedStatic(p: IrProperty) = isInheritedStaticProperty(p)
 	// `!isClrEventProperty`: a `kotlin.clr.ClrEvent<T>` fake-override (a .NET event inherited through a base's
 	// interface) is not a real property and must not surface an accessor/property member.
-	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p) && !inheritedStatic(p)
-	fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !isClrField(p) && !dropFake(p) && !isClrEventProperty(p) && !inheritedStatic(p)
+	fun emitsGet(p: IrProperty) = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p) && !dropFake(p.getter) && !isClrEventProperty(p) && !inheritedStatic(p)
+	fun emitsSet(p: IrProperty) = p.setter != null && !p.isConst && !p.isLateinit && !isClrField(p) && !dropFake(p.setter) && !isClrEventProperty(p) && !inheritedStatic(p)
+	val inheritedDefaultAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
+		listOfNotNull(
+			inheritedDefaultAccessorFact(p, p.getter, "get"),
+			inheritedDefaultAccessorFact(p, p.setter, "set"))
+	}
+	val inheritedDefaultMethods = klass.declarations.filterIsInstance<IrSimpleFunction>()
+		.mapNotNull(::inheritedDefaultMethodFact)
 	val userAccessors = klass.declarations.filterIsInstance<IrProperty>().flatMap { p ->
 		listOfNotNull(
 			p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
@@ -1214,7 +1326,11 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val clrEventsJson = if (clrEventBackings.isEmpty()) "" else ""","clrEvents":[${clrEventBackings.joinToString(",")}]"""
 	val clrEventForwardersJson = if (clrEventForwarders.isEmpty()) "" else
 		""","clrEventForwarders":[${clrEventForwarders.joinToString(",")}]"""
-	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$semanticOwner$staticSemanticOwnerFact$outerTypeParamsFact$outerTypeParamOffsetFact$sealedFlag$tpJson$generatedFlag$kotlinCompanion,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$clrEventsJson$clrEventForwardersJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
+	val inheritedDefaultsJson = if (inheritedDefaultAccessors.isEmpty()) "" else
+		""","inheritedDefaultAccessors":[${inheritedDefaultAccessors.joinToString(",")}]"""
+	val inheritedDefaultMethodsJson = if (inheritedDefaultMethods.isEmpty()) "" else
+		""","inheritedDefaultMethods":[${inheritedDefaultMethods.joinToString(",")}]"""
+	val result = """{"name":${str(typeName(klass))},"kind":"class","abstract":$isAbstract,"vis":${str(vis)}$semanticOwner$staticSemanticOwnerFact$outerTypeParamsFact$outerTypeParamOffsetFact$sealedFlag$tpJson$generatedFlag$kotlinCompanion,"base":$baseJson,"interfaces":[$ifaces],"fields":[$fields],"ctors":[$ctors],"methods":[$methods],"properties":[$propsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson$clrEventsJson$clrEventForwardersJson,"attrs":[${attrsJson(klass.annotations)}]${posJson(klass)}}"""
 	// Restore the captured-param remap installed at the top.
 	savedCaptureSubst.forEach { (tp, prev) -> if (prev != null) typeArgSubst[tp] = prev else typeArgSubst.remove(tp) }
 	return result
@@ -1501,8 +1617,7 @@ internal fun BirEmitter.isInlineWithLambda(fn: IrSimpleFunction): Boolean =
  * is a bare name string `"T"`; a bounded one (`<T : Comparable<T>>`) is `{"name":"T","constraints":[...]}`
  * (each constraint a BIR type, e.g. `clrg:System.IComparable[gp:T]`). `kotlin.Any` bounds are dropped.
  */
-internal fun BirEmitter.typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String {
-	if (tps.isEmpty()) return ""
+internal fun BirEmitter.typeParamDeclarationsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String {
 	val entries = tps.joinToString(",") { tp ->
 		// kotc emits the PURE-KOTLIN bound in EVERY build (#66): the `kotlin.Comparable` upper-bound DROP is a
 		// SUBSTITUTION CONSEQUENCE (a substituted BCL primitive has no kotlin.Comparable bound), so it belongs to
@@ -1528,8 +1643,11 @@ internal fun BirEmitter.typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declara
 			"{${parts.joinToString(",")}}"
 		}
 	}
-	return ""","typeParams":[$entries]"""
+	return "[$entries]"
 }
+
+internal fun BirEmitter.typeParamsJson(tps: List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>): String =
+	if (tps.isEmpty()) "" else ""","typeParams":${typeParamDeclarationsJson(tps)}"""
 
 internal fun BirEmitter.paramsJson(params: List<org.jetbrains.kotlin.ir.declarations.IrValueParameter>): String =
 	paramsJsonList(params).joinToString(",")

@@ -27,7 +27,7 @@
 // EVERY suspend member declared in the compilation gets a cold-entry slot `<name>$dotkt_suspend` + a public
 // Task bridge, no exceptions. There is NO resolvability fixpoint and NO eligibility FILTER — a CLASSIFIER
 // (see the collection loop + FunGen.Build) assigns each declared suspend member one of three shapes:
-//   * abstract / interface-no-body       -> abstract cold entry + abstract bridge (no SM).
+//   * explicitly abstract declaration    -> abstract cold entry + abstract bridge (no SM).
 //   * concrete + segmentable             -> SM class + cold entry + bridge (the full transform).
 //   * concrete + NOT segmentable (v1)    -> a call-time-throw cold entry (`throw NotSupportedException(reason)`)
 //                                           + bridge, and a bir2cir WARNING naming the fun + the refusal site.
@@ -508,14 +508,8 @@ static partial class SuspendColdLowering
             if (e.Root["methods"] is JsonArray flm)
                 foreach (var lm in flm)
                     if (lm is JsonObject lmo && Str(lmo["name"]) is string lmn) fileLambdas[lmn] = lmo;
-            // An interface member (kotc emits interface `suspend fun`s with `virtual:true` but WITHOUT the
-            // `abstract` flag — unlike an abstract-CLASS member) with no body is abstract by definition (an
-            // interface method with no default). Treat it exactly like the abstract-class case so its cold entry
-            // AND Task bridge are emitted ABSTRACT (no body), rather than a concrete bridge whose non-virtual
-            // `call` to the (interface-abstract) cold entry is unverifiable (ilverify CallAbstract). Concrete
-            // implementations in classes fill both slots — ilemit's interface-impl pass binds them by name/sig.
-            var ownerIsInterface = e.TypeNode != null && Str(e.TypeNode["kind"]) == "interface";
-            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl, ownerTpDecls, closures, smSuffix[key], coldSuffix[key], fileLambdas, ownerIsInterface, staticMember);
+            var gen = new FunGen(e.Method, key.Name, e.FileClass, e.Owner, calleeRet, baseIsLocal, tcsBcl, taskBcl,
+                ownerTpDecls, closures, smSuffix[key], coldSuffix[key], fileLambdas, staticMember);
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
@@ -1196,6 +1190,7 @@ static partial class SuspendColdLowering
         readonly TypeNode _smTypeInst;           // instantiated (`f$sm<T>`) or bare when non-generic
         readonly string _coldName;
         readonly TypeNode _resultType;           // Kotlin resultType, OUTER `?` stripped (VoidTn for Unit)
+        readonly TypeNode _taskResultType;       // explicitly selected physical Task<T> result, else _resultType
         readonly bool _resultNullable;           // the suspend fn's result had an outer `?` (#37/#48: read off the type node)
         readonly string _resultNullableGeneric;  // #86: the PRE-erasure `T?` result, for the bridge's carrier (else null)
         readonly List<JsonObject> _params;       // original params (extension: leading __self)
@@ -1204,6 +1199,15 @@ static partial class SuspendColdLowering
         // Kotlin override ownership is the proof used by the late CLR slot normalizer. Suspend lowering replaces one
         // logical declaration with TWO physical declarations, so both retain that proof under their final names.
         readonly JsonArray _overrideMarkers;
+        // Some suspend declarations are already compiler-authored physical MethodImpl bodies (for example the
+        // forwarding method from G<T> to its existential G<*> interface). Suspend lowering replaces one MethodDef
+        // with a cold entry and a Task bridge, so the physical role and its exact declaration descriptors must be
+        // transformed onto both outputs. Dropping them forces ilemit to rediscover the relation from names/hierarchy.
+        readonly bool _physicalSlotBridge;
+        readonly bool _clrInterfaceSlotBridge;
+        readonly string _physicalSlotVisibility;
+        readonly JsonArray _clrInterfaceImpls;
+        readonly JsonArray _clrBaseImpls;
         // A companion suspend extension retains both its receiver association and Kotlin source name after the
         // original method is replaced by the public Task bridge. RoundtripMetadata consumes both facts there.
         readonly string _companionReceiver;
@@ -1233,7 +1237,7 @@ static partial class SuspendColdLowering
             JsonArray ownerTypeParamDecls = null, IReadOnlyDictionary<string, JsonObject> closures = null,
             string smNameSuffix = "", string coldNameSuffix = "",
             IReadOnlyDictionary<string, JsonObject> lambdaMethods = null,
-            bool ownerIsInterface = false, bool staticMember = false)
+            bool staticMember = false)
         {
             _m = m; _name = name; _fileClass = fileClass; _ownerClass = ownerClass;
             _staticMember = staticMember;
@@ -1245,14 +1249,10 @@ static partial class SuspendColdLowering
             _lambdaMethods = lambdaMethods ?? new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             _ownerTypeParamDecls = ownerTypeParamDecls?.DeepClone() as JsonArray ?? new JsonArray();
             _ownerTypeParams = ReadTypeParamNames(_ownerTypeParamDecls);
-            // Virtuality of the source member (kept in lockstep on the cold entry): an abstract member -> an abstract
-            // cold entry (no SM); an override/open member -> an override/virtual cold entry (fills/opens the slot).
-            // An interface member with no body is abstract (see the ownerIsInterface note at the call site): its
-            // cold entry + Task bridge are emitted abstract, mirroring an abstract-class member. A static/companion
-            // member is never virtual/abstract/override.
-            var interfaceAbstract = ownerIsInterface
-                && (m["body"] is not JsonArray ib || ib.Count == 0);
-            _memberAbstract = _isMember && (Bool(m["abstract"]) || interfaceAbstract);
+            // Virtuality of the source member (kept in lockstep on the cold entry): the frontend-stated abstract
+            // modality produces an abstract cold entry; an override/open member produces an override/virtual entry.
+            // An empty concrete interface body is still a valid DIM and must never be reclassified here.
+            _memberAbstract = _isMember && Bool(m["abstract"]);
             _memberOverride = _isMember && Bool(m["override"]);
             _memberVirtual = _isMember && Bool(m["virtual"]);
             _smType = (ownerClass ?? fileClass) + "_" + name + smNameSuffix + "$sm";
@@ -1269,10 +1269,16 @@ static partial class SuspendColdLowering
             _resultNullableGeneric = (m["nullableGenericSuspendRet"] as JsonValue)?.GetValue<string>();
             _resultNullable = suspendRetRaw is TypeNode.Nullable || _resultNullableGeneric != null;
             _resultType = (suspendRetRaw is TypeNode.Nullable srn ? srn.Of : suspendRetRaw) ?? VoidTn;
+            _taskResultType = TypeJson.Read(m[KotlinPropertyAccessors.SuspendTaskResultKey]) ?? _resultType;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
             _typeParams = ReadTypeParamNames(m["typeParams"]);
             _methodTypeParamDecls = (m["typeParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
             _overrideMarkers = (m["overrides"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+            _physicalSlotBridge = Bool(m[KotlinPropertyAccessors.PhysicalSlotBridgeKey]);
+            _clrInterfaceSlotBridge = Bool(m[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey]);
+            _physicalSlotVisibility = Str(m["vis"]);
+            _clrInterfaceImpls = (m["clrInterfaceImpls"] as JsonArray)?.DeepClone() as JsonArray;
+            _clrBaseImpls = (m["clrBaseImpls"] as JsonArray)?.DeepClone() as JsonArray;
             _companionReceiver = (m["companionReceiver"] as JsonValue)?.GetValue<string>();
             _companionSourceName = (m["companionSourceName"] as JsonValue)?.GetValue<string>();
             _companionMemberKind = (m["companionMemberKind"] as JsonValue)?.GetValue<string>();
@@ -3275,7 +3281,11 @@ static partial class SuspendColdLowering
                 ["body"] = invokeBody,
                 ["attrs"] = new JsonArray(),
             };
-            if (!_baseIsLocal) invoke["clrOverride"] = Tn(BaseContinuationImplFqn);
+            if (!_baseIsLocal)
+            {
+                invoke["clrOverride"] = Tn(BaseContinuationImplFqn);
+                invoke["clrOverrideRet"] = Tw(AnyTn);
+            }
 
             var methods = new JsonArray { invoke };
             foreach (var rm in _awaitResumeMethods) methods.Add(rm);
@@ -3368,7 +3378,11 @@ static partial class SuspendColdLowering
                 ["body"] = invokeBody,
                 ["attrs"] = new JsonArray(),
             };
-            if (!_baseIsLocal) invoke["clrOverride"] = Tn(BaseContinuationImplFqn);
+            if (!_baseIsLocal)
+            {
+                invoke["clrOverride"] = Tn(BaseContinuationImplFqn);
+                invoke["clrOverrideRet"] = Tw(AnyTn);
+            }
 
             var methods = new JsonArray { invoke };
             foreach (var cm in CreateMethods()) methods.Add(cm);
@@ -3564,7 +3578,11 @@ static partial class SuspendColdLowering
                 ["body"] = body,
                 ["attrs"] = new JsonArray(),
             };
-            if (!_baseIsLocal) m["clrOverride"] = Tn(BaseContinuationImplFqn);
+            if (!_baseIsLocal)
+            {
+                m["clrOverride"] = Tn(BaseContinuationImplFqn);
+                m["clrOverrideRet"] = ContUnit();
+            }
             return m;
         }
 
@@ -3639,7 +3657,7 @@ static partial class SuspendColdLowering
                 ["virtual"] = _memberVirtual,
                 ["abstract"] = false,
                 ["objectOverride"] = false,
-                ["vis"] = "public",
+                ["vis"] = _physicalSlotBridge ? _physicalSlotVisibility ?? "private" : "public",
                 ["params"] = ps,
                 ["ret"] = Tw(AnyTn),
                 ["body"] = body,
@@ -3648,19 +3666,78 @@ static partial class SuspendColdLowering
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             if (_generated) method["generated"] = true;
-            CarryOverrideMarkers(method, _coldName);
+            CarrySourceDeclaration(method);
+            CarryOverrideMarkers(method);
+            CarryPhysicalSlotFacts(method, coldEntry: true);
             return method;
         }
 
-        // The public Task member keeps the source member name. The cold member is a second physical slot and its
-        // marker names that slot (f$dotkt_suspend, including an overload suffix), not the logical f; otherwise the
-        // late slot walk correctly refuses to guess which generated declaration owns the obligation.
-        void CarryOverrideMarkers(JsonObject method, string member)
+        // Override markers are frontend-selected Kotlin declaration identities. Suspend lowering creates two CLR
+        // MethodDefs but must not rewrite that semantic identity into either physical spelling. The late slot pass
+        // matches cold/Task MethodDefs independently by their exact physical name, signature, and constraints, then
+        // uses this unchanged marker only to prove which Kotlin declaration the frontend selected.
+        void CarryOverrideMarkers(JsonObject method)
         {
             if (_overrideMarkers.Count == 0) return;
-            var markers = (JsonArray)_overrideMarkers.DeepClone();
-            foreach (var marker in markers.OfType<JsonObject>()) marker["member"] = member;
-            method["overrides"] = markers;
+            method["overrides"] = _overrideMarkers.DeepClone();
+        }
+
+        // Keep the frontend declaration identity beside every physical suspend projection. A later CLR slot pass
+        // may need to bind a frontend-selected DIM after this lowering has replaced the one Kotlin signature with
+        // two unrelated CLR signatures. The facts are consumed before CIR emission; neither names nor bodies are
+        // inspected to recover the original declaration.
+        void CarrySourceDeclaration(JsonObject method)
+        {
+            method[DeclarationRename.SourceMemberKey] =
+                _m[DeclarationRename.SourceMemberKey]?.DeepClone() ?? JsonValue.Create(_name);
+            var parameters = new JsonArray();
+            foreach (var parameter in _params)
+                parameters.Add(parameter["type"]?.DeepClone());
+            method[KotlinPropertyAccessors.SuspendSourceParamsKey] = parameters;
+            method[KotlinPropertyAccessors.SuspendSourceRetKey] = _m["ret"]?.DeepClone();
+        }
+
+        // A resolved MethodImpl descriptor names the declaration signature, not merely its logical source method.
+        // Transform it in lockstep with the suspend declaration: the cold slot appends the continuation and returns
+        // object; the public bridge retains the member name and exposes Task/Task<R>. Owner and generic arity are
+        // already exact and remain untouched. This is a one-to-one physical rewrite, not interface-slot selection.
+        void CarryPhysicalSlotFacts(JsonObject method, bool coldEntry)
+        {
+            if (!_physicalSlotBridge) return;
+            method[KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true;
+            if (_clrInterfaceSlotBridge)
+                method[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
+
+            void Carry(string key, JsonArray source)
+            {
+                if (source == null || source.Count == 0) return;
+                var descriptors = new JsonArray();
+                foreach (var item in source.OfType<JsonObject>())
+                {
+                    var descriptor = (JsonObject)item.DeepClone();
+                    if (coldEntry)
+                    {
+                        descriptor["member"] = (Str(descriptor["member"]) ?? _name) + "$dotkt_suspend";
+                        var parameters = (descriptor["params"] as JsonArray)?.DeepClone() as JsonArray
+                            ?? new JsonArray();
+                        parameters.Add(ContAny());
+                        descriptor["params"] = parameters;
+                        descriptor["ret"] = Tw(AnyTn);
+                    }
+                    else if (TypeJson.Read(descriptor["ret"]) is TypeNode result)
+                    {
+                        var slot = BirTypeLowering.AsReadonlyResultSlot(result);
+                        descriptor["ret"] = Tw(IsUnitTn(result)
+                            ? new TypeNode.Fqn(_taskBcl)
+                            : new TypeNode.Fqn(_taskBcl, new[] { slot }));
+                    }
+                    descriptors.Add(descriptor);
+                }
+                method[key] = descriptors;
+            }
+
+            Carry("clrInterfaceImpls", _clrInterfaceImpls);
+            Carry("clrBaseImpls", _clrBaseImpls);
         }
 
         // R1 — the call-time-throw cold entry for a concrete-but-NOT-segmentable member (design §11 v1 policy). An
@@ -3706,7 +3783,7 @@ static partial class SuspendColdLowering
                 ["virtual"] = true,
                 ["abstract"] = true,
                 ["objectOverride"] = false,
-                ["vis"] = "public",
+                ["vis"] = _physicalSlotBridge ? _physicalSlotVisibility ?? "private" : "public",
                 ["params"] = ps,
                 ["ret"] = Tw(AnyTn),
                 ["body"] = new JsonArray(),
@@ -3715,7 +3792,9 @@ static partial class SuspendColdLowering
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             if (_generated) method["generated"] = true;
-            CarryOverrideMarkers(method, _coldName);
+            CarrySourceDeclaration(method);
+            CarryOverrideMarkers(method);
+            CarryPhysicalSlotFacts(method, coldEntry: true);
             return method;
         }
 
@@ -3843,7 +3922,7 @@ static partial class SuspendColdLowering
         JsonObject BuildBridge()
         {
             var isUnit = IsUnitTn(_resultType);
-            var rKotlin = isUnit ? UnitTn : _resultType;
+            var rKotlin = isUnit ? UnitTn : _taskResultType;
             // Name the readonly public result representation now and use it for every producer/consumer of the slot.
             // Otherwise Root-V independently makes the nested TCS/Task owner invariant while the head-position
             // TrySetResult value and Kotlin call sites remain readonly, producing either a resolver or IL mismatch.
@@ -3871,7 +3950,7 @@ static partial class SuspendColdLowering
                     ["abstract"] = true,
                     ["objectOverride"] = false,
                     ["suspendBridge"] = true,
-                    ["vis"] = "public",
+                    ["vis"] = _physicalSlotBridge ? _physicalSlotVisibility ?? "private" : "public",
                     ["params"] = aps,
                     ["ret"] = Tw(taskRetType),
                     ["body"] = new JsonArray(),
@@ -3880,7 +3959,9 @@ static partial class SuspendColdLowering
                 if (_typeParams.Count > 0)
                     am["typeParams"] = _methodTypeParamDecls.DeepClone();
                 if (_generated) am["generated"] = true;
-                CarryOverrideMarkers(am, _name);
+                CarrySourceDeclaration(am);
+                CarryOverrideMarkers(am);
+                CarryPhysicalSlotFacts(am, coldEntry: false);
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
                 if (_resultNullableGeneric != null) am["nullableGenericRet"] = _resultNullableGeneric;
                 if (_companionReceiver != null) am["companionReceiver"] = _companionReceiver;
@@ -3975,7 +4056,7 @@ static partial class SuspendColdLowering
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["suspendBridge"] = true,
-                ["vis"] = "public",
+                ["vis"] = _physicalSlotBridge ? _physicalSlotVisibility ?? "private" : "public",
                 ["params"] = ps,
                 ["ret"] = Tw(taskRetType),
                 ["body"] = body,
@@ -3984,7 +4065,9 @@ static partial class SuspendColdLowering
             if (_typeParams.Count > 0)
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             if (_generated) method["generated"] = true;
-            CarryOverrideMarkers(method, _name);
+            CarrySourceDeclaration(method);
+            CarryOverrideMarkers(method);
+            CarryPhysicalSlotFacts(method, coldEntry: false);
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the
             // inner `?` — the scalar retNullable can't express a nullability that rides an INNER type arg. Emit the
             // flattened NullableAttribute byte walk (RoundtripMetadata folds it into the return's `retAttrs` for ilemit

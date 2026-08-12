@@ -35,6 +35,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Kotlin property accessors no longer collide with ordinary `get_<name>` / `set_<name>` functions on the CLR
+  (#393).** bir2cir assigns every Kotlin accessor the dedicated `prop_get<name>` / `prop_set<name>` physical name in
+  top-level, instance, companion, extension, and companion-extension placements. External CLR property interfaces and
+  virtual base properties retain their native accessor slots through exact MethodImpl metadata, so a property and an
+  ordinary function with the former accessor-shaped name can implement separate interfaces and dispatch independently.
+  Default interface properties use a private final forwarding MethodImpl, preserving the public overridable DIM while
+  filling the external CLR property slot exactly. Same-kind declarations that collide only after CLR erasure remain
+  the separate frontend-callee-identity problem tracked by #395.
+
 - **Property accessors now retain their frontend-resolved Kotlin identity until bir2cir assigns their CLR
   representation (#397).** Calls, fake overrides, bridges, companion and extension properties, reference metadata,
   and DLL → KLIB projection use explicit property name, accessor role, association, owner, and signature facts instead

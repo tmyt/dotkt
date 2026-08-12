@@ -52,6 +52,10 @@
         {
           "name": "x", "propertyName": "x", "propertyAccessor": "set", "propertyAssociation": "derived-x",
           "static": false, "override": false, "virtual": true, "abstract": true, "fakeOverride": true,
+          "inheritedImplementation": {
+            "owner": { "t": "fqn", "name": "Base" }, "member": "x", "kind": "setter", "arity": 0,
+            "typeParams": []
+          },
           "params": [{ "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }],
           "ret": { "t": "fqn", "name": "kotlin.Unit" }, "body": [], "attrs": [],
           "overrides": [{ "owner": { "t": "fqn", "name": "Base" }, "member": "x", "kind": "setter", "arity": 1 }]

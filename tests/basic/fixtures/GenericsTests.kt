@@ -157,6 +157,13 @@ class TagDerived : TagBase() {
 
 fun <T : TagBase> classBoundReceiver(t: T): Int = t.openValue() + t.finalValue()
 
+// `!0` and `!1` are distinct positions in a CLR MethodDef signature. Collapsing both to one wildcard in the
+// emitter's declaration index either rejects this legal overload set or silently binds one body to the other.
+class TypeVariableOverloads<A, B> {
+    fun choose(value: A): String = "first:$value"
+    fun choose(value: B): String = "second:$value"
+}
+
 class GenericsTests {
     @TestAttribute
     fun classAndFunction() {

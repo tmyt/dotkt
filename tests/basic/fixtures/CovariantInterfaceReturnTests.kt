@@ -15,6 +15,25 @@ private class CovariantSlotImpl : CovariantSlot {
         get() = CovariantBoxImpl(CovariantDerived(42))
 }
 
+private interface CovariantGenericConstraint
+private class CovariantGenericReceiver<T>(val value: T)
+private interface CovariantGenericExtensionSlot {
+    val <T : CovariantGenericConstraint> CovariantGenericReceiver<T>.genericBoxed: CovariantBox<CovariantBase>
+}
+private class CovariantGenericExtensionSlotImpl : CovariantGenericExtensionSlot {
+    override val <T : CovariantGenericConstraint> CovariantGenericReceiver<T>.genericBoxed: CovariantBox<CovariantDerived>
+        get() = CovariantBoxImpl(CovariantDerived(43))
+    fun marker(): Int = 43
+}
+
+private interface CovariantGenericDefaultBase {
+    fun <T> create(value: T): CovariantBase
+}
+private interface CovariantGenericDefaultDerived : CovariantGenericDefaultBase {
+    override fun <T> create(value: T): CovariantDerived = CovariantDerived(48)
+}
+private class CovariantGenericDefaultImpl : CovariantGenericDefaultDerived
+
 // A covariant override whose return type is `Nothing` (#197). Legal Kotlin — `Nothing` is below every type, so it
 // satisfies any slot — and it is the LATE-SYNTHESIZED instance of the Nothing-value defect: the bridge above is
 // built by bir2cir out of the target declaration's return type, so it mints a fresh `Nothing`-typed call inside a
@@ -40,6 +59,17 @@ class CovariantInterfaceReturnTests {
 
         val value: CovariantSlot = CovariantSlotImpl()
         assertEquals(42, value.boxed.item.value)
+
+        // Constructing the class forces CoreCLR to validate the method-generic MethodImpl row. Invocation of a
+        // method-generic member-extension property is a separate call-site type-argument concern, not this slot test.
+        val genericExtension = CovariantGenericExtensionSlotImpl()
+        assertEquals(43, genericExtension.marker())
+
+        val genericDefault: CovariantGenericDefaultBase = CovariantGenericDefaultImpl()
+        // A generic DIM needs the same exact-return MethodImpl as a class implementation; otherwise the eventual
+        // concrete class has no implementation of the base interface's broad-returning slot.
+        assertEquals(48, genericDefault.create("x").value)
+
     }
 
     // The formal half (ilverify over this assembly) is what regresses first: the bridge is only ever entered to

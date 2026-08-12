@@ -17,13 +17,13 @@ using DotKt.Bir;
 //
 // Mutates the (already deep-cloned) lowered tree in place. Only the declaration hierarchy that ilemit emits as IL
 // bodies is touched: file-level methods, and per-type methods + constructors, recursively through nested types.
-// Property accessors are already lowered to `get_X`/`set_X` methods, so they are covered by the method pass.
+// Property accessors are already represented as methods, so they are covered by the method pass.
 static class RefBodySquash
 {
     public static void Squash(JsonNode root)
     {
         if (root is not JsonObject file) return;
-        SquashMethods(file["methods"] as JsonArray, interfaceMembers: false);
+        SquashMethods(file["methods"] as JsonArray);
         SquashTypes(file["types"] as JsonArray);
     }
 
@@ -33,13 +33,13 @@ static class RefBodySquash
         foreach (var t in types)
         {
             if (t is not JsonObject type) continue;
-            SquashMethods(type["methods"] as JsonArray, Str(type["kind"]) == "interface");
+            SquashMethods(type["methods"] as JsonArray);
             SquashCtors(type["ctors"] as JsonArray);
             SquashTypes(type["types"] as JsonArray);   // nested types (local/object/companion)
         }
     }
 
-    static void SquashMethods(JsonArray methods, bool interfaceMembers)
+    static void SquashMethods(JsonArray methods)
     {
         if (methods == null) return;
         foreach (var m in methods)
@@ -52,11 +52,6 @@ static class RefBodySquash
             if (IsAbstract(method)) continue;
             if (method["body"] is JsonArray body)
             {
-                // Kotlin interface declarations encode an abstract slot as an empty body array and a DIM as a
-                // non-empty one.  Preserve that distinction in the reference assembly: body stripping must never
-                // turn an abstract slot into a concrete throw-stub DIM, because downstream hierarchy lowering reads
-                // MethodInfo.IsAbstract as ABI metadata.
-                if (interfaceMembers && body.Count == 0) continue;
                 method["body"] = ThrowStubBody();
             }
         }
@@ -77,9 +72,6 @@ static class RefBodySquash
 
     static bool IsAbstract(JsonObject method) =>
         method["abstract"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
-
-    static string Str(JsonNode node) =>
-        node is JsonValue value && value.TryGetValue<string>(out var result) ? result : null;
 
     // A one-statement body: `throw new System.NotImplementedException()`. Mirrors the existing throw-statement
     // shape ilemit already consumes (see the stdlib's NotSupportedException intrinsic stubs); the same shape kotc

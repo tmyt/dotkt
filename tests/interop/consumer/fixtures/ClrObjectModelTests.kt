@@ -7,7 +7,7 @@
 // Coverage preserved (old case -> method):
 //   il-samcmp      -> samComparatorLiteral    an explicit `Comparator { a, b -> ... }` SAM conversion -> a synthetic class implementing the plain Kotlin fun interface (no @Clr* read in kotc)
 //   il-superobj    -> superToObjectSlot       #14 RESIDUAL: super.toString()/hashCode()/equals() to kotlin.Any reach the System.Object slot NON-virtually (else callvirt re-dispatches to the override -> stack overflow)
-//   il-overridemsg -> overrideExceptionMessage #24 `override val message` on a @ClrTypeAlias base (kotlin.Exception->System.Exception) is DISPATCHED — DeclarationRename wires get_message to the @ClrProperty("Message") slot
+//   il-overridemsg -> overrideExceptionMessage #24 `override val message` on a @ClrTypeAlias base (kotlin.Exception->System.Exception) is DISPATCHED — the dedicated accessor keeps its name and an explicit MethodImpl fills the @ClrProperty("Message") slot
 //   il-pairtostr   -> setTripleDataClassToString  collection/tuple/data-class toString routing (C11 gate guard)
 //
 // PARTIAL DUP — il-pairtostr's `listOf(1,2,3).toString()` (MapsTests), `(1 to 2).toString()` (ClrObjectModelLangTests),

@@ -363,6 +363,79 @@ static class BirTypeLowering
         }
     }
 
+    // Some representation passes run before the full-tree lowering but must compare a Kotlin declaration with an
+    // exact CLR slot read from metadata. Use the one canonical lowering rule under the reference facts for that
+    // comparison; do not duplicate a partial primitive/@ClrTypeAlias table in the caller.
+    internal static bool SamePhysicalSlotType(TypeNode left, TypeNode right,
+        IReadOnlyDictionary<string, string> aliases, Func<string, bool> isValueFqn,
+        IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
+        IReadOnlySet<string> localTypeNames = null)
+    {
+        var savedAliases = _aliases;
+        var savedIsValue = _isValueFqn;
+        var savedPhysicalNames = _physicalTypeNames;
+        var savedLocalNames = _localTypeNames;
+        try
+        {
+            _aliases = aliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
+            _isValueFqn = isValueFqn ?? (_ => false);
+            _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
+            _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
+            TypeNode LowerSlot(TypeNode type) => returnPosition
+                && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
+                    ? VoidType
+                    : CanonicalPhysicalSlotType(
+                        LowerType(type, refBuild: false, force: false, typeArg: false));
+            return LowerSlot(left).Equals(LowerSlot(right));
+        }
+        finally
+        {
+            _aliases = savedAliases;
+            _isValueFqn = savedIsValue;
+            _physicalTypeNames = savedPhysicalNames;
+            _localTypeNames = savedLocalNames;
+        }
+    }
+
+    // CIR admits both the primitive shorthand used by metadata readers (`int`, `bool`, ...) and the corresponding
+    // BCL FQN produced by @ClrTypeAlias lowering. ilemit maps each pair to the same System.Type, so an earlier
+    // representation pass comparing physical slots must canonicalize the pair as well. Keep this recursive because
+    // the spelling can occur beneath arrays, nullable value types, byrefs, function types, and constructed generics.
+    internal static TypeNode CanonicalPhysicalSlotType(TypeNode type) => type switch
+    {
+        TypeNode.Fqn { Args: null } f => new TypeNode.Fqn(f.Name switch
+        {
+            "void" => "System.Void",
+            "int" => "System.Int32",
+            "long" => "System.Int64",
+            "short" => "System.Int16",
+            "sbyte" => "System.SByte",
+            "double" => "System.Double",
+            "float" => "System.Single",
+            "bool" => "System.Boolean",
+            "char" => "System.Char",
+            "string" => "System.String",
+            "object" => "System.Object",
+            "uint" => "System.UInt32",
+            "ulong" => "System.UInt64",
+            "byte" => "System.Byte",
+            "ushort" => "System.UInt16",
+            _ => f.Name,
+        }),
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(
+            f.Name, args.Select(CanonicalPhysicalSlotType).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(CanonicalPhysicalSlotType(a.Elem)),
+        TypeNode.Nullable n => new TypeNode.Nullable(CanonicalPhysicalSlotType(n.Of)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(CanonicalPhysicalSlotType(o.Of)),
+        TypeNode.ByRef b => new TypeNode.ByRef(CanonicalPhysicalSlotType(b.Of)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+            CanonicalPhysicalSlotType(fn.Ret),
+            fn.Params.Select(CanonicalPhysicalSlotType).ToArray(),
+            fn.Recv == null ? null : CanonicalPhysicalSlotType(fn.Recv), fn.Clr,
+            fn.Ctx?.Select(CanonicalPhysicalSlotType).ToArray()),
+        _ => type,
+    };
+
     // The widest Kotlin function arity that has a CLR delegate. `System.Func`/`Action` carry 0..16; the DotKt stdlib
     // defines `KAction`17..22` / `KFunc`18..23` for 17..22 (#220). The cap is not a property of the frontend — it
     // resolves `kotlin.FunctionN` for arbitrary N, because its builtin provider synthesizes the class on demand — it
@@ -459,7 +532,18 @@ static class BirTypeLowering
                 // STEP-1 clrName migration: kotc emits a pure-Kotlin `overrides` marker (the override closure) so a
                 // future bir2cir decl-rename pass can derive BCL slot names from the ref.dll @ClrIntrinsic. It is
                 // bir2cir-internal metadata — strip it here so it never reaches the CIR/ilemit (keeps emit byte-identical).
+                if (kv.Key == DeclarationRename.SourceMemberKey)
+                {
+                    continue;
+                }
                 if (kv.Key is "overrides" or "fakeOverride"
+                    or KotlinPropertyAccessors.InheritedImplementationKey
+                    or KotlinPropertyAccessors.InheritedDefaultAccessorsKey
+                    or KotlinPropertyAccessors.InheritedDefaultMethodsKey
+                    or KotlinPropertyAccessors.PhysicalSlotBridgeKey
+                    or KotlinPropertyAccessors.SuspendSourceParamsKey
+                    or KotlinPropertyAccessors.SuspendSourceRetKey
+                    or KotlinPropertyAccessors.SuspendTaskResultKey
                     or KotlinPropertyAccessors.SourceNameKey or KotlinPropertyAccessors.KindKey
                     or KotlinPropertyAccessors.PropertyRolesKey or KotlinPropertyAccessors.AssociationKey
                     or FBoundStarProjectionErasure.SourceMemberKey) continue;

@@ -19,6 +19,10 @@ SEMANTIC_KEYS = {
     "propertyAssociation",
     "kotlinAccessors",
     "kotlinPropertyAccessorCarrier",
+    "physicalSlotBridge",
+    "inheritedImplementation",
+    "inheritedDefaultAccessors",
+    "inheritedDefaultMethods",
 }
 PHYSICAL_PROPERTY_DESCRIPTOR_KEYS = {"getSig", "setSig", "getMethodArity", "setMethodArity"}
 
@@ -47,13 +51,18 @@ def validate_bir(file: Path, root: Any) -> list[str]:
         if has_name != has_role:
             errors.append(f"{file}:{path}: propertyName/propertyAccessor must be carried together")
         if has_name:
+            # This is an explicitly-schema'd fact only when reached through its owning type-level array. Do not infer
+            # its role from the incidental absence/presence of method fields on the object itself.
+            inherited_default_fact = ".inheritedDefaultAccessors[" in path
             property_name = node.get("propertyName")
             role = node.get("propertyAccessor")
             if not isinstance(property_name, str) or not property_name:
                 errors.append(f"{file}:{path}: propertyName must be a non-empty string")
             if role not in ROLES:
                 errors.append(f"{file}:{path}: propertyAccessor must be get or set")
-            if not isinstance(node.get("propertyAssociation"), str) or not node["propertyAssociation"]:
+            if not inherited_default_fact and (
+                not isinstance(node.get("propertyAssociation"), str) or not node["propertyAssociation"]
+            ):
                 errors.append(f"{file}:{path}: accessor declaration has no propertyAssociation")
             # A raw kotc method declaration is still in Kotlin vocabulary. Calls may acquire the same facts inside
             # bir2cir, but no such intermediate tree is persisted as a .bir.json artifact.
@@ -211,8 +220,8 @@ def validate_sources() -> list[str]:
                 if line.lstrip().startswith("//"):
                     continue
                 if file == allocator and line.strip() in {
-                    '"get" => "get_" + sourceName,',
-                    '"set" => "set_" + sourceName,',
+                    '"get" => "prop_get<" + sourceName + ">",',
+                    '"set" => "prop_set<" + sourceName + ">",',
                 }:
                     continue
                 if any(pattern.search(line) for pattern in FORBIDDEN_SOURCE_PATTERNS):

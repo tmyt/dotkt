@@ -2,9 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
 
-// AUTO-PROPERTY BACKING-FIELD RENAME (#228). An ACCESSOR-ROUTED Kotlin property becomes a REAL CLR property (get_/set_
-// + a `properties` record) plus the storage that backs it. kotc names that storage with the KOTLIN identity — the
-// property's own name — because kotc emits Kotlin facts and decides no CLR member name. The resulting CLR type
+// AUTO-PROPERTY BACKING-FIELD RENAME (#228). An ACCESSOR-ROUTED Kotlin property becomes a REAL CLR property (dedicated
+// accessor methods plus explicit links in a `properties` record) and the storage that backs it. kotc names that
+// storage with the KOTLIN identity — the property's own name — because kotc emits Kotlin facts and decides no CLR
+// member name. The resulting CLR type
 // therefore carried a property `Value` AND a field `Value`: two same-named members, which reflection-driven libraries
 // cannot resolve (Newtonsoft's member grouping keys on the name and drops the pair, so `SerializeObject` silently
 // yields `{}`).

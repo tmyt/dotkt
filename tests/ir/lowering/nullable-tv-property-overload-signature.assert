@@ -1,4 +1,4 @@
 # The frontend-selected Int-receiver accessor is re-derived from its own open T? declaration.
-+"method":"get_selected","calleeOwner":{"t":"fqn","name":"NullableTvPropertyOverloadSignatureKt"},"typeArgs":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"object"},"args":[{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":1}],"sig":[{"t":"fqn","name":"System.Int32"}]
++"method":"prop_get\u003Cselected\u003E","calleeOwner":{"t":"fqn","name":"NullableTvPropertyOverloadSignatureKt"},"typeArgs":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"object"},"args":[{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":1}],"sig":[{"t":"fqn","name":"System.Int32"}]
 # A type-owned static property uses the owner declaration index, not the file-facade index.
-+"method":"get_selected","typeArgs":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"object"},"args":[{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":2}],"owner":{"t":"fqn","name":"StaticPropertyOwner"},"sig":[{"t":"fqn","name":"System.Int32"}]
++"method":"prop_get\u003Cselected\u003E","typeArgs":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"object"},"args":[{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":2}],"owner":{"t":"fqn","name":"StaticPropertyOwner"},"sig":[{"t":"fqn","name":"System.Int32"}]

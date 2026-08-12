@@ -1,3 +1,3 @@
 # The call resolved to A must derive A's T? return even though B declares the same property/signature with another return.
-+"method":"get_selected","calleeOwner":{"t":"fqn","name":"TopLevelPropertyOwnerAKt"},"typeArgs":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"object"}
--"method":"get_selected","calleeOwner":{"t":"fqn","name":"TopLevelPropertyOwnerAKt"},"typeArgs":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
++"method":"prop_get\u003Cselected\u003E","calleeOwner":{"t":"fqn","name":"TopLevelPropertyOwnerAKt"},"typeArgs":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"object"}
+-"method":"prop_get\u003Cselected\u003E","calleeOwner":{"t":"fqn","name":"TopLevelPropertyOwnerAKt"},"typeArgs":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}

@@ -29,8 +29,9 @@ sealed class TypeInfo
     public readonly Dictionary<string, MethodBuilder> Methods = new();
     // Overloaded methods share a name, so `Methods` (name-keyed) collides — the last-declared wins, and the others'
     // bodies/calls get misrouted. `MethodsBySig` keys by the complete CLR method identity available before return-type
-    // emission: name + METHOD generic arity + parameter vector. Thus `f(object)` and `f<T>(object)` are distinct even
-    // though their physical params coincide (#86 Phase 0). Both body emission and call/MethodImpl linking prefer it.
+    // emission: name + METHOD generic arity + parameter vector. Each MethodDef has an exact key that retains generic
+    // parameter scope/index, plus a first-wins erased alias used only by current call-side linking until #395 carries
+    // frontend-selected declaration identity. Definition bodies and MethodImpl links always use the exact key.
     public readonly Dictionary<MethodSigKey, MethodBuilder> MethodsBySig = new();
     // How many members share each NAME. `Methods` cannot say (it is last-wins), and the difference decides whether a
     // name-only lookup is safe: with one member there is no overload to mis-select, with several the descriptor is

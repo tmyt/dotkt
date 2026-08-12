@@ -19,7 +19,9 @@
           "init": {
             "k": "callInstance",
             "ownerType": { "t": "fqn", "name": "kotlin.Pair", "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }, { "t": "fqn", "name": "kotlin.String" }] },
-            "method": "get_first",
+            "method": "first",
+            "prop": "get",
+            "sig": [],
             "ret": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } },
             "recv": { "k": "local", "name": "p" },
             "args": []

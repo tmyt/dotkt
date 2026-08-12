@@ -378,13 +378,17 @@ sealed partial class Emitter
         if (!m.TryGetProperty("clrOverrideSig", out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException($"ilemit: override of {baseT?.FullName}.{name} is missing its `clrOverrideSig` descriptor (bir2cir must carry the resolved base-virtual signature — W1-S4 #46/#183)");
         var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
+        if (!m.TryGetProperty("clrOverrideRet", out var retEl))
+            throw new InvalidOperationException($"ilemit: override of {baseT?.FullName}.{name} is missing its `clrOverrideRet` descriptor");
+        var declRet = DotKt.Bir.TypeNode.Read(retEl);
         var declaredOwner = ResolvedOwnerIdentity(m, "clrOverrideOwner", $"override of {baseT?.FullName}.{name}");
         var searchType = baseT.IsGenericType && !baseT.IsGenericTypeDefinition ? baseT.GetGenericTypeDefinition() : baseT;
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         MethodInfo[] named;
         try { named = searchType.GetMethods(flags).Where(x => x.Name == name && x.IsVirtual && x.GetParameters().Length == declParams.Length).ToArray(); }
         catch { named = Array.Empty<MethodInfo>(); }
-        var hits = named.Where(x => DeclaringTypeIdentity(x) == declaredOwner && x.GetParameters()
+        var hits = named.Where(x => DeclaringTypeIdentity(x) == declaredOwner
+            && GenericParamMatches(declRet, ReturnTypeOf(x), null) && x.GetParameters()
             .Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, null)).All(y => y))
             .GroupBy(x => (x.Module, x.MetadataToken)).Select(g => g.First()).ToList();
         var desc = $"{baseT?.FullName}.{name}{sigEl}";
@@ -541,7 +545,7 @@ sealed partial class Emitter
     }
 
     // W1-S3 (#46 / #121) CONSUME-ONLY property GET. bir2cir (ClrMemberResolution) resolved the member against the ref.dll
-    // and stamped a `member` discriminator: "accessor" (a real .NET property OR a DotKt `get_X` method — carries the
+    // and stamped a `member` discriminator: "accessor" (a real .NET property — carries the
     // resolved accessor name + `memberSig` + `dispatch`) or "field" (a public/const field). ilemit no longer reclassifies
     // property vs get_ method vs field, and no longer derives dispatch from the reflected accessor.
     Type EmitClrPropGet(JsonElement e)

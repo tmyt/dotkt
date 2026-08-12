@@ -46,6 +46,7 @@ static class RoundtripMetadata
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
     const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
+    const string AKSourceMethod = Ns + "KotlinSourceMethodAttribute";
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
     internal const string AKExtensionCore = Ns + "KotlinExtensionCoreAttribute";
     const string AKStaticCarrier = Ns + "KotlinStaticCarrierAttribute";
@@ -189,11 +190,7 @@ static class RoundtripMetadata
     {
         // CLR Property rows cannot describe method-generic accessors. The allocator leaves this exact semantic
         // association only on those MethodDefs; turn it into trusted metadata before the hand-off fact disappears.
-        if (mo[KotlinPropertyAccessors.MetadataCarrierKey] is JsonObject propertyAccessor)
-        {
-            Append(mo, JsonCarrierAttr(AKPropertyAccessor, propertyAccessor));
-            mo.Remove(KotlinPropertyAccessors.MetadataCarrierKey);
-        }
+        StampPropertyAccessorCarrier(mo);
         // [KotlinFunction(flags)] — Kotlin modifiers with no .NET analog. suspendBridge is the bir2cir-synthesized
         // Task<R> bridge that IS the suspend fun's CLR ABI (dll2klib must see it as `suspend fun`).
         int flags = 0;
@@ -261,6 +258,18 @@ static class RoundtripMetadata
 
         StampParams(mo["params"]);
     }
+
+    static void StampPropertyAccessorCarrier(JsonObject method)
+    {
+        if (method[KotlinPropertyAccessors.MetadataCarrierKey] is not JsonObject propertyAccessor) return;
+        if (!HasAttr(method, AKPropertyAccessor))
+            Append(method, JsonCarrierAttr(AKPropertyAccessor, propertyAccessor));
+        method.Remove(KotlinPropertyAccessors.MetadataCarrierKey);
+    }
+
+    static bool HasAttr(JsonObject declaration, string attributeName) =>
+        declaration["attrs"] is JsonArray attrs && attrs.OfType<JsonObject>().Any(attribute =>
+            TypeJson.OwnerName(attribute["attr"]) == attributeName);
 
     static void StampParams(JsonNode ps)
     {
@@ -527,6 +536,13 @@ static class RoundtripMetadata
         return Marker(attr, StringArg(BirCarrier.JsonV1), BytesArg(Convert.ToBase64String(content)));
     }
 
+    // DeclarationRename owns the source-to-physical decision and records the exact cross-module edge immediately on
+    // that MethodDef. Keeping it in attrs lets every later structural pass copy it like other declaration metadata;
+    // runtime builds remove it through the ordinary DotKt.Runtime.CompilerServices.* stripping rule.
+    internal static void AddSourceMethodIdentity(JsonObject method, string sourceName) =>
+        Append(method, JsonCarrierAttr(AKSourceMethod,
+            new JsonObject { ["name"] = sourceName }));
+
     // The standard C# 14 Property graph carries receiver/name/accessor shape but cannot say that a private storage
     // field is Kotlin `const` or `lateinit`. Storage stays on the source file facade so every receiver observes the
     // original one-.cctor initialization order; this narrow edge names that physical owner/slot while dll2klib reads
@@ -638,6 +654,7 @@ static class RoundtripMetadata
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association
+            AttrClass(AKSourceMethod, Ctor(Param("System.String"), Param(ByteArrayType()))), // renamed CLR method -> Kotlin source identity
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts
             AttrClass(AKExtensionCore, Ctor(Param("System.String"), Param(ByteArrayType()))), // generic C# wrapper -> Kotlin semantic core
             AttrClass(AKStaticCarrier, Ctor(Param("System.String"), Param(ByteArrayType()))), // one physical static surface for a generic Kotlin owner

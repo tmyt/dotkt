@@ -181,17 +181,59 @@ not author CLR MethodDef names or Property getter/setter links.
 Property calls continue to use the bare Kotlin property name plus the existing `prop:get|set` role. bir2cir is the
 only layer that projects those facts to physical MethodDef/MethodRef names and exact Property links (physical name,
 method generic arity, and parameter signature). ilemit consumes that descriptor one-to-one. For this format version
-the physical rule remains `get_<name>` / `set_<name>`, but that spelling is one-way output: no pass may parse it to
+the physical rule is `prop_get<name>` / `prop_set<name>`, but that spelling is one-way output: no pass may parse it to
 recover Kotlin meaning. External CLR properties are read through Property/MethodSemantics metadata. The four BIR-only
 identity fields (`propertyName`, `propertyAccessor`, `propertyAssociation`, `kotlinAccessors`) and `prop:get|set`
 calls are forbidden in final CIR.
 
+When that dedicated accessor implements an external CLR property, bir2cir records the exact external accessor in a
+`clrInterfaceImpls` or `clrOverride`/`clrOverrideMember`/`clrOverrideRet` descriptor. The latter is paired with
+`clrOverrideSig`; return and parameter types together identify the CLR MethodDef. A class accessor can itself be the MethodImpl
+body. A default accessor declared on an interface requires the CLR explicit-interface shape instead: bir2cir emits a
+private forwarding body with `clrInterfaceSlotBridge:true`, and ilemit maps that CIR instruction directly to a
+`Private|Virtual|Final|NewSlot` MethodDef plus the stated MethodImpl. Neither path derives a slot from an accessor name.
+When otherwise-identical generic slots differ by constraints, the MethodImpl descriptor also carries the exact
+`typeParams` declarations; ilemit compares that resolved vector opaquely and does not reinterpret Kotlin bounds.
+
+Fake-override resolution remains a frontend decision. kotc records a concrete selected declaration on an interface
+fake override as `inheritedImplementation`, and records each default property accessor inherited by a class in
+`inheritedDefaultAccessors` together with its class-frame Kotlin signature. These selected identities include the
+target declaration's method `typeParams`, because equal name/arity/parameter/return shapes may still denote distinct
+frontend declarations when their generic constraints differ. The ordinary-function twin is
+`inheritedDefaultMethods`; it covers a DIM whose physical CLR name collides with an unrelated virtual class method. bir2cir consumes those facts when eliding
+the non-declaration and, only if the CLR shape collides with an unrelated ordinary virtual method, allocating a class-level
+MethodImpl bridge. It may resolve the stated Kotlin declaration to a CLR slot, but must not rediscover whether a
+default exists or which declaration won by inspecting ancestor bodies, metadata abstractness, or physical names.
+Interface declarations likewise carry their frontend modality explicitly as `abstract`. An empty `body` is valid for
+a concrete Unit-returning default implementation, so neither bir2cir nor ilemit may use statement count as modality.
+
+There is one external-assembly representability boundary that more identity does not remove. A foreign CLR interface
+may provide the selected default only through a `private final` explicit MethodImpl body. If a consuming Kotlin class
+also declares an ordinary virtual method at the implemented property's physical accessor signature, preserving the
+frontend-selected default would require a new class-level MethodImpl bridge; that bridge cannot call the foreign private body
+(`MethodAccessException`), cannot non-virtually call the abstract base declaration (invalid IL), and cannot call it
+virtually without redispatching to the colliding class method. Supporting that source shape therefore requires either a
+public producer-side trampoline or a dedicated compilation refusal. bir2cir performs that refusal when a colliding
+ordinary MethodDef requires a bridge but the frontend-selected external implementation has no public concrete call
+target. It must not be "fixed" by selecting a different default from names or hierarchy. DotKt-produced interfaces do not have this limitation because their public source
+accessor remains callable while the private exact bridge supplies only the declaration-side MethodImpl identity.
+
+When bir2cir assigns an ordinary Kotlin method a different CLR slot name, it records the exact Kotlin source name in
+the trusted `KotlinSourceMethod` carrier on that MethodDef. An explicit MethodImpl bridge carries the same identity so
+`dll2klib` can re-surface the implemented function under its Kotlin name. `ReferenceMetadataIndex` ignores that
+compiler-generated bridge copy and uses the source declaration's carrier to map a frontend-selected declaration back
+to its physical MethodDef. Neither consumer derives source identity from capitalization, a known method-name table,
+or a method body.
+
 A CLR Property signature has no method-generic parameter owner, so a method-generic extension accessor cannot be
-attached to a valid Property row when its receiver or context mentions `!!T`. bir2cir omits that unrepresentable row
-and stamps each accessor MethodDef with the exact source name, role, and opaque association in the trusted
-`KotlinPropertyAccessor` carrier. `dll2klib` reconstructs the Kotlin property from that carrier without inspecting the
-physical method name or re-resolving an erased signature. Representable properties continue to use ordinary
-Property/MethodSemantics metadata; synthesized override bridges receive the same exact association.
+attached to a valid Property row when its receiver or context mentions `!!T`. bir2cir omits that unrepresentable row.
+Such an accessor carries the exact source name, role, and opaque association in the trusted
+`KotlinPropertyAccessor` carrier. `dll2klib` reconstructs it from that carrier without inspecting the physical method
+name or re-resolving an erased signature; representable properties otherwise use ordinary Property/MethodSemantics
+metadata. A synthesized override bridge carries its own physical-property association plus an explicit
+`sourceAssociation` back to the source accessor, and that source accessor carries its association as well. This
+relation lets a downstream class consume the frontend-selected default through the bridge even when their CLR
+signatures differ; no consumer compares those signatures or parses either opaque association.
 
 Control flow: the structured `for*` family and the CFG `label`/`brIf`/`goto` while-family coexist
 (mid-migration, audit D8) — the freeze picks the CFG form as canonical for lowered output; the structured

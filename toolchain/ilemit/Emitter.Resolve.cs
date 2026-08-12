@@ -106,7 +106,15 @@ sealed partial class Emitter
             retType = rrm.ReturnType;
             return rrm;
         }
-        var mb = FindMethod(open, name, sig, methodArity)
+        // A method DECLARED on a locally-emitted constructed generic owner is keyed in MethodsBySig with the OPEN
+        // owner's type variables (`set(!T)`), while the already-resolved call descriptor is expressed in the
+        // constructed frame (`Owner<string>.set(string)`). Link that exact descriptor after substituting the owner's
+        // arguments. This is token construction, not overload resolution: owner, name, arity, and parameter vector
+        // are all CIR facts, and a non-unique match is refused.
+        var mb = constructed != null && _types.ContainsKey(open)
+            ? FindDeclaredMethodOnConstructedOwner(open, constructed, name, sig, methodArity)
+            : null;
+        mb ??= FindMethod(open, name, sig, methodArity)
             ?? throw new NotSupportedException($"method {open}.{name}({sig}) not found (external owner did not resolve or lacks the member)");
         if (constructed == null)
         {
@@ -143,6 +151,29 @@ sealed partial class Emitter
         // base instantiation (`Base<int>`); only fall back to the open MethodBuilder when no such base exists (interface).
         try { return AnchorMethod(constructed, mb); }
         catch (ArgumentException) { return AnchorInheritedOnBase(constructed, mb, out retType) ?? mb; }
+    }
+
+    MethodInfo FindDeclaredMethodOnConstructedOwner(string open, Type constructed, string name,
+        DotKt.Bir.TypeNode[] sig, int methodArity)
+    {
+        if (sig == null || !_types.TryGetValue(open, out var ti)) return null;
+        var wanted = sig.Select(MapType).ToArray();
+        var ownerArgs = constructed.GetGenericArguments();
+        var candidates = ti.MethodsBySig
+            .Where(entry => entry.Key.Name == name && entry.Key.GenericArity == methodArity)
+            .Select(entry => entry.Value)
+            .Distinct()
+            .Where(method => _mparams.TryGetValue(method, out var declared)
+                && declared.Length == wanted.Length
+                // Compare the declaration after applying this owner's type arguments through the whole
+                // parameter shape. `Subst` only handles a bare top-level parameter and therefore misses an
+                // exact descriptor such as Slot<List<T>> when Slot's declaration is Slot<U>. The owner-slot
+                // substitution returns a replacement argument as-is (it does not recursively substitute the
+                // caller's own T inside List<T>), which is precisely the single substitution frame required here.
+                && declared.Select(parameter => SubstituteIfaceArgs(parameter, ownerArgs))
+                    .Zip(wanted, SlotParamMatches).All(match => match))
+            .ToArray();
+        return candidates.Length == 1 ? candidates[0] : null;
     }
 
     // `mb` is INHERITED — declared on a generic BASE class, not on `constructed`'s own generic def. A call must
@@ -278,20 +309,54 @@ sealed partial class Emitter
         return subst.SequenceEqual(args) ? t : ConstructedType(t.GetGenericTypeDefinition(), subst);
     }
 
-    // Overload disambiguation for interface-slot wiring: does a body method's declared param type satisfy the
-    // interface method's (substituted) param type? Reference/Type equality first; builders vs runtime
-    // instantiations of the same shape compare by name (TypeBuilderInstantiation instances are not reference-equal
-    // even for identical shapes). Deliberately shallow — the caller only disambiguates same-name OVERLOADS, whose
-    // param lists differ at the top level (CompareTo(Ver) vs CompareTo(object)).
+    // Exact physical type comparison for interface/base-slot wiring. TypeBuilderInstantiation objects are not
+    // reference-equal even when they denote the same constructed type, so compare their generic definitions and
+    // arguments recursively. This must remain discriminating below the top level: CLR property/indexer accessors may
+    // overload on `IList<string>` vs `IList<int>`, and a shallow `Name` comparison would wire the wrong MethodImpl.
     // A METHOD's own type parameter is the one thing here with NO name identity across two declarations: the CLI
     // encodes it as `!!i` (ECMA-335 II.23.2.12) and an override may rename it — `<X, Y> keep(x, u, v)` fills
     // `<U, V> keep(...)`, same slot, different spelling. So two method-scoped parameters are the same position when
     // their indices agree, and the name comparison is never asked about them.
-    bool SlotParamMatches(Type body, Type iface) =>
-        ReferenceEquals(body, iface) || body == iface
-        || (IsMethodScoped(body) && IsMethodScoped(iface)
-            && body.GenericParameterPosition == iface.GenericParameterPosition)
-        || (body.Name == iface.Name && (body.Namespace ?? "") == (iface.Namespace ?? ""));
+    bool SlotParamMatches(Type body, Type iface)
+    {
+        if (ReferenceEquals(body, iface) || body == iface) return true;
+        if (body == null || iface == null) return false;
+        if (body.IsGenericParameter || iface.IsGenericParameter)
+        {
+            if (!body.IsGenericParameter || !iface.IsGenericParameter) return false;
+            var bodyMethod = IsMethodScoped(body);
+            var ifaceMethod = IsMethodScoped(iface);
+            return bodyMethod == ifaceMethod
+                   && body.GenericParameterPosition == iface.GenericParameterPosition;
+        }
+        if (body.HasElementType || iface.HasElementType)
+        {
+            if (body.IsArray != iface.IsArray || body.IsByRef != iface.IsByRef || body.IsPointer != iface.IsPointer)
+                return false;
+            if (body.IsArray && body.GetArrayRank() != iface.GetArrayRank()) return false;
+            return SlotParamMatches(body.GetElementType(), iface.GetElementType());
+        }
+        if (body.IsGenericType || iface.IsGenericType)
+        {
+            if (!body.IsGenericType || !iface.IsGenericType) return false;
+            Type bodyDef;
+            Type ifaceDef;
+            try
+            {
+                bodyDef = body.IsGenericTypeDefinition ? body : body.GetGenericTypeDefinition();
+                ifaceDef = iface.IsGenericTypeDefinition ? iface : iface.GetGenericTypeDefinition();
+            }
+            catch { return false; }
+            if (!ReferenceEquals(bodyDef, ifaceDef) && bodyDef != ifaceDef
+                && (bodyDef.Name != ifaceDef.Name || (bodyDef.Namespace ?? "") != (ifaceDef.Namespace ?? "")))
+                return false;
+            var bodyArgs = body.GetGenericArguments();
+            var ifaceArgs = iface.GetGenericArguments();
+            return bodyArgs.Length == ifaceArgs.Length
+                   && bodyArgs.Zip(ifaceArgs, SlotParamMatches).All(match => match);
+        }
+        return body.Name == iface.Name && (body.Namespace ?? "") == (iface.Namespace ?? "");
+    }
 
     // Whose scope a generic parameter belongs to. A REFLECTED declaration answers directly; an EMITTED
     // `GenericTypeParameterBuilder` reports neither a declaring method nor a declaring type (measured — both are null
@@ -302,14 +367,13 @@ sealed partial class Emitter
     // Consume bir2cir's resolved `clrInterfaceImpls` directive. Matching is structural against the already-substituted
     // interface spec and parameter signature; no assignability, hierarchy, or covariance decision occurs here.
     MethodBuilder FindExplicitInterfaceBridge(TypeInfo ti, DotKt.Bir.TypeNode.Fqn ifaceSpec, string member,
-        MethodSigKey slotSig)
+        MethodSigKey slotSig, DotKt.Bir.TypeNode slotRet, JsonElement slotMethod)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("methods", out var methods)) return null;
         var ifaceKey = SigCanon(ifaceSpec);
         foreach (var method in methods.EnumerateArray())
         {
-            if (!method.TryGetProperty("clrInterfaceImpls", out var impls)
-                || !method.TryGetProperty("name", out var bridgeNameNode)) continue;
+            if (!method.TryGetProperty("clrInterfaceImpls", out var impls)) continue;
             foreach (var impl in impls.EnumerateArray())
             {
                 if (!impl.TryGetProperty("owner", out var ownerNode)
@@ -317,7 +381,11 @@ sealed partial class Emitter
                     || SigCanon(owner) != ifaceKey
                     || !impl.TryGetProperty("member", out var memberNode)
                     || memberNode.GetString() != member
-                    || !impl.TryGetProperty("params", out var ps)) continue;
+                    || !impl.TryGetProperty("params", out var ps)
+                    || !impl.TryGetProperty("ret", out var retNode)
+                    || DotKt.Bir.TypeNode.Read(retNode) is not { } describedRet
+                    || slotRet == null || !describedRet.Equals(slotRet)
+                    || !DescriptorTypeParamsMatch(impl, slotMethod, ifaceSpec.Args)) continue;
                 // ARITY comes from the DESCRIPTOR, not from the slot being matched. Taking it from the slot made a
                 // directive for `put(T?)` answer for `<U> put(T?)` as well — one bridge wired to two CLR slots,
                 // which the CLR rejects outright.
@@ -325,10 +393,102 @@ sealed partial class Emitter
                 var describedSig = SigKey(member, slotSig.GenericArity,
                     ps.EnumerateArray().Select(p => DotKt.Bir.TypeNode.Read(p)));
                 if (describedSig != slotSig) continue;
-                return ti.Methods.TryGetValue(bridgeNameNode.GetString(), out var bridge) ? bridge : null;
+                // The descriptor lives on this exact method declaration. Accessors with the same physical name are
+                // ordinary CLR overloads (member-extension/index parameters), so the name-keyed compatibility index is
+                // insufficient and may point at a different MethodBuilder.
+                var bridgeName = PhysicalMethodName(method);
+                return ti.MethodsBySig.TryGetValue(DefinitionSigKey(bridgeName, method), out var bridge) ? bridge : null;
             }
         }
         return null;
+    }
+
+    static bool DescriptorTypeParamsMatch(JsonElement descriptor, JsonElement declaration,
+        DotKt.Bir.TypeNode[] ownerArgs = null)
+    {
+        if (!descriptor.TryGetProperty("typeParams", out var described)) return true;
+        if (!declaration.TryGetProperty("typeParams", out var declared))
+            return described.ValueKind == JsonValueKind.Array && described.GetArrayLength() == 0;
+        if (described.ValueKind != JsonValueKind.Array || declared.ValueKind != JsonValueKind.Array
+            || described.GetArrayLength() != declared.GetArrayLength()) return false;
+        var describedParams = described.EnumerateArray().ToArray();
+        var declaredParams = declared.EnumerateArray().ToArray();
+        for (var i = 0; i < describedParams.Length; i++)
+        {
+            if (!TypeParameterSpecialConstraints(describedParams[i])
+                    .SetEquals(TypeParameterSpecialConstraints(declaredParams[i])))
+                return false;
+            var describedConstraints = TypeParameterConstraints(describedParams[i]).ToList();
+            var declaredConstraints = TypeParameterConstraints(declaredParams[i])
+                .Select(constraint => SubstTv(constraint, ownerArgs)).ToList();
+            if (describedConstraints.Count != declaredConstraints.Count) return false;
+            foreach (var constraint in describedConstraints)
+            {
+                var match = declaredConstraints.FindIndex(candidate => candidate.Equals(constraint));
+                if (match < 0) return false;
+                declaredConstraints.RemoveAt(match);
+            }
+        }
+        return true;
+    }
+
+    static IEnumerable<DotKt.Bir.TypeNode> TypeParameterConstraints(JsonElement parameter) =>
+        parameter.ValueKind == JsonValueKind.Object
+        && parameter.TryGetProperty("constraints", out var constraints)
+        && constraints.ValueKind == JsonValueKind.Array
+            ? constraints.EnumerateArray().Select(DotKt.Bir.TypeNode.Read)
+            : Enumerable.Empty<DotKt.Bir.TypeNode>();
+
+    static HashSet<string> TypeParameterSpecialConstraints(JsonElement parameter) =>
+        parameter.ValueKind == JsonValueKind.Object
+        && parameter.TryGetProperty("specialConstraints", out var constraints)
+        && constraints.ValueKind == JsonValueKind.Array
+            ? constraints.EnumerateArray().Select(value => value.GetString()).ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+
+    // Consume exact MethodImpl descriptors whose declaration is another interface emitted in this assembly. The
+    // descriptor already states the owner/member/arity/parameter/return identity and the implementing MethodDef;
+    // this routine only turns that CIR instruction into the corresponding metadata row. In particular it does not
+    // inspect method bodies or select a default implementation from the interface hierarchy.
+    void WireResolvedEmittedInterfaceImpls(TypeInfo ti, DotKt.Bir.TypeNode.Fqn ifaceSpec, HashSet<string> seen)
+    {
+        var (open, constructed) = ParseOwnerT(ifaceSpec);
+        if (!_types.TryGetValue(open, out var iface)
+            || iface.Def.ValueKind != JsonValueKind.Object
+            || !iface.Def.TryGetProperty("methods", out var methods))
+            return;
+        var specArgs = ifaceSpec.Args;
+        foreach (var method in methods.EnumerateArray())
+        {
+            if (method.TryGetProperty("clrInterfaceSlotBridge", out var physicalBridge)
+                && physicalBridge.GetBoolean())
+                continue;
+            if (!method.TryGetProperty("name", out var nameNode)
+                || !method.TryGetProperty("params", out var parameters))
+                continue;
+            var name = PhysicalMethodName(method);
+            var slotSig = SigKey(name, DeclaredMethodArity(method),
+                parameters.EnumerateArray()
+                    .Select(p => SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs)));
+            var slotRet = method.TryGetProperty("ret", out var retNode)
+                ? SubstTv(DotKt.Bir.TypeNode.Read(retNode), specArgs)
+                : null;
+            var bridge = FindExplicitInterfaceBridge(ti, ifaceSpec, name, slotSig, slotRet, method);
+            if (bridge == null) continue;
+            var key = SigCanon(ifaceSpec) + "::" + slotSig + "->"
+                      + (slotRet == null ? "?" : DotKt.Bir.TypeNode.Write(slotRet))
+                      + "#tp=" + (method.TryGetProperty("typeParams", out var methodTypeParams)
+                          ? methodTypeParams.GetRawText() : "[]");
+            if (!seen.Add(key)) continue;
+            var declaration = iface.MethodsBySig.TryGetValue(DefinitionSigKey(name, method), out var exact)
+                ? exact
+                : null;
+            if (declaration == null)
+                throw new InvalidOperationException(
+                    $"ilemit: resolved interface MethodImpl declaration {open}.{slotSig} is absent");
+            WireMethodOverride(ti.TB, bridge,
+                constructed != null ? AnchorMethod(constructed, declaration) : declaration);
+        }
     }
 
     // The same directive, consumed for a REFERENCED or BCL interface slot. The emitted-interface branch can match
@@ -339,26 +499,53 @@ sealed partial class Emitter
     // Without this a bridge for a referenced supertype is emitted and then never wired: the name-based lookup below
     // searches for a body CALLED like the slot, and a bridge is deliberately named nothing of the sort.
     MethodBuilder FindExternalInterfaceBridge(TypeInfo ti, Type ifaceType, string member,
-        int methodArity, Type[] ips)
+        int methodArity, Type[] ips, Type interfaceRet, DotKt.Bir.TypeNode.Fqn ifaceSpec = null)
     {
         if (ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("methods", out var methods)) return null;
         foreach (var method in methods.EnumerateArray())
         {
-            if (!method.TryGetProperty("clrInterfaceImpls", out var impls)
-                || !method.TryGetProperty("name", out var nameNode)) continue;
+            if (!method.TryGetProperty("clrInterfaceImpls", out var impls)) continue;
             foreach (var impl in impls.EnumerateArray())
             {
-                // The owner is compared as a RESOLVED TYPE, not as a spec string: a slot reached through a referenced
-                // interface's own base is enumerated by reflection and has no spec to canonicalize against.
+                // Prefer the exact CIR spec whenever the worklist carries it. Constructing the same generic interface
+                // twice over a local GenericTypeParameterBuilder can produce distinct TypeBuilderInstantiation objects,
+                // so reflection-object identity is not structural identity. A base interface discovered only through
+                // reflection has no CIR spec here and retains the mapped-type comparison as its fallback.
                 if (!impl.TryGetProperty("owner", out var ownerNode)
                     || ReadFqn(ownerNode) is not DotKt.Bir.TypeNode.Fqn owner
-                    || MapType(owner) != ifaceType
+                    || (ifaceSpec != null ? SigCanon(owner) != SigCanon(ifaceSpec) : MapType(owner) != ifaceType)
                     || !impl.TryGetProperty("member", out var memberNode)
-                    || memberNode.GetString() != member) continue;
+                    || memberNode.GetString() != member
+                    || !impl.TryGetProperty("params", out var describedParams)
+                    || describedParams.ValueKind != JsonValueKind.Array
+                    || describedParams.GetArrayLength() != ips.Length) continue;
                 if (DescribedArity(impl) != methodArity) continue;
-                if (!ti.Methods.TryGetValue(nameNode.GetString(), out var bridge)) continue;
+                if (!impl.TryGetProperty("ret", out var describedRetNode)
+                    || DotKt.Bir.TypeNode.Read(describedRetNode) is not { } describedRet
+                    || interfaceRet == null || !GenericParamMatches(describedRet, interfaceRet, ownerArgs: null))
+                    continue;
+                // The descriptor is the producer's exact answer. Consume its full parameter vector before considering
+                // the body; owner/member/arity alone do not distinguish overloaded CLR indexer/property accessors.
+                var descriptorMatches = true;
+                var describedIndex = 0;
+                foreach (var describedParam in describedParams.EnumerateArray())
+                {
+                    var node = DotKt.Bir.TypeNode.Read(describedParam);
+                    if (node == null || !GenericParamMatches(node, ips[describedIndex], ownerArgs: null))
+                    {
+                        descriptorMatches = false;
+                        break;
+                    }
+                    describedIndex++;
+                }
+                if (!descriptorMatches) continue;
+                // Select the MethodImpl body from the declaration that owns this descriptor, not from the last-wins
+                // name index. Multiple property accessors intentionally share `prop_get<name>`/`prop_set<name>`.
+                var bridgeName = PhysicalMethodName(method);
+                if (!ti.MethodsBySig.TryGetValue(DefinitionSigKey(bridgeName, method), out var bridge)) continue;
                 if (_mparams.TryGetValue(bridge, out var bps) && bps.Length == ips.Length
-                    && bps.Zip(ips, SlotParamMatches).All(x => x))
+                    && bps.Zip(ips, SlotParamMatches).All(x => x)
+                    && SlotParamMatches(bridge.ReturnType, interfaceRet))
                     return bridge;
             }
         }
@@ -366,18 +553,25 @@ sealed partial class Emitter
     }
 
     // The METHOD GENERIC ARITY a MethodImpl descriptor states. Part of the CLI signature (ECMA-335 I.8.6.1.6), so
-    // part of the identity a directive is matched by; absent on an older descriptor, which then means arity 0.
-    static int DescribedArity(JsonElement impl) =>
-        impl.TryGetProperty("arity", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetInt32() : 0;
+    // part of the identity a directive is matched by. CIR is internal ABI: an incomplete descriptor is malformed,
+    // not an arity-0 compatibility spelling.
+    static int DescribedArity(JsonElement impl)
+    {
+        if (impl.TryGetProperty("arity", out var arity) && arity.ValueKind == JsonValueKind.Number)
+            return arity.GetInt32();
+        throw new InvalidOperationException("ilemit: MethodImpl descriptor has no resolved generic arity");
+    }
 
     // The base-class slot a `clrBaseImpls` descriptor names when its owner lives in a REFERENCED assembly. The
     // owner is a real reflection Type, so the slot is a real MethodInfo: match by name, method generic arity and the
     // descriptor's own (already-constructed) parameter vector. Resolution only — the descriptor decided the slot.
-    MethodInfo FindExternalBaseSlot(DotKt.Bir.TypeNode.Fqn ownerFqn, string member, int arity, JsonElement ps)
+    MethodInfo FindExternalBaseSlot(DotKt.Bir.TypeNode.Fqn ownerFqn, string member, int arity,
+        JsonElement ps, JsonElement ret, JsonElement descriptor)
     {
         var owner = MapType(ownerFqn);
         if (owner == null) return null;
         var want = ps.EnumerateArray().Select(p => MapType(p)).ToArray();
+        var wantRet = MapType(ret);
         // A REFERENCED GENERIC base instantiated at a LOCALLY EMITTED type argument — `class C : Base<LocalType>` —
         // is a TypeBuilderInstantiation, whose `GetMethods()` throws. That is a perfectly ordinary shape, not an
         // impossible one: the open definition is enumerated instead and each candidate re-anchored onto the
@@ -397,10 +591,58 @@ sealed partial class Emitter
                                    && m.GetParameters().Length == want.Length
                                    && m.GetParameters()
                                        .Select(p => reanchor ? SubstituteIfaceArgs(p.ParameterType, args) : p.ParameterType)
-                                       .Zip(want, SlotParamMatches).All(x => x))
+                                       .Zip(want, SlotParamMatches).All(x => x)
+                                   && SlotParamMatches(
+                                       reanchor ? SubstituteIfaceArgs(ReturnTypeOf(m), args) : ReturnTypeOf(m),
+                                       wantRet)
+                                   && ReflectedTypeParamsMatch(descriptor, m, reanchor ? args : null))
             .ToList();
         if (cands.Count != 1) return null;
         return reanchor ? AnchorMethod(owner, cands[0]) : cands[0];
+    }
+
+    // Reflection supplies the MethodInfo named by an already-resolved descriptor; it does not get to choose among
+    // constraint-only declarations. Compare the descriptor's positional !!i constraint shape before returning the
+    // metadata handle. Generic-parameter names are deliberately irrelevant to CLR identity.
+    bool ReflectedTypeParamsMatch(JsonElement descriptor, MethodInfo declaration, Type[] ownerArgs)
+    {
+        if (!descriptor.TryGetProperty("typeParams", out var described)) return true;
+        if (described.ValueKind != JsonValueKind.Array) return false;
+        var describedParams = described.EnumerateArray().ToArray();
+        var declaredParams = declaration.GetGenericArguments();
+        if (describedParams.Length != declaredParams.Length) return false;
+        const GenericParameterAttributes specialMask =
+            GenericParameterAttributes.ReferenceTypeConstraint
+            | GenericParameterAttributes.NotNullableValueTypeConstraint
+            | GenericParameterAttributes.DefaultConstructorConstraint
+            | GenericParameterAttributes.AllowByRefLike;
+        for (var i = 0; i < describedParams.Length; i++)
+        {
+            var wantedAttributes = GenericParameterAttributes.None;
+            foreach (var special in TypeParameterSpecialConstraints(describedParams[i]))
+                wantedAttributes |= special switch
+                {
+                    "class" => GenericParameterAttributes.ReferenceTypeConstraint,
+                    "struct" => GenericParameterAttributes.NotNullableValueTypeConstraint,
+                    "new" => GenericParameterAttributes.DefaultConstructorConstraint,
+                    "allowsRefStruct" => GenericParameterAttributes.AllowByRefLike,
+                    var value => throw new InvalidOperationException(
+                        $"ilemit: MethodImpl descriptor has unknown generic-parameter special constraint '{value}'"),
+                };
+            if ((declaredParams[i].GenericParameterAttributes & specialMask) != wantedAttributes) return false;
+            var wantedConstraints = TypeParameterConstraints(describedParams[i]).Select(MapType).ToList();
+            var actualConstraints = declaredParams[i].GetGenericParameterConstraints()
+                .Select(constraint => ownerArgs == null ? constraint : SubstituteIfaceArgs(constraint, ownerArgs))
+                .ToList();
+            if (wantedConstraints.Count != actualConstraints.Count) return false;
+            foreach (var constraint in wantedConstraints)
+            {
+                var match = actualConstraints.FindIndex(candidate => SlotParamMatches(constraint, candidate));
+                if (match < 0) return false;
+                actualConstraints.RemoveAt(match);
+            }
+        }
+        return true;
     }
 
     MethodInfo ApplyTypeArgs(MethodInfo m, JsonElement e, out Type retType, out Type[] paramTypes)
@@ -542,6 +784,17 @@ sealed partial class Emitter
             methodDef.GetProperty("params").EnumerateArray()
                 .Select(p => DotKt.Bir.TypeNode.Read(p.GetProperty("type"))));
 
+    // A MethodDef's own identity retains the exact generic-parameter scope and position. The more permissive SigKey
+    // above remains a call/constructed-owner alias until #395 transports frontend-selected call identities; it must
+    // not be used to store or retrieve a particular declaration body.
+    MethodSigKey DefinitionSigKey(string name, JsonElement methodDef) =>
+        DefinitionSigKey(name, DeclaredMethodArity(methodDef),
+            methodDef.GetProperty("params").EnumerateArray()
+                .Select(p => DotKt.Bir.TypeNode.Read(p.GetProperty("type"))));
+
+    MethodSigKey DefinitionSigKey(string name, int methodArity, IEnumerable<DotKt.Bir.TypeNode> sig) =>
+        new(name, methodArity, string.Join("|", sig.Select(DefinitionSigCanon)));
+
     MethodSigKey SigKey(string name, int methodArity, IEnumerable<DotKt.Bir.TypeNode> sig) =>
         new(name, methodArity, string.Join("|", sig.Select(SigCanon)));
 
@@ -549,6 +802,9 @@ sealed partial class Emitter
         methodDef.TryGetProperty("typeParams", out var tps) && tps.ValueKind == JsonValueKind.Array
             ? tps.GetArrayLength()
             : 0;
+
+    static string PhysicalMethodName(JsonElement methodDef) =>
+        methodDef.GetProperty("name").GetString();
 
     static int CalledMethodArity(JsonElement call) =>
         call.TryGetProperty("typeArgs", out var tas) && tas.ValueKind == JsonValueKind.Array
@@ -563,9 +819,8 @@ sealed partial class Emitter
             ? s.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray()
             : null;
 
-    // The CANONICAL overload-key encoding of a Type node (a type variable collapses to a single wildcard, so def-side
-    // and call-side keys agree wherever the shape matches). An internal dictionary-hash spelling — never parsed back and
-    // never on the wire; the structural `Matches` (not this string) does the actual type comparison against reflection.
+    // The CANONICAL call/substitution-key encoding of a Type node. A type variable is a wildcard here so a call in a
+    // constructed owner frame can reach an open declaration alias. DefinitionSigCanon is the distinct MethodDef key.
     string SigCanon(DotKt.Bir.TypeNode t) => t switch
     {
         DotKt.Bir.TypeNode.Fqn f => f.Args == null ? SigFqn(f.Name) : SigFqn(f.Name) + "[" + string.Join(",", f.Args.Select(SigCanon)) + "]",
@@ -580,6 +835,22 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode.Oblivious o => SigCanon(o.Of),
         DotKt.Bir.TypeNode.Array a => "array:" + SigCanon(a.Elem),
         DotKt.Bir.TypeNode.ByRef b => "byref:" + SigCanon(b.Of),
+        _ => "object",
+    };
+
+    string DefinitionSigCanon(DotKt.Bir.TypeNode t) => t switch
+    {
+        DotKt.Bir.TypeNode.Fqn f => f.Args == null ? SigFqn(f.Name) : SigFqn(f.Name) + "[" +
+            string.Join(",", f.Args.Select(DefinitionSigCanon)) + "]",
+        DotKt.Bir.TypeNode.Tv tv => "gp:" + tv.Scope + ":" + tv.I,
+        DotKt.Bir.TypeNode.Fn fn => (fn.Suspend ? "sfunc:" : "func:") + DefinitionSigCanon(fn.Ret) + ":" +
+            string.Join(",", fn.DelegateParams.Select(DefinitionSigCanon)),
+        DotKt.Bir.TypeNode.Nullable n => IsValueType(MapType(n.Of))
+            ? "nullable[" + DefinitionSigCanon(n.Of) + "]"
+            : DefinitionSigCanon(n.Of),
+        DotKt.Bir.TypeNode.Oblivious o => DefinitionSigCanon(o.Of),
+        DotKt.Bir.TypeNode.Array a => "array:" + DefinitionSigCanon(a.Elem),
+        DotKt.Bir.TypeNode.ByRef b => "byref:" + DefinitionSigCanon(b.Of),
         _ => "object",
     };
 

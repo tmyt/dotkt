@@ -176,7 +176,7 @@ class KotlinApiShapeRoundtripTests {
             // per-parameter list is physical — so the context slot shifts `k`'s ordinal.
             ClassicAssert.AreEqual(18, labeled(1))                   // 18    k defaults to 7
             ClassicAssert.AreEqual(13, labeled(1, 2))                // 13    nothing omitted
-            // Context PROPERTIES: the accessor is a `get_<name>([__self,] ctx...)` method, restored as a context
+            // Context PROPERTIES: the accessor is a `prop_get<name>([__self,] ctx...)` method, restored as a context
             // property rather than an extension property on the CONTEXT type (a different declaration).
             ClassicAssert.AreEqual(30, gauge)                        // 30    top-level context property
             ClassicAssert.AreEqual(12, 2.bumped)                     // 12    extension receiver + context
@@ -247,7 +247,7 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual("[one]", collectionValue.get("one").toString())
 
         // The stdlib declares same-name extension properties in several physical file classes. The projected owner
-        // on this resolved reference, not a global get_/set_ name search, must select the List accessor.
+        // on this resolved reference, not a global physical-name search, must select the List accessor.
         val stdlibLastIndex = List<Int>::lastIndex
         ClassicAssert.AreEqual(1, stdlibLastIndex.get(listOf(10, 20)))
 

@@ -57,6 +57,13 @@ import roundtrip.memberextensionsurface.topLevelComputed
 import roundtrip.memberextensionsurface.topLevelCustomGetter
 import roundtrip.memberextensionsurface.topLevelCustomSetter
 import roundtrip.propertytypes.PropertyHolder
+import roundtrip.defaultpropertyslot.ReferencedDefaultPropertySlot
+import roundtrip.defaultpropertyslot.ReferencedGenericDefaultPropertySlot
+import roundtrip.defaultpropertyslot.ReferencedPropertySlotBase
+import roundtrip.covariantdefaultpropertyslot.ReferencedCovariantDefaultPropertySlot
+import roundtrip.defaultpropertyslot.ReferencedEmptyDefaultSlot
+import roundtrip.defaultpropertyslot.ReferencedRenamedDefaultMethodSlot
+import roundtrip.defaultpropertyslot.ReferencedNullableOverloadSlot
 import roundtrip.receiverfunctions.Panel
 import roundtrip.receiverfunctions.PanelBuilder
 import roundtrip.receiverfunctions.applyPanel
@@ -91,7 +98,82 @@ private class ProtectedCompanionConsumer : ProtectedCompanionHost() {
     }
 }
 
+private class ReferencedDefaultPropertyWithFunctionCollision : ReferencedDefaultPropertySlot {
+    fun get_value(): Int = 320
+    fun set_value(next: Int) {}
+}
+
+private class ReferencedGenericDefaultPropertyWithFunctionCollision :
+    ReferencedGenericDefaultPropertySlot<String> {
+    override fun defaultValue(): String = "generic-default"
+    fun get_value(): String = "generic-function"
+    fun set_value(next: String) {}
+}
+
+private class ReferencedCovariantDefaultPropertyWithFunctionCollision :
+    ReferencedCovariantDefaultPropertySlot {
+    fun get_value(): RoundtripPropertyInterop.PropertySlotBaseValue =
+        RoundtripPropertyInterop.PropertySlotBaseValue("referenced-covariant-function")
+}
+
+private class ReferencedPropertySlotDerived : ReferencedPropertySlotBase() {
+    override var value: Int = 340
+}
+
+private class ReferencedEmptyDefaultImplementation : ReferencedEmptyDefaultSlot
+
+private open class ReferencedRenamedDefaultMethodBase {
+    fun CompareTo(other: ReferencedRenamedDefaultMethodSlot): Int = 361
+}
+
+private class ReferencedRenamedDefaultMethodCollision :
+    ReferencedRenamedDefaultMethodBase(), ReferencedRenamedDefaultMethodSlot
+
+private class ReferencedNullableOverloadImplementation : ReferencedNullableOverloadSlot<Int> {
+    override fun choose(value: Int?, marker: String): Int = (value ?: 0) + marker.length
+    override fun choose(value: Int?, marker: Int): Int = (value ?: 0) + marker
+}
+
 class RoundtripSurfaceTests {
+    @TestAttribute
+    fun referencedDefaultPropertyKeepsItsExternalSlotBesideOrdinaryFunctions() {
+        val implementation = ReferencedDefaultPropertyWithFunctionCollision()
+        val property: RoundtripPropertyInterop.IPropertySlot = implementation
+        ClassicAssert.AreEqual(310, property.value)
+        property.value = 1
+        ClassicAssert.AreEqual(310, property.value)
+        ClassicAssert.AreEqual(320, implementation.get_value())
+
+        val genericImplementation = ReferencedGenericDefaultPropertyWithFunctionCollision()
+        val genericProperty: RoundtripPropertyInterop.IGenericPropertySlot<String> = genericImplementation
+        ClassicAssert.AreEqual("generic-default", genericProperty.value)
+        ClassicAssert.AreEqual("generic-function", genericImplementation.get_value())
+
+        val covariantImplementation = ReferencedCovariantDefaultPropertyWithFunctionCollision()
+        val covariantProperty: RoundtripPropertyInterop.IReadOnlyNominalPropertySlot = covariantImplementation
+        ClassicAssert.AreEqual("referenced-covariant-property", covariantProperty.value.Text)
+        ClassicAssert.AreEqual("referenced-covariant-function", covariantImplementation.get_value().Text)
+
+        val derived = ReferencedPropertySlotDerived()
+        val referencedBaseProperty: RoundtripPropertyInterop.IPropertySlot = derived
+        ClassicAssert.AreEqual(340, referencedBaseProperty.value)
+        referencedBaseProperty.value = 350
+        ClassicAssert.AreEqual(350, derived.value)
+
+        val emptyDefault: RoundtripPropertyInterop.IEmptyDefaultSlot = ReferencedEmptyDefaultImplementation()
+        emptyDefault.touch()
+
+        val renamedDefault = ReferencedRenamedDefaultMethodCollision()
+        ClassicAssert.AreEqual(360,
+            (renamedDefault as ReferencedRenamedDefaultMethodSlot).compareTo(renamedDefault))
+        ClassicAssert.AreEqual(361, renamedDefault.CompareTo(renamedDefault))
+
+        val nullableOverloads: ReferencedNullableOverloadSlot<Int> = ReferencedNullableOverloadImplementation()
+        ClassicAssert.AreEqual(43, nullableOverloads.choose(41, "ab"))
+        ClassicAssert.AreEqual(44, nullableOverloads.choose(41, 3))
+
+    }
+
     @TestAttribute
     fun referencedInheritedPropertyKeepsDeclarationOwnerAndVirtualDispatch() {
         val value: InheritedPropertyMiddle = InheritedPropertyLeaf()
@@ -319,7 +401,7 @@ class RoundtripSurfaceTests {
         val bumped = ProviderDelegateCompanionHost.bump()
         ClassicAssert.AreEqual(bumped + 1, ProviderDelegateCompanionHost.bump())
         // The provider field stays private in the producer's file facade; the exported top-level property survives
-        // DLL -> KLIB as one accessor-routed declaration and is consumed here through get_/set_.
+        // DLL -> KLIB as one accessor-routed declaration and is consumed here through its dedicated accessors.
         ClassicAssert.AreEqual(bumped + 1, roundtripDelegatedCounter)
         roundtripDelegatedCounter = bumped + 2
         ClassicAssert.AreEqual(bumped + 2, roundtripDelegatedCounter)

@@ -63,6 +63,11 @@ class DefaultArithmetic : IDefaultArithmetic {
     override fun Required(value: Int): Int = value * 2
 }
 
+class DefaultArithmeticWithAccessorFunction : IDefaultArithmetic {
+    override fun Required(value: Int): Int = value * 3
+    fun get_Offset(): Int = 99
+}
+
 // #205 helper: reach the inherited non-generic-base member through the base interface TYPE.
 fun ifaceBaseViaBase(p: IfaceBasePingable): String = p.Ping()
 
@@ -126,6 +131,15 @@ class CSharpInterfaceAndGenericTests {
         assertEquals(15, x.Add(5))                       // default interface method calling that getter
         assertEquals("echo", x.Echo<String>("echo"))     // generic default interface method
         assertEquals(14, x.Required(7))                  // genuinely abstract slot implemented by Kotlin
+
+        // The ordinary function's CLR spelling is also the external property's accessor spelling. Frontend-selected
+        // DIM identity must win for property dispatch; bir2cir supplies an exact MethodImpl instead of guessing from
+        // the inherited interface body.
+        val collision = DefaultArithmeticWithAccessorFunction()
+        val collisionAsInterface: IDefaultArithmetic = collision
+        assertEquals(10, collisionAsInterface.Offset)
+        assertEquals(99, collision.get_Offset())
+        assertEquals(21, collisionAsInterface.Required(7))
     }
 
     // #205: a generic interface (IReader<Doc>) deriving a member-bearing non-generic base interface (IPingable).
