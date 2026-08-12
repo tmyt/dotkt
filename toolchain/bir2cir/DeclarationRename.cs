@@ -5,21 +5,20 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// DECLARATION-NAME RENAME (clrName migration, Step 2a). kotc tags each emitted method/accessor with a pure-Kotlin
-// `overrides` marker (the transitive override closure, in Kotlin terms). This pass derives the BCL slot name from the
-// ref.dll @ClrIntrinsic on the FIRST overridden member that carries one (a `size` getter override of
-// Collection.size@ClrIntrinsic("Count") -> get_Count; resumeWith -> ResumeWith) — replacing what kotc's clrName/annClr
-// resolves today. While annClr still runs in kotc the rename is IDEMPOTENT (it reproduces the existing name), so the
-// emit stays byte-identical; once annClr is removed (Step 3) this becomes the sole source of the slot name. Mutates the
-// method nodes in place; the `overrides` marker is stripped later by BirTypeLowering. (Object-method names like ToString
-// and the hardcoded close->Dispose map are NOT @ClrIntrinsic, so TryMemberIntrinsic returns false and the kotc-supplied
-// name is left untouched — those stay kotc's concern.)
+// CLR OVERRIDE ALLOCATION. kotc tags each emitted declaration/call with a pure-Kotlin `overrides` marker (the
+// transitive override closure). This pass resolves the external slot from reference metadata. Ordinary functions may
+// adopt that physical name; Kotlin property accessors retain their dedicated physical name and record the external
+// base slot separately for MethodImpl wiring. The `overrides` marker is stripped later by BirTypeLowering.
 static class DeclarationRename
 {
-    // Recursively rename to the BCL slot every node carrying an `overrides` marker: a method/accessor DECLARATION (its
-    // `name`) and a CALL node (`callInstance`'s `method`) alike, so the implementor-side call `AbstractList.get_size`
-    // tracks the renamed declaration `get_Count`. Runs BEFORE MemberCallSubstitution so a now-`get_Count` call on a
-    // CLR-bound owner still falls through to clrPropGet. Idempotent while annClr is active (reproduces the kotc name).
+    // bir2cir-internal hand-off from semantic declaration identity to physical allocation. Ordinary methods may
+    // adopt an external CLR name in this pass, but later representation passes still have to consume frontend facts
+    // expressed in Kotlin identity. Preserve that identity explicitly until BirTypeLowering strips the carrier;
+    // never recover it from the physical spelling or an override hierarchy.
+    internal const string SourceMemberKey = "kotlinSourceMember";
+
+    // Recursively consume every `overrides` marker. Calls and ordinary functions may adopt the resolved CLR slot;
+    // accessor declarations keep their dedicated name while receiving override flags and an explicit base slot.
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs, false);
 
     static void Walk(JsonNode node, ReferenceMetadataIndex refs, bool inIface)
@@ -36,6 +35,8 @@ static class DeclarationRename
                 // naming rule and cannot leave a stale link behind.
                 var semanticPropertyCall = (obj["k"] as JsonValue)?.GetValue<string>() == "callInstance"
                     && KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
+                var semanticPropertyDeclaration = obj.ContainsKey("name")
+                    && KotlinPropertyAccessors.TryIdentity(obj, out _, out _);
                 if (obj[KotlinPropertyAccessors.PropertyRolesKey] is not JsonArray && !semanticPropertyCall
                     && ResolveSlot(obj, ovs, refs) is string slot)
                 {
@@ -63,7 +64,20 @@ static class DeclarationRename
                     }
                     else if (obj.ContainsKey("name"))
                     {
-                        obj["name"] = slot;
+                        // A Kotlin accessor always stays in the dedicated property naming domain. External CLR
+                        // property slots retain their native spelling and are linked explicitly below/through the
+                        // interface MethodImpl descriptors authored by KotlinOverrideSlotBridge.
+                        if (!semanticPropertyDeclaration)
+                        {
+                            if (obj["name"] is JsonValue sourceName
+                                && sourceName.TryGetValue<string>(out var sourceMember)
+                                && sourceMember != slot)
+                            {
+                                obj[SourceMemberKey] ??= sourceMember;
+                                RoundtripMetadata.AddSourceMethodIdentity(obj, sourceMember);
+                            }
+                            obj["name"] = slot;
+                        }
                         // A CLASS member that overrides a @ClrIntrinsic ancestor is a CLR override -> `override:true` AND
                         // `vis:public` (the flags kotc's `clrIfaceName != null` set via method()/accessorMethod: an
                         // interface impl must be a public virtual). Without annClr kotc emits override:false / vis:visOf(fn)
@@ -79,9 +93,20 @@ static class DeclarationRename
                             // the plain override method + its `overrides` marker (its `clrAccessorMethod` producer was
                             // retired in #73 M4); this is the SOLE source of the clrOverride field, derived off the refs.
                             // The guard is defensive (no kotc producer remains to double-stamp).
-                            if (!obj.ContainsKey("clrOverride")
-                                && ResolveNetClassOwner(obj, ovs, refs) is string clrBase)
-                                obj["clrOverride"] = TypeJson.Fqn(clrBase);
+                            if (ResolveNetClassOwner(obj, ovs, refs, out var clrBaseReturn) is TypeNode.Fqn clrBase)
+                            {
+                                obj["clrOverride"] ??= TypeJson.Write(clrBase);
+                                obj["clrOverrideRet"] ??= TypeJson.Write(clrBaseReturn);
+                                if (semanticPropertyDeclaration)
+                                {
+                                    if (obj["clrOverrideMember"] is JsonValue existing
+                                        && existing.TryGetValue<string>(out var existingMember)
+                                        && existingMember != slot)
+                                        throw new InvalidOperationException(
+                                            $"conflicting CLR base property slots '{existingMember}' and '{slot}'");
+                                    obj["clrOverrideMember"] = slot;
+                                }
+                            }
                         }
                     }
                 }
@@ -97,18 +122,24 @@ static class DeclarationRename
     // DefineMethodOverride binds the base virtual slot. A property mapping alone is NOT sufficient: Kotlin's open
     // Throwable.cause maps to the NON-virtual Exception.InnerException getter, so a subclass `override val cause`
     // must remain a Kotlin virtual newslot rather than attempt an impossible CLR .override.
-    static string ResolveNetClassOwner(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs)
+    static TypeNode.Fqn ResolveNetClassOwner(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs,
+        out TypeNode slotReturn)
     {
+        slotReturn = null;
         foreach (var o in ovs)
         {
             if (o is not JsonObject oo) continue;
-            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if (TypeJson.Read(oo["owner"]) is not TypeNode.Fqn ownerSpec) continue;
+            var owner = ownerSpec.Name;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var overrideKind = (oo["kind"] as JsonValue)?.GetValue<string>();
             var bare = ReferenceMetadataIndex.BareOwnerFqn(owner);
-            if (refs.ResolveNetType(bare) is not Type nt || !nt.IsClass) continue;   // IsClass excludes interface + struct
-            if (!HasOverridableAccessor(nt, member, overrideKind)) continue;
-            return bare;
+            if (refs.ResolveNetType(bare, ownerSpec.Args?.Length ?? 0) is not Type nt || !nt.IsClass) continue;   // IsClass excludes interface + struct
+            if (!TryExactPropertySlot(declaration, refs, ownerSpec, member, overrideKind,
+                    out _, out var physicalProperty, out _, out var exactReturn)
+                || !HasOverridableAccessor(nt, physicalProperty, overrideKind)) continue;
+            slotReturn = exactReturn;
+            return new TypeNode.Fqn(bare, ownerSpec.Args);
         }
         // @ClrProperty on a @ClrTypeAlias base (issue #24): the override's ancestor is a kotlin.* alias (kotlin.Throwable)
         // that ResolveNetType above deliberately SKIPS, yet it binds a real BCL CLASS property via @ClrProperty (message
@@ -118,14 +149,18 @@ static class DeclarationRename
         foreach (var o in ovs)
         {
             if (o is not JsonObject oo) continue;
-            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if (TypeJson.Read(oo["owner"]) is not TypeNode.Fqn ownerSpec) continue;
+            var owner = ownerSpec.Name;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var overrideKind = (oo["kind"] as JsonValue)?.GetValue<string>();
             if (refs.TryResolveClrOwner(owner, out var bcl, out var ownerKind) && ownerKind == "class"
-                && TryExactPropertySlot(declaration, refs, owner, member, overrideKind,
-                    out _, out var bclProperty, out _)
+                && TryExactPropertySlot(declaration, refs, ownerSpec, member, overrideKind,
+                    out _, out var bclProperty, out _, out var exactReturn)
                 && refs.ResolveNetType(bcl) is Type nt && HasOverridableAccessor(nt, bclProperty, overrideKind))
-                return bcl;
+            {
+                slotReturn = exactReturn;
+                return new TypeNode.Fqn(bcl, ownerSpec.Args);
+            }
         }
         return null;
     }
@@ -142,29 +177,27 @@ static class DeclarationRename
         catch { return false; }
     }
 
-    // The first override entry whose (owner, Kotlin member name, arity) carries an @ClrIntrinsic in the ref.dll, mapped
-    // to its CLR slot: a getter/setter -> get_/set_ + the intrinsic; a method -> the intrinsic verbatim. null = no
-    // CLR-bound member in the closure (leave the kotc name).
+    // The first override entry whose (owner, Kotlin member name, arity) resolves to a CLR slot. Property accessors use
+    // the referenced Property/MethodSemantics association; ordinary methods use their exact intrinsic/native name.
+    // null = no CLR-bound member in the closure (leave the kotc name).
     internal static string ResolveSlot(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs)
     {
         foreach (var o in ovs)
         {
             if (o is not JsonObject oo) continue;
-            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if (TypeJson.Read(oo["owner"]) is not TypeNode.Fqn ownerSpec) continue;
+            var owner = ownerSpec.Name;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
             var arity = (oo["arity"] as JsonValue)?.GetValue<int>() ?? 0;
-            // The @ClrIntrinsic lives on the EMITTED member as the ref.dll exposes it: for a property it is on the
-            // get_<name>/set_<name> ACCESSOR METHOD (not the property), and its value is the BCL PROPERTY name ("Count"),
-            // so the slot is get_/set_ + that. A plain method's intrinsic is the BCL method name verbatim. EXACT arity
-            // overload-matching (getter=arity 0, setter=arity 1) so `add(element)`->Add never grabs `add(i,e)`->Insert.
-            // A property's @ClrIntrinsic lives on the get_<name> accessor (arity 0) in the ref.dll — for a SETTER too
-            // (a `var` overriding a `val` base has no set_<name> to key on), so look up the getter and re-prefix. A plain
-            // method's intrinsic is on the method itself by exact arity.
+            // A property annotation names the target CLR Property, not an accessor spelling. Resolve the exact
+            // MethodSemantics association from reference metadata. A setter overriding a getter-only `val` still uses
+            // the getter to establish the property allocation, then resolves the external setter if one exists. Plain
+            // methods use their exact intrinsic name. Arity remains part of ordinary-method overload selection.
             if (kind is "getter" or "setter")
             {
-                if (TryExactPropertySlot(declaration, refs, owner, member, kind,
-                        out _, out _, out var accessorMethod)) return accessorMethod;
+                if (TryExactPropertySlot(declaration, refs, ownerSpec, member, kind,
+                        out _, out _, out var accessorMethod, out _)) return accessorMethod;
                 continue;
             }
             if (refs.TryMemberIntrinsicExact(owner, member, arity, out var intr)) return intr;
@@ -173,18 +206,17 @@ static class DeclarationRename
         // refs (NOT a stdlib ref.dll alias — ResolveNetType excludes kotlin.*/dotkt$ synthetics and locals
         // type).
         // A Kotlin class implementing/overriding such a member binds the .NET slot HERE (kotc no longer bakes it). Because
-        // dll2klib injects the Kotlin member identity EQUAL to the .NET name, the slot is the identity: a method ->
-        // `member`; a property accessor -> get_/set_ + the .NET property name (confirmed to be a real .NET property/
-        // field). This reproduces exactly what kotc's get_/set_+name / method-name fallback already emits (so it is a
-        // no-op rename for a name-matching override), but routes the resolution through bir2cir + restores the
-        // override:true/vis:public flags the Walk caller stamps for a CLR-bound member declaration.
+        // dll2klib injects an ordinary method identity equal to the .NET name, that method's slot is the identity.
+        // Properties were already handled above through their explicit Property/MethodSemantics association. This
+        // also restores the override:true/vis:public flags the Walk caller stamps for a CLR-bound declaration.
         foreach (var o in ovs)
         {
             if (o is not JsonObject oo) continue;
-            if (TypeJson.OwnerName(oo["owner"]) is not string owner) continue;
+            if (TypeJson.Read(oo["owner"]) is not TypeNode.Fqn ownerSpec) continue;
+            var owner = ownerSpec.Name;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
-            if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(owner)) is not Type nt) continue;
+            if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(owner), ownerSpec.Args?.Length ?? 0) is not Type nt) continue;
             if (kind is "getter" or "setter") continue;
             if (NetInteropBinding.DeclaresPublicMethodNamed(nt, member)) return member;
         }
@@ -196,12 +228,14 @@ static class DeclarationRename
     // A setter overriding a getter-only `val` is handled inside the reference index by removing the value parameter
     // and resolving the same exact getter association.
     static bool TryExactPropertySlot(JsonObject declaration, ReferenceMetadataIndex refs,
-        string owner, string member, string overrideKind,
-        out string physicalOwner, out string physicalProperty, out string physicalMethod)
+        TypeNode.Fqn owner, string member, string overrideKind,
+        out string physicalOwner, out string physicalProperty, out string physicalMethod,
+        out TypeNode slotReturn)
     {
         physicalOwner = null;
         physicalProperty = null;
         physicalMethod = null;
+        slotReturn = null;
         if (overrideKind is not ("getter" or "setter") || declaration["params"] is not JsonArray parameters)
             return false;
         var signature = new List<TypeNode>(parameters.Count);
@@ -212,8 +246,16 @@ static class DeclarationRename
             signature.Add(type);
         }
         var methodArity = (declaration["typeParams"] as JsonArray)?.Count ?? 0;
-        return refs.TryExternalPropertyAccessor(owner, member,
+        if (!refs.TryExternalPropertyAccessor(owner.Name, member,
             overrideKind == "setter" ? "set" : "get", parameters.Count, methodArity, signature,
-            Array.Empty<TypeNode>(), out physicalOwner, out physicalProperty, out physicalMethod);
+            owner.Args ?? Array.Empty<TypeNode>(), out physicalOwner, out physicalProperty, out physicalMethod)
+            || !refs.TryNullableGenericPropertySlot(owner.Name, member,
+                overrideKind == "setter" ? "set" : "get", isStatic: false, parameters.Count, methodArity,
+                signature, owner.Args ?? Array.Empty<TypeNode>(), out var declaredReturn, out _, out var refused,
+                includeUnchanged: true)
+            || declaredReturn == null || refused?.Any(value => value) == true)
+            return false;
+        slotReturn = SupertypeGraph.SubstOwnerTvs(declaredReturn, owner.Args ?? Array.Empty<TypeNode>());
+        return true;
     }
 }

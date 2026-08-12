@@ -824,12 +824,24 @@ kotc or ilemit.
 
 ## 5h. An auto-property's backing field is a compiler-generated `<Name>k__BackingField` (#228)
 
-An **accessor-routed** Kotlin property becomes a real CLR property (`Name` + `get_Name`/`set_Name`); its storage is
+An **accessor-routed** Kotlin property becomes a real CLR property (`Name` + dedicated
+`prop_get<Name>`/`prop_set<Name>` methods); its storage is
 emitted as an assembly-visible (`internal`) field named **`<Name>k__BackingField`**, stamped
 `[System.Runtime.CompilerServices.CompilerGenerated]` — the same convention and attribute `csc` uses for a C#
 auto-property. Kotlin/JVM instead names the field after the property, which on the CLR would put a property and a field
 of the SAME name on one type: reflection-driven .NET libraries group candidate members by name and cannot resolve that
 pair (Newtonsoft's `SerializeObject` silently returned `{}`, and the round-trip back threw).
+
+The non-C# accessor spelling is intentional: it keeps a source function named `get_Name`/`set_Name` in a distinct CLR
+method domain. The CLR Property row names the actual methods through MethodSemantics, so `PropertyInfo.GetMethod`/
+`SetMethod`, normal C#/F# property access, and metadata-driven consumers use the property normally. Code that bypasses
+the Property row and searches for `Type.GetMethod("get_Name")` observes the different physical name; that convention
+is not the identity of a DotKt property.
+
+The angle brackets are the unspeakable boundary: Kotlin rejects `<` and `>` even inside a backtick-quoted identifier,
+so source code cannot declare a function in the compiler-reserved `prop_get<…>` / `prop_set<…>` method domain.
+Same-kind declarations that become identical only after CLR erasure are outside this accessor naming rule; preserving
+their frontend-selected callee identity is tracked by #395.
 
 **Framing:** interop-first, CLR-native. The name is un-writable in Kotlin: even backtick-quoted, the frontend rejects
 ``var `<Value>k__BackingField` = 0`` with *"name contains illegal characters: <>"* — so it can never collide with, or be
@@ -868,8 +880,9 @@ counted only the regular parameters on one side of a call produced a short argum
 `InvalidProgramException` at run, or (for a generic context type) a silent `null` argument.
 
 A **property** with context parameters is the same rule applied to its accessors: `context(s: Scale) val gauge`
-emits `get_gauge(Scale)`, and `context(s: Scale) val Int.bumped` emits `get_bumped(int __self, Scale)`. A TOP-LEVEL
-one is a pair of `get_`/`set_` statics on the file class and no CLR property at all; a MEMBER one additionally gets a
+emits `prop_get<gauge>(Scale)`, and `context(s: Scale) val Int.bumped` emits
+`prop_get<bumped>(int __self, Scale)`. A TOP-LEVEL one is a pair of dedicated `prop_get`/`prop_set` statics on the
+file class and no CLR property at all; a MEMBER one additionally gets a
 CLR property whose accessors take those arguments — a *parameterized* property, exactly as a member extension
 property (`class C { val T.p }`) already produced. Reflection therefore reports one index parameter for it, which is
 why dll2klib's `this[i]` indexer probe has to exclude a `__self` / context slot rather than take the first

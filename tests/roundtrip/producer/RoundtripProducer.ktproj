@@ -14,4 +14,7 @@
     <OutputType>Library</OutputType>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../property-slot-producer/RoundtripPropertySlot.csproj" />
+  </ItemGroup>
 </Project>

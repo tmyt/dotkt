@@ -4,7 +4,7 @@
 //
 // Coverage preserved (old case -> method):
 //   il-ext        -> extension_ext         user-defined extension functions (receiver -> __self first param)
-//   il-extprop    -> extension_extprop     C7 top-level extension-property getters route to get_<name>(receiver): a GENERIC
+//   il-extprop    -> extension_extprop     C7 top-level extension-property getters route to prop_get<name>(receiver): a GENERIC
 //                                    getter (List<T>.lastIndex) + non-generic (CharSequence.lastIndex, Int.absoluteValue/.sign)
 //   il-extpropref -> extension_extpropref  #21 bound/unbound + mutable extension-property references, including generic
 //                                    receiver/value slots (`List<T>`, `List<T>` return, `ExtensionRefBox<T>` get/set)

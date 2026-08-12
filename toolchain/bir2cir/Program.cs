@@ -39,6 +39,7 @@ sealed class Pipeline
 
     public Pipeline(DriverOptions options) => _options = options;
 
+
     public void Run()
     {
         Directory.CreateDirectory(_options.OutDir);
@@ -121,7 +122,7 @@ sealed class Pipeline
         // Consume that explicit declaration/use fact before any name-keyed index or inline payload is captured.
         var companionExtensionBindings = CompanionExtensionBinding.Apply(birRoots, refs);
         // #397: accessor declarations arrive in Kotlin vocabulary (source property identity + get/set role).
-        // Materialize the legacy CLR spelling once, after #389 has selected any companion-extension core/container
+        // Materialize the dedicated CLR spelling once, after #389 has selected any companion-extension core/container
         // representation and before a name-keyed declaration index is captured.  The explicit identity remains on
         // each declaration for semantic consumers and is stripped only at the BIR->CIR boundary.
         KotlinPropertyAccessors.AllocateDeclarationsAndProperties(birRoots);
@@ -580,19 +581,16 @@ sealed class Pipeline
             // (once it stops reading @ClrIntrinsic). BEFORE the hoist so an alias class's bound stubs / @ClrIntrinsic
             // overrides don't over-hoist into the rule-3 helper.
             if (!_options.RefBuild) MemberStrip.Apply(bir.Root, refs);
-            // Kotlin IR fake overrides are BIR facts, not CLR declarations.  When an interface fake override is backed
-            // by an inherited DIM, consume it here instead of emitting a distinct abstract slot and asking ilemit to
-            // infer a class-level forwarding bridge.  Abstract ancestors remain explicit.
-            if (!_options.RefBuild) InheritedDefaultFakeOverrideElision.Apply(bir.Root, refs);
+            // Kotlin IR fake overrides are BIR facts, not CLR declarations. Consume the frontend's explicit selected
+            // implementation fact instead of rediscovering a DIM from hierarchy bodies or reference metadata.
+            // This is representation-independent and therefore applies to reference builds too.
+            InheritedDefaultFakeOverrideElision.Apply(bir.Root);
             var hoisted = _options.RefBuild ? bir.Root : AliasHelperHoist.Apply(bir.Root, refs);
-            // DECLARATION + CALL-NAME rename (clrName migration): a member declaration that overrides a CLR-bound
-            // interface member carrying @ClrIntrinsic gets the BCL slot name (a `size` getter override -> get_Count,
-            // `resumeWith` -> ResumeWith), AND the corresponding implementor-side call (`AbstractList.get_size` ->
-            // `get_Count`) — the job kotc's clrName/annClr does today. Derived from the `overrides` marker (the pure-Kotlin
-            // override closure) + the ref.dll @ClrIntrinsic bindings. Runs BEFORE MemberCallSubstitution so a now-get_Count
-            // call on a CLR-bound owner still falls through to clrPropGet. While annClr STILL runs in kotc this is
-            // IDEMPOTENT (reproduces the name annClr already set) -> CIR byte-identical. Never in ref (there annClr is null
-            // and members keep their plain Kotlin names — renaming would corrupt the pure-Kotlin ref shapes).
+            // CLR override allocation: ordinary functions carrying @ClrIntrinsic receive the external slot name;
+            // Kotlin property accessors keep their dedicated name and receive an explicit interface/base MethodImpl
+            // binding instead. Derived from the frontend's `overrides` closure plus reference metadata. Runs before
+            // MemberCallSubstitution so CLR-bound calls can still be shaped from the exact external identity. Never in
+            // ref builds, whose declarations remain a pure Kotlin surface.
             if (!_options.RefBuild) DeclarationRename.Apply(hoisted, refs);
             // STAR-PROJECTION LOWERING (bundle-6 `iscoll`): `x is Collection<*>` + the guarded smart-cast member access
             // (`.size`/`.iterator()`/`[i]`/…) -> the non-generic BCL interface (ICollection/IList/IEnumerable/IDictionary),
@@ -783,7 +781,14 @@ sealed class Pipeline
         // rule emits one exact bridge/MethodImpl per physical obligation without teaching ilemit suspend semantics.
         // Ref builds skip suspend lowering and normalize their logical declaration here; app and rt builds normalize
         // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
-        KotlinOverrideSlotBridge.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn, refs);
+        KotlinOverrideSlotBridge.ApplyAll(
+            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns);
+
+        // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering
+        // can create additional physical slots. Project any Kotlin star types copied into those late declarations
+        // through the already-allocated existential ABI; no new carrier or semantic/member lookup occurs here.
+        FBoundStarProjectionErasure.RewriteLateTypes(
+            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
 
         // The late bridge above can synthesize a fresh forwarding call returning `kotlin.Nothing`, after the second
         // sweep has run. The pass is idempotent; cover exactly that new body before type lowering erases the fact.
@@ -924,7 +929,6 @@ sealed class Pipeline
         // Capture the actual post-allocation MethodDef names now, once, for exact call allocation below.
         var localPropertyAccessors = MemberCallSubstitution.CollectLocalPropertyAccessors(
             staged.Select(s => s.Root));
-
         // PHASE 2 — per-file type lowering onwards.
         var files = new List<CirFile>();
         // The fully-lowered roots, kept so the implementing-position half of the crossing refusal can be asked of the
@@ -1128,9 +1132,10 @@ sealed class Pipeline
             if (files.Any(f => f.OutputName == CanonicalDelegateSynthesis.OutputName))
                 throw new InvalidOperationException(
                     $"bir2cir: reserved synthetic CIR name '{CanonicalDelegateSynthesis.OutputName}' collides with an input file");
+            var delegateDefinitions = CanonicalDelegateSynthesis.SynthDefsFile();
             files.Insert(0, new CirFile(
                 CanonicalDelegateSynthesis.OutputName,
-                CanonicalDelegateSynthesis.SynthDefsFile().ToJsonString(JsonOptions.Indented)));
+                delegateDefinitions.ToJsonString(JsonOptions.Indented)));
         }
 
         // #71 S2: emit the embedded round-trip attribute-class defs ONCE per assembly, as a dedicated synthetic CIR
@@ -1143,7 +1148,8 @@ sealed class Pipeline
             // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
             if (files.Any(f => f.OutputName == synthName))
                 throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
-            files.Insert(0, new CirFile(synthName, RoundtripMetadata.SynthDefsFile().ToJsonString(JsonOptions.Indented)));
+            var attributeDefinitions = RoundtripMetadata.SynthDefsFile();
+            files.Insert(0, new CirFile(synthName, attributeDefinitions.ToJsonString(JsonOptions.Indented)));
         }
 
         return files;

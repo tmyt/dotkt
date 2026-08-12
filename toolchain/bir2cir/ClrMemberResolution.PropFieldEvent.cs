@@ -8,7 +8,7 @@ using DotKt.Bir;
 // W1-S3 (#46 / #121) — the RESOLVED-CLR-IR carry extended to the remaining un-carried member axes: PROPERTY accessors
 // (clrPropGet/clrPropSet), FIELDS (an external private-backing-field property read as a `field`/`setFieldExpr`), and
 // EVENTS (clrEventAdd/clrEventRemove). Until now ilemit RE-DERIVED the member KIND at codegen (a clrPropGet reclassified
-// into real-property vs `get_X` method vs public FIELD; a `field` on an external type reinterpreted into a `get_`
+// into real-property vs public FIELD; a `field` on an external type reinterpreted into a property accessor
 // accessor with a field fallback; an event's add/remove resolved via an unchecked `GetEvent`), and RE-DERIVED the
 // call/callvirt/constrained dispatch from the reflected accessor. This pass makes bir2cir the sole resolver: it reads
 // the owner off the ref.dll MLC (ResolveOwnerType — null for a LOCAL emitted owner, whose backing field is directly
@@ -20,8 +20,7 @@ static partial class ClrMemberResolution
     // ---- property get / set --------------------------------------------------------------------
 
     // A clrPropGet/clrPropSet on a .NET (or referenced-DotKt) owner. Resolve the owner's OPEN def off the ref.dll and
-    // classify: a real .NET property OR a DotKt custom-accessor `get_X`/`set_X` METHOD (no PropertyDef, emitted by our
-    // own backend) -> an ACCESSOR (carry accessor name + memberSig + dispatch); a public FIELD surfaced as a Kotlin
+    // classify: a real .NET property -> an ACCESSOR (carry accessor name + memberSig + dispatch); a public FIELD surfaced as a Kotlin
     // property -> `member:"field"` (ilemit does the ldsfld/ldfld + const-literal inline, a mechanical value fetch, not a
     // KIND decision). 0 members = a hard ABI error.
     static void ResolveProp(JsonObject node, bool write)
@@ -63,9 +62,8 @@ static partial class ClrMemberResolution
         throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")} — #46 W1-S3)");
     }
 
-    // The property accessor MethodInfo for `name`: (1) a real .NET PropertyDef's authoritative get_/set_ accessor
-    // (GetProperty walks base CLASSES for a class owner); else (2) a conventionally-named `get_X`/`set_X` METHOD (a DotKt
-    // custom-accessor property, emitted by our backend WITHOUT a PropertyDef). Reflection does not expose an explicitly
+    // The property accessor MethodInfo for `name`: a real .NET PropertyDef's authoritative MethodSemantics accessor
+    // (GetProperty walks base CLASSES for a class owner). Reflection does not expose an explicitly
     // implemented property on its class under the interface name, nor does interface GetProperty traverse base
     // interfaces, so both probes fall back to the implemented/base-interface walk (mirrors S2 Candidates). null when
     // the name is not an accessor (a public field, or absent).
@@ -237,7 +235,7 @@ static partial class ClrMemberResolution
 
     // A Kotlin field read/write (`this.x`, a destructuring `component1()` that kotc lowers to a backing-field access) on
     // an EXTERNAL owner. A cross-assembly backing field is PRIVATE (a direct ldfld -> FieldAccessException), so the read
-    // must go through the public `get_X`/`set_X` accessor when one exists. That KIND choice (accessor vs direct field)
+    // must go through the public Property/MethodSemantics accessor when one exists. That KIND choice (accessor vs direct field)
     // was ilemit's ExternalPropAccessor; move it here: resolve the owner off the ref.dll (null = a LOCAL owner whose
     // field IS directly accessible -> leave the plain `field` node), and when the external owner exposes the accessor,
     // stamp `member:"accessor"` + accessor name + memberSig + dispatch so ilemit LINKS it. A genuine public field
@@ -259,7 +257,7 @@ static partial class ClrMemberResolution
             // No accessor. A genuine public @ClrField (the field really is declared there) -> direct ldfld/stfld in
             // ilemit, unchanged. But if the owner declares NEITHER an accessor NOR a field of that name, the node names
             // storage that does not exist in the referenced assembly — an accessor-routed property's storage is emitted
-            // under its compiler-generated name (BackingFieldRename), reachable only through get_/set_. Reaching here
+            // under its compiler-generated name (BackingFieldRename), reachable only through its accessors. Reaching here
             // means a carrier (a cross-module [KotlinInline] payload) named the Kotlin identity for storage that is not
             // cross-assembly-addressable. Fail with a breadcrumb rather than let ilemit's ResolveField return null and
             // NRE at Emit(Ldfld, null).
@@ -270,7 +268,7 @@ static partial class ClrMemberResolution
             var direct = FindFieldMember(open, name, Any);
             if (direct == null && FindPropAccessor(open, name, write, Any) == null)
                 throw new InvalidOperationException(
-                    $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a get_/set_ accessor on the referenced owner — "
+                    $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a property accessor on the referenced owner — "
                     + "a cross-assembly property's storage is reachable only through its accessors");
             // A direct external FIELD read/write: its declared type is the foreign declaration this node stands for.
             if (direct != null) StampMemberRet(node, direct.FieldType);

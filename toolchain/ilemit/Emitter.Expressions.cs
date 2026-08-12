@@ -230,7 +230,9 @@ sealed partial class Emitter
                 // dispatch. Gated to nodes carrying "dynRet" (the @Clr member calls), so a genuine miss elsewhere throws.
                 var ciOwner = ParseOwnerSlot(e.GetProperty("ownerType"));   // keeps a constructed-generic owner's args
                 try { m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e)); }
-                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _) && OwnerHasClrInterface(ciOwner.open)) { return EmitDynamicCall(e); }
+                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _)
+                    && !e.TryGetProperty("clrOwnerResolved", out _)
+                    && OwnerHasClrInterface(ciOwner.open)) { return EmitDynamicCall(e); }
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 // #108 GUARD (defensive, contract-violation only — never fires on valid CIR). This path pushes the
                 // receiver as a plain value/reference (EmitExpr(recv)) then emits call/callvirt on `m` DIRECTLY. Per

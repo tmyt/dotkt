@@ -48,11 +48,11 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=391
-	["tests/coroutines"]=157
-	["tests/roundtrip/consumer"]=68
-	["tests/roundtrip/bidirectional/consumer"]=7
-	["tests/interop/consumer"]=135
+	["tests/basic"]=392
+	["tests/coroutines"]=158
+	["tests/roundtrip/consumer"]=69
+	["tests/roundtrip/bidirectional/consumer"]=8
+	["tests/interop/consumer"]=136
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -69,7 +69,7 @@ done
 # its bin (the single-platform RoundtripProducer + the MPP RoundtripProducerMpp); verify all (§5 order).
 declare -A EXTRA_EMIT=(
 	["tests/coroutines"]="DotKt.Tests.CoroutineSupport.dll"
-	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll"
+	["tests/roundtrip/consumer"]="RoundtripProducer.dll RoundtripProducerMpp.dll RoundtripDefaultPropertySlot.dll"
 	# The C#-producer dll is csc-emitted (not ilemit), so it needs no DotKt ilverify of its own; ilverify over the
 	# CONSUMER assembly (the .ktproj-named dll) is what proves the emitted interop IL is clean. No EXTRA_EMIT entry
 	# for tests/interop/consumer — adding the plain C# producer would only formally re-verify a non-DotKt assembly.
@@ -185,7 +185,7 @@ for proj in "${PROJECTS[@]}"; do
 		basic_dll="$dir/bin/$CONFIGURATION/net10.0/DotKt.Tests.Basic.dll"
 		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
 			-- --volatile-consumer "$basic_dll" 'GenericVolatileBox`1' \
-			"get_value" "set_value" "readValueByRef" "writeValueByRef" \
+			"prop_get<value>" "prop_set<value>" "readValueByRef" "writeValueByRef" \
 			>"$ROOT/build/nunit-$name.volatile-generic.log" 2>&1; then
 			echo "  local generic volatile field access IL OK"
 		else

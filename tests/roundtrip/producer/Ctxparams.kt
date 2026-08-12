@@ -72,6 +72,13 @@ fun evaluateRecv(f: context(Boxy) Boxy.() -> Int): Int = with(Boxy(10)) { Boxy(3
 context(s: Scale)
 val gauge: Int get() = s.factor * 3
 
-// A context parameter beside an EXTENSION receiver on a property: the accessor is `get_bumped(__self, s)`.
+// A context parameter beside an EXTENSION receiver on a property: the accessor is `prop_get<bumped>(__self, s)`.
 context(s: Scale)
 val Int.bumped: Int get() = this + s.factor
+
+// `!0` and `!1` are distinct MethodDef parameter identities even though the permissive call-side index treats owner
+// type variables uniformly. Property/MethodSemantics linking is declaration-side and must retain them.
+class OwnerTypeVariableProperties<A, B> {
+    val A.ownerSlot: String get() = "first"
+    val B.ownerSlot: String get() = "second"
+}

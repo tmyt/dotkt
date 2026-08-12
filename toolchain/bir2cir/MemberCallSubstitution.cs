@@ -771,7 +771,7 @@ static class MemberCallSubstitution
             if (instance || string.IsNullOrEmpty(fn)) return null;
             // A reference-KLIB-projected STATIC property on a referenced DotKt type carries its declaring type in
             // `ownerType`, while callStatic's `owner` remains null. Bind a real CLR property/public field immediately,
-            // before the owner-null top-level-property convention below rewrites its bare name to `get_`/`set_`.
+            // before the owner-null top-level-property convention below allocates its dedicated accessor name.
             // The declaring type is resolved from the reference metadata universe, so this is independent of package
             // names and covers class-like enum entries as well as ordinary companion/static properties.
             if ((node["prop"] as JsonValue)?.GetValue<string>() is ("get" or "set") and var injectedPropKind
@@ -1112,11 +1112,11 @@ static class MemberCallSubstitution
             // common ordinary Kotlin property. kotc emits its bare property identity plus an explicit get/set role on
             // both axes. Preserve that identity, then apply the common forward physical-name allocation so the call
             // resolves to the emitted accessor:
-            //   • SAME-module owner -> ilemit's `_types` FindMethod finds the emitted `get_<p>`/`set_<p>`.
+            //   • SAME-module owner -> ilemit's `_types` FindMethod finds the emitted dedicated accessor.
             //   • RE-IMPORTED cross-module Kotlin owner (#17: a `--ref` Kotlin assembly whose type is skipped by
             //     NetInteropBinding's ResolveNetType because it is stdlib/compiler-synthetic vocabulary) -> ilemit's
             //     EXTERNAL-owner ResolveMethod reflects the public
-            //     `get_<p>`/`set_<p>` accessor off the referenced dll. Without this the bare `method:"<p>",prop:"get"`
+            //     dedicated accessor off the referenced dll. Without this the bare `method:"<p>",prop:"get"`
             //     reaches ilemit and its ResolveMethod looks for a literal method `<p>` -> "method …value() not found".
             // A normally-packaged cross-module Kotlin owner (`shapes.Rectangle.area`) never reaches here — NetInterop-
             // Binding already reshaped it to clrPropGet/clrPropSet. The `prop` carrier is consumed only after copying

@@ -10,11 +10,11 @@
 # result is `Int?`. The reference index answers with the real declaration, so the corrected owner is kept and the
 # result is `Subst(!0, [object, String])` = `object`.
 +"ownerType":{"t":"fqn","name":"kotlin.Pair\u00602","args":[{"t":"fqn","name":"object"},{"t":"fqn","name":"System.String"}]}
-+"method":"get_first","ret":{"t":"fqn","name":"object"}
++"method":"prop_get\u003Cfirst\u003E","sig":[],"ret":{"t":"fqn","name":"object"}
 # The value still reaches its declared `Int?` slot, and it reaches it through an explicit narrowing — ilemit's
 # `unbox.any` — rather than as a silently mistyped stack slot.
 +"k":"cast","type":{"t":"nullable","of":{"t":"fqn","name":"System.Int32"}}
 # The defect this document exists to catch: keeping the call site's SUBSTITUTED return. That is what the call said
 # before the referenced declaration was consulted, and it is not what the producer's member returns — at a value
 # instantiation the two are unrelated CLR types and the mismatch is a memory-corrupting unbox, not a mistype.
--"method":"get_first","ret":{"t":"nullable"
+-"method":"prop_get\u003Cfirst\u003E","sig":[],"ret":{"t":"nullable"

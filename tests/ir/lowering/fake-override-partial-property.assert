@@ -1,5 +1,5 @@
 # Removing only an inherited default setter must keep the still-abstract getter and update the Property association.
 +"name":"Derived"
-+"name":"get_x","static":false,"override":false,"virtual":true,"abstract":true
-+"properties":[{"name":"x","type":{"t":"fqn","name":"System.Int32"},"get":"get_x","getSig":[],"getMethodArity":0,"set":null
--"name":"set_x","static":false,"override":false,"virtual":true,"abstract":true
++"name":"prop_get\u003Cx\u003E","static":false,"override":false,"virtual":true,"abstract":true
++"properties":[{"name":"x","type":{"t":"fqn","name":"System.Int32"},"get":"prop_get\u003Cx\u003E","getSig":[],"getMethodArity":0,"set":null
+-"name":"prop_set\u003Cx\u003E","static":false,"override":false,"virtual":true,"abstract":true

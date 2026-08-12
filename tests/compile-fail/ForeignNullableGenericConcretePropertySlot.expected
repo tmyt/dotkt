@@ -1,4 +1,4 @@
-# The overridden getter, and only it — the sibling `Tag` is untouched.
-'CConcreteProp' derives from 'plainnet.PropBase'
-whose member 'get_Items' declares
-at its return
+# The exact selected base accessor cannot be represented with the lowered return. The sibling `Tag` is untouched.
+no .NET member matches the resolved descriptor
+override base=plainnet.PropBase.get_Items()
+ABI mismatch

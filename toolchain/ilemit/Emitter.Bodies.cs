@@ -100,21 +100,14 @@ sealed partial class Emitter
         // bir2cir-bug class #84 targets) is attributed to THIS type, not the previously-emitted method. Refined to the
         // method name once resolved below.
         _ctxType = ti.TB?.Name; _ctxMethod = "?"; _ctxNode = null; _ctxPos = PosOf(m); _curTi = ti;   // #112 P2: decl source pos
-        var mname = m.GetProperty("name").GetString();
+        var mname = PhysicalMethodName(m);
         _ctxMethod = mname;
-        // A DUPLICATE (name, METHOD generic arity, params) def was define-phase-mangled to `name$dupN` (see
-        // DeclareMethod); body emission walks the same def array in the same order, so consume the occurrences
-        // symmetrically — without this, both bodies would be written into ONE MethodBuilder (concatenated IL ->
-        // BadImageFormatException). A CLASS abstract slot is DECLARED (holds a MethodBuilder) and DeclareMethod counts
-        // it for its $dupN mangling, so the body phase counts it here too (BEFORE the abstract-skip below) to stay in
-        // lockstep. (An INTERFACE bare slot is the one uncounted population: the pass-4 body driver skips it before
-        // EmitMethodBody — see Emitter.Assembly.cs.)
-        var dupCount = _bodyDupSeen.TryGetValue((ti, SigKey(mname, m)), out var seen) ? seen : 0;
-        _bodyDupSeen[(ti, SigKey(mname, m))] = dupCount + 1;
+        // Same-kind erasure collisions retain ilemit's existing declaration-order fallback pending #395. Walk the
+        // same declaration order as DeclareMethod so each body reaches the MethodBuilder created for that occurrence.
+        var dupKey = SigKey(mname, m);
+        var dupCount = _bodyDupSeen.TryGetValue((ti, dupKey), out var seen) ? seen : 0;
+        _bodyDupSeen[(ti, dupKey)] = dupCount + 1;
         if (dupCount > 0) mname = mname + "$dup" + (dupCount + 1);
-        // Pick THIS def's own MethodBuilder by signature (overloads share `mname`; the name-keyed map holds only the
-        // last, so emitting by name alone routes a body into the wrong overload — the WinUI `text(String)` /
-        // `text(()->String)` bug).
         if (!ti.MethodsBySig.TryGetValue(SigKey(mname, m), out var mb))
             throw new InvalidOperationException($"ilemit: method body {ti.TB.FullName}.{mname} has no exact declared signature match");
         // Abstract-slot body invariant (#92): a MethodBuilder DECLARED Abstract has NO IL body — GetILGenerator would

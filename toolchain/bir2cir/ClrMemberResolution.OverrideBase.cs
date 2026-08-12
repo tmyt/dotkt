@@ -7,7 +7,8 @@ using DotKt.Bir;
 
 // W1-S4 (#46/#183) — RESOLVED-CLR-IR carry for the DECLARATION-SIDE override base slot. A Kotlin class member that
 // overrides a .NET base-CLASS virtual accessor (`override val message` on a `kotlin.Exception`->System.Exception base:
-// get_message renamed to get_Message + `clrOverride`="System.Exception" by DeclarationRename) needs ilemit to
+// prop_get<message> plus `clrOverride`="System.Exception" and `clrOverrideMember`="get_Message" from
+// DeclarationRename) needs ilemit to
 // `DefineMethodOverride` against the EXACT base virtual so the emitted method reuses the base vtable slot (else a fresh
 // newslot is minted and `callvirt System.Exception::get_Message` binds the base value, not the override).
 //
@@ -18,30 +19,45 @@ using DotKt.Bir;
 // the unique base slot (0 = hard ABI error, >1 = malformed) and never first-picks. Runs inside ClrMemberResolution's
 // Walk (last pass, fully-lowered tree) on every method DECLARATION node carrying `clrOverride`.
 //
-// SCOPE: `clrOverride` is stamped ONLY on PROPERTY-ACCESSOR overrides of a .NET base CLASS virtual (get_/set_ on a
-// non-generic BCL class such as System.Exception — a plain-method override binds its base slot implicitly by CLR
+// SCOPE: `clrOverride` is stamped ONLY on PROPERTY-ACCESSOR overrides of a .NET base CLASS virtual (the external
+// Property/MethodSemantics slot on a non-generic BCL class such as System.Exception — a plain-method override binds
+// its base slot implicitly by CLR
 // name+sig matching, no DefineMethodOverride). The matcher below also handles a generic base def (positional-tv params
 // treated as substitution wildcards) for completeness, but the corpus exercises only the non-generic accessor case.
 static partial class ClrMemberResolution
 {
     static void ResolveOverrideBase(JsonObject node)
     {
-        var owner = TypeJson.OwnerName(node["clrOverride"]);
-        var name = (node["name"] as JsonValue)?.GetValue<string>();
-        if (owner == null || name == null || node["params"] is not JsonArray) return;
-        var open = ResolveOwnerType(new TypeNode.Fqn(owner));
+        var ownerSpec = TypeJson.Read(node["clrOverride"]) as TypeNode.Fqn;
+        var owner = ownerSpec?.Name;
+        var implementationName = (node["name"] as JsonValue)?.GetValue<string>();
+        var slotName = (node["clrOverrideMember"] as JsonValue)?.GetValue<string>() ?? implementationName;
+        var rawReturnNode = TypeJson.Read(node["clrOverrideRet"]);
+        var returnNode = rawReturnNode == null ? null : BirTypeLowering.CanonicalPhysicalSlotType(rawReturnNode);
+        if (owner == null || implementationName == null || slotName == null || node["params"] is not JsonArray) return;
+        // Freeze the exact external slot before final MethodDef allocation can rename the implementing declaration.
+        // ilemit consumes this descriptor one-to-one and must never fall back to the implementation's own name.
+        node["clrOverrideMember"] = slotName;
+        if (returnNode == null)
+            throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' is missing the exact base return descriptor");
+        var open = ResolveOwnerType(ownerSpec);
         if (open == null)
             throw new InvalidOperationException($"bir2cir: override base owner '{owner}' does not resolve to a .NET type (#46/#183 clrOverride carry)");
         // Read EVERY param type — a null-drop would shrink the arity and could bind a wrong-arity base overload
         // (BaseContinuationImpl's create(completion)/create(value,completion)/create(args[],completion) family), so an
         // unreadable node is a hard error, not silently skipped.
         var argNodes = (node["params"] as JsonArray).Select((p, i) => TypeJson.Read((p as JsonObject)?["type"])
-            ?? throw new InvalidOperationException($"bir2cir: override '{owner}.{name}' param #{i} has an unreadable type node (#46/#183 clrOverride carry)")).ToList();
+            ?? throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' param #{i} has an unreadable type node (#46/#183 clrOverride carry)")).ToList();
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         var cands = new List<MethodInfo>();
-        try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == name && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
-        var win = PickOverrideBase(cands, argNodes, $"override base={owner}.{name}({DescArgs(argNodes)})");
+        try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == slotName && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
+        var win = PickOverrideBase(cands, argNodes, returnNode,
+            $"override base={owner}.{slotName}({DescArgs(argNodes)}):{returnNode}");
         node["clrOverrideSig"] = MemberSig(win.GetParameters());
+        // The incoming return describes the implementation's resolved Kotlin/constructed-owner view and is used
+        // above to select the slot.  ilemit links against the declaration in the reference assembly, so carry the
+        // winner's declared CLR return in the same vocabulary as clrOverrideSig (including positional type vars).
+        node["clrOverrideRet"] = TypeJson.Write(MemberSigOf(win.ReturnType));
         node["clrOverrideOwner"] = DeclaringTypeDescriptor(win);
     }
 
@@ -50,9 +66,11 @@ static partial class ClrMemberResolution
     // a scalar `Any` arg "match" an `Any[]` param via the object-downcast rule and make BaseContinuationImpl's
     // `create(Any,Cont)` / `create(Any[],Cont)` ambiguous). Require exactly one after §12.8.10.2 most-derived shadowing;
     // 0 = hard ABI error, >1 = malformed. NEVER a first-pick.
-    static MethodInfo PickOverrideBase(List<MethodInfo> cands, List<TypeNode> argNodes, string desc)
+    static MethodInfo PickOverrideBase(List<MethodInfo> cands, List<TypeNode> argNodes, TypeNode returnNode,
+        string desc)
     {
-        var hits = MostDerived(cands.Where(c => OverrideMatch(c.GetParameters(), argNodes)).ToList());
+        var hits = MostDerived(cands.Where(c => OverrideMatch(c.GetParameters(), argNodes)
+            && OverrideParamMatch(returnNode, c.ReturnType)).ToList());
         if (hits.Count == 0) throw NoMatch(desc, cands);
         if (hits.Count == 1) return hits[0];
         throw Malformed(desc, hits);

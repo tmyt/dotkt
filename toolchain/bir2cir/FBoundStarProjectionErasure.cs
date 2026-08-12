@@ -47,6 +47,51 @@ static class FBoundStarProjectionErasure
             .ToDictionary(o => o.Name, o => o.ErasedName, StringComparer.Ordinal);
     }
 
+    // Some structural passes must run after the main existential rewrite (notably the final override-slot bridge,
+    // which waits for suspend lowering). Those passes can copy a frontend-resolved `G<*>` slot into a fresh physical
+    // declaration. Re-apply only the type projection to those late declarations; do not repeat member binding or
+    // synthesize carriers. The carrier allocation returned by ApplyAll is the sole local authority, while referenced
+    // carriers remain metadata-driven through ReferenceMetadataIndex.
+    public static void RewriteLateTypes(IEnumerable<JsonNode> roots,
+        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs)
+    {
+        var owners = localExistentialOwners.ToDictionary(
+            pair => pair.Key,
+            pair => new Owner { Name = pair.Key, ErasedName = pair.Value, Needed = true },
+            StringComparer.Ordinal);
+        foreach (var root in roots) RewriteTypesOnly(root, owners, refs);
+    }
+
+    static void RewriteTypesOnly(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                foreach (var key in obj.Select(kv => kv.Key).ToList())
+                {
+                    var value = obj[key];
+                    if (value == null || key == "name") continue;
+                    if (TypeJson.Read(value) is TypeNode type)
+                        obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
+                    else
+                        RewriteTypesOnly(value, owners, refs);
+                }
+                break;
+            case JsonArray arr:
+                for (var i = 0; i < arr.Count; i++)
+                {
+                    var value = arr[i];
+                    if (value == null) continue;
+                    if (TypeJson.Read(value) is TypeNode type)
+                        arr[i] = TypeJson.Write(RewriteType(type, owners, refs));
+                    else
+                        RewriteTypesOnly(value, owners, refs);
+                }
+                break;
+        }
+    }
+
     // The physical name is intentionally not an ABI oracle: trusted [KotlinType] metadata carries the relation.
     // Allocate against every TypeDef in the emission unit so a user declaration (including a backtick identifier)
     // can never collide with the compiler carrier. The sorted walk makes the chosen suffix deterministic.
@@ -287,7 +332,18 @@ static class FBoundStarProjectionErasure
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
-                if (dependent) declared.Add(BridgeMethod(owner, method, owners, refs));
+                if (dependent)
+                    declared.Add(BridgeMethod(owner, method, owners, refs,
+                        slotTypeParams: slot["typeParams"] as JsonArray));
+                else if (Str(owner.Def["kind"]) == "interface")
+                    // A concrete/default declaration on a derived CLR interface does not implicitly implement the
+                    // same-shaped abstract slot on the synthesized existential base interface. Give every source
+                    // interface method a distinct private forwarding body and an exact MethodImpl; abstract source
+                    // methods are valid virtual call targets and are supplied by the eventual implementing class.
+                    // The slot keeps its public source name, while the body name is deliberately unspeakable.
+                    declared.Add(BridgeMethod(owner, method, owners, refs,
+                        StarMethodName(owner, method), slotMemberName: Str(slot["name"]),
+                        slotTypeParams: slot["typeParams"] as JsonArray));
             }
 
             // A class existential cannot inherit a concrete non-generic base, yet star-typed
@@ -303,7 +359,8 @@ static class FBoundStarProjectionErasure
                 var key = MethodKey(slot);
                 if (key == null || !seen.Add(key)) continue;
                 methods.Add(slot);
-                declared.Add(BridgeMethod(owner, method, owners, refs, bridgeName, new TypeNode.Fqn(declaringName)));
+                declared.Add(BridgeMethod(owner, method, owners, refs, bridgeName,
+                    new TypeNode.Fqn(declaringName), slotTypeParams: slot["typeParams"] as JsonArray));
             }
         }
 
@@ -402,7 +459,8 @@ static class FBoundStarProjectionErasure
 
     static JsonObject BridgeMethod(Owner owner, JsonObject method,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
-        string bridgeName = null, TypeNode.Fqn callOwner = null)
+        string bridgeName = null, TypeNode.Fqn callOwner = null, string slotMemberName = null,
+        JsonArray slotTypeParams = null)
     {
         var originalParams = method["params"] as JsonArray ?? new JsonArray();
         var methodDisplay = $"{owner.Name}.{MethodDisplay(method)}";
@@ -465,13 +523,37 @@ static class FBoundStarProjectionErasure
             ["virtual"] = true,
             ["abstract"] = false,
             ["objectOverride"] = false,
-            ["vis"] = "public",
+            // This is the explicit MethodImpl body for the public member on the existential interface, not another
+            // Kotlin-visible declaration on G<T>. Keep it private and generated; calls through G<*> target the public
+            // interface slot, while the body forwards to G<T>'s source declaration.
+            ["vis"] = "private",
             ["params"] = bridgeParams,
             ["ret"] = TypeJson.Write(EraseOwnerTv(originalRet, owners, refs)),
             ["body"] = body,
             ["attrs"] = new JsonArray(),
+            ["generated"] = true,
+            [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
         };
-        if (method["typeParams"] is JsonArray tps && tps.Count > 0) bridge["typeParams"] = tps.DeepClone();
+        if (slotTypeParams is { Count: > 0 }) bridge["typeParams"] = slotTypeParams.DeepClone();
+        else if (method["typeParams"] is JsonArray tps && tps.Count > 0) bridge["typeParams"] = tps.DeepClone();
+        // This forwarding declaration is created precisely to implement the corresponding method on the owner's
+        // existential interface. State that exact relation now, while both identities are explicit. Leaving ilemit to
+        // match the generated physical name against interface hierarchy members made the emitter re-infer the purpose
+        // of this bridge and was also unable to distinguish inherited same-signature slots.
+        var descriptor = new JsonObject
+        {
+            ["owner"] = TypeJson.Write(new TypeNode.Fqn(owner.ErasedName)),
+            ["member"] = slotMemberName ?? bridge["name"]?.DeepClone(),
+            ["arity"] = (method["typeParams"] as JsonArray)?.Count ?? 0,
+            ["params"] = new JsonArray(bridgeParams.OfType<JsonObject>()
+                .Select(parameter => parameter["type"]?.DeepClone()).ToArray()),
+            ["ret"] = bridge["ret"]?.DeepClone(),
+        };
+        if (slotTypeParams is { Count: > 0 } descriptorTypeParams)
+            descriptor["typeParams"] = descriptorTypeParams.DeepClone();
+        bridge["clrInterfaceImpls"] = new JsonArray(descriptor);
+        if (Str(owner.Def["kind"]) == "interface")
+            bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
         // The forwarding bridge is a real declaration consumed by later lowering passes. Preserve
         // Kotlin modifiers rather than manufacturing a non-suspend body that calls a suspend slot.
         if (method["mods"] != null) bridge["mods"] = method["mods"].DeepClone();
@@ -604,7 +686,9 @@ static class FBoundStarProjectionErasure
         var ga = (method["typeParams"] as JsonArray)?.Count ?? 0;
         var ps = method["params"] as JsonArray;
         return name + "|" + ga + "|" + string.Join(";", ps?.OfType<JsonObject>()
-            .Select(p => TypeJson.Read(p["type"])?.ToString() ?? "?") ?? Enumerable.Empty<string>());
+            .Select(p => TypeJson.Read(p["type"])?.ToString() ?? "?") ?? Enumerable.Empty<string>())
+            + "|" + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
+                method["typeParams"] as JsonArray, Array.Empty<TypeNode>());
     }
 
     static bool ContainsOwnerTvInSignature(JsonObject method)

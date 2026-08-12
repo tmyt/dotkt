@@ -5,7 +5,7 @@ Status: **design locked** (design owner, 2026-06-28). **Phases 1–5 implemented
 ## Decision
 
 1. **Every Kotlin property is emitted as a REAL CLR property** — `PropertyBuilder` (`DefineProperty` +
-   `SetGetMethod`/`SetSetMethod`) over `T get_p()` / `void set_p(T)` accessors, with an **`internal`
+   `SetGetMethod`/`SetSetMethod`) over `T prop_get<p>()` / `void prop_set<p>(T)` accessors, with an **`internal`
    (assembly-visible) backing field**. So a Kotlin `val`/`var` is seen as a *property* by a cross-assembly C#/F#/
    reflection consumer (the backing field is invisible across the assembly boundary) — the interop-correct shape.
    (Pre-model behavior: a plain public field — a deviation; see [dotkt-semantics.md](dotkt-semantics.md).)
@@ -40,7 +40,8 @@ Status: **design locked** (design owner, 2026-06-28). **Phases 1–5 implemented
 For `class C { val p: T ; var q: U }` (no `@ClrField`):
 - internal backing fields `<p>k__BackingField` : T, `<q>k__BackingField` : U (renamed so they don't collide with the
   property name — the C# auto-property convention; bir2cir `BackingFieldRename`, #228).
-- `public T get_p()` { ldarg.0; ldfld `<p>k__BackingField`; ret } ; `public U get_q()` ; `public void set_q(U)`.
+- `public T prop_get<p>()` { ldarg.0; ldfld `<p>k__BackingField`; ret } ; `public U prop_get<q>()` ;
+  `public void prop_set<q>(U)`.
 - CLR properties `p` (get only) and `q` (get+set) via `PropertyBuilder`.
 - accessors are `virtual final` when the property implements an interface/override (binds the slot — see the
   `overridesIface` method/accessor fix already landed for the method side), else non-virtual.
@@ -69,8 +70,9 @@ For `class C { val p: T ; var q: U }` (no `@ClrField`):
 
 ## Implemented & verified (2026-06-28)
 
-- ilemit `PropertyBuilder` (`DefineProperty` + `SetGetMethod`/`SetSetMethod`); kotc emits a `properties` list + routes
-  every non-`@ClrField`/const/lateinit/delegated property through `get_`/`set_`, backing field `internal`.
+- ilemit `PropertyBuilder` (`DefineProperty` + `SetGetMethod`/`SetSetMethod`); kotc emits a `properties` list and
+  bir2cir routes every non-`@ClrField`/const/lateinit/delegated property through its dedicated accessor, backing field
+  `internal`.
 - Verified: `il-outref` (behavioral — `byref(a.quo)` writes through the internal backing field; ref-swap between a
   property-backed field and a `@ClrField` field); a `MetadataLoadContext` reflection probe over the emitted `Acc`
   (structural — `quo` = CLR property + `internal` field, `raw`(`@ClrField`) = public field, no property);

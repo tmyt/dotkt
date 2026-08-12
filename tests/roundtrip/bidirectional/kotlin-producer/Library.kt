@@ -11,6 +11,17 @@ class BidirectionalGreeter(val name: String) {
 
 fun bidirectionalAdd(a: Int, b: Int): Int = a + b
 
+open class BidirectionalPropertyBase(open var value: Int) {
+    open fun get_value(): Int = value + 100
+    open fun set_value(next: Int) { value = next + 100 }
+}
+
+interface BidirectionalPropertyInterface {
+    var value: Int
+    fun get_value(): Int
+    fun set_value(next: Int)
+}
+
 // #389 — companion extensions are emitted as the released C# 14 static extension-member graph. Keeping two
 // receivers with the same source member name proves that bir2cir partitions the physical containers by receiver;
 // the generic member proves that method type parameters and constraints stay on the executable declaration.

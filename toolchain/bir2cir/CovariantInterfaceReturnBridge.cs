@@ -26,7 +26,10 @@ static class CovariantInterfaceReturnBridge
     public static void ApplyAll(IEnumerable<JsonNode> roots)
     {
         var defs = Collect(roots);
-        foreach (var cls in defs.Values.Where(d => d.Kind == "class"))
+        // A concrete member on a derived interface is a DIM body, but it still needs an exact MethodImpl when its
+        // covariant return differs from the base-interface slot. Treat interfaces and classes uniformly here: the
+        // frontend override edge selects the declaration, and this pass only materializes its CLR representation.
+        foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface"))
             ApplyClass(cls, defs);
     }
 
@@ -71,7 +74,11 @@ static class CovariantInterfaceReturnBridge
 
             foreach (var slot in iface.Methods.OfType<JsonObject>())
             {
-                if (Bool(slot["static"]) || Str(slot["name"]) is not string name
+                // A private exact MethodImpl body synthesized on a derived interface is not another declaration slot
+                // for implementing classes. Exclude it explicitly; consuming it here would bridge the bridge and make
+                // the result depend on whether that interface happened to be visited before the class.
+                if (Bool(slot["static"]) || KotlinPropertyAccessors.IsPhysicalSlotBridge(slot)
+                    || Str(slot["name"]) is not string name
                     || slot["params"] is not JsonArray slotParamNodes) continue;
                 var methodArity = (slot["typeParams"] as JsonArray)?.Count ?? 0;
                 var slotParams = slotParamNodes.OfType<JsonObject>()
@@ -86,6 +93,9 @@ static class CovariantInterfaceReturnBridge
                     !Bool(m["static"]) && !KotlinPropertyAccessors.IsPhysicalSlotBridge(m)
                     && SameIdentity(m, name, propertyName, accessorKind)
                     && ((m["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
+                    && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
+                        slot["typeParams"] as JsonArray, m["typeParams"] as JsonArray,
+                        ifaceArgs, ClassOwnArgs(cls))
                     && ParamsEqual(m, slotParams, ClassOwnArgs(cls))
                     && Overrides(m, iface.Name, propertyName ?? name,
                         accessorKind switch { "get" => "getter", "set" => "setter", _ => "method" })).ToList();
@@ -102,7 +112,12 @@ static class CovariantInterfaceReturnBridge
                 // was written for.
                 if (KotlinOverrideSlotBridge.IsErasureDivergence(slotRet, implementationRet)) continue;
 
-                var key = name + "(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
+                // Method generic arity is part of the CLI slot identity. An arity-0 and arity-1 accessor can otherwise
+                // share one bridge even though no MethodImpl body can implement both declarations.
+                var key = name + "`" + methodArity + "<"
+                          + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
+                              slot["typeParams"] as JsonArray, ifaceArgs)
+                          + ">(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
                     bridge = BuildBridge(cls, implementation, slotParams, slotRet,
@@ -110,10 +125,23 @@ static class CovariantInterfaceReturnBridge
                     bridges[key] = bridge;
                     methods.Add(bridge);
                     if (propertyName != null)
-                        KotlinPropertyAccessors.AssociateBridgeProperty(cls.Node, bridge, propertyName, accessorKind,
-                            Str(implementation[KotlinPropertyAccessors.AssociationKey]), slotParams, slotRet);
+                    {
+                        var sourceAssociation = Str(implementation[KotlinPropertyAccessors.AssociationKey]);
+                        // An interface bridge is a private/final MethodImpl body for the authored public DIM, not a
+                        // second property declaration. Preserve its exact source relation for round-trip metadata
+                        // without attempting to attach several inherited CLR slots to one additional Property row.
+                        if (cls.Kind == "interface")
+                            KotlinPropertyAccessors.MarkExactInterfaceBridgeProperty(
+                                bridge, propertyName, accessorKind, sourceAssociation);
+                        else
+                            KotlinPropertyAccessors.AssociateBridgeProperty(cls.Node, bridge, propertyName, accessorKind,
+                                sourceAssociation, slotParams, slotRet);
+                    }
                 }
-                ((JsonArray)bridge["clrInterfaceImpls"]).Add(ImplDescriptor(ifaceSpec, name, slotParams, slotRet));
+                ((JsonArray)bridge["clrInterfaceImpls"]).Add(
+                    ImplDescriptor(ifaceSpec, name, methodArity, slotParams, slotRet,
+                        KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
+                            slot["typeParams"] as JsonArray, ifaceArgs)));
             }
         }
     }
@@ -162,7 +190,6 @@ static class CovariantInterfaceReturnBridge
                 typeArgs.Add(TypeJson.Write(new TypeNode.Tv("method", i)));
             call["typeArgs"] = typeArgs;
         }
-
         var bridge = new JsonObject
         {
             ["name"] = bridgeName,
@@ -176,23 +203,30 @@ static class CovariantInterfaceReturnBridge
             ["ret"] = TypeJson.Write(slotRet),
             ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = call }),
             ["attrs"] = new JsonArray(),
+            [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
             ["clrInterfaceImpls"] = new JsonArray(),
         };
+        if (cls.Kind == "interface")
+            bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
         if (implementation["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
         return bridge;
     }
 
-    static JsonObject ImplDescriptor(TypeNode.Fqn ifaceSpec, string member, TypeNode[] slotParams, TypeNode slotRet)
+    static JsonObject ImplDescriptor(TypeNode.Fqn ifaceSpec, string member, int methodArity,
+        TypeNode[] slotParams, TypeNode slotRet, JsonArray typeParams)
     {
         var ps = new JsonArray();
         foreach (var p in slotParams) ps.Add(TypeJson.Write(p));
-        return new JsonObject
+        var descriptor = new JsonObject
         {
             ["owner"] = TypeJson.Write(ifaceSpec),
             ["member"] = member,
+            ["arity"] = methodArity,
             ["params"] = ps,
             ["ret"] = TypeJson.Write(slotRet),
         };
+        if (typeParams != null) descriptor["typeParams"] = typeParams.DeepClone();
+        return descriptor;
     }
 
     static IEnumerable<TypeNode.Fqn> ReachableInterfaces(Def cls, IReadOnlyDictionary<string, Def> defs)

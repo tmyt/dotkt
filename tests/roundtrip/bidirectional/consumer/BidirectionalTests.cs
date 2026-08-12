@@ -8,6 +8,36 @@ using NUnit.Framework;
 
 public class BidirectionalTests
 {
+    private sealed class CSharpPropertyOverride : BidirectionalPropertyBase
+    {
+        private int storage;
+
+        public CSharpPropertyOverride() : base(0) { }
+
+        public override int value
+        {
+            get => storage;
+            set => storage = value;
+        }
+
+        public override int get_value() => 200;
+        public override void set_value(int next) => storage = next + 200;
+    }
+
+    private sealed class CSharpPropertyImplementation : BidirectionalPropertyInterface
+    {
+        private int storage;
+
+        int BidirectionalPropertyInterface.value
+        {
+            get => storage;
+            set => storage = value;
+        }
+
+        public int get_value() => 300;
+        public void set_value(int next) => storage = next + 300;
+    }
+
     [Test]
     public void CSharpAndKotlinProjectReferencesWorkInBothDirections()
     {
@@ -21,6 +51,32 @@ public class BidirectionalTests
     public void CSharpCallsKotlinTopLevelFunctionAtCompileTime()
     {
         Assert.That(LibraryKt.bidirectionalAdd(2, 3), Is.EqualTo(5));
+    }
+
+    [Test]
+    public void CSharpConsumesOverridesAndImplementsDedicatedKotlinPropertyAccessors()
+    {
+        var derived = new CSharpPropertyOverride();
+        BidirectionalPropertyBase throughBase = derived;
+        throughBase.value = 7;
+        Assert.That(throughBase.value, Is.EqualTo(7));
+        Assert.That(throughBase.get_value(), Is.EqualTo(200));
+        throughBase.set_value(8);
+        Assert.That(throughBase.value, Is.EqualTo(208));
+
+        BidirectionalPropertyInterface throughInterface = new CSharpPropertyImplementation();
+        throughInterface.value = 9;
+        Assert.That(throughInterface.value, Is.EqualTo(9));
+        Assert.That(throughInterface.get_value(), Is.EqualTo(300));
+        throughInterface.set_value(10);
+        Assert.That(throughInterface.value, Is.EqualTo(310));
+
+        var baseAccessor = typeof(BidirectionalPropertyBase).GetProperty("value")!.GetMethod!;
+        var interfaceAccessor = typeof(BidirectionalPropertyInterface).GetProperty("value")!.GetMethod!;
+        Assert.That(baseAccessor.Name, Is.EqualTo("prop_get<value>"));
+        Assert.That(interfaceAccessor.Name, Is.EqualTo("prop_get<value>"));
+        Assert.That(typeof(BidirectionalPropertyBase).GetMethod("get_value"), Is.Not.Null);
+        Assert.That(typeof(BidirectionalPropertyInterface).GetMethod("get_value"), Is.Not.Null);
     }
 
     [Test]
@@ -71,7 +127,7 @@ public class BidirectionalTests
                 type.IsDefined(typeof(ExtensionAttribute), inherit: false))
             .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.Static |
                 BindingFlags.DeclaredOnly))
-            .Where(method => method.Name is "genericAnswer" or "get_genericCounter" or "set_genericCounter")
+            .Where(method => method.Name is "genericAnswer" or "prop_get<genericCounter>" or "prop_set<genericCounter>")
             .ToArray();
         Assert.That(wrappers, Has.Length.EqualTo(3));
         Assert.That(wrappers.All(method => method.IsGenericMethodDefinition &&
@@ -115,10 +171,11 @@ public class BidirectionalTests
         var container = typeof(BidirectionalStaticAlpha).Assembly.GetTypes()
             .Single(type => type.DeclaringType is null && type.IsAbstract && type.IsSealed &&
                 type.IsDefined(typeof(ExtensionAttribute), inherit: false) &&
-                type.GetMethod("get_label", BindingFlags.Public | BindingFlags.Static) is not null &&
-                type.GetMethod("get_counter", BindingFlags.Public | BindingFlags.Static) is not null);
-        foreach (var name in new[] { "get_label", "get_marker", "get_code", "get_counter", "set_counter",
-                     "get_later", "set_later", "get_computed" })
+                type.GetMethod("prop_get<label>", BindingFlags.Public | BindingFlags.Static) is not null &&
+                type.GetMethod("prop_get<counter>", BindingFlags.Public | BindingFlags.Static) is not null);
+        foreach (var name in new[] { "prop_get<label>", "prop_get<marker>", "prop_get<code>",
+                     "prop_get<counter>", "prop_set<counter>", "prop_get<later>", "prop_set<later>",
+                     "prop_get<computed>" })
         {
             var accessor = container.GetMethod(name, BindingFlags.Public | BindingFlags.Static)!;
             Assert.That(accessor.IsSpecialName, Is.False,
@@ -132,9 +189,9 @@ public class BidirectionalTests
         Assert.That(storage, Has.Length.EqualTo(8));
         Assert.That(storage.All(field => field.IsPrivate), Is.True,
             "companion extension storage must remain private on its single initialization owner");
-        Assert.That(container.GetMethod("set_computed", BindingFlags.NonPublic | BindingFlags.Static)!.IsPrivate, Is.True,
+        Assert.That(container.GetMethod("prop_set<computed>", BindingFlags.NonPublic | BindingFlags.Static)!.IsPrivate, Is.True,
             "a private Kotlin setter must remain a private implementation accessor");
-        Assert.That(container.GetMethod("set_restricted", BindingFlags.NonPublic | BindingFlags.Static)!.IsPrivate, Is.True,
+        Assert.That(container.GetMethod("prop_set<restricted>", BindingFlags.NonPublic | BindingFlags.Static)!.IsPrivate, Is.True,
             "a field-backed var's private default setter must survive the C# 14 graph");
     }
 

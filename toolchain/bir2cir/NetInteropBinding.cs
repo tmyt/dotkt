@@ -341,8 +341,8 @@ static class NetInteropBinding
                 if (!isStatic) CarrySuper();
                 return;
             }
-            // No matching .NET property/field -> a synthetic accessor method. Apply the shared forward allocation and
-            // fall through to the plain instance/static method path.
+            // No matching .NET property/field -> a Kotlin synthetic accessor method. Apply the shared forward
+            // allocation and fall through to the plain instance/static method path.
             method = KotlinPropertyAccessors.PhysicalName(method, propKind);
         }
 
