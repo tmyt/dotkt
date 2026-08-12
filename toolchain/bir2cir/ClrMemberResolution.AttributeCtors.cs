@@ -19,13 +19,20 @@ using DotKt.Bir;
 
 static partial class ClrMemberResolution
 {
+    // The keys an applied attribute list rides on. A RETURN-position attribute lives under its own key, which
+    // is how 496 of them went unresolved while the walk looked convincingly complete: `attrs` covers a type, a
+    // member and a parameter, and a return is none of those. Naming the carriers is what makes the next one an
+    // entry here rather than a silent omission.
+    static readonly string[] AttributeCarriers = { "attrs", "retAttrs" };
+
     /// <summary>
     /// Resolve every applied EXTERNAL attribute's constructor and stamp it. Runs over the whole document
     /// because an attribute rides on any declaration — a type, a member, a parameter, a return.
     /// </summary>
     public static void ResolveAttributeCtors(JsonNode root, ReferenceMetadataIndex refs)
     {
-        _refs ??= refs;
+        // One index per run; assigning rather than coalescing, for the reason MemberRefOf's own note gives.
+        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
         WalkAttrs(root);
     }
 
@@ -34,9 +41,10 @@ static partial class ClrMemberResolution
         switch (node)
         {
             case JsonObject obj:
-                if (obj["attrs"] is JsonArray attrs)
-                    foreach (var entry in attrs)
-                        if (entry is JsonObject attr) ResolveAppliedAttribute(attr);
+                foreach (var carrier in AttributeCarriers)
+                    if (obj[carrier] is JsonArray attrs)
+                        foreach (var entry in attrs)
+                            if (entry is JsonObject attr) ResolveAppliedAttribute(attr);
                 foreach (var kv in obj) WalkAttrs(kv.Value);
                 break;
             case JsonArray arr:
@@ -69,9 +77,13 @@ static partial class ClrMemberResolution
         if (argNodes.Any(t => t == null)) return;
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == argNodes.Count).ToList();
-        if (ctors.Count == 0) return;   // an unencodable annotation, dropped downstream as it always was
-        var win = PickUnique(ctors, c => c.GetParameters(), argNodes, attrFqn.Args,
-            $"applied attribute [{attrFqn.Name}]({DescArgs(argNodes)})");
+        // ONE POLICY for the whole lane. An annotation whose constructor this cannot select is left unnamed,
+        // exactly as an annotation whose type does not resolve is — never an abort. The frontend accepted the
+        // program, and an attribute is decoration: refusing to compile over one would reject source because a
+        // marker could not be encoded. (`PickUnique` throws, which is right where a MEMBER is being called and
+        // wrong here, and the difference is the whole reason this uses the quiet form.)
+        var win = TryPickUniqueCtor(ctors, argNodes, attrFqn.Args);
+        if (win == null) return;
         attr["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, attrFqn.Args);
     }
 }

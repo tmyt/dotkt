@@ -1143,13 +1143,21 @@ sealed partial class ReferenceMetadataIndex
         if (string.IsNullOrEmpty(fqn) || string.IsNullOrEmpty(assemblySimpleName)) return null;
         EnsureNetMlc();
         if (_netMlc == null) return null;
+        Type found = null;
         foreach (var asm in _netRefAsms)
         {
             if (!string.Equals(asm.GetName().Name, assemblySimpleName, StringComparison.OrdinalIgnoreCase)) continue;
             var match = SafeGetType(asm, fqn);
-            if (match != null) return match;
+            if (match == null) continue;
+            // Two references answering to one simple name is an ambiguity, not a race to be first: the whole
+            // point of stating the scope was to name ONE declaration. Every sibling resolver in this file
+            // refuses the same way.
+            if (found != null && found != match)
+                throw new InvalidOperationException(
+                    $"bir2cir: type '{fqn}' is defined by more than one reference named '{assemblySimpleName}'");
+            found = match;
         }
-        return null;
+        return found;
     }
 
     Type ProbeNetType(string fqn, int genericArity)
