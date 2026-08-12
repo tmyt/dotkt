@@ -73,6 +73,7 @@ public inline operator fun <T> MutableCollection<in T>.plusAssign(elements: Arra
  * Adds all elements of the given [elements] sequence to this mutable collection.
  */
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("plusAssignSequence")
 public inline operator fun <T> MutableCollection<in T>.plusAssign(elements: Sequence<T>) {
     this.addAll(elements)
 }
@@ -105,6 +106,7 @@ public inline operator fun <T> MutableCollection<in T>.minusAssign(elements: Arr
  * Removes all elements contained in the given [elements] sequence from this mutable collection.
  */
 @kotlin.internal.InlineOnly
+@kotlin.clr.ClrName("minusAssignSequence")
 public inline operator fun <T> MutableCollection<in T>.minusAssign(elements: Sequence<T>) {
     this.removeAll(elements)
 }
@@ -129,6 +131,7 @@ public fun <T> MutableCollection<in T>.addAll(elements: Iterable<T>): Boolean {
  * Adds all elements of the given [elements] sequence to this [MutableCollection].
  */
 @IgnorableReturnValue
+@kotlin.clr.ClrName("addAllSequence")
 public fun <T> MutableCollection<in T>.addAll(elements: Sequence<T>): Boolean {
     var result: Boolean = false
     for (item in elements) {
@@ -164,6 +167,7 @@ public fun <T> MutableCollection<in T>.removeAll(elements: Iterable<T>): Boolean
  * Removes all elements from this [MutableCollection] that are also contained in the given [elements] sequence.
  */
 @IgnorableReturnValue
+@kotlin.clr.ClrName("removeAllSequence")
 public fun <T> MutableCollection<in T>.removeAll(elements: Sequence<T>): Boolean {
     val list = elements.toList()
     return list.isNotEmpty() && removeAll(list)
@@ -200,6 +204,7 @@ public fun <T> MutableCollection<in T>.retainAll(elements: Array<out T>): Boolea
  * Retains only elements of this [MutableCollection] that are contained in the given [elements] sequence.
  */
 @IgnorableReturnValue
+@kotlin.clr.ClrName("retainAllSequence")
 public fun <T> MutableCollection<in T>.retainAll(elements: Sequence<T>): Boolean {
     val list = elements.toList()
     if (list.isNotEmpty())

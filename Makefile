@@ -31,7 +31,6 @@ FEED       := build/nuget-feed
 # ---- source sets (prerequisites for incrementality) ----------------------------------------------
 KOTC_SRC   := $(shell find toolchain/kotc/src -type f 2>/dev/null) toolchain/kotc/build.gradle.kts settings.gradle.kts
 STDLIB_SRC := $(shell find libraries/stdlib -name '*.kt' 2>/dev/null)
-STDLIB_OVERLAYS := $(shell find libraries/stdlib/clr/overlays -type f 2>/dev/null)
 # bir-common/TypeNode.cs is <Compile Link/>-shared into bir2cir/ilemit/dll2klib, so it is a source
 # prerequisite of every C# tool — include it for incrementality.
 tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -name '*.csproj' 2>/dev/null | grep -vE '/(obj|bin)/')
@@ -68,7 +67,7 @@ $(foreach t,$(TOOLS),$(eval $(call TOOL_RULE,$(t))))
 stdlib: stdlib-klib stdlib-ref stdlib-rt ## the CLR stdlib: frontend KLIB + reference dll + runtime dll
 
 stdlib-klib: $(FE_KLIB) ## kotlin-stdlib-clr-frontend.klib (kotc -classpath input)
-$(FE_KLIB): $(KOTC) $(STDLIB_SRC) $(STDLIB_OVERLAYS) scripts/build-stdlib-klib.sh scripts/lib.sh
+$(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh scripts/lib.sh
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_fe_klib'
 	@touch "$@"
 
@@ -76,7 +75,7 @@ $(FE_KLIB): $(KOTC) $(STDLIB_SRC) $(STDLIB_OVERLAYS) scripts/build-stdlib-klib.s
 # deps on the dlls (existence). Depending on the dll mtimes directly would spuriously retrigger these
 # slow builds: the verify scripts' internal `dotnet build` refreshes the dlls even when nothing changed.
 stdlib-ref: $(STDLIB_REF) ## DotKt.Private.Stdlib.dll (compile-time @Clr metadata; bir2cir's --ref)
-$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) $(STDLIB_OVERLAYS) scripts/build-stdlib-ref.sh scripts/lib.sh \
+$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh scripts/lib.sh \
                $(call tool_src,bir2cir) $(call tool_src,ilemit) \
                | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_stdlib_ref'
@@ -86,7 +85,7 @@ $(STDLIB_REF): $(KOTC) $(STDLIB_SRC) $(STDLIB_OVERLAYS) scripts/build-stdlib-ref
 stdlib-rt: $(STDLIB_RT) ## DotKt.Stdlib.dll (the shipping runtime assembly)
 # The script exits 0 on success / nonzero on real failure (the old final-error-grep footgun — exit 1
 # exactly when the build was CLEAN — is fixed, so no compensating `|| true` here any more).
-$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) $(STDLIB_OVERLAYS) scripts/build-stdlib-rt.sh scripts/lib.sh \
+$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdlib-rt.sh scripts/lib.sh \
               $(call tool_src,bir2cir) $(call tool_src,ilemit) \
               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_stdlib_rt'

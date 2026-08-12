@@ -2962,6 +2962,7 @@ public operator fun <T> Sequence<T>.minus(elements: Iterable<T>): Sequence<T> {
  * 
  * The operation is _intermediate_ for this sequence and _terminal_ and _stateful_ for the [elements] sequence.
  */
+@kotlin.clr.ClrName("minusSequence")
 public operator fun <T> Sequence<T>.minus(elements: Sequence<T>): Sequence<T> {
     return object: Sequence<T> {
         override fun iterator(): Iterator<T> {
@@ -3047,6 +3048,7 @@ public operator fun <T> Sequence<T>.plus(elements: Iterable<T>): Sequence<T> {
  *
  * The operation is _intermediate_ and _stateless_.
  */
+@kotlin.clr.ClrName("plusSequence")
 public operator fun <T> Sequence<T>.plus(elements: Sequence<T>): Sequence<T> {
     return sequenceOf(this, elements).flatten()
 }
@@ -3405,4 +3407,3 @@ public fun Sequence<Double>.sum(): Double {
     }
     return sum
 }
-
