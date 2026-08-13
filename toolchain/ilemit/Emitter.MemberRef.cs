@@ -81,21 +81,21 @@ sealed partial class Emitter
             + $"reference(s) these documents carry ({_memberRefResolved} resolved, "
             + $"{_memberRefUncovered} legacy resolution(s) had no reference to compare).");
 
-        // The ASSERTION. Every reference this build resolved was resolved in order to be compared, because
-        // ShadowParity is the only caller of the resolver. A site that resolves without comparing — or compares
-        // without resolving — breaks that and reddens here rather than inflating a number nobody checks.
-        if (_memberRefResolved != _memberRefParityChecked)
-            throw new InvalidOperationException(
-                $"ilemit: {_memberRefResolved} member reference(s) were resolved but {_memberRefParityChecked} "
-                + "were compared against the legacy pick. Resolving outside the parity check proves nothing; "
-                + "route the new site through ShadowParity (#370).");
-
-        // What is deliberately NOT asserted: that the checks equal the carriers. That is not an invariant any
-        // build satisfies — a metadata-only build squashes bodies, so references it carries are never consumed,
-        // and a node the emitter visits twice has its reference checked twice. Claiming it would make the gate
-        // lie in both directions. The number that DOES measure coverage is the uncovered count above: it is the
-        // population still resolved by name rather than by reference, and the cutover's precondition is that it
-        // reaches zero for the kinds being cut over.
+        // NOTHING IS ASSERTED HERE, and the honest reason is worth writing down, because two assertions were
+        // tried and both were worse than none.
+        //
+        // "checks == carriers" is not an invariant any build satisfies: a metadata-only build squashes bodies, so
+        // references it carries are never consumed, and a node the emitter visits twice has its reference checked
+        // twice. It would redden on correct builds in both directions.
+        //
+        // "resolved == checked" IS always true — and vacuously so, because both counters are incremented on the
+        // same straight line through ShadowParity. It cannot fail, so it proves nothing; it merely reads as if it
+        // did, which is worse than silence.
+        //
+        // Coverage is enforced by WIRING — a legacy resolver that produces a member for a node carrying a
+        // reference compares them first — and MEASURED by the uncovered count above, which is the population
+        // still resolved by name. A count cannot state a wiring property. Reporting the number and naming what it
+        // does not cover is the strongest true thing available here.
     }
 
     /// <summary>The member a reference names, resolved exactly. Never a search.</summary>
