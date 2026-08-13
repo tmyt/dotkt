@@ -72,6 +72,21 @@ class CollectionTypePositionTests {
         assertEquals("c", joined[1])
     }
 
+    // ---- the other collapses the same lowering applies, which a positional rule alone does not cover ----------
+
+    @TestAttribute
+    fun comparableStarCollapsesToTheNonGenericFace() {
+        // `Comparable<*>` lowers to the NON-generic `System.IComparable` — contravariance means no value type is
+        // `IComparable<object>`. This is the vararg `compareBy`, whose parameter carries that type; a serializer
+        // that applied only the arg-position rule spells it `IComparable`1<Object>`, which the runtime stdlib
+        // does not declare, and the call fails to resolve at emit time.
+        val people = listOf("bb" to 2, "a" to 1, "ccc" to 3)
+        val sorted = people.sortedWith(compareBy({ it.second }, { it.first }))
+        assertEquals("a", sorted[0].first)
+        assertEquals("bb", sorted[1].first)
+        assertEquals("ccc", sorted[2].first)
+    }
+
     // ---- head position: the covariant face, the rule everything else is measured against ----------------------
 
     @TestAttribute
