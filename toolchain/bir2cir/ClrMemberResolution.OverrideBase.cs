@@ -53,12 +53,9 @@ static partial class ClrMemberResolution
         try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == slotName && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
         var win = PickOverrideBase(cands, argNodes, returnNode,
             $"override base={owner}.{slotName}({DescArgs(argNodes)}):{returnNode}");
-        node["clrOverrideSig"] = MemberSig(win.GetParameters());
         // The incoming return describes the implementation's resolved Kotlin/constructed-owner view and is used
         // above to select the slot.  ilemit links against the declaration in the reference assembly, so carry the
         // winner's declared CLR return in the same vocabulary as clrOverrideSig (including positional type vars).
-        node["clrOverrideRet"] = TypeJson.Write(MemberSigOf(win.ReturnType));
-        node["clrOverrideOwner"] = DeclaringTypeDescriptor(win);
         // The same slot as one scalar identity. The three descriptors above state the base member in pieces —
         // name here, parameters there, owner and return elsewhere — and a MethodImpl target is exactly the
         // place where assembling those pieces back into a member is selection.

@@ -458,9 +458,9 @@ static class ForeignNullableGenericCrossing
                 // THE STAMPED DECLARATION IS THE TRIGGER, not a list of node kinds. `memberSig`/`memberRet` exist on
                 // exactly the nodes ClrMemberResolution resolved against a .NET member — including an accessor-backed
                 // external `field`, whose KIND is Kotlin's too — so keying on them is keyed on the fact itself and
-                // cannot drift from where the stamping happens.
-                if (obj["memberSig"] != null || obj[ClrMemberResolution.MemberRetKey] != null) CheckCall(obj, file);
-                // `memberRet` is a pass-to-pass fact and must not reach CIR: the emitter consumes `memberSig` and
+                // cannot drift from where the stamping happens. The reference is that stamp now; `memberSig` was.
+                if (obj["memberRef"] != null || obj[ClrMemberResolution.MemberRetKey] != null) CheckCall(obj, file);
+                // `memberRet` is a pass-to-pass fact and must not reach CIR: the emitter consumes the reference and
                 // knows nothing of this one.
                 obj.Remove(ClrMemberResolution.MemberRetKey);
                 foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, file);
@@ -480,7 +480,9 @@ static class ForeignNullableGenericCrossing
         // `clrType`, an accessor-backed field in `ownerType`. The message must name the member the author wrote.
         var owner = (TypeJson.Read(call["type"]) ?? TypeJson.Read(call["clrType"]) ?? TypeJson.Read(call["ownerType"]))
             is TypeNode.Fqn f ? f.Name : "<unknown>";
-        if (call["memberSig"] is JsonArray sig)
+        // The parameter vector comes off the resolved reference — the declaration's own, which is the whole point:
+        // the node's argument types are the caller's Kotlin view and would hide the crossing.
+        if (call["memberRef"] is JsonObject reference && reference["parameterTypes"] is JsonArray sig)
             for (var i = 0; i < sig.Count; i++)
                 if (TypeJson.Read(sig[i]) is TypeNode p && NullableGenericErasure.ErasureWouldMove(p))
                     throw Refuse(file, owner, member, "parameter " + i, p);

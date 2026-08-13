@@ -714,10 +714,8 @@ class V:
                         if not isinstance(type_params, list) or len(type_params) != descriptor.get("arity"):
                             self.err(f, descriptor_path, "MethodImpl descriptor typeParams must match its generic arity")
             if o.get("k") == "newClrStaticDelegate" and f.endswith(".cir.json"):
-                if not isinstance(o.get("memberSig"), list):
-                    self.err(f, path, "newClrStaticDelegate.memberSig must be a resolved Type-node array in CIR")
-                if not isinstance(o.get("memberOwner"), dict) or "t" not in o["memberOwner"]:
-                    self.err(f, path, "newClrStaticDelegate.memberOwner must be a resolved Type node in CIR")
+                if not isinstance(o.get("memberRef"), dict):
+                    self.err(f, path, "newClrStaticDelegate must carry the resolved memberRef of the method it binds")
             if f.endswith(".cir.json"):
                 # The declaration-side pair, checked in BOTH directions. A base-constructor delegation and an
                 # external override target are resolved by the same pass and stated in the same transitional
@@ -748,13 +746,13 @@ class V:
                         declared = o.get("argTypes")
                         if isinstance(declared, list) and len(declared) != len(ref.get("parameterTypes") or []):
                             self.err(f, path, "an applied attribute's memberRef takes a different number of arguments than the application states")
+                # The transitional descriptors are RETIRED: the emitter reads the reference and nothing else,
+                # so an owner descriptor beside it is a second spelling of a settled identity — the kind that
+                # drifts from the first and cannot be caught, because whoever compares them compares two
+                # outputs of the same producer.
                 for owner_key, ref_key in DECLARATION_REF_PAIRS:
-                    if owner_key in o and ref_key not in o:
-                        self.err(f, path, f"{owner_key} is present without the resolved {ref_key} beside it")
-                    if ref_key in o and owner_key not in o:
-                        # ilemit still reads the owner descriptor, so a reference without it validates clean
-                        # here and dies at emit — the failure lands one layer past the document that caused it.
-                        self.err(f, path, f"{ref_key} is present without the {owner_key} the emitter still reads")
+                    if owner_key in o:
+                        self.err(f, path, f"{owner_key} is a retired transitional descriptor; the resolved {ref_key} is the identity")
             if f.endswith(".cir.json"):
                 for required_key in COLLECTION_TEMPLATE_REFS.get(o.get("k"), ()):
                     if required_key not in o:
@@ -768,11 +766,9 @@ class V:
                     self.err(f, path, f"{kind} is an external member reference and must carry a resolved memberRef")
                 elif kind in MEMBER_REF_CONDITIONAL_KINDS:
                     # Sometimes external, sometimes a member of the assembly being built. The transitional
-                    # identity is what says WHICH this node is: `memberOwner` where a declaring type was read,
-                    # `member` for a property or field, which carry a discriminator instead of a signature.
-                    if "memberOwner" in o:
-                        self.err(f, path, f"{kind} carries the transitional memberOwner without the resolved memberRef beside it")
-                    elif o.get("member") in ("accessor", "field"):
+                    # discriminator is what says WHICH this node is: `member` for a property or field, which carries a
+                    # kind marker rather than a signature.
+                    if o.get("member") in ("accessor", "field"):
                         self.err(f, path, f"{kind} carries member={o['member']!r} without the resolved memberRef beside it")
             if isinstance(o.get("mods"), dict):
                 for mk in o["mods"]:
