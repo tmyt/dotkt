@@ -481,6 +481,15 @@ static class ForeignNullableGenericCrossing
     {
         TypeNode.Fqn { Args: { Length: 1 } a } f when IsNullableName(f.Name) =>
             new TypeNode.Nullable(AsDocumentNullable(a[0])),
+        // A lowered function type read back as its delegate. The document calls it `fn`, and the erasure rule is
+        // positional: a function type's parameters and return are method slots, an ordinary generic's arguments
+        // are storage. Restoring the shape is what keeps the question the same one `memberSig` used to ask.
+        TypeNode.Fqn { Args: { Length: > 0 } fa } f when BirTypeLowering.IsLoweredFunctionType(StripArity(f.Name)) =>
+            // An Action has no return: every argument is a parameter. A Func's last argument is its return.
+            StripArity(f.Name).EndsWith("Action", StringComparison.Ordinal)
+                ? new TypeNode.Fn(false, UnitReturn, fa.Select(AsDocumentNullable).ToArray())
+                : new TypeNode.Fn(false, AsDocumentNullable(fa[^1]),
+                    fa.Take(fa.Length - 1).Select(AsDocumentNullable).ToArray()),
         TypeNode.Fqn { Args: not null } f =>
             new TypeNode.Fqn(f.Name, f.Args.Select(AsDocumentNullable).ToArray()),
         TypeNode.Array arr => arr.SzArray
@@ -489,6 +498,10 @@ static class ForeignNullableGenericCrossing
         TypeNode.ByRef b => new TypeNode.ByRef(AsDocumentNullable(b.Of)),
         _ => t,
     };
+
+    static readonly TypeNode UnitReturn = new TypeNode.Fqn("kotlin.Unit");
+
+    static string StripArity(string s) { var i = s.IndexOf('`'); return i >= 0 ? s[..i] : s; }
 
     static bool IsNullableName(string name) =>
         name is "System.Nullable" or "System.Nullable`1";
