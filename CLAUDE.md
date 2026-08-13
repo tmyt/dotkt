@@ -114,11 +114,14 @@ bug; the only legitimate throw is an assert that cannot fire on valid IR.
 - Use Codex for design and investigation, and tell subagents to use it too:
   `codex exec -s read-only --skip-git-repo-check "<question>" </dev/null`. The `</dev/null` is required or it
   hangs. If it goes silent it may be stuck on an interactive update prompt — ask me.
-- Before reporting done or treating a PR as ready, complete the independent local review contract in `AGENTS.md`:
-  separate fresh Claude and Codex processes, both read-only and given the exact diff or commit range. Give
-  them the task, applicable invariants, and the honest remainder — known limitations, open questions and weak
-  points — but none of the implementation conversation or reasoning that would turn an independent read into
-  a confirmation pass. Validate both review results before handoff. For this review contract, `AGENTS.md` is
+- Before reporting done or treating a PR as ready, complete the independent local review contract in `AGENTS.md`.
+  Reviews are a budget, not a loop: Claude once per PR iteration, Codex once per semantic milestone of the
+  issue (e.g. new contract established / consumers switched over / old path deleted), and never a fresh round
+  for comment-level fixes. Each reviewer runs as a fresh read-only process given the exact diff or commit
+  range, the task, applicable invariants, and the honest remainder — known limitations, open questions and
+  weak points — but none of the implementation conversation or reasoning that would turn an independent read
+  into a confirmation pass. Validate findings before applying them; a validated finding outside the PR's scope
+  is reported to me for the tracker, not folded into the PR. For this review contract, `AGENTS.md` is
   authoritative if this summary ever differs from it.
 - If the same fault keeps reappearing somewhere new instead of closing, stop fixing symptoms per layer and do
   one read-only pass that enumerates every manifestation and specs a single fix.
@@ -135,10 +138,10 @@ Not a single `gradle build` — a multi-stage native pipeline. Don't guess these
 | The CLR stdlib: frontend KLIB, then reference dll, then runtime dll | `make stdlib` |
 
 Validation cadence is part of the review contract in `AGENTS.md`: iterate with the narrowest focused check,
-review the stable focused-green diff, then run the canonical full gate once. If that gate fails, iterate on its
-failing stage; if the fix changes the reviewed artifact, repeat focused validation and independent review before
-rerunning the whole gate. A draft PR may expose honest work in progress, but it must state which reviews or
-checks remain and cannot be treated as ready for handoff.
+spend the review budget on the stable focused-green diff, then run the canonical full gate once. If that gate
+fails, iterate on its failing stage and validate the fix with focused checks — the budget is spent, so no new
+review round — before rerunning the whole gate. A draft PR may expose honest work in progress, but it must
+state which reviews or checks remain and cannot be treated as ready for handoff.
 
 The truthful fail-sets are machine-readable, never prose: `ILVERIFY_XFAIL` in `tests/run-ilverify.sh`,
 `XFAIL_PKG` in `tests/packaged-sdk/run.sh`. A gate exits 0 iff every actual failure is listed, and reports what

@@ -30,13 +30,27 @@ another layer.
 
 During implementation, use the narrowest focused checks that exercise the
 changed behavior. Once those checks pass and the diff is stable enough to
-review, complete independent local reviews from both Claude and Codex in
-separate processes when their CLIs are available. Do not consider the change
-ready for handoff or ready-for-review until both reviews have completed and
-their findings have been validated and every required final gate is green on
-the final diff. A draft pull request may be opened earlier when its outstanding
-review and validation status is stated explicitly in the pull request
-description.
+review, run the independent local reviews in separate processes when their
+CLIs are available. Reviews are a fixed budget, not a loop:
+
+- Claude reviews once per pull-request iteration: one review of the stable
+  diff before handoff. Fixes made in response to findings get focused
+  validation and the final gate, not another review round; only substantial
+  new work pushed to the same pull request afterwards constitutes a new
+  iteration carrying one further Claude review.
+- Codex reviews once per semantic milestone of the issue — a design boundary
+  such as "the new contract is established", "consumers are switched to the
+  new path", "the old path is deleted" — never per diff revision, and never
+  for mechanical follow-ups such as comment fixes or one-line corrections.
+
+This budget is deliberate, adopted after its trial on issue #370: unbounded
+re-review rounds inflated lead time, and out-of-scope findings folded in
+blindly drifted pull requests away from their issue. Do not consider the
+change ready for handoff or ready-for-review until the budgeted reviews have
+completed, their findings have been validated, and every required final gate
+is green on the final diff. A draft pull request may be opened earlier when
+its outstanding review and validation status is stated explicitly in the pull
+request description.
 
 - Run the reviewers read-only; they must not edit the worktree. Explicitly name
   the artifact each reviewer must inspect: the full staged and unstaged diff
@@ -46,24 +60,25 @@ description.
 - Give the reviewers the task scope and these project principles, but do not
   pass the implementing agent's conversation context or reasoning. Include all
   known limitations, unresolved questions, and suspected weak points rather
-  than only a favorable summary. Run both reviews from fresh processes with no
+  than only a favorable summary. Run every review from a fresh process with no
   inherited implementation conversation.
 - Ask for concrete, evidence-backed findings about correctness, layer ownership,
   generality, binary validity, and missing test coverage, and instruct the
   reviewers to reject weak or speculative hypotheses explicitly.
 - Independently validate every finding before changing the implementation; do
-  not apply reviewer suggestions blindly.
-- After addressing material findings, rerun the focused checks and repeat
-  independent review when the resulting change is substantial. Run the
-  canonical full gate (`make verify` for behavior-affecting changes) once the
-  reviewed diff is stable, rather than after each implementation or review
-  iteration.
+  not apply reviewer suggestions blindly. A validated finding outside the pull
+  request's declared scope is reported for the issue tracker, not folded into
+  the pull request.
+- After addressing material findings, rerun the focused checks — the review
+  budget for this iteration is spent, so do not open another review round. Run
+  the canonical full gate (`make verify` for behavior-affecting changes) once
+  the diff is stable, rather than after each implementation iteration.
 - If the full gate fails, reproduce and iterate with the failing stage or
-  focused check before running the full gate again. If the fix changes the
-  reviewed artifact, return to the focused-green review step before the next
-  full run. A green full-gate result must be repeated only when a subsequent
-  code, build, or packaging change can invalidate it; review-only discussion
+  focused check before running the full gate again; the fix is validated by
+  those focused checks, not by a new review round. A green full-gate result
+  must be repeated only when a subsequent code, build, or packaging change
+  can invalidate it; review-only discussion
   and documentation/comment-only edits to files not executed or consumed by
   the build or gates do not require another full run.
-- If either reviewer cannot be run, report that explicitly rather than silently
-  skipping it.
+- If a budgeted review cannot be run, report that explicitly rather than
+  silently skipping it.
