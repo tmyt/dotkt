@@ -44,6 +44,8 @@ static partial class ClrMemberResolution
             RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
             node["member"] = "accessor";
             node["accessor"] = acc.Name;
+            node["memberSig"] = MemberSig(acc.GetParameters());
+            node["memberOwner"] = DeclaringTypeDescriptor(acc);
             node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
             StampMemberRet(node, acc.ReturnType);
             if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall);
@@ -214,6 +216,8 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException($"bir2cir: event '{name}' on '{open}' has no {(add ? "add" : "remove")} accessor (#46 W1-S3)");
         RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
         node["accessor"] = acc.Name;
+        node["memberSig"] = MemberSig(acc.GetParameters());
+        node["memberOwner"] = DeclaringTypeDescriptor(acc);
         node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
         StampMemberRet(node, acc.ReturnType);
         if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall: false);
@@ -280,6 +284,8 @@ static partial class ClrMemberResolution
         RetargetToBaseInterface(node, "ownerType", open, acc, ownerFqn);
         node["member"] = "accessor";
         node["accessor"] = acc.Name;
+        node["memberSig"] = MemberSig(acc.GetParameters());
+        node["memberOwner"] = DeclaringTypeDescriptor(acc);
         node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
         StampMemberRet(node, acc.ReturnType);
         node["dispatch"] = Dispatch(acc, open, superCall: false);
