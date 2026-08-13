@@ -944,11 +944,22 @@ static partial class ClrMemberResolution
     // The BCL-MLC type an @ClrTypeAlias def maps to, or null when the def is not aliased.
     static Type AliasDef(Type def)
     {
-        var name = StripArity(Dotted(def.FullName ?? def.Name));
-        return _refs.Aliases.TryGetValue(name, out var bcl)
+        return _refs.Aliases.TryGetValue(AliasKey(def), out var bcl)
             ? RefDef(bcl, def.IsGenericType ? def.GetGenericArguments().Length : 0)
             : null;
     }
+
+    /// <summary>
+    /// The @ClrTypeAlias index key for a reflected type: dotted, with the arity backtick dropped from EVERY
+    /// nesting segment.
+    /// </summary>
+    /// <remarks>
+    /// Truncating at the FIRST backtick instead keys `Map`2+Entry`2` as `kotlin.collections.Map`, so a nested
+    /// type inherits its OUTER type's alias — `Map.Entry` resolved to `IDictionary`. Nothing caught that while
+    /// the only consumer matched on parameters, because the mis-aliased type sat in a return.
+    /// </remarks>
+    static string AliasKey(Type def) =>
+        string.Join('.', (def.FullName ?? def.Name).Split('+').Select(StripArity));
 
     // Resolve a .NET type by name off the ref.dll, RESPECTING generic arity: probe the arity-suffixed def (`Foo`1`)
     // FIRST when arity>0, so a same-named NON-generic sibling (`TaskCompletionSource`/the `System.Nullable` static class)
