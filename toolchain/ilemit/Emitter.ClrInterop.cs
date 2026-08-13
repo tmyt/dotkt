@@ -412,6 +412,10 @@ sealed partial class Emitter
             throw new InvalidOperationException($"ilemit: override descriptor {desc} is AMBIGUOUS — {hits.Count} base virtuals match (malformed clrOverrideSig): {string.Join("; ", hits.Select(x => x.ToString()))}");
         var win = hits[0];
         ShadowParity(m, "clrOverrideRef", win, $"override base {desc}");
+        // …and where the reference answers, it is the answer, anchoring included — the walk below reconstructs
+        // the base instantiation from the emitted type's chain, which is what the reference's declaring type
+        // already states. The search above survives only so the two can be compared.
+        if (PrimaryFromRef(m, "clrOverrideRef") is MethodInfo referenced) return referenced;
         // Non-generic declaring base (the accessor case): the reflected slot is a usable closed handle.
         if (!(win.DeclaringType?.IsGenericType ?? false)) return win;
         // Generic .NET base: DefineMethodOverride must reference the slot on the emitted type's CONSTRUCTED base
