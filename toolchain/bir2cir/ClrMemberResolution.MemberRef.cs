@@ -299,18 +299,30 @@ static partial class ClrMemberResolution
     // no `+`-to-`.` flattening, no delegate rewritten as a Kotlin function type, no `System.Nullable`1`
     // collapsed to a nullability wrapper: each of those is a document convention for talking about a Kotlin
     // program, and each one merges types this reference has to keep apart.
-    static TypeNode RefTypeOf(Type t)
+    // The twin the member is RESOLVED in is not the twin it is CALLED in. bir2cir resolves against the stdlib's
+    // reference twin, which declares the Kotlin surface (`kotlin.collections.List<kotlin.collections.List<T>>`);
+    // the member this reference names lives in the runtime twin, which declares the physical shape
+    // (`IReadOnlyList<IList<T>>`). Those are two vocabularies for one member, and the map between them is
+    // BirTypeLowering's — POSITION-DEPENDENT, so it cannot be applied by walking the signature with one alias
+    // step. Doing that produced `IReadOnlyList<IReadOnlyList<T>>`: a member neither twin declares.
+    static TypeNode RefTypeOf(Type t) => RefTypeOf(t, typeArg: false);
+
+    static TypeNode RefTypeOf(Type t, bool typeArg)
     {
-        t = AliasResolve(t);
-        if (t.IsByRef) return new TypeNode.ByRef(RefTypeOf(t.GetElementType()));
-        if (t.IsPointer) return new TypeNode.Ptr(RefTypeOf(t.GetElementType()));
-        if (t.IsArray) return ArrayOf(t, RefTypeOf(t.GetElementType()));
+        // An element, a pointee and a byref target are VALUE positions — `typeArg: false` — exactly as
+        // BirTypeLowering lowers them. The collapse below applies to storage slots, not to what a slot holds.
+        if (t.IsByRef) return new TypeNode.ByRef(RefTypeOf(t.GetElementType(), typeArg: false));
+        if (t.IsPointer) return new TypeNode.Ptr(RefTypeOf(t.GetElementType(), typeArg: false));
+        if (t.IsArray) return ArrayOf(t, RefTypeOf(t.GetElementType(), typeArg: false));
         if (t.IsGenericParameter)
             return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
         if (t.IsGenericType && !t.IsGenericTypeDefinition)
-            return new TypeNode.Fqn(PhysicalTypeName(t.GetGenericTypeDefinition()),
-                t.GetGenericArguments().Select(RefTypeOf).ToArray());
-        return new TypeNode.Fqn(PhysicalTypeName(t));
+        {
+            var argsAreSlots = !ArgumentsAreMethodSlots(t);
+            return new TypeNode.Fqn(PhysicalTypeName(PhysicalHeadOf(t, typeArg)),
+                t.GetGenericArguments().Select(a => RefTypeOf(a, typeArg: argsAreSlots)).ToArray());
+        }
+        return new TypeNode.Fqn(PhysicalTypeName(PhysicalHeadOf(t, typeArg)));
     }
 
     // The vector and the general array are different types even at rank 1 — `T[]` and `T[*]` — and reflection
@@ -320,6 +332,57 @@ static partial class ClrMemberResolution
         bool sz; try { sz = t.IsSZArray; } catch { sz = true; }
         return sz ? new TypeNode.Array(elem) : TypeNode.Array.General(elem, SafeArrayRank(t));
     }
+
+    /// <summary>
+    /// The open definition this type is named by in the target: its @ClrTypeAlias twin, or — in a generic
+    /// ARGUMENT position — the invariant sibling BirTypeLowering's Root-V collapse rewrites it to.
+    /// </summary>
+    static Type PhysicalHeadOf(Type t, bool typeArg)
+    {
+        var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
+        // ARG-POSITION VARIANCE COLLAPSE (Root-V), taken from the pass that owns it rather than restated: a
+        // covariant read-only Kotlin collection in a storage slot lowers to its invariant CLR sibling, while the
+        // same token in a head position keeps the covariant alias.
+        if (typeArg
+            && BirTypeLowering.TryInvariantSibling(KotlinKeyOf(def), out var invariant)
+            && RefDef(invariant, def.IsGenericType ? def.GetGenericArguments().Length : 0) is { } sibling)
+            return sibling;
+        return AliasDef(def) ?? def;
+    }
+
+    /// <summary>
+    /// True when this constructed generic's arguments reach the target as method slots rather than storage —
+    /// so Root-V does NOT apply to them.
+    /// </summary>
+    static bool ArgumentsAreMethodSlots(Type t)
+    {
+        var def = t.IsGenericTypeDefinition ? t : t.GetGenericTypeDefinition();
+        // A delegate's type arguments ARE a signature: they arrive as a Kotlin function type, whose parameters
+        // and return BirTypeLowering lowers as heads. `Func<List<T>, R>` therefore keeps `IReadOnlyList` where a
+        // `Box<List<T>>` collapses to `IList` — the difference that makes this positional rather than uniform.
+        // (A CLR delegate written literally in Kotlin source lowers its arguments as storage instead, and the
+        // reference twin spells both origins identically, so that one case would be named wrong here. It is left
+        // to fail loudly at the exact lookup rather than guessed at: corpus-wide exact resolution is the evidence
+        // that it does not occur, and a silent mis-naming is what this whole change exists to remove.)
+        if (IsDelegate(def)) return true;
+        // The KProperty carriers, for the reason BirTypeLowering gives: each argument is substituted into an
+        // interface method slot, not stored in one.
+        return BirTypeLowering.IsMethodSlotCarrier(KotlinKeyOf(def));
+    }
+
+    static bool IsDelegate(Type t)
+    {
+        try
+        {
+            for (var b = t.BaseType; b != null; b = b.BaseType)
+                if (b.FullName == "System.MulticastDelegate") return true;
+        }
+        catch { /* a reference whose base chain does not load is simply not a delegate here */ }
+        return false;
+    }
+
+    // The document-vocabulary key the alias index and the Root-V table are both keyed on: dotted, arity-free.
+    static string KotlinKeyOf(Type t) => StripArity(Dotted(t.FullName ?? t.Name));
 
     static int SafeArrayRank(Type t) { try { return t.GetArrayRank(); } catch { return 1; } }
 
