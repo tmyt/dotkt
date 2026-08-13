@@ -250,7 +250,11 @@ sealed partial class Emitter
         var hits = cands.Where(c => c.GetParameters()
             .Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, ownerArgs)).All(x => x)).ToList();
         var desc = $"{type?.FullName}::.ctor{sigEl}";
-        if (hits.Count == 1) return hits[0];
+        if (hits.Count == 1)
+        {
+            ShadowParity(e, descriptorName == "baseMemberSig" ? "baseCtorRef" : "memberRef", hits[0], $"constructor {desc}");
+            return hits[0];
+        }
         if (hits.Count == 0)
             throw new InvalidOperationException($"ilemit: no constructor matches the resolved descriptor {desc} (ABI mismatch; {cands.Count} same-arity candidate(s): {string.Join("; ", cands.Select(c => c.ToString()))})");
         throw new InvalidOperationException($"ilemit: resolved ctor descriptor {desc} is AMBIGUOUS — {hits.Count} constructors match (malformed memberSig): {string.Join("; ", hits.Select(c => c.ToString()))}");
@@ -302,6 +306,9 @@ sealed partial class Emitter
         if (hits.Count == 1)
         {
             var hit = ExactDeclaringMethod(hits[0]);
+            // The reference travelling with this descriptor must name the SAME declaration. Checked before the
+            // anchoring below, which is a projection of the winner rather than another choice of member.
+            ShadowParity(e, "memberRef", hit, $"clr{(instance ? "Instance" : "Static")} {desc}");
             // Re-anchor only a member DECLARED by this generic owner. An inherited slot already carries its own
             // declaring interface; anchoring `IEnumerator.MoveNext` onto `IEnumerator<T>` manufactures a member that
             // does not exist. (TypeBuilder.GetMethod used to reject that pair; SignatureMethod must preserve the same
