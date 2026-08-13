@@ -28,6 +28,19 @@ sealed class ManagedReferenceCatalog
     public IReadOnlyList<Entry> Entries { get; }
     public IReadOnlyList<string> Paths { get; }
 
+    /// <summary>
+    /// The runtime stdlib twin's file, when the ref-reader collapse removed it from the resolution set.
+    /// </summary>
+    /// <remarks>
+    /// It is dropped from RESOLUTION so that `kotlin.*` resolves through the reference twin and one Kotlin surface
+    /// stays authoritative — that is deliberate and unchanged. But the reference twin declares the Kotlin surface,
+    /// and a member reference has to name a member of the assembly that SHIPS: the two disagree wherever the
+    /// surface is lossy about the physical shape (a value type's nullability has nowhere to live in a twin where
+    /// `kotlin.Float` is a class). Keeping the path lets a caller read the shipped declaration directly instead of
+    /// reconstructing it from what the surface erased.
+    /// </remarks>
+    public string PhysicalStdlibPath { get; private init; }
+
     ManagedReferenceCatalog(List<Entry> entries, bool refStdlibAliasesRuntime)
     {
         Entries = entries;
@@ -200,6 +213,7 @@ sealed class ManagedReferenceCatalog
         // to the ref twin) — realizing the invariant "ref-readers function with the REFERENCE stdlib ALONE". Done AFTER
         // phase 2 so a genuine same-name conflict (two physical `DotKt.Stdlib` files) still throws first. ilemit never
         // sets the flag; its runtime set carries only `DotKt.Stdlib` (the ref twin is compile-only) so this is inert.
+        string dropped = null;
         if (refStdlibAliasesRuntime
             && entries.Any(e => string.Equals(e.Identity.Name, RefStdlibName, StringComparison.OrdinalIgnoreCase)))
         {
@@ -211,9 +225,10 @@ sealed class ManagedReferenceCatalog
                     $"{toolName}: ref-reader collapse — dropping runtime stdlib twin {RuntimeStdlibName} " +
                     $"({runtimeTwin.Path}); a {RuntimeStdlibName} reference resolves to the reference twin {RefStdlibName}");
                 entries.Remove(runtimeTwin);
+                dropped = runtimeTwin.Path;
             }
         }
-        return new ManagedReferenceCatalog(entries, refStdlibAliasesRuntime);
+        return new ManagedReferenceCatalog(entries, refStdlibAliasesRuntime) { PhysicalStdlibPath = dropped };
     }
 
     /// <summary>
