@@ -199,6 +199,21 @@ static class BirTypeLowering
         "kotlin.reflect.ClrPropertyStub",
     };
 
+    // The two rules above, readable by the member-reference serializer.
+    //
+    // bir2cir resolves a stdlib member against the REFERENCE twin, which declares the Kotlin surface, while the
+    // member a reference has to name lives in the RUNTIME twin, which declares what this pass produces. Naming
+    // that member therefore means applying THIS lowering to a signature read back out of metadata — and the
+    // collapse is position-dependent, so a serializer that walks a signature applying only the head alias names a
+    // member that exists in neither twin. Exposing the rule, rather than letting the serializer restate it, is
+    // what stops two spellings of one decision from drifting; that drift is exactly what happened once, and it
+    // was invisible because the descriptor the reference got compared against restated the rule the same way.
+    internal static bool TryInvariantSibling(string kotlinFqn, out string clrFqn) =>
+        InvariantSibling.TryGetValue(kotlinFqn, out clrFqn);
+
+    internal static bool IsMethodSlotCarrier(string kotlinFqn) =>
+        InterfaceMethodSlotCarriers.Contains(kotlinFqn);
+
     // A synthesized result slot sometimes has to be named before this lowering pass runs (the suspend
     // TaskCompletionSource<R>/RootContinuation<R> drive is the canonical case). Its public Task<R> must retain the
     // same readonly head type a Kotlin call observes; spelling that BCL head explicitly also exempts this one coherent
