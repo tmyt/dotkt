@@ -43,40 +43,15 @@ static partial class ClrMemberResolution
     internal static JsonNode FieldRefJson(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
         => FieldRefOf(field, openOwner, ownerArgs).Write();
 
-    // A member reflected off a CONSTRUCTED generic type reports its signature ALREADY SUBSTITUTED —
-    // `ITransformer<string>.Transform` says `string Transform(string)` where the declaration says
-    // `T Transform(T)`. A reference carries the OPEN declared signature (ECMA II.9.8: instantiation rides on
-    // the type spec, not in the member's own blob), so the declaration is what must be serialized. Reflection
-    // has no direct route from one to the other; the metadata token is the identity that survives the
-    // substitution, so the definition's member with the same token IS the same declaration.
-    static T OpenDeclarationOf<T>(T member) where T : MethodBase
-    {
-        var declaring = member.DeclaringType;
-        if (declaring == null || !declaring.IsGenericType || declaring.IsGenericTypeDefinition) return member;
-        Type definition;
-        try { definition = declaring.GetGenericTypeDefinition(); } catch { return member; }
-        if (definition == null || definition == declaring) return member;
-        try
-        {
-            const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic
-                | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-            IEnumerable<MethodBase> candidates = member is ConstructorInfo
-                ? definition.GetConstructors(all)
-                : definition.GetMethods(all);
-            foreach (var candidate in candidates)
-                if (candidate.MetadataToken == member.MetadataToken && candidate.Module == member.Module)
-                    return (T)candidate;
-        }
-        catch { }
-        return member;
-    }
-
     internal static MemberRefNode MemberRefOf(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs)
     {
-        member = OpenDeclarationOf(member);
+        // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
+        // Only the signature is taken from it — the declaring head, its instantiation and the physical assembly
+        // are already decided from the resolved member and must not be re-derived here.
+        var shipped = _refs.PhysicalTwinOf(member) ?? member;
         var ctor = member as ConstructorInfo;
-        var method = member as MethodInfo;
-        if (ctor == null && method == null)
+        var method = shipped as MethodInfo ?? member as MethodInfo;
+        if (ctor == null && member as MethodInfo == null)
             throw new InvalidOperationException($"bir2cir: cannot reference '{member}' — neither a method nor a constructor (#370)");
         var node = new MemberRefNode(
             Kind: kind,
@@ -88,7 +63,7 @@ static partial class ClrMemberResolution
                 ? MemberRefNode.Void
                 : RefReturnOf(method),
             CallingConvention: ConventionOf(member),
-            ParameterTypes: RefParamsOf(member));
+            ParameterTypes: RefParamsOf(shipped));
         node.Validate();
         return node;
     }
@@ -120,7 +95,6 @@ static partial class ClrMemberResolution
 
     internal static MemberRefNode FieldRefOf(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
     {
-        field = OpenFieldDeclarationOf(field);
         var node = new MemberRefNode(
             Kind: MemberRefNode.Kinds.Field,
             Assembly: PhysicalAssemblyOf(field),
@@ -128,31 +102,16 @@ static partial class ClrMemberResolution
             Name: field.Name,
             GenericArity: 0,
             // A field's "return" is its declared type — the same crossing a parameter of that type would be.
-            ReturnType: Modified(RefTypeOf(field.FieldType),
-                field.GetRequiredCustomModifiers(), field.GetOptionalCustomModifiers()));
+            ReturnType: ShippedFieldType(field));
         node.Validate();
         return node;
     }
 
-    // The field flavour of OpenDeclarationOf: a field read off a constructed generic type reports the
-    // substituted field type, and the declaration is what a reference states.
-    static FieldInfo OpenFieldDeclarationOf(FieldInfo field)
+    static TypeNode ShippedFieldType(FieldInfo field)
     {
-        var declaring = field.DeclaringType;
-        if (declaring == null || !declaring.IsGenericType || declaring.IsGenericTypeDefinition) return field;
-        Type definition;
-        try { definition = declaring.GetGenericTypeDefinition(); } catch { return field; }
-        if (definition == null || definition == declaring) return field;
-        try
-        {
-            const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic
-                | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-            foreach (var candidate in definition.GetFields(all))
-                if (candidate.MetadataToken == field.MetadataToken && candidate.Module == field.Module)
-                    return candidate;
-        }
-        catch { }
-        return field;
+        var shipped = _refs.PhysicalTwinOf(field) ?? field;
+        return Modified(RefTypeOf(shipped.FieldType),
+            shipped.GetRequiredCustomModifiers(), shipped.GetOptionalCustomModifiers());
     }
 
     // ---- the identity's three parts -----------------------------------------------------------------
