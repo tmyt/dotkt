@@ -106,4 +106,46 @@ static partial class ClrMemberResolution
 
     static InvalidOperationException Missing(string owner, string member) =>
         new($"bir2cir: '{owner}.{member}' does not resolve to one declaration for spreadConcat (#370)");
+
+    /// <summary>
+    /// The enumerator protocol an inlined `for` walks. Both arms are named: WHICH arm the emitter takes is a
+    /// Reflection.Emit fact (an instantiation over a type still being built cannot carry a usable member token),
+    /// so that choice stays where the knowledge is — but choosing between two members already named is not
+    /// member selection, and neither arm's members are derived by name any more.
+    /// </summary>
+    static void ResolveForEachInline(JsonObject node)
+    {
+        if (node.ContainsKey("moveNextRef")) return;
+        if (TypeJson.Read(node["elem"]) is not TypeNode elem) return;
+        var element = new TypeNode.Tv("type", 0);
+
+        StampProtocolMember(node, "enumerableGetRef", "System.Collections.Generic.IEnumerable",
+            new[] { elem }, "GetEnumerator", new List<TypeNode>());
+        StampProtocolMember(node, "currentRef", "System.Collections.Generic.IEnumerator",
+            new[] { elem }, "get_Current", new List<TypeNode>());
+        // The non-generic arm's owners take no arguments at all — the erased walk exists precisely because the
+        // constructed ones cannot be spoken here.
+        StampProtocolMember(node, "enumerableGetErasedRef", "System.Collections.IEnumerable",
+            Array.Empty<TypeNode>(), "GetEnumerator", new List<TypeNode>());
+        StampProtocolMember(node, "currentErasedRef", "System.Collections.IEnumerator",
+            Array.Empty<TypeNode>(), "get_Current", new List<TypeNode>());
+        StampProtocolMember(node, "moveNextRef", "System.Collections.IEnumerator",
+            Array.Empty<TypeNode>(), "MoveNext", new List<TypeNode>());
+        _ = element;
+    }
+
+    static void StampProtocolMember(JsonObject node, string refKey, string ownerFqn,
+        TypeNode[] args, string name, List<TypeNode> signature)
+    {
+        var ownerNode = args.Length == 0 ? new TypeNode.Fqn(ownerFqn) : new TypeNode.Fqn(ownerFqn, args);
+        var open = ResolveOwnerType(ownerNode)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: forEachInline walks '{ownerFqn}', which does not resolve to a .NET type (#370)");
+        var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == name && m.GetParameters().Length == signature.Count).ToList();
+        var win = TryPickUnique(candidates, signature, args)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: '{ownerFqn}.{name}' does not resolve to one declaration for forEachInline (#370)");
+        node[refKey] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, args);
+    }
 }

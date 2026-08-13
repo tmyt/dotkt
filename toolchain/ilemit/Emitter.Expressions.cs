@@ -555,12 +555,14 @@ sealed partial class Emitter
                 Type enT;
                 if (viaNonGeneric)
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
+                    EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "enumerableGetErasedRef") as MethodInfo
+                        ?? Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
                     enT = Bcl("System.Collections.IEnumerator");
                 }
                 else
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, GenericMethod(ienumT, "GetEnumerator"));
+                    EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "enumerableGetRef") as MethodInfo
+                        ?? GenericMethod(ienumT, "GetEnumerator"));
                     enT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elem);
                 }
                 var en = _il.DeclareLocal(enT); _il.Emit(OpCodes.Stloc, en);
@@ -569,17 +571,20 @@ sealed partial class Emitter
                 _loops.Add((LoopLabel(e), start, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, en);
-                EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
+                EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "moveNextRef") as MethodInfo
+                    ?? Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
                 _il.Emit(OpCodes.Brfalse, end);
                 _il.Emit(OpCodes.Ldloc, en);
                 if (viaNonGeneric)
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("get_Current"));
+                    EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "currentErasedRef") as MethodInfo
+                        ?? Bcl("System.Collections.IEnumerator").GetMethod("get_Current"));
                     _il.Emit(OpCodes.Unbox_Any, elem);
                 }
                 else
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, GenericMethod(enT, "get_Current"));
+                    EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "currentRef") as MethodInfo
+                        ?? GenericMethod(enT, "get_Current"));
                 }
                 _il.Emit(OpCodes.Stloc, lv);
                 foreach (var b in e.GetProperty("body").EnumerateArray()) EmitStmt(b);
