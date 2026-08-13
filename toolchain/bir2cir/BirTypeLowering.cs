@@ -199,7 +199,48 @@ static class BirTypeLowering
         "kotlin.reflect.ClrPropertyStub",
     };
 
-    // The two rules above, readable by the member-reference serializer.
+    /// <summary>
+    /// Which CLR type a Kotlin-surface type HEAD becomes, given its already-lowered arguments. The single
+    /// implementation of that decision.
+    /// </summary>
+    /// <remarks>
+    /// This exists because there are two callers, not one. `LowerType` applies it to the declarations this pass
+    /// lowers; the member-reference serializer applies it to a signature read back out of the reference twin,
+    /// which speaks the Kotlin surface while the member being named lives in the runtime twin, which speaks
+    /// this. Those two must agree at EVERY branch — the erasure of a generic classifier, the contravariant
+    /// `Comparable<Any?>` collapse, the arg-position variance collapse, the plain alias — and the only way to
+    /// guarantee they do is for there to be one branch each. A serializer that reproduced "the same rule"
+    /// reproduced two of the four, and named members that exist in neither twin.
+    ///
+    /// `bcl` is the type's @ClrTypeAlias target, or null when it has none; `loweredArgs` is null for a leaf.
+    /// `collapseInvariant` is the caller's position judgement — a storage slot collapses, a head or method slot
+    /// does not — because only the caller knows which of the two vocabularies its position came from.
+    /// </remarks>
+    internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs, bool collapseInvariant)
+    {
+        // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not the
+        // generic stdlib class); drop the self-referential arg (`where T : Enum`).
+        if (ErasesGenericApplicationToNonGenericClassifier(kotlinFqn) && loweredArgs != null)
+            return new TypeNode.Fqn("System.Enum");
+        // A leaf: a @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) or a non-primitive
+        // BCL (StringBuilder/Regex/IComparable/…) -> the BCL FQN. Otherwise the name stands: user / stdlib /
+        // in-assembly names are unchanged, trusted external DotKt identities become their physical metadata names.
+        if (loweredArgs == null) return new TypeNode.Fqn(bcl ?? PhysicalName(kotlinFqn));
+        if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn), loweredArgs);
+        // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant; no value
+        // type is IComparable<object>). A concrete arg keeps the generic form.
+        if (bcl == "System.IComparable" && loweredArgs.Length == 1 && IsObjectish(loweredArgs[0]))
+            return new TypeNode.Fqn("System.IComparable");
+        // ARG-POSITION VARIANCE COLLAPSE (Root V): in a storage slot a covariant readonly collection interface ->
+        // its INVARIANT sibling, so a concrete invariant value inhabits the nested slot EXACTLY. The head keeps the
+        // covariant alias; CollectionViewCallCoercion materializes any resulting call-site seam as a CIR cast.
+        if (collapseInvariant && InvariantSibling.TryGetValue(kotlinFqn, out var inv))
+            return new TypeNode.Fqn(inv, loweredArgs);
+        // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
+        return new TypeNode.Fqn(bcl, loweredArgs);
+    }
+
+    // The method-slot rule, readable by the member-reference serializer.
     //
     // bir2cir resolves a stdlib member against the REFERENCE twin, which declares the Kotlin surface, while the
     // member a reference has to name lives in the RUNTIME twin, which declares what this pass produces. Naming
@@ -208,8 +249,6 @@ static class BirTypeLowering
     // member that exists in neither twin. Exposing the rule, rather than letting the serializer restate it, is
     // what stops two spellings of one decision from drifting; that drift is exactly what happened once, and it
     // was invisible because the descriptor the reference got compared against restated the rule the same way.
-    internal static bool TryInvariantSibling(string kotlinFqn, out string clrFqn) =>
-        InvariantSibling.TryGetValue(kotlinFqn, out clrFqn);
 
     internal static bool IsMethodSlotCarrier(string kotlinFqn) =>
         InterfaceMethodSlotCarriers.Contains(kotlinFqn);
@@ -291,8 +330,6 @@ static class BirTypeLowering
                             f.Args?.Select(a => LowerType(a, refBuild, force: false, typeArg: true)).ToArray());
                     // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
                     // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
-                    if (ErasesGenericApplicationToNonGenericClassifier(f.Name) && f.Args != null)
-                        return new TypeNode.Fqn("System.Enum");
                     var methodSlotCarrier = f.Args != null && InterfaceMethodSlotCarriers.Contains(f.Name);
                     var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force,
                         typeArg: methodSlotCarrier ? false : true)).ToArray();
@@ -307,30 +344,8 @@ static class BirTypeLowering
                         // blob path keeps KotlinAllToClr: a custom-attribute blob needs a concrete System.* even in the ref
                         // build, which has no ref.dll to read.
                         if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
-                        // A @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) OR a non-primitive BCL
-                        // (StringBuilder/Regex/IComparable/…) -> the BCL FQN, read from the ref.dll alias index.
-                        if (AliasBcl(f.Name) is string bclNonGen) return new TypeNode.Fqn(bclNonGen);
-                        return new TypeNode.Fqn(PhysicalName(f.Name));
-                        // user / stdlib / in-assembly names stay unchanged; trusted external DotKt identities become
-                        // their exact physical metadata names.
                     }
-                    // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
-                    if (AliasBcl(f.Name) is string bcl)
-                    {
-                        // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant;
-                        // no value type is IComparable<object>). A concrete arg keeps the generic form.
-                        if (bcl == "System.IComparable" && loweredArgs.Length == 1 && IsObjectish(loweredArgs[0]))
-                            return new TypeNode.Fqn("System.IComparable");
-                        // ARG-POSITION VARIANCE COLLAPSE (Root V): at generic-arg depth >= 1 (typeArg), a covariant readonly
-                        // collection interface -> its INVARIANT sibling, so a concrete invariant value inhabits the nested
-                        // slot EXACTLY. The HEAD (depth-0) keeps the covariant alias; CollectionViewCallCoercion materializes
-                        // any resulting call-site seam as an explicit CIR cast. RefBuild is `kotlin.*` verbatim (line 191); `!refBuild`
-                        // also spares a `force` attribute-blob.
-                        if (typeArg && !refBuild && InvariantSibling.TryGetValue(f.Name, out var inv))
-                            return new TypeNode.Fqn(inv, loweredArgs);
-                        return new TypeNode.Fqn(bcl, loweredArgs);
-                    }
-                    return new TypeNode.Fqn(PhysicalName(f.Name), loweredArgs);
+                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs, collapseInvariant: typeArg && !refBuild);
                 }
             case TypeNode.Tv:
                 return t;   // scope+i preserved; ilemit maps scope:"type"->!i / scope:"method"->!!i
