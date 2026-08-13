@@ -148,13 +148,14 @@ sealed partial class Emitter
     // delegate's Invoke. `invokeRet` is that Invoke return type (must carry a static `INSTANCE` singleton — `kotlin.Unit`);
     // `paramTypes` are the delegate's parameter types (identical for the void and the Unit delegate — only the return
     // differs), forwarded straight through.
-    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes)
+    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes, FieldInfo singleton)
     {
-        // `invokeRet` is a referenced (baked) `kotlin.Unit` in an app/rt build -> its static INSTANCE reflects directly.
-        // (Were the rt-stdlib itself to ever bind such a delegate while `kotlin.Unit` is still a TypeBuilder, this GetField
-        // would throw a loud NotSupportedException rather than mis-emit — no gate hits it; add a `_types` lookup if it does.)
-        var instF = invokeRet.GetField("INSTANCE", BindingFlags.Public | BindingFlags.Static)
-            ?? throw new NotSupportedException($"cannot reconcile a void lambda into a delegate returning {invokeRet} (no static INSTANCE singleton)");
+        // The singleton the conversion's node names. It does not depend on the adapter's arity — it is one static
+        // field of one type — so it rides the node rather than being fetched by string off the return type here.
+        var instF = singleton
+            ?? throw new InvalidOperationException(
+                $"ilemit: reconciling a void lambda into a delegate returning {invokeRet} needs the "
+                + "`unitInstanceRef` its node carries. Every external member arrives named (#370)");
         var pTypes = new[] { ft }.Concat(paramTypes).ToArray();
         var mb = UnitAdapterHolder().DefineMethod("Unit$" + (_unitAdapterCounter++),
             MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,

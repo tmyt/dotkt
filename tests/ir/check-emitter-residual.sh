@@ -11,16 +11,11 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # Names invariant 10 accounts for. Anything else is a member being CHOSEN.
 ALLOWED='^(Invoke|GetEnumerator|MoveNext|get_Current|Reset|Dispose|GetTypeFromHandle|Equals|ToString|GetHashCode|CompareTo|GetType|GetValues|Parse|Concat|IndexOf|Add|AddRange|ToArray|GetMethod|CreateDelegate|Combine|Remove|CompareExchange)$'
 
-# The one entry that is NOT "no lookup can get this wrong": `kotlin.Unit.INSTANCE`, read by the void-delegate
-# adapter. It is a real stdlib member named by the emitter, which the cardinal rule says should arrive resolved
-# — but the adapter is synthesized per arity and belongs to no CIR node, so there is nothing to carry the
-# reference yet. Listed here rather than hidden in the allowlist above, because it is debt and not a rule.
-ALLOWED_DEBT='^(INSTANCE)$'
 
 found=0
 while IFS= read -r hit; do
 	name="${hit##*(\"}"; name="${name%%\"*}"
-	if ! [[ "$name" =~ $ALLOWED || "$name" =~ $ALLOWED_DEBT ]]; then
+	if ! [[ "$name" =~ $ALLOWED ]]; then
 		echo "  UNDOCUMENTED  $hit"
 		found=1
 	fi
@@ -31,5 +26,4 @@ if (( found )); then
 	echo "  Either the member belongs in CIR as a resolved memberRef, or invariant 10 must say why it cannot."
 	exit 1
 fi
-echo "EMITTER RESIDUAL: GREEN — every by-name member lookup in ilemit is one invariant 10 names,"
-echo "  plus the one listed as debt: kotlin.Unit.INSTANCE in the void-delegate adapter (#370 remainder)."
+echo "EMITTER RESIDUAL: GREEN — every by-name member lookup in ilemit is one invariant 10 names."

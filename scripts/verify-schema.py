@@ -27,7 +27,7 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 # change. `declaringType` is the shape's discriminator (no other document shape has it), which is what
 # catches a parallel member-identity spelling invented under some other key.
 MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef",
-                    "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef"}
+                    "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef", "unitInstanceRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -46,6 +46,7 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "currentRef": {"method", "propertyAccessor"},
     "currentErasedRef": {"method", "propertyAccessor"},
     "moveNextRef": {"method"},
+    "unitInstanceRef": {"field"},
 }
 
 # A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such

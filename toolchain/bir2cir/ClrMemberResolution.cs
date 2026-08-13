@@ -298,6 +298,7 @@ static partial class ClrMemberResolution
             case "clrEventRemove": ResolveEvent(node); break;
             case "spreadConcat": ResolveSpreadConcat(node); break;
             case "forEachInline": ResolveForEachInline(node); break;
+            case "newDelegate": case "newClosure": ResolveUnitSingleton(node); break;
             case "newList": ResolveCollectionTemplate(node, "newList"); break;
             case "newSet": ResolveCollectionTemplate(node, "newSet"); break;
             case "newMap": ResolveCollectionTemplate(node, "newMap"); break;

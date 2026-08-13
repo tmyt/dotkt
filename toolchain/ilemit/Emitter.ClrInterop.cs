@@ -609,7 +609,8 @@ sealed partial class Emitter
             && FuncRetType(h.GetProperty("funcType")) == Bcl("System.Void"))
         {
             var ft = EmitExpr(h);                             // the lambda's natural void delegate, on the stack
-            EmitMethod(_il, OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray()));
+            EmitMethod(_il, OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray(),
+                PrimaryFromRef(h, "unitInstanceRef") as FieldInfo));
             EmitDelegateCtor(_il, want);
             return;
         }
