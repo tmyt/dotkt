@@ -357,30 +357,6 @@
                 "t": "fqn",
                 "name": "System.Collections.IEnumerable"
               }
-            ]
-          }
-        },
-        {
-          "k": "exprStmt",
-          "expr": {
-            "k": "clrGenericStatic",
-            "type": {
-              "t": "fqn",
-              "name": "System.Linq.Enumerable"
-            },
-            "method": "Cast",
-            "args": [],
-            "typeArgs": [
-              {
-                "t": "fqn",
-                "name": "object"
-              }
-            ],
-            "memberSig": [
-              {
-                "t": "fqn",
-                "name": "System.Collections.IEnumerable"
-              }
             ],
             "memberOwner": {
               "t": "fqn",
