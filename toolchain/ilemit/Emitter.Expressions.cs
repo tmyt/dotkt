@@ -340,6 +340,7 @@ sealed partial class Emitter
                     resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
                 // The owner selected in CIR is complete. A bare generic TypeDef here is malformed CIR; ilemit must not
                 // invent a representative instantiation or reconstruct a retired compiler ABI.
+                ShadowParity(e, "memberRef", resolved, $"callStatic {name}");
                 var mb = ApplyTypeArgs(resolved, e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
@@ -390,8 +391,11 @@ sealed partial class Emitter
                 // `listOf(...)` -> new List<elem> { ... } via repeated Add.
                 var elem = MapType(e.GetProperty("elem"));
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
-                EmitConstructor(_il, OpCodes.Newobj, GenericCtor(listT));
+                var listCtor = GenericCtor(listT);
                 var add = GenericMethod(listT, "Add");
+                ShadowParity(e, "ctorRef", listCtor, "newList constructor");
+                ShadowParity(e, "addRef", add, "newList Add");
+                EmitConstructor(_il, OpCodes.Newobj, listCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
@@ -700,8 +704,11 @@ sealed partial class Emitter
                 var kt = MapType(e.GetProperty("keyType"));
                 var vt = MapType(e.GetProperty("valType"));
                 var dt = ConstructedType(Bcl("System.Collections.Generic.Dictionary`2"), kt, vt);
-                EmitConstructor(_il, OpCodes.Newobj, GenericCtor(dt));
+                var mapCtor = GenericCtor(dt);
                 var setItem = GenericMethod(dt, "set_Item");
+                ShadowParity(e, "ctorRef", mapCtor, "newMap constructor");
+                ShadowParity(e, "setItemRef", setItem, "newMap set_Item");
+                EmitConstructor(_il, OpCodes.Newobj, mapCtor);
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
@@ -716,8 +723,11 @@ sealed partial class Emitter
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem"));
                 var setT = ConstructedType(Bcl("System.Collections.Generic.HashSet`1"), elem);
-                EmitConstructor(_il, OpCodes.Newobj, GenericCtor(setT));
+                var setCtor = GenericCtor(setT);
                 var add = GenericMethod(setT, "Add");
+                ShadowParity(e, "ctorRef", setCtor, "newSet constructor");
+                ShadowParity(e, "addRef", add, "newSet Add");
+                EmitConstructor(_il, OpCodes.Newobj, setCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Dup);
