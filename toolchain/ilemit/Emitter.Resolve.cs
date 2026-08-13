@@ -1347,7 +1347,8 @@ sealed partial class Emitter
         if (hits.Count == 1)
         {
             ShadowParity(e, "memberRef", hits[0], $"clrGeneric {type?.FullName}.{name}");
-            return ConstructedMethod(hits[0], typeArgs);
+            var definition = PrimaryFromRef(e, "memberRef") as MethodInfo ?? hits[0];
+            return ConstructedMethod(definition, typeArgs);
         }
         var desc = $"{type?.FullName}.{name}<{typeArgs.Length}>{sigEl}";
         if (hits.Count == 0)

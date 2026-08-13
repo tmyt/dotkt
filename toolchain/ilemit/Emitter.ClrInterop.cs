@@ -252,8 +252,9 @@ sealed partial class Emitter
         var desc = $"{type?.FullName}::.ctor{sigEl}";
         if (hits.Count == 1)
         {
-            ShadowParity(e, descriptorName == "baseMemberSig" ? "baseCtorRef" : "memberRef", hits[0], $"constructor {desc}");
-            return hits[0];
+            var carrier = descriptorName == "baseMemberSig" ? "baseCtorRef" : "memberRef";
+            ShadowParity(e, carrier, hits[0], $"constructor {desc}");
+            return PrimaryFromRef(e, carrier) as ConstructorInfo ?? hits[0];
         }
         if (hits.Count == 0)
             throw new InvalidOperationException($"ilemit: no constructor matches the resolved descriptor {desc} (ABI mismatch; {cands.Count} same-arity candidate(s): {string.Join("; ", cands.Select(c => c.ToString()))})");
@@ -309,6 +310,9 @@ sealed partial class Emitter
             // The reference travelling with this descriptor must name the SAME declaration. Checked before the
             // anchoring below, which is a projection of the winner rather than another choice of member.
             ShadowParity(e, "memberRef", hit, $"clr{(instance ? "Instance" : "Static")} {desc}");
+            // …and where there IS one, it is the answer. The search above still runs only so the two can be
+            // compared; it goes when the descriptor it reads does.
+            if (PrimaryFromRef(e, "memberRef") is MethodInfo referenced) hit = referenced;
             // Re-anchor only a member DECLARED by this generic owner. An inherited slot already carries its own
             // declaring interface; anchoring `IEnumerator.MoveNext` onto `IEnumerator<T>` manufactures a member that
             // does not exist. (TypeBuilder.GetMethod used to reject that pair; SignatureMethod must preserve the same
