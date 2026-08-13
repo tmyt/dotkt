@@ -43,8 +43,58 @@ static partial class ClrMemberResolution
     internal static JsonNode FieldRefJson(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
         => FieldRefOf(field, openOwner, ownerArgs).Write();
 
+    // A member reflected off a CONSTRUCTED generic type reports its signature ALREADY SUBSTITUTED —
+    // `ITransformer<string>.Transform` says `string Transform(string)` where the declaration says
+    // `T Transform(T)`. A reference carries the OPEN declared signature (ECMA II.9.8: instantiation rides on
+    // the type spec, not in the member's own blob), so the declaration is what must be serialized. Reflection
+    // has no direct route from one to the other; the metadata token is the identity that survives the
+    // substitution, so the definition's member with the same token IS the same declaration.
+    static T OpenDeclarationOf<T>(T member) where T : MethodBase
+    {
+        var declaring = member.DeclaringType;
+        if (declaring == null || !declaring.IsGenericType || declaring.IsGenericTypeDefinition) return member;
+        Type definition;
+        try { definition = declaring.GetGenericTypeDefinition(); } catch { return member; }
+        if (definition == null || definition == declaring) return member;
+        try
+        {
+            const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+            IEnumerable<MethodBase> candidates = member is ConstructorInfo
+                ? definition.GetConstructors(all)
+                : definition.GetMethods(all);
+            foreach (var candidate in candidates)
+                if (candidate.MetadataToken == member.MetadataToken && candidate.Module == member.Module)
+                    return (T)candidate;
+        }
+        catch { }
+        return member;
+    }
+
+    // The field flavour of OpenDeclarationOf: a field read off a constructed generic type reports the
+    // substituted field type, and the declaration is what a reference states.
+    static FieldInfo OpenFieldDeclarationOf(FieldInfo field)
+    {
+        var declaring = field.DeclaringType;
+        if (declaring == null || !declaring.IsGenericType || declaring.IsGenericTypeDefinition) return field;
+        Type definition;
+        try { definition = declaring.GetGenericTypeDefinition(); } catch { return field; }
+        if (definition == null || definition == declaring) return field;
+        try
+        {
+            const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+            foreach (var candidate in definition.GetFields(all))
+                if (candidate.MetadataToken == field.MetadataToken && candidate.Module == field.Module)
+                    return candidate;
+        }
+        catch { }
+        return field;
+    }
+
     internal static MemberRefNode MemberRefOf(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs)
     {
+        member = OpenDeclarationOf(member);
         // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
         // Only the signature is taken from it — the declaring head, its instantiation and the physical assembly
         // are already decided from the resolved member and must not be re-derived here.
@@ -95,6 +145,7 @@ static partial class ClrMemberResolution
 
     internal static MemberRefNode FieldRefOf(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
     {
+        field = OpenFieldDeclarationOf(field);
         var node = new MemberRefNode(
             Kind: MemberRefNode.Kinds.Field,
             Assembly: PhysicalAssemblyOf(field),
