@@ -1227,6 +1227,83 @@ sealed partial class ReferenceMetadataIndex
         catch { _netMlc = null; }
     }
 
+    Assembly _physicalStdlib; bool _physicalStdlibInit;
+
+    /// <summary>
+    /// The SHIPPED declaration of a member resolved against the reference twin, or null when there is none or it
+    /// cannot be identified unambiguously.
+    /// </summary>
+    /// <remarks>
+    /// The reference twin declares the Kotlin surface and the runtime twin declares the physical shape; a member
+    /// reference must state the latter, because that is the assembly the emitted reference is scoped to and the
+    /// one the emitter resolves against. Deriving the physical shape from the surface means undoing every erasure
+    /// the reference build applied — the arg-position variance collapse, the generic-classifier and contravariant
+    /// collapses, and a value type's nullability, which the surface cannot express at all because `kotlin.Float`
+    /// is a class there and `Nullable&lt;class&gt;` is not a type. Each of those was found by a build failing on it.
+    ///
+    /// So read the shipped declaration instead of reconstructing it. Selection stays here, where it belongs, and
+    /// refuses rather than guesses: same declaring type name, same member name, same generic arity, same parameter
+    /// count, and exactly one candidate. An ambiguous or absent twin falls back to the reflected member, which is
+    /// correct for every reference whose twin is itself (a BCL assembly is its own physical form).
+    /// </remarks>
+    public MethodBase PhysicalTwinOf(MethodBase member)
+    {
+        var owner = PhysicalOwnerOf(member);
+        if (owner == null) return null;
+        var arity = member.IsGenericMethod ? member.GetGenericArguments().Length : 0;
+        var count = member.GetParameters().Length;
+        var hits = (member is ConstructorInfo
+                ? owner.GetConstructors(MemberProbeFlags).Cast<MethodBase>()
+                : owner.GetMethods(MemberProbeFlags).Cast<MethodBase>()
+                    .Where(m => string.Equals(m.Name, member.Name, StringComparison.Ordinal)))
+            .Where(m => m.GetParameters().Length == count
+                && (m.IsGenericMethod ? m.GetGenericArguments().Length : 0) == arity)
+            .ToList();
+        return hits.Count == 1 ? hits[0] : null;
+    }
+
+    public FieldInfo PhysicalTwinOf(FieldInfo field)
+    {
+        var owner = PhysicalOwnerOf(field);
+        if (owner == null) return null;
+        var hits = owner.GetFields(MemberProbeFlags)
+            .Where(f => string.Equals(f.Name, field.Name, StringComparison.Ordinal)).ToList();
+        return hits.Count == 1 ? hits[0] : null;
+    }
+
+    const BindingFlags MemberProbeFlags =
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+    Type PhysicalOwnerOf(MemberInfo member)
+    {
+        var declaring = member?.DeclaringType;
+        if (declaring == null) return null;
+        // Only a member of the twin that was collapsed away has a separate shipped form; everything else already
+        // IS its shipped form, and re-finding it would be a second resolution of a settled member.
+        var asm = PhysicalStdlibAssembly();
+        if (asm == null || declaring.Assembly?.GetName()?.Name is not string owning
+            || !string.Equals(owning, "DotKt.Private.Stdlib", StringComparison.OrdinalIgnoreCase)) return null;
+        var def = declaring.IsGenericType && !declaring.IsGenericTypeDefinition
+            ? declaring.GetGenericTypeDefinition() : declaring;
+        try { return asm.GetType(def.FullName, throwOnError: false); } catch { return null; }
+    }
+
+    Assembly PhysicalStdlibAssembly()
+    {
+        if (_physicalStdlibInit) return _physicalStdlib;
+        _physicalStdlibInit = true;
+        EnsureNetMlc();
+        var path = _compileRefs?.PhysicalStdlibPath;
+        if (_netMlc == null || string.IsNullOrEmpty(path)) return null;
+        try { _physicalStdlib = _netMlc.LoadFromAssemblyPath(path); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"bir2cir: warning: could not read the shipped stdlib twin {path} — {ex.GetType().Name}: {ex.Message}");
+            _physicalStdlib = null;
+        }
+        return _physicalStdlib;
+    }
+
     public void DisposeNet() { try { _netMlc?.Dispose(); } catch { } _netMlc = null; }
 
     public int OwnerArity(string ownerFqn)
