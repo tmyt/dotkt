@@ -45,9 +45,13 @@ static partial class ClrMemberResolution
 
     internal static MemberRefNode MemberRefOf(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs)
     {
+        // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
+        // Only the signature is taken from it — the declaring head, its instantiation and the physical assembly
+        // are already decided from the resolved member and must not be re-derived here.
+        var shipped = _refs.PhysicalTwinOf(member) ?? member;
         var ctor = member as ConstructorInfo;
-        var method = member as MethodInfo;
-        if (ctor == null && method == null)
+        var method = shipped as MethodInfo ?? member as MethodInfo;
+        if (ctor == null && member as MethodInfo == null)
             throw new InvalidOperationException($"bir2cir: cannot reference '{member}' — neither a method nor a constructor (#370)");
         var node = new MemberRefNode(
             Kind: kind,
@@ -59,7 +63,7 @@ static partial class ClrMemberResolution
                 ? MemberRefNode.Void
                 : RefReturnOf(method),
             CallingConvention: ConventionOf(member),
-            ParameterTypes: RefParamsOf(member));
+            ParameterTypes: RefParamsOf(shipped));
         node.Validate();
         return node;
     }
@@ -98,10 +102,16 @@ static partial class ClrMemberResolution
             Name: field.Name,
             GenericArity: 0,
             // A field's "return" is its declared type — the same crossing a parameter of that type would be.
-            ReturnType: Modified(RefTypeOf(field.FieldType),
-                field.GetRequiredCustomModifiers(), field.GetOptionalCustomModifiers()));
+            ReturnType: ShippedFieldType(field));
         node.Validate();
         return node;
+    }
+
+    static TypeNode ShippedFieldType(FieldInfo field)
+    {
+        var shipped = _refs.PhysicalTwinOf(field) ?? field;
+        return Modified(RefTypeOf(shipped.FieldType),
+            shipped.GetRequiredCustomModifiers(), shipped.GetOptionalCustomModifiers());
     }
 
     // ---- the identity's three parts -----------------------------------------------------------------
