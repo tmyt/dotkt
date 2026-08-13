@@ -61,4 +61,49 @@ static partial class ClrMemberResolution
                 $"bir2cir: '{template.Owner}.{template.Accumulator}' does not resolve to one declaration for {kind} (#370)");
         node[template.RefKey] = MemberRefJson(accumulator, MemberRefNode.Kinds.Method, open, args);
     }
+
+    /// <summary>
+    /// The members a SPREAD ARGUMENT builds through: `f(1, *a, 2)` accumulates into a `List&lt;T&gt;` and hands over
+    /// its `ToArray()`. Four members, chosen here for the same reason the collection literals' two are.
+    /// </summary>
+    static void ResolveSpreadConcat(JsonObject node)
+    {
+        if (node.ContainsKey("ctorRef")) return;
+        if (TypeJson.Read(node["elem"]) is not TypeNode elem) return;
+        var args = new[] { elem };
+        var open = ResolveOwnerType(new TypeNode.Fqn(SpreadOwner, args))
+            ?? throw new InvalidOperationException(
+                $"bir2cir: spreadConcat accumulates into '{SpreadOwner}', which does not resolve to a .NET type (#370)");
+
+        var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c => c.GetParameters().Length == 0).ToList();
+        node["ctorRef"] = MemberRefJson(
+            TryPickUniqueCtor(ctors, new List<TypeNode>(), args)
+                ?? throw Missing(SpreadOwner, ".ctor"),
+            MemberRefNode.Kinds.Ctor, open, args);
+
+        // The element parameter is the construction's OWN type parameter, positionally — `Add(!0)` — and the
+        // spread arm takes the sequence over it. Stating the vectors is what stops a future overload of either
+        // name from being picked up by the name alone.
+        var element = new TypeNode.Tv("type", 0);
+        StampSpreadMember(node, open, args, "addRef", "Add", new List<TypeNode> { element });
+        StampSpreadMember(node, open, args, "addRangeRef", "AddRange",
+            new List<TypeNode> { new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { element }) });
+        StampSpreadMember(node, open, args, "toArrayRef", "ToArray", new List<TypeNode>());
+    }
+
+    const string SpreadOwner = "System.Collections.Generic.List";
+
+    static void StampSpreadMember(JsonObject node, Type open, TypeNode[] args,
+        string refKey, string name, List<TypeNode> signature)
+    {
+        var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == name && m.GetParameters().Length == signature.Count).ToList();
+        node[refKey] = MemberRefJson(
+            TryPickUnique(candidates, signature, args) ?? throw Missing(SpreadOwner, name),
+            MemberRefNode.Kinds.Method, open, args);
+    }
+
+    static InvalidOperationException Missing(string owner, string member) =>
+        new($"bir2cir: '{owner}.{member}' does not resolve to one declaration for spreadConcat (#370)");
 }

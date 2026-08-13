@@ -502,18 +502,21 @@ sealed partial class Emitter
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
                 var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elem);
                 var loc = _il.DeclareLocal(listT);
-                EmitConstructor(_il, OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes));
+                // The four members this builds through are named by the pass that minted the node.
+                var spreadCtor = PrimaryFromRef(e, "ctorRef") as ConstructorInfo ?? listT.GetConstructor(Type.EmptyTypes);
+                var spreadAdd = PrimaryFromRef(e, "addRef") as MethodInfo ?? listT.GetMethod("Add", new[] { elem });
+                var spreadAddRange = PrimaryFromRef(e, "addRangeRef") as MethodInfo ?? listT.GetMethod("AddRange", new[] { ienumT });
+                var spreadToArray = PrimaryFromRef(e, "toArrayRef") as MethodInfo ?? listT.GetMethod("ToArray", Type.EmptyTypes);
+                EmitConstructor(_il, OpCodes.Newobj, spreadCtor);
                 _il.Emit(OpCodes.Stloc, loc);
                 foreach (var p in e.GetProperty("parts").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Ldloc, loc);
                     EmitExpr(p.GetProperty("e"));
-                    EmitMethod(_il, OpCodes.Callvirt, p.GetProperty("spread").GetBoolean()
-                        ? listT.GetMethod("AddRange", new[] { ienumT })
-                        : listT.GetMethod("Add", new[] { elem }));
+                    EmitMethod(_il, OpCodes.Callvirt, p.GetProperty("spread").GetBoolean() ? spreadAddRange : spreadAdd);
                 }
                 _il.Emit(OpCodes.Ldloc, loc);
-                EmitMethod(_il, OpCodes.Callvirt, listT.GetMethod("ToArray", Type.EmptyTypes));
+                EmitMethod(_il, OpCodes.Callvirt, spreadToArray);
                 return elem.MakeArrayType();
             }
             case "arrayGet":

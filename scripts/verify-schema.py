@@ -26,7 +26,7 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 # member of another assembly. Frozen like KINDS/TYPE_TAGS, so a new carrier key is a deliberate vocabulary
 # change. `declaringType` is the shape's discriminator (no other document shape has it), which is what
 # catches a parallel member-identity spelling invented under some other key.
-MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef"}
+MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -38,6 +38,8 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "ctorRef": {"ctor"},
     "addRef": {"method"},
     "setItemRef": {"method", "propertyAccessor"},
+    "addRangeRef": {"method"},
+    "toArrayRef": {"method"},
 }
 
 # A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such
@@ -46,6 +48,8 @@ COLLECTION_TEMPLATE_REFS = {
     "newList": ("ctorRef", "addRef"),
     "newSet": ("ctorRef", "addRef"),
     "newMap": ("ctorRef", "setItemRef"),
+    # A spread argument accumulates into a list and hands over its array: four members, same rule.
+    "spreadConcat": ("ctorRef", "addRef", "addRangeRef", "toArrayRef"),
 }
 
 # The transitional owner descriptor each declaration-side carrier travels with, in BOTH directions: one
