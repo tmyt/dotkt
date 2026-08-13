@@ -53,7 +53,7 @@ sealed partial class Emitter
             // bir2cir has already resolved the Kotlin delegation onto its physical CLR constructor and carried the
             // declaration as baseMemberSig. Reuse the same exact-link path as newClr; this layer does not form or rank
             // a constructor candidate set from the argument expressions.
-            var ctor = LinkClrCtor(ti.ClrBase, c, out var reanchorBaseCtor, "baseMemberSig", includeNonPublic: true);
+            var ctor = LinkClrCtor(ti.ClrBase, c, out var reanchorBaseCtor, "baseCtorRef", includeNonPublic: true);
             if (reanchorBaseCtor) ctor = AnchorConstructor(ti.ClrBase, ctor);
             if (ba.ValueKind == JsonValueKind.Array) EmitArgs(ba, ParametersOf(ctor));
             EmitConstructor(_il, OpCodes.Call, ctor);

@@ -215,11 +215,10 @@ sealed partial class Emitter
     // positional-tv equality (GenericParamMatches, shared with the S1 generic matcher). Require EXACTLY ONE: 0 is a hard
     // ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor.
     /// <summary>The constructor a `newClr` or a base delegation names. A lookup, not a choice.</summary>
-    ConstructorInfo LinkClrCtor(Type type, JsonElement e, out bool tb, string descriptorName = "memberSig",
+    ConstructorInfo LinkClrCtor(Type type, JsonElement e, out bool tb, string carrier = "memberRef",
         bool includeNonPublic = false)
     {
         tb = IsTbInstantiation(type);
-        var carrier = descriptorName == "baseMemberSig" ? "baseCtorRef" : "memberRef";
         if (PrimaryFromRef(e, carrier) is ConstructorInfo referenced) return referenced;
         throw new InvalidOperationException(
             $"ilemit: construction of {type?.FullName} carries no resolved `{carrier}`. Every external member "
