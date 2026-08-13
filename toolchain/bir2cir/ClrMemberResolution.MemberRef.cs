@@ -48,7 +48,7 @@ static partial class ClrMemberResolution
         // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
         // Only the signature is taken from it — the declaring head, its instantiation and the physical assembly
         // are already decided from the resolved member and must not be re-derived here.
-        var shipped = _refs.PhysicalTwinOf(member) ?? member;
+        var shipped = _refs.PhysicalTwinOf(member, DeclaringDefOf(member)) ?? member;
         var ctor = member as ConstructorInfo;
         var method = shipped as MethodInfo ?? member as MethodInfo;
         if (ctor == null && member as MethodInfo == null)
@@ -84,7 +84,7 @@ static partial class ClrMemberResolution
 
     static TypeNode ShippedFieldType(FieldInfo field)
     {
-        var shipped = _refs.PhysicalTwinOf(field) ?? field;
+        var shipped = _refs.PhysicalTwinOf(field, DeclaringDefOf(field)) ?? field;
         return Modified(RefTypeOf(shipped.FieldType),
             shipped.GetRequiredCustomModifiers(), shipped.GetOptionalCustomModifiers());
     }
