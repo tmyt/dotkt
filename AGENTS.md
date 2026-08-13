@@ -42,6 +42,11 @@ CLIs are available. Reviews are a fixed budget, not a loop:
   such as "the new contract is established", "consumers are switched to the
   new path", "the old path is deleted" — never per diff revision, and never
   for mechanical follow-ups such as comment fixes or one-line corrections.
+- The review requirement rides with the gate: a change is reviewed exactly
+  when it needs the canonical full gate. A change in the gate-exempt class —
+  documentation or comment-only edits to files not executed or consumed by
+  the build or gates — is review-exempt as well, and a pull request claiming
+  that exemption names it in its description.
 
 This budget is deliberate, adopted after its trial on issue #370: unbounded
 re-review rounds inflated lead time, and out-of-scope findings folded in

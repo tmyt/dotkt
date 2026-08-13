@@ -117,10 +117,11 @@ bug; the only legitimate throw is an assert that cannot fire on valid IR.
 - Before reporting done or treating a PR as ready, complete the independent local review contract in `AGENTS.md`.
   Reviews are a budget, not a loop: Claude once per PR iteration, Codex once per semantic milestone of the
   issue (e.g. new contract established / consumers switched over / old path deleted), and never a fresh round
-  for comment-level fixes. Each reviewer runs as a fresh read-only process given the exact diff or commit
-  range, the task, applicable invariants, and the honest remainder — known limitations, open questions and
-  weak points — but none of the implementation conversation or reasoning that would turn an independent read
-  into a confirmation pass. Validate findings before applying them; a validated finding outside the PR's scope
+  for comment-level fixes. The requirement rides with the gate — a gate-exempt docs/comment-only change is
+  review-exempt too, and the PR names the exemption it claims. Each reviewer runs as a fresh read-only
+  process given the exact diff or commit range, the task, applicable invariants, and the honest remainder —
+  known limitations, open questions and weak points — but none of the implementation conversation or
+  reasoning that would turn an independent read into a confirmation pass. Validate findings before applying them; a validated finding outside the PR's scope
   is reported to me for the tracker, not folded into the PR. For this review contract, `AGENTS.md` is
   authoritative if this summary ever differs from it.
 - If the same fault keeps reappearing somewhere new instead of closing, stop fixing symptoms per layer and do
