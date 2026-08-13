@@ -737,8 +737,6 @@ static class RoundtripMetadata
             ["vis"] = "public",
             ["params"] = ps,
             ["baseArgs"] = new JsonArray(),
-            ["baseMemberSig"] = new JsonArray(),
-            ["baseMemberOwner"] = Fqn("System.Attribute"),
             ["baseCtorRef"] = _attributeBaseCtorRef?.DeepClone(),
             ["body"] = new JsonArray(),
         };
