@@ -310,9 +310,12 @@ sealed partial class Emitter
             // The reference travelling with this descriptor must name the SAME declaration. Checked before the
             // anchoring below, which is a projection of the winner rather than another choice of member.
             ShadowParity(e, "memberRef", hit, $"clr{(instance ? "Instance" : "Static")} {desc}");
-            // …and where there IS one, it is the answer. The search above still runs only so the two can be
-            // compared; it goes when the descriptor it reads does.
-            if (PrimaryFromRef(e, "memberRef") is MethodInfo referenced) hit = referenced;
+            // …and where there IS one, it is the answer — including its anchoring. The reference states the
+            // declarer's instantiation as the use site sees it, which is the very thing the re-anchoring below
+            // reconstructs from the receiver, so running that on top of it anchors an already-anchored member and
+            // substitutes arguments through an edge whose arity no longer matches. Return it. The search above
+            // still runs only so the two can be compared; it goes when the descriptor it reads does.
+            if (PrimaryFromRef(e, "memberRef") is MethodInfo referenced) return referenced;
             // Re-anchor only a member DECLARED by this generic owner. An inherited slot already carries its own
             // declaring interface; anchoring `IEnumerator.MoveNext` onto `IEnumerator<T>` manufactures a member that
             // does not exist. (TypeBuilder.GetMethod used to reject that pair; SignatureMethod must preserve the same
