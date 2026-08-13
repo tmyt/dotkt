@@ -408,6 +408,7 @@ sealed partial class Emitter
         if (hits.Count > 1)
             throw new InvalidOperationException($"ilemit: override descriptor {desc} is AMBIGUOUS — {hits.Count} base virtuals match (malformed clrOverrideSig): {string.Join("; ", hits.Select(x => x.ToString()))}");
         var win = hits[0];
+        ShadowParity(m, "clrOverrideRef", win, $"override base {desc}");
         // Non-generic declaring base (the accessor case): the reflected slot is a usable closed handle.
         if (!(win.DeclaringType?.IsGenericType ?? false)) return win;
         // Generic .NET base: DefineMethodOverride must reference the slot on the emitted type's CONSTRUCTED base

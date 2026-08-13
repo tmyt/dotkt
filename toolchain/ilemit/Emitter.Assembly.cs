@@ -17,6 +17,8 @@ sealed partial class Emitter
         // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
         // See Emitter.Sanity.cs. Pure fail-fast validation — no IL effect (a valid CIR is byte-identical after it).
         CheckCir(files);
+        // #370: how many references these documents carry, so the parity check below can be held to all of them.
+        CountMemberRefCarriers(files);
         // #336: PersistedAssemblyBuilder and every external type/member below share one target
         // MetadataLoadContext. The compiler host still supplies Reflection.Emit's implementation, never an emitted
         // identity. Mixing a host Type with this graph is invalid even when its FullName matches a target Type.
@@ -1516,6 +1518,9 @@ sealed partial class Emitter
 
     void Save(PersistedAssemblyBuilder ab, MethodBuilder entry)
     {
+        // How much of what these documents carry this build put through the parity check. A measurement, not
+        // the gate — the enforcement is at the call sites, which compare before every legacy resolution.
+        ReportParityCoverage();
         MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData);
         var peHeader = new PEHeaderBuilder(imageCharacteristics: Characteristics.ExecutableImage | Characteristics.Dll);
         var peBuilder = new ManagedPEBuilder(

@@ -71,12 +71,37 @@ static partial class ClrMemberResolution
         return member;
     }
 
+    // The field flavour of OpenDeclarationOf: a field read off a constructed generic type reports the
+    // substituted field type, and the declaration is what a reference states.
+    static FieldInfo OpenFieldDeclarationOf(FieldInfo field)
+    {
+        var declaring = field.DeclaringType;
+        if (declaring == null || !declaring.IsGenericType || declaring.IsGenericTypeDefinition) return field;
+        Type definition;
+        try { definition = declaring.GetGenericTypeDefinition(); } catch { return field; }
+        if (definition == null || definition == declaring) return field;
+        try
+        {
+            const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+            foreach (var candidate in definition.GetFields(all))
+                if (candidate.MetadataToken == field.MetadataToken && candidate.Module == field.Module)
+                    return candidate;
+        }
+        catch { }
+        return field;
+    }
+
     internal static MemberRefNode MemberRefOf(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs)
     {
         member = OpenDeclarationOf(member);
+        // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
+        // Only the signature is taken from it — the declaring head, its instantiation and the physical assembly
+        // are already decided from the resolved member and must not be re-derived here.
+        var shipped = _refs.PhysicalTwinOf(member) ?? member;
         var ctor = member as ConstructorInfo;
-        var method = member as MethodInfo;
-        if (ctor == null && method == null)
+        var method = shipped as MethodInfo ?? member as MethodInfo;
+        if (ctor == null && member as MethodInfo == null)
             throw new InvalidOperationException($"bir2cir: cannot reference '{member}' — neither a method nor a constructor (#370)");
         var node = new MemberRefNode(
             Kind: kind,
@@ -88,7 +113,7 @@ static partial class ClrMemberResolution
                 ? MemberRefNode.Void
                 : RefReturnOf(method),
             CallingConvention: ConventionOf(member),
-            ParameterTypes: RefParamsOf(member));
+            ParameterTypes: RefParamsOf(shipped));
         node.Validate();
         return node;
     }
@@ -128,31 +153,16 @@ static partial class ClrMemberResolution
             Name: field.Name,
             GenericArity: 0,
             // A field's "return" is its declared type — the same crossing a parameter of that type would be.
-            ReturnType: Modified(RefTypeOf(field.FieldType),
-                field.GetRequiredCustomModifiers(), field.GetOptionalCustomModifiers()));
+            ReturnType: ShippedFieldType(field));
         node.Validate();
         return node;
     }
 
-    // The field flavour of OpenDeclarationOf: a field read off a constructed generic type reports the
-    // substituted field type, and the declaration is what a reference states.
-    static FieldInfo OpenFieldDeclarationOf(FieldInfo field)
+    static TypeNode ShippedFieldType(FieldInfo field)
     {
-        var declaring = field.DeclaringType;
-        if (declaring == null || !declaring.IsGenericType || declaring.IsGenericTypeDefinition) return field;
-        Type definition;
-        try { definition = declaring.GetGenericTypeDefinition(); } catch { return field; }
-        if (definition == null || definition == declaring) return field;
-        try
-        {
-            const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic
-                | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-            foreach (var candidate in definition.GetFields(all))
-                if (candidate.MetadataToken == field.MetadataToken && candidate.Module == field.Module)
-                    return candidate;
-        }
-        catch { }
-        return field;
+        var shipped = _refs.PhysicalTwinOf(field) ?? field;
+        return Modified(RefTypeOf(shipped.FieldType),
+            shipped.GetRequiredCustomModifiers(), shipped.GetOptionalCustomModifiers());
     }
 
     // ---- the identity's three parts -----------------------------------------------------------------
@@ -240,21 +250,9 @@ static partial class ClrMemberResolution
 
     // `SubstOwnerParams`'s projection in the reference's own spelling: an owner-definition generic parameter
     // becomes the receiver's argument at that position, everything else keeps the target's verbatim name.
-    static TypeNode SubstOwnerParamsPhysical(Type t, TypeNode[] ownerArgs)
-    {
-        t = AliasResolve(t);
-        if (t.IsGenericParameter)
-            return t.GenericParameterPosition < ownerArgs.Length
-                ? ownerArgs[t.GenericParameterPosition]
-                : new TypeNode.Tv("type", t.GenericParameterPosition);
-        if (t.IsByRef) return new TypeNode.ByRef(SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
-        if (t.IsPointer) return new TypeNode.Ptr(SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
-        if (t.IsArray) return ArrayOf(t, SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
-        if (t.IsGenericType && !t.IsGenericTypeDefinition)
-            return new TypeNode.Fqn(PhysicalTypeName(t.GetGenericTypeDefinition()),
-                t.GetGenericArguments().Select(a => SubstOwnerParamsPhysical(a, ownerArgs)).ToArray());
-        return new TypeNode.Fqn(PhysicalTypeName(t));
-    }
+    // The declaring edge's own arguments, projected onto the receiver's. A storage slot, so the collapse applies.
+    static TypeNode SubstOwnerParamsPhysical(Type t, TypeNode[] ownerArgs) =>
+        PhysicalTypeOf(t, ownerArgs ?? Array.Empty<TypeNode>(), typeArg: true);
 
     static Type SafeBase(Type t) { try { return t.BaseType; } catch { return null; } }
 
@@ -299,18 +297,50 @@ static partial class ClrMemberResolution
     // no `+`-to-`.` flattening, no delegate rewritten as a Kotlin function type, no `System.Nullable`1`
     // collapsed to a nullability wrapper: each of those is a document convention for talking about a Kotlin
     // program, and each one merges types this reference has to keep apart.
-    static TypeNode RefTypeOf(Type t)
+    // The twin the member is RESOLVED in is not the twin it is CALLED in. bir2cir resolves against the stdlib's
+    // reference twin, which declares the Kotlin surface (`kotlin.collections.List<kotlin.collections.List<T>>`);
+    // the member this reference names lives in the runtime twin, which declares the physical shape
+    // (`IReadOnlyList<IList<T>>`). Those are two vocabularies for one member, and the map between them is
+    // BirTypeLowering's — POSITION-DEPENDENT, so it cannot be applied by walking the signature with one alias
+    // step. Doing that produced `IReadOnlyList<IReadOnlyList<T>>`: a member neither twin declares.
+    static TypeNode RefTypeOf(Type t) => PhysicalTypeOf(t, null, typeArg: false);
+
+    static TypeNode RefTypeOf(Type t, bool typeArg) => PhysicalTypeOf(t, null, typeArg);
+
+    /// <summary>
+    /// A reflected type, spelled as the target declares it. `ownerArgs`, when given, substitutes the declaring
+    /// type's own parameters positionally — projecting a declaration edge instead of naming it over itself.
+    /// </summary>
+    /// <remarks>
+    /// Projection and plain naming were two functions until each was found applying the alias uniformly; they
+    /// are one function now because being two is what let one be fixed and the other not.
+    /// </remarks>
+    static TypeNode PhysicalTypeOf(Type t, TypeNode[] ownerArgs, bool typeArg)
     {
-        t = AliasResolve(t);
-        if (t.IsByRef) return new TypeNode.ByRef(RefTypeOf(t.GetElementType()));
-        if (t.IsPointer) return new TypeNode.Ptr(RefTypeOf(t.GetElementType()));
-        if (t.IsArray) return ArrayOf(t, RefTypeOf(t.GetElementType()));
         if (t.IsGenericParameter)
-            return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
+            return ownerArgs != null && t.GenericParameterPosition < ownerArgs.Length
+                ? ownerArgs[t.GenericParameterPosition]
+                : new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
+        // An element, a pointee and a byref target are VALUE positions — `typeArg: false` — exactly as
+        // BirTypeLowering lowers them. The collapse below applies to storage slots, not to what a slot holds.
+        if (t.IsByRef) return new TypeNode.ByRef(PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
+        if (t.IsPointer) return new TypeNode.Ptr(PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
+        if (t.IsArray) return ArrayOf(t, PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
+        var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
+        var kotlinName = AliasKey(def);
+        TypeNode[] loweredArgs = null;
         if (t.IsGenericType && !t.IsGenericTypeDefinition)
-            return new TypeNode.Fqn(PhysicalTypeName(t.GetGenericTypeDefinition()),
-                t.GetGenericArguments().Select(RefTypeOf).ToArray());
-        return new TypeNode.Fqn(PhysicalTypeName(t));
+        {
+            var argsAreSlots = !ArgumentsAreMethodSlots(t);
+            loweredArgs = t.GetGenericArguments()
+                .Select(a => PhysicalTypeOf(a, ownerArgs, typeArg: argsAreSlots)).ToArray();
+        }
+        // ONE implementation of "which CLR type does this Kotlin type become", shared with the pass that lowered
+        // the declaration being named. Reproducing it here instead reproduced part of it: the arg-position
+        // collapse but not the generic-classifier erasure, and not the contravariant `Comparable<Any?>` collapse.
+        var head = BirTypeLowering.PhysicalHead(kotlinName,
+            _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs, collapseInvariant: typeArg);
+        return MetadataSpelling(head, def, kotlinName);
     }
 
     // The vector and the general array are different types even at rank 1 — `T[]` and `T[*]` — and reflection
@@ -319,6 +349,54 @@ static partial class ClrMemberResolution
     {
         bool sz; try { sz = t.IsSZArray; } catch { sz = true; }
         return sz ? new TypeNode.Array(elem) : TypeNode.Array.General(elem, SafeArrayRank(t));
+    }
+
+    /// <summary>
+    /// The head decision, respelled as the TARGET's metadata spells it.
+    /// </summary>
+    /// <remarks>
+    /// The lowering speaks document vocabulary, where a generic name carries no arity backtick and nesting is
+    /// dotted; a reference is a lookup key and must carry both. When the decision left the name alone, the
+    /// reflected type's own FullName IS that spelling. When it substituted a BCL type, the substitute is named
+    /// in the same universe, so its definition supplies the spelling rather than a backtick pasted on by hand.
+    /// </remarks>
+    static TypeNode MetadataSpelling(TypeNode head, Type def, string kotlinName)
+    {
+        if (head is not TypeNode.Fqn f) return head;
+        if (f.Name == kotlinName) return new TypeNode.Fqn(PhysicalTypeName(def), f.Args);
+        var substitute = RefDef(f.Name, f.Args?.Length ?? 0);
+        return new TypeNode.Fqn(substitute != null ? PhysicalTypeName(substitute) : f.Name, f.Args);
+    }
+
+    /// <summary>
+    /// True when this constructed generic's arguments reach the target as method slots rather than storage —
+    /// so Root-V does NOT apply to them.
+    /// </summary>
+    static bool ArgumentsAreMethodSlots(Type t)
+    {
+        var def = t.IsGenericTypeDefinition ? t : t.GetGenericTypeDefinition();
+        // A delegate's type arguments ARE a signature: they arrive as a Kotlin function type, whose parameters
+        // and return BirTypeLowering lowers as heads. `Func<List<T>, R>` therefore keeps `IReadOnlyList` where a
+        // `Box<List<T>>` collapses to `IList` — the difference that makes this positional rather than uniform.
+        // (A CLR delegate written literally in Kotlin source lowers its arguments as storage instead, and the
+        // reference twin spells both origins identically, so that one case would be named wrong here. It is left
+        // to fail loudly at the exact lookup rather than guessed at: corpus-wide exact resolution is the evidence
+        // that it does not occur, and a silent mis-naming is what this whole change exists to remove.)
+        if (IsDelegate(def)) return true;
+        // The KProperty carriers, for the reason BirTypeLowering gives: each argument is substituted into an
+        // interface method slot, not stored in one.
+        return BirTypeLowering.IsMethodSlotCarrier(AliasKey(def));
+    }
+
+    static bool IsDelegate(Type t)
+    {
+        try
+        {
+            for (var b = t.BaseType; b != null; b = b.BaseType)
+                if (b.FullName == "System.MulticastDelegate") return true;
+        }
+        catch { /* a reference whose base chain does not load is simply not a delegate here */ }
+        return false;
     }
 
     static int SafeArrayRank(Type t) { try { return t.GetArrayRank(); } catch { return 1; } }
