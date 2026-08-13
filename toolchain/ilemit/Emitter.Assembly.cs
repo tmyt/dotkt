@@ -18,7 +18,6 @@ sealed partial class Emitter
         // See Emitter.Sanity.cs. Pure fail-fast validation — no IL effect (a valid CIR is byte-identical after it).
         CheckCir(files);
         // #370: how many references these documents carry, so the parity check below can be held to all of them.
-        CountMemberRefCarriers(files);
         // #336: PersistedAssemblyBuilder and every external type/member below share one target
         // MetadataLoadContext. The compiler host still supplies Reflection.Emit's implementation, never an emitted
         // identity. Mixing a host Type with this graph is invalid even when its FullName matches a target Type.
@@ -786,12 +785,8 @@ sealed partial class Emitter
                         // the worst outcome available: an abstract base slot becomes a type-load failure with nothing
                         // naming the producer, and a concrete virtual one keeps dispatching to the base body — the
                         // override simply never runs. Same contract as the emitted-base miss below.
-                        var externalSlot = FindExternalBaseSlot(ownerFqn, memberNode.GetString(), DescribedArity(impl), ps, ret, impl);
-                        // The reference travelling with this descriptor must name the same slot, and where it is
-                        // present it IS the slot — the search survives only so the two can be compared.
-                        if (externalSlot != null)
-                            ShadowParity(impl, "memberRef", externalSlot, $"clrBaseImpls {open}.{memberNode.GetString()}");
-                        if (PrimaryFromRef(impl, "memberRef") is MethodInfo referencedSlot) externalSlot = referencedSlot;
+                        // The slot is a lookup: the reference travelling with this descriptor names it.
+                        var externalSlot = PrimaryFromRef(impl, "memberRef") as MethodInfo;
                         if (externalSlot is null)
                             throw new InvalidOperationException(
                                 $"ilemit: {ti.TB.Name}.{bridgeName}: clrBaseImpls names "
@@ -1525,7 +1520,6 @@ sealed partial class Emitter
     {
         // How much of what these documents carry this build put through the parity check. A measurement, not
         // the gate — the enforcement is at the call sites, which compare before every legacy resolution.
-        ReportParityCoverage();
         MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData);
         var peHeader = new PEHeaderBuilder(imageCharacteristics: Characteristics.ExecutableImage | Characteristics.Dll);
         var peBuilder = new ManagedPEBuilder(

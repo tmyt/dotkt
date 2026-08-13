@@ -24,79 +24,8 @@ using DotKt.Bir;
 sealed partial class Emitter
 {
     /// <summary>How many references were resolved, and how many were checked against the legacy path.</summary>
-    int _memberRefResolved, _memberRefParityChecked, _memberRefCarriers, _memberRefUncovered;
 
     /// <summary>Every key a resolved member reference can ride on. The counting below is keyed on this set.</summary>
-    static readonly string[] MemberRefCarriers =
-        { "memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef" };
-
-    /// <summary>
-    /// Count the references the DOCUMENTS carry, so the parity check can be held to covering all of them.
-    ///
-    /// A check wired site by site proves whatever those sites happen to reach, and says nothing about the
-    /// ones nobody wired — which is the failure this whole issue is about, one layer up. Counting both sides
-    /// makes the check answerable: if a carrier exists that no consumer verifies, the totals disagree and the
-    /// build stops, naming the gap instead of quietly reporting a number that means less than it reads.
-    /// </summary>
-    void CountMemberRefCarriers(IEnumerable<JsonElement> files)
-    {
-        foreach (var file in files) CountCarriers(file);
-    }
-
-    void CountCarriers(JsonElement node)
-    {
-        switch (node.ValueKind)
-        {
-            case JsonValueKind.Object:
-                foreach (var property in node.EnumerateObject())
-                {
-                    if (System.Array.IndexOf(MemberRefCarriers, property.Name) >= 0
-                        && property.Value.ValueKind == JsonValueKind.Object)
-                        _memberRefCarriers++;
-                    CountCarriers(property.Value);
-                }
-                break;
-            case JsonValueKind.Array:
-                foreach (var item in node.EnumerateArray()) CountCarriers(item);
-                break;
-        }
-    }
-
-    /// <summary>
-    /// Report how much of what the documents carry this build actually exercised.
-    ///
-    /// This is a MEASUREMENT, not the gate, and the difference matters. "Every reference in the document was
-    /// checked" is not an invariant any build satisfies: a metadata-only build squashes bodies, so the calls
-    /// those references describe are never emitted and there is no legacy resolution to compare against —
-    /// nothing is unproven there, it is simply unused. The property that IS enforced lives at the call sites:
-    /// every legacy resolver that produces a member for a node carrying a reference compares the two first,
-    /// unconditionally. A count cannot state that; wiring does. What the count is good for is saying how much
-    /// of the corpus a given build put through it, which is worth printing and worth watching move.
-    /// </summary>
-    void ReportParityCoverage()
-    {
-        if (_memberRefParityOff || _memberRefCarriers == 0) return;
-        Console.Error.WriteLine(
-            $"ilemit: member-reference parity checked {_memberRefParityChecked} of the {_memberRefCarriers} "
-            + $"reference(s) these documents carry ({_memberRefResolved} resolved, "
-            + $"{_memberRefUncovered} legacy resolution(s) had no reference to compare).");
-
-        // NOTHING IS ASSERTED HERE, and the honest reason is worth writing down, because two assertions were
-        // tried and both were worse than none.
-        //
-        // "checks == carriers" is not an invariant any build satisfies: a metadata-only build squashes bodies, so
-        // references it carries are never consumed, and a node the emitter visits twice has its reference checked
-        // twice. It would redden on correct builds in both directions.
-        //
-        // "resolved == checked" IS always true — and vacuously so, because both counters are incremented on the
-        // same straight line through ShadowParity. It cannot fail, so it proves nothing; it merely reads as if it
-        // did, which is worse than silence.
-        //
-        // Coverage is enforced by WIRING — a legacy resolver that produces a member for a node carrying a
-        // reference compares them first — and MEASURED by the uncovered count above, which is the population
-        // still resolved by name. A count cannot state a wiring property. Reporting the number and naming what it
-        // does not cover is the strongest true thing available here.
-    }
 
     /// <summary>The member a reference names, resolved exactly. Never a search.</summary>
     MemberInfo ResolveMemberRef(MemberRefNode reference)
@@ -105,7 +34,6 @@ sealed partial class Emitter
         MemberInfo found = reference.Kind == MemberRefNode.Kinds.Field
             ? MatchField(owner, reference)
             : (MemberInfo)MatchMethodBase(owner, reference);
-        _memberRefResolved++;
         return found;
     }
 
@@ -368,65 +296,6 @@ sealed partial class Emitter
         return null;
     }
 
-    /// <summary>
-    /// Resolve the reference beside the legacy pick and refuse to continue if they name different members.
-    /// Runs over every build, which is the only way the claim is about the corpus rather than about a few
-    /// examples. Disable with DOTKT_MEMBERREF_PARITY=off only to bisect.
-    /// </summary>
-    void ShadowParity(JsonElement node, string carrier, MemberInfo legacy, string context)
-    {
-        if (_memberRefParityOff || legacy == null) return;
-        if (node.ValueKind != JsonValueKind.Object
-            || !node.TryGetProperty(carrier, out var element)
-            || element.ValueKind != JsonValueKind.Object)
-        {
-            // A legacy resolver produced an EXTERNAL member for a node that carries no reference: that site's
-            // producer is the one still unproven. Counting it is what makes "every producer is covered" a number
-            // rather than an impression — the claim that failed review last time was exactly this one, asserted
-            // from wiring that reached three sites out of nine.
-            //
-            // A member being BUILT by this same compilation is not in that population: it has no assembly
-            // identity to reference yet, and the sites below resolve local and external members through one
-            // path. Counting those would bury the number that matters under the whole local corpus.
-            if (!IsUnderConstruction(legacy)) _memberRefUncovered++;
-            return;
-        }
-        MemberRefNode reference;
-        try { reference = MemberRefNode.Read(element); }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException($"ilemit: {context} carries a malformed {carrier}: {ex.Message}", ex);
-        }
-        var resolved = ResolveMemberRef(reference);
-        _memberRefParityChecked++;
-        if (SameDeclaration(resolved, legacy)) return;
-        throw new InvalidOperationException(
-            $"ilemit: {context}: the resolved {carrier} and the descriptor it travels with name DIFFERENT members. "
-            + $"reference -> {Describe(resolved)}; descriptor -> {Describe(legacy)}; reference = {reference.Describe()}");
-    }
-
-    /// <summary>
-    /// True when this member is a definition THIS compilation is emitting, rather than one it references.
-    /// Reflection.Emit says so structurally: a member being built lives in a ModuleBuilder.
-    /// </summary>
-    static bool IsUnderConstruction(MemberInfo member)
-    {
-        try { return UnwrapSignatureView(member)?.Module is System.Reflection.Emit.ModuleBuilder; }
-        catch { return false; }
-    }
-
-    static bool SameDeclaration(MemberInfo a, MemberInfo b)
-    {
-        a = UnwrapSignatureView(a);
-        b = UnwrapSignatureView(b);
-        if (a == null || b == null) return false;
-        if (ReferenceEquals(a, b)) return true;
-        // The legacy path may hand back a member reflected THROUGH a constructed owner; the reference always
-        // names the declaration. Comparing metadata identity is what makes those two comparable at all.
-        try { return a.Module == b.Module && a.MetadataToken == b.MetadataToken; }
-        catch { return false; }
-    }
-
     // A signature view is a description of a member on a constructed owner, not a member the metadata declares:
     // it has no token of its own, so a comparison has to look at the declaration it describes. Which member it
     // is and which owner it is being viewed on are separate questions, and only the first one is asked here.
@@ -443,7 +312,4 @@ sealed partial class Emitter
         try { return $"{member.DeclaringType?.FullName}::{member}"; }
         catch { return member?.Name ?? "<null>"; }
     }
-
-    static readonly bool _memberRefParityOff =
-        string.Equals(Environment.GetEnvironmentVariable("DOTKT_MEMBERREF_PARITY"), "off", StringComparison.OrdinalIgnoreCase);
 }

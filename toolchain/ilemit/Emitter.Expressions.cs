@@ -340,7 +340,6 @@ sealed partial class Emitter
                     resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
                 // The owner selected in CIR is complete. A bare generic TypeDef here is malformed CIR; ilemit must not
                 // invent a representative instantiation or reconstruct a retired compiler ABI.
-                ShadowParity(e, "memberRef", resolved, $"callStatic {name}");
                 // A call into a previously-compiled DotKt assembly is an external member like any other. Where a
                 // reference travels with it, that is the callee; a member of THIS compilation carries none, and the
                 // search above still answers for it. Method type arguments are applied after either way — those are
@@ -398,8 +397,6 @@ sealed partial class Emitter
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
                 var listCtor = GenericCtor(listT);
                 var add = GenericMethod(listT, "Add");
-                ShadowParity(e, "ctorRef", listCtor, "newList constructor");
-                ShadowParity(e, "addRef", add, "newList Add");
                 // The members a collection literal builds through are stated by the pass that minted the node,
                 // so the emitter stops deriving them from the constructed type.
                 if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refListCtor) listCtor = refListCtor;
@@ -715,8 +712,6 @@ sealed partial class Emitter
                 var dt = ConstructedType(Bcl("System.Collections.Generic.Dictionary`2"), kt, vt);
                 var mapCtor = GenericCtor(dt);
                 var setItem = GenericMethod(dt, "set_Item");
-                ShadowParity(e, "ctorRef", mapCtor, "newMap constructor");
-                ShadowParity(e, "setItemRef", setItem, "newMap set_Item");
                 if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refMapCtor) mapCtor = refMapCtor;
                 if (PrimaryFromRef(e, "setItemRef") is MethodInfo refSetItem) setItem = refSetItem;
                 EmitConstructor(_il, OpCodes.Newobj, mapCtor);
@@ -736,8 +731,6 @@ sealed partial class Emitter
                 var setT = ConstructedType(Bcl("System.Collections.Generic.HashSet`1"), elem);
                 var setCtor = GenericCtor(setT);
                 var add = GenericMethod(setT, "Add");
-                ShadowParity(e, "ctorRef", setCtor, "newSet constructor");
-                ShadowParity(e, "addRef", add, "newSet Add");
                 if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refSetCtor) setCtor = refSetCtor;
                 if (PrimaryFromRef(e, "addRef") is MethodInfo refSetAdd) add = refSetAdd;
                 EmitConstructor(_il, OpCodes.Newobj, setCtor);
