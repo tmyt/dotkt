@@ -416,7 +416,11 @@ sealed partial class Emitter
         }
         // A .NET FIELD surfaced as a Kotlin property (bir2cir resolved member:"field"). A `const` (literal) field has no
         // storage — inline its value (a mechanical raw-constant fetch, not a KIND decision), exactly as C# does.
-        var fld = ResolveClrPropField(type, e.GetProperty("name").GetString());
+        // The reference first: a field is a member like any other, and re-finding it by name is the selection
+        // this change exists to remove — a derived type's static field can hide a base instance field of the
+        // same name, and a name lookup cannot tell which one bir2cir resolved.
+        var fld = PrimaryFromRef(e, "memberRef") as FieldInfo
+            ?? ResolveClrPropField(type, e.GetProperty("name").GetString());
         if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), FieldTypeOf(fld));
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         MaybeVolatile(fld, e);
@@ -439,7 +443,11 @@ sealed partial class Emitter
             return Bcl("System.Void");
         }
         // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
-        var fld = ResolveClrPropField(type, e.GetProperty("name").GetString());
+        // The reference first: a field is a member like any other, and re-finding it by name is the selection
+        // this change exists to remove — a derived type's static field can hide a base instance field of the
+        // same name, and a name lookup cannot tell which one bir2cir resolved.
+        var fld = PrimaryFromRef(e, "memberRef") as FieldInfo
+            ?? ResolveClrPropField(type, e.GetProperty("name").GetString());
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitNullableCoerced(e.GetProperty("value"), FieldTypeOf(fld));
         MaybeVolatile(fld, e);

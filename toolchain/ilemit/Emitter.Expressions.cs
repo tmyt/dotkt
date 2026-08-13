@@ -119,7 +119,9 @@ sealed partial class Emitter
                     return prDeclared;
                 }
                 var fon = ParseOwnerSlot(e.GetProperty("ownerType"));
-                var fb = ResolveField(fon, fnm, out var ft);
+                FieldInfo fb; Type ft;
+                if (PrimaryFromRef(e, "memberRef") is FieldInfo referencedField) { fb = referencedField; ft = FieldTypeOf(fb); }
+                else fb = ResolveField(fon, fnm, out ft);
                 // ECMA-335 ldfld consumes a managed pointer for a value-type receiver.  Property access already takes
                 // this path through EmitAddr above; a genuine public CLR field must do the same.  The field token is the
                 // physical source of truth here (including a referenced constructed generic owner), so this is direct
@@ -327,24 +329,26 @@ sealed partial class Emitter
                 // #199/#204 — `owner:null` remains the substitution/recognition axis, while mandatory `calleeOwner`
                 // is the exact dispatch axis. Never global-search by method name: a missing/scoped miss is malformed
                 // CIR and must fail loud instead of silently binding another file class's same-simple-name function.
-                MethodInfo resolved;
+                // A call into a previously-compiled DotKt assembly is an external member like any other, and the
+                // reference is consulted FIRST: running the search anyway would let a missing or ambiguous
+                // candidate set abort before the answer that was already resolved could be read. A member of THIS
+                // compilation carries no reference, and the search below still answers for it.
                 bool exactConstructedOwner = false;
-                if (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
+                var resolved = PrimaryFromRef(e, "memberRef") as MethodInfo;
+                if (resolved == null)
                 {
-                    exactConstructedOwner = DotKt.Bir.TypeNode.Read(ow) is DotKt.Bir.TypeNode.Fqn { Args: not null };
-                    resolved = exactConstructedOwner
-                        ? ResolveMethod(ParseOwnerSlot(ow), name, out _, csig, CalledMethodArity(e))
-                        : FindMethod(ownm, name, csig, CalledMethodArity(e));
+                    // The owner selected in CIR is complete. A bare generic TypeDef here is malformed CIR; ilemit
+                    // must not invent a representative instantiation or reconstruct a retired compiler ABI.
+                    if (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
+                    {
+                        exactConstructedOwner = DotKt.Bir.TypeNode.Read(ow) is DotKt.Bir.TypeNode.Fqn { Args: not null };
+                        resolved = exactConstructedOwner
+                            ? ResolveMethod(ParseOwnerSlot(ow), name, out _, csig, CalledMethodArity(e))
+                            : FindMethod(ownm, name, csig, CalledMethodArity(e));
+                    }
+                    else
+                        resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
                 }
-                else
-                    resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
-                // The owner selected in CIR is complete. A bare generic TypeDef here is malformed CIR; ilemit must not
-                // invent a representative instantiation or reconstruct a retired compiler ABI.
-                // A call into a previously-compiled DotKt assembly is an external member like any other. Where a
-                // reference travels with it, that is the callee; a member of THIS compilation carries none, and the
-                // search above still answers for it. Method type arguments are applied after either way — those are
-                // the node's own, not part of which declaration is meant.
-                if (PrimaryFromRef(e, "memberRef") is MethodInfo referencedStatic) resolved = referencedStatic;
                 var mb = ApplyTypeArgs(resolved, e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
@@ -395,12 +399,12 @@ sealed partial class Emitter
                 // `listOf(...)` -> new List<elem> { ... } via repeated Add.
                 var elem = MapType(e.GetProperty("elem"));
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
-                var listCtor = GenericCtor(listT);
-                var add = GenericMethod(listT, "Add");
+                // The reference first — the search is the fallback for a shape that carries none, never a step
+                // that runs before the answer is read.
+                var listCtor = PrimaryFromRef(e, "ctorRef") as ConstructorInfo ?? GenericCtor(listT);
+                var add = PrimaryFromRef(e, "addRef") as MethodInfo ?? GenericMethod(listT, "Add");
                 // The members a collection literal builds through are stated by the pass that minted the node,
                 // so the emitter stops deriving them from the constructed type.
-                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refListCtor) listCtor = refListCtor;
-                if (PrimaryFromRef(e, "addRef") is MethodInfo refAdd) add = refAdd;
                 EmitConstructor(_il, OpCodes.Newobj, listCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
@@ -710,10 +714,8 @@ sealed partial class Emitter
                 var kt = MapType(e.GetProperty("keyType"));
                 var vt = MapType(e.GetProperty("valType"));
                 var dt = ConstructedType(Bcl("System.Collections.Generic.Dictionary`2"), kt, vt);
-                var mapCtor = GenericCtor(dt);
-                var setItem = GenericMethod(dt, "set_Item");
-                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refMapCtor) mapCtor = refMapCtor;
-                if (PrimaryFromRef(e, "setItemRef") is MethodInfo refSetItem) setItem = refSetItem;
+                var mapCtor = PrimaryFromRef(e, "ctorRef") as ConstructorInfo ?? GenericCtor(dt);
+                var setItem = PrimaryFromRef(e, "setItemRef") as MethodInfo ?? GenericMethod(dt, "set_Item");
                 EmitConstructor(_il, OpCodes.Newobj, mapCtor);
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
@@ -729,10 +731,8 @@ sealed partial class Emitter
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem"));
                 var setT = ConstructedType(Bcl("System.Collections.Generic.HashSet`1"), elem);
-                var setCtor = GenericCtor(setT);
-                var add = GenericMethod(setT, "Add");
-                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refSetCtor) setCtor = refSetCtor;
-                if (PrimaryFromRef(e, "addRef") is MethodInfo refSetAdd) add = refSetAdd;
+                var setCtor = PrimaryFromRef(e, "ctorRef") as ConstructorInfo ?? GenericCtor(setT);
+                var add = PrimaryFromRef(e, "addRef") as MethodInfo ?? GenericMethod(setT, "Add");
                 EmitConstructor(_il, OpCodes.Newobj, setCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {

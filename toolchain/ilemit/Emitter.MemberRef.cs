@@ -255,11 +255,23 @@ sealed partial class Emitter
         // instantiation, so a count that disagrees is not an instantiation of this declarer at all — anchoring
         // does not apply and the declaration stands, which is what a member on a non-generic declarer gets too.
         var definition = declaration.DeclaringType;
-        if (definition == null || !definition.IsGenericTypeDefinition
-            || definition.GetGenericArguments().Length != args.Length) return declaration;
+        if (definition == null || !definition.IsGenericTypeDefinition) return declaration;
+        // Past this point the reference DOES state an instantiation for a generic declarer, so failing to build
+        // it is not a shape anchoring does not apply to — it is a reference the target cannot honour. Emitting
+        // the open declaration instead writes a generic token where a constructed one belongs: invalid IL, blamed
+        // on nothing. Say which reference, and stop.
+        if (definition.GetGenericArguments().Length != args.Length)
+            throw new InvalidOperationException(
+                $"ilemit: {reference.Describe()} instantiates its declarer with {args.Length} argument(s), but "
+                + $"{definition.FullName} declares {definition.GetGenericArguments().Length}");
         Type owner;
         try { owner = ConstructedType(definition, args.Select(MapType).ToArray()); }
-        catch { return declaration; }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"ilemit: {reference.Describe()} cannot be anchored on its declarer's instantiation — "
+                + $"{ex.GetType().Name}: {ex.Message}", ex);
+        }
         if (owner == null || owner == definition) return declaration;
         // A constructed owner made entirely of target types is an ordinary reflection type: its members are
         // reachable directly, and the same metadata token identifies the declaration on it. The Anchor*
