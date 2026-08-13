@@ -323,8 +323,16 @@ sealed partial class Emitter
     MemberInfo AnchorOnUseSite(MemberInfo declaration, MemberRefNode reference)
     {
         if (reference.DeclaringType is not TypeNode.Fqn { Args: { Length: > 0 } args }) return declaration;
-        var owner = ConstructedType(declaration.DeclaringType, args.Select(MapType).ToArray());
-        if (owner == null || owner == declaration.DeclaringType) return declaration;
+        // A definition can only be instantiated with its OWN arity. The reference states the declarer's
+        // instantiation, so a count that disagrees is not an instantiation of this declarer at all — anchoring
+        // does not apply and the declaration stands, which is what a member on a non-generic declarer gets too.
+        var definition = declaration.DeclaringType;
+        if (definition == null || !definition.IsGenericTypeDefinition
+            || definition.GetGenericArguments().Length != args.Length) return declaration;
+        Type owner;
+        try { owner = ConstructedType(definition, args.Select(MapType).ToArray()); }
+        catch { return declaration; }
+        if (owner == null || owner == definition) return declaration;
         // A constructed owner made entirely of target types is an ordinary reflection type: its members are
         // reachable directly, and the same metadata token identifies the declaration on it. The Anchor*
         // helpers next door are for the other case — an owner built over a TypeBuilder, which cannot be
