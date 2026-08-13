@@ -41,6 +41,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   transitional descriptor is untouched; the schema gate now reddens if a migrated node carries one of the two
   without the other.
 
+  The reference is spelled in the vocabulary the TARGET declares, which is not the vocabulary the member is
+  resolved in: a stdlib member resolves against the reference twin, which declares the Kotlin surface
+  (`List<List<T>>`), while the member the reference names lives in the runtime twin, which declares the
+  physical shape (`IReadOnlyList<IList<T>>`). The map between them is position-dependent — a read-only
+  collection collapses to its invariant sibling in a storage slot but keeps the covariant face in a head or
+  method-slot position — so the serializer applies the lowering pass's own rule instead of a uniform alias
+  step, which would name a member neither twin declares.
+
 - **A single scalar CIR member reference, and the ECMA signature vocabulary it needs (#370, step 1).** The BIR/CIR
   contract gains `memberRef`: one complete, already-resolved reference to a member of another assembly (kind,
   physical defining assembly, exact declaring type and its instantiation, metadata name, generic arity, calling
