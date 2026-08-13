@@ -11,14 +11,14 @@
         {
           "k": "exprStmt",
           "expr": {
-            "k": "clrPropGet",
-            "type": {
+            "k": "field",
+            "ownerType": {
               "t": "fqn",
-              "name": "System.Math"
+              "name": "Probe.Widget"
             },
-            "member": "field",
-            "name": "PI",
-            "args": []
+            "name": "Count",
+            "member": "accessor",
+            "accessor": "get_Count"
           }
         }
       ]
