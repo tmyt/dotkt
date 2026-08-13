@@ -189,26 +189,9 @@ static partial class ClrMemberResolution
 
     // `SubstOwnerParams`'s projection in the reference's own spelling: an owner-definition generic parameter
     // becomes the receiver's argument at that position, everything else keeps the target's verbatim name.
-    static TypeNode SubstOwnerParamsPhysical(Type t, TypeNode[] ownerArgs)
-    {
-        t = AliasResolve(t);
-        if (t.IsGenericParameter)
-            return t.GenericParameterPosition < ownerArgs.Length
-                ? ownerArgs[t.GenericParameterPosition]
-                : new TypeNode.Tv("type", t.GenericParameterPosition);
-        if (t.IsByRef) return new TypeNode.ByRef(SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
-        if (t.IsPointer) return new TypeNode.Ptr(SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
-        if (t.IsArray)
-        {
-            var elem = SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs);
-            int rank = SafeArrayRank(t);
-            return rank > 1 ? new TypeNode.Array(elem, rank) : new TypeNode.Array(elem);
-        }
-        if (t.IsGenericType && !t.IsGenericTypeDefinition)
-            return new TypeNode.Fqn(PhysicalTypeName(t.GetGenericTypeDefinition()),
-                t.GetGenericArguments().Select(a => SubstOwnerParamsPhysical(a, ownerArgs)).ToArray());
-        return new TypeNode.Fqn(PhysicalTypeName(t));
-    }
+    // The declaring edge's own arguments, projected onto the receiver's. A storage slot, so the collapse applies.
+    static TypeNode SubstOwnerParamsPhysical(Type t, TypeNode[] ownerArgs) =>
+        PhysicalTypeOf(t, ownerArgs ?? Array.Empty<TypeNode>(), typeArg: true);
 
     static Type SafeBase(Type t) { try { return t.BaseType; } catch { return null; } }
 
@@ -259,49 +242,69 @@ static partial class ClrMemberResolution
     // (`IReadOnlyList<IList<T>>`). Those are two vocabularies for one member, and the map between them is
     // BirTypeLowering's — POSITION-DEPENDENT, so it cannot be applied by walking the signature with one alias
     // step. Doing that produced `IReadOnlyList<IReadOnlyList<T>>`: a member neither twin declares.
-    static TypeNode RefTypeOf(Type t) => RefTypeOf(t, typeArg: false);
+    static TypeNode RefTypeOf(Type t) => PhysicalTypeOf(t, null, typeArg: false);
 
-    static TypeNode RefTypeOf(Type t, bool typeArg)
+    static TypeNode RefTypeOf(Type t, bool typeArg) => PhysicalTypeOf(t, null, typeArg);
+
+    /// <summary>
+    /// A reflected type, spelled as the target declares it. `ownerArgs`, when given, substitutes the declaring
+    /// type's own parameters positionally — projecting a declaration edge instead of naming it over itself.
+    /// </summary>
+    /// <remarks>
+    /// Projection and plain naming were two functions until each was found applying the alias uniformly; they
+    /// are one function now because being two is what let one be fixed and the other not.
+    /// </remarks>
+    static TypeNode PhysicalTypeOf(Type t, TypeNode[] ownerArgs, bool typeArg)
     {
+        if (t.IsGenericParameter)
+            return ownerArgs != null && t.GenericParameterPosition < ownerArgs.Length
+                ? ownerArgs[t.GenericParameterPosition]
+                : new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
         // An element, a pointee and a byref target are VALUE positions — `typeArg: false` — exactly as
         // BirTypeLowering lowers them. The collapse below applies to storage slots, not to what a slot holds.
-        if (t.IsByRef) return new TypeNode.ByRef(RefTypeOf(t.GetElementType(), typeArg: false));
-        if (t.IsPointer) return new TypeNode.Ptr(RefTypeOf(t.GetElementType(), typeArg: false));
+        if (t.IsByRef) return new TypeNode.ByRef(PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
+        if (t.IsPointer) return new TypeNode.Ptr(PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
         if (t.IsArray)
         {
-            var elem = RefTypeOf(t.GetElementType(), typeArg: false);
+            var elem = PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false);
             int rank = SafeArrayRank(t);
             // Reflection reports rank 1 for BOTH `T[]` and the rare `T[*]`; the vector spelling is the one
             // this compiler can produce, and inventing a distinction reflection cannot see would be worse
             // than the shared spelling.
             return rank > 1 ? new TypeNode.Array(elem, rank) : new TypeNode.Array(elem);
         }
-        if (t.IsGenericParameter)
-            return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
+        var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
+        var kotlinName = AliasKey(def);
+        TypeNode[] loweredArgs = null;
         if (t.IsGenericType && !t.IsGenericTypeDefinition)
         {
             var argsAreSlots = !ArgumentsAreMethodSlots(t);
-            return new TypeNode.Fqn(PhysicalTypeName(PhysicalHeadOf(t, typeArg)),
-                t.GetGenericArguments().Select(a => RefTypeOf(a, typeArg: argsAreSlots)).ToArray());
+            loweredArgs = t.GetGenericArguments()
+                .Select(a => PhysicalTypeOf(a, ownerArgs, typeArg: argsAreSlots)).ToArray();
         }
-        return new TypeNode.Fqn(PhysicalTypeName(PhysicalHeadOf(t, typeArg)));
+        // ONE implementation of "which CLR type does this Kotlin type become", shared with the pass that lowered
+        // the declaration being named. Reproducing it here instead reproduced part of it: the arg-position
+        // collapse but not the generic-classifier erasure, and not the contravariant `Comparable<Any?>` collapse.
+        var head = BirTypeLowering.PhysicalHead(kotlinName,
+            _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs, collapseInvariant: typeArg);
+        return MetadataSpelling(head, def, kotlinName);
     }
 
     /// <summary>
-    /// The open definition this type is named by in the target: its @ClrTypeAlias twin, or — in a generic
-    /// ARGUMENT position — the invariant sibling BirTypeLowering's Root-V collapse rewrites it to.
+    /// The head decision, respelled as the TARGET's metadata spells it.
     /// </summary>
-    static Type PhysicalHeadOf(Type t, bool typeArg)
+    /// <remarks>
+    /// The lowering speaks document vocabulary, where a generic name carries no arity backtick and nesting is
+    /// dotted; a reference is a lookup key and must carry both. When the decision left the name alone, the
+    /// reflected type's own FullName IS that spelling. When it substituted a BCL type, the substitute is named
+    /// in the same universe, so its definition supplies the spelling rather than a backtick pasted on by hand.
+    /// </remarks>
+    static TypeNode MetadataSpelling(TypeNode head, Type def, string kotlinName)
     {
-        var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
-        // ARG-POSITION VARIANCE COLLAPSE (Root-V), taken from the pass that owns it rather than restated: a
-        // covariant read-only Kotlin collection in a storage slot lowers to its invariant CLR sibling, while the
-        // same token in a head position keeps the covariant alias.
-        if (typeArg
-            && BirTypeLowering.TryInvariantSibling(KotlinKeyOf(def), out var invariant)
-            && RefDef(invariant, def.IsGenericType ? def.GetGenericArguments().Length : 0) is { } sibling)
-            return sibling;
-        return AliasDef(def) ?? def;
+        if (head is not TypeNode.Fqn f) return head;
+        if (f.Name == kotlinName) return new TypeNode.Fqn(PhysicalTypeName(def), f.Args);
+        var substitute = RefDef(f.Name, f.Args?.Length ?? 0);
+        return new TypeNode.Fqn(substitute != null ? PhysicalTypeName(substitute) : f.Name, f.Args);
     }
 
     /// <summary>
@@ -321,7 +324,7 @@ static partial class ClrMemberResolution
         if (IsDelegate(def)) return true;
         // The KProperty carriers, for the reason BirTypeLowering gives: each argument is substituted into an
         // interface method slot, not stored in one.
-        return BirTypeLowering.IsMethodSlotCarrier(KotlinKeyOf(def));
+        return BirTypeLowering.IsMethodSlotCarrier(AliasKey(def));
     }
 
     static bool IsDelegate(Type t)
@@ -334,9 +337,6 @@ static partial class ClrMemberResolution
         catch { /* a reference whose base chain does not load is simply not a delegate here */ }
         return false;
     }
-
-    // The document-vocabulary key the alias index and the Root-V table are both keyed on: dotted, arity-free.
-    static string KotlinKeyOf(Type t) => StripArity(Dotted(t.FullName ?? t.Name));
 
     static int SafeArrayRank(Type t) { try { return t.GetArrayRank(); } catch { return 1; } }
 

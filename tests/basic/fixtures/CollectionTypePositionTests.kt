@@ -21,22 +21,33 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 class CollectionTypePositionTests {
     // ---- generic-ARGUMENT position: the token collapses to the invariant sibling ------------------------------
 
+    // These two assert through `flatten()` rather than by indexing an element out of the nested collection.
+    // That is not squeamishness about the assertion: extracting the element crosses a SEPARATE seam, where the
+    // value really is the invariant sibling (Root-V made it one) while the Kotlin declared type says the
+    // covariant face, and no view coercion is inserted there — ILVerify rejects the result. That gap is about
+    // call-site casts rather than member identity, it reproduces without this change, and letting it decide the
+    // shape of this fixture would mean testing two unrelated things and being able to fix neither.
+    // `flatten()` keeps the nested collection whole, so the reference under test is still the one being proven.
+
     @TestAttribute
     fun nestedCollectionInAReturnedElementSlot() {
         // `List<List<T>>` — the inner token is the returned collection's element, a storage slot. This is the
         // shape that was mis-spelled: the reference said `IReadOnlyList<IReadOnlyList<T>>`.
         val w: List<List<Int>> = listOf(1, 2, 3, 4).windowed(2, 1)
         assertEquals(3, w.size)
-        assertEquals(1, w[0][0])
-        assertEquals(4, w[2][1])
+        val f: List<Int> = w.flatten()
+        assertEquals(6, f.size)
+        assertEquals(1, f[0])
+        assertEquals(4, f[5])
     }
 
     @TestAttribute
     fun nestedCollectionThroughChunked() {
         val c: List<List<Int>> = listOf(1, 2, 3, 4, 5).chunked(2)
         assertEquals(3, c.size)
-        assertEquals(2, c[0].size)
-        assertEquals(1, c[2].size)
+        val f: List<Int> = c.flatten()
+        assertEquals(5, f.size)
+        assertEquals(5, f[4])
     }
 
     @TestAttribute
@@ -59,6 +70,21 @@ class CollectionTypePositionTests {
         assertEquals(2, joined.size)
         assertEquals("ab", joined[0])
         assertEquals("c", joined[1])
+    }
+
+    // ---- the other collapses the same lowering applies, which a positional rule alone does not cover ----------
+
+    @TestAttribute
+    fun comparableStarCollapsesToTheNonGenericFace() {
+        // `Comparable<*>` lowers to the NON-generic `System.IComparable` — contravariance means no value type is
+        // `IComparable<object>`. This is the vararg `compareBy`, whose parameter carries that type; a serializer
+        // that applied only the arg-position rule spells it `IComparable`1<Object>`, which the runtime stdlib
+        // does not declare, and the call fails to resolve at emit time.
+        val people = listOf("bb" to 2, "a" to 1, "ccc" to 3)
+        val sorted = people.sortedWith(compareBy({ it.second }, { it.first }))
+        assertEquals("a", sorted[0].first)
+        assertEquals("bb", sorted[1].first)
+        assertEquals("ccc", sorted[2].first)
     }
 
     // ---- head position: the covariant face, the rule everything else is measured against ----------------------
