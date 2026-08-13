@@ -7,6 +7,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A collection literal names the members it builds through, and two identities stop merging (#370, step 8).**
+  `listOf(1, 2)` says what to BUILD; the constructor and the `Add` behind it were left for the emitter to find
+  by name. Choosing `List`1` with a parameterless constructor and a one-argument `Add` is this layer's decision
+  about physical representation, so it states them. Alongside: `T[*]` is no longer written as `T[]` — ECMA
+  keeps the single-dimensional non-vector distinct from the vector, and an external member may declare both —
+  and the key that decides whether two declarations are the same member now carries the calling convention and
+  the return position's custom modifiers, without which `ref readonly` merges into the overload beside it.
+
 - **A property read synthesized after the reshape finds its accessor (#370, step 7).** A call minted by a later
   pass — a suspension sentinel, say — still carries the Kotlin property name, and no metadata declares a member
   by that name: the physical accessor name is assigned forty lines further on. Asking the reference index for

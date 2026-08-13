@@ -298,6 +298,14 @@
                     "t": "fqn",
                     "name": "System.Int32"
                   }
+                },
+                {
+                  "t": "array",
+                  "elem": {
+                    "t": "fqn",
+                    "name": "System.Int32"
+                  },
+                  "rank": 1
                 }
               ]
             }

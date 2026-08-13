@@ -44,7 +44,7 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
 | `nullable` | `of:T` | `T?` (NRT-annotated nullable, `NullableAttribute`=2) | `nullable:X` |
 | `oblivious` | `of:T` | `T!` — an NRT-*oblivious* flexible type `(T..T?)` (`NullableAttribute`=0); the CLR term, not the Kotlin-consumer "platform" name | the META `!` platform suffix |
-| `array` | `elem:T`, `rank?:int≥2` | `Array<T>`; **CIR-only** `rank` names the multi-dimensional ECMA ARRAY `T[,…]` (absent = the SZ vector `T[]`) | `array:X` |
+| `array` | `elem:T`, `rank?:1..32` | `Array<T>`; an absent `rank` is the SZ vector `T[]`. A **CIR-only** stated rank names the general ECMA ARRAY: ≥2 is `T[,…]`, and 1 is the non-vector `T[*]`, a distinct type from `T[]` | `array:X` |
 | `byRef` | `of:T` | a CLR by-ref `ref T` | `byRef:X` |
 | `ptr` | `of:T` | **CIR-only**: a CLR unmanaged pointer `T*` | no Kotlin form |
 | `mod` | `req:bool`, `m:T`, `of:T` | **CIR-only**: an ECMA custom modifier (II.7.1.1) at its signature position — `req` selects modreq from modopt | no Kotlin form |
@@ -54,7 +54,8 @@ Notes:
   `memberRef` must be able to spell any signature the *target metadata* can declare, and these three shapes
   are declarable there while being unspeakable in Kotlin. They are not new expressiveness for the source
   language — kotc MUST omit all three, and the validator refuses them in BIR. Dropping them is not neutral:
-  `T*` degrades to the FQN string `"System.Int32*"`, an identity naming no type; `T[,]` collapses onto `T[]`;
+  `T*` degrades to the FQN string `"System.Int32*"`, an identity naming no type; `T[,]` and `T[*]` collapse
+  onto `T[]`;
   and `void V(in DateTime)` becomes indistinguishable from `void V(DateTime)`, since `modreq(InAttribute)` on
   a by-ref parameter is the only thing separating them. Each is a way for two distinct members to look like
   one, which is exactly what a resolved reference must never allow.

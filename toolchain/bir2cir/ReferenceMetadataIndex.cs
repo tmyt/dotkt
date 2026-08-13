@@ -2114,17 +2114,29 @@ sealed partial class ReferenceMetadataIndex
     static string MetadataSignatureKey(MethodInfo method)
     {
         var sb = new StringBuilder();
-        sb.Append(method.Name).Append('`').Append(method.GetGenericArguments().Length).Append('(');
+        // The calling convention is part of the signature: a vararg member is not the fixed-arity one beside it.
+        sb.Append(method.Name).Append('`').Append(method.GetGenericArguments().Length)
+          .Append('[').Append(method.CallingConvention).Append("](");
         foreach (var p in method.GetParameters())
         {
-            AppendMetadataType(sb, p.ParameterType);
-            foreach (var m in p.GetRequiredCustomModifiers()) sb.Append(" modreq(").Append(m.FullName).Append(')');
-            foreach (var m in p.GetOptionalCustomModifiers()) sb.Append(" modopt(").Append(m.FullName).Append(')');
+            AppendMetadataSlot(sb, p.ParameterType, p.GetRequiredCustomModifiers(), p.GetOptionalCustomModifiers());
             sb.Append(',');
         }
         sb.Append("):");
-        AppendMetadataType(sb, method.ReturnType);
+        // The RETURN carries modifiers too — `ref readonly` is modreq(InAttribute) there and nowhere else — so
+        // omitting them merges a member with the one it differs from only in that.
+        var ret = method.ReturnParameter;
+        AppendMetadataSlot(sb, method.ReturnType,
+            ret?.GetRequiredCustomModifiers() ?? Type.EmptyTypes,
+            ret?.GetOptionalCustomModifiers() ?? Type.EmptyTypes);
         return sb.ToString();
+    }
+
+    static void AppendMetadataSlot(StringBuilder sb, Type t, Type[] required, Type[] optional)
+    {
+        AppendMetadataType(sb, t);
+        foreach (var m in required) sb.Append(" modreq(").Append(m.FullName).Append(')');
+        foreach (var m in optional) sb.Append(" modopt(").Append(m.FullName).Append(')');
     }
 
     static void AppendMetadataType(StringBuilder sb, Type t)
@@ -2136,7 +2148,9 @@ sealed partial class ReferenceMetadataIndex
         {
             AppendMetadataType(sb, t.GetElementType());
             int rank; try { rank = t.GetArrayRank(); } catch { rank = 1; }
-            sb.Append('[').Append(rank).Append(']');
+            bool sz; try { sz = t.IsSZArray; } catch { sz = rank == 1; }
+            // `T[]` and `T[*]` are different types at the same rank, so the key has to say which.
+            sb.Append(sz ? "[]" : "[*" + rank + "]");
             return;
         }
         if (t.IsGenericParameter) { sb.Append(t.DeclaringMethod != null ? "!!" : "!").Append(t.GenericParameterPosition); return; }

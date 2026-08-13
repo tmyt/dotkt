@@ -198,12 +198,7 @@ static partial class ClrMemberResolution
                 : new TypeNode.Tv("type", t.GenericParameterPosition);
         if (t.IsByRef) return new TypeNode.ByRef(SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
         if (t.IsPointer) return new TypeNode.Ptr(SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
-        if (t.IsArray)
-        {
-            var elem = SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs);
-            int rank = SafeArrayRank(t);
-            return rank > 1 ? new TypeNode.Array(elem, rank) : new TypeNode.Array(elem);
-        }
+        if (t.IsArray) return ArrayOf(t, SubstOwnerParamsPhysical(t.GetElementType(), ownerArgs));
         if (t.IsGenericType && !t.IsGenericTypeDefinition)
             return new TypeNode.Fqn(PhysicalTypeName(t.GetGenericTypeDefinition()),
                 t.GetGenericArguments().Select(a => SubstOwnerParamsPhysical(a, ownerArgs)).ToArray());
@@ -258,21 +253,21 @@ static partial class ClrMemberResolution
         t = AliasResolve(t);
         if (t.IsByRef) return new TypeNode.ByRef(RefTypeOf(t.GetElementType()));
         if (t.IsPointer) return new TypeNode.Ptr(RefTypeOf(t.GetElementType()));
-        if (t.IsArray)
-        {
-            var elem = RefTypeOf(t.GetElementType());
-            int rank = SafeArrayRank(t);
-            // Reflection reports rank 1 for BOTH `T[]` and the rare `T[*]`; the vector spelling is the one
-            // this compiler can produce, and inventing a distinction reflection cannot see would be worse
-            // than the shared spelling.
-            return rank > 1 ? new TypeNode.Array(elem, rank) : new TypeNode.Array(elem);
-        }
+        if (t.IsArray) return ArrayOf(t, RefTypeOf(t.GetElementType()));
         if (t.IsGenericParameter)
             return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
         if (t.IsGenericType && !t.IsGenericTypeDefinition)
             return new TypeNode.Fqn(PhysicalTypeName(t.GetGenericTypeDefinition()),
                 t.GetGenericArguments().Select(RefTypeOf).ToArray());
         return new TypeNode.Fqn(PhysicalTypeName(t));
+    }
+
+    // The vector and the general array are different types even at rank 1 — `T[]` and `T[*]` — and reflection
+    // says which is which through IsSZArray. Collapsing them would let one reference name either.
+    static TypeNode ArrayOf(Type t, TypeNode elem)
+    {
+        bool sz; try { sz = t.IsSZArray; } catch { sz = true; }
+        return sz ? new TypeNode.Array(elem) : TypeNode.Array.General(elem, SafeArrayRank(t));
     }
 
     static int SafeArrayRank(Type t) { try { return t.GetArrayRank(); } catch { return 1; } }

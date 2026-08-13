@@ -14,22 +14,22 @@
             "k": "clrStatic",
             "type": {
               "t": "fqn",
-              "name": "System.Math"
+              "name": "Probe.Arrays"
             },
-            "method": "Abs",
+            "method": "Take",
             "args": [],
             "memberRef": {
               "kind": "method",
-              "assembly": "System.Runtime",
+              "assembly": "Probe",
               "declaringType": {
                 "t": "fqn",
-                "name": "System.Math"
+                "name": "Probe.Arrays"
               },
-              "name": "Abs",
+              "name": "Take",
               "genericArity": 0,
               "returnType": {
                 "t": "fqn",
-                "name": "System.Int32"
+                "name": "void"
               },
               "callingConvention": "static",
               "parameterTypes": [
@@ -39,7 +39,7 @@
                     "t": "fqn",
                     "name": "System.Int32"
                   },
-                  "rank": 1
+                  "rank": 0
                 }
               ]
             }
