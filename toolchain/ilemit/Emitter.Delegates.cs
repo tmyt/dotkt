@@ -71,7 +71,7 @@ sealed partial class Emitter
         return ft.GetGenericArguments().Any(a => !a.IsGenericParameter && ContainsTypeBuilder(a));
     }
 
-    MethodInfo DelegateInvokeAdapter(Type ft)
+    MethodInfo DelegateInvokeAdapter(Type ft, MethodInfo openInvoke)
     {
         var def = ft.GetGenericTypeDefinition();
         var actual = ft.GetGenericArguments();
@@ -91,17 +91,19 @@ sealed partial class Emitter
             var il = mb.GetILGenerator();
             for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
             // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
-            EmitMethod(il, OpCodes.Callvirt, AnchorMethod(delegateType, def.GetMethod("Invoke")));
+            EmitMethod(il, OpCodes.Callvirt, AnchorMethod(delegateType, openInvoke));
             il.Emit(OpCodes.Ret);
             _delegateInvokeAdapters[key] = mb;
         }
         return mb.MakeGenericMethod(actual);
     }
 
-    void EmitDelegateInvoke(ILGenerator il, Type ft)
+    // `openInvoke` is the DECLARATION the node named; anchoring it onto the call site's constructed delegate is
+    // mechanical, and the adapter arm needs the same declaration for the body it synthesizes.
+    void EmitDelegateInvoke(ILGenerator il, Type ft, MethodInfo openInvoke)
     {
-        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateInvokeAdapter(ft));
-        else EmitMethod(il, OpCodes.Callvirt, InvokeOf(ft));
+        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateInvokeAdapter(ft, openInvoke));
+        else EmitMethod(il, OpCodes.Callvirt, AnchorMethod(ft, openInvoke));
     }
 
     // The same PersistedAssemblyBuilder limitation applies to the delegate `.ctor`: it cannot map
@@ -113,7 +115,10 @@ sealed partial class Emitter
     //
     // The helper definition mentions only its own direct generic parameters, which Reflection.Emit can encode;
     // the call site supplies E[]/List<E>/etc. This is strictly an encoding adapter, not delegate selection.
-    MethodInfo DelegateCtorAdapter(Type ft)
+    // The adapter is shared per arity, and so is the OPEN constructor it needs: `Func`N..ctor(object, native int)`
+    // does not vary with the instantiation. The call site has the node, so the reference reaches here rather than
+    // being fetched by signature inside a body that belongs to no node.
+    MethodInfo DelegateCtorAdapter(Type ft, ConstructorInfo openCtor, MethodInfo openInvoke)
     {
         var def = ft.GetGenericTypeDefinition();
         var actual = ft.GetGenericArguments();
@@ -141,10 +146,16 @@ sealed partial class Emitter
         return mb.MakeGenericMethod(actual);
     }
 
-    void EmitDelegateCtor(ILGenerator il, Type ft)
+    void EmitDelegateCtor(ILGenerator il, Type ft, JsonElement node)
     {
-        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateCtorAdapter(ft));
-        else EmitConstructor(il, OpCodes.Newobj, DelegateCtor(ft));
+        // The adapter arm calls a method this compilation synthesizes; the direct arm needs the constructed
+        // delegate's own constructor, which the node names.
+        if (NeedsDelegateInvokeAdapter(ft))
+            EmitMethod(il, OpCodes.Call, DelegateCtorAdapter(ft,
+                RequiredRef<ConstructorInfo>(node, "delegateCtorRef", "a delegate construction"),
+                RequiredRef<MethodInfo>(node, "invokeRef", "a delegate construction")));
+        else EmitConstructor(il, OpCodes.Newobj,
+            RequiredRef<ConstructorInfo>(node, "delegateCtorRef", "a delegate construction"));
     }
 
     // `static Unit A(<voidDelegate> d, <params>) { d.Invoke(<params>); return Unit.INSTANCE; }` — the void delegate `ft`
@@ -152,7 +163,7 @@ sealed partial class Emitter
     // delegate's Invoke. `invokeRet` is that Invoke return type (must carry a static `INSTANCE` singleton — `kotlin.Unit`);
     // `paramTypes` are the delegate's parameter types (identical for the void and the Unit delegate — only the return
     // differs), forwarded straight through.
-    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes, FieldInfo singleton)
+    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes, FieldInfo singleton, MethodInfo openInvoke)
     {
         // The singleton the conversion's node names. It does not depend on the adapter's arity — it is one static
         // field of one type — so it rides the node rather than being fetched by string off the return type here.
@@ -166,7 +177,7 @@ sealed partial class Emitter
             invokeRet, pTypes);
         var il = mb.GetILGenerator();
         for (int i = 0; i < pTypes.Length; i++) il.Emit(OpCodes.Ldarg, i);
-        EmitDelegateInvoke(il, ft);
+        EmitDelegateInvoke(il, ft, openInvoke);
         EmitField(il, OpCodes.Ldsfld, instF);
         il.Emit(OpCodes.Ret);
         return mb;

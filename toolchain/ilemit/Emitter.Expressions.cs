@@ -478,7 +478,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, i);                       // arr, i (for stelem)
                 _il.Emit(OpCodes.Ldloc, fn); _il.Emit(OpCodes.Ldloc, i);                         // fn, i
                 if (!IsValueType(pType)) _il.Emit(OpCodes.Box, Bcl("System.Int32"));
-                EmitDelegateInvoke(_il, fnType);                                                 // init(i)
+                EmitDelegateInvoke(_il, fnType, RequiredRef<MethodInfo>(e, "invokeRef", "an array initializer call"));                                                 // init(i)
                 if (rType != elem) { if (IsValueType(elem) || elem.IsGenericParameter) _il.Emit(OpCodes.Unbox_Any, elem); else _il.Emit(OpCodes.Castclass, elem); }
                 EmitStelem(elem);                                                                // arr[i] = init(i)
                 _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
@@ -793,7 +793,7 @@ sealed partial class Emitter
                     : mb;
                 _il.Emit(OpCodes.Ldnull);
                 EmitMethod(_il, OpCodes.Ldftn, target);
-                EmitDelegateCtor(_il, ft);
+                EmitDelegateCtor(_il, ft, e);
                 return ft;
             }
             case "newBoundDelegate":
@@ -825,7 +825,7 @@ sealed partial class Emitter
                 if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, boundTarget); }
                 else EmitMethod(_il, OpCodes.Ldftn, boundTarget);
-                EmitDelegateCtor(_il, ft);
+                EmitDelegateCtor(_il, ft, e);
                 return ft;
             }
             case "newBoundClrDelegate":
@@ -847,7 +847,7 @@ sealed partial class Emitter
                 if (NeedsBoxToRef(recvTc)) _il.Emit(OpCodes.Box, recvTc);
                 if (IsVirtual(e)) { _il.Emit(OpCodes.Dup); EmitMethod(_il, OpCodes.Ldvirtftn, mi); }
                 else EmitMethod(_il, OpCodes.Ldftn, mi);
-                EmitDelegateCtor(_il, ft);
+                EmitDelegateCtor(_il, ft, e);
                 return ft;
             }
             case "newClrStaticDelegate":
@@ -861,7 +861,7 @@ sealed partial class Emitter
                         clrStaticTypeArgs.EnumerateArray().Select(x => MapType(x)).ToArray());
                 _il.Emit(OpCodes.Ldnull);
                 EmitMethod(_il, OpCodes.Ldftn, mi);
-                EmitDelegateCtor(_il, ft);
+                EmitDelegateCtor(_il, ft, e);
                 return ft;
             }
             case "delegateInvoke":
@@ -886,7 +886,8 @@ sealed partial class Emitter
                         && !IsValueType(got) && !got.IsGenericParameter && got != want)
                         _il.Emit(OpCodes.Unbox_Any, want);
                 }
-                EmitDelegateInvoke(_il, ft);
+                // The node names the Invoke it calls; the delegate type it lowered to determines it.
+                EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "invokeRef", "a function-type call"));
                 return FuncRetType(ftNode);
             }
             case "newClosure":
@@ -899,7 +900,7 @@ sealed partial class Emitter
                 EmitConstructor(_il, OpCodes.Newobj, ctor);  // closure instance is the delegate target
                 EmitMethod(_il, OpCodes.Ldftn, invoke);
                 var ft = MapType(e.GetProperty("funcType"));
-                EmitDelegateCtor(_il, ft);
+                EmitDelegateCtor(_il, ft, e);
                 return ft;
             }
             case "newSam":

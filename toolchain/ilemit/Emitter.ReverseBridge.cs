@@ -83,7 +83,7 @@ partial class Emitter
         var cgi = mCurG.GetILGenerator();
         cgi.Emit(OpCodes.Ldarg_0); EmitField(cgi, OpCodes.Ldfld, fCur); cgi.Emit(OpCodes.Ret);
         // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
-        WireMethodOverride(tb, mCurG, AnchorMethod(ienumT, ienumGenDef.GetMethod("get_Current")));
+        WireMethodOverride(tb, mCurG, AnchorMethod(ienumT, WellKnown<MethodInfo>("EnumeratorT.Current")));
 
         // object System.Collections.IEnumerator.get_Current()  -- the non-generic slot (boxes a value T)
         var mCurO = tb.DefineMethod("dotkt$NonGenericCurrent",
@@ -185,10 +185,10 @@ partial class Emitter
         // IEnumerable<int> is a pure runtime type, so TypeBuilder.GetMethod would throw — use normal reflection.
         var getEnumIfaceM = ContainsTypeBuilder(elemType)
             // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
-            ? AnchorMethod(ienumerableElem, ienumerableGenDef.GetMethod("GetEnumerator"))
+            ? AnchorMethod(ienumerableElem, WellKnown<MethodInfo>("EnumerableT.GetEnumerator"))
             // #370-residual: REMAINING GAP (#370): the GENERIC IEnumerable<T>.GetEnumerator, whose owner varies
             // per site, so it needs a per-node carrier rather than the fixed-member table
-            : ienumerableElem.GetMethod("GetEnumerator");
+            : AnchorMethod(ienumerableElem, WellKnown<MethodInfo>("EnumerableT.GetEnumerator"));
         WireMethodOverride(ti.TB, gGen, getEnumIfaceM);
         ti.Methods["GetEnumerator"] = gGen;
 

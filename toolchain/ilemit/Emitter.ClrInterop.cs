@@ -594,8 +594,9 @@ sealed partial class Emitter
         {
             var ft = EmitExpr(h);                             // the lambda's natural void delegate, on the stack
             EmitMethod(_il, OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray(),
-                PrimaryFromRef(h, "unitInstanceRef") as FieldInfo));
-            EmitDelegateCtor(_il, want);
+                PrimaryFromRef(h, "unitInstanceRef") as FieldInfo,
+                RequiredRef<MethodInfo>(h, "invokeRef", "a void-to-Unit conversion")));
+            EmitDelegateCtor(_il, want, h);
             return;
         }
         switch (k)
@@ -608,14 +609,14 @@ sealed partial class Emitter
                 var dtarget = FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig, CalledMethodArity(h));
                 _il.Emit(OpCodes.Ldnull);
                 EmitMethod(_il, OpCodes.Ldftn, dtarget);
-                EmitDelegateCtor(_il, want);
+                EmitDelegateCtor(_il, want, h);
                 break;
             case "newClosure":
                 var (cctor, cinvoke) = ResolveClosure(h);
                 foreach (var c in h.GetProperty("captures").EnumerateArray()) EmitExpr(c);
                 EmitConstructor(_il, OpCodes.Newobj, cctor);
                 EmitMethod(_il, OpCodes.Ldftn, cinvoke);
-                EmitDelegateCtor(_il, want);
+                EmitDelegateCtor(_il, want, h);
                 break;
             default:
                 // A stored handler value (a Func/Action local/field). Re-wrap it into the event's delegate
@@ -625,7 +626,7 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Dup);
                 // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
                 EmitMethod(_il, OpCodes.Ldvirtftn, src.GetMethod("Invoke"));
-                EmitDelegateCtor(_il, want);
+                EmitDelegateCtor(_il, want, h);
                 break;
         }
     }

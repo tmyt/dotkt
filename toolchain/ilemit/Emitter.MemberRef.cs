@@ -78,12 +78,6 @@ sealed partial class Emitter
             if (m?.Module is ModuleBuilder or null) return;             // being built here
             if (m.DeclaringType is TypeBuilder) return;                 // ditto, through a constructed view
             if (Token(m) is not { } key || _provenance.Contains(key)) return;
-            // Inventory mode: one run lists every unsanctioned member instead of stopping at the first.
-            if (Environment.GetEnvironmentVariable("ILEMIT_AUDIT_LIST") != null)
-            {
-                Console.Error.WriteLine($"AUDIT {position}: {Describe(m)}");
-                return;
-            }
             throw new InvalidOperationException(
                 $"ilemit: {position} names the external member {Describe(m)}, whose identity no resolved reference "
                 + "supplied. Every external member ilemit consumes arrives named (#370); if this one cannot, "

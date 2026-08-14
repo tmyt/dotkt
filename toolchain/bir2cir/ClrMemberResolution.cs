@@ -284,8 +284,8 @@ static partial class ClrMemberResolution
             case "new": ResolveReferencedCtor(node); break;
             case "clrStatic": ResolveCall(node, instance: false); break;
             case "clrInstance": ResolveCall(node, instance: true); break;
-            case "newBoundClrDelegate": ResolveBoundClrDelegate(node); break;
-            case "newClrStaticDelegate": ResolveClrStaticDelegate(node); break;
+            case "newBoundClrDelegate": ResolveBoundClrDelegate(node); ResolveDelegateCtor(node, "type"); break;
+            case "newClrStaticDelegate": ResolveClrStaticDelegate(node); ResolveDelegateCtor(node, "type"); break;
             // A GENERIC .NET method gets its `memberSig` from NetInteropBinding (kotc's FIR-resolved `shapeTypes`),
             // so it never needed resolving here — and so its DECLARED RETURN was never established either, which is
             // the one thing the crossing refusal reads. It is resolved for that fact alone: `memberSig` is left
@@ -298,8 +298,15 @@ static partial class ClrMemberResolution
             case "clrEventRemove": ResolveEvent(node); break;
             case "spreadConcat": ResolveSpreadConcat(node); break;
             case "forEachInline": ResolveForEachInline(node); break;
-            case "newDelegate": case "newClosure": ResolveUnitSingleton(node); break;
+            case "newDelegate": case "newClosure":
+                ResolveUnitSingleton(node);
+                ResolveDelegateCtor(node, "funcType");
+                ResolveDelegateInvoke(node, "funcType");
+                break;
             case "clrEventAccessorImpl": ResolveEventCas(node); break;
+            case "delegateInvoke": ResolveDelegateInvoke(node, "funcType"); break;
+            case "newArrayInit": ResolveDelegateInvoke(node, "init"); break;
+            case "newBoundDelegate": ResolveDelegateCtor(node, "funcType"); ResolveDelegateInvoke(node, "funcType"); break;
             case "nullableNull": ResolveNullableConversion(node, "nullableNull"); break;
             case "nullableWrap": ResolveNullableConversion(node, "nullableWrap"); break;
             case "nullableHasValue": ResolveNullableConversion(node, "nullableHasValue"); break;

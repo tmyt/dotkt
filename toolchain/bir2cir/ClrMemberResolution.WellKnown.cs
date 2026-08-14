@@ -38,6 +38,20 @@ static partial class ClrMemberResolution
         ("Disposable.Dispose",    "System.IDisposable", "Dispose",        new string[0]),
         ("Array.IndexOf",         "System.Array",    "IndexOf",           new[] { "System.Array", "System.Object" }),
         ("Comparable.CompareTo",  "System.IComparable", "CompareTo",      new[] { "System.Object" }),
+        // The OPEN declarations of the generic collection slots. Their instantiation is over a type parameter of
+        // a type the emitter synthesizes, which no document can name — but the DECLARATION is fixed, and
+        // anchoring a named declaration onto an owner is mechanical rather than a second choice of member.
+        ("EnumeratorT.Current",   "System.Collections.Generic.IEnumerator", "get_Current", new string[0]),
+        ("EnumerableT.GetEnumerator", "System.Collections.Generic.IEnumerable", "GetEnumerator", new string[0]),
+        ("ReadOnlyCollectionT.Count", "System.Collections.Generic.IReadOnlyCollection", "get_Count", new string[0]),
+        // The rest of the generic collection faces a Kotlin collection implements. All open declarations, all
+        // fixed: the emitter anchors each onto the type it is building.
+        ("ReadOnlyListT.Item",    "System.Collections.Generic.IReadOnlyList", "get_Item", new[] { "System.Int32" }),
+        ("CollectionT.Count",     "System.Collections.Generic.ICollection", "get_Count",  new string[0]),
+        ("CollectionT.IsReadOnly","System.Collections.Generic.ICollection", "get_IsReadOnly", new string[0]),
+        ("CollectionT.Clear",     "System.Collections.Generic.ICollection", "Clear",      new string[0]),
+        ("ListT.Item",            "System.Collections.Generic.IList", "get_Item",         new[] { "System.Int32" }),
+        ("ListT.RemoveAt",        "System.Collections.Generic.IList", "RemoveAt",         new[] { "System.Int32" }),
     };
 
     // Constructors with a FIXED owner. `newobj` needs a token exactly as `call` does, so these are the same
@@ -73,7 +87,7 @@ static partial class ClrMemberResolution
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}.{name}({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}' (#370)");
-            table[role] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, Array.Empty<TypeNode>());
+            table[role] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
         }
         foreach (var (role, owner, parameters) in WellKnownCtors)
         {
@@ -91,6 +105,14 @@ static partial class ClrMemberResolution
         }
         document["wellKnownRefs"] = table;
     }
+
+    // An OPEN generic declaration is named over its own parameters — `IEnumerator`1<!0>` — because that is what
+    // the declaration IS. The emitter anchors it onto the owner it is building; the reference states the
+    // declaration, exactly as it does everywhere else.
+    static TypeNode[] OwnParameters(Type open) =>
+        open.IsGenericTypeDefinition
+            ? open.GetGenericArguments().Select(p => (TypeNode)new TypeNode.Tv("type", p.GenericParameterPosition)).ToArray()
+            : Array.Empty<TypeNode>();
 
     static TypeNode ParseWellKnownParam(string spec) =>
         spec.EndsWith("[]", StringComparison.Ordinal)

@@ -261,4 +261,76 @@ static partial class ClrMemberResolution
     }
 
     const string NullableFqn = "System.Nullable";
+
+    /// <summary>
+    /// The `Invoke` a Kotlin function-type value is called through.
+    /// </summary>
+    /// <remarks>
+    /// One producer, one rule: a node that states a function type states which delegate it lowered to, and that
+    /// delegate's Invoke is determined by the type alone. The emitter used to derive it from the value's emitted
+    /// type at each site — thousands of operands from this one path, which is why the unit that matters is the
+    /// producer and not the occurrence.
+    /// </remarks>
+    static void ResolveDelegateInvoke(JsonObject node, string typeKey)
+    {
+        if (node.ContainsKey("invokeRef")) return;
+        // Most nodes state their own function type. An array initializer states the EXPRESSION whose value it
+        // calls, and that expression is a node with a function type of its own — one level down, same fact.
+        var stated = TypeJson.Read(node["funcType"]) ?? TypeJson.Read(node["clrType"])
+            ?? TypeJson.Read((node[typeKey] as JsonObject)?["funcType"]) ?? TypeJson.Read(node[typeKey]);
+        if (stated == null) return;
+        // The document states the Kotlin function type; the lowering already turned it into the delegate the
+        // value physically is. Ask that same lowering rather than re-deriving the delegate here.
+        var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
+        if (physical is TypeNode.Fn fnNode)
+            physical = BirTypeLowering.DelegateFqnOf(
+                (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
+        if (physical is not TypeNode.Fqn { Args: { Length: > 0 } } delegateFqn) return;
+        var open = ResolveOwnerType(delegateFqn);
+        if (open == null) return;
+        var invoke = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == "Invoke").ToList();
+        if (invoke.Count != 1) return;
+        node["invokeRef"] = MemberRefJson(invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args);
+    }
+
+    /// <summary>
+    /// The constructor a delegate CONSTRUCTION runs through: every delegate's `(object, native int)`.
+    /// </summary>
+    /// <remarks>
+    /// Same producer family as the invoke, and the same rule: the node states the function type, the lowering
+    /// says which delegate that is, and the constructor follows from the type. ECMA-335 II.14.6 fixes the
+    /// signature; what varies — and what a reference has to state — is WHICH constructed delegate.
+    /// </remarks>
+    static void ResolveDelegateCtor(JsonObject node, string typeKey)
+    {
+        if (node.ContainsKey("delegateCtorRef")) return;
+        // The node states its delegate under whichever key its kind uses; all five construction kinds carry one.
+        var stated = TypeJson.Read(node["funcType"]) ?? TypeJson.Read(node["clrType"]) ?? TypeJson.Read(node[typeKey]);
+        if (stated == null)
+            throw new InvalidOperationException(
+                $"bir2cir: a delegate construction states no function type under funcType/clrType/{typeKey} (#370)");
+        // A function type stays an `fn` node through the general lowering — its DELEGATE form is a separate
+        // step, and the same one the emitter's own mapping uses. Ask for it rather than assembling `Func`N` here.
+        var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
+        if (physical is TypeNode.Fn fnNode)
+            physical = BirTypeLowering.DelegateFqnOf(
+                (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
+        if (physical is not TypeNode.Fqn delegateFqn)
+            throw new InvalidOperationException(
+                $"bir2cir: a delegate construction lowers to {TypeNode.ToJson(physical)}, which is not a named type (#370)");
+        var open = ResolveOwnerType(delegateFqn)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type (#370)");
+        var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c => c.GetParameters().Length == 2).ToList();
+        var win = TryPickUniqueCtor(ctors,
+            new List<TypeNode> { new TypeNode.Fqn("System.Object"), new TypeNode.Fqn("System.IntPtr") },
+            delegateFqn.Args ?? Array.Empty<TypeNode>())
+            ?? throw new InvalidOperationException(
+                $"bir2cir: '{delegateFqn.Name}' has no unique (object, native int) constructor — "
+                + $"{ctors.Count} two-argument candidate(s) (#370)");
+        node["delegateCtorRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open,
+            delegateFqn.Args ?? Array.Empty<TypeNode>());
+    }
 }

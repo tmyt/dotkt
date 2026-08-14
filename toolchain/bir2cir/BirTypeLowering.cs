@@ -500,7 +500,7 @@ static class BirTypeLowering
     // given Kotlin function type has no CLR delegate at all, which is this layer's call to make and not ilemit's.
     // ilemit must not change the nominal ABI based on whether one of the resolved types happens to still be a
     // TypeBuilder.
-    static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
+    internal static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
     {
         var ret = (fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
             ? VoidType : LowerType(fn.Ret, refBuild, force, typeArg: false);
@@ -519,6 +519,30 @@ static class BirTypeLowering
             ? arity <= MaxBclDelegateArity ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
             : arity <= MaxBclDelegateArity ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc";
         return new TypeNode.Fn(false, ret, ps, recv, clr);
+    }
+
+    /// <summary>
+    /// The constructed delegate a lowered function type IS, named.
+    /// </summary>
+    /// <remarks>
+    /// `LowerFnDelegate` leaves the node an `fn` carrying the delegate's family in `clr`, and the emitter builds
+    /// the constructed type from that. A member reference has to NAME the type, so the same construction is
+    /// spelled here — beside the pass that decided the family, so the two cannot drift.
+    ///
+    /// `Action` takes the parameters alone; `Func` takes the parameters then the return. A receiver is the
+    /// leading parameter either way, exactly as the arity above counts it.
+    /// </remarks>
+    internal static TypeNode.Fqn DelegateFqnOf(TypeNode.Fn lowered)
+    {
+        if (lowered.Clr == null) return null;
+        var args = new List<TypeNode>();
+        if (lowered.Recv != null) args.Add(lowered.Recv);
+        args.AddRange(lowered.Params);
+        bool returnsVoid = lowered.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+        if (!returnsVoid) args.Add(lowered.Ret);
+        return args.Count == 0
+            ? new TypeNode.Fqn(lowered.Clr)
+            : new TypeNode.Fqn(lowered.Clr, args.ToArray());
     }
 
     // Read a structured Type node out of the BIR JSON, lower it, and write it back.
