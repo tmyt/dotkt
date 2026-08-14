@@ -42,11 +42,6 @@
             "t": "fqn",
             "name": "System.String"
           },
-          "clrOverride": {
-            "t": "fqn",
-            "name": "System.Object"
-          },
-          "clrOverrideMember": "ToString",
           "clrOverrideRef": {
             "kind": "method",
             "assembly": "System.Runtime",
