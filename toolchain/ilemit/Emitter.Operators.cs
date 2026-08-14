@@ -257,7 +257,7 @@ sealed partial class Emitter
             _il.Emit(OpCodes.Stelem_Ref);
         }
         // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-        EmitMethod(_il, OpCodes.Call, Bcl("System.String").GetMethod("Concat", new[] { Bcl("System.Object").MakeArrayType() }));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("String.ConcatArray"));
         return Bcl("System.String");
     }
 
@@ -280,6 +280,7 @@ sealed partial class Emitter
             // the ctor on the MakeGenericType — use TypeBuilder.GetConstructor(constructed, open Nullable<>'s ctor).
             var ctor = ContainsTypeBuilder(want)
                 ? AnchorConstructor(want, Bcl("System.Nullable`1").GetConstructors()[0])
+                // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
                 : want.GetConstructor(new[] { got });
             EmitConstructor(_il, OpCodes.Newobj, ctor);
             return want;

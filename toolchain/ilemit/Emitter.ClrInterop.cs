@@ -29,6 +29,7 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Br, done);
         _il.MarkLabel(has);
         _il.Emit(OpCodes.Unbox_Any, elem);
+        // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
         EmitConstructor(_il, OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
         _il.MarkLabel(done);
         return nt;
@@ -51,6 +52,7 @@ sealed partial class Emitter
         var elem = NativeType(e.GetProperty("elem"));
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
         EmitExpr(e.GetProperty("e"));
+        // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
         EmitConstructor(_il, OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
         return nt;
     }
@@ -154,7 +156,7 @@ sealed partial class Emitter
             EmitExpr(e.GetProperty("e"));
             _il.Emit(OpCodes.Box, et);
             // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-            EmitMethod(_il, OpCodes.Call, Bcl("System.Array").GetMethod("IndexOf", new[] { Bcl("System.Array"), Bcl("System.Object") }));
+            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Array.IndexOf"));
             return Bcl("System.Int32");
         }
         EmitExpr(e.GetProperty("e"));

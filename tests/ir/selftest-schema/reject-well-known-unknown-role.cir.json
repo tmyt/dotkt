@@ -1,0 +1,409 @@
+{
+  "methods": [
+    {
+      "name": "everyMemberRefKind",
+      "params": [],
+      "ret": {
+        "t": "fqn",
+        "name": "void"
+      },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrStatic",
+            "type": {
+              "t": "fqn",
+              "name": "System.Math"
+            },
+            "method": "Abs",
+            "args": [],
+            "memberRef": {
+              "kind": "method",
+              "assembly": "System.Runtime",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.Math"
+              },
+              "name": "Abs",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Int32"
+              },
+              "callingConvention": "static",
+              "parameterTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.Int32"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrInstance",
+            "type": {
+              "t": "fqn",
+              "name": "System.Collections.Generic.List",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "System.String"
+                }
+              ]
+            },
+            "method": "Add",
+            "args": [],
+            "dispatch": "callvirt",
+            "memberRef": {
+              "kind": "method",
+              "assembly": "System.Collections",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.Collections.Generic.List`1",
+                "args": [
+                  {
+                    "t": "fqn",
+                    "name": "System.String"
+                  }
+                ]
+              },
+              "name": "Add",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "void"
+              },
+              "callingConvention": "instance",
+              "parameterTypes": [
+                {
+                  "t": "tv",
+                  "scope": "type",
+                  "i": 0
+                }
+              ]
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "newClr",
+            "type": {
+              "t": "fqn",
+              "name": "System.Object"
+            },
+            "args": [],
+            "memberRef": {
+              "kind": "ctor",
+              "assembly": "System.Runtime",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.Object"
+              },
+              "name": ".ctor",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "void"
+              },
+              "callingConvention": "instance",
+              "parameterTypes": []
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "staticField",
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Int32"
+            },
+            "name": "MaxValue",
+            "memberRef": {
+              "kind": "field",
+              "assembly": "System.Runtime",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.Int32"
+              },
+              "name": "MaxValue",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Int32"
+              }
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrPropGet",
+            "type": {
+              "t": "fqn",
+              "name": "System.ReadOnlySpan",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "System.Byte"
+                }
+              ]
+            },
+            "member": "accessor",
+            "accessor": "get_Item",
+            "dispatch": "call",
+            "args": [],
+            "memberRef": {
+              "kind": "propertyAccessor",
+              "assembly": "System.Runtime",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.ReadOnlySpan`1",
+                "args": [
+                  {
+                    "t": "fqn",
+                    "name": "System.Byte"
+                  }
+                ]
+              },
+              "name": "get_Item",
+              "genericArity": 0,
+              "returnType": {
+                "t": "mod",
+                "req": true,
+                "m": {
+                  "t": "fqn",
+                  "name": "System.Runtime.InteropServices.InAttribute"
+                },
+                "of": {
+                  "t": "byRef",
+                  "of": {
+                    "t": "tv",
+                    "scope": "type",
+                    "i": 0
+                  }
+                }
+              },
+              "callingConvention": "instance",
+              "parameterTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.Int32"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrEventAdd",
+            "type": {
+              "t": "fqn",
+              "name": "System.AppDomain"
+            },
+            "accessor": "add_UnhandledException",
+            "dispatch": "callvirt",
+            "args": [],
+            "memberRef": {
+              "kind": "eventAccessor",
+              "assembly": "System.Runtime",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.AppDomain"
+              },
+              "name": "add_UnhandledException",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "void"
+              },
+              "callingConvention": "instance",
+              "parameterTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.UnhandledExceptionEventHandler"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrStatic",
+            "type": {
+              "t": "fqn",
+              "name": "Probe.Signatures"
+            },
+            "method": "Exotic",
+            "args": [],
+            "memberRef": {
+              "kind": "method",
+              "assembly": "Probe",
+              "declaringType": {
+                "t": "fqn",
+                "name": "Probe.Signatures"
+              },
+              "name": "Exotic",
+              "genericArity": 1,
+              "returnType": {
+                "t": "array",
+                "elem": {
+                  "t": "tv",
+                  "scope": "method",
+                  "i": 0
+                }
+              },
+              "callingConvention": "static",
+              "parameterTypes": [
+                {
+                  "t": "ptr",
+                  "of": {
+                    "t": "fqn",
+                    "name": "System.Int32"
+                  }
+                },
+                {
+                  "t": "array",
+                  "elem": {
+                    "t": "fqn",
+                    "name": "System.Int32"
+                  },
+                  "rank": 2
+                },
+                {
+                  "t": "mod",
+                  "req": false,
+                  "m": {
+                    "t": "fqn",
+                    "name": "System.Runtime.CompilerServices.IsConst"
+                  },
+                  "of": {
+                    "t": "fqn",
+                    "name": "System.Int32"
+                  }
+                },
+                {
+                  "t": "array",
+                  "elem": {
+                    "t": "fqn",
+                    "name": "System.Int32"
+                  },
+                  "rank": 1
+                }
+              ]
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrStatic",
+            "type": {
+              "t": "fqn",
+              "name": "System.Math"
+            },
+            "method": "Abs",
+            "args": [],
+            "memberRef": {
+              "kind": "method",
+              "assembly": "Probe",
+              "declaringType": {
+                "t": "fqn",
+                "name": "Probe.Variadic"
+              },
+              "name": "Printf",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Int32"
+              },
+              "callingConvention": "varargStatic",
+              "parameterTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.String"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrGenericStatic",
+            "type": {
+              "t": "fqn",
+              "name": "System.Linq.Enumerable"
+            },
+            "method": "Cast",
+            "args": [],
+            "typeArgs": [
+              {
+                "t": "fqn",
+                "name": "object"
+              }
+            ],
+            "memberRef": {
+              "kind": "method",
+              "assembly": "System.Linq",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.Linq.Enumerable"
+              },
+              "name": "Cast",
+              "genericArity": 1,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IEnumerable`1",
+                "args": [
+                  {
+                    "t": "tv",
+                    "scope": "method",
+                    "i": 0
+                  }
+                ]
+              },
+              "callingConvention": "static",
+              "parameterTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.Collections.IEnumerable"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "wellKnownRefs": {
+    "Typo.Role": {
+      "kind": "method",
+      "assembly": "System.Runtime",
+      "declaringType": {
+        "t": "fqn",
+        "name": "System.Math"
+      },
+      "name": "Abs",
+      "genericArity": 0,
+      "returnType": {
+        "t": "fqn",
+        "name": "System.Int32"
+      },
+      "callingConvention": "static",
+      "parameterTypes": [
+        {
+          "t": "fqn",
+          "name": "System.Int32"
+        }
+      ]
+    }
+  }
+}

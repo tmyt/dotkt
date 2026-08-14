@@ -47,8 +47,23 @@ sealed partial class Emitter
                 || table.ValueKind != JsonValueKind.Object) continue;
             foreach (var entry in table.EnumerateObject())
             {
-                if (_wellKnown.ContainsKey(entry.Name) || entry.Value.ValueKind != JsonValueKind.Object) continue;
-                try { _wellKnown[entry.Name] = ResolveMemberRef(MemberRefNode.Read(entry.Value)); }
+                if (entry.Value.ValueKind != JsonValueKind.Object) continue;
+                try
+                {
+                    var resolved = ResolveMemberRef(MemberRefNode.Read(entry.Value));
+                    // Every document states the same fixed member for a role. Taking the first and skipping the
+                    // rest would make a disagreement invisible — and a disagreement means two documents were
+                    // resolved against different reference sets, which is worth stopping for.
+                    if (_wellKnown.TryGetValue(entry.Name, out var already))
+                    {
+                        if (already.MetadataToken != resolved.MetadataToken || already.Module != resolved.Module)
+                            throw new InvalidOperationException(
+                                $"ilemit: two documents name different members for the fixed-member role "
+                                + $"`{entry.Name}`: {Describe(already)} and {Describe(resolved)}");
+                        continue;
+                    }
+                    _wellKnown[entry.Name] = resolved;
+                }
                 catch (Exception ex)
                 {
                     throw new InvalidOperationException(

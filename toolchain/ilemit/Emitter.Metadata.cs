@@ -353,6 +353,7 @@ sealed partial class Emitter
             var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
             // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
             if (vararg) SetAttribute(pb.SetCustomAttribute,
+                // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 Bcl("System.ParamArrayAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
             // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an

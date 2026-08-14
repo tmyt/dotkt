@@ -230,7 +230,9 @@ sealed partial class Emitter
 
     static ConstructorInfo GenericCtor(Type constructed, params Type[] argTypes) =>
         IsTbInstantiation(constructed)
+            // #370-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
             ? AnchorConstructor(constructed, constructed.GetGenericTypeDefinition().GetConstructor(argTypes))
+            // #370-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
             : constructed.GetConstructor(argTypes);
 
     static MethodInfo GenericMethod(Type constructed, string name) =>
@@ -1203,12 +1205,14 @@ sealed partial class Emitter
     // skips generated types by attribute rather than by `dotkt$` name-sniffing.
     internal void StampCompilerGenerated(TypeBuilder tb) =>
         SetAttribute(tb.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
 
     // #68: same stamp for an ilemit-authored generated METHOD (the covar/dim* variance-bridge synthetics, the reverse-
     // enumerator adapter's own methods) — one consistent `dotkt$` + [CompilerGenerated] marking for every synthetic member.
     internal void StampCompilerGenerated(MethodBuilder mb) =>
         SetAttribute(mb.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
 
     // True when `name` is defined by the exact target compile-reference universe. The module under construction is a

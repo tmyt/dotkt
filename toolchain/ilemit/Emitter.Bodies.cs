@@ -76,7 +76,7 @@ sealed partial class Emitter
         }
         else
         {
-            EmitConstructor(_il, OpCodes.Call, Bcl("System.Object").GetConstructor(Type.EmptyTypes));
+            EmitConstructor(_il, OpCodes.Call, WellKnown<ConstructorInfo>("Object.ctor"));
         }
         foreach (var s in c.GetProperty("body").EnumerateArray()) EmitStmt(s);
         _il.Emit(OpCodes.Ret);
@@ -467,7 +467,7 @@ sealed partial class Emitter
     {
         var il = mb.GetILGenerator();
         il.Emit(OpCodes.Ldstr, "DOTKT-STDLIB stub: " + feature + " not yet supported by the .NET backend");
-        EmitConstructor(il, OpCodes.Newobj, Bcl("System.NotSupportedException").GetConstructor(new[] { Bcl("System.String") }));
+        EmitConstructor(il, OpCodes.Newobj, WellKnown<ConstructorInfo>("NotSupportedException.ctor"));
         il.Emit(OpCodes.Throw);
     }
 
@@ -684,7 +684,7 @@ sealed partial class Emitter
         var ok = _il.DefineLabel();
         _il.Emit(OpCodes.Blt_Un, ok);
         _il.Emit(OpCodes.Ldstr, "StackBuffer index out of bounds");
-        EmitConstructor(_il, OpCodes.Newobj, Bcl("System.IndexOutOfRangeException").GetConstructor(new[] { Bcl("System.String") }));
+        EmitConstructor(_il, OpCodes.Newobj, WellKnown<ConstructorInfo>("IndexOutOfRangeException.ctor"));
         _il.Emit(OpCodes.Throw);
         _il.MarkLabel(ok);
 
@@ -807,6 +807,7 @@ sealed partial class Emitter
         if (got == null) return;
         if (_methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == Bcl("System.Nullable`1")
             && _methodRetType.GetGenericArguments()[0] == got)
+            // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
             EmitConstructor(_il, OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
         // A value type / `gp:T` returned where the method declares ANY reference type must BOX (C2: the
         // `compareBy { it }` selector lambda returns `it: Int` declared `kotlin.Comparable[object]` = System.IComparable

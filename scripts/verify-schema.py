@@ -73,7 +73,19 @@ DECLARATION_REF_PAIRS = (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner"
 # The transitional identity vocabulary #370 retired. A CIR document carrying any of them has a second spelling
 # of a settled member beside the reference that replaced it.
 # The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
+#
+# The role set is FROZEN, for the reason every other key here is: a table that accepts any name accepts a typo,
+# and a typo'd role resolves to nothing at emit time with the producer long out of the picture. It is CIR-only —
+# nothing resolves members before bir2cir runs — and every value is a complete reference.
 WELL_KNOWN_TABLE = "wellKnownRefs"
+WELL_KNOWN_ROLES = frozenset({
+    "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
+    "Object.Equals", "Enum.GetValues", "Enum.Parse", "Type.GetMethod", "MethodInfo.Invoke",
+    "Enumerable.GetEnumerator", "Enumerator.MoveNext", "Enumerator.Current", "Enumerator.Reset",
+    "Disposable.Dispose", "Array.IndexOf", "Comparable.CompareTo",
+    "Object.ctor", "NotSupportedException.ctor", "NotSupportedException.ctor0",
+    "IndexOutOfRangeException.ctor",
+})
 
 RETIRED_DESCRIPTORS = (
     "memberSig", "memberOwner", "memberRet",
@@ -592,6 +604,22 @@ class V:
             # that dropped a required field cannot escape validation by no longer looking like one. And
             # `declaringType` — which no other document shape has — catches a resolved identity smuggled in
             # under a key nobody registered, i.e. a second member-identity vocabulary growing beside this one.
+            if WELL_KNOWN_TABLE in o:
+                table = o[WELL_KNOWN_TABLE]
+                if not f.endswith(".cir.json"):
+                    self.err(f, path, f"{WELL_KNOWN_TABLE} is a CIR fact: nothing resolves a member before bir2cir runs")
+                elif not isinstance(table, dict):
+                    self.err(f, path, f"{WELL_KNOWN_TABLE} must be an object mapping a frozen role to its resolved member")
+                else:
+                    for role, ref in table.items():
+                        where = path + "/" + WELL_KNOWN_TABLE + "/" + role
+                        if role not in WELL_KNOWN_ROLES:
+                            self.err(f, where, f"{role!r} is not a frozen fixed-member role; a role nothing asks for "
+                                               "resolves to nothing at emit time")
+                        elif not isinstance(ref, dict):
+                            self.err(f, where, f"the {role!r} entry must be a resolved memberRef")
+                        else:
+                            self.member_ref(f, where, ref)
             for carrier_key in MEMBER_REF_KEYS & set(o):
                 self.member_ref_carrier(f, path + "/" + carrier_key, carrier_key, o[carrier_key])
             if "declaringType" in o:

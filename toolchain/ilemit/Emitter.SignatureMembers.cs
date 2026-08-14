@@ -130,6 +130,7 @@ sealed partial class Emitter
     static ConstructorInfo AnchorConstructor(Type type, ConstructorInfo constructor) =>
         IsTargetSignatureInstantiation(type)
             ? new SignatureConstructor(type, constructor)
+            // #370-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
             : TypeBuilder.GetConstructor(type, constructor);
 
     static FieldInfo AnchorField(Type type, FieldInfo field) =>

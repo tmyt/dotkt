@@ -37,6 +37,7 @@ sealed partial class Emitter
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
             Bcl("System.Object"));
         SetAttribute(_unitAdapterTB.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _unitAdapterTB;
     }
@@ -48,6 +49,7 @@ sealed partial class Emitter
             TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
             Bcl("System.Object"));
         SetAttribute(_delegateInvokeAdapterTB.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _delegateInvokeAdapterTB;
     }
@@ -131,6 +133,7 @@ sealed partial class Emitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             EmitConstructor(il, OpCodes.Newobj, AnchorConstructor(delegateType,
+                // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
                 def.GetConstructor(new[] { Bcl("System.Object"), Bcl("System.IntPtr") })));
             il.Emit(OpCodes.Ret);
             _delegateCtorAdapters[key] = mb;
@@ -185,7 +188,9 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateCtors.TryGetValue(dtb, out var dctor))
             return AnchorConstructor(ft, dctor);
         return (IsGenericInst(ft) && ContainsTypeBuilder(ft))
+            // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
             ? AnchorConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
+            // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
             : ft.GetConstructor(sig);
     }
 

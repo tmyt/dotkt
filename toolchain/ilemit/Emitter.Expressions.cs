@@ -314,7 +314,7 @@ sealed partial class Emitter
                 bool brokenGeneric = iface.IsGenericType && iface.GetGenericTypeDefinition() == Bcl("System.IComparable`1")
                     && IsTbInstantiation(iface) && !recvType.IsGenericParameter;
                 // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-                var mi = brokenGeneric ? Bcl("System.IComparable").GetMethod("CompareTo")! : InterfaceMethodOn(iface, e.GetProperty("method").GetString());
+                var mi = brokenGeneric ? WellKnown<MethodInfo>("Comparable.CompareTo") : InterfaceMethodOn(iface, e.GetProperty("method").GetString());
                 EmitAddr(e.GetProperty("recv"));
                 EmitExpr(e.GetProperty("arg"));
                 if (brokenGeneric) _il.Emit(OpCodes.Box, recvType);   // arg (type T) -> object for CompareTo(object)
@@ -978,6 +978,7 @@ sealed partial class Emitter
                 // `new System.Span<T>(void* ptr, int length)` over the stack buffer -> a real Span for .NET APIs.
                 var elem = MapType(e.GetProperty("elem"));
                 var spanT = ConstructedType(Bcl("System.Span`1"), elem);
+                // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
                 var ctor = spanT.GetConstructor(new[] { Bcl("System.Void").MakePointerType(), Bcl("System.Int32") });
                 EmitExpr(e.GetProperty("ptr"));
                 EmitExpr(e.GetProperty("len"));

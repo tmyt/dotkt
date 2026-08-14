@@ -21,7 +21,7 @@ static partial class ClrMemberResolution
     // emitter can find the entry without knowing the BCL signature by heart.
     static readonly (string Role, string Owner, string Name, string[] Params)[] WellKnownMembers =
     {
-        ("String.Concat2",        "System.String",   "Concat",            new[] { "System.String", "System.String" }),
+        ("String.ConcatArray",    "System.String",   "Concat",            new[] { "System.Object[]" }),
         ("Type.FromHandle",       "System.Type",     "GetTypeFromHandle", new[] { "System.RuntimeTypeHandle" }),
         ("Object.GetType",        "System.Object",   "GetType",           new string[0]),
         ("Object.ToString",       "System.Object",   "ToString",          new string[0]),
@@ -36,6 +36,18 @@ static partial class ClrMemberResolution
         ("Enumerator.Current",    "System.Collections.IEnumerator", "get_Current", new string[0]),
         ("Enumerator.Reset",      "System.Collections.IEnumerator", "Reset",       new string[0]),
         ("Disposable.Dispose",    "System.IDisposable", "Dispose",        new string[0]),
+        ("Array.IndexOf",         "System.Array",    "IndexOf",           new[] { "System.Array", "System.Object" }),
+        ("Comparable.CompareTo",  "System.IComparable", "CompareTo",      new[] { "System.Object" }),
+    };
+
+    // Constructors with a FIXED owner. `newobj` needs a token exactly as `call` does, so these are the same
+    // question — the split that matters is whether the owner varies per site, not whether the member has a name.
+    static readonly (string Role, string Owner, string[] Params)[] WellKnownCtors =
+    {
+        ("Object.ctor",                  "System.Object",                  new string[0]),
+        ("NotSupportedException.ctor",   "System.NotSupportedException",   new[] { "System.String" }),
+        ("NotSupportedException.ctor0",  "System.NotSupportedException",   new string[0]),
+        ("IndexOutOfRangeException.ctor","System.IndexOutOfRangeException", new[] { "System.String" }),
     };
 
     /// <summary>Stamp the fixed-member table on a document root. Every entry resolves or the build stops.</summary>
@@ -46,17 +58,38 @@ static partial class ClrMemberResolution
         var table = new JsonObject();
         foreach (var (role, owner, name, parameters) in WellKnownMembers)
         {
-            var open = ResolveOwnerType(new TypeNode.Fqn(owner));
-            if (open == null) continue;   // a build that cannot see this assembly cannot need the member either
+            var open = ResolveOwnerType(new TypeNode.Fqn(owner))
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: the fixed-member table needs '{owner}' for role '{role}', which does not resolve "
+                    + "to a .NET type (#370)");
             var wanted = parameters.Select(ParseWellKnownParam).ToList();
             var cands = open.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
                 .Where(m => m.Name == name && m.GetParameters().Length == wanted.Count
                     && !m.IsGenericMethodDefinition).ToList();
-            var win = TryPickUnique(cands, wanted, Array.Empty<TypeNode>());
-            if (win == null) continue;
+            // A role that cannot be resolved is a producer defect. Skipping it quietly hands the emitter a
+            // table with a hole in it, and the hole only shows up as a missing member at emit time — one layer
+            // past the one that could say what went wrong.
+            var win = TryPickUnique(cands, wanted, Array.Empty<TypeNode>())
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: '{owner}.{name}({string.Join(", ", parameters)})' does not resolve to one "
+                    + $"declaration for role '{role}' (#370)");
             table[role] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, Array.Empty<TypeNode>());
         }
-        if (table.Count > 0) document["wellKnownRefs"] = table;
+        foreach (var (role, owner, parameters) in WellKnownCtors)
+        {
+            var open = ResolveOwnerType(new TypeNode.Fqn(owner))
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: the fixed-member table needs '{owner}' for role '{role}' (#370)");
+            var wanted = parameters.Select(ParseWellKnownParam).ToList();
+            var cands = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Where(c => !c.IsStatic && c.GetParameters().Length == wanted.Count).ToList();
+            var win = TryPickUniqueCtor(cands, wanted, Array.Empty<TypeNode>())
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: '{owner}..ctor({string.Join(", ", parameters)})' does not resolve to one "
+                    + $"declaration for role '{role}' (#370)");
+            table[role] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, Array.Empty<TypeNode>());
+        }
+        document["wellKnownRefs"] = table;
     }
 
     static TypeNode ParseWellKnownParam(string spec) =>

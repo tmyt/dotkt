@@ -28,6 +28,7 @@ sealed partial class Emitter
         // signal together with compiler-generated embedded metadata carriers before applying Kotlin-only reverse maps.
         const string dotKtMarkerKey = "DotKt.Compiler";
         const string dotKtMarkerValue = "metadata-v1";
+        // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
         var assemblyMetadataCtor = Bcl("System.Reflection.AssemblyMetadataAttribute").GetConstructor(new[] { Bcl("System.String"), Bcl("System.String") });
         SetAttribute(ab.SetCustomAttribute, assemblyMetadataCtor,
             new[] { Bcl("System.String"), Bcl("System.String") }, dotKtMarkerKey, dotKtMarkerValue);
@@ -36,6 +37,7 @@ sealed partial class Emitter
         if (_targetFrameworkMoniker != null)
         {
             var targetFrameworkCtor = Bcl("System.Runtime.Versioning.TargetFrameworkAttribute")
+                // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 .GetConstructor(new[] { Bcl("System.String") });
             SetAttribute(ab.SetCustomAttribute, targetFrameworkCtor,
                 new[] { Bcl("System.String") }, _targetFrameworkMoniker);
