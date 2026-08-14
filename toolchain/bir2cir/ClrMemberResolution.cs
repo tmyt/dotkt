@@ -300,6 +300,10 @@ static partial class ClrMemberResolution
             case "forEachInline": ResolveForEachInline(node); break;
             case "newDelegate": case "newClosure": ResolveUnitSingleton(node); break;
             case "clrEventAccessorImpl": ResolveEventCas(node); break;
+            case "nullableNull": ResolveNullableConversion(node, "nullableNull"); break;
+            case "nullableWrap": ResolveNullableConversion(node, "nullableWrap"); break;
+            case "nullableHasValue": ResolveNullableConversion(node, "nullableHasValue"); break;
+            case "nullableValue": ResolveNullableConversion(node, "nullableValue"); break;
             case "newList": ResolveCollectionTemplate(node, "newList"); break;
             case "newSet": ResolveCollectionTemplate(node, "newSet"); break;
             case "newMap": ResolveCollectionTemplate(node, "newMap"); break;

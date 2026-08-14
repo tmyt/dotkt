@@ -219,4 +219,46 @@ static partial class ClrMemberResolution
         node["compareExchangeRef"] = MemberRefJson(cas[0], MemberRefNode.Kinds.Method, interlocked, Array.Empty<TypeNode>());
         _ = delegateType;
     }
+
+    /// <summary>
+    /// The members a value-type nullability conversion runs through: `Nullable&lt;T&gt;`'s constructor and its two
+    /// accessors.
+    /// </summary>
+    /// <remarks>
+    /// The OWNER varies per site — `Nullable&lt;int&gt;` and `Nullable&lt;char&gt;` are different constructed types with
+    /// different members — so no fixed table can carry these. The node states its element, which is all the
+    /// owner needs, so each conversion names its own three.
+    /// </remarks>
+    static void ResolveNullableConversion(JsonObject node, string kind)
+    {
+        if (node.ContainsKey("ctorRef") || node.ContainsKey("valueRef") || node.ContainsKey("hasValueRef")) return;
+        if (TypeJson.Read(node["elem"]) is not TypeNode elem) return;
+        var args = new[] { elem };
+        var open = ResolveOwnerType(new TypeNode.Fqn(NullableFqn, args))
+            ?? throw new InvalidOperationException(
+                $"bir2cir: {kind} wraps '{NullableFqn}', which does not resolve to a .NET type (#370)");
+        var element = new TypeNode.Tv("type", 0);
+
+        if (kind is "nullableNull" or "nullableWrap")
+        {
+            var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+                .Where(c => c.GetParameters().Length == 1).ToList();
+            node["ctorRef"] = MemberRefJson(
+                TryPickUniqueCtor(ctors, new List<TypeNode> { element }, args)
+                    ?? throw new InvalidOperationException(
+                        $"bir2cir: '{NullableFqn}' has no unique one-argument constructor for {kind} (#370)"),
+                MemberRefNode.Kinds.Ctor, open, args);
+            return;
+        }
+        var accessor = kind == "nullableHasValue" ? "get_HasValue" : "get_Value";
+        var cands = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == accessor && m.GetParameters().Length == 0).ToList();
+        node[kind == "nullableHasValue" ? "hasValueRef" : "valueRef"] = MemberRefJson(
+            TryPickUnique(cands, new List<TypeNode>(), args)
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: '{NullableFqn}.{accessor}' does not resolve to one declaration for {kind} (#370)"),
+            MemberRefNode.Kinds.PropertyAccessor, open, args);
+    }
+
+    const string NullableFqn = "System.Nullable";
 }

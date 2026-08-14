@@ -30,7 +30,7 @@ sealed partial class Emitter
         _il.MarkLabel(has);
         _il.Emit(OpCodes.Unbox_Any, elem);
         // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
-        EmitConstructor(_il, OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
+        EmitConstructor(_il, OpCodes.Newobj, RequiredRef<ConstructorInfo>(e, "ctorRef", "a nullable conversion"));
         _il.MarkLabel(done);
         return nt;
     }
@@ -53,7 +53,7 @@ sealed partial class Emitter
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
         EmitExpr(e.GetProperty("e"));
         // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
-        EmitConstructor(_il, OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
+        EmitConstructor(_il, OpCodes.Newobj, RequiredRef<ConstructorInfo>(e, "ctorRef", "a nullable conversion"));
         return nt;
     }
 
@@ -65,7 +65,7 @@ sealed partial class Emitter
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Stloc, loc);
         _il.Emit(OpCodes.Ldloca, loc);
-        EmitMethod(_il, OpCodes.Call, nt.GetProperty("HasValue").GetGetMethod());
+        EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e, "hasValueRef", "a nullable conversion"));
         return Bcl("System.Boolean");
     }
 
@@ -88,7 +88,7 @@ sealed partial class Emitter
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Stloc, loc);
         _il.Emit(OpCodes.Ldloca, loc);
-        EmitMethod(_il, OpCodes.Call, nt.GetProperty("Value").GetGetMethod());
+        EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e, "valueRef", "a nullable conversion"));
         return elem;
     }
 

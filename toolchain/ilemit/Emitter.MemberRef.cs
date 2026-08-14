@@ -17,6 +17,7 @@
 // reference names what the emitter links today. It disappears with the descriptors it compares against.
 
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Text;
 using System.Text.Json;
 using DotKt.Bir;
@@ -29,6 +30,69 @@ sealed partial class Emitter
 
     readonly Dictionary<string, MemberInfo> _wellKnown = new(StringComparer.Ordinal);
 
+    /// <summary>Members whose identity a RESOLVED reference supplied, plus the sanctioned residual.</summary>
+    readonly HashSet<(Module, int)> _provenance = new();
+    /// <summary>Set once the check has something to check against; before that every build would trip it.</summary>
+    bool _auditArmed;
+
+    /// <summary>
+    /// Record that this member's identity came from somewhere #370 sanctions.
+    /// </summary>
+    /// <remarks>
+    /// Three previous versions of the residual gate matched SOURCE SHAPES — a name written, a name computed, a
+    /// candidate set filtered — and each one reported green while a shape it did not match was live. Shapes are
+    /// endless; the property is not. This records provenance at the few places identity legitimately comes from,
+    /// and the emit chokepoints check it, so HOW a member was found stops mattering.
+    /// </remarks>
+    MemberInfo Sanction(MemberInfo member)
+    {
+        if (Token(member) is { } key) _provenance.Add(key);
+        return member;
+    }
+
+    T Sanction<T>(T member) where T : MemberInfo { Sanction((MemberInfo)member); return member; }
+
+    static (Module, int)? Token(MemberInfo member)
+    {
+        try
+        {
+            var m = UnwrapSignatureView(member);
+            return m == null ? null : (m.Module, m.MetadataToken);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// Refuse to encode an EXTERNAL member whose identity no resolved reference supplied.
+    /// </summary>
+    /// <remarks>
+    /// A member of the assembly under construction has no reference to come from — that is the local axis (#395).
+    /// Everything else reaching an operand or a MethodImpl must have arrived named.
+    /// </remarks>
+    void AuditExternal(MemberInfo member, string position)
+    {
+        if (!_auditArmed || member == null) return;
+        try
+        {
+            var m = UnwrapSignatureView(member);
+            if (m?.Module is ModuleBuilder or null) return;             // being built here
+            if (m.DeclaringType is TypeBuilder) return;                 // ditto, through a constructed view
+            if (Token(m) is not { } key || _provenance.Contains(key)) return;
+            // Inventory mode: one run lists every unsanctioned member instead of stopping at the first.
+            if (Environment.GetEnvironmentVariable("ILEMIT_AUDIT_LIST") != null)
+            {
+                Console.Error.WriteLine($"AUDIT {position}: {Describe(m)}");
+                return;
+            }
+            throw new InvalidOperationException(
+                $"ilemit: {position} names the external member {Describe(m)}, whose identity no resolved reference "
+                + "supplied. Every external member ilemit consumes arrives named (#370); if this one cannot, "
+                + "sanction it explicitly and say why in docs/architecture.md invariant 10.");
+        }
+        catch (InvalidOperationException) { throw; }
+        catch { /* a member whose module cannot be read cannot be audited */ }
+    }
+
     /// <summary>
     /// Load the document's table of fixed BCL members — the ones a Kotlin operation EXPANDS into.
     /// </summary>
@@ -40,6 +104,7 @@ sealed partial class Emitter
     /// </remarks>
     void LoadWellKnown(IEnumerable<JsonElement> files)
     {
+        _auditArmed = true;
         foreach (var file in files)
         {
             if (file.ValueKind != JsonValueKind.Object
@@ -62,7 +127,7 @@ sealed partial class Emitter
                                 + $"`{entry.Name}`: {Describe(already)} and {Describe(resolved)}");
                         continue;
                     }
-                    _wellKnown[entry.Name] = resolved;
+                    _wellKnown[entry.Name] = Sanction(resolved);
                 }
                 catch (Exception ex)
                 {
@@ -94,11 +159,12 @@ sealed partial class Emitter
     /// <summary>The member a reference names, resolved exactly. Never a search.</summary>
     MemberInfo ResolveMemberRef(MemberRefNode reference)
     {
+        // Whatever this returns came from a reference; record it before anything wraps or anchors it.
         var owner = OpenOwnerOf(reference);
         MemberInfo found = reference.Kind == MemberRefNode.Kinds.Field
             ? MatchField(owner, reference)
             : (MemberInfo)MatchMethodBase(owner, reference);
-        return found;
+        return Sanction(found);
     }
 
     /// <summary>The DECLARING type, resolved in the assembly the reference names — never searched for.</summary>

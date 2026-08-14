@@ -232,11 +232,17 @@ sealed partial class Emitter
         return new SignatureMethod(owner, method, methodArguments);
     }
 
-    static void WireMethodOverride(TypeBuilder owner, MethodInfo body, MethodInfo declaration) =>
+    void WireMethodOverride(TypeBuilder owner, MethodInfo body, MethodInfo declaration)
+    {
+        AuditExternal(declaration, "a MethodImpl target");
         owner.DefineMethodOverride(body, PersistableMethod(declaration));
+    }
 
-    static void EmitMethod(ILGenerator il, OpCode opcode, MethodInfo method) =>
+    void EmitMethod(ILGenerator il, OpCode opcode, MethodInfo method)
+    {
+        AuditExternal(method, "a call operand");
         il.Emit(opcode, PersistableMethod(method));
+    }
 
     static ConstructorInfo PersistableConstructor(ConstructorInfo constructor)
     {
@@ -251,8 +257,11 @@ sealed partial class Emitter
         return new SignatureConstructor(owner, constructor);
     }
 
-    static void EmitConstructor(ILGenerator il, OpCode opcode, ConstructorInfo constructor) =>
+    void EmitConstructor(ILGenerator il, OpCode opcode, ConstructorInfo constructor)
+    {
+        AuditExternal(constructor, "a newobj operand");
         il.Emit(opcode, PersistableConstructor(constructor));
+    }
 
     static FieldInfo PersistableField(FieldInfo field)
     {
@@ -267,8 +276,11 @@ sealed partial class Emitter
         return new SignatureField(owner, field);
     }
 
-    static void EmitField(ILGenerator il, OpCode opcode, FieldInfo field) =>
+    void EmitField(ILGenerator il, OpCode opcode, FieldInfo field)
+    {
+        AuditExternal(field, "a field operand");
         il.Emit(opcode, PersistableField(field));
+    }
 
     static Type SubstituteSignatureType(Type type, Type declaringType, Type[] ownerArguments,
         Type[] methodParameters = null, Type[] methodArguments = null)

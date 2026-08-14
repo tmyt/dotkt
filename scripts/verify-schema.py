@@ -28,7 +28,7 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 # catches a parallel member-identity spelling invented under some other key.
 MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef",
                     "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef", "unitInstanceRef",
-                    "combineRef", "removeRef", "compareExchangeRef"}
+                    "combineRef", "removeRef", "compareExchangeRef", "hasValueRef", "valueRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -51,6 +51,8 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "combineRef": {"method"},
     "removeRef": {"method"},
     "compareExchangeRef": {"method"},
+    "hasValueRef": {"method", "propertyAccessor"},
+    "valueRef": {"method", "propertyAccessor"},
 }
 
 # A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such
