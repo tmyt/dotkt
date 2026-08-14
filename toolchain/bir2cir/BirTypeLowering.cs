@@ -535,9 +535,10 @@ static class BirTypeLowering
     internal static TypeNode.Fqn DelegateFqnOf(TypeNode.Fn lowered)
     {
         if (lowered.Clr == null) return null;
-        var args = new List<TypeNode>();
-        if (lowered.Recv != null) args.Add(lowered.Recv);
-        args.AddRange(lowered.Params);
+        // DelegateParams is the shared property the EMITTER builds its delegate from — it prepends an extension
+        // receiver so a receiver-lambda and the flat closure bound to it land on the same CLR delegate. Rebuilding
+        // that list here instead is a second implementation of one decision, and the two disagreed.
+        var args = new List<TypeNode>(lowered.DelegateParams);
         bool returnsVoid = lowered.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
         if (!returnsVoid) args.Add(lowered.Ret);
         return args.Count == 0

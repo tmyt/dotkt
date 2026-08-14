@@ -887,8 +887,10 @@ sealed partial class Emitter
                         && !IsValueType(got) && !got.IsGenericParameter && got != want)
                         _il.Emit(OpCodes.Unbox_Any, want);
                 }
-                // The node names the Invoke it calls; the delegate type it lowered to determines it.
-                EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "invokeRef", "a function-type call"));
+                // The node names the DECLARATION it calls through; the delegate value on the stack is what it
+                // gets anchored onto. Emitting the declaration unanchored is emitting a member of the open
+                // definition, which the constructed type has no token for.
+                EmitDelegateInvoke(_il, ft, RequiredRef<MethodInfo>(e, "invokeRef", "a function-type call"));
                 return FuncRetType(ftNode);
             }
             case "newClosure":

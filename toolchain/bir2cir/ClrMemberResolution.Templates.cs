@@ -278,19 +278,26 @@ static partial class ClrMemberResolution
         // calls, and that expression is a node with a function type of its own — one level down, same fact.
         var stated = TypeJson.Read(node["funcType"]) ?? TypeJson.Read(node["clrType"])
             ?? TypeJson.Read((node[typeKey] as JsonObject)?["funcType"]) ?? TypeJson.Read(node[typeKey]);
-        if (stated == null) return;
+        if (stated == null)
+            throw new InvalidOperationException(
+                $"bir2cir: a function-type call states no type under funcType/clrType/{typeKey} (#370)");
         // The document states the Kotlin function type; the lowering already turned it into the delegate the
         // value physically is. Ask that same lowering rather than re-deriving the delegate here.
         var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
         if (physical is TypeNode.Fn fnNode)
             physical = BirTypeLowering.DelegateFqnOf(
                 (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
-        if (physical is not TypeNode.Fqn { Args: { Length: > 0 } } delegateFqn) return;
-        var open = ResolveOwnerType(delegateFqn);
-        if (open == null) return;
+        if (physical is not TypeNode.Fqn delegateFqn)
+            throw new InvalidOperationException(
+                $"bir2cir: a function-type call lowers to {TypeNode.ToJson(physical)}, which is not a named type (#370)");
+        var open = ResolveOwnerType(delegateFqn)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type (#370)");
         var invoke = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.Name == "Invoke").ToList();
-        if (invoke.Count != 1) return;
+        if (invoke.Count != 1)
+            throw new InvalidOperationException(
+                $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one (#370)");
         node["invokeRef"] = MemberRefJson(invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args);
     }
 
