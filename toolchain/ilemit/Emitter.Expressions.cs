@@ -980,7 +980,8 @@ sealed partial class Emitter
                 var elem = MapType(e.GetProperty("elem"));
                 var spanT = ConstructedType(Bcl("System.Span`1"), elem);
                 // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
-                var ctor = spanT.GetConstructor(new[] { Bcl("System.Void").MakePointerType(), Bcl("System.Int32") });
+                // The declaration is fixed; the element this site computed is what it anchors onto.
+                var ctor = AnchorConstructor(spanT, WellKnown<ConstructorInfo>("SpanT.ctorPointer"));
                 EmitExpr(e.GetProperty("ptr"));
                 EmitExpr(e.GetProperty("len"));
                 EmitConstructor(_il, OpCodes.Newobj, ctor);

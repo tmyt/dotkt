@@ -65,6 +65,8 @@ static partial class ClrMemberResolution
         // The OPEN `Nullable<T>..ctor(T)`. A coercion computes the constructed owner from the slot it is filling,
         // which no document states — but the declaration does not vary, and anchoring is mechanical.
         ("NullableT.ctor",               "System.Nullable`1",              new[] { "!0" }),
+        // `Span<T>(void*, int)` — the stackalloc interop shape. Open declaration, anchored on the site's element.
+        ("SpanT.ctorPointer",            "System.Span`1",                  new[] { "System.Void*", "System.Int32" }),
     };
 
     /// <summary>Stamp the fixed-member table on a document root. Every entry resolves or the build stops.</summary>
@@ -130,6 +132,7 @@ static partial class ClrMemberResolution
     }
 
     static TypeNode ParseWellKnownParam(string spec) =>
+        spec.EndsWith("*", StringComparison.Ordinal) ? new TypeNode.Ptr(new TypeNode.Fqn(spec[..^1])) :
         spec.StartsWith("!", StringComparison.Ordinal) ? new TypeNode.Tv("type", int.Parse(spec[1..])) :
         spec.EndsWith("[]", StringComparison.Ordinal)
             ? new TypeNode.Array(new TypeNode.Fqn(spec[..^2]))
