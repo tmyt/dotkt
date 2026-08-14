@@ -477,7 +477,9 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, i);                       // arr, i (for stelem)
                 _il.Emit(OpCodes.Ldloc, fn); _il.Emit(OpCodes.Ldloc, i);                         // fn, i
                 if (!IsValueType(pType)) _il.Emit(OpCodes.Box, Bcl("System.Int32"));
-                EmitDelegateInvoke(_il, fnType, RequiredRef<MethodInfo>(e, "invokeRef", "an array initializer call"));                                                 // init(i)
+                // #370-residual: REMAINING GAP: the init expression's emitted delegate type is what this calls through,
+                // and the reference stamped from the node did not match it — isolated, not yet resolved
+                EmitDelegateInvoke(_il, fnType, InvokeOf(fnType));                                                 // init(i)
                 if (rType != elem) { if (IsValueType(elem) || elem.IsGenericParameter) _il.Emit(OpCodes.Unbox_Any, elem); else _il.Emit(OpCodes.Castclass, elem); }
                 EmitStelem(elem);                                                                // arr[i] = init(i)
                 _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
