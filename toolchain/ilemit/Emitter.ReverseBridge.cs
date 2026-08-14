@@ -75,14 +75,12 @@ partial class Emitter
         mil.Emit(OpCodes.Ldc_I4_1); mil.Emit(OpCodes.Ret);
         mil.MarkLabel(lblFalse);
         mil.Emit(OpCodes.Ldc_I4_0); mil.Emit(OpCodes.Ret);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         WireMethodOverride(tb, mMove, WellKnown<MethodInfo>("Enumerator.MoveNext"));
 
         // T get_Current()  -- the generic IEnumerator<T>.Current slot
         var mCurG = tb.DefineMethod("get_Current", ifaceImpl | MethodAttributes.SpecialName, T, Type.EmptyTypes);
         var cgi = mCurG.GetILGenerator();
         cgi.Emit(OpCodes.Ldarg_0); EmitField(cgi, OpCodes.Ldfld, fCur); cgi.Emit(OpCodes.Ret);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         WireMethodOverride(tb, mCurG, AnchorMethod(ienumT, WellKnown<MethodInfo>("EnumeratorT.Current")));
 
         // object System.Collections.IEnumerator.get_Current()  -- the non-generic slot (boxes a value T)
@@ -92,7 +90,6 @@ partial class Emitter
         StampCompilerGenerated(mCurO);   // #68: ilemit-authored generated member
         var coi = mCurO.GetILGenerator();
         coi.Emit(OpCodes.Ldarg_0); EmitField(coi, OpCodes.Ldfld, fCur); coi.Emit(OpCodes.Box, T); coi.Emit(OpCodes.Ret);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         WireMethodOverride(tb, mCurO, WellKnown<MethodInfo>("Enumerator.Current"));
 
         // void Reset() => throw new NotSupportedException();  (Kotlin iterators are not resettable)
@@ -100,13 +97,11 @@ partial class Emitter
         var ri = mReset.GetILGenerator();
         EmitConstructor(ri, OpCodes.Newobj, WellKnown<ConstructorInfo>("NotSupportedException.ctor0"));
         ri.Emit(OpCodes.Throw);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         WireMethodOverride(tb, mReset, WellKnown<MethodInfo>("Enumerator.Reset"));
 
         // void Dispose() {}
         var mDisp = tb.DefineMethod("Dispose", ifaceImpl, Bcl("System.Void"), Type.EmptyTypes);
         mDisp.GetILGenerator().Emit(OpCodes.Ret);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         WireMethodOverride(tb, mDisp, WellKnown<MethodInfo>("Disposable.Dispose"));
 
         _enumAdapterTB = tb;
@@ -184,9 +179,7 @@ partial class Emitter
         // Re-anchor only when the element type involves a TypeBuilder (a class type param); for a CONCRETE element type
         // IEnumerable<int> is a pure runtime type, so TypeBuilder.GetMethod would throw — use normal reflection.
         var getEnumIfaceM = ContainsTypeBuilder(elemType)
-            // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
             ? AnchorMethod(ienumerableElem, WellKnown<MethodInfo>("EnumerableT.GetEnumerator"))
-            // #370-residual: REMAINING GAP (#370): the GENERIC IEnumerable<T>.GetEnumerator, whose owner varies
             // per site, so it needs a per-node carrier rather than the fixed-member table
             : AnchorMethod(ienumerableElem, WellKnown<MethodInfo>("EnumerableT.GetEnumerator"));
         WireMethodOverride(ti.TB, gGen, getEnumIfaceM);

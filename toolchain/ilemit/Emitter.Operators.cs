@@ -256,7 +256,6 @@ sealed partial class Emitter
             if (NeedsBoxToRef(t)) _il.Emit(OpCodes.Box, t);
             _il.Emit(OpCodes.Stelem_Ref);
         }
-        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("String.ConcatArray"));
         return Bcl("System.String");
     }
