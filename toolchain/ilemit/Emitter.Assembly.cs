@@ -530,9 +530,17 @@ sealed partial class Emitter
                         // OR a generic STDLIB interface instantiated even with a concrete arg) is a TypeBuilderInstantiation
                         // whose .GetMethods() throws. Try GetMethods; on failure, enumerate the OPEN definition's methods
                         // and re-anchor each to the instantiation via TypeBuilder.GetMethod.
-                        MethodInfo[] ifaceMs; bool reanchor;
-                        try { ifaceMs = itype.GetMethods(); reanchor = false; }
-                        catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
+                        MethodInfo[] ifaceMs; bool reanchor; Type slotOwner;
+                        try { ifaceMs = itype.GetMethods(); reanchor = false; slotOwner = itype; }
+                        catch (NotSupportedException)
+                        {
+                            slotOwner = itype.GetGenericTypeDefinition();
+                            ifaceMs = slotOwner.GetMethods(); reanchor = true;
+                        }
+                        // The slots are named on the type that implements them. Only the member SET is replaced:
+                        // which face to anchor against was decided just above, by the reflection that either
+                        // worked or did not, and that is not a decision a reference can make.
+                        if (NamedInterfaceSlots(ti, slotOwner) is { } named) ifaceMs = named;
                         // Reflection's GetMethods() omits a referenced interface's inherited slots. bir2cir's resolved
                         // MethodImpl descriptors name each exact DECLARING interface, and those owners were seeded into
                         // this worklist above. Consume the descriptor when that owner is dequeued; probing base interfaces

@@ -81,7 +81,7 @@ partial class Emitter
         var mCurG = tb.DefineMethod("get_Current", ifaceImpl | MethodAttributes.SpecialName, T, Type.EmptyTypes);
         var cgi = mCurG.GetILGenerator();
         cgi.Emit(OpCodes.Ldarg_0); EmitField(cgi, OpCodes.Ldfld, fCur); cgi.Emit(OpCodes.Ret);
-        WireMethodOverride(tb, mCurG, AnchorMethod(ienumT, WellKnown<MethodInfo>("EnumeratorT.Current")));
+        WireMethodOverride(tb, mCurG, AnchorOn(ienumT, WellKnown<MethodInfo>("EnumeratorT.Current")));
 
         // object System.Collections.IEnumerator.get_Current()  -- the non-generic slot (boxes a value T)
         var mCurO = tb.DefineMethod("dotkt$NonGenericCurrent",
@@ -178,10 +178,7 @@ partial class Emitter
         gi.Emit(OpCodes.Ret);
         // Re-anchor only when the element type involves a TypeBuilder (a class type param); for a CONCRETE element type
         // IEnumerable<int> is a pure runtime type, so TypeBuilder.GetMethod would throw — use normal reflection.
-        var getEnumIfaceM = ContainsTypeBuilder(elemType)
-            ? AnchorMethod(ienumerableElem, WellKnown<MethodInfo>("EnumerableT.GetEnumerator"))
-            // per site, so it needs a per-node carrier rather than the fixed-member table
-            : AnchorMethod(ienumerableElem, WellKnown<MethodInfo>("EnumerableT.GetEnumerator"));
+        var getEnumIfaceM = AnchorOn(ienumerableElem, WellKnown<MethodInfo>("EnumerableT.GetEnumerator"));
         WireMethodOverride(ti.TB, gGen, getEnumIfaceM);
         ti.Methods["GetEnumerator"] = gGen;
 

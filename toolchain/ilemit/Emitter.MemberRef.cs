@@ -132,6 +132,54 @@ sealed partial class Emitter
         }
     }
 
+    /// <summary>
+    /// Put a named DECLARATION onto the owner this site holds.
+    /// </summary>
+    /// <remarks>
+    /// Two mechanisms, one rule. An instantiation over a type still being emitted needs Reflection.Emit's own
+    /// re-anchoring; a pure runtime one reflects the declaration back by metadata token, and TypeBuilder.GetMethod
+    /// throws on it. Every site that names a member and anchors it goes through here, because doing that branch
+    /// by hand at each site is how several of them ended up with only one of the two arms.
+    /// </remarks>
+    MethodInfo AnchorOn(Type owner, MethodInfo declaration) =>
+        ContainsTypeBuilder(owner) ? AnchorMethod(owner, declaration)
+            : ReflectOnConstructed(owner, declaration) as MethodInfo ?? declaration;
+
+    ConstructorInfo AnchorOn(Type owner, ConstructorInfo declaration) =>
+        ContainsTypeBuilder(owner) ? AnchorConstructor(owner, declaration)
+            : ReflectOnConstructed(owner, declaration) as ConstructorInfo ?? declaration;
+
+    /// <summary>
+    /// The slots of one external interface as the implementing type named them, or null when the document named
+    /// none — which is what an interface this compilation emits looks like.
+    /// </summary>
+    /// <remarks>
+    /// `owner` is whichever face the caller will anchor against: the constructed interface when it can be
+    /// reflected on, its open definition when it cannot. Substituting only the member SET leaves that decision
+    /// where it was — it is made by trying the reflection and catching, and no predicate reproduces that.
+    /// </remarks>
+    MethodInfo[] NamedInterfaceSlots(TypeInfo ti, Type owner)
+    {
+        if (ti.Def.ValueKind != JsonValueKind.Object
+            || !ti.Def.TryGetProperty("interfaceSlotRefs", out var slots)
+            || slots.ValueKind != JsonValueKind.Array) return null;
+        var found = new List<MethodInfo>();
+        foreach (var slot in slots.EnumerateArray())
+        {
+            if (slot.ValueKind != JsonValueKind.Object) continue;
+            MemberInfo resolved;
+            try { resolved = ResolveMemberRef(MemberRefNode.Read(slot)); } catch { continue; }
+            if (resolved is not MethodInfo m || m.DeclaringType is not { } declaring) continue;
+            var declaringDef = declaring.IsGenericType && !declaring.IsGenericTypeDefinition
+                ? declaring.GetGenericTypeDefinition() : declaring;
+            var ownerDef = owner.IsGenericType && !owner.IsGenericTypeDefinition
+                ? owner.GetGenericTypeDefinition() : owner;
+            if (declaringDef != ownerDef) continue;
+            found.Add(owner == ownerDef ? m : ReflectOnConstructed(owner, m) as MethodInfo ?? m);
+        }
+        return found.Count > 0 ? found.ToArray() : null;
+    }
+
     /// <summary>The fixed BCL member a role names. Absent means the producer did not state it.</summary>
     T WellKnown<T>(string role) where T : MemberInfo =>
         _wellKnown.TryGetValue(role, out var m) && m is T typed ? typed

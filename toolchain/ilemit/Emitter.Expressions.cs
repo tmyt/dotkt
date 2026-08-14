@@ -979,7 +979,7 @@ sealed partial class Emitter
                 var elem = MapType(e.GetProperty("elem"));
                 var spanT = ConstructedType(Bcl("System.Span`1"), elem);
                 // The declaration is fixed; the element this site computed is what it anchors onto.
-                var ctor = AnchorConstructor(spanT, WellKnown<ConstructorInfo>("SpanT.ctorPointer"));
+                var ctor = AnchorOn(spanT, WellKnown<ConstructorInfo>("SpanT.ctorPointer"));
                 EmitExpr(e.GetProperty("ptr"));
                 EmitExpr(e.GetProperty("len"));
                 EmitConstructor(_il, OpCodes.Newobj, ctor);

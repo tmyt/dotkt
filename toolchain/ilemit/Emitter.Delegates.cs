@@ -91,7 +91,7 @@ sealed partial class Emitter
             var il = mb.GetILGenerator();
             for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
             // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
-            EmitMethod(il, OpCodes.Callvirt, AnchorMethod(delegateType, openInvoke));
+            EmitMethod(il, OpCodes.Callvirt, AnchorOn(delegateType, openInvoke));
             il.Emit(OpCodes.Ret);
             _delegateInvokeAdapters[key] = mb;
         }
@@ -103,7 +103,7 @@ sealed partial class Emitter
     void EmitDelegateInvoke(ILGenerator il, Type ft, MethodInfo openInvoke)
     {
         if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateInvokeAdapter(ft, openInvoke));
-        else EmitMethod(il, OpCodes.Callvirt, AnchorMethod(ft, openInvoke));
+        else EmitMethod(il, OpCodes.Callvirt, AnchorOn(ft, openInvoke));
     }
 
     // The same PersistedAssemblyBuilder limitation applies to the delegate `.ctor`: it cannot map

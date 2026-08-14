@@ -136,3 +136,57 @@ static partial class ClrMemberResolution
             ? new TypeNode.Array(new TypeNode.Fqn(spec[..^2]))
             : new TypeNode.Fqn(spec);
 }
+
+static partial class ClrMemberResolution
+{
+    /// <summary>
+    /// Every slot of every EXTERNAL interface a type declares, named on the type that implements them.
+    /// </summary>
+    /// <remarks>
+    /// The emitter wires a MethodImpl for each slot of each interface it does not itself emit, and it enumerates
+    /// those slots off the interface by reflection — the last external member reaching an operand unnamed. The
+    /// existing `clrInterfaceImpls` descriptors do not cover this: individual bridge passes author them for the
+    /// slots THOSE passes create, while an implicitly implemented slot has no descriptor at all.
+    ///
+    /// Which BODY fills each slot stays the emitter's question — that member belongs to the assembly being
+    /// built, which is the local axis. What arrives named is the slot the MethodImpl points AT.
+    /// </remarks>
+    public static void ResolveInterfaceSlots(JsonNode root, ReferenceMetadataIndex refs)
+    {
+        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        WalkTypesForSlots(root);
+    }
+
+    static void WalkTypesForSlots(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                if (obj["interfaces"] is JsonArray ifaces && obj["name"] is JsonValue) StampInterfaceSlots(obj, ifaces);
+                foreach (var kv in obj) if (kv.Value != null) WalkTypesForSlots(kv.Value);
+                break;
+            case JsonArray arr:
+                foreach (var it in arr) if (it != null) WalkTypesForSlots(it);
+                break;
+        }
+    }
+
+    static void StampInterfaceSlots(JsonObject type, JsonArray ifaces)
+    {
+        if (type.ContainsKey("interfaceSlotRefs")) return;
+        var slots = new JsonArray();
+        foreach (var entry in ifaces)
+        {
+            if (TypeJson.Read(entry) is not TypeNode.Fqn iface) continue;
+            var open = ResolveOwnerType(iface);
+            if (open == null) continue;   // an interface this compilation emits has no reference to make
+            var args = iface.Args ?? Array.Empty<TypeNode>();
+            foreach (var m in open.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (m.IsGenericMethodDefinition) continue;
+                slots.Add(MemberRefJson(m, MemberRefNode.Kinds.Method, open, args));
+            }
+        }
+        if (slots.Count > 0) type["interfaceSlotRefs"] = slots;
+    }
+}

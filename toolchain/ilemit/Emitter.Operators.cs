@@ -279,7 +279,7 @@ sealed partial class Emitter
             // the ctor on the MakeGenericType — use TypeBuilder.GetConstructor(constructed, open Nullable<>'s ctor).
             // The declaration is fixed — `Nullable<T>..ctor(T)` — and the owner this coercion computed is what
             // it gets anchored onto. Same shape as every other open declaration named once and anchored per use.
-            var ctor = AnchorConstructor(want, WellKnown<ConstructorInfo>("NullableT.ctor"));
+            var ctor = AnchorOn(want, WellKnown<ConstructorInfo>("NullableT.ctor"));
             EmitConstructor(_il, OpCodes.Newobj, ctor);
             return want;
         }

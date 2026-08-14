@@ -82,6 +82,10 @@ DECLARATION_REF_PAIRS = (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner"
 # and a typo'd role resolves to nothing at emit time with the producer long out of the picture. It is CIR-only —
 # nothing resolves members before bir2cir runs — and every value is a complete reference.
 WELL_KNOWN_TABLE = "wellKnownRefs"
+
+# Every slot of every external interface a type declares, named on the type. CIR-only, like every resolved
+# identity: nothing resolves a member before bir2cir runs.
+INTERFACE_SLOTS = "interfaceSlotRefs"
 WELL_KNOWN_ROLES = frozenset({
     "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
     "Object.Equals", "Enum.GetValues", "Enum.Parse", "Type.GetMethod", "MethodInfo.Invoke",
@@ -611,6 +615,19 @@ class V:
             # that dropped a required field cannot escape validation by no longer looking like one. And
             # `declaringType` — which no other document shape has — catches a resolved identity smuggled in
             # under a key nobody registered, i.e. a second member-identity vocabulary growing beside this one.
+            if INTERFACE_SLOTS in o:
+                slots = o[INTERFACE_SLOTS]
+                if not f.endswith(".cir.json"):
+                    self.err(f, path, f"{INTERFACE_SLOTS} is a CIR fact: nothing resolves a member before bir2cir runs")
+                elif not isinstance(slots, list):
+                    self.err(f, path, f"{INTERFACE_SLOTS} must be an array of resolved member references")
+                else:
+                    for i, ref in enumerate(slots):
+                        where = f"{path}/{INTERFACE_SLOTS}[{i}]"
+                        if not isinstance(ref, dict):
+                            self.err(f, where, "an interface slot must be a resolved memberRef")
+                        else:
+                            self.member_ref(f, where, ref)
             if WELL_KNOWN_TABLE in o:
                 table = o[WELL_KNOWN_TABLE]
                 if not f.endswith(".cir.json"):
@@ -634,7 +651,8 @@ class V:
                 # The fixed-member table is keyed by ROLE, not by carrier: its whole point is that one container
                 # says every member an expansion needs, so its keys are what the emitter asks for rather than
                 # names the contract froze. Its VALUES are still full references and are checked as such.
-                in_table = "/" + WELL_KNOWN_TABLE + "/" in path + "/"
+                in_table = ("/" + WELL_KNOWN_TABLE + "/" in path + "/"
+                            or "/" + INTERFACE_SLOTS + "[" in path)
                 if in_table:
                     self.member_ref(f, path, o)
                 elif carrier not in MEMBER_REF_KEYS:
