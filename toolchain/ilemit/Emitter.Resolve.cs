@@ -228,23 +228,6 @@ sealed partial class Emitter
     static bool ContainsGenericParam(Type t) =>
         t.IsGenericParameter || (t.IsGenericType && t.GetGenericArguments().Any(ContainsGenericParam));
 
-    static ConstructorInfo GenericCtor(Type constructed, params Type[] argTypes) =>
-        IsTbInstantiation(constructed)
-            // #370-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
-            ? AnchorConstructor(constructed, constructed.GetGenericTypeDefinition().GetConstructor(argTypes))
-            // #370-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
-            : constructed.GetConstructor(argTypes);
-
-    static MethodInfo GenericMethod(Type constructed, string name) =>
-        IsTbInstantiation(constructed)
-            // #370-residual: anchoring an ALREADY-resolved method onto a constructed owner, not choosing one
-            ? AnchorMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
-            // Runtime 10.0.10's PAB asks the returned ParameterInfo graph for modifier-aware Types. MLC's raw
-            // RoModifiedType deliberately leaves several structural reflection APIs unsupported, so route the
-            // already-selected member through the same signature adapter used for TypeSpec anchoring.
-            // #370-residual: anchoring an ALREADY-resolved method onto a constructed owner, not choosing one
-            : PersistableMethod(constructed.GetMethod(name));
-
     // Substitute an open TYPE's own generic parameters (positionally = `typeArgs`) throughout a member reference as
     // declared on that open def — including CONSTRUCTED args (`ICollection<KeyValuePair<K,V>>` with
     // K:=string,V:=int -> `ICollection<KeyValuePair<string,int>>`). Re-anchoring is onto the OWNER's instantiation and

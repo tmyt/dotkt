@@ -316,30 +316,6 @@ sealed partial class Emitter
 
     static string LoopLabel(JsonElement s) => s.TryGetProperty("label", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
 
-    // Enumerate an IEnumerable<elemT> `src`, binding each element to a fresh local passed to `body`.
-    void EmitForEachOf(JsonElement src, Type elemT, Action<LocalBuilder> body)
-    {
-        var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elemT);
-        var ienumrT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elemT);
-        EmitExpr(src);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
-        EmitMethod(_il, OpCodes.Callvirt, ienumT.GetMethod("GetEnumerator"));
-        var en = _il.DeclareLocal(ienumrT); _il.Emit(OpCodes.Stloc, en);
-        var x = _il.DeclareLocal(elemT);
-        var start = _il.DefineLabel(); var end = _il.DefineLabel();
-        _il.MarkLabel(start);
-        _il.Emit(OpCodes.Ldloc, en);
-        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Enumerator.MoveNext"));
-        _il.Emit(OpCodes.Brfalse, end);
-        _il.Emit(OpCodes.Ldloc, en);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
-        EmitMethod(_il, OpCodes.Callvirt, ienumrT.GetMethod("get_Current"));
-        _il.Emit(OpCodes.Stloc, x);
-        body(x);
-        _il.Emit(OpCodes.Br, start);
-        _il.MarkLabel(end);
-    }
-
     // Emit `value` COERCED to the store target's type — the ONE shared RHS coercion for every store site
     // (var init, setLocal into a local/arg, setField/setFieldExpr via setter or field, staticFieldSet):
     //  - `T`/null-const stored into a `Nullable<T>` slot -> wrap / default(Nullable<T>) (EmitNullableCoerced);
