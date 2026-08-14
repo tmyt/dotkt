@@ -38,16 +38,6 @@
                   "name": "System.Int32"
                 }
               ]
-            },
-            "memberSig": [
-              {
-                "t": "fqn",
-                "name": "System.Int32"
-              }
-            ],
-            "memberOwner": {
-              "t": "fqn",
-              "name": "System.Math"
             }
           }
         },
@@ -360,16 +350,6 @@
                 "name": "object"
               }
             ],
-            "memberSig": [
-              {
-                "t": "fqn",
-                "name": "System.Collections.IEnumerable"
-              }
-            ],
-            "memberOwner": {
-              "t": "fqn",
-              "name": "System.Linq.Enumerable"
-            },
             "memberRef": {
               "kind": "method",
               "assembly": "System.Linq",

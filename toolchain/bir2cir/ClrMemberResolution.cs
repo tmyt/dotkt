@@ -647,6 +647,10 @@ static partial class ClrMemberResolution
                 StampMemberRet(node, win.ReturnType);
             }
             else StampMemberRetUnresolved(node);
+            // The descriptor is this resolution's INPUT — it selects among the candidates above — and inputs do
+            // not belong in the output. Leaving it made the reference travel beside the thing it replaced, which
+            // is the arrangement every other node just stopped carrying.
+            node.Remove("memberSig");
             return;
         }
         // No usable descriptor means there is no resolved identity to consume. A unique name/arity candidate is not
