@@ -17,10 +17,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MARK='#370-residual'
 
-# The two shapes that HIDE a by-name lookup from a reader (and hid one from this check's first version): a name
-# computed rather than written, and a candidate set enumerated then filtered by name. A literal `GetMethod("X")`
-# is visible to anyone reading the line; these are not, which is why they are what this gate insists on.
+# ALL THREE shapes, always. The first version of this check saw only literals and reported green with a computed
+# name live in the file it had just cleared; the second traded the literal check away for the computed one and
+# reported green with `GetMethod("GetEnumerator")` fallbacks live in another. Narrowing this set has now caused
+# the exact failure it was narrowed to fix, twice. It does not get narrowed again.
 lookups() {
+	grep -rnE '\.(GetMethod|GetField)\("' "$ROOT"/toolchain/ilemit/*.cs | grep -vE ':[0-9]+: *(//|\*)' 
 	# GetMethod/GetField only: a constructor has no name, so `GetConstructor(signature)` cannot be a by-name
 	# lookup however it is spelled. What counts is a NAME arriving as a variable or an expression.
 	grep -rnE '\.(GetMethod|GetField)\(([a-z_][A-Za-z0-9_]*[,)]|[A-Za-z0-9_.()"]+ *\?)' "$ROOT"/toolchain/ilemit/*.cs \

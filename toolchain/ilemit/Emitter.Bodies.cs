@@ -322,15 +322,18 @@ sealed partial class Emitter
         var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elemT);
         var ienumrT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elemT);
         EmitExpr(src);
+        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         EmitMethod(_il, OpCodes.Callvirt, ienumT.GetMethod("GetEnumerator"));
         var en = _il.DeclareLocal(ienumrT); _il.Emit(OpCodes.Stloc, en);
         var x = _il.DeclareLocal(elemT);
         var start = _il.DefineLabel(); var end = _il.DefineLabel();
         _il.MarkLabel(start);
         _il.Emit(OpCodes.Ldloc, en);
+        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
         _il.Emit(OpCodes.Brfalse, end);
         _il.Emit(OpCodes.Ldloc, en);
+        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         EmitMethod(_il, OpCodes.Callvirt, ienumrT.GetMethod("get_Current"));
         _il.Emit(OpCodes.Stloc, x);
         body(x);

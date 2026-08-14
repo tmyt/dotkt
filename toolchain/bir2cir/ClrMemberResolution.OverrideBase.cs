@@ -60,6 +60,12 @@ static partial class ClrMemberResolution
         // name here, parameters there, owner and return elsewhere — and a MethodImpl target is exactly the
         // place where assembling those pieces back into a member is selection.
         node["clrOverrideRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerSpec.Args);
+        // …and the pieces go. They were this resolution's INPUT — they named the slot to look for — and leaving
+        // them makes the reference travel beside the thing it replaced, which is how a consumer keeps triggering
+        // on the old key and never notices the new one exists.
+        node.Remove("clrOverride");
+        node.Remove("clrOverrideMember");
+        node.Remove("clrOverrideRet");
     }
 
     // Pick the UNIQUE base virtual to override. An override's DECLARED params ARE the base slot's params (that is what

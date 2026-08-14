@@ -70,6 +70,14 @@ COLLECTION_TEMPLATE_REFS = {
 # without the other is half a migration, and each half resolves on its own so nothing else would notice.
 DECLARATION_REF_PAIRS = (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner", "clrOverrideRef"))
 
+# The transitional identity vocabulary #370 retired. A CIR document carrying any of them has a second spelling
+# of a settled member beside the reference that replaced it.
+RETIRED_DESCRIPTORS = (
+    "memberSig", "memberOwner", "memberRet",
+    "baseMemberSig", "baseMemberOwner",
+    "clrOverride", "clrOverrideSig", "clrOverrideRet", "clrOverrideOwner", "clrOverrideMember",
+)
+
 
 def in_member_ref(path):
     """True when `path` points inside ANY member-reference carrier (derived, never a literal key name)."""
@@ -768,9 +776,12 @@ class V:
                 # so an owner descriptor beside it is a second spelling of a settled identity — the kind that
                 # drifts from the first and cannot be caught, because whoever compares them compares two
                 # outputs of the same producer.
-                for owner_key, ref_key in DECLARATION_REF_PAIRS:
-                    if owner_key in o:
-                        self.err(f, path, f"{owner_key} is a retired transitional descriptor; the resolved {ref_key} is the identity")
+                # EVERY retired descriptor, not the two that happened to have a pair. A ban that lists a subset
+                # is a ban a producer can walk around without noticing — and one did: `memberSig` reached CIR on
+                # the generic call while this rule reported clean.
+                for retired in RETIRED_DESCRIPTORS:
+                    if retired in o:
+                        self.err(f, path, f"{retired} is a retired transitional descriptor; the resolved memberRef is the identity")
             if f.endswith(".cir.json"):
                 for required_key in COLLECTION_TEMPLATE_REFS.get(o.get("k"), ()):
                     if required_key not in o:

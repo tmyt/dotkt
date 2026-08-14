@@ -256,6 +256,7 @@ sealed partial class Emitter
             if (NeedsBoxToRef(t)) _il.Emit(OpCodes.Box, t);
             _il.Emit(OpCodes.Stelem_Ref);
         }
+        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Call, Bcl("System.String").GetMethod("Concat", new[] { Bcl("System.Object").MakeArrayType() }));
         return Bcl("System.String");
     }
@@ -340,11 +341,14 @@ sealed partial class Emitter
         if (NeedsBoxToRef(rt)) _il.Emit(OpCodes.Box, rt);
         switch (e.GetProperty("method").GetString())
         {
+            // #370-residual: Object's universal slots, wired onto a type being built (#395)
             case "GetHashCode": EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetHashCode")); return Bcl("System.Int32");
+            // #370-residual: Object's universal slots, wired onto a type being built (#395)
             case "ToString": EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("ToString")); return Bcl("System.String");
             case "Equals":
                 var at = EmitExpr(e.GetProperty("arg"));
                 if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);
+                // #370-residual: Object's universal slots, wired onto a type being built (#395)
                 EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
                 return Bcl("System.Boolean");
         }
@@ -368,6 +372,7 @@ sealed partial class Emitter
         _il.MarkLabel(nonNull);                                  // a non-null -> a.Equals((object)b)
         var rt2 = EmitExpr(e.GetProperty("rhs"));
         if (NeedsBoxToRef(rt2)) _il.Emit(OpCodes.Box, rt2);
+        // #370-residual: Object's universal slots, wired onto a type being built (#395)
         EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
         _il.MarkLabel(done);
         return Bcl("System.Boolean");

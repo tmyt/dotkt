@@ -76,6 +76,15 @@ The split prevents frontend declarations, binding metadata, and executable imple
       that is [#395](https://github.com/tmyt/dotkt/issues/395), not this rule.
     - **Assembly boilerplate.** `typeof` (`GetTypeFromHandle`) and the attribute/metadata stamping the output format
       obliges, which describe the emitted assembly rather than anything a Kotlin program said.
+    - **Compiler lowerings.** A Kotlin operation the backend expands into a BCL call the source never wrote —
+      `enumValues()` into `Enum.GetValues`, string `+` into `String.Concat`, a `clrDynInstance` dispatch into the
+      reflection API. Retiring these is the intrinsic-binding programme (bind the member as `@ClrIntrinsic`
+      metadata instead of lowering it), which is about which layer OWNS the expansion, not about whether a
+      resolved member arrives named.
+
+    `tests/ir/check-emitter-residual.sh` holds the emitter to this list. It matches all three shapes a by-name
+    lookup takes — the name written, computed, or used as a predicate over an enumerated candidate set — because
+    a check that saw only the first reported green twice while the other two were live.
 
 ## Build modes
 

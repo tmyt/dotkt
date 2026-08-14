@@ -47,8 +47,10 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Stloc, recvLocal);
         // mi = recv.GetType().GetMethod(name)   (this for Invoke)
         _il.Emit(OpCodes.Ldloc, recvLocal);
+        // #370-residual: the reflection API a `clrDynInstance` dispatch expands to, which bir2cir marks and docs record as the one sanctioned non-memberRef external call
         EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetType"));
         _il.Emit(OpCodes.Ldstr, name);
+        // #370-residual: the reflection API a `clrDynInstance` dispatch expands to, which bir2cir marks and docs record as the one sanctioned non-memberRef external call
         EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Type").GetMethod("GetMethod", new[] { Bcl("System.String") }));
         // Invoke(target=recv, object[] args)
         _il.Emit(OpCodes.Ldloc, recvLocal);
@@ -62,6 +64,7 @@ sealed partial class Emitter
             if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);   // box a value-type OR a `gp:T` arg before stelem_ref into object[]
             _il.Emit(OpCodes.Stelem_Ref);
         }
+        // #370-residual: the reflection API a `clrDynInstance` dispatch expands to, which bir2cir marks and docs record as the one sanctioned non-memberRef external call
         EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Reflection.MethodInfo").GetMethod("Invoke", new[] { Bcl("System.Object"), Bcl("System.Object").MakeArrayType() }));
         // result: pop a dropped void return, else unbox/cast to the CIR-declared dynRet. The spec is a CLR spelling —
         // bir2cir derives Unit->void upstream, so ilemit never sees a Kotlin `unit`/`kotlin.Unit` here (if it did, that
@@ -313,6 +316,7 @@ sealed partial class Emitter
                 // path for a generic-parameter receiver; scope the workaround to genuinely-emitted value-type instantiations.
                 bool brokenGeneric = iface.IsGenericType && iface.GetGenericTypeDefinition() == Bcl("System.IComparable`1")
                     && IsTbInstantiation(iface) && !recvType.IsGenericParameter;
+                // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
                 var mi = brokenGeneric ? Bcl("System.IComparable").GetMethod("CompareTo")! : InterfaceMethodOn(iface, e.GetProperty("method").GetString());
                 EmitAddr(e.GetProperty("recv"));
                 EmitExpr(e.GetProperty("arg"));
@@ -555,14 +559,12 @@ sealed partial class Emitter
                 Type enT;
                 if (viaNonGeneric)
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "enumerableGetErasedRef") as MethodInfo
-                        ?? Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
+                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "enumerableGetErasedRef", "forEachInline"));
                     enT = Bcl("System.Collections.IEnumerator");
                 }
                 else
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "enumerableGetRef") as MethodInfo
-                        ?? GenericMethod(ienumT, "GetEnumerator"));
+                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "enumerableGetRef", "forEachInline"));
                     enT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elem);
                 }
                 var en = _il.DeclareLocal(enT); _il.Emit(OpCodes.Stloc, en);
@@ -571,20 +573,17 @@ sealed partial class Emitter
                 _loops.Add((LoopLabel(e), start, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, en);
-                EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "moveNextRef") as MethodInfo
-                    ?? Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
+                EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "moveNextRef", "forEachInline"));
                 _il.Emit(OpCodes.Brfalse, end);
                 _il.Emit(OpCodes.Ldloc, en);
                 if (viaNonGeneric)
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "currentErasedRef") as MethodInfo
-                        ?? Bcl("System.Collections.IEnumerator").GetMethod("get_Current"));
+                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "currentErasedRef", "forEachInline"));
                     _il.Emit(OpCodes.Unbox_Any, elem);
                 }
                 else
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, PrimaryFromRef(e, "currentRef") as MethodInfo
-                        ?? GenericMethod(enT, "get_Current"));
+                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "currentRef", "forEachInline"));
                 }
                 _il.Emit(OpCodes.Stloc, lv);
                 foreach (var b in e.GetProperty("body").EnumerateArray()) EmitStmt(b);

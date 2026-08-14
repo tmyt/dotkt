@@ -94,6 +94,7 @@ sealed partial class Emitter
     {
         var t = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, t);
+        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
         return Bcl("System.Type");
     }
@@ -102,6 +103,7 @@ sealed partial class Emitter
     {
         var got = EmitExpr(e.GetProperty("e"));
         if (got != null && NeedsBoxToRef(got)) _il.Emit(OpCodes.Box, got);
+        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetType"));
         return Bcl("System.Type");
     }
@@ -149,10 +151,13 @@ sealed partial class Emitter
         {
             var et = NativeType(tp);
             _il.Emit(OpCodes.Ldtoken, et);
+            // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
             EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
+            // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
             EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("GetValues", new[] { Bcl("System.Type") }));
             EmitExpr(e.GetProperty("e"));
             _il.Emit(OpCodes.Box, et);
+            // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
             EmitMethod(_il, OpCodes.Call, Bcl("System.Array").GetMethod("IndexOf", new[] { Bcl("System.Array"), Bcl("System.Object") }));
             return Bcl("System.Int32");
         }
@@ -165,7 +170,9 @@ sealed partial class Emitter
     {
         var et = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, et);
+        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
+        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("GetValues", new[] { Bcl("System.Type") }));
         _il.Emit(OpCodes.Castclass, et.MakeArrayType());
         return et.MakeArrayType();
@@ -175,8 +182,10 @@ sealed partial class Emitter
     {
         var et = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, et);
+        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
         EmitExpr(e.GetProperty("arg"));
+        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("Parse", new[] { Bcl("System.Type"), Bcl("System.String") }));
         _il.Emit(OpCodes.Unbox_Any, et);
         return et;
@@ -419,8 +428,7 @@ sealed partial class Emitter
         // The reference first: a field is a member like any other, and re-finding it by name is the selection
         // this change exists to remove — a derived type's static field can hide a base instance field of the
         // same name, and a name lookup cannot tell which one bir2cir resolved.
-        var fld = PrimaryFromRef(e, "memberRef") as FieldInfo
-            ?? ResolveClrPropField(type, e.GetProperty("name").GetString());
+        var fld = RequiredRef<FieldInfo>(e, "memberRef", "an external field access");
         if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), FieldTypeOf(fld));
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         MaybeVolatile(fld, e);
@@ -446,8 +454,7 @@ sealed partial class Emitter
         // The reference first: a field is a member like any other, and re-finding it by name is the selection
         // this change exists to remove — a derived type's static field can hide a base instance field of the
         // same name, and a name lookup cannot tell which one bir2cir resolved.
-        var fld = PrimaryFromRef(e, "memberRef") as FieldInfo
-            ?? ResolveClrPropField(type, e.GetProperty("name").GetString());
+        var fld = RequiredRef<FieldInfo>(e, "memberRef", "an external field access");
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitNullableCoerced(e.GetProperty("value"), FieldTypeOf(fld));
         MaybeVolatile(fld, e);
@@ -467,24 +474,6 @@ sealed partial class Emitter
     {
         if (e.TryGetProperty("dispatch", out var d) && d.ValueKind == JsonValueKind.String) return d.GetString();
         throw new InvalidOperationException($"ilemit: {what} on {type?.FullName} is missing its `dispatch` decision (bir2cir must carry call|callvirt|constrained — W1-S3 #46)");
-    }
-
-    // Resolve the FieldInfo for a `member:"field"` property node (bir2cir already decided the KIND is a field). GetField
-    // walks base classes; a constructed generic over a TypeBuilder re-anchors on the open def. NOT a KIND probe — the
-    // member is known to be a field, this only produces the handle.
-    FieldInfo ResolveClrPropField(Type type, string name)
-    {
-        const BindingFlags F = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
-        // #370-residual: the local axis: a field of the assembly being built has no assembly identity to reference (#395)
-        try { var fld = type.GetField(name, F); if (fld != null) return fld; }
-        catch (NotSupportedException) { }
-        if (type.IsConstructedGenericType)
-        {
-            // #370-residual: the local axis, on the open definition of the same emitted type (#395)
-            var openFld = type.GetGenericTypeDefinition().GetField(name, F);
-            if (openFld != null) return AnchorField(type, openFld);
-        }
-        throw new InvalidOperationException($"ilemit: field '{name}' resolved by bir2cir is absent on .NET type '{type}' (W1-S3 #46/#121)");
     }
 
     // `.NET event +=/-=` -> call the event's add/remove accessor with the handler bound as the event's OWN
@@ -582,6 +571,7 @@ sealed partial class Emitter
     // arg0 = this; the raise params (== D.Invoke's params) start at arg1. The null check = C#'s field-like `field?.Invoke`.
     void EmitClrEventRaise(FieldInfo field, Type d)
     {
+        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
         var invoke = d.GetMethod("Invoke");
         var handler = _il.DeclareLocal(d);
         var done = _il.DefineLabel();
@@ -639,6 +629,7 @@ sealed partial class Emitter
                 // value share target+method, so Delegate equality holds and `-=` removes the right handler.
                 var src = EmitExpr(h);                       // stack: the stored delegate value
                 _il.Emit(OpCodes.Dup);
+                // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
                 EmitMethod(_il, OpCodes.Ldvirtftn, src.GetMethod("Invoke"));
                 EmitDelegateCtor(_il, want);
                 break;

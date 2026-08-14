@@ -88,6 +88,7 @@ sealed partial class Emitter
             mb.SetParameters(new[] { delegateType }.Concat(invokeParams).ToArray());
             var il = mb.GetILGenerator();
             for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             EmitMethod(il, OpCodes.Callvirt, AnchorMethod(delegateType, def.GetMethod("Invoke")));
             il.Emit(OpCodes.Ret);
             _delegateInvokeAdapters[key] = mb;
@@ -201,7 +202,9 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var invoke))
             return AnchorMethod(ft, invoke);
         if (IsGenericInst(ft) && ContainsTypeBuilder(ft))
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             return AnchorMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
+        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
         return ft.GetMethod("Invoke");
     }
 
@@ -219,6 +222,7 @@ sealed partial class Emitter
         var def = ft.GetGenericTypeDefinition();
         var r = def is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var declared)
             ? declared.ReturnType
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             : def.GetMethod("Invoke").ReturnType;
         return r.IsGenericParameter && r.GenericParameterPosition < ft.GetGenericArguments().Length
             ? ft.GetGenericArguments()[r.GenericParameterPosition] : r;

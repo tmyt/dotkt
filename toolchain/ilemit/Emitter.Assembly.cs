@@ -1151,14 +1151,10 @@ sealed partial class Emitter
         isStatic = isStatic || m.GetProperty("static").GetBoolean();
         var objOverride = m.TryGetProperty("objectOverride", out var oo) && oo.GetBoolean();
         // Overriding a .NET base virtual (e.g. `override val Message`) reuses the base slot, like an object-method.
-        var hasClrOverride = m.TryGetProperty("clrOverride", out var clrOverride);
-        var clrOverrideMember = hasClrOverride
-            ? m.TryGetProperty("clrOverrideMember", out var com) && com.ValueKind == JsonValueKind.String
-                && !string.IsNullOrEmpty(com.GetString())
-                    ? com.GetString()
-                    : throw new InvalidOperationException(
-                        $"ilemit: CLR override implementation {ti.TB?.FullName}.{name} has no exact base member descriptor")
-            : null;
+        // The RESOLVED REFERENCE is what says this method overrides a .NET base virtual, and it is also the
+        // slot. Triggering on the old descriptor and then linking through the reference meant a document in the
+        // shape this change produces — reference only — wired no override at all.
+        var hasClrOverride = m.TryGetProperty("clrOverrideRef", out _);
         // The frontend-stated abstract modality decides whether an interface member is a CLR abstract slot. A concrete
         // Kotlin DIM may have an empty Unit body, so body length is not a declaration-semantics oracle.
         // A compiler-authored static interface helper takes no slot, so it must NOT be marked Virtual/NewSlot/Abstract
@@ -1250,8 +1246,11 @@ sealed partial class Emitter
         {
             var objM = name switch
             {
+                // #370-residual: Object's universal slots, wired onto a type being built (#395)
                 "ToString" => Bcl("System.Object").GetMethod("ToString", Type.EmptyTypes),
+                // #370-residual: Object's universal slots, wired onto a type being built (#395)
                 "GetHashCode" => Bcl("System.Object").GetMethod("GetHashCode", Type.EmptyTypes),
+                // #370-residual: Object's universal slots, wired onto a type being built (#395)
                 "Equals" => Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }),
                 _ => null,
             };
@@ -1259,12 +1258,10 @@ sealed partial class Emitter
         }
         if (hasClrOverride)
         {
-            // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches it
-            // (`callvirt System.Exception::get_Message` -> our override). bir2cir resolved the base slot off the ref.dll
-            // and carried its param signature as `clrOverrideSig` (#46/#183 W1-S4) — LinkOverrideBase links the unique
-            // slot (0 = hard ABI error), replacing the former name-only first-pick fallback.
-            var baseT = ClrRef(clrOverride);
-            WireMethodOverride(ti.TB, mb, LinkOverrideBase(baseT, clrOverrideMember, m, ti.TB));
+            // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches
+            // it (`callvirt System.Exception::get_Message` -> our override). The slot is the reference bir2cir
+            // resolved: one member, stated once, and the same thing that said this method overrides at all.
+            WireMethodOverride(ti.TB, mb, RequiredRef<MethodInfo>(m, "clrOverrideRef", $"the override {name}"));
         }
         // Kotlin's `@kotlin.internal.InlineOnly` says "this fn is meant to be inlined, not called as a method". The direct
         // CLR translation is a [MethodImpl(AggressiveInlining)] hint on the emitted method. kotc reads the annotation and
