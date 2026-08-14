@@ -278,10 +278,9 @@ sealed partial class Emitter
         {
             // want = Nullable<got>. When got is an EMITTED value type (a TypeBuilder), Reflection.Emit can't resolve
             // the ctor on the MakeGenericType — use TypeBuilder.GetConstructor(constructed, open Nullable<>'s ctor).
-            var ctor = ContainsTypeBuilder(want)
-                ? AnchorConstructor(want, Bcl("System.Nullable`1").GetConstructors()[0])
-                // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
-                : want.GetConstructor(new[] { got });
+            // The declaration is fixed — `Nullable<T>..ctor(T)` — and the owner this coercion computed is what
+            // it gets anchored onto. Same shape as every other open declaration named once and anchored per use.
+            var ctor = AnchorConstructor(want, WellKnown<ConstructorInfo>("NullableT.ctor"));
             EmitConstructor(_il, OpCodes.Newobj, ctor);
             return want;
         }

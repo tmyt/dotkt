@@ -91,7 +91,7 @@ WELL_KNOWN_ROLES = frozenset({
     "IndexOutOfRangeException.ctor",
     "EnumeratorT.Current", "EnumerableT.GetEnumerator", "ReadOnlyCollectionT.Count",
     "ReadOnlyListT.Item", "CollectionT.Count", "CollectionT.IsReadOnly", "CollectionT.Clear",
-    "ListT.Item", "ListT.RemoveAt",
+    "ListT.Item", "ListT.RemoveAt", "NullableT.ctor",
 })
 
 RETIRED_DESCRIPTORS = (

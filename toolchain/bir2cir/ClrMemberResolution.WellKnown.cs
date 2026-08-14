@@ -62,6 +62,9 @@ static partial class ClrMemberResolution
         ("NotSupportedException.ctor",   "System.NotSupportedException",   new[] { "System.String" }),
         ("NotSupportedException.ctor0",  "System.NotSupportedException",   new string[0]),
         ("IndexOutOfRangeException.ctor","System.IndexOutOfRangeException", new[] { "System.String" }),
+        // The OPEN `Nullable<T>..ctor(T)`. A coercion computes the constructed owner from the slot it is filling,
+        // which no document states — but the declaration does not vary, and anchoring is mechanical.
+        ("NullableT.ctor",               "System.Nullable`1",              new[] { "!0" }),
     };
 
     /// <summary>Stamp the fixed-member table on a document root. Every entry resolves or the build stops.</summary>
@@ -91,17 +94,20 @@ static partial class ClrMemberResolution
         }
         foreach (var (role, owner, parameters) in WellKnownCtors)
         {
-            var open = ResolveOwnerType(new TypeNode.Fqn(owner))
+            // A name may state its arity — `System.Nullable`1` is a different type from the static `System.Nullable`
+            // beside it, and the bare name resolves to the wrong one.
+            var open = OwnerOfSpec(owner)
                 ?? throw new InvalidOperationException(
                     $"bir2cir: the fixed-member table needs '{owner}' for role '{role}' (#370)");
             var wanted = parameters.Select(ParseWellKnownParam).ToList();
+            var ownerArgs = OwnParameters(open);
             var cands = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .Where(c => !c.IsStatic && c.GetParameters().Length == wanted.Count).ToList();
             var win = TryPickUniqueCtor(cands, wanted, Array.Empty<TypeNode>())
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}..ctor({string.Join(", ", parameters)})' does not resolve to one "
                     + $"declaration for role '{role}' (#370)");
-            table[role] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, Array.Empty<TypeNode>());
+            table[role] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
         }
         document["wellKnownRefs"] = table;
     }
@@ -114,7 +120,17 @@ static partial class ClrMemberResolution
             ? open.GetGenericArguments().Select(p => (TypeNode)new TypeNode.Tv("type", p.GenericParameterPosition)).ToArray()
             : Array.Empty<TypeNode>();
 
+    // `Name`N` -> the arity-N definition; a bare name -> whatever that name alone resolves to.
+    static Type OwnerOfSpec(string spec)
+    {
+        var tick = spec.IndexOf('`');
+        return tick < 0
+            ? ResolveOwnerType(new TypeNode.Fqn(spec))
+            : RefDef(spec[..tick], int.Parse(spec[(tick + 1)..]));
+    }
+
     static TypeNode ParseWellKnownParam(string spec) =>
+        spec.StartsWith("!", StringComparison.Ordinal) ? new TypeNode.Tv("type", int.Parse(spec[1..])) :
         spec.EndsWith("[]", StringComparison.Ordinal)
             ? new TypeNode.Array(new TypeNode.Fqn(spec[..^2]))
             : new TypeNode.Fqn(spec);

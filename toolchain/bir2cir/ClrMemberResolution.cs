@@ -306,6 +306,7 @@ static partial class ClrMemberResolution
             case "clrEventAccessorImpl": ResolveEventCas(node); break;
             case "delegateInvoke": ResolveDelegateInvoke(node, "funcType"); break;
             case "newArrayInit": ResolveDelegateInvoke(node, "init"); break;
+            case "constrainedCall": ResolveConstrainedCall(node); break;
             case "newBoundDelegate": ResolveDelegateCtor(node, "funcType"); ResolveDelegateInvoke(node, "funcType"); break;
             case "nullableNull": ResolveNullableConversion(node, "nullableNull"); break;
             case "nullableWrap": ResolveNullableConversion(node, "nullableWrap"); break;

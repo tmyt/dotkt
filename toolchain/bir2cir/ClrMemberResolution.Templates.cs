@@ -333,4 +333,26 @@ static partial class ClrMemberResolution
         node["delegateCtorRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open,
             delegateFqn.Args ?? Array.Empty<TypeNode>());
     }
+
+    /// <summary>
+    /// The interface slot a constrained call dispatches through.
+    /// </summary>
+    /// <remarks>
+    /// The node states the interface and the member; the emitter was looking the member up on the interface by
+    /// name. Same fact, resolved where resolution belongs.
+    /// </remarks>
+    static void ResolveConstrainedCall(JsonObject node)
+    {
+        if (node.ContainsKey("memberRef")) return;
+        if (TypeJson.Read(node["iface"]) is not TypeNode.Fqn iface) return;
+        if ((node["method"] as JsonValue)?.GetValue<string>() is not string name) return;
+        var open = ResolveOwnerType(iface);
+        if (open == null) return;
+        var argCount = (node["arg"] as JsonObject) == null ? 0 : 1;
+        var cands = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == name && m.GetParameters().Length == argCount).ToList();
+        if (cands.Count != 1) return;
+        node["memberRef"] = MemberRefJson(cands[0], MemberRefNode.Kinds.Method, open,
+            iface.Args ?? Array.Empty<TypeNode>());
+    }
 }
