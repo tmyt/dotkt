@@ -58,7 +58,11 @@ sealed partial class Emitter
                 // `Cell<!0>::v` — a TYPE generic parameter, in a method whose frame has only `!!0` — which the JIT
                 // rejects as a bad image. `ParseOwnerSlot` preserves the instantiation, exactly as the field READ and
                 // `Ldflda` paths already do (Emitter.Expressions/Bodies).
-                var sfld = ResolveField(ParseOwnerSlot(s.GetProperty("ownerType")), fnm, out var sft);
+                // The reference first, exactly as the READ path does. A store by name can hit a derived type's
+                // static field where the base instance field was resolved, and write to the wrong one silently.
+                FieldInfo sfld; Type sft;
+                if (PrimaryFromRef(s, "memberRef") is FieldInfo referencedStore) { sfld = referencedStore; sft = FieldTypeOf(sfld); }
+                else sfld = ResolveField(ParseOwnerSlot(s.GetProperty("ownerType")), fnm, out sft);
                 if (IsValueType(ClrRef(s.GetProperty("ownerType")))) EmitAddr(s.GetProperty("recv"));
                 else EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);

@@ -124,6 +124,7 @@ sealed partial class Emitter
     static MethodInfo AnchorMethod(Type type, MethodInfo method) =>
         IsTargetSignatureInstantiation(type)
             ? new SignatureMethod(type, method)
+            // #370-residual: Reflection.Emit's re-anchoring API: it takes the MemberInfo, not a name
             : TypeBuilder.GetMethod(type, method);
 
     static ConstructorInfo AnchorConstructor(Type type, ConstructorInfo constructor) =>
@@ -134,6 +135,7 @@ sealed partial class Emitter
     static FieldInfo AnchorField(Type type, FieldInfo field) =>
         IsTargetSignatureInstantiation(type)
             ? new SignatureField(type, field)
+            // #370-residual: Reflection.Emit's re-anchoring API: it takes the MemberInfo, not a name
             : TypeBuilder.GetField(type, field);
 
     // PersistedAssemblyBuilder reads the public reflection surface below to encode a MemberRef. ECMA-335 requires

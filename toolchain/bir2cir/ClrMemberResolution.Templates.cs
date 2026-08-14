@@ -175,4 +175,48 @@ static partial class ClrMemberResolution
 
     const string UnitFqn = "kotlin.Unit";
     const string UnitInstance = "INSTANCE";
+
+    /// <summary>
+    /// The three BCL members a field-like event accessor's CAS loop runs through.
+    /// </summary>
+    /// <remarks>
+    /// `Delegate.Combine`/`Remove` and `Interlocked.CompareExchange&lt;D&gt;` are as external as anything else, and the
+    /// emitter was picking them — one by a computed name, one by filtering an enumeration on a name predicate.
+    /// Neither shape is visible to a reader scanning for `GetMethod("…")`, which is how they outlived the rest.
+    /// </remarks>
+    static void ResolveEventCas(JsonObject node)
+    {
+        if (node.ContainsKey("combineRef")) return;
+        var kind = (node["kind"] as JsonValue)?.GetValue<string>();
+        if (kind is not ("add" or "remove")) return;
+        if (TypeJson.Read(node["delegateType"]) is not TypeNode delegateType) return;
+
+        var delegateFqn = new TypeNode.Fqn("System.Delegate");
+        var del = ResolveOwnerType(delegateFqn)
+            ?? throw new InvalidOperationException("bir2cir: 'System.Delegate' does not resolve to a .NET type (#370)");
+        var pair = new List<TypeNode> { delegateFqn, delegateFqn };
+        foreach (var name in new[] { "Combine", "Remove" })
+        {
+            var cands = del.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Where(m => m.Name == name && m.GetParameters().Length == 2).ToList();
+            var win = TryPickUnique(cands, pair, Array.Empty<TypeNode>())
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: 'System.Delegate.{name}(Delegate, Delegate)' does not resolve to one declaration (#370)");
+            node[name == "Combine" ? "combineRef" : "removeRef"] =
+                MemberRefJson(win, MemberRefNode.Kinds.Method, del, Array.Empty<TypeNode>());
+        }
+
+        // `CompareExchange<T>(ref T, T, T)` — the ONE generic overload; the non-generic siblings take concrete
+        // slots and are a different member entirely.
+        var interlocked = ResolveOwnerType(new TypeNode.Fqn("System.Threading.Interlocked"))
+            ?? throw new InvalidOperationException("bir2cir: 'System.Threading.Interlocked' does not resolve (#370)");
+        var cas = interlocked.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(m => m.Name == "CompareExchange" && m.IsGenericMethodDefinition
+                && m.GetGenericArguments().Length == 1 && m.GetParameters().Length == 3).ToList();
+        if (cas.Count != 1)
+            throw new InvalidOperationException(
+                $"bir2cir: 'Interlocked.CompareExchange<T>' resolves to {cas.Count} declarations, not one (#370)");
+        node["compareExchangeRef"] = MemberRefJson(cas[0], MemberRefNode.Kinds.Method, interlocked, Array.Empty<TypeNode>());
+        _ = delegateType;
+    }
 }

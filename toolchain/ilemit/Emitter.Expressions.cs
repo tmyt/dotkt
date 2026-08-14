@@ -401,8 +401,8 @@ sealed partial class Emitter
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
                 // The reference first — the search is the fallback for a shape that carries none, never a step
                 // that runs before the answer is read.
-                var listCtor = PrimaryFromRef(e, "ctorRef") as ConstructorInfo ?? GenericCtor(listT);
-                var add = PrimaryFromRef(e, "addRef") as MethodInfo ?? GenericMethod(listT, "Add");
+                var listCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newList");
+                var add = RequiredRef<MethodInfo>(e, "addRef", "newList");
                 // The members a collection literal builds through are stated by the pass that minted the node,
                 // so the emitter stops deriving them from the constructed type.
                 EmitConstructor(_il, OpCodes.Newobj, listCtor);
@@ -503,10 +503,10 @@ sealed partial class Emitter
                 var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elem);
                 var loc = _il.DeclareLocal(listT);
                 // The four members this builds through are named by the pass that minted the node.
-                var spreadCtor = PrimaryFromRef(e, "ctorRef") as ConstructorInfo ?? listT.GetConstructor(Type.EmptyTypes);
-                var spreadAdd = PrimaryFromRef(e, "addRef") as MethodInfo ?? listT.GetMethod("Add", new[] { elem });
-                var spreadAddRange = PrimaryFromRef(e, "addRangeRef") as MethodInfo ?? listT.GetMethod("AddRange", new[] { ienumT });
-                var spreadToArray = PrimaryFromRef(e, "toArrayRef") as MethodInfo ?? listT.GetMethod("ToArray", Type.EmptyTypes);
+                var spreadCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "spreadConcat");
+                var spreadAdd = RequiredRef<MethodInfo>(e, "addRef", "spreadConcat");
+                var spreadAddRange = RequiredRef<MethodInfo>(e, "addRangeRef", "spreadConcat");
+                var spreadToArray = RequiredRef<MethodInfo>(e, "toArrayRef", "spreadConcat");
                 EmitConstructor(_il, OpCodes.Newobj, spreadCtor);
                 _il.Emit(OpCodes.Stloc, loc);
                 foreach (var p in e.GetProperty("parts").EnumerateArray())
@@ -722,8 +722,8 @@ sealed partial class Emitter
                 var kt = MapType(e.GetProperty("keyType"));
                 var vt = MapType(e.GetProperty("valType"));
                 var dt = ConstructedType(Bcl("System.Collections.Generic.Dictionary`2"), kt, vt);
-                var mapCtor = PrimaryFromRef(e, "ctorRef") as ConstructorInfo ?? GenericCtor(dt);
-                var setItem = PrimaryFromRef(e, "setItemRef") as MethodInfo ?? GenericMethod(dt, "set_Item");
+                var mapCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newMap");
+                var setItem = RequiredRef<MethodInfo>(e, "setItemRef", "newMap");
                 EmitConstructor(_il, OpCodes.Newobj, mapCtor);
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
@@ -739,8 +739,8 @@ sealed partial class Emitter
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem"));
                 var setT = ConstructedType(Bcl("System.Collections.Generic.HashSet`1"), elem);
-                var setCtor = PrimaryFromRef(e, "ctorRef") as ConstructorInfo ?? GenericCtor(setT);
-                var add = PrimaryFromRef(e, "addRef") as MethodInfo ?? GenericMethod(setT, "Add");
+                var setCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newSet");
+                var add = RequiredRef<MethodInfo>(e, "addRef", "newSet");
                 EmitConstructor(_il, OpCodes.Newobj, setCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {

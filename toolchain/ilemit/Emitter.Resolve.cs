@@ -79,6 +79,7 @@ sealed partial class Emitter
     // Resolve a field by name on an already-RESOLVED (referenced .NET / baked) type, walking its base-class chain
     // (reflection's GetField already includes inherited members). Pure CLR resolution; null if absent.
     static FieldInfo FindReflectedField(Type t, string name) =>
+        // #370-residual: the local axis: a field of a type this compilation is emitting (#395)
         t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
 
     // Resolve a method for emit; out-param gives the substituted (concrete) return type for boxing decisions.
@@ -234,10 +235,12 @@ sealed partial class Emitter
 
     static MethodInfo GenericMethod(Type constructed, string name) =>
         IsTbInstantiation(constructed)
+            // #370-residual: anchoring an ALREADY-resolved method onto a constructed owner, not choosing one
             ? AnchorMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
             // Runtime 10.0.10's PAB asks the returned ParameterInfo graph for modifier-aware Types. MLC's raw
             // RoModifiedType deliberately leaves several structural reflection APIs unsupported, so route the
             // already-selected member through the same signature adapter used for TypeSpec anchoring.
+            // #370-residual: anchoring an ALREADY-resolved method onto a constructed owner, not choosing one
             : PersistableMethod(constructed.GetMethod(name));
 
     // Substitute an open TYPE's own generic parameters (positionally = `typeArgs`) throughout a member reference as
@@ -1004,6 +1007,7 @@ sealed partial class Emitter
                 if (!p.IsGenericType)
                     return retVoid && dparams.Length == 0
                         && expectedNs == "System" && expectedName == "Action"
+                        // #370-residual: a TYPE-shape predicate, not a member lookup
                         && p.Namespace == "System" && p.Name == "Action";
                 Type delegateDef;
                 try { delegateDef = p.GetGenericTypeDefinition(); } catch { return false; }
@@ -1339,6 +1343,7 @@ sealed partial class Emitter
         // The NON-generic `System.Action` (0-arg, void) — a `()->Unit` lambda param (`column(setup, content: ()->Unit)`).
         if (!p.IsGenericType)
             return isVoid && dp.Length == 0 && expectedNs == "System" && expectedName == "Action"
+                   // #370-residual: a TYPE-shape predicate, not a member lookup
                    && p.Name == "Action" && p.Namespace == "System";
         var dn = p.GetGenericTypeDefinition().Name;
         var dns = p.GetGenericTypeDefinition().Namespace;

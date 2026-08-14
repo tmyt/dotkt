@@ -27,6 +27,17 @@ sealed partial class Emitter
 
     /// <summary>Every key a resolved member reference can ride on. The counting below is keyed on this set.</summary>
 
+    /// <summary>
+    /// The member a REQUIRED carrier names. The schema makes these mandatory, so a node without one is a
+    /// producer defect, and falling back to a search would be the emitter deciding whether the build survives —
+    /// the exact arrangement this change removes everywhere else.
+    /// </summary>
+    T RequiredRef<T>(JsonElement node, string carrier, string kind) where T : MemberInfo =>
+        PrimaryFromRef(node, carrier) as T
+            ?? throw new InvalidOperationException(
+                $"ilemit: {kind} carries no resolved `{carrier}`. The members a construction builds through are "
+                + "named by the pass that minted it; a node without one is an earlier-layer drop (#370)");
+
     /// <summary>The member a reference names, resolved exactly. Never a search.</summary>
     MemberInfo ResolveMemberRef(MemberRefNode reference)
     {

@@ -536,6 +536,7 @@ sealed partial class Emitter
                         // here as well would wire the same MethodImpl twice when the declaring owner is later visited.
                         foreach (var im in ifaceMs)
                         {
+                            // #370-residual: the local axis: wiring a MethodImpl on a type being built (#395)
                             if (im.Name == "GetEnumerator") continue;   // handled by the reverse bridge above
                             // OVERLOADED body methods (e.g. the generic CompareTo(V) + the non-generic IComparable bridge
                             // CompareTo(object)) collide in the name-keyed ti.Methods — wiring the wrong one to the slot

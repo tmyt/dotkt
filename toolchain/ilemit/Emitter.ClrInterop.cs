@@ -475,10 +475,12 @@ sealed partial class Emitter
     FieldInfo ResolveClrPropField(Type type, string name)
     {
         const BindingFlags F = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
+        // #370-residual: the local axis: a field of the assembly being built has no assembly identity to reference (#395)
         try { var fld = type.GetField(name, F); if (fld != null) return fld; }
         catch (NotSupportedException) { }
         if (type.IsConstructedGenericType)
         {
+            // #370-residual: the local axis, on the open definition of the same emitted type (#395)
             var openFld = type.GetGenericTypeDefinition().GetField(name, F);
             if (openFld != null) return AnchorField(type, openFld);
         }
@@ -551,20 +553,18 @@ sealed partial class Emitter
         if (_curTi == null || !_curTi.Fields.TryGetValue(fieldName, out var field))
             throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}' (bir2cir ClrEventImplBinding must insert `<E>$delegate` — #187/#113)");
         if (kind == "raise") { EmitClrEventRaise(field, d); return; }
-        EmitClrEventCas(field, d, add: kind == "add");
+        EmitClrEventCas(e, field, d, add: kind == "add");
     }
 
     // The lock-free add/remove CAS loop over the backing delegate field (C#'s field-like-event accessor shape):
     //   D cur = this.field; do { D cmp = cur; D upd = (D)Delegate.Combine/Remove(cmp, value);
     //       cur = Interlocked.CompareExchange<D>(ref this.field, upd, cmp); } while (cur != cmp);
     // arg0 = this, arg1 = the handler `value`. Reference comparison (bne.un), not delegate equality.
-    void EmitClrEventCas(FieldInfo field, Type d, bool add)
+    void EmitClrEventCas(JsonElement node, FieldInfo field, Type d, bool add)
     {
-        var combine = Bcl("System.Delegate").GetMethod(add ? "Combine" : "Remove", new[] { Bcl("System.Delegate"), Bcl("System.Delegate") });
-        var cmpx = ConstructedMethod(
-            Bcl("System.Threading.Interlocked").GetMethods(BindingFlags.Public | BindingFlags.Static)
-                .Single(m => m.Name == "CompareExchange" && m.IsGenericMethodDefinition && m.GetGenericArguments().Length == 1),
-            d);
+        // The three members this loop runs through are named by the pass that authored the accessor.
+        var combine = RequiredRef<MethodInfo>(node, add ? "combineRef" : "removeRef", "clrEventAccessorImpl");
+        var cmpx = ConstructedMethod(RequiredRef<MethodInfo>(node, "compareExchangeRef", "clrEventAccessorImpl"), d);
         var cur = _il.DeclareLocal(d); var cmp = _il.DeclareLocal(d); var upd = _il.DeclareLocal(d);
         var retry = _il.DefineLabel();
         _il.Emit(OpCodes.Ldarg_0); EmitField(_il, OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, cur);

@@ -214,6 +214,7 @@ sealed partial class Emitter
     // param would come back open, but that only feeds the Unit-adapter trigger, where it is rightly not `kotlin.Unit`.
     Type InvokeRetOf(Type ft)
     {
+        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6); this reads its RETURN TYPE, emitting no member token
         if (!IsGenericInst(ft)) return ft.GetMethod("Invoke")?.ReturnType ?? Bcl("System.Void");
         var def = ft.GetGenericTypeDefinition();
         var r = def is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var declared)
