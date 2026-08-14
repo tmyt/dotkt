@@ -186,8 +186,9 @@ partial class Emitter
         var getEnumIfaceM = ContainsTypeBuilder(elemType)
             // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
             ? AnchorMethod(ienumerableElem, ienumerableGenDef.GetMethod("GetEnumerator"))
-            // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
-            : WellKnown<MethodInfo>("Enumerable.GetEnumerator");
+            // #370-residual: REMAINING GAP (#370): the GENERIC IEnumerable<T>.GetEnumerator, whose owner varies
+            // per site, so it needs a per-node carrier rather than the fixed-member table
+            : ienumerableElem.GetMethod("GetEnumerator");
         WireMethodOverride(ti.TB, gGen, getEnumIfaceM);
         ti.Methods["GetEnumerator"] = gGen;
 
