@@ -978,8 +978,9 @@ sealed partial class Emitter
                 // `new System.Span<T>(void* ptr, int length)` over the stack buffer -> a real Span for .NET APIs.
                 var elem = MapType(e.GetProperty("elem"));
                 var spanT = ConstructedType(Bcl("System.Span`1"), elem);
-                // The declaration is fixed; the element this site computed is what it anchors onto.
-                var ctor = AnchorConstructor(spanT, WellKnown<ConstructorInfo>("SpanT.ctorPointer"));
+                // #370-residual: REMAINING GAP (#370): Span has more than one two-argument constructor and the
+                // fixed-member matcher has no arm for a pointer parameter, so the role cannot discriminate yet
+                var ctor = spanT.GetConstructor(new[] { Bcl("System.Void").MakePointerType(), Bcl("System.Int32") });
                 EmitExpr(e.GetProperty("ptr"));
                 EmitExpr(e.GetProperty("len"));
                 EmitConstructor(_il, OpCodes.Newobj, ctor);
