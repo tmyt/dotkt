@@ -65,6 +65,7 @@ static partial class ClrMemberResolution
         // The OPEN `Nullable<T>..ctor(T)`. A coercion computes the constructed owner from the slot it is filling,
         // which no document states — but the declaration does not vary, and anchoring is mechanical.
         ("NullableT.ctor",               "System.Nullable`1",              new[] { "!0" }),
+        ("SpanT.ctorPointer",            "System.Span`1",                  new[] { "System.Void*", "System.Int32" }),
     };
 
     /// <summary>Stamp the fixed-member table on a document root. Every entry resolves or the build stops.</summary>

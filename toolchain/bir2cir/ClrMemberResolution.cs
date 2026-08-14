@@ -920,6 +920,9 @@ static partial class ClrMemberResolution
             return MatchKind.No;
         }
         if (p.IsByRef) return a is TypeNode.ByRef b ? Applies(b.Of, p.GetElementType(), ownerArgs) : MatchKind.No;
+        // A pointer is a distinct parameter shape, and without an arm here it matched nothing — which is how a
+        // `Span<T>(void*, int)` could not be told from its `(ref T, int)` sibling.
+        if (p.IsPointer) return a is TypeNode.Ptr ptr ? Applies(ptr.Of, p.GetElementType(), ownerArgs) : MatchKind.No;
         if (p.IsArray) return a is TypeNode.Array ar ? Applies(ar.Elem, p.GetElementType(), ownerArgs) : MatchKind.No;
         if (p.IsGenericType && SafeDef(p) == NullableDef())
             return a is TypeNode.Nullable nv ? Applies(nv.Of, p.GetGenericArguments()[0], ownerArgs) : MatchKind.No;
@@ -1029,6 +1032,7 @@ static partial class ClrMemberResolution
         {
             case TypeNode.Oblivious o: return MapMlc(o.Of);
             case TypeNode.ByRef b: { var e = MapMlc(b.Of); return e?.MakeByRefType(); }
+            case TypeNode.Ptr p: { var e = MapMlc(p.Of); return e?.MakePointerType(); }
             case TypeNode.Array a: { var e = MapMlc(a.Elem); return e?.MakeArrayType(); }
             case TypeNode.Nullable n:
             {
