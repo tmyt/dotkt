@@ -201,8 +201,7 @@ partial class Emitter
         ni.Emit(OpCodes.Ldarg_0);
         EmitMethod(ni, OpCodes.Callvirt, gGenSelf);
         ni.Emit(OpCodes.Ret);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
-        WireMethodOverride(ti.TB, gNon, Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
+        WireMethodOverride(ti.TB, gNon, WellKnown<MethodInfo>("Enumerable.GetEnumerator"));
         return true;
     }
 }

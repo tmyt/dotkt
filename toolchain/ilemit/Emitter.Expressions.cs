@@ -47,11 +47,9 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Stloc, recvLocal);
         // mi = recv.GetType().GetMethod(name)   (this for Invoke)
         _il.Emit(OpCodes.Ldloc, recvLocal);
-        // #370-residual: the reflection API a `clrDynInstance` dispatch expands to, which bir2cir marks and docs record as the one sanctioned non-memberRef external call
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetType"));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetType"));
         _il.Emit(OpCodes.Ldstr, name);
-        // #370-residual: the reflection API a `clrDynInstance` dispatch expands to, which bir2cir marks and docs record as the one sanctioned non-memberRef external call
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Type").GetMethod("GetMethod", new[] { Bcl("System.String") }));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Type.GetMethod"));
         // Invoke(target=recv, object[] args)
         _il.Emit(OpCodes.Ldloc, recvLocal);
         _il.Emit(OpCodes.Ldc_I4, args.Length);
@@ -64,8 +62,7 @@ sealed partial class Emitter
             if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);   // box a value-type OR a `gp:T` arg before stelem_ref into object[]
             _il.Emit(OpCodes.Stelem_Ref);
         }
-        // #370-residual: the reflection API a `clrDynInstance` dispatch expands to, which bir2cir marks and docs record as the one sanctioned non-memberRef external call
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Reflection.MethodInfo").GetMethod("Invoke", new[] { Bcl("System.Object"), Bcl("System.Object").MakeArrayType() }));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("MethodInfo.Invoke"));
         // result: pop a dropped void return, else unbox/cast to the CIR-declared dynRet. The spec is a CLR spelling —
         // bir2cir derives Unit->void upstream, so ilemit never sees a Kotlin `unit`/`kotlin.Unit` here (if it did, that
         // would be a bir2cir lowering defect, not something ilemit should silently absorb). The slot is a structured

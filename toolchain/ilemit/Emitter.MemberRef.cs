@@ -27,6 +27,44 @@ sealed partial class Emitter
 
     /// <summary>Every key a resolved member reference can ride on. The counting below is keyed on this set.</summary>
 
+    readonly Dictionary<string, MemberInfo> _wellKnown = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Load the document's table of fixed BCL members — the ones a Kotlin operation EXPANDS into.
+    /// </summary>
+    /// <remarks>
+    /// The source wrote none of them, and that is not the test. The test is whether an EXTERNAL member reaches a
+    /// CIL operand, which it does for every entry here. They take no per-site decision — same member every time,
+    /// no type arguments, no overload picked from context — so one table per document says them all, and the
+    /// emitter keeps the expansion while the member arrives named.
+    /// </remarks>
+    void LoadWellKnown(IEnumerable<JsonElement> files)
+    {
+        foreach (var file in files)
+        {
+            if (file.ValueKind != JsonValueKind.Object
+                || !file.TryGetProperty("wellKnownRefs", out var table)
+                || table.ValueKind != JsonValueKind.Object) continue;
+            foreach (var entry in table.EnumerateObject())
+            {
+                if (_wellKnown.ContainsKey(entry.Name) || entry.Value.ValueKind != JsonValueKind.Object) continue;
+                try { _wellKnown[entry.Name] = ResolveMemberRef(MemberRefNode.Read(entry.Value)); }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException(
+                        $"ilemit: the document's `{entry.Name}` reference does not resolve: {ex.Message}", ex);
+                }
+            }
+        }
+    }
+
+    /// <summary>The fixed BCL member a role names. Absent means the producer did not state it.</summary>
+    T WellKnown<T>(string role) where T : MemberInfo =>
+        _wellKnown.TryGetValue(role, out var m) && m is T typed ? typed
+            : throw new InvalidOperationException(
+                $"ilemit: the expansion needs the `{role}` member, which this document does not name. Every "
+                + "external member an operand encodes arrives resolved (#370)");
+
     /// <summary>
     /// The member a REQUIRED carrier names. The schema makes these mandatory, so a node without one is a
     /// producer defect, and falling back to a search would be the emitter deciding whether the build survives —

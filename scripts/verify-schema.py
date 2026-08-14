@@ -72,6 +72,9 @@ DECLARATION_REF_PAIRS = (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner"
 
 # The transitional identity vocabulary #370 retired. A CIR document carrying any of them has a second spelling
 # of a settled member beside the reference that replaced it.
+# The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
+WELL_KNOWN_TABLE = "wellKnownRefs"
+
 RETIRED_DESCRIPTORS = (
     "memberSig", "memberOwner", "memberRet",
     "baseMemberSig", "baseMemberOwner",
@@ -593,7 +596,13 @@ class V:
                 self.member_ref_carrier(f, path + "/" + carrier_key, carrier_key, o[carrier_key])
             if "declaringType" in o:
                 carrier = path.rsplit("/", 1)[-1].split("[")[0]
-                if carrier not in MEMBER_REF_KEYS:
+                # The fixed-member table is keyed by ROLE, not by carrier: its whole point is that one container
+                # says every member an expansion needs, so its keys are what the emitter asks for rather than
+                # names the contract froze. Its VALUES are still full references and are checked as such.
+                in_table = "/" + WELL_KNOWN_TABLE + "/" in path + "/"
+                if in_table:
+                    self.member_ref(f, path, o)
+                elif carrier not in MEMBER_REF_KEYS:
                     self.member_ref(f, path, o)
                     self.err(f, path, f"a resolved member identity must ride on a frozen memberRef carrier key, not {carrier!r}")
                     if f.endswith(".bir.json"):

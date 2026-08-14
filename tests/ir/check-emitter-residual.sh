@@ -22,7 +22,7 @@ MARK='#370-residual'
 # reported green with `GetMethod("GetEnumerator")` fallbacks live in another. Narrowing this set has now caused
 # the exact failure it was narrowed to fix, twice. It does not get narrowed again.
 lookups() {
-	grep -rnE '\.(GetMethod|GetField)\("' "$ROOT"/toolchain/ilemit/*.cs | grep -vE ':[0-9]+: *(//|\*)' 
+	grep -rnE '\.(GetMethod|GetField)\("' "$ROOT"/toolchain/ilemit/*.cs | grep -vE ':[0-9]+: *(//|\*)'
 	# GetMethod/GetField only: a constructor has no name, so `GetConstructor(signature)` cannot be a by-name
 	# lookup however it is spelled. What counts is a NAME arriving as a variable or an expression.
 	grep -rnE '\.(GetMethod|GetField)\(([a-z_][A-Za-z0-9_]*[,)]|[A-Za-z0-9_.()"]+ *\?)' "$ROOT"/toolchain/ilemit/*.cs \

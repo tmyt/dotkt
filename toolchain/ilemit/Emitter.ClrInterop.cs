@@ -94,8 +94,7 @@ sealed partial class Emitter
     {
         var t = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, t);
-        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
         return Bcl("System.Type");
     }
 
@@ -103,8 +102,7 @@ sealed partial class Emitter
     {
         var got = EmitExpr(e.GetProperty("e"));
         if (got != null && NeedsBoxToRef(got)) _il.Emit(OpCodes.Box, got);
-        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetType"));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetType"));
         return Bcl("System.Type");
     }
 
@@ -151,10 +149,8 @@ sealed partial class Emitter
         {
             var et = NativeType(tp);
             _il.Emit(OpCodes.Ldtoken, et);
-            // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-            EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
-            // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-            EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("GetValues", new[] { Bcl("System.Type") }));
+            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
+            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.GetValues"));
             EmitExpr(e.GetProperty("e"));
             _il.Emit(OpCodes.Box, et);
             // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
@@ -170,10 +166,8 @@ sealed partial class Emitter
     {
         var et = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, et);
-        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
-        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("GetValues", new[] { Bcl("System.Type") }));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.GetValues"));
         _il.Emit(OpCodes.Castclass, et.MakeArrayType());
         return et.MakeArrayType();
     }
@@ -182,11 +176,9 @@ sealed partial class Emitter
     {
         var et = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, et);
-        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
         EmitExpr(e.GetProperty("arg"));
-        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("Parse", new[] { Bcl("System.Type"), Bcl("System.String") }));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.Parse"));
         _il.Emit(OpCodes.Unbox_Any, et);
         return et;
     }

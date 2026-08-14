@@ -12,6 +12,7 @@ sealed partial class Emitter
 {
     public void EmitAssembly(List<JsonElement> files)
     {
+        LoadWellKnown(files);
         // #84 Phase 4: run the in-process CIR SANITY gate at the CIR boundary, BEFORE any emit — malformed CIR
         // (undeclared local, dangling goto, missing owner) fails LOUD with a precise `sanity: <invariant>` message
         // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
@@ -1246,12 +1247,9 @@ sealed partial class Emitter
         {
             var objM = name switch
             {
-                // #370-residual: Object's universal slots, wired onto a type being built (#395)
-                "ToString" => Bcl("System.Object").GetMethod("ToString", Type.EmptyTypes),
-                // #370-residual: Object's universal slots, wired onto a type being built (#395)
-                "GetHashCode" => Bcl("System.Object").GetMethod("GetHashCode", Type.EmptyTypes),
-                // #370-residual: Object's universal slots, wired onto a type being built (#395)
-                "Equals" => Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }),
+                "ToString" => WellKnown<MethodInfo>("Object.ToString"),
+                "GetHashCode" => WellKnown<MethodInfo>("Object.GetHashCode"),
+                "Equals" => WellKnown<MethodInfo>("Object.Equals"),
                 _ => null,
             };
             if (objM != null) WireMethodOverride(ti.TB, mb, objM);

@@ -329,8 +329,7 @@ sealed partial class Emitter
         var start = _il.DefineLabel(); var end = _il.DefineLabel();
         _il.MarkLabel(start);
         _il.Emit(OpCodes.Ldloc, en);
-        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Enumerator.MoveNext"));
         _il.Emit(OpCodes.Brfalse, end);
         _il.Emit(OpCodes.Ldloc, en);
         // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
