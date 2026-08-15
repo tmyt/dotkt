@@ -191,8 +191,11 @@ static partial class ClrMemberResolution
         if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn owner
             || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
             return;
-        var open = ResolveOwnerType(owner);
-        if (open == null) return;                       // emitted here: there is nothing external to name
+        // The reference surface first, then the assembly that ships the owner — the emitter resolves this owner in
+        // the runtime twin, and a type the reference twin has no name for is exactly what PhysicalTypeNamed exists
+        // to reach. Null past both means this compilation emits the owner and there is nothing external to name.
+        var open = ResolveOwnerType(owner) ?? _refs.PhysicalTypeNamed(owner.Name, (owner.Args ?? Array.Empty<TypeNode>()).Length);
+        if (open == null) return;
         var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (field == null) return;
         node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
