@@ -2340,9 +2340,11 @@ sealed partial class ReferenceMetadataIndex
             return DeclarationDescribesCall(declaration, cOb.Of);
         if (call is TypeNode.Nullable cNull)
         {
-            if (declaration is TypeNode.Tv dt && cNull.Of == dt) return true;
-            if (declaration is TypeNode.Fqn df && cNull.Of is TypeNode.Fqn cf)
-                return DeclarationDescribesCall(df, cf);
+            // Nullability of a REFERENCE slot is not part of CLR identity, so a call stating T? still describes a
+            // declaration of T whatever kind T is. This used to unwrap only for an Fqn or a type variable, which
+            // left a nullable ARRAY — every `UIntArray?` receiver of a _UArraysKt extension — matching nothing.
+            if (declaration is not TypeNode.Nullable)
+                return DeclarationDescribesCall(declaration, cNull.Of);
         }
         if (declaration is TypeNode.Fqn { Args: null } erased
             && ParamKey(erased) == "obj"
