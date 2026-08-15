@@ -178,9 +178,10 @@ static partial class ClrMemberResolution
         foreach (var entry in ifaces)
         {
             if (TypeJson.Read(entry) is not TypeNode.Fqn iface) continue;
-            // A canonical synthetic interface (dotkt$CharSequence and friends) is spelled as a bare name, which
-            // the owner path does not resolve; the emitter reaches it by plain type resolution and so does this.
-            var open = ResolveOwnerType(iface) ?? _refs.ResolveRefType(iface.Name);
+            // A canonical synthetic interface is spelled as a bare name and lives ONLY in the assembly that
+            // ships it: the reference twin describes the Kotlin surface and has no name for it, so no amount
+            // of reference resolution will ever find one. Read it from the shipped twin, as the emitter does.
+            var open = ResolveOwnerType(iface) ?? _refs.PhysicalTypeNamed(iface.Name);
             if (open == null) continue;   // an interface this compilation emits has no reference to make
             var args = iface.Args ?? Array.Empty<TypeNode>();
             foreach (var m in open.GetMethods(BindingFlags.Public | BindingFlags.Instance))

@@ -1349,6 +1349,26 @@ sealed partial class ReferenceMetadataIndex
         try { return asm.GetType(def.FullName, throwOnError: false); } catch { return null; }
     }
 
+    /// <summary>
+    /// The shipped declaration of a type named only by the assembly that ships it. A canonical synthetic
+    /// interface is emitted once into the runtime stdlib and referenced from there; the reference twin
+    /// describes the Kotlin surface and has no name for it at all, so the reference surface can never
+    /// resolve one. Naming a slot on such a type therefore has to read the twin that ships it — the same
+    /// type the emitter resolves, reached by the same bare name.
+    /// </summary>
+    public Type PhysicalTypeNamed(string name, int arity = 0)
+    {
+        if (string.IsNullOrEmpty(name)) return null;
+        var asm = PhysicalStdlibAssembly();
+        if (asm == null) return null;
+        try
+        {
+            return asm.GetType(name, throwOnError: false)
+                ?? (arity > 0 ? asm.GetType($"{name}`{arity}", throwOnError: false) : null);
+        }
+        catch { return null; }
+    }
+
     Assembly PhysicalStdlibAssembly()
     {
         if (_physicalStdlibInit) return _physicalStdlib;
@@ -2211,7 +2231,10 @@ sealed partial class ReferenceMetadataIndex
             return false;
         var bareOwner = BareOwnerFqn(ownerFqn);
         var ownerArity = _ownerArity.TryGetValue(bareOwner, out var oa) ? oa : 0;
-        var owner = ResolveRefType(bareOwner, ownerArity);
+        // A hoisted alias helper exists only in the assembly that ships it — the reference twin carries the alias
+        // implementation this pass replaced, never the static it was hoisted into — so the reference surface has no
+        // name for it and never will. Read the declaration from the shipped twin, the assembly the call links against.
+        var owner = ResolveRefType(bareOwner, ownerArity) ?? PhysicalTypeNamed(bareOwner, ownerArity);
         if (owner == null)
             return false;
         var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
