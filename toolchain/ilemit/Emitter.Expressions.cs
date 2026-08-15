@@ -231,6 +231,14 @@ sealed partial class Emitter
                 // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
                 // dispatch. Gated to nodes carrying "dynRet" (the @Clr member calls), so a genuine miss elsewhere throws.
                 var ciOwner = ParseOwnerSlot(e.GetProperty("ownerType"));   // keeps a constructed-generic owner's args
+                // An external owner names the member (#370); only a method this compilation emits is still found
+                // by signature here, which is the local axis (#395).
+                if (e.TryGetProperty("memberRef", out _))
+                {
+                    m0 = RequiredRef<MethodInfo>(e, "memberRef", "method");
+                    rt = m0.ReturnType;
+                }
+                else
                 try { m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e)); }
                 catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _)
                     && !e.TryGetProperty("clrOwnerResolved", out _)
