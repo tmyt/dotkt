@@ -2362,6 +2362,10 @@ sealed partial class ReferenceMetadataIndex
     static bool DeclarationDescribesCall(TypeNode declaration, TypeNode call)
     {
         if (declaration == call) return true;
+        // A star projection states no bound, so it describes whatever the declaration says — the erasure the
+        // reference twin shows as `object` is one such answer, not a different type. Without this a
+        // Comparable<*> selector could not meet compareBy's Comparable<object> parameter.
+        if (call is TypeNode.Star) return true;
         if (declaration is TypeNode.Oblivious dOb)
             return DeclarationDescribesCall(dOb.Of, call);
         if (call is TypeNode.Oblivious cOb)
