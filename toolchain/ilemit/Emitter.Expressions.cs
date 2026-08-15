@@ -359,7 +359,16 @@ sealed partial class Emitter
             {
                 // ownerType is already the final CIR TypeSpec. Preserve it exactly: generic-owner companion statics
                 // have already moved to their explicit non-generic carrier, and arbitrary CIR must not be reinterpreted.
-                var f = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out var ft);
+                // An external owner names its field (#370); only a field this compilation emits is still found by
+                // name, which is the local axis (#395). The field's own type is what the read is typed by either way.
+                Type ft;
+                FieldInfo f;
+                if (e.TryGetProperty("fieldRef", out _))
+                {
+                    f = RequiredRef<FieldInfo>(e, "fieldRef", "field");
+                    ft = f.FieldType;
+                }
+                else f = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out ft);
                 MaybeVolatile(f, e);
                 EmitField(_il, OpCodes.Ldsfld, f);
                 return ft;
