@@ -2247,6 +2247,34 @@ sealed partial class ReferenceMetadataIndex
             .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
             .Where(c => c.ps.All(p => p != null))
             .ToList();
+        // A member the owner reaches through an interface it implements is declared on that interface, not on the
+        // owner — ArrayDeque<T> states addLast itself but Add, Insert, RemoveAt and set_Item come from IList<T>.
+        // The reference is to the declaring type either way, so when the owner answers for nothing, ask the
+        // interfaces it implements. Only when the owner itself has no candidate, so an owner-declared member is
+        // never displaced by an interface one.
+        if (candidates.Count == 0)
+            candidates = owner.GetInterfaces()
+                .SelectMany(i => i.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
+                    && m.GetParameters().Length == callSignature.Count)
+                .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
+                .Where(c => c.ps.All(p => p != null))
+                .ToList();
+        // The call may already have been renamed to its PHYSICAL spelling while the reference surface still
+        // describes the Kotlin one — ArrayDeque implements MutableList<T> there and has no Add at all, though the
+        // assembly that ships it does. When the reference surface knows the owner but not the member, ask the
+        // shipped twin, which is the assembly the call links against.
+        if (candidates.Count == 0 && PhysicalTypeNamed(bareOwner, ownerArity) is { } shipped && shipped != owner)
+        {
+            owner = shipped;
+            candidates = shipped.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
+                    | BindingFlags.Static | BindingFlags.Instance)
+                .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
+                    && m.GetParameters().Length == callSignature.Count)
+                .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
+                .Where(c => c.ps.All(p => p != null))
+                .ToList();
+        }
         if (candidates.Count == 0)
             return false;
 

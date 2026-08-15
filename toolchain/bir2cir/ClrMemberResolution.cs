@@ -433,6 +433,9 @@ static partial class ClrMemberResolution
             || (node["method"] as JsonValue)?.TryGetValue<string>(out var name) != true
             || node["sig"] is not JsonArray sig)
             return;
+        // A type this compilation emits stays on the local axis (#395). The search can otherwise answer from the
+        // shipped twin, which for a stdlib self-build is the PREVIOUS build of the assembly being produced.
+        if (_localTypes.Contains(ownerFqn.Name)) return;
         var selectionSig = sig;
         if ((node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
             && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot))
