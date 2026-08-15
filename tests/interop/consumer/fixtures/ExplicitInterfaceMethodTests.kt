@@ -19,6 +19,9 @@ import ExplicitMethodInterop.IInheritedPropertySlot
 import ExplicitMethodInterop.IDerivedPropertySlot
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import Cbk.ICallbackEngine
+import Cbk.IGenericCallbackEngine
+import GenIm.IConv
 
 private class DerivedExplicitOperations : ExplicitOperations()
 
@@ -237,3 +240,11 @@ class ExplicitInterfaceMethodTests {
 
     }
 }
+// Kept in a different source file from its implementation and call site. The local interface graph is module-wide;
+// its inherited external slots must therefore be carried even when the implementing type is in a sibling file.
+interface LocalCallbackEngine : ICallbackEngine
+interface LocalGenericCallbackEngine<T> : IGenericCallbackEngine<T>
+interface LocalConstrainedCallback<T> : IGenericCallbackEngine<T> {
+    override fun Apply(value: T, transform: (T) -> String): String = "local:" + transform(value)
+}
+interface LocalConv : IConv

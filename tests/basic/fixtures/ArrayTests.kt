@@ -66,6 +66,12 @@ fun <T : Enum<T>> arrayEnumName(value: T): String = value.name
 
 class ArrayTests {
     @TestAttribute
+    fun storedFunctionArrayInitializer() {
+        val init: (Int) -> Int = { it * 3 }
+        assertEquals("[0, 3, 6, 9]", IntArray(4, init).toList().toString())
+    }
+
+    @TestAttribute
     fun boxedGenericValues() {
         val values = mutableMapOf<Int, Int>()
         assertEquals(42, values.getOrPut(5) { 42 })

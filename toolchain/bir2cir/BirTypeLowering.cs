@@ -415,6 +415,23 @@ static class BirTypeLowering
         IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
         IReadOnlySet<string> localTypeNames = null)
     {
+        TypeNode LowerSlot(TypeNode type) => returnPosition
+            && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
+                ? VoidType
+                : CanonicalPhysicalSlotType(LowerPhysicalType(
+                    type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames));
+        return LowerSlot(left).Equals(LowerSlot(right));
+    }
+
+    // A representation pass that runs before the full-tree lowering may already have to author a PHYSICAL type
+    // inside a CIR-only carrier. Configure the same facts Lower() will use and invoke the same recursive rule; a
+    // caller must not reproduce only the primitive, alias, collection-collapse or delegate branch it happened to
+    // encounter first. The statics are per-run state, so preserve them just as SamePhysicalSlotType historically did.
+    internal static TypeNode LowerPhysicalType(TypeNode type,
+        IReadOnlyDictionary<string, string> aliases, Func<string, bool> isValueFqn,
+        IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
+        IReadOnlySet<string> localTypeNames = null)
+    {
         var savedAliases = _aliases;
         var savedIsValue = _isValueFqn;
         var savedPhysicalNames = _physicalTypeNames;
@@ -425,12 +442,7 @@ static class BirTypeLowering
             _isValueFqn = isValueFqn ?? (_ => false);
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
-            TypeNode LowerSlot(TypeNode type) => returnPosition
-                && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
-                    ? VoidType
-                    : CanonicalPhysicalSlotType(
-                        LowerType(type, refBuild: false, force: false, typeArg: false));
-            return LowerSlot(left).Equals(LowerSlot(right));
+            return LowerType(type, refBuild: false, force: false, typeArg);
         }
         finally
         {

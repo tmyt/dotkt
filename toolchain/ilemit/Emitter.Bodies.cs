@@ -54,7 +54,7 @@ sealed partial class Emitter
             // declaration as baseMemberSig. Reuse the same exact-link path as newClr; this layer does not form or rank
             // a constructor candidate set from the argument expressions.
             var ctor = LinkClrCtor(ti.ClrBase, c, out var reanchorBaseCtor, "baseCtorRef", includeNonPublic: true);
-            if (reanchorBaseCtor) ctor = AnchorConstructor(ti.ClrBase, ctor);
+            if (reanchorBaseCtor) ctor = AnchorOn(ti.ClrBase, ctor);
             if (ba.ValueKind == JsonValueKind.Array) EmitArgs(ba, ParametersOf(ctor));
             EmitConstructor(_il, OpCodes.Call, ctor);
         }
@@ -557,6 +557,7 @@ sealed partial class Emitter
     {
         if (sig == null)
             throw new InvalidOperationException($"ilemit: interface call {owner}.{name} is missing its resolved `sig` descriptor");
+        // #370-residual: local axis — this resolves a slot on an interface/type being wired into this assembly.
         var byName = owner.GetMethods().Where(m => m.Name == name).ToList();
         var candidates = byName
             .Where(m => (methodArity == 0 ? !m.IsGenericMethodDefinition
@@ -615,14 +616,17 @@ sealed partial class Emitter
                 // the private cross-assembly field. Only a genuine direct-field node takes the Ldflda fast path here.
                 if (e.TryGetProperty("member", out var fam) && fam.ValueKind == JsonValueKind.String && fam.GetString() == "accessor") break;
                 EmitExpr(e.GetProperty("recv"));
-                EmitField(_il, OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                EmitField(_il, OpCodes.Ldflda, PrimaryFromRef(e, "memberRef") as FieldInfo
+                    ?? ResolveLocalField(ParseOwnerSlot(e.GetProperty("ownerType")),
+                        e.GetProperty("name").GetString(), out _, "field address"));
                 return;
             case "staticField":
                 // An external owner names its field; a field this compilation emits is still found by name, which
                 // is the local axis (#395) rather than a second resolver living on here.
                 EmitField(_il, OpCodes.Ldsflda, e.TryGetProperty("fieldRef", out _)
                     ? RequiredRef<FieldInfo>(e, "fieldRef", "field")
-                    : ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                    : ResolveLocalField(ParseOwnerSlot(e.GetProperty("ownerType")),
+                        e.GetProperty("name").GetString(), out _, "static field address"));
                 return;
             case "arrayGet":
                 EmitExpr(e.GetProperty("array"));
@@ -704,13 +708,15 @@ sealed partial class Emitter
         // Mirrors the event path; covers custom delegates (ApplicationInitializationCallback, ThreadStart) and BCL
         // Func/Action alike. Scoped to literal lambdas (newDelegate/newClosure) so stored delegate/Func values keep
         // their existing pass-through path.
-        // Skip the rewrap only for a `want` still mentioning an OPEN generic PARAMETER — there is no concrete ctor to
-        // bind. Everything else rewraps, including a delegate whose only builder-ness is a TypeBuilder type-arg
-        // (`Func<Res,int>`, Res a user class being emitted): DelegateCtor/InvokeOf bridge those via TypeBuilder.GetX.
+        // A TARGET mentioning the current method/type's generic parameter is still a complete constructed delegate
+        // at this call site when bir2cir carried `targetDelegateCtorRef` for the containing parameter. MemberRef
+        // decoding anchors that declaration onto the use-site instantiation. The carrier is also the discriminator:
+        // a natural open Func/Action has no target conversion to perform and must stay on the ordinary expression
+        // path, while an open custom target must not discard the exact ctor merely because it contains a scoped tv.
         // (#220 removed the old assembly-local `KFunc`/`KAction` exemption: a wide delegate in a signature is now the
         // stdlib's canonical baked type, identical on both sides, so there is nothing left to exempt.)
         if (IsDelegateType(want) && want != Bcl("System.Delegate") && want != Bcl("System.MulticastDelegate")
-            && !ContainsGenericParameter(want)
+            && (!ContainsGenericParameter(want) || HasDistinctTargetDelegateCtor(a))
             && a.TryGetProperty("k", out var dk) && (dk.GetString() == "newDelegate" || dk.GetString() == "newClosure"))
         {
             EmitHandlerAsDelegate(a, want);
@@ -734,6 +740,19 @@ sealed partial class Emitter
         // any OTHER arg/slot mismatch still surfaces (pure CLR reconciliation of bir2cir's collapse — no Kotlin knowledge).
         else if (IsCollectionViewSeam(got, want))
             _il.Emit(OpCodes.Castclass, want);
+    }
+
+    bool HasDistinctTargetDelegateCtor(JsonElement node)
+    {
+        if (!node.TryGetProperty("delegateCtorRef", out var naturalElement)
+            || naturalElement.ValueKind != JsonValueKind.Object
+            || !node.TryGetProperty("targetDelegateCtorRef", out var targetElement)
+            || targetElement.ValueKind != JsonValueKind.Object)
+            return false;
+        var natural = DotKt.Bir.MemberRefNode.Read(naturalElement);
+        var target = DotKt.Bir.MemberRefNode.Read(targetElement);
+        return !string.Equals(natural.Assembly, target.Assembly, StringComparison.Ordinal)
+            || natural.DeclaringType != target.DeclaringType;
     }
 
     // True exactly for the sanctioned COLLAPSED-VARIANCE collection-interface seams (EITHER direction) with an

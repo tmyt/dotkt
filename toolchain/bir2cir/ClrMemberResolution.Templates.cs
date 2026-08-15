@@ -188,7 +188,9 @@ static partial class ClrMemberResolution
     static void ResolveStaticField(JsonObject node)
     {
         if (node.ContainsKey("fieldRef")) return;
-        if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn owner
+        // `staticField`/`staticFieldSet` use ownerType; the CLR-vocabulary `clrStaticField` uses type.
+        // They are the same physical operation after this point and must receive the same field identity.
+        if (ReadOwnerNode(node["ownerType"] ?? node["type"]) is not TypeNode.Fqn owner
             || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
             return;
         // A type this compilation emits keeps the local axis (#395) and must not be given an external identity,
@@ -199,7 +201,31 @@ static partial class ClrMemberResolution
         var open = ResolveOwnerType(owner);
         if (open == null) return;
         var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
         if (field == null) return;
+        node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
+    }
+
+    // `lateinitGet` is a direct load of the property storage followed by the null check encoded
+    // by that CIR node.  When an inline/reference payload makes that storage external, name the
+    // field just as an ordinary static/instance field operand does; ilemit must not rediscover it.
+    static void ResolveLateinitField(JsonObject node)
+    {
+        if (node.ContainsKey("fieldRef")) return;
+        if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn owner
+            || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
+            return;
+        if (_localTypes.Contains(owner.Name)) return;
+        var open = ResolveOwnerType(owner);
+        if (open == null) return;
+        var isStatic = node["static"] is JsonValue value && value.TryGetValue<bool>(out var flag) && flag;
+        var flags = BindingFlags.Public | BindingFlags.NonPublic
+            | (isStatic ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.FlattenHierarchy;
+        var field = open.GetField(name, flags);
+        if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
+        if (field == null)
+            throw new InvalidOperationException(
+                $"bir2cir: external lateinit storage '{owner.Name}.{name}' does not resolve to a field (#370)");
         node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
     }
 
@@ -213,8 +239,16 @@ static partial class ClrMemberResolution
     /// </remarks>
     static void ResolveEventCas(JsonObject node)
     {
-        if (node.ContainsKey("combineRef")) return;
         var kind = (node["kind"] as JsonValue)?.GetValue<string>();
+        // A raise emits a callvirt to the concrete event delegate's Invoke.  It is the same
+        // operation as every other delegate invocation, so it carries the same resolved
+        // declaration instead of asking ilemit to recover it from the delegate type.
+        if (kind == "raise")
+        {
+            ResolveDelegateInvoke(node, "delegateType");
+            return;
+        }
+        if (node.ContainsKey("combineRef")) return;
         if (kind is not ("add" or "remove")) return;
         if (TypeJson.Read(node["delegateType"]) is not TypeNode delegateType) return;
 
@@ -304,10 +338,31 @@ static partial class ClrMemberResolution
         // Most nodes state their own function type. An array initializer states the EXPRESSION whose value it
         // calls, and that expression is a node with a function type of its own — one level down, same fact.
         var stated = TypeJson.Read(node["funcType"]) ?? TypeJson.Read(node["clrType"])
-            ?? TypeJson.Read((node[typeKey] as JsonObject)?["funcType"]) ?? TypeJson.Read(node[typeKey]);
+            ?? TypeJson.Read((node[typeKey] as JsonObject)?["funcType"])
+            ?? TypeJson.Read((node[typeKey] as JsonObject)?["sty"])
+            ?? TypeJson.Read(node[typeKey]);
         if (stated == null)
             throw new InvalidOperationException(
                 $"bir2cir: a function-type call states no type under funcType/clrType/{typeKey} (#370)");
+        ResolveDelegateInvoke(node, stated);
+    }
+
+    // Used by a semantic producer that still has the handler's function type before transient `sty`
+    // annotations are consumed.  The result is the same ordinary invokeRef carrier used by all
+    // delegate-call nodes; no event-specific identity dialect is introduced.
+    internal static void ResolveDelegateInvoke(
+        JsonObject node, JsonNode stated, ReferenceMetadataIndex refs,
+        IReadOnlySet<string> localTypes)
+    {
+        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        _localTypes = localTypes ?? new HashSet<string>();
+        ResolveDelegateInvoke(node, TypeJson.Read(stated)
+            ?? throw new InvalidOperationException("bir2cir: a delegate invocation has no readable handler type (#370)"));
+    }
+
+    static void ResolveDelegateInvoke(JsonObject node, TypeNode stated)
+    {
+        if (node.ContainsKey("invokeRef")) return;
         // The document states the Kotlin function type; the lowering already turned it into the delegate the
         // value physically is. Ask that same lowering rather than re-deriving the delegate here.
         var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
@@ -325,7 +380,8 @@ static partial class ClrMemberResolution
         if (invoke.Count != 1)
             throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one (#370)");
-        node["invokeRef"] = MemberRefJson(invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args);
+        node["invokeRef"] = MemberRefJson(invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
+            ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
 
     /// <summary>
@@ -344,6 +400,12 @@ static partial class ClrMemberResolution
         if (stated == null)
             throw new InvalidOperationException(
                 $"bir2cir: a delegate construction states no function type under funcType/clrType/{typeKey} (#370)");
+        ResolveDelegateCtor(node, stated);
+    }
+
+    static void ResolveDelegateCtor(JsonObject node, TypeNode stated, string carrier = "delegateCtorRef")
+    {
+        if (node.ContainsKey(carrier)) return;
         // A function type stays an `fn` node through the general lowering — its DELEGATE form is a separate
         // step, and the same one the emitter's own mapping uses. Ask for it rather than assembling `Func`N` here.
         var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
@@ -364,9 +426,17 @@ static partial class ClrMemberResolution
             ?? throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has no unique (object, native int) constructor — "
                 + $"{ctors.Count} two-argument candidate(s) (#370)");
-        node["delegateCtorRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open,
-            delegateFqn.Args ?? Array.Empty<TypeNode>());
+        node[carrier] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open,
+            delegateFqn.Args ?? Array.Empty<TypeNode>(), ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
+
+    static bool IsFunctionShape(TypeNode type) => type switch
+    {
+        TypeNode.Fn => true,
+        TypeNode.Nullable n => IsFunctionShape(n.Of),
+        TypeNode.Oblivious o => IsFunctionShape(o.Of),
+        _ => false,
+    };
 
     /// <summary>
     /// The interface slot a constrained call dispatches through.
@@ -382,11 +452,29 @@ static partial class ClrMemberResolution
         if ((node["method"] as JsonValue)?.GetValue<string>() is not string name) return;
         var open = ResolveOwnerType(iface);
         if (open == null) return;
-        var argCount = (node["arg"] as JsonObject) == null ? 0 : 1;
+        // constrainedCall has two dialects: the historical compareTo form carries one `arg`, while the
+        // general form carries `args`.  Count the declaration operands from the carrier itself; treating every
+        // general-form call as parameterless silently left its member unresolved.
+        var argCount = node["args"] is JsonArray args
+            ? args.Count
+            : node["arg"] is JsonObject ? 1 : 0;
+        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         var cands = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-            .Where(m => m.Name == name && m.GetParameters().Length == argCount).ToList();
-        if (cands.Count != 1) return;
-        node["memberRef"] = MemberRefJson(cands[0], MemberRefNode.Kinds.Method, open,
+            .Where(m => m.Name == name && m.GetParameters().Length == argCount
+                && (m.IsGenericMethodDefinition
+                    ? m.GetGenericArguments().Length == methodArity
+                    : methodArity == 0))
+            .ToList();
+        var sig = (node["sig"] as JsonArray)?.Select(TypeJson.Read).ToList();
+        var win = sig == null
+            ? (cands.Count == 1 ? cands[0] : null)
+            : TryPickUnique(cands, sig, iface.Args ?? Array.Empty<TypeNode>());
+        if (win == null)
+            throw new InvalidOperationException(
+                $"bir2cir: constrained call '{iface.Name}.{name}' does not resolve to one declared signature (#370)");
+        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open,
             iface.Args ?? Array.Empty<TypeNode>());
+        StampDelegateArgumentTargets(node, win, iface.Args ?? Array.Empty<TypeNode>());
+        StampMemberRet(node, win.ReturnType);
     }
 }

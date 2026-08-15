@@ -36,8 +36,9 @@ using DotKt.Toolchain;
 static partial class ClrMemberResolution
 {
     /// <summary>The scalar reference for a resolved method/constructor, ready to be stamped on a node.</summary>
-    internal static JsonNode MemberRefJson(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs)
-        => MemberRefOf(member, kind, openOwner, ownerArgs).Write();
+    internal static JsonNode MemberRefJson(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs,
+        bool? ownerArgumentsAreMethodSlots = null)
+        => MemberRefOf(member, kind, openOwner, ownerArgs, ownerArgumentsAreMethodSlots).Write();
 
     /// <summary>The scalar reference for a resolved field.</summary>
     internal static JsonNode FieldRefJson(FieldInfo field, Type openOwner, TypeNode[] ownerArgs)
@@ -92,7 +93,8 @@ static partial class ClrMemberResolution
         return field;
     }
 
-    internal static MemberRefNode MemberRefOf(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs)
+    internal static MemberRefNode MemberRefOf(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs,
+        bool? ownerArgumentsAreMethodSlots = null)
     {
         member = OpenDeclarationOf(member);
         // The SHIPPED declaration when the member's assembly has a separate one; otherwise the member itself.
@@ -106,7 +108,7 @@ static partial class ClrMemberResolution
         var node = new MemberRefNode(
             Kind: kind,
             Assembly: PhysicalAssemblyOf(member),
-            DeclaringType: DeclaringTypeRef(member, openOwner, ownerArgs),
+            DeclaringType: DeclaringTypeRef(member, openOwner, ownerArgs, ownerArgumentsAreMethodSlots),
             Name: ctor != null ? MemberRefNode.CtorName : member.Name,
             GenericArity: member.IsGenericMethod ? member.GetGenericArguments().Length : 0,
             ReturnType: ctor != null
@@ -114,6 +116,7 @@ static partial class ClrMemberResolution
                 : RefReturnOf(method),
             CallingConvention: ConventionOf(member),
             ParameterTypes: RefParamsOf(shipped));
+        ValidateDeclaringArity(member, node.DeclaringType);
         node.Validate();
         return node;
     }
@@ -154,8 +157,24 @@ static partial class ClrMemberResolution
             GenericArity: 0,
             // A field's "return" is its declared type — the same crossing a parameter of that type would be.
             ReturnType: ShippedFieldType(field));
+        ValidateDeclaringArity(field, node.DeclaringType);
         node.Validate();
         return node;
+    }
+
+    // A nested metadata name does not encode its constructed arity. C# may carry enclosing parameters into a
+    // nested declaration (`Outer`1+Inner`1` has two arguments), while a static Kotlin nested declaration may
+    // introduce an independent set (`MutableMap`2+MutableEntry`2` has only two). The producer has the resolved
+    // TypeDef, so validate against that fact here instead of asking the wire validator to infer it from a name.
+    static void ValidateDeclaringArity(MemberInfo member, TypeNode declaringType)
+    {
+        if (declaringType is not TypeNode.Fqn f) return;
+        var expected = DeclaringDefOf(member).GetGenericArguments().Length;
+        var actual = f.Args?.Length ?? 0;
+        if (expected != actual)
+            throw new InvalidOperationException(
+                $"bir2cir: declaring type '{f.Name}' of '{DescribeMember(member)}' has {expected} metadata "
+                + $"parameter(s), but its memberRef carries {actual} argument(s) (#370)");
     }
 
     static TypeNode ShippedFieldType(FieldInfo field)
@@ -205,29 +224,36 @@ static partial class ClrMemberResolution
     // receiver inherits from `IReadOnlyCollection<T>` is declared on `IReadOnlyCollection`1<string>` — the
     // projection ilemit would otherwise have to redo from the receiver, which is where its base-interface
     // fallbacks came from.
-    /// <summary>
-    /// The delegate a Kotlin function type IS, for use as an owner's type argument.
-    /// </summary>
-    /// <remarks>
-    /// An owner argument arrives straight off the call node, so it can still be an un-lowered `fn` — the family
-    /// is only decided by the lowering, and a reference naming a function SHAPE is not a reference to any CLR
-    /// type. Lowering here asks the one component that owns the decision rather than restating it.
-    /// </remarks>
-    static TypeNode DelegateArgOf(TypeNode.Fn fn) =>
-        (BirTypeLowering.LowerFnDelegate(fn, refBuild: false, force: false) is TypeNode.Fn lowered
-            ? BirTypeLowering.DelegateFqnOf(lowered)
-            : null) ?? (TypeNode)fn;
+    // Owner arguments can reach this early resolver before the full-tree lowering. A memberRef is already physical
+    // CIR, so lower the WHOLE argument through the canonical rule — not only the function-type case that first made
+    // the omission visible. A root function shape additionally becomes the nominal delegate type that instantiates
+    // the owner; nested function nodes remain valid signature types and ilemit maps them through their carried clr.
+    static TypeNode PhysicalOwnerArg(TypeNode arg, bool typeArg)
+    {
+        var lowered = BirTypeLowering.LowerPhysicalType(arg, _refs.Aliases, _refs.IsValueTypeFqn,
+            _refs.PhysicalTypeNames, typeArg, _localTypes);
+        return lowered is TypeNode.Fn fn
+            ? BirTypeLowering.DelegateFqnOf(fn)
+                ?? throw new InvalidOperationException("bir2cir: a lowered owner function argument has no CLR delegate family (#370)")
+            : lowered;
+    }
 
-    static TypeNode DeclaringTypeRef(MemberInfo member, Type openOwner, TypeNode[] ownerArgs)
+    static TypeNode DeclaringTypeRef(MemberInfo member, Type openOwner, TypeNode[] ownerArgs,
+        bool? ownerArgumentsAreMethodSlots = null)
     {
         var declaring = DeclaringDefOf(member);
         var head = PhysicalTypeName(declaring);
-        // A type ARGUMENT has to be stated physically like everything else in a reference: a Kotlin function type
-        // in that position is the delegate it becomes, not an `fn` shape. Owner arguments reach here straight off
-        // the call node, so the ones that are still Kotlin-shaped are physicalized here rather than downstream —
-        // the emitter anchors on this instantiation and cannot make a CLR type out of a function shape.
+        // A type ARGUMENT has to be stated physically like everything else in a reference. Owner arguments may reach
+        // here straight off the pre-lowering call node; the carrier itself is not rewritten downstream.
+        // The owner's arguments occupy the same positions here as they do when the full owner TypeNode is
+        // lowered later. Most generic arguments are storage slots (Root-V applies); delegate and KProperty
+        // arguments are method slots (Root-H applies). Treating every owner argument as storage rewrites e.g.
+        // KProperty1<List<T>, R> to KProperty1<IList<T>, R>, although its get receiver remains IReadOnlyList<T>.
+        var methodSlots = ownerArgumentsAreMethodSlots
+            ?? (openOwner != null && openOwner.IsGenericType && ArgumentsAreMethodSlots(openOwner));
+        var argsAreSlots = !methodSlots;
         var args = (ownerArgs ?? Array.Empty<TypeNode>())
-            .Select(a => a is TypeNode.Fn fn ? DelegateArgOf(fn) : a).ToArray();
+            .Select(a => PhysicalOwnerArg(a, typeArg: argsAreSlots)).ToArray();
         var openDefinition = openOwner == null ? null : SafeDef(openOwner);
         // The receiver IS the declarer: its own arguments apply unchanged.
         if (openDefinition != null && openDefinition == declaring)
@@ -393,14 +419,6 @@ static partial class ClrMemberResolution
     static bool ArgumentsAreMethodSlots(Type t)
     {
         var def = t.IsGenericTypeDefinition ? t : t.GetGenericTypeDefinition();
-        // A delegate's type arguments ARE a signature: they arrive as a Kotlin function type, whose parameters
-        // and return BirTypeLowering lowers as heads. `Func<List<T>, R>` therefore keeps `IReadOnlyList` where a
-        // `Box<List<T>>` collapses to `IList` — the difference that makes this positional rather than uniform.
-        // (A CLR delegate written literally in Kotlin source lowers its arguments as storage instead, and the
-        // reference twin spells both origins identically, so that one case would be named wrong here. It is left
-        // to fail loudly at the exact lookup rather than guessed at: corpus-wide exact resolution is the evidence
-        // that it does not occur, and a silent mis-naming is what this whole change exists to remove.)
-        if (IsDelegate(def)) return true;
         // The KProperty carriers, for the reason BirTypeLowering gives: each argument is substituted into an
         // interface method slot, not stored in one.
         return BirTypeLowering.IsMethodSlotCarrier(AliasKey(def));

@@ -213,6 +213,14 @@ static partial class ClrMemberResolution
         if (acc == null)
             throw new InvalidOperationException($"bir2cir: event '{name}' on '{open}' has no {(add ? "add" : "remove")} accessor (#46 W1-S3)");
         RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
+        // A stored Kotlin function value is re-wrapped in the event's own delegate type.  The accessor declaration
+        // fixes that target type; carry its constructor here so ilemit does not rediscover a member from the delegate
+        // shape.  RetargetToBaseInterface may have projected the owner onto a declaring base interface, so substitute
+        // the handler slot in that final owner frame.
+        var declaringSpec = ReadOwnerNode(node["type"]) as TypeNode.Fqn ?? ownerFqn;
+        var handlerType = SubstOwnerParams(acc.GetParameters().Single().ParameterType,
+            declaringSpec.Args ?? Array.Empty<TypeNode>());
+        ResolveDelegateCtor(node, handlerType);
         node["accessor"] = acc.Name;
         node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
         StampMemberRet(node, acc.ReturnType);

@@ -86,9 +86,9 @@ public sealed record MemberRefNode(
     static bool IsInstanceConvention(string? cc) => cc is Instance or VarargInstance;
 
     /// <summary>
-    /// The generic arity a metadata FullName encodes, summed over the nesting chain: `Outer`1+Inner`1` has two
-    /// parameters, of which the outer one comes first. Reading it back is how the declaring type's argument
-    /// list is checked against the name it is attached to.
+    /// The generic arity a NON-NESTED metadata FullName encodes. A nested name cannot state its constructed
+    /// arity: an inner declaration may capture enclosing parameters or may be independent of them. Callers use
+    /// this only after excluding names containing `+`.
     /// </summary>
     public static int ArityOfName(string fullName)
     {
@@ -141,13 +141,15 @@ public sealed record MemberRefNode(
         // would acquire two identities that never compare equal.
         if (DeclaringType is TypeNode.Fqn { Args: { Length: 0 } })
             throw new FormatException("memberRef.declaringType must omit `args` when the declarer is non-generic, not carry an empty list");
-        // The declarer's name states its own arity, so an argument list of any other length describes an
+        // A non-nested declarer's name states its own arity, so an argument list of any other length describes an
         // instantiation that type cannot have. Checking it is what catches a projection that silently ran
         // short or long — an identity that still looks coherent but names nothing.
         if (DeclaringType is TypeNode.Fqn declarer)
         {
+            // A nested name cannot state whether its inner declaration captures enclosing parameters. The producer
+            // validates that case against the resolved TypeDef; a context-free wire validator cannot infer it.
             int want = ArityOfName(declarer.Name), got = declarer.Args?.Length ?? 0;
-            if (want != got)
+            if (want != got && !declarer.Name.Contains('+'))
                 throw new FormatException(
                     $"memberRef.declaringType `{declarer.Name}` declares {want} generic parameter(s) but carries {got} argument(s)");
         }
@@ -401,16 +403,16 @@ public static class MemberRefNodeSelfTest
         Refuse("an empty declaring-args list", () => new MemberRefNode(MemberRefNode.Kinds.Method, "A",
             new TypeNode.Fqn("T", System.Array.Empty<TypeNode>()), "m", 0, MemberRefNode.Void,
             MemberRefNode.Instance, System.Array.Empty<TypeNode>()).Validate());
-        // A declarer's name states its own arity, nesting chain included, so any other argument count names
-        // an instantiation that type cannot have.
+        // A non-nested declarer's name states its own arity, so any other argument count names an instantiation
+        // that type cannot have. Nested arity requires the resolved TypeDef and is checked by bir2cir's producer.
         Refuse("too few declaring args", () => new MemberRefNode(MemberRefNode.Kinds.Method, "A",
-            new TypeNode.Fqn("Outer`1+Inner`1", new TypeNode[] { new TypeNode.Fqn("System.Int32") }), "m", 0,
+            new TypeNode.Fqn("Owner`2", new TypeNode[] { new TypeNode.Fqn("System.Int32") }), "m", 0,
             MemberRefNode.Void, MemberRefNode.Instance, System.Array.Empty<TypeNode>()).Validate());
         Refuse("args on a non-generic declarer", () => new MemberRefNode(MemberRefNode.Kinds.Method, "A",
             new TypeNode.Fqn("T", new TypeNode[] { new TypeNode.Fqn("System.Int32") }), "m", 0,
             MemberRefNode.Void, MemberRefNode.Instance, System.Array.Empty<TypeNode>()).Validate());
-        if (MemberRefNode.ArityOfName("Outer`1+Inner`2") != 3 || MemberRefNode.ArityOfName("Plain") != 0)
-            throw new Exception("[C# MemberRefNode] nesting-chain arity must be summed over the whole name");
+        if (MemberRefNode.ArityOfName("Owner`2") != 2 || MemberRefNode.ArityOfName("Plain") != 0)
+            throw new Exception("[C# MemberRefNode] non-nested metadata arity must be read from the name");
         // A vararg member is a different member, not an unrepresentable one.
         new MemberRefNode(MemberRefNode.Kinds.Method, "A", new TypeNode.Fqn("T"), "m", 0, MemberRefNode.Void,
             MemberRefNode.VarargStatic, System.Array.Empty<TypeNode>()).Validate();

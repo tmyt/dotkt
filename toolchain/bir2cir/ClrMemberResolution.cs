@@ -28,6 +28,7 @@ static partial class ClrMemberResolution
     static ReferenceMetadataIndex _refs;
     static IReadOnlySet<string> _localEnums = new HashSet<string>();
     static IReadOnlySet<string> _localTypes = new HashSet<string>();
+    static IReadOnlySet<string> _externalCanonicalTypes = new HashSet<string>();
 
     // `localEnums` = every LOCAL `kind:"enum"` FQN in this compilation (the self-build's own enums — in an APP build a
     // stdlib enum like RegexOption is in the ref.dll and resolves concretely, never via the enum-reinterpret fallback).
@@ -84,6 +85,11 @@ static partial class ClrMemberResolution
             var winner = exact.Count == 1 ? exact[0]
                 : throw new InvalidOperationException($"bir2cir: {context} resolves to {exact.Count} exact local constructors on '{owner.Name}'; wanted={sig?.ToJsonString()}; declarations={string.Join(" | ", sameArity.Select(c => c.ctor["params"]?.ToJsonString()))}; call={call.ToJsonString()}");
             call["localCtorIndex"] = winner.index;
+            var declaredParameters = ((JsonArray)winner.ctor["params"]).OfType<JsonObject>()
+                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+            if (declaredParameters.Length == args.Count && declaredParameters.All(type => type != null))
+                StampDelegateArgumentTargets(call, declaredParameters,
+                    owner.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
         }
 
         void WalkLocalNews(JsonNode node)
@@ -121,8 +127,9 @@ static partial class ClrMemberResolution
     // is open (`!!0 -> !!0`). Confirm that closing the declaration with the carried typeArgs produces the call-site
     // descriptor, then serialize the declaration's OPEN parameter vector. ilemit subsequently performs only an exact
     // table lookup; it does not reconstruct a generic method signature from the delegate type.
-    public static void ResolveLocalDelegateTargets(IEnumerable<JsonNode> roots)
+    public static void ResolveLocalDelegateTargets(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
     {
+        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var rootList = roots.ToList();
         var owners = new Dictionary<string, List<JsonObject>>(StringComparer.Ordinal);
         void AddDeclarations(string owner, JsonArray methods)
@@ -165,8 +172,13 @@ static partial class ClrMemberResolution
         void Bind(JsonObject call)
         {
             var kind = (call["k"] as JsonValue)?.GetValue<string>();
-            if (kind is not ("newDelegate" or "newBoundDelegate")) return;
-            var ownerNode = call["calleeOwner"] ?? call["ownerType"];
+            if (kind is not ("newDelegate" or "newBoundDelegate" or "callStatic" or "callInstance" or "constrainedCall")) return;
+            // A constrained call names its declaration owner in `iface`; its `recvType` is the type parameter whose
+            // dispatch mechanics the emitter consumes.  Treating only ordinary owner slots as local left this one
+            // call shape outside delegate-target stamping whenever the interface is emitted in this module.
+            var ownerNode = kind == "constrainedCall"
+                ? call["iface"]
+                : call["calleeOwner"] ?? call["owner"] ?? call["ownerType"];
             if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner || !owners.TryGetValue(owner.Name, out var methods))
                 return;
             if ((call["method"] as JsonValue)?.TryGetValue<string>(out var name) != true
@@ -191,10 +203,23 @@ static partial class ClrMemberResolution
                 if (Keys(declared).SequenceEqual(Keys(wanted)) || Keys(closed).SequenceEqual(Keys(wanted)))
                     matches.Add((candidate, declared));
             }
-            if (matches.Count != 1)
+            if (matches.Count != 1 && kind is "newDelegate" or "newBoundDelegate")
                 throw new InvalidOperationException(
                     $"bir2cir: {kind} target '{owner.Name}.{name}' resolves to {matches.Count} exact local methods; call={call.ToJsonString()}");
-            call["sig"] = new JsonArray(matches[0].Params.Select(TypeJson.Write).ToArray());
+            if (matches.Count != 1) return;
+            // Delegate-construction nodes identify the target method itself, so their descriptor must be the
+            // declaration's open parameter vector. Ordinary calls already carry the receiver/method-substituted
+            // call-site descriptor; replacing it with declaration-relative type variables would reinterpret those
+            // variables in the caller's generic frame (notably for a constrained call through I<Int> from T : I<Int>).
+            if (kind is "newDelegate" or "newBoundDelegate")
+                call["sig"] = new JsonArray(matches[0].Params.Select(TypeJson.Write).ToArray());
+            try { StampDelegateArgumentTargets(call, matches[0].Params, ownerArgs, methodArgs); }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"bir2cir: failed to stamp a local call's delegate target for {owner.Name}.{name}: {ex.Message}; "
+                    + $"call={call.ToJsonString()}", ex);
+            }
         }
 
         void WalkDelegates(JsonNode node)
@@ -255,6 +280,8 @@ static partial class ClrMemberResolution
                     winner = arity[0];
                 }
                 ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
+                StampDelegateArgumentTargets(ctor, winner.GetParameters(),
+                    baseFqn.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>(), "baseArgs");
             }
         }
     }
@@ -309,6 +336,10 @@ static partial class ClrMemberResolution
             // rather than one gate failure at a time.
             case "staticField": case "staticFieldSet": case "clrStaticField": ResolveStaticField(node); break;
             case "delegateInvoke": ResolveDelegateInvoke(node, "funcType"); break;
+            // The initializer may be an arbitrary stored function value, not only a newDelegate/newClosure node.
+            // Name the Invoke on the operation that performs the call; an expression-local carrier would disappear
+            // for `val f = { ... }; IntArray(n, f)` and force ilemit to rediscover the delegate member.
+            case "newArrayInit": ResolveDelegateInvoke(node, "init"); break;
             case "constrainedCall": ResolveConstrainedCall(node); break;
             case "newBoundDelegate": ResolveDelegateCtor(node, "funcType"); ResolveDelegateInvoke(node, "funcType"); break;
             case "nullableNull": ResolveNullableConversion(node, "nullableNull"); break;
@@ -324,6 +355,7 @@ static partial class ClrMemberResolution
             case "field": ResolveFieldAccess(node, write: false); break;
             case "setFieldExpr": ResolveFieldAccess(node, write: true); break;
             case "setField": ResolveFieldAccess(node, write: true); break;
+            case "lateinitGet": ResolveLateinitField(node); break;
         }
     }
 
@@ -332,9 +364,15 @@ static partial class ClrMemberResolution
     // `sig` with the referenced declaration's physical signature so ilemit links that exact slot. This is the plain-
     // call counterpart of `memberSig` on clr* nodes: no CLR policy is inferred by ilemit, and no arity fallback is
     // needed. Local same-assembly calls are absent from the reference index and remain unchanged.
-    public static void ResolveReferencedStaticCalls(JsonNode root, ReferenceMetadataIndex refs)
+    public static void ResolveReferencedStaticCalls(JsonNode root, ReferenceMetadataIndex refs,
+        IReadOnlySet<string> localTypes, IReadOnlySet<string> externalCanonicalTypes)
     {
         _refs = refs;
+        // This pass runs before Apply, which normally initializes the local/external boundary. Set it here as an
+        // explicit input too: retaining a prior file's static value (or the initial empty set) can bind a synthetic
+        // type emitted by this compilation to a stale copy from its compile references.
+        _localTypes = localTypes ?? new HashSet<string>();
+        _externalCanonicalTypes = externalCanonicalTypes ?? new HashSet<string>();
         WalkReferencedStaticCalls(root);
         DropKotlinSigSnapshots(root);
     }
@@ -412,7 +450,7 @@ static partial class ClrMemberResolution
         {
             foreach (var kv in obj.ToList())
                 if (kv.Value != null) WalkReferencedStaticCalls(kv.Value);
-            if ((obj["k"] as JsonValue)?.GetValue<string>() is "callStatic" or "callInstance")
+            if ((obj["k"] as JsonValue)?.GetValue<string>() is "callStatic" or "callInstance" or "newDelegate" or "newBoundDelegate")
                 ResolveReferencedStaticCall(obj);
         }
         else if (node is JsonArray arr)
@@ -435,7 +473,11 @@ static partial class ClrMemberResolution
             return;
         // A type this compilation emits stays on the local axis (#395). The search can otherwise answer from the
         // shipped twin, which for a stdlib self-build is the PREVIOUS build of the assembly being produced.
-        if (_localTypes.Contains(ownerFqn.Name)) return;
+        // A canonical runtime synthetic is present in the input only as a representation template.  App CIR omits
+        // that duplicate declaration and ilemit links the shipped TypeDef, so its calls belong to the external axis.
+        // Every other locally-authored type keeps source-wins precedence, generated or not.
+        if (_localTypes.Contains(ownerFqn.Name) && !_externalCanonicalTypes.Contains(ownerFqn.Name))
+            return;
         var selectionSig = sig;
         if ((node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
             && KotlinSigSnapshots.TryGetValue(snapshotId, out var snapshot))
@@ -449,20 +491,6 @@ static partial class ClrMemberResolution
         // member by that name. Ask the reference index for the accessor's physical name, exactly as the
         // reshape does; without it the search is for a member that does not exist under that spelling.
         var accessorKind = (node["prop"] as JsonValue)?.GetValue<string>();
-        // The same fact can arrive spelled into the NAME instead of carried beside it: `prop_get<key>` is the
-        // getter of `key`, stated by a pass that had no property to point at. Read the role out of the spelling
-        // so both forms reach the one resolution — otherwise the search is for a member literally called
-        // "prop_get<key>", which no metadata declares.
-        if (accessorKind == null && name.StartsWith("prop_", StringComparison.Ordinal) && name.EndsWith(">", StringComparison.Ordinal)
-            && name.IndexOf('<') is var lt && lt > 5)
-        {
-            var role = name["prop_".Length..lt];
-            if (role is "get" or "set")
-            {
-                accessorKind = role;
-                name = name[(lt + 1)..^1];
-            }
-        }
         if (accessorKind is "get" or "set")
         {
             if (!_refs.TryKotlinPropertyAccessor(ownerFqn.Name, name, accessorKind, callSig.Length, methodArity,
@@ -474,8 +502,9 @@ static partial class ClrMemberResolution
             if (accessorVirtual) node["virtual"] = true;
             name = physicalAccessor;
         }
+        var isStatic = node["k"]?.GetValue<string>() is "callStatic" or "newDelegate";
         if (!_refs.TryResolveStaticMemberSignature(
-                ownerFqn.Name, name, methodArity, callSig, out var declarationSig,
+                ownerFqn.Name, name, methodArity, isStatic, callSig, out var declarationSig,
                 out var declaration, out var declaringOwner))
             return;
         node["sig"] = new JsonArray(declarationSig.Select(TypeJson.Write).ToArray());
@@ -483,6 +512,7 @@ static partial class ClrMemberResolution
         // this call kept a parameter vector rather than an identity was only that the vector was all this
         // resolution used to return.
         node["memberRef"] = MemberRefJson(declaration, MemberRefNode.Kinds.Method, declaringOwner, ownerFqn.Args);
+        StampDelegateArgumentTargets(node, declaration, ownerFqn.Args ?? Array.Empty<TypeNode>());
     }
 
     static void DropKotlinSigSnapshots(JsonNode node)
@@ -527,6 +557,8 @@ static partial class ClrMemberResolution
             $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
         CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerFqn.Args);
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerFqn.Args);
+        StampDelegateArgumentTargets(node, win.GetParameters(), ownerFqn.Args ?? Array.Empty<TypeNode>(),
+            Array.Empty<TypeNode>());
         // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
         // chokepoint can tell "no return" from "nobody stamped one".
         StampMemberRet(node, typeof(void));
@@ -621,11 +653,77 @@ static partial class ClrMemberResolution
             return;
         }
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
+        StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
         if (instance)
             node["dispatch"] = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
     }
+
+    // A literal Kotlin lambda has a NATURAL Func/Action constructor, while an external parameter can require a
+    // different delegate (a custom delegate, or another generic construction of the same family). The call resolver
+    // already owns the selected declaration and its substitutions, so it names that TARGET constructor here. ilemit
+    // may choose between the two carried constructors based on the already-resolved parameter type, but never search.
+    static void StampDelegateArgumentTargets(JsonObject call, MethodInfo method, TypeNode[] ownerArgs,
+        string argumentKey = "args")
+    {
+        var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+            ?? Array.Empty<TypeNode>();
+        if (methodArgs.Any(t => t == null)) return;
+        StampDelegateArgumentTargets(call, method.GetParameters(), ownerArgs, methodArgs, argumentKey);
+    }
+
+    static void StampDelegateArgumentTargets(JsonObject call, ParameterInfo[] parameters,
+        TypeNode[] ownerArgs, TypeNode[] methodArgs, string argumentKey = "args")
+        => StampDelegateArgumentTargets(call,
+            parameters.Select(parameter => RefTypeOf(parameter.ParameterType)).ToArray(), ownerArgs, methodArgs,
+            argumentKey);
+
+    static void StampDelegateArgumentTargets(JsonObject call, TypeNode[] parameters,
+        TypeNode[] ownerArgs, TypeNode[] methodArgs, string argumentKey = "args")
+    {
+        if (call[argumentKey] is not JsonArray args || parameters.Length != args.Count) return;
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            if (args[i] is not JsonObject arg
+                || (arg["k"] as JsonValue)?.GetValue<string>() is not ("newDelegate" or "newClosure"))
+                continue;
+            var target = SupertypeGraph.SubstOwnerTvs(parameters[i], ownerArgs);
+            target = SubstituteMethodTypeArgs(target, methodArgs);
+            var delegateShape = target;
+            while (delegateShape is TypeNode.Nullable nullable) delegateShape = nullable.Of;
+            while (delegateShape is TypeNode.Oblivious oblivious) delegateShape = oblivious.Of;
+            var physical = BirTypeLowering.LowerType(delegateShape, refBuild: false, force: false, typeArg: false);
+            if (physical is TypeNode.Fn fn)
+                physical = BirTypeLowering.DelegateFqnOf(
+                    (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fn, refBuild: false, force: false));
+            if (physical is not TypeNode.Fqn targetDelegate
+                || ResolveOwnerType(targetDelegate) is not Type targetOpen
+                || !IsDelegate(targetOpen))
+                continue;
+            ResolveDelegateCtor(arg, delegateShape, "targetDelegateCtorRef");
+        }
+    }
+
+    static TypeNode SubstituteMethodTypeArgs(TypeNode type, TypeNode[] args) => type switch
+    {
+        TypeNode.Tv { Scope: "method" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
+        TypeNode.Fqn { Args: { } nested } f => new TypeNode.Fqn(f.Name,
+            nested.Select(a => SubstituteMethodTypeArgs(a, args)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstituteMethodTypeArgs(n.Of, args)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstituteMethodTypeArgs(o.Of, args)),
+        TypeNode.Array a => new TypeNode.Array(SubstituteMethodTypeArgs(a.Elem, args), a.Rank, a.SzArray),
+        TypeNode.ByRef b => new TypeNode.ByRef(SubstituteMethodTypeArgs(b.Of, args)),
+        TypeNode.Ptr p => new TypeNode.Ptr(SubstituteMethodTypeArgs(p.Of, args)),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req, SubstituteMethodTypeArgs(m.M, args),
+            SubstituteMethodTypeArgs(m.Of, args)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+            SubstituteMethodTypeArgs(fn.Ret, args),
+            fn.Params.Select(p => SubstituteMethodTypeArgs(p, args)).ToArray(),
+            fn.Recv == null ? null : SubstituteMethodTypeArgs(fn.Recv, args), fn.Clr,
+            fn.Ctx?.Select(c => SubstituteMethodTypeArgs(c, args)).ToArray()),
+        _ => type,
+    };
 
     // THE DECLARED RETURN OF A GENERIC .NET METHOD. Everything else about these nodes was already resolved
     // upstream, so this establishes one fact and touches nothing: the member's own return type, open (a method
@@ -681,6 +779,7 @@ static partial class ClrMemberResolution
                 // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
                 // as an ECMA MethodSpec wraps a MemberRef to the uninstantiated signature.
                 node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
+                StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
                 StampMemberRet(node, win.ReturnType);
             }
             else StampMemberRetUnresolved(node);

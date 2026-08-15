@@ -201,7 +201,7 @@ sealed partial class Emitter
             int ai = 0;
             foreach (var a in args.EnumerateArray()) { EmitArg(a, SubstituteIfaceArgs(openPs[ai].ParameterType, classArgs)); ai++; }
             RequireArgCount(ai, openPs.Length, openCtor.ToString());
-            EmitConstructor(_il, OpCodes.Newobj, AnchorConstructor(type, openCtor));
+            EmitConstructor(_il, OpCodes.Newobj, AnchorOn(type, openCtor));
             return type;
         }
         EmitArgs(args, openCtor.GetParameters());
@@ -487,7 +487,7 @@ sealed partial class Emitter
         if (e.TryGetProperty("handlerExact", out var exact) && exact.GetBoolean())
             EmitExpr(e.GetProperty("handler"));
         else
-            EmitHandlerAsDelegate(e.GetProperty("handler"), delType);
+            EmitHandlerAsDelegate(e.GetProperty("handler"), delType, e);
         if (isStatic) EmitMethod(_il, OpCodes.Call, accessor);
         else EmitClrDispatch(accessor, RequireDispatch(e, type, add ? "clrEventAdd" : "clrEventRemove"), type);
         return Bcl("System.Void");
@@ -532,7 +532,12 @@ sealed partial class Emitter
         // S5 (#113): a missing backing field is a bir2cir/kotc synthesis defect — a legible breadcrumb, not an opaque miss.
         if (_curTi == null || !_curTi.Fields.TryGetValue(fieldName, out var field))
             throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}' (bir2cir ClrEventImplBinding must insert `<E>$delegate` — #187/#113)");
-        if (kind == "raise") { EmitClrEventRaise(field, d); return; }
+        if (kind == "raise")
+        {
+            EmitClrEventRaise(field, d,
+                RequiredRef<MethodInfo>(e, "invokeRef", "clrEventAccessorImpl raise"));
+            return;
+        }
         EmitClrEventCas(e, field, d, add: kind == "add");
     }
 
@@ -560,10 +565,8 @@ sealed partial class Emitter
 
     // `raise_<E>(args...)`: snapshot the backing field, and if non-null invoke it with the raise method's own params.
     // arg0 = this; the raise params (== D.Invoke's params) start at arg1. The null check = C#'s field-like `field?.Invoke`.
-    void EmitClrEventRaise(FieldInfo field, Type d)
+    void EmitClrEventRaise(FieldInfo field, Type d, MethodInfo invoke)
     {
-        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
-        var invoke = d.GetMethod("Invoke");
         var handler = _il.DeclareLocal(d);
         var done = _il.DefineLabel();
         _il.Emit(OpCodes.Ldarg_0); EmitField(_il, OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, handler);
@@ -577,7 +580,7 @@ sealed partial class Emitter
 
     // Bind a lambda handler (newDelegate = non-capturing, newClosure = capturing) into a SPECIFIC delegate type.
     // Mirrors the newDelegate/newClosure cases but uses `want` (the event's delegate type) for the ctor.
-    void EmitHandlerAsDelegate(JsonElement h, Type want)
+    void EmitHandlerAsDelegate(JsonElement h, Type want, JsonElement? eventNode = null)
     {
         // The delegate's Invoke return type: when it is a real (non-void) type while the lambda's NATURAL delegate is
         // void-returning (a Unit body maps to void), binding the void method-pointer into the ctor is not verifiable
@@ -593,7 +596,7 @@ sealed partial class Emitter
             EmitMethod(_il, OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray(),
                 PrimaryFromRef(h, "unitInstanceRef") as FieldInfo,
                 RequiredRef<MethodInfo>(h, "invokeRef", "a void-to-Unit conversion")));
-            EmitDelegateCtor(_il, want, h);
+            EmitDelegateCtor(_il, want, h, eventNode);
             return;
         }
         switch (k)
@@ -603,17 +606,22 @@ sealed partial class Emitter
                 // overload. Missing/misspelled ownership is malformed CIR, never a global name lookup (#204).
                 var dname = h.GetProperty("method").GetString();
                 var dsig = SigNodes(h);
-                var dtarget = FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig, CalledMethodArity(h));
+                var dmethod = PrimaryFromRef(h, "memberRef") as MethodInfo
+                    ?? FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig, CalledMethodArity(h));
+                var dtarget = h.TryGetProperty("typeArgs", out var dta) && dta.GetArrayLength() > 0
+                    && dmethod.IsGenericMethodDefinition
+                    ? ConstructedMethod(dmethod, dta.EnumerateArray().Select(x => MapType(x)).ToArray())
+                    : dmethod;
                 _il.Emit(OpCodes.Ldnull);
                 EmitMethod(_il, OpCodes.Ldftn, dtarget);
-                EmitDelegateCtor(_il, want, h);
+                EmitDelegateCtor(_il, want, h, eventNode);
                 break;
             case "newClosure":
                 var (cctor, cinvoke) = ResolveClosure(h);
                 foreach (var c in h.GetProperty("captures").EnumerateArray()) EmitExpr(c);
                 EmitConstructor(_il, OpCodes.Newobj, cctor);
                 EmitMethod(_il, OpCodes.Ldftn, cinvoke);
-                EmitDelegateCtor(_il, want, h);
+                EmitDelegateCtor(_il, want, h, eventNode);
                 break;
             default:
                 // A stored handler value (a Func/Action local/field). Re-wrap it into the event's delegate
@@ -621,9 +629,12 @@ sealed partial class Emitter
                 // value share target+method, so Delegate equality holds and `-=` removes the right handler.
                 var src = EmitExpr(h);                       // stack: the stored delegate value
                 _il.Emit(OpCodes.Dup);
-                // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
-                EmitMethod(_il, OpCodes.Ldvirtftn, src.GetMethod("Invoke"));
-                EmitDelegateCtor(_il, want, h);
+                if (eventNode == null)
+                    throw new InvalidOperationException(
+                        "ilemit: a stored delegate re-wrap is missing its resolved Invoke reference");
+                EmitMethod(_il, OpCodes.Ldvirtftn,
+                    RequiredRef<MethodInfo>(eventNode.Value, "invokeRef", "CLR event handler re-wrap"));
+                EmitDelegateCtor(_il, want, eventNode.Value);
                 break;
         }
     }

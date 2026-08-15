@@ -23,7 +23,7 @@
               "assembly": "System.Runtime",
               "declaringType": {
                 "t": "fqn",
-                "name": "Outer`1+Inner`1",
+                "name": "Owner`2",
                 "args": [
                   {
                     "t": "fqn",

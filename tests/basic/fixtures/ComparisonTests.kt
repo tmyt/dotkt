@@ -35,6 +35,13 @@ class ComparisonTests {
         assertEquals(-3, a.compareTo(b))                        // -3
         val sorted = listOf(c, a, b).sorted()                   // sorted() uses compareTo
         assertEquals("1.2,1.5,2.0", sorted.joinToString(","))   // 1.2,1.5,2.0
+
+        // The derived declaration is compiled from an earlier-sorted file than its base. Loading and dispatching it
+        // proves the late non-generic IComparable interface manifest was built from the completed module graph.
+        val crossFileLow = CrossFileComparableDerived(2)
+        val crossFileHigh = CrossFileComparableDerived(7)
+        assertEquals(-5, crossFileLow.compareTo(crossFileHigh))
+        assertTrue(compareValues(crossFileLow, crossFileHigh) < 0)
     }
 
     @TestAttribute

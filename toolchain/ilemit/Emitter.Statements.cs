@@ -62,7 +62,7 @@ sealed partial class Emitter
                 // static field where the base instance field was resolved, and write to the wrong one silently.
                 FieldInfo sfld; Type sft;
                 if (PrimaryFromRef(s, "memberRef") is FieldInfo referencedStore) { sfld = referencedStore; sft = FieldTypeOf(sfld); }
-                else sfld = ResolveField(ParseOwnerSlot(s.GetProperty("ownerType")), fnm, out sft);
+                else sfld = ResolveLocalField(ParseOwnerSlot(s.GetProperty("ownerType")), fnm, out sft, "field write");
                 if (IsValueType(ClrRef(s.GetProperty("ownerType")))) EmitAddr(s.GetProperty("recv"));
                 else EmitExpr(s.GetProperty("recv"));
                 EmitStoreCoerced(s.GetProperty("value"), sft);

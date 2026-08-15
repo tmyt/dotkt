@@ -97,6 +97,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return method;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetMethods(flags)
             .Single(candidate => candidate.Module == method.Module && candidate.MetadataToken == method.MetadataToken);
     }
@@ -107,6 +108,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return constructor;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetConstructors(flags)
             .Single(candidate => candidate.Module == constructor.Module && candidate.MetadataToken == constructor.MetadataToken);
     }
@@ -117,6 +119,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return field;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetFields(flags)
             .Single(candidate => candidate.Module == field.Module && candidate.MetadataToken == field.MetadataToken);
     }
@@ -207,12 +210,15 @@ sealed partial class Emitter
 
     // MetadataLoadContext likewise refuses MakeGenericMethod when an argument is a local builder parameter. Represent
     // the MethodSpec as a signature-only MethodInfo; PersistedAssemblyBuilder consumes that description directly.
-    static MethodInfo ConstructedMethod(MethodInfo definition, params Type[] arguments) =>
-        definition is SignatureMethod
+    MethodInfo ConstructedMethod(MethodInfo definition, params Type[] arguments)
+    {
+        var constructed = definition is SignatureMethod
             ? definition.MakeGenericMethod(arguments)
             : definition.Module is not ModuleBuilder && arguments.Any(ContainsTypeBuilder)
                 ? new SignatureMethod(definition.DeclaringType, definition, arguments)
                 : definition.MakeGenericMethod(arguments);
+        return IsSanctioned(definition) ? Sanction(constructed) : constructed;
+    }
 
     // PersistedAssemblyBuilder 10.0.10 reads modifier-aware Types from every declaration member handed to
     // DefineMethodOverride. Normalize that final emission boundary so raw MetadataLoadContext members never leak their

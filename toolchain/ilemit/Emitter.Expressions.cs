@@ -121,7 +121,7 @@ sealed partial class Emitter
                 var fon = ParseOwnerSlot(e.GetProperty("ownerType"));
                 FieldInfo fb; Type ft;
                 if (PrimaryFromRef(e, "memberRef") is FieldInfo referencedField) { fb = referencedField; ft = FieldTypeOf(fb); }
-                else fb = ResolveField(fon, fnm, out ft);
+                else fb = ResolveLocalField(fon, fnm, out ft, "field read");
                 // ECMA-335 ldfld consumes a managed pointer for a value-type receiver.  Property access already takes
                 // this path through EmitAddr above; a genuine public CLR field must do the same.  The field token is the
                 // physical source of truth here (including a referenced constructed generic owner), so this is direct
@@ -145,7 +145,13 @@ sealed partial class Emitter
                     return Bcl("System.Void");
                 }
                 var son = ParseOwnerSlot(e.GetProperty("ownerType"));
-                var sfefld = ResolveField(son, snm, out var sfet);
+                FieldInfo sfefld; Type sfet;
+                if (PrimaryFromRef(e, "memberRef") is FieldInfo referencedField)
+                {
+                    sfefld = referencedField;
+                    sfet = FieldTypeOf(sfefld);
+                }
+                else sfefld = ResolveLocalField(son, snm, out sfet, "field write");
                 if (IsValueType(ClrRef(e.GetProperty("ownerType")))) EmitAddr(e.GetProperty("recv"));
                 else EmitExpr(e.GetProperty("recv"));
                 EmitStoreCoerced(e.GetProperty("value"), sfet);
@@ -161,7 +167,12 @@ sealed partial class Emitter
                     lateinitType = EmitExpr(lateinitValue);
                 else
                 {
-                    var fld = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _);
+                    FieldInfo fld;
+                    if (e.TryGetProperty("fieldRef", out _))
+                        fld = RequiredRef<FieldInfo>(e, "fieldRef", "lateinitGet");
+                    else
+                        fld = ResolveLocalField(ParseOwnerSlot(e.GetProperty("ownerType")),
+                            e.GetProperty("name").GetString(), out _, "lateinit field read");
                     if (e.TryGetProperty("static", out var lgs) && lgs.ValueKind == JsonValueKind.True)
                     {
                         MaybeVolatile(fld, e);
@@ -205,7 +216,7 @@ sealed partial class Emitter
                         foreach (var a in nargs.EnumerateArray())
                         { EmitArg(a, SubstituteIfaceArgs(openPs[ai].ParameterType, classArgs)); ai++; }
                         RequireArgCount(ai, openPs.Length, ctorE.ToString());
-                        ctorE = AnchorConstructor(ext, ctorE);
+                        ctorE = AnchorOn(ext, ctorE);
                     }
                     else EmitArgs(nargs, ParametersOf(ctorE));
                     EmitConstructor(_il, OpCodes.Newobj, ctorE);
@@ -284,7 +295,7 @@ sealed partial class Emitter
                     var mi20 = ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name)
                         ? ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(), out _,
                             ccSig, ccArity)
-                        : InterfaceMethodOn(if2, e.GetProperty("method").GetString(), ccSig, ccArity);
+                        : RequiredRef<MethodInfo>(e, "memberRef", "an external constrained-call interface slot");
                     // The receiver being a type variable changes the DISPATCH, not the member: a generic member still
                     // needs its `typeArgs` instantiation, exactly as the callInstance arm applies it. Without this a
                     // `fun <R> pick(a: R, b: R): R` called on a `!!T` receiver emitted a callvirt on the generic
@@ -321,7 +332,9 @@ sealed partial class Emitter
                 // path for a generic-parameter receiver; scope the workaround to genuinely-emitted value-type instantiations.
                 bool brokenGeneric = iface.IsGenericType && iface.GetGenericTypeDefinition() == Bcl("System.IComparable`1")
                     && IsTbInstantiation(iface) && !recvType.IsGenericParameter;
-                var mi = brokenGeneric ? WellKnown<MethodInfo>("Comparable.CompareTo") : InterfaceMethodOn(iface, e.GetProperty("method").GetString());
+                var mi = brokenGeneric
+                    ? WellKnown<MethodInfo>("Comparable.CompareTo")
+                    : RequiredRef<MethodInfo>(e, "memberRef", "an external constrained CompareTo slot");
                 EmitAddr(e.GetProperty("recv"));
                 EmitExpr(e.GetProperty("arg"));
                 if (brokenGeneric) _il.Emit(OpCodes.Box, recvType);   // arg (type T) -> object for CompareTo(object)
@@ -376,23 +389,31 @@ sealed partial class Emitter
                     f = RequiredRef<FieldInfo>(e, "fieldRef", "field");
                     ft = f.FieldType;
                 }
-                else f = ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out ft);
+                else f = ResolveLocalField(ParseOwnerSlot(e.GetProperty("ownerType")),
+                    e.GetProperty("name").GetString(), out ft, "static field read");
                 MaybeVolatile(f, e);
                 EmitField(_il, OpCodes.Ldsfld, f);
                 return ft;
             }
             case "clrStaticField":   // a static field on a .NET (reflected) type, e.g. EmptyCoroutineContext.Instance
             {
-                var ct = ClrRef(e.GetProperty("type"));
-                var cf = ct.GetField(e.GetProperty("name").GetString(), BindingFlags.Public | BindingFlags.Static);
+                var cf = RequiredRef<FieldInfo>(e, "fieldRef", "clrStaticField");
                 EmitField(_il, OpCodes.Ldsfld, cf);
                 return FieldTypeOf(cf);
             }
             case "staticFieldSet":
             {
                 // Preserve the exact CIR owner, for the same reason as the `staticField` read above.
-                var sfsf = ResolveField(
-                    ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out var sfsft);
+                FieldInfo sfsf;
+                Type sfsft;
+                if (e.TryGetProperty("fieldRef", out _))
+                {
+                    sfsf = RequiredRef<FieldInfo>(e, "fieldRef", "staticFieldSet");
+                    sfsft = FieldTypeOf(sfsf);
+                }
+                else
+                    sfsf = ResolveLocalField(ParseOwnerSlot(e.GetProperty("ownerType")),
+                        e.GetProperty("name").GetString(), out sfsft, "static field write");
                 EmitStoreCoerced(e.GetProperty("value"), sfsft);
                 MaybeVolatile(sfsf, e);
                 EmitField(_il, OpCodes.Stsfld, sfsf);
@@ -476,7 +497,8 @@ sealed partial class Emitter
                 // The init is a Func<int,elem> delegate; box/unbox per its actual signature (primitive vs boxed lambda).
                 var elem = MapType(e.GetProperty("elem"));
                 EmitExpr(e.GetProperty("size")); var size = _il.DeclareLocal(Bcl("System.Int32")); _il.Emit(OpCodes.Stloc, size);
-                var fnType = EmitExpr(e.GetProperty("init")); var fn = _il.DeclareLocal(fnType); _il.Emit(OpCodes.Stloc, fn);
+                var init = e.GetProperty("init");
+                var fnType = EmitExpr(init); var fn = _il.DeclareLocal(fnType); _il.Emit(OpCodes.Stloc, fn);
                 // `Func<int,elem>` over an EMITTED elem (kotlin.Any / kotlin.UInt / a user class) is a TypeBuilder
                 // instantiation whose .GetMethod / .GetParameters / .ReturnType all throw -- resolve Invoke via
                 // InvokeOf, and read the param/return shapes off the delegate's type ARGS (GetGenericArguments is
@@ -494,9 +516,8 @@ sealed partial class Emitter
                 _il.Emit(OpCodes.Ldloc, arr); _il.Emit(OpCodes.Ldloc, i);                       // arr, i (for stelem)
                 _il.Emit(OpCodes.Ldloc, fn); _il.Emit(OpCodes.Ldloc, i);                         // fn, i
                 if (!IsValueType(pType)) _il.Emit(OpCodes.Box, Bcl("System.Int32"));
-                // #370-residual: REMAINING GAP: the init expression's emitted delegate type is what this calls through,
-                // and the reference stamped from the node did not match it — isolated, not yet resolved
-                EmitDelegateInvoke(_il, fnType, InvokeOf(fnType));                                                 // init(i)
+                EmitDelegateInvoke(_il, fnType,
+                    RequiredRef<MethodInfo>(e, "invokeRef", "an array initializer delegate"));                  // init(i)
                 if (rType != elem) { if (IsValueType(elem) || elem.IsGenericParameter) _il.Emit(OpCodes.Unbox_Any, elem); else _il.Emit(OpCodes.Castclass, elem); }
                 EmitStelem(elem);                                                                // arr[i] = init(i)
                 _il.Emit(OpCodes.Ldloc, i); _il.Emit(OpCodes.Ldc_I4_1); _il.Emit(OpCodes.Add); _il.Emit(OpCodes.Stloc, i);
@@ -802,7 +823,8 @@ sealed partial class Emitter
                 // lifted __lambda/__ctorref/__mref targets carry their synthesizing file class too; no global fallback.
                 var dname = e.GetProperty("method").GetString();
                 var dsig = SigNodes(e);
-                MethodInfo mb = FindCalleeOwnedStatic(e, "newDelegate", dname, dsig, CalledMethodArity(e));
+                MethodInfo mb = PrimaryFromRef(e, "memberRef") as MethodInfo
+                    ?? FindCalleeOwnedStatic(e, "newDelegate", dname, dsig, CalledMethodArity(e));
                 // A GENERIC lifted lambda (e.g. the comparator inside a generic `sort<T>`) MUST be instantiated with its
                 // typeArgs before Ldftn -- loading the open generic-method-DEFINITION's ftn throws "the method itself or
                 // the containing type is not fully instantiated" at runtime.
@@ -826,9 +848,10 @@ sealed partial class Emitter
                 if (!e.TryGetProperty("calleeOwner", out var bco) || bco.ValueKind == JsonValueKind.Null
                     || SlotName(bco) is not string bcoName || bcoName != boundOwner)
                     throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' is missing or mismatches required calleeOwner");
-                var mb = DotKt.Bir.TypeNode.Read(boundOwnerNode) is DotKt.Bir.TypeNode.Fqn { Args: not null }
-                    ? ResolveMethod(ParseOwnerSlot(boundOwnerNode), boundName, out _, SigNodes(e), CalledMethodArity(e))
-                    : FindMethod(boundOwner, boundName, SigNodes(e), CalledMethodArity(e));
+                var mb = PrimaryFromRef(e, "memberRef") as MethodInfo
+                    ?? (DotKt.Bir.TypeNode.Read(boundOwnerNode) is DotKt.Bir.TypeNode.Fqn { Args: not null }
+                        ? ResolveMethod(ParseOwnerSlot(boundOwnerNode), boundName, out _, SigNodes(e), CalledMethodArity(e))
+                        : FindMethod(boundOwner, boundName, SigNodes(e), CalledMethodArity(e)));
                 if (mb == null)
                     throw new NotSupportedException($"newBoundDelegate target '{boundOwner}.{boundName}' was not found");
                 MethodInfo boundTarget = e.TryGetProperty("typeArgs", out var boundTypeArgs)

@@ -35,6 +35,7 @@ static class InheritedMemberOwnerBinding
         public TypeNode.Fqn Base;
         public TypeNode.Fqn[] Interfaces = Array.Empty<TypeNode.Fqn>();
         public JsonArray Methods;
+        public JsonArray InheritedDefaultMethods;
     }
 
     readonly record struct Reachable(TypeNode.Fqn Type, int Depth);
@@ -69,6 +70,7 @@ static class InheritedMemberOwnerBinding
                 Interfaces = (type["interfaces"] as JsonArray)?.Select(TypeJson.Read)
                     .OfType<TypeNode.Fqn>().ToArray() ?? Array.Empty<TypeNode.Fqn>(),
                 Methods = type["methods"] as JsonArray,
+                InheritedDefaultMethods = type[KotlinPropertyAccessors.InheritedDefaultMethodsKey] as JsonArray,
             };
             CollectFrom(type, result);
         }
@@ -144,6 +146,31 @@ static class InheritedMemberOwnerBinding
         if (ownDeclarationSig != null)
         {
             call["sig"] = ownDeclarationSig;
+            return;
+        }
+        // A local interface can expose an inherited external default implementation as a fake override. That fake
+        // method is not emitted and therefore cannot be a bound-delegate target, but its inheritedImplementation
+        // carrier is the frontend's exact declaration fact. Retarget the callable reference to that declaration now;
+        // leaving it on the local owner makes the later exact local lookup (correctly) find no MethodDef.
+        if (kind == "newBoundDelegate"
+            && ExactInheritedDefault(types.GetValueOrDefault(owner.Name), method, methodArity, sig, owner.Args)
+                is JsonObject inherited
+            && inherited["implementation"] is JsonObject implementation
+            && TypeJson.Read(implementation["owner"]) is TypeNode.Fqn implementationOwner
+            && Str(implementation["member"]) is string implementationMember)
+        {
+            // kotc's implementation fact identifies the declaration, not its use-site instantiation. Project that
+            // identity through the already-constructed receiver hierarchy so `Local<T> : External<T>` becomes
+            // `External<T>`, rather than throwing away T by copying the carrier's deliberately bare owner.
+            var projectedOwners = ReachableTypes(owner, types, refs)
+                .Where(candidate => candidate.Type.Name == implementationOwner.Name)
+                .Select(candidate => candidate.Type).Distinct().ToList();
+            if (projectedOwners.Count != 1) return;
+            var projectedOwner = projectedOwners[0];
+            call["ownerType"] = TypeJson.Write(projectedOwner);
+            call["calleeOwner"] = TypeJson.Write(projectedOwner);
+            call["method"] = implementationMember;
+            call["virtual"] = true;
             return;
         }
         if (propertyAccessor != null
@@ -260,6 +287,18 @@ static class InheritedMemberOwnerBinding
     static JsonArray ExactDeclarationSignature(TypeDef def, string name, int methodArity,
         TypeNode[] callSig, TypeNode[] ownerArgs, string propertyName, string propertyAccessor)
     {
+        var match = ExactMethod(def, name, methodArity, callSig, ownerArgs,
+            propertyName, propertyAccessor, fakeOverride: false);
+        return match?["params"] is JsonArray ps
+            ? new JsonArray(ps.OfType<JsonObject>()
+                .Select(p => TypeJson.Write(TypeJson.Read(p["type"]))).ToArray())
+            : null;
+    }
+
+    static JsonObject ExactMethod(TypeDef def, string name, int methodArity,
+        TypeNode[] callSig, TypeNode[] ownerArgs, string propertyName, string propertyAccessor,
+        bool fakeOverride)
+    {
         if (def?.Methods == null) return null;
         ownerArgs ??= def.TypeParamCount == 0 ? Array.Empty<TypeNode>() : null;
         if (ownerArgs == null || ownerArgs.Length != def.TypeParamCount) return null;
@@ -275,7 +314,7 @@ static class InheritedMemberOwnerBinding
             }
             else if (Str(method["name"]) != name
                 || KotlinPropertyAccessors.TryIdentity(method, out _, out _)) continue;
-            if (Bool(method["fakeOverride"])) continue;
+            if (Bool(method["fakeOverride"]) != fakeOverride) continue;
             if (((method["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) continue;
             if (method["params"] is not JsonArray ps || ps.Count != callSig.Length) continue;
             var exact = true;
@@ -303,9 +342,29 @@ static class InheritedMemberOwnerBinding
             }
             if (exact) matches.Add(method);
         }
-        if (matches.Count != 1) return null;
-        return new JsonArray(((JsonArray)matches[0]["params"]).OfType<JsonObject>()
-            .Select(p => TypeJson.Write(TypeJson.Read(p["type"]))).ToArray());
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    static JsonObject ExactInheritedDefault(TypeDef def, string name, int methodArity,
+        TypeNode[] callSig, TypeNode[] ownerArgs)
+    {
+        if (def?.InheritedDefaultMethods == null) return null;
+        ownerArgs ??= def.TypeParamCount == 0 ? Array.Empty<TypeNode>() : null;
+        if (ownerArgs == null || ownerArgs.Length != def.TypeParamCount) return null;
+        var matches = def.InheritedDefaultMethods.OfType<JsonObject>().Where(fact =>
+        {
+            if (Str(fact["member"]) != name || fact["params"] is not JsonArray ps
+                || ps.Count != callSig.Length || fact["implementation"] is not JsonObject implementation
+                || ((implementation["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) return false;
+            return ps.Select(TypeJson.Read).Select((declared, i) =>
+            {
+                var substituted = declared == null ? null : SubstOwnerTvs(declared, ownerArgs);
+                return declared != null && (declared == callSig[i] || substituted == callSig[i]
+                    || IsNestedObjectErasureOf(declared, callSig[i])
+                    || IsNestedObjectErasureOf(substituted, callSig[i]));
+            }).All(match => match);
+        }).ToList();
+        return matches.Count == 1 ? matches[0] : null;
     }
 
     static bool IsNestedObjectErasureOf(TypeNode candidate, TypeNode source)

@@ -166,8 +166,11 @@ static class ConstrainedTypeParameterReceiverBinding
             switch (node)
             {
                 case JsonObject call:
-                    if (Str(call["k"]) == "callInstance"
-                        && TypeJson.Read(call["ownerType"]) is TypeNode.Fqn owner
+                    var kind = Str(call["k"]);
+                    var genericClrCall = kind == "clrGenericInstance";
+                    var ownerKey = genericClrCall ? "type" : "ownerType";
+                    if (kind is "callInstance" or "clrGenericInstance"
+                        && TypeJson.Read(call[ownerKey]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
                         && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv)
                     {
@@ -179,7 +182,7 @@ static class ConstrainedTypeParameterReceiverBinding
                             if (owner.Args == null
                                 && ConstraintAt(tv, owner.Name, typeParams, methodParams) is TypeNode.Fqn bound
                                 && bound.Args != null)
-                                call["ownerType"] = TypeJson.Write(bound);
+                                call[ownerKey] = TypeJson.Write(bound);
                         }
                         else if (ClosedOwner(owner, arity) is TypeNode.Fqn iface)
                         {
@@ -191,12 +194,20 @@ static class ConstrainedTypeParameterReceiverBinding
                             // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
                             // are carried through untouched — ilemit consumes all three on this node exactly as it
                             // does on a callInstance, and dropping any of them would make it guess.
+                            // A clrGenericInstance's exact descriptor is named `memberSig`; constrainedCall uses the
+                            // same descriptor under its ordinary `sig` slot. Move that fact rather than asking the
+                            // constrained resolver to select again by name/arity.
+                            if (genericClrCall && call["memberSig"] is JsonNode memberSig)
+                            {
+                                call.Remove("memberSig");
+                                call["sig"] = memberSig;
+                            }
                             call["k"] = "constrainedCall";
                             call["recvType"] = TypeJson.Write(tv);
                             call["iface"] = TypeJson.Write(iface);
                             if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
                                 call["ret"] = dynRet.DeepClone();
-                            call.Remove("ownerType");
+                            call.Remove(ownerKey);
                             call.Remove("virtual");
                             call.Remove("dynRet");
                         }

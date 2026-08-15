@@ -1227,6 +1227,7 @@ sealed partial class ReferenceMetadataIndex
         catch { _netMlc = null; }
     }
 
+    MetadataLoadContext _physicalMlc;
     Assembly _physicalStdlib; bool _physicalStdlibInit;
 
     /// <summary>
@@ -1373,10 +1374,13 @@ sealed partial class ReferenceMetadataIndex
     {
         if (_physicalStdlibInit) return _physicalStdlib;
         _physicalStdlibInit = true;
-        EnsureNetMlc();
         var path = _compileRefs?.PhysicalStdlibPath;
-        if (_netMlc == null || string.IsNullOrEmpty(path)) return null;
-        try { _physicalStdlib = _netMlc.LoadFromAssemblyPath(path); }
+        if (string.IsNullOrEmpty(path)) return null;
+        try
+        {
+            _physicalMlc = _compileRefs.CreatePhysicalStdlibMetadataLoadContext();
+            _physicalStdlib = _physicalMlc?.LoadFromAssemblyPath(path);
+        }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"bir2cir: warning: could not read the shipped stdlib twin {path} — {ex.GetType().Name}: {ex.Message}");
@@ -1385,7 +1389,13 @@ sealed partial class ReferenceMetadataIndex
         return _physicalStdlib;
     }
 
-    public void DisposeNet() { try { _netMlc?.Dispose(); } catch { } _netMlc = null; }
+    public void DisposeNet()
+    {
+        try { _physicalMlc?.Dispose(); } catch { }
+        _physicalMlc = null;
+        try { _netMlc?.Dispose(); } catch { }
+        _netMlc = null;
+    }
 
     public int OwnerArity(string ownerFqn)
     {
@@ -2210,9 +2220,9 @@ sealed partial class ReferenceMetadataIndex
     // erasure seam (`generateSequence(seed: T?, next: (T)->T?)` reflects as `T, Func<T,object>`). Method generic arity
     // + parameter count normally identify one overload; when several remain, accept an exact/ABI-equivalent semantic
     // shape only. Identical duplicate declarations collapse to one structural shape. No first-pick is performed.
-    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity,
+    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity, bool isStatic,
         IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature) =>
-        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, callSignature, out declarationSignature,
+        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, isStatic, callSignature, out declarationSignature,
             out _, out _);
 
     /// <summary>
@@ -2220,7 +2230,7 @@ sealed partial class ReferenceMetadataIndex
     /// thing this ever returned, which left the caller describing a member it had in its hand — and a
     /// description has to be turned back into a member by whoever reads it.
     /// </summary>
-    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity,
+    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity, bool isStatic,
         IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature,
         out MethodInfo declaration, out Type declaringOwner)
     {
@@ -2234,7 +2244,21 @@ sealed partial class ReferenceMetadataIndex
         // A hoisted alias helper exists only in the assembly that ships it — the reference twin carries the alias
         // implementation this pass replaced, never the static it was hoisted into — so the reference surface has no
         // name for it and never will. Read the declaration from the shipped twin, the assembly the call links against.
-        var owner = ResolveRefType(bareOwner, ownerArity) ?? PhysicalTypeNamed(bareOwner, ownerArity);
+        // An already-physical owner is authoritative as written. A semantic dotted nested owner is projected through
+        // the trusted DotKt type index to its exact `Outer`N+Inner`M` metadata identity — never guessed by trying
+        // separator/arity combinations. The same exact name is tried in both twins because a shipped-only helper can
+        // legitimately be absent from the reference surface.
+        var exactOwner = ExactPhysicalTypeName(ownerFqn);
+        // A bare semantic name with generic arguments must not win a same-named non-generic declaration
+        // (`EventHandler` beside `EventHandler<T>`). Only a spelling that already encodes physical arity/nesting is
+        // authoritative before the arity-aware probes.
+        var physicalSpelling = ownerFqn.Contains('`') || ownerFqn.Contains('+');
+        var owner = (physicalSpelling || ownerArity == 0 ? ResolveRefType(ownerFqn) : null)
+            ?? (exactOwner == null ? null : ResolveRefType(exactOwner))
+            ?? ResolveRefType(bareOwner, ownerArity)
+            ?? PhysicalTypeNamed(ownerFqn)
+            ?? (exactOwner == null ? null : PhysicalTypeNamed(exactOwner))
+            ?? PhysicalTypeNamed(bareOwner, ownerArity);
         if (owner == null)
             return false;
         // Instance as well as static: a call on a referenced Kotlin owner — every method on an `object`, reached
@@ -2242,8 +2266,9 @@ sealed partial class ReferenceMetadataIndex
         // than the signature, so the two searches differ only in which members they look at.
         var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
                 | BindingFlags.Static | BindingFlags.Instance)
-            .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
-                && m.GetParameters().Length == callSignature.Count)
+            .Where(m => m.IsStatic == isStatic && m.Name == name && m.GetGenericArguments().Length == methodArity
+                && m.GetParameters().Length == callSignature.Count
+                && (m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly))
             .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
             .Where(c => c.ps.All(p => p != null))
             .ToList();
@@ -2255,8 +2280,9 @@ sealed partial class ReferenceMetadataIndex
         if (candidates.Count == 0)
             candidates = owner.GetInterfaces()
                 .SelectMany(i => i.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
-                    && m.GetParameters().Length == callSignature.Count)
+                .Where(m => m.IsStatic == isStatic && m.Name == name && m.GetGenericArguments().Length == methodArity
+                    && m.GetParameters().Length == callSignature.Count
+                    && (m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly))
                 .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
                 .Where(c => c.ps.All(p => p != null))
                 .ToList();
@@ -2269,8 +2295,9 @@ sealed partial class ReferenceMetadataIndex
             owner = shipped;
             candidates = shipped.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
                     | BindingFlags.Static | BindingFlags.Instance)
-                .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
-                    && m.GetParameters().Length == callSignature.Count)
+                .Where(m => m.IsStatic == isStatic && m.Name == name && m.GetGenericArguments().Length == methodArity
+                    && m.GetParameters().Length == callSignature.Count
+                    && (m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly))
                 .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
                 .Where(c => c.ps.All(p => p != null))
                 .ToList();
@@ -2284,6 +2311,12 @@ sealed partial class ReferenceMetadataIndex
             : candidates.Where(c => c.ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
                 .ToList();
         var source = compatible.Count > 0 ? compatible : candidates;
+        // Type.GetMethods includes inherited declarations.  When this exact owner declares a matching member, normal
+        // CLR member lookup selects that declaration (including a `new` forwarding slot) rather than treating the
+        // hidden base member as a second overload.  Keep inherited candidates only when the stated owner has no
+        // matching declaration of its own.  This choice is based on metadata ownership, not source names or order.
+        var declaredHere = source.Where(c => c.method.DeclaringType == owner).ToList();
+        if (declaredHere.Count > 0) source = declaredHere;
         // Declarations that are the SAME MEMBER collapse to one — the duplicate expect/actual rows a merged
         // stdlib produces. Sameness is judged on the physical metadata identity, not on the rendered parameter
         // vector: that vector strips generic arity, flattens `+` nesting, drops array rank and knows nothing of

@@ -28,7 +28,8 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 # catches a parallel member-identity spelling invented under some other key.
 MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef",
                     "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef", "unitInstanceRef",
-                    "combineRef", "removeRef", "compareExchangeRef", "hasValueRef", "valueRef", "invokeRef", "delegateCtorRef"}
+                    "combineRef", "removeRef", "compareExchangeRef", "hasValueRef", "valueRef", "invokeRef", "delegateCtorRef", "targetDelegateCtorRef",
+                    "fieldRef", "enumeratorAdapterCtorRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -55,6 +56,9 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "valueRef": {"method", "propertyAccessor"},
     "invokeRef": {"method"},
     "delegateCtorRef": {"ctor"},
+    "targetDelegateCtorRef": {"ctor"},
+    "fieldRef": {"field"},
+    "enumeratorAdapterCtorRef": {"ctor"},
 }
 
 # A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such
@@ -68,6 +72,13 @@ COLLECTION_TEMPLATE_REFS = {
     # An inlined `for` walks the enumerator protocol; both arms are named because which one the emitter can
     # speak is a Reflection.Emit fact, not a choice about which member is meant.
     "forEachInline": ("enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef"),
+}
+
+# Other operation-local roles whose consumer emits an external operand. These live on the operation rather than
+# on a child expression: a child can be a plain local/field value and therefore has no invocation role of its own.
+REQUIRED_OPERATION_REFS = {
+    "newArrayInit": ("invokeRef",),
+    "clrStaticField": ("fieldRef",),
 }
 
 # The transitional owner descriptor each declaration-side carrier travels with, in BOTH directions: one
@@ -112,7 +123,9 @@ RETIRED_DESCRIPTORS = (
 
 def in_member_ref(path):
     """True when `path` points inside ANY member-reference carrier (derived, never a literal key name)."""
-    return any(("/" + key) in path for key in MEMBER_REF_KEYS)
+    return (any(("/" + key) in path for key in MEMBER_REF_KEYS)
+            or "/" + WELL_KNOWN_TABLE + "/" in path
+            or ("/" + INTERFACE_SLOTS + "[" in path and "/slots[" in path))
 
 # HASTHIS, plus whether the signature is vararg — a vararg member is a DIFFERENT member from its fixed-arity
 # neighbour, so the convention states it rather than the producer refusing to describe it.
@@ -120,7 +133,7 @@ MEMBER_REF_CONVENTIONS = {"static", "instance", "varargStatic", "varargInstance"
 
 
 def arity_of_name(full_name):
-    """The generic arity a metadata FullName encodes, summed over the nesting chain (`Outer`1+Inner`1` = 2)."""
+    """The generic arity encoded by a non-nested metadata FullName."""
     return sum(int(n) for n in re.findall(r"`(\d+)", full_name))
 
 # #370: the CIR node kinds that EXIST only because a member of another assembly was resolved. bir2cir mints
@@ -470,11 +483,10 @@ class V:
             # compares them.
             self.err(f, path, "memberRef.declaringType must omit `args` when the declarer is non-generic, not carry an empty list")
         elif isinstance(declaring.get("name"), str):
-            # The declarer's name states its own arity, so any other argument count describes an instantiation
-            # that type cannot have — which is what a projection that ran short or long produces: an identity
-            # that still looks coherent and names nothing.
+            # A non-nested name states its arity. A nested name cannot state whether the inner declaration captures
+            # enclosing parameters; bir2cir validates it against the resolved TypeDef while authoring the reference.
             want, got = arity_of_name(declaring["name"]), len(declaring.get("args") or [])
-            if want != got:
+            if "+" not in declaring["name"] and want != got:
                 self.err(f, path, f"memberRef.declaringType `{declaring['name']}` declares {want} generic parameter(s) but carries {got} argument(s)")
         if not isinstance(o.get("name"), str) or not o["name"]:
             self.err(f, path, "memberRef.name must be a non-empty metadata member name")
@@ -625,14 +637,51 @@ class V:
                 if not f.endswith(".cir.json"):
                     self.err(f, path, f"{INTERFACE_SLOTS} is a CIR fact: nothing resolves a member before bir2cir runs")
                 elif not isinstance(slots, list):
-                    self.err(f, path, f"{INTERFACE_SLOTS} must be an array of resolved member references")
+                    self.err(f, path, f"{INTERFACE_SLOTS} must be an array of owner-scoped slot sets")
                 else:
-                    for i, ref in enumerate(slots):
+                    owner_keys = set()
+                    for i, slot_set in enumerate(slots):
                         where = f"{path}/{INTERFACE_SLOTS}[{i}]"
-                        if not isinstance(ref, dict):
-                            self.err(f, where, "an interface slot must be a resolved memberRef")
+                        if not isinstance(slot_set, dict):
+                            self.err(f, where, "an interface slot set must be an object")
+                            continue
+                        unknown = set(slot_set) - {"owner", "assembly", "slots"}
+                        if unknown:
+                            self.err(f, where, f"interface slot set has unknown keys: {sorted(unknown)}")
+                        owner = slot_set.get("owner")
+                        assembly = slot_set.get("assembly")
+                        refs = slot_set.get("slots")
+                        if not isinstance(owner, dict) or owner.get("t") != "fqn":
+                            self.err(f, where + "/owner", "interface slot set owner must be an fqn type")
                         else:
-                            self.member_ref(f, where, ref)
+                            self.type_node(f, where + "/owner", owner)
+                            owner_key = json.dumps(owner, sort_keys=True, separators=(",", ":"))
+                            if owner_key in owner_keys:
+                                self.err(f, where + "/owner", "interface slot set owner is duplicated")
+                            owner_keys.add(owner_key)
+                        if not isinstance(assembly, str) or not assembly:
+                            self.err(f, where + "/assembly", "interface slot set assembly must be a non-empty string")
+                        if not isinstance(refs, list):
+                            self.err(f, where + "/slots", "interface slot set slots must be an array")
+                            continue
+                        for j, ref in enumerate(refs):
+                            ref_where = f"{where}/slots[{j}]"
+                            if not isinstance(ref, dict):
+                                self.err(f, ref_where, "an interface slot must be a resolved memberRef")
+                            elif ref.get("kind") != "method":
+                                self.err(f, ref_where, "an interface slot must name a method")
+                            else:
+                                if isinstance(assembly, str) and ref.get("assembly") != assembly:
+                                    self.err(f, ref_where, "interface slot assembly must match its owner-scoped set")
+                                declaring = ref.get("declaringType")
+                                if isinstance(owner, dict) and isinstance(declaring, dict):
+                                    owner_name = re.sub(r"`\d+", "", owner.get("name", ""))
+                                    declaring_name = re.sub(r"`\d+", "", declaring.get("name", ""))
+                                    if (owner_name != declaring_name
+                                            or owner.get("args") != declaring.get("args")):
+                                        self.err(f, ref_where,
+                                                 "interface slot declaringType must match its constructed owner")
+                                self.member_ref(f, ref_where, ref)
             if ENUMERATOR_ADAPTER_CTOR in o:
                 ctor = o[ENUMERATOR_ADAPTER_CTOR]
                 where = f"{path}/{ENUMERATOR_ADAPTER_CTOR}"
@@ -668,7 +717,7 @@ class V:
                 # says every member an expansion needs, so its keys are what the emitter asks for rather than
                 # names the contract froze. Its VALUES are still full references and are checked as such.
                 in_table = ("/" + WELL_KNOWN_TABLE + "/" in path + "/"
-                            or "/" + INTERFACE_SLOTS + "[" in path)
+                            or ("/" + INTERFACE_SLOTS + "[" in path and "/slots[" in path))
                 if in_table:
                     self.member_ref(f, path, o)
                 elif carrier not in MEMBER_REF_KEYS:
@@ -864,6 +913,9 @@ class V:
                 for required_key in COLLECTION_TEMPLATE_REFS.get(o.get("k"), ()):
                     if required_key not in o:
                         self.err(f, path, f"{o['k']} must carry {required_key}: a collection literal names the members it builds through")
+                for required_key in REQUIRED_OPERATION_REFS.get(o.get("k"), ()):
+                    if required_key not in o:
+                        self.err(f, path, f"{o['k']} must carry {required_key}: the operation emits that external member operand")
             if f.endswith(".cir.json") and "memberRef" not in o:
                 kind = o.get("k")
                 if kind in MEMBER_REF_REQUIRED_KINDS:

@@ -23,6 +23,17 @@ sealed class ManagedReferenceCatalog
     const string RefStdlibName = "DotKt.Private.Stdlib";
     const string RuntimeStdlibName = "DotKt.Stdlib";
 
+    // Compiler-owned types whose CLR identity is emitted once by the runtime stdlib and referenced by applications.
+    // Keep this registry beside the ref/runtime-twin policy so bir2cir and ilemit cannot disagree about whether an
+    // otherwise-identical generated template is a local TypeDef or an external declaration.
+    static readonly HashSet<string> CanonicalRuntimeSyntheticTypes = new(StringComparer.Ordinal)
+    {
+        "dotkt$CharSequence",
+    };
+
+    public static bool IsCanonicalRuntimeSyntheticType(string name) =>
+        name != null && CanonicalRuntimeSyntheticTypes.Contains(name);
+
     public sealed record Entry(string Path, AssemblyName Identity);
 
     public IReadOnlyList<Entry> Entries { get; }
@@ -443,6 +454,21 @@ sealed class ManagedReferenceCatalog
             throw new InvalidOperationException(
                 "the compile reference set has no core assembly (expected System.Runtime or System.Private.CoreLib)");
         return new MetadataLoadContext(new ExactPathAssemblyResolver(this), core);
+    }
+
+    /// <summary>
+    /// Create an isolated metadata context that can read the physical stdlib twin by its real assembly identity.
+    /// The ordinary ref-reader context deliberately aliases <c>DotKt.Stdlib</c> to
+    /// <c>DotKt.Private.Stdlib</c>; loading the dropped runtime path into that same context therefore resolves back
+    /// to the reference twin and cannot expose runtime-only declarations.  Keep the semantic/reference context
+    /// unchanged and build a second exact-path universe containing both distinct identities.
+    /// </summary>
+    public MetadataLoadContext CreatePhysicalStdlibMetadataLoadContext()
+    {
+        if (string.IsNullOrEmpty(PhysicalStdlibPath)) return null;
+        var physicalCatalog = Create(Paths.Append(PhysicalStdlibPath),
+            "physical stdlib metadata", refStdlibAliasesRuntime: false);
+        return physicalCatalog.CreateMetadataLoadContext();
     }
 
     public static string[] Split(string value) =>

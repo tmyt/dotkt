@@ -1,0 +1,5 @@
+# The constrained call arrives with the constructed local interface's closed descriptor. Delegate-target stamping
+# must use the declaration's open parameter vector without replacing that call-site identity.
++"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":[{"t":"fqn","name":"System.Int32"},{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"System.String"},"params":[{"t":"fqn","name":"System.Int32"}],"clr":"System.Func"}]
++"targetDelegateCtorRef":{"kind":"ctor","assembly":"System.Runtime"
+-"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":[{"t":"tv","scope":"type","i":0}
