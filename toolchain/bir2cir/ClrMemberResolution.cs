@@ -449,6 +449,20 @@ static partial class ClrMemberResolution
         // member by that name. Ask the reference index for the accessor's physical name, exactly as the
         // reshape does; without it the search is for a member that does not exist under that spelling.
         var accessorKind = (node["prop"] as JsonValue)?.GetValue<string>();
+        // The same fact can arrive spelled into the NAME instead of carried beside it: `prop_get<key>` is the
+        // getter of `key`, stated by a pass that had no property to point at. Read the role out of the spelling
+        // so both forms reach the one resolution — otherwise the search is for a member literally called
+        // "prop_get<key>", which no metadata declares.
+        if (accessorKind == null && name.StartsWith("prop_", StringComparison.Ordinal) && name.EndsWith(">", StringComparison.Ordinal)
+            && name.IndexOf('<') is var lt && lt > 5)
+        {
+            var role = name["prop_".Length..lt];
+            if (role is "get" or "set")
+            {
+                accessorKind = role;
+                name = name[(lt + 1)..^1];
+            }
+        }
         if (accessorKind is "get" or "set")
         {
             if (!_refs.TryKotlinPropertyAccessor(ownerFqn.Name, name, accessorKind, callSig.Length, methodArity,
