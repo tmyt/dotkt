@@ -2348,6 +2348,12 @@ sealed partial class ReferenceMetadataIndex
             && ParamKey(erased) == "obj"
             && call is TypeNode.Nullable { Of: TypeNode.Tv })
             return true;
+        // A Kotlin primitive-array CLASS and the CLR array it IS are one type under two spellings, and which one
+        // arrives here depends only on how far the call has been lowered — a call still stating kotlin.IntArray
+        // meets a declaration the reference twin reflects as int[]. The kinds differ, so no same-kind arm below
+        // can see them, and ParamKey is already the single place that knows the two are the same type.
+        if (declaration is TypeNode.Array != call is TypeNode.Array && ParamKey(declaration) == ParamKey(call))
+            return true;
         if (declaration is TypeNode.Fqn dfqn && call is TypeNode.Fqn cfqn)
         {
             if (ParamKey(dfqn) != ParamKey(cfqn)) return false;
