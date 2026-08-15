@@ -308,8 +308,6 @@ static partial class ClrMemberResolution
             // Kotlin or the @Clr spelling. Found by enumerating the emitter's node kinds against this dispatch
             // rather than one gate failure at a time.
             case "staticField": case "staticFieldSet": case "clrStaticField": ResolveStaticField(node); break;
-            // A SAM conversion builds a delegate exactly as newDelegate does.
-            case "newSam": ResolveDelegateCtor(node, "funcType"); ResolveDelegateInvoke(node, "funcType"); break;
             case "delegateInvoke": ResolveDelegateInvoke(node, "funcType"); break;
             case "constrainedCall": ResolveConstrainedCall(node); break;
             case "newBoundDelegate": ResolveDelegateCtor(node, "funcType"); ResolveDelegateInvoke(node, "funcType"); break;
