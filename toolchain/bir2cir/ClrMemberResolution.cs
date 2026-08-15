@@ -304,6 +304,7 @@ static partial class ClrMemberResolution
                 ResolveDelegateInvoke(node, "funcType");
                 break;
             case "clrEventAccessorImpl": ResolveEventCas(node); break;
+            case "staticField": ResolveStaticField(node); break;
             case "delegateInvoke": ResolveDelegateInvoke(node, "funcType"); break;
             case "constrainedCall": ResolveConstrainedCall(node); break;
             case "newBoundDelegate": ResolveDelegateCtor(node, "funcType"); ResolveDelegateInvoke(node, "funcType"); break;

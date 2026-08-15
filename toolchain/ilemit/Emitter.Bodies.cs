@@ -618,7 +618,11 @@ sealed partial class Emitter
                 EmitField(_il, OpCodes.Ldflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
             case "staticField":
-                EmitField(_il, OpCodes.Ldsflda, ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
+                // An external owner names its field; a field this compilation emits is still found by name, which
+                // is the local axis (#395) rather than a second resolver living on here.
+                EmitField(_il, OpCodes.Ldsflda, e.TryGetProperty("fieldRef", out _)
+                    ? RequiredRef<FieldInfo>(e, "fieldRef", "field")
+                    : ResolveField(ParseOwnerSlot(e.GetProperty("ownerType")), e.GetProperty("name").GetString(), out _));
                 return;
             case "arrayGet":
                 EmitExpr(e.GetProperty("array"));

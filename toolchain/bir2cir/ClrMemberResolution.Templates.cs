@@ -177,6 +177,28 @@ static partial class ClrMemberResolution
     const string UnitInstance = "INSTANCE";
 
     /// <summary>
+    /// The static field a `staticField` node reads, named here rather than re-found by name downstream (#370).
+    /// </summary>
+    /// <remarks>
+    /// Every Kotlin `object` reaches its instance through this node, so no singleton is a special case — the
+    /// kotlin.Unit resolver above survives only because it fires on a closure's return slot, where there is no
+    /// `staticField` node to carry anything. An owner this compilation emits does not resolve and correctly
+    /// carries nothing: that is the local axis, which is #395's subject and not this one's.
+    /// </remarks>
+    static void ResolveStaticField(JsonObject node)
+    {
+        if (node.ContainsKey("fieldRef")) return;
+        if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn owner
+            || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
+            return;
+        var open = ResolveOwnerType(owner);
+        if (open == null) return;                       // emitted here: there is nothing external to name
+        var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (field == null) return;
+        node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
+    }
+
+    /// <summary>
     /// The three BCL members a field-like event accessor's CAS loop runs through.
     /// </summary>
     /// <remarks>
