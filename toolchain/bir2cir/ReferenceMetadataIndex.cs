@@ -2348,13 +2348,6 @@ sealed partial class ReferenceMetadataIndex
             && ParamKey(erased) == "obj"
             && call is TypeNode.Nullable { Of: TypeNode.Tv })
             return true;
-        // An array is described by its element, recursively. Without this the two sides only ever met by whole-node
-        // equality, so a primitive array — the one place where the reference twin's Kotlin spelling (IntArray) and
-        // the call's physical one (System.Int32[]) differ while every scalar position already agrees — matched
-        // nothing, and an overload set like _ArraysKt.sum stayed ambiguous rather than resolving.
-        if (declaration is TypeNode.Array dArr && call is TypeNode.Array cArr)
-            return dArr.Rank == cArr.Rank && dArr.SzArray == cArr.SzArray
-                && DeclarationDescribesCall(dArr.Elem, cArr.Elem);
         if (declaration is TypeNode.Fqn dfqn && call is TypeNode.Fqn cfqn)
         {
             if (ParamKey(dfqn) != ParamKey(cfqn)) return false;
