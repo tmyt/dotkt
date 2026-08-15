@@ -191,10 +191,11 @@ static partial class ClrMemberResolution
         if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn owner
             || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
             return;
-        // The reference surface first, then the assembly that ships the owner — the emitter resolves this owner in
-        // the runtime twin, and a type the reference twin has no name for is exactly what PhysicalTypeNamed exists
-        // to reach. Null past both means this compilation emits the owner and there is nothing external to name.
-        var open = ResolveOwnerType(owner) ?? _refs.PhysicalTypeNamed(owner.Name, (owner.Args ?? Array.Empty<TypeNode>()).Length);
+        // The reference surface, and only it. Falling back to the shipped twin here reads a PREVIOUS build of the
+        // assembly this compilation is producing, so a type being emitted right now resolves to last build's copy
+        // and gets an external reference to itself — which is how the stdlib runtime build broke. A type absent
+        // from the reference surface is one this compilation emits, and it correctly carries nothing.
+        var open = ResolveOwnerType(owner);
         if (open == null) return;
         var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
         if (field == null) return;
