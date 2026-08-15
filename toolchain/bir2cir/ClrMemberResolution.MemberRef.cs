@@ -205,11 +205,29 @@ static partial class ClrMemberResolution
     // receiver inherits from `IReadOnlyCollection<T>` is declared on `IReadOnlyCollection`1<string>` — the
     // projection ilemit would otherwise have to redo from the receiver, which is where its base-interface
     // fallbacks came from.
+    /// <summary>
+    /// The delegate a Kotlin function type IS, for use as an owner's type argument.
+    /// </summary>
+    /// <remarks>
+    /// An owner argument arrives straight off the call node, so it can still be an un-lowered `fn` — the family
+    /// is only decided by the lowering, and a reference naming a function SHAPE is not a reference to any CLR
+    /// type. Lowering here asks the one component that owns the decision rather than restating it.
+    /// </remarks>
+    static TypeNode DelegateArgOf(TypeNode.Fn fn) =>
+        (BirTypeLowering.LowerFnDelegate(fn, refBuild: false, force: false) is TypeNode.Fn lowered
+            ? BirTypeLowering.DelegateFqnOf(lowered)
+            : null) ?? (TypeNode)fn;
+
     static TypeNode DeclaringTypeRef(MemberInfo member, Type openOwner, TypeNode[] ownerArgs)
     {
         var declaring = DeclaringDefOf(member);
         var head = PhysicalTypeName(declaring);
-        var args = ownerArgs ?? Array.Empty<TypeNode>();
+        // A type ARGUMENT has to be stated physically like everything else in a reference: a Kotlin function type
+        // in that position is the delegate it becomes, not an `fn` shape. Owner arguments reach here straight off
+        // the call node, so the ones that are still Kotlin-shaped are physicalized here rather than downstream —
+        // the emitter anchors on this instantiation and cannot make a CLR type out of a function shape.
+        var args = (ownerArgs ?? Array.Empty<TypeNode>())
+            .Select(a => a is TypeNode.Fn fn ? DelegateArgOf(fn) : a).ToArray();
         var openDefinition = openOwner == null ? null : SafeDef(openOwner);
         // The receiver IS the declarer: its own arguments apply unchanged.
         if (openDefinition != null && openDefinition == declaring)
