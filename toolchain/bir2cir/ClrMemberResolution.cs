@@ -406,7 +406,7 @@ static partial class ClrMemberResolution
         {
             foreach (var kv in obj.ToList())
                 if (kv.Value != null) WalkReferencedStaticCalls(kv.Value);
-            if ((obj["k"] as JsonValue)?.GetValue<string>() == "callStatic")
+            if ((obj["k"] as JsonValue)?.GetValue<string>() is "callStatic" or "callInstance")
                 ResolveReferencedStaticCall(obj);
         }
         else if (node is JsonArray arr)

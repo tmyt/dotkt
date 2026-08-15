@@ -2237,7 +2237,11 @@ sealed partial class ReferenceMetadataIndex
         var owner = ResolveRefType(bareOwner, ownerArity) ?? PhysicalTypeNamed(bareOwner, ownerArity);
         if (owner == null)
             return false;
-        var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+        // Instance as well as static: a call on a referenced Kotlin owner — every method on an `object`, reached
+        // through its INSTANCE — is as external as a static one, and the receiver rides the node's `recv` rather
+        // than the signature, so the two searches differ only in which members they look at.
+        var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.Static | BindingFlags.Instance)
             .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
                 && m.GetParameters().Length == callSignature.Count)
             .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
