@@ -203,8 +203,14 @@ static partial class ClrMemberResolution
     {
         if (type.ContainsKey("enumeratorAdapterCtorRef")) return;
         if (type["methods"] is not JsonArray methods
-            || !methods.OfType<JsonObject>().Any(m =>
-                (m["clrBridgeRole"] as JsonValue)?.GetValue<string>() == "iterator"))
+            || methods.OfType<JsonObject>().FirstOrDefault(m =>
+                (m["clrBridgeRole"] as JsonValue)?.GetValue<string>() == "iterator") is not JsonObject iter)
+            return;
+        // The adapter is instantiated with the element the bridge actually wraps, which the iterator's own return
+        // type states: Iterator<E> -> adapter<E>. Reading it from the wrapped member rather than from a supertype
+        // list keeps the two in step whatever collection interface the type reached the bridge through.
+        if (TypeJson.Read(iter["ret"]) is not TypeNode.Fqn iterRet
+            || iterRet.Args is not { Length: 1 } elem)
             return;
         var open = _refs.PhysicalTypeNamed("dotkt$EnumeratorOverKotlinIterator", 1);
         if (open == null) return;   // this compilation emits the adapter: the local branch needs no reference
@@ -217,6 +223,6 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException(
                 $"bir2cir: the shipped enumerator adapter declares {ctors.Count} constructors taking "
                 + "kotlin.collections.Iterator`1, so the reverse bridge cannot be given one identity (#370)");
-        type["enumeratorAdapterCtorRef"] = MemberRefJson(ctors[0], MemberRefNode.Kinds.Ctor, open, Array.Empty<TypeNode>());
+        type["enumeratorAdapterCtorRef"] = MemberRefJson(ctors[0], MemberRefNode.Kinds.Ctor, open, elem);
     }
 }
