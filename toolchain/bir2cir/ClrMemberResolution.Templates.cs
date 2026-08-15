@@ -191,10 +191,11 @@ static partial class ClrMemberResolution
         if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn owner
             || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
             return;
-        // The reference surface, and only it. Falling back to the shipped twin here reads a PREVIOUS build of the
-        // assembly this compilation is producing, so a type being emitted right now resolves to last build's copy
-        // and gets an external reference to itself — which is how the stdlib runtime build broke. A type absent
-        // from the reference surface is one this compilation emits, and it correctly carries nothing.
+        // A type this compilation emits keeps the local axis (#395) and must not be given an external identity,
+        // even though the reference surface can answer for it: the stdlib runtime build compiles against a
+        // PREVIOUS build of the assembly it is producing, so kotlin.text.HexFormat+$Companion resolved there and
+        // was handed a reference to itself that the emitter's own universe then could not contain.
+        if (_localTypes.Contains(owner.Name)) return;
         var open = ResolveOwnerType(owner);
         if (open == null) return;
         var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
