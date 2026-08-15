@@ -418,9 +418,11 @@ static partial class ClrMemberResolution
 
     static void ResolveReferencedStaticCall(JsonObject node)
     {
+        // An instance call states its owner as `ownerType`; a static one as `owner`, or `calleeOwner` when a
+        // lowering rebuilt the node. All three name the same thing — the type that declares the member.
         var ownerNode = node["owner"] is JsonNode owner && owner.GetValueKind() != System.Text.Json.JsonValueKind.Null
             ? owner
-            : node["calleeOwner"];
+            : node["calleeOwner"] ?? node["ownerType"];
         if (ReadOwnerNode(ownerNode) is not TypeNode.Fqn ownerFqn
             || (node["method"] as JsonValue)?.TryGetValue<string>(out var name) != true
             || node["sig"] is not JsonArray sig)
