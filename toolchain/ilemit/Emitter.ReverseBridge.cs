@@ -158,10 +158,12 @@ partial class Emitter
         }
         else
         {
+            // The shipped adapter is external, so its constructor arrives named like every other external member
+            // (#370): the producer resolved the same declaration the local branch builds, and picking one out of
+            // GetConstructors() — which said nothing about WHICH constructor — is not a question asked here any more.
             adapterClosed = ConstructedType(externalAdapterOpen, elemType);
-            adapterCtor = ContainsTypeBuilder(elemType)
-                ? AnchorConstructor(adapterClosed, externalAdapterOpen.GetConstructors()[0])
-                : adapterClosed.GetConstructors()[0];
+            adapterCtor = AnchorOn(adapterClosed,
+                RequiredRef<ConstructorInfo>(ti.Def, "enumeratorAdapterCtorRef", "ctor"));
         }
         var ienumElem = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elemType);
         var ienumerableGenDef = Bcl("System.Collections.Generic.IEnumerable`1");

@@ -191,5 +191,32 @@ static partial class ClrMemberResolution
             }
         }
         if (slots.Count > 0) type["interfaceSlotRefs"] = slots;
+        StampEnumeratorAdapterCtor(type);
+    }
+
+    // The reverse enumerator bridge wraps this type's iterator in the shipped adapter. Its constructor is external
+    // exactly when this compilation does NOT emit the adapter, which is the ordinary local/external split: a stdlib
+    // build emits it and uses its own ConstructorBuilder, an app build links the shipped one and so must be given
+    // its identity. The trigger is the same structural fact the bridge itself keys on — an `iterator` bridge role —
+    // and the declaration is selected by the signature the local emission builds, never by position.
+    static void StampEnumeratorAdapterCtor(JsonObject type)
+    {
+        if (type.ContainsKey("enumeratorAdapterCtorRef")) return;
+        if (type["methods"] is not JsonArray methods
+            || !methods.OfType<JsonObject>().Any(m =>
+                (m["clrBridgeRole"] as JsonValue)?.GetValue<string>() == "iterator"))
+            return;
+        var open = _refs.PhysicalTypeNamed("dotkt$EnumeratorOverKotlinIterator", 1);
+        if (open == null) return;   // this compilation emits the adapter: the local branch needs no reference
+        var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c => c.GetParameters() is { Length: 1 } ps
+                && ps[0].ParameterType.IsGenericType
+                && ps[0].ParameterType.GetGenericTypeDefinition().FullName == "kotlin.collections.Iterator`1")
+            .ToList();
+        if (ctors.Count != 1)
+            throw new InvalidOperationException(
+                $"bir2cir: the shipped enumerator adapter declares {ctors.Count} constructors taking "
+                + "kotlin.collections.Iterator`1, so the reverse bridge cannot be given one identity (#370)");
+        type["enumeratorAdapterCtorRef"] = MemberRefJson(ctors[0], MemberRefNode.Kinds.Ctor, open, Array.Empty<TypeNode>());
     }
 }

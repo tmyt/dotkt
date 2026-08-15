@@ -86,6 +86,11 @@ WELL_KNOWN_TABLE = "wellKnownRefs"
 # Every slot of every external interface a type declares, named on the type. CIR-only, like every resolved
 # identity: nothing resolves a member before bir2cir runs.
 INTERFACE_SLOTS = "interfaceSlotRefs"
+
+# The shipped enumerator adapter's constructor, named on the type whose reverse bridge wraps it. Per-site rather
+# than a fixed-table role: it is present exactly when the adapter is external to this compilation, so a stdlib
+# build — which emits the adapter and uses its own ConstructorBuilder — carries none.
+ENUMERATOR_ADAPTER_CTOR = "enumeratorAdapterCtorRef"
 WELL_KNOWN_ROLES = frozenset({
     "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
     "Object.Equals", "Enum.GetValues", "Enum.Parse", "Type.GetMethod", "MethodInfo.Invoke",
@@ -628,6 +633,17 @@ class V:
                             self.err(f, where, "an interface slot must be a resolved memberRef")
                         else:
                             self.member_ref(f, where, ref)
+            if ENUMERATOR_ADAPTER_CTOR in o:
+                ctor = o[ENUMERATOR_ADAPTER_CTOR]
+                where = f"{path}/{ENUMERATOR_ADAPTER_CTOR}"
+                if not f.endswith(".cir.json"):
+                    self.err(f, where, f"{ENUMERATOR_ADAPTER_CTOR} is a CIR fact: nothing resolves a member before bir2cir runs")
+                elif not isinstance(ctor, dict):
+                    self.err(f, where, f"{ENUMERATOR_ADAPTER_CTOR} must be one resolved member reference")
+                elif ctor.get("kind") != "ctor":
+                    self.err(f, where, f"{ENUMERATOR_ADAPTER_CTOR} must name a constructor")
+                else:
+                    self.member_ref(f, where, ctor)
             if WELL_KNOWN_TABLE in o:
                 table = o[WELL_KNOWN_TABLE]
                 if not f.endswith(".cir.json"):
