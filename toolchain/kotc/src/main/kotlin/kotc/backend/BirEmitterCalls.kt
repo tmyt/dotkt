@@ -2007,10 +2007,10 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// interface member is bir2cir's too.
 		val mname = name
 		val anySlotTag = if (isAnySlotMethod(callee)) ""","anySlot":true""" else ""
-		// Carry the return type so ilemit can fall back to dynamic dispatch if static resolution fails AND the owner
-		// implements a BCL clrg: interface (a substituted Kotlin collection whose member -- get_Item, iterator, addAll
-		// -- lives on the BCL interface FindMethod skips). ilemit gates on the owner-interface so non-collection misses
-		// still throw. See ilemit EmitDynamicCall.
+		// Carry the frontend-resolved result type of the call. It is the last of the three result-type stamps
+		// (`sty`, then `ret`, then `dynRet` — bir-common/NodeType.cs owns that precedence), and downstream passes read
+		// it wherever a node has to state its own result. It was introduced to feed ilemit's runtime-reflection
+		// fallback, which no longer exists (#400); the stamp itself is ordinary frontend vocabulary and stays.
 		val dynRet = ""","dynRet":${birType(call.type).toJson()}"""
 		"""{"k":"callInstance","ownerType":${ownerStr.toJson()},"virtual":$virtual,"recv":${recvExpr(recv, ownerStr, declaringClass?.defaultType, renderedRecv)},"method":${str(mname)}${overloadSigField(callee)}$ta$dynRet${retHintStr(ta.isNotEmpty() || (ownerStr as? TypeNode.Fqn)?.args != null, effRet)},"args":[$args]${suspendCallTag(callee)}${overridesJson(callee)}$anySlotTag${superTag(call)}}"""
 	} else """{"k":"callStatic","owner":null,"method":${str(name)}${overloadSigField(callee)}$ta${retHintStr(ta.isNotEmpty(), effRet)},"args":[$args]${suspendCallTag(callee)}${calleeOwnerTag(callee)}$companionExtensionCallTag}"""
