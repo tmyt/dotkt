@@ -81,12 +81,6 @@ REQUIRED_OPERATION_REFS = {
     "clrStaticField": ("fieldRef",),
 }
 
-# The transitional owner descriptor each declaration-side carrier travels with, in BOTH directions: one
-# without the other is half a migration, and each half resolves on its own so nothing else would notice.
-DECLARATION_REF_PAIRS = (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner", "clrOverrideRef"))
-
-# The transitional identity vocabulary #370 retired. A CIR document carrying any of them has a second spelling
-# of a settled member beside the reference that replaced it.
 # The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
 #
 # The role set is FROZEN, for the reason every other key here is: a table that accepts any name accepts a typo,
@@ -120,6 +114,13 @@ RETIRED_DESCRIPTORS = (
     "clrOverride", "clrOverrideSig", "clrOverrideRet", "clrOverrideOwner", "clrOverrideMember",
 )
 
+# Pass-to-pass facts owned exclusively by bir2cir. They are deliberately not part of either serialized phase:
+# seeing one in an input BIR or output CIR means an internal resolution step leaked across a layer boundary.
+BIR2CIR_INTERNAL_MEMBER_FACTS = (
+    "resolvedMemberParams", "resolvedMemberReturn",
+    "pendingOverrideOwner", "pendingOverrideMember", "pendingOverrideReturn",
+)
+
 
 def in_member_ref(path):
     """True when `path` points inside ANY member-reference carrier (derived, never a literal key name)."""
@@ -140,7 +141,7 @@ def arity_of_name(full_name):
 # them nowhere else (its own ResolvedOnlyKinds), and ilemit already refuses one that arrives without a
 # resolved owner — so for these, a reference is not merely expected, it is what the node is made of. Requiring
 # it unconditionally puts the failure at the layer that dropped the identity instead of several stages later,
-# and keeps the rule independent of the transitional descriptors this migration deletes.
+# and keeps the rule independent of the retired descriptors.
 #
 # The set GROWS one authoring step at a time; a kind absent from it is simply not migrated yet.
 MEMBER_REF_REQUIRED_KINDS = {
@@ -150,9 +151,15 @@ MEMBER_REF_REQUIRED_KINDS = {
 }
 
 # Kinds that are external only SOMETIMES — a field access or a construction whose owner may equally be a type
-# this compilation is emitting, which has no assembly identity yet and correctly carries no reference. For
-# these the transitional identity is the evidence that this particular node's member WAS resolved.
-MEMBER_REF_CONDITIONAL_KINDS = {"new", "field", "setField", "setFieldExpr"}
+# this compilation is emitting, which has no assembly identity yet and correctly carries no reference.
+MEMBER_REF_CONDITIONAL_KEYS = {
+    "new": "memberRef",
+    "field": "memberRef",
+    "setField": "memberRef",
+    "setFieldExpr": "memberRef",
+    "staticField": "fieldRef",
+    "staticFieldSet": "fieldRef",
+}
 
 # Keys that legitimately hold a bare STRING scalar: format vocabulary (k/t tags, enums),
 # object-language NAME payloads, and the documented owner/member/attribute reference
@@ -174,8 +181,6 @@ STR_OK = {
                                                 # bir2cir DECISION (W1-S2 #46), NOT a type slot; ilemit emits the opcode
                                                 # verbatim (no re-derivation from reflected IsVirtual/IsFinal)
     "member", "method", "get", "set", "event",  # member/accessor/event NAME references (reflection/override — §2.2.1)
-    "clrOverrideMember",                         # CIR-only exact external base MethodDef name paired with the
-                                                # implementing declaration's differently named Kotlin accessor.
     "accessor",                                  # W1-S3 (#46/#121): the ref.dll-resolved get_/set_/add_/remove_ accessor
                                                 # METHOD NAME ilemit links (clrPropGet/Set, clrEvent*, external field) — a
                                                 # bir2cir resolution decision, NOT a type slot (paired with `member`+`dispatch`)
@@ -265,7 +270,7 @@ STR_OK = {
     # OWNER-FQN owner slots (§2.2.1 — a type IDENTITY used as a resolution key) are ALL structured `{t:fqn}` nodes now
     # (#48 fully realized): `owner` (callStatic AND callInline.owner/callee), `ownerType`
     # (callInstance/field/setField/staticField, incl. the top-level-file-class + interop-extension owners kotc formerly
-    # emitted as bare strings), `clrOverride`, `accessOwner`, clr* `type`. bir2cir reads them via TypeJson.Read/OwnerName
+    # emitted as bare strings), `accessOwner`, and clr* `type`. bir2cir reads them via TypeJson.Read/OwnerName
     # and ilemit via SlotName/ParseOwnerSlot/ClrRef — both node-native. No owner-FQN string slot remains.
 }
 # On these CLR-lowered kinds the `type` field is the call's OWNER (not a value type) — the owner-FQN island
@@ -279,8 +284,8 @@ CLR_OWNER_KINDS = {
 # Keys that legitimately hold an ARRAY containing bare strings: only the type-PARAMETER
 # name-declaration shorthand (typeParams may be ["T"] instead of [{name:"T"}]). A type-param
 # DECLARATION names a variable; references to it use positional tv{scope,i} nodes (§1), so this
-# is a decl-name list, NOT a type-usage slot. (The clrGeneric* overload key is now the STRUCTURED `memberSig`
-# TypeNode array — W1-S1 #46 — walked as ordinary type nodes; the retired lossy `shapes` string island is gone.)
+# is a decl-name list, NOT a type-usage slot. bir2cir's internal resolved-member parameter vector is structured
+# TypeNode data and never crosses either serialized phase boundary; the retired lossy `shapes` island is gone.
 STRARR_OK = {
     "typeParams",
     "typeParamDecls",                          # newSuspendLambda's full declaration-form copy of typeParams;
@@ -514,8 +519,10 @@ class V:
             if o.get("returnType") != {"t": "fqn", "name": "void"}:
                 self.err(f, path, "a ctor memberRef must return void")
 
-    def check_local_over_reference(self, files):
-        """A member reference must never name a type THIS compilation emits (#15 local-over-ref, #370).
+    def check_whole_assembly_member_refs(self, files):
+        """Check member-reference rules that require the complete emitted-type set.
+
+        A member reference must never name a type THIS compilation emits (#15 local-over-ref, #370).
 
         A reference carries an assembly, so naming a locally-emitted type points the call at some other
         assembly's copy of it — the precedence bug #15 exists to prevent, and the shape a regression fixture in
@@ -546,6 +553,73 @@ class V:
                 self.collect_declared(d.get("types"), local)
             for f, d in docs:
                 self.walk_local_refs(f, d, "", local)
+                self.walk_external_base_ctor_refs(f, d, "", local)
+                self.walk_external_member_nodes(f, d, "", local)
+                self.walk_external_base_method_impls(f, d, "", local)
+
+    def walk_external_member_nodes(self, f, o, path, local):
+        """Require identity from an owner fact that cannot disappear with memberRef."""
+        if isinstance(o, dict):
+            kind = o.get("k")
+            owner = o.get("type") if kind == "new" else o.get("ownerType")
+            reference_key = MEMBER_REF_CONDITIONAL_KEYS.get(kind)
+            if (reference_key is not None and isinstance(owner, dict)
+                    and owner.get("t") == "fqn" and isinstance(owner.get("name"), str)
+                    and owner["name"] not in local and not isinstance(o.get(reference_key), dict)):
+                self.err(
+                    f, path,
+                    f"{kind} targeting external owner {owner['name']!r} must carry a resolved {reference_key}"
+                )
+            for key, val in o.items():
+                self.walk_external_member_nodes(f, val, path + "/" + key, local)
+        elif isinstance(o, list):
+            for i, x in enumerate(o):
+                self.walk_external_member_nodes(f, x, path + f"[{i}]", local)
+
+    def walk_external_base_method_impls(self, f, o, path, local):
+        if isinstance(o, dict):
+            descriptors = o.get("clrBaseImpls")
+            if isinstance(descriptors, list):
+                for i, descriptor in enumerate(descriptors):
+                    owner = descriptor.get("owner") if isinstance(descriptor, dict) else None
+                    if (isinstance(owner, dict) and owner.get("t") == "fqn"
+                            and isinstance(owner.get("name"), str) and owner["name"] not in local
+                            and not isinstance(descriptor.get("memberRef"), dict)):
+                        self.err(
+                            f, path + f"/clrBaseImpls[{i}]",
+                            f"external base MethodImpl {owner['name']!r} must carry its resolved memberRef"
+                        )
+            for key, val in o.items():
+                self.walk_external_base_method_impls(f, val, path + "/" + key, local)
+        elif isinstance(o, list):
+            for i, x in enumerate(o):
+                self.walk_external_base_method_impls(f, x, path + f"[{i}]", local)
+
+    def walk_external_base_ctor_refs(self, f, o, path, local):
+        """Every direct constructor delegation to a non-local base carries its selected constructor.
+
+        The type's lowered base plus the whole compilation's declared-type set is the durable discriminator;
+        it does not duplicate the constructor identity and cannot disappear together with baseCtorRef in the
+        pass that authors the reference.
+        """
+        if isinstance(o, dict):
+            base = o.get("base")
+            ctors = o.get("ctors")
+            if (isinstance(o.get("kind"), str) and isinstance(base, dict)
+                    and base.get("t") == "fqn" and isinstance(base.get("name"), str)
+                    and base["name"] not in local and isinstance(ctors, list)):
+                for i, ctor in enumerate(ctors):
+                    if (isinstance(ctor, dict) and not isinstance(ctor.get("thisArgs"), list)
+                            and not isinstance(ctor.get("baseCtorRef"), dict)):
+                        self.err(
+                            f, f"{path}/ctors[{i}]",
+                            f"constructor delegating to external base {base['name']!r} must carry baseCtorRef"
+                        )
+            for key, val in o.items():
+                self.walk_external_base_ctor_refs(f, val, path + "/" + key, local)
+        elif isinstance(o, list):
+            for i, x in enumerate(o):
+                self.walk_external_base_ctor_refs(f, x, path + f"[{i}]", local)
 
     def collect_declared(self, node, into):
         if isinstance(node, dict):
@@ -613,6 +687,12 @@ class V:
 
     def walk(self, f, o, path):
         if isinstance(o, dict):
+            for internal in BIR2CIR_INTERNAL_MEMBER_FACTS:
+                if internal in o:
+                    self.err(
+                        f, path,
+                        f"{internal} is a bir2cir pass-to-pass member-resolution fact and must not be serialized"
+                    )
             if o.get("kind") == "interface" and isinstance(o.get("methods"), list):
                 for i, method in enumerate(o["methods"]):
                     if (not isinstance(method, dict)
@@ -833,7 +913,7 @@ class V:
                     self.err(f, path, "capturedTypeParams is a bir2cir-authored nested CLR declaration fact and must not appear in BIR")
                 if "nestedIn" in o:
                     self.err(f, path, "nestedIn is a bir2cir-authored physical CLR ownership fact and must not appear in BIR")
-                for method_impl_key in ("clrInterfaceImpls", "clrBaseImpls", "clrOverrideSig", "clrOverrideOwner"):
+                for method_impl_key in ("clrInterfaceImpls", "clrBaseImpls"):
                     if method_impl_key in o:
                         self.err(f, path, f"{method_impl_key} is a bir2cir-authored MethodImpl fact and must not appear in BIR")
             for method_impl_key in ("clrInterfaceImpls", "clrBaseImpls"):
@@ -849,9 +929,9 @@ class V:
                         self.err(f, descriptor_path, "MethodImpl descriptor must be an object")
                         continue
                     required = {"owner", "member", "arity", "params", "ret"}
-                    allowed = required | {"typeParams"}
+                    allowed = required | {"typeParams", "memberRef"}
                     if not required.issubset(descriptor) or not set(descriptor).issubset(allowed):
-                        self.err(f, descriptor_path, "MethodImpl descriptor must contain owner/member/arity/params/ret and optional typeParams")
+                        self.err(f, descriptor_path, "MethodImpl descriptor must contain owner/member/arity/params/ret and optional typeParams/memberRef")
                     if not isinstance(descriptor.get("owner"), dict) or descriptor["owner"].get("t") != "fqn":
                         self.err(f, descriptor_path, "MethodImpl descriptor owner must be an fqn Type node")
                     if not isinstance(descriptor.get("member"), str) or not descriptor["member"]:
@@ -866,23 +946,24 @@ class V:
                         type_params = descriptor["typeParams"]
                         if not isinstance(type_params, list) or len(type_params) != descriptor.get("arity"):
                             self.err(f, descriptor_path, "MethodImpl descriptor typeParams must match its generic arity")
+                    if ("memberRef" in descriptor and (not isinstance(descriptor.get("memberRef"), dict)
+                            or descriptor["memberRef"].get("kind") != "method")):
+                        self.err(f, descriptor_path, "MethodImpl descriptor memberRef must name a method")
             if o.get("k") == "newClrStaticDelegate" and f.endswith(".cir.json"):
                 if not isinstance(o.get("memberRef"), dict):
                     self.err(f, path, "newClrStaticDelegate must carry the resolved memberRef of the method it binds")
             if f.endswith(".cir.json"):
-                # The declaration-side pair, checked in BOTH directions. A base-constructor delegation and an
-                # external override target are resolved by the same pass and stated in the same transitional
-                # pieces; either half alone still resolves to a member, so a document that lost one would keep
-                # working while silently reverting the guarantee.
-                #
-                # WHEN THE TRANSITIONAL OWNERS ARE DELETED this rule has nothing left to key on — a declaration
-                # carries no `k`, so the node-side kind rule has no counterpart here. Its successor must key on
-                # the DURABLE facts instead: a constructor delegating to a non-local base, and a method carrying
-                # `clrOverride`. Removing the owners without writing that rule leaves 2,310 sites unenforced
-                # while the gate still reports green.
+                requires_override = o.get("requiresClrOverride")
+                has_override_ref = "clrOverrideRef" in o
+                if requires_override is not None and requires_override is not True:
+                    self.err(f, path, "requiresClrOverride must be true when present")
+                if (requires_override is True) != has_override_ref:
+                    self.err(
+                        f, path,
+                        "requiresClrOverride:true and clrOverrideRef must be present together: the instruction requires its exact MethodImpl operand"
+                    )
                 # An APPLIED EXTERNAL attribute is a call into the assembly that declares it, and `attrExternal`
-                # is a durable bir2cir fact rather than a transitional descriptor — so unlike the pairs below,
-                # this rule survives the migration that deletes them. It is also the rule that would have
+                # is a durable bir2cir fact rather than an identity descriptor. It is also the rule that would have
                 # caught 496 return-position attributes going unresolved while the walk that resolves them
                 # looked complete.
                 if o.get("attrExternal") is True:
@@ -899,7 +980,7 @@ class V:
                         declared = o.get("argTypes")
                         if isinstance(declared, list) and len(declared) != len(ref.get("parameterTypes") or []):
                             self.err(f, path, "an applied attribute's memberRef takes a different number of arguments than the application states")
-                # The transitional descriptors are RETIRED: the emitter reads the reference and nothing else,
+                # The old descriptors are RETIRED: the emitter reads the reference and nothing else,
                 # so an owner descriptor beside it is a second spelling of a settled identity — the kind that
                 # drifts from the first and cannot be caught, because whoever compares them compares two
                 # outputs of the same producer.
@@ -923,12 +1004,14 @@ class V:
                     # identity has nothing for a consumer to link, which is why ilemit refuses it — and refusing
                     # it here names the layer that dropped it rather than the one that noticed.
                     self.err(f, path, f"{kind} is an external member reference and must carry a resolved memberRef")
-                elif kind in MEMBER_REF_CONDITIONAL_KINDS:
-                    # Sometimes external, sometimes a member of the assembly being built. The transitional
-                    # discriminator is what says WHICH this node is: `member` for a property or field, which carries a
+                elif MEMBER_REF_CONDITIONAL_KEYS.get(kind) == "memberRef":
+                    # Sometimes external, sometimes a member of the assembly being built. The durable `member`
+                    # discriminator says WHICH this node is for a property or field, carrying a
                     # kind marker rather than a signature.
                     if o.get("member") in ("accessor", "field"):
                         self.err(f, path, f"{kind} carries member={o['member']!r} without the resolved memberRef beside it")
+            elif "requiresClrOverride" in o:
+                self.err(f, path, "requiresClrOverride is a bir2cir-authored CIR instruction and must not appear in BIR")
             if isinstance(o.get("mods"), dict):
                 for mk in o["mods"]:
                     if mk not in MOD_KEYS:
@@ -997,7 +1080,7 @@ def main(argv):
         v.walk(f, d, "")
         if f.endswith(".bir.json"):
             v.plan_scope(f, d, "", frozenset())
-    v.check_local_over_reference(files)
+    v.check_whole_assembly_member_refs(files)
     # report
     if v.viol:
         # group by message-prefix for a readable summary; cap examples per kind

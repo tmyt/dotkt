@@ -88,23 +88,23 @@ static class DeclarationRename
                             if (obj.ContainsKey("override")) obj["override"] = true;
                             if (obj.ContainsKey("vis")) obj["vis"] = "public";
                             // #73 M4-c: an accessor overriding a reference-KLIB-projected .NET base CLASS virtual property
-                            // needs the `clrOverride` field so ilemit's DefineMethodOverride reuses the base slot (an
-                            // INTERFACE member binds by name at type-load, so it needs no clrOverride). kotc emits ONLY
+                            // needs the `pendingOverrideOwner` field so ilemit's DefineMethodOverride reuses the base slot (an
+                            // INTERFACE member binds by name at type-load, so it needs no pendingOverrideOwner). kotc emits ONLY
                             // the plain override method + its `overrides` marker (its `clrAccessorMethod` producer was
-                            // retired in #73 M4); this is the SOLE source of the clrOverride field, derived off the refs.
+                            // retired in #73 M4); this is the SOLE source of the pendingOverrideOwner field, derived off the refs.
                             // The guard is defensive (no kotc producer remains to double-stamp).
                             if (ResolveNetClassOwner(obj, ovs, refs, out var clrBaseReturn) is TypeNode.Fqn clrBase)
                             {
-                                obj["clrOverride"] ??= TypeJson.Write(clrBase);
-                                obj["clrOverrideRet"] ??= TypeJson.Write(clrBaseReturn);
+                                obj["pendingOverrideOwner"] ??= TypeJson.Write(clrBase);
+                                obj["pendingOverrideReturn"] ??= TypeJson.Write(clrBaseReturn);
                                 if (semanticPropertyDeclaration)
                                 {
-                                    if (obj["clrOverrideMember"] is JsonValue existing
+                                    if (obj["pendingOverrideMember"] is JsonValue existing
                                         && existing.TryGetValue<string>(out var existingMember)
                                         && existingMember != slot)
                                         throw new InvalidOperationException(
                                             $"conflicting CLR base property slots '{existingMember}' and '{slot}'");
-                                    obj["clrOverrideMember"] = slot;
+                                    obj["pendingOverrideMember"] = slot;
                                 }
                             }
                         }
@@ -118,7 +118,7 @@ static class DeclarationRename
     }
 
     // #73 M4-c — the .NET base CLASS owner FQN in an accessor's override closure (a virtual property whose declaring
-    // .NET type is a real CLASS, not an interface/struct), else null. Used to stamp `clrOverride` so ilemit's
+    // .NET type is a real CLASS, not an interface/struct), else null. Used to stamp `pendingOverrideOwner` so ilemit's
     // DefineMethodOverride binds the base virtual slot. A property mapping alone is NOT sufficient: Kotlin's open
     // Throwable.cause maps to the NON-virtual Exception.InnerException getter, so a subclass `override val cause`
     // must remain a Kotlin virtual newslot rather than attempt an impossible CLR .override.
@@ -145,7 +145,7 @@ static class DeclarationRename
         // that ResolveNetType above deliberately SKIPS, yet it binds a real BCL CLASS property via @ClrProperty (message
         // -> System.Exception.get_Message). Return the ALIASED BCL owner so ilemit's DefineMethodOverride reuses the base
         // virtual slot instead of emitting a fresh newslot (else the substituted callvirt binds the base value). Class
-        // only (an interface member binds by name at type-load, needing no clrOverride), mirroring the IsClass gate above.
+        // only (an interface member binds by name at type-load, needing no pendingOverrideOwner), mirroring the IsClass gate above.
         foreach (var o in ovs)
         {
             if (o is not JsonObject oo) continue;

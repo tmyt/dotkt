@@ -1,0 +1,19 @@
+{
+  "types": [
+    {
+      "name": "MissingOverrideRef",
+      "kind": "class",
+      "base": { "t": "fqn", "name": "System.Exception" },
+      "ctors": [],
+      "methods": [
+        {
+          "name": "prop_get<message>",
+          "params": [],
+          "ret": { "t": "fqn", "name": "System.String" },
+          "requiresClrOverride": true,
+          "body": []
+        }
+      ]
+    }
+  ]
+}

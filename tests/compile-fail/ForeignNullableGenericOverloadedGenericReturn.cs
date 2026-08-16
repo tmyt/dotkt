@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 // A GENERIC .NET method in an overload set. Name + generic arity + parameter count leaves both members standing,
 // and stamping a fake `void` for "could not narrow it" made the crossing refusal see a member with no problematic
-// return at all — while emission, which links by the exact `memberSig` the frontend resolved, picked the right one
+// return at all — while bir2cir's scalar memberRef resolution picked the right one
 // and handed back a `List<Nullable<int32>>` consumed as a `List<object>`.
 namespace ovgen
 {

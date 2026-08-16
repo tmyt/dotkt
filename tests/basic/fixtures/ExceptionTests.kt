@@ -47,6 +47,15 @@ fun excSafeDiv(a: Int, b: Int): Int {
 // ---- il-customexc : user exception : System.Exception (base ctor chain, .message -> .Message, catch by base) --
 class ExcAppErr(val code: Int) : Exception("error " + code)
 class ExcRtErr(m: String) : RuntimeException(m)
+// RuntimeException(cause) is an @ClrTypeAlias constructor adapter carried by the stdlib ref DLL. A consuming module
+// must expand its declaration-authored `(cause?.toString(), cause)` vector before resolving System.Exception::.ctor.
+class ExcCauseErr(cause: Throwable) : RuntimeException(cause)
+
+fun excDirectCause(cause: Throwable): RuntimeException = RuntimeException(cause)
+fun excRepeatedDirectCauses(cause: Throwable): List<RuntimeException> = listOf(
+    RuntimeException(cause), RuntimeException(cause), RuntimeException(cause), RuntimeException(cause),
+    RuntimeException(cause), RuntimeException(cause), RuntimeException(cause), RuntimeException(cause),
+)
 fun excCustomRisky(n: Int): Int { if (n < 0) throw ExcAppErr(n); return n * 2 }
 
 // ---- il-result : runCatching -> Result<T>; risky/greet feed the success + failure paths -----------------------
@@ -137,6 +146,16 @@ class ExceptionTests {
         assertEquals(-5, caught.code)                // code=-5
         val msg = try { throw ExcRtErr("boom") } catch (e: Exception) { "caught:" + e.message }
         assertEquals("caught:boom", msg)             // caught:boom  (RuntimeException caught by base Exception)
+        val cause = IllegalStateException("inner")
+        val wrapped = ExcCauseErr(cause)
+        assertEquals("inner", wrapped.cause?.message) // the cause-only adapter selected (String, Exception), not String
+        assertTrue(wrapped.message?.contains("inner") == true)
+        val direct = excDirectCause(cause)
+        assertEquals("inner", direct.cause?.message)  // the same carried adapter applies to an ordinary `new` expression
+        assertTrue(direct.message?.contains("inner") == true)
+        val repeated = excRepeatedDirectCauses(cause)
+        assertEquals(8, repeated.size)
+        assertTrue(repeated.all { it.cause?.message == "inner" }) // caller/adapter temp namespaces cannot collide
         assertEquals(42, excCustomRisky(21))         // 42
     }
 

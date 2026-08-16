@@ -12,11 +12,11 @@ using DotKt.Bir;
 // (arity probes, name+arity first-picks, assignability scoring, ctor-by-arg-count, the interface-owner dynamic-dispatch
 // downgrade). This pass makes CIR the RESOLVED IR: it structurally matches the callee's DECLARED param types (kotc's
 // FIR-resolved `sig`, carried as `argTypes`) against the owner's same-name members in the MLC, requires a UNIQUE winner,
-// and stamps the winner's canonical DECLARED params as `memberSig` (+ `dispatch` on clrInstance), deleting `argTypes`.
+// and stamps the winner's canonical DECLARED params as `resolvedMemberParams` (+ `dispatch` on clrInstance), deleting `argTypes`.
 // ilemit then LINKS exactly one handle (0 = hard ABI error / >1 = malformed), never picking.
 //
 // Mirrors the S1 generic-CALL matcher (Emitter.Resolve.cs ResolveGenericMethod) — its DUAL for the CONSTRUCTION case:
-// the owner is resolved on its OPEN definition, and `memberSig` keeps a class type-var as a positional `tv(type,i)`.
+// the owner is resolved on its OPEN definition, and `resolvedMemberParams` keeps a class type-var as a positional `tv(type,i)`.
 // So `List<E>` (generic stdlib) / `HashSet<EmittedType>` need NO MakeGenericType over an open/local type-arg; the
 // tv-vs-owner-instantiation bridge (the `ownerArgs` TypeNodes) resolves the concrete/open owner args positionally,
 // exactly as ilemit's GenericParamMatches `ownerArgs` branch does with reflected Types.
@@ -39,6 +39,7 @@ static partial class ClrMemberResolution
         _localEnums = localEnums ?? new HashSet<string>();
         _localTypes = localTypes ?? new HashSet<string>();
         ResolveExternalClassOverrides(root);
+        ResolveExternalBaseMethodImpls(root);
         ResolveBaseConstructors(root);
         Walk(root);
     }
@@ -259,26 +260,8 @@ static partial class ClrMemberResolution
                         + $"{baseArgs.Count} arguments but {semanticSig.Count} signature slots");
                 var arity = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                     .Where(c => c.GetParameters().Length == semanticSig.Count).ToList();
-                ConstructorInfo winner;
-                try
-                {
-                    winner = PickUnique(arity, c => c.GetParameters(), semanticSig, baseFqn.Args,
-                        $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(semanticSig)})");
-                }
-                catch (InvalidOperationException) when (arity.Count == 1)
-                {
-                    // Compatibility debt: alias collapse can erase a Kotlin convenience constructor whose body adapts
-                    // to a differently-shaped CLR ctor (notably RuntimeException(cause)). CIR cannot yet serialize that
-                    // adapter. Keep the decision in bir2cir — never ilemit — until the constructor-adapter work lands.
-                    //
-                    // BE PRECISE ABOUT WHAT THIS PRODUCES. The reference below names the constructor that WILL be
-                    // invoked, so it is a true identity and the emitter may resolve it exactly. What does not hold is
-                    // the ARGUMENTS: the delegation's own signature is the one this pick just failed to match, so the
-                    // values handed to that constructor are not the ones it declares. The debt is in the adapter, not
-                    // in the member — and reading it as an identity problem is what would send someone looking in the
-                    // wrong place.
-                    winner = arity[0];
-                }
+                var winner = PickUnique(arity, c => c.GetParameters(), semanticSig, baseFqn.Args,
+                    $"base constructor owner={TypeNode.ToJson(baseFqn)} ({DescArgs(semanticSig)})");
                 ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
                 StampDelegateArgumentTargets(ctor, winner.GetParameters(),
                     baseFqn.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>(), "baseArgs");
@@ -301,10 +284,10 @@ static partial class ClrMemberResolution
 
     static void Resolve(JsonObject node)
     {
-        // W1-S4 (#46/#183): a method DECLARATION overriding a .NET base-CLASS virtual (accessor) carries `clrOverride`
+        // W1-S4 (#46/#183): a method DECLARATION overriding a .NET base-CLASS virtual (accessor) carries `pendingOverrideOwner`
         // (the base owner FQN, from DeclarationRename) but no `k` — resolve its base virtual off the ref.dll and carry
-        // `clrOverrideSig` so ilemit links the exact base slot (no name-only first-pick).
-        if (node["clrOverride"] != null) ResolveOverrideBase(node);
+        // the complete `clrOverrideRef` so ilemit links the exact base slot (no name-only first-pick).
+        if (node["pendingOverrideOwner"] != null) ResolveOverrideBase(node);
         switch ((node["k"] as JsonValue)?.GetValue<string>())
         {
             case "newClr": ResolveCtor(node); break;
@@ -313,10 +296,9 @@ static partial class ClrMemberResolution
             case "clrInstance": ResolveCall(node, instance: true); break;
             case "newBoundClrDelegate": ResolveBoundClrDelegate(node); ResolveDelegateCtor(node, "type"); break;
             case "newClrStaticDelegate": ResolveClrStaticDelegate(node); ResolveDelegateCtor(node, "type"); break;
-            // A GENERIC .NET method gets its `memberSig` from NetInteropBinding (kotc's FIR-resolved `shapeTypes`),
-            // so it never needed resolving here — and so its DECLARED RETURN was never established either, which is
-            // the one thing the crossing refusal reads. It is resolved for that fact alone: `memberSig` is left
-            // exactly as it arrived, because that open form is what the emitter matches the member by.
+            // A GENERIC .NET method gets its `resolvedMemberParams` from NetInteropBinding (kotc's FIR-resolved
+            // `shapeTypes`). Resolve that input to one declaration here, author its scalar memberRef, and establish the
+            // declared return for the crossing refusal. The descriptor is consumed and never reaches CIR.
             case "clrGenericStatic": ResolveGenericCallRet(node, instance: false); break;
             case "clrGenericInstance": ResolveGenericCallRet(node, instance: true); break;
             case "clrPropGet": ResolveProp(node, write: false); break;
@@ -361,9 +343,9 @@ static partial class ClrMemberResolution
 
     // A plain top-level/static Kotlin call into a referenced assembly is already attributed to its file class by
     // MemberCallSubstitution (`owner`) or the frontend provenance carry (`calleeOwner`). Replace the frontend call-site
-    // `sig` with the referenced declaration's physical signature so ilemit links that exact slot. This is the plain-
-    // call counterpart of `memberSig` on clr* nodes: no CLR policy is inferred by ilemit, and no arity fallback is
-    // needed. Local same-assembly calls are absent from the reference index and remain unchanged.
+    // `sig` with the referenced declaration's physical signature, then resolve the scalar memberRef. This is the plain-call
+    // counterpart of bir2cir's internal `resolvedMemberParams` on clr* nodes. Local same-assembly calls are absent from the
+    // reference index and remain unchanged.
     public static void ResolveReferencedStaticCalls(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypes, IReadOnlySet<string> externalCanonicalTypes)
     {
@@ -561,14 +543,14 @@ static partial class ClrMemberResolution
             Array.Empty<TypeNode>());
         // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
         // chokepoint can tell "no return" from "nobody stamped one".
-        StampMemberRet(node, typeof(void));
+        StampResolvedMemberReturn(node, typeof(void));
         node.Remove("argTypes");
     }
 
     // Root-V lowers a readonly Kotlin collection nested in a constructed generic to its invariant CLR sibling.
     // A constructor descriptor remains a head-position slot, so the same source type can arrive here as
     // `IReadOnlyList<T>` while the selected closed constructor parameter is `IList<T>`. Materialize that already-
-    // sanctioned collection-view conversion in CIR; ilemit then emits the stated cast and links memberSig 1:1.
+    // sanctioned collection-view conversion in CIR; ilemit then emits the stated cast and links the memberRef 1:1.
     // This is structural over the reflected constructor signature, not tied to Pair/Triple or any source name.
     static void CoerceCtorCollectionViews(JsonObject node, ParameterInfo[] parameters,
         IReadOnlyList<TypeNode> argNodes, TypeNode[] ownerArgs)
@@ -654,7 +636,7 @@ static partial class ClrMemberResolution
         }
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
-        StampMemberRet(node, win.ReturnType);
+        StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
         if (instance)
             node["dispatch"] = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
@@ -731,28 +713,37 @@ static partial class ClrMemberResolution
     // reached that refusal with no declared return at all and its caller-view `ret` — already erased to Kotlin's
     // `List<object>` — said nothing.
     //
-    // UNKNOWN IS NOT SPELLED `void`, AND IT IS NOT AN ABORT EITHER. Stamping a fake `void` for an overload set this
-    // could not narrow satisfied the chokepoint — a stamp WAS made — while telling the crossing refusal there was no
-    // declared return to object to, so a C# `List<int?> Make<T>(int)` beside a `string Make<T>(string)` passed both
-    // and its `List<Nullable<int32>>` was consumed as a `List<object>`. The node already carries the FIR-resolved
-    // `memberSig`, which is the exact descriptor ilemit LINKS the overload by, so the return is resolved through it
-    // by the same unique-match discipline every other member here uses — INCLUDING ilemit's fallback to the
+    // UNKNOWN IS NOT SPELLED `void`. Stamping a fake `void` for an overload set this could not narrow satisfied the
+    // chokepoint — a stamp WAS made — while telling the crossing refusal there was no declared return to object to,
+    // so a C# `List<int?> Make<T>(int)` beside a `string Make<T>(string)` passed both and its
+    // `List<Nullable<int32>>` was consumed as a `List<object>`. The node already carries the FIR-resolved internal
+    // `resolvedMemberParams`, which is the exact matching input used to author the memberRef, so the return is resolved
+    // through it by the same unique-match discipline every other member here uses — INCLUDING lookup through the
     // implemented interfaces, since a class may satisfy the Kotlin-surfaced member through a private explicit
-    // MethodImpl body whose public name lives only on the interface.
+    // MethodImpl body whose public name lives only on the interface. If that input resolves no declaration, the
+    // reference ABI is incomplete and lowering stops before CIR is written.
     //
-    // What remains genuinely unreadable is stamped as such. This pass does NOT see what ilemit sees: it reads the
-    // REFERENCE stdlib and the compile references, ilemit the RUNTIME ones plus this compilation's own emitted
-    // types, and a suspend cold entry synthesized here (`<name>$dotkt_suspend<T>`) is not in the reference dll at
-    // all. Refusing those would be a backend abort on source the frontend accepted. `Unresolved` says exactly what
-    // happened — a declaration was looked for and not read — which the chokepoint accepts as a stamp and the
-    // crossing refusal reads as "nothing to check here", where a `void` claimed a fact that is not true.
+    // There is no "unresolved but emit later" state. A declaration that can become an external CIL operand — including
+    // a synthesized suspend cold entry — is reference ABI and must be present with its full signature in the reference
+    // assembly. Letting ilemit recover it from the runtime twin would make emission resolve meaning again and would also
+    // produce CIR that the scalar-reference contract cannot represent.
     static void ResolveGenericCallRet(JsonObject node, bool instance)
     {
-        if (node.ContainsKey(MemberRetKey)) return;
+        if (node["memberRef"] is JsonObject && node.ContainsKey(ResolvedMemberReturnKey))
+        {
+            node.Remove("resolvedMemberParams");
+            return;
+        }
+        if (node.ContainsKey(ResolvedMemberReturnKey))
+            throw new InvalidOperationException(
+                "bir2cir: generic external call carries a declared-return stamp without its resolved memberRef");
         var name = (node["method"] as JsonValue)?.GetValue<string>();
         var ownerFqn = ReadOwnerNode(node["type"]) as TypeNode.Fqn;
         var open = ownerFqn != null ? ResolveOwnerType(ownerFqn) : null;
-        if (open == null || name == null) { StampMemberRetUnresolved(node); return; }
+        if (open == null || name == null)
+            throw new InvalidOperationException(
+                $"bir2cir: generic external call '{ownerFqn?.Name ?? "<unknown>"}.{name ?? "<unknown>"}' "
+                + "does not resolve to a declaration in the reference set");
         var flags = BindingFlags.Public | (instance ? BindingFlags.Instance : BindingFlags.Static);
         var arity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         var argCount = (node["args"] as JsonArray)?.Count ?? 0;
@@ -766,7 +757,7 @@ static partial class ClrMemberResolution
             ? new List<MethodInfo>()
             : SafeInterfaces(open).SelectMany(Candidates)
                 .GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
-        var sig = (node["memberSig"] as JsonArray)?.Select(TypeJson.Read).ToList();
+        var sig = (node["resolvedMemberParams"] as JsonArray)?.Select(TypeJson.Read).ToList();
         // THE DESCRIPTOR DECIDES, and it decides FIRST. Taking a lone same-name candidate without asking whether the
         // descriptor selects it is how a `string Make<T>(string)` on the class answered for an `I.Make<T>(int)`
         // reached through an interface — a return read off a member the emitter does not link.
@@ -780,18 +771,23 @@ static partial class ClrMemberResolution
                 // as an ECMA MethodSpec wraps a MemberRef to the uninstantiated signature.
                 node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
                 StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
-                StampMemberRet(node, win.ReturnType);
+                StampResolvedMemberReturn(node, win.ReturnType);
             }
-            else StampMemberRetUnresolved(node);
+            else
+                throw new InvalidOperationException(
+                    $"bir2cir: generic external call '{ownerFqn.Name}.{name}<{arity}>' has no unique declaration "
+                    + "matching its frontend-resolved parameter vector in the reference set");
             // The descriptor is this resolution's INPUT — it selects among the candidates above — and inputs do
             // not belong in the output. Leaving it made the reference travel beside the thing it replaced, which
             // is the arrangement every other node just stopped carrying.
-            node.Remove("memberSig");
+            node.Remove("resolvedMemberParams");
             return;
         }
         // No usable descriptor means there is no resolved identity to consume. A unique name/arity candidate is not
         // an identity and must not become one merely because today's target happens to expose only one overload.
-        StampMemberRetUnresolved(node);
+        throw new InvalidOperationException(
+            $"bir2cir: generic external call '{ownerFqn.Name}.{name}<{arity}>' carries no usable "
+            + "frontend-resolved parameter vector");
     }
 
     // `PickUnique`'s first two tiers without its diagnostics: the exact structural match, then the single applicable
@@ -826,16 +822,15 @@ static partial class ClrMemberResolution
     // NetInteropBinding.ReshapeBoundDelegate). The target is a source-visible public/protected INSTANCE method on the owner `clrType`
     // (Codex-confirmed: the bound receiver comes from an IR dispatch receiver — statics have none, extensions are
     // excluded). Until now ilemit resolved it with `type.GetMethod(name, argTypes) ?? type.GetMethod(name)` — a
-    // name+params match with a NAME-ONLY first-pick fallback (exactly the class #46 removes). This carries the winning
-    // method's DECLARED param signature as `memberSig` so ilemit LINKS the unique target (0 = hard ABI error, >1 =
-    // malformed). The ldftn-vs-ldvirtftn choice stays driven by the node's existing `virtual` field — memberSig only
-    // identifies the overload, so no `dispatch` is needed.
+    // name+params match with a NAME-ONLY first-pick fallback (exactly the class #46 removes). The internal
+    // `resolvedMemberParams` selects the unique target (0 = hard ABI error, >1 = malformed), then this pass authors its
+    // complete memberRef. The ldftn-vs-ldvirtftn choice stays driven by the node's existing `virtual` field.
     static void ResolveBoundClrDelegate(JsonObject node)
     {
         if (ReadOwnerNode(node["clrType"]) is not TypeNode.Fqn ownerFqn) return;
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
-            throw new InvalidOperationException($"bir2cir: newBoundClrDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type (#46/#183 memberSig carry)");
+            throw new InvalidOperationException($"bir2cir: newBoundClrDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type (#46/#183 resolvedMemberParams carry)");
         var name = (node["method"] as JsonValue)?.GetValue<string>();
         var argNodes = ReadArgTypes(node);
         var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
@@ -849,7 +844,7 @@ static partial class ClrMemberResolution
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
-        StampMemberRet(node, win.ReturnType);
+        StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
     }
 
@@ -873,7 +868,7 @@ static partial class ClrMemberResolution
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newClrStaticDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
-        StampMemberRet(node, win.ReturnType);
+        StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
     }
 
@@ -934,7 +929,7 @@ static partial class ClrMemberResolution
 
     // C#'s "most-derived declaring type wins" (§12.8.10.2): discard a candidate whose declaring type is a STRICT BASE of
     // another candidate's — a base CLASS (`Task<T>.GetAwaiter()` on Task`1 beats the inherited `Task.GetAwaiter()` on the
-    // base Task) OR a base INTERFACE (`IEnumerable<T>.GetEnumerator()` beats `IEnumerable.GetEnumerator()`). memberSig
+    // base Task) OR a base INTERFACE (`IEnumerable<T>.GetEnumerator()` beats `IEnumerable.GetEnumerator()`). resolvedMemberParams
     // (params) can't distinguish the return-only difference, so this shadowing rule is what makes the winner unique.
     static List<T> MostDerived<T>(List<T> hits) where T : MethodBase
     {
@@ -1193,7 +1188,7 @@ static partial class ClrMemberResolution
     // members, but not an interface slot implemented by a private explicit MethodImpl body. GetInterfaces is therefore
     // the fallback for class and interface owners alike. Adding those slots unconditionally would make
     // `IEnumerable<T>.GetEnumerator()` ambiguous with the inherited non-generic `IEnumerable.GetEnumerator()`
-    // (memberSig = [] cannot distinguish return-type-only overloads), so consult them only when no own member is
+    // (resolvedMemberParams = [] cannot distinguish return-type-only overloads), so consult them only when no own member is
     // applicable. Static calls never bind an implemented-interface slot.
     static List<MethodInfo> Candidates(Type open, string name, List<TypeNode> argNodes, TypeNode[] ownerArgs, BindingFlags flags)
     {
@@ -1303,35 +1298,29 @@ static partial class ClrMemberResolution
         return "constrained";
     }
 
-    // ---- memberSig (winning member params -> lowered TypeNode array) ---------------------------
+    // ---- resolvedMemberParams (winning member params -> lowered TypeNode array) ---------------------------
 
 
-    // THE FOREIGN DECLARED RETURN, stamped beside `memberSig` for the crossing refusal to read (#86).
+    // THE FOREIGN DECLARED RETURN, stamped beside `resolvedMemberParams` for the crossing refusal to read (#86).
     //
     // A node's own `ret` is the CALLER's Kotlin view of the result and is erased as a Kotlin slot — correctly, since
     // it is what the value's Kotlin type is. What no key stated is what the MEMBER declares, so a C# `List<int?>
     // Make()` was seen as returning Kotlin's `List<object>`, was not refused, and left a `List<Nullable<int32>>` on a
-    // stack typed as the unrelated Kotlin form. `memberSig` is that channel for parameters; this is its return twin.
+    // stack typed as the unrelated Kotlin form. `resolvedMemberParams` is that channel for parameters; this is its return twin.
     //
     // A pass-to-pass fact, NOT a CIR key: ForeignNullableGenericCrossing reads it and strips it, so nothing reaches
     // the emitter that the emitter does not consume.
-    internal const string MemberRetKey = "memberRet";
+    internal const string ResolvedMemberReturnKey = "resolvedMemberReturn";
 
     // ALWAYS stamped where a foreign declaration is established, INCLUDING for `void`. A missing stamp and a
     // genuinely void member were otherwise the same observation, so nothing could tell an omission from a fact —
     // and an omission is exactly what let a generic method's and a field's declared type go unchecked. With `void`
     // written explicitly, `CheckForeignDeclStamped` below can assert the invariant mechanically.
-    static void StampMemberRet(JsonObject node, Type declaredReturn)
-        => node[MemberRetKey] = TypeJson.Write(
+    static void StampResolvedMemberReturn(JsonObject node, Type declaredReturn)
+        => node[ResolvedMemberReturnKey] = TypeJson.Write(
             declaredReturn == null || declaredReturn == typeof(void)
                 ? new TypeNode.Fqn("void")
                 : MemberSigOf(declaredReturn));
-
-    // THE THIRD ANSWER, and it is not a type. A member whose declaration this pass could not read is stamped with a
-    // bare STRING rather than a TypeNode: the chokepoint sees that a stamp was made, and the crossing refusal — which
-    // reads a TypeNode or nothing — finds nothing to check, which is the truth. Writing `void` there claimed a fact,
-    // and aborting would refuse source the frontend accepted over a declaration only ilemit's reference set carries.
-    static void StampMemberRetUnresolved(JsonObject node) => node[MemberRetKey] = "unresolved";
 
     static JsonArray MemberSig(ParameterInfo[] ps)
     {
@@ -1341,7 +1330,7 @@ static partial class ClrMemberResolution
     }
 
     // A resolved OPEN-def member's param Type -> its declared-param TypeNode in the CLR-lowered vocabulary (BCL FullName
-    // spellings, matching S1's lowered memberSig). A class/method generic param -> a positional tv; a delegate keeps its
+    // spellings, matching S1's lowered resolvedMemberParams). A class/method generic param -> a positional tv; a delegate keeps its
     // concrete Fqn (unlike TypeNodeOf, which drops delegates) so ilemit can link the exact slot.
     internal static TypeNode MemberSigOf(Type t)
     {
@@ -1410,9 +1399,9 @@ static partial class ClrMemberResolution
     // the crossing refusal. Review caught them; the build did not. It does now.
     //
     // WHAT IT ASSERTS, precisely, so nobody reads more into it than it holds: every node carrying a resolved
-    // parameter vector (`memberSig`), and every node whose KIND only this pass produces, also carries `memberRet`.
+    // parameter vector (`resolvedMemberParams`), and every node whose KIND only this pass produces, also carries `resolvedMemberReturn`.
     // It cannot speak for a `field`/`setField` node, whose kind Kotlin uses too and whose owner may be local — those
-    // stamp in their own branches, and the assertion below covers them only once they carry a `memberSig`.
+    // stamp in their own branches, and the assertion below covers them only once they carry a `resolvedMemberParams`.
     static readonly string[] ResolvedOnlyKinds =
     {
         "newClr", "clrStatic", "clrInstance", "clrGenericStatic", "clrGenericInstance", "newBoundClrDelegate",
@@ -1427,11 +1416,11 @@ static partial class ClrMemberResolution
             case JsonObject obj:
             {
                 var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var ks) == true ? ks : null;
-                var resolved = obj["memberSig"] != null || (k != null && Array.IndexOf(ResolvedOnlyKinds, k) >= 0);
-                if (resolved && obj[MemberRetKey] == null)
+                var resolved = obj["resolvedMemberParams"] != null || (k != null && Array.IndexOf(ResolvedOnlyKinds, k) >= 0);
+                if (resolved && obj[ResolvedMemberReturnKey] == null)
                     throw new InvalidOperationException(
                         $"bir2cir: {file}: a '{k ?? "?"}' node resolved against a .NET member carries no declared "
-                        + "return (memberRet). Every site that establishes a foreign declaration must stamp one — "
+                        + "return (resolvedMemberReturn). Every site that establishes a foreign declaration must stamp one — "
                         + "the crossing refusal reads it, and an unstamped node silently leaves its family unchecked.");
                 foreach (var kv in obj) if (kv.Value != null) CheckForeignDeclStamped(kv.Value, file);
                 break;

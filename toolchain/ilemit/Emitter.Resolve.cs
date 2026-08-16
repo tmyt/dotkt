@@ -1193,14 +1193,8 @@ sealed partial class Emitter
         return t;
     }
 
-    // W1-S1 (#46/#44) — CONSUME-ONLY generic-method linking. bir2cir holds the winning MethodInfo (ReferenceMetadataIndex
-    // / MetadataLoadContext) and carries the FIR-resolved reference as the `memberSig` descriptor: the callee's DECLARED
-    // parameter types (OPEN — a method type-var is `{t:tv,scope:method}`, a constructed generic keeps its args). ilemit
-    // resolves the owner, enumerates the name-matching generic-method DEFINITIONS of the right generic-arity + param-count,
-    // and matches each declared param STRUCTURALLY under positional-tv equality. It requires EXACTLY ONE hit — 0 is a hard
-    // ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor. NO shape-string, no
-    // name/arity first-pick, no assignability scoring: ilemit makes no overload choice (the retired ResolveGenericMethod
-    // shapes-match `?? cands.First()` and its `Shape(Type)` helper are deleted).
+    // A generic call carries the complete open declaration as a memberRef. Resolve it exactly, then apply the call's
+    // MethodSpec arguments; the instantiation does not change which declaration was selected by bir2cir.
     /// <summary>
     /// The generic method a `clrGeneric*` call names, instantiated with the node's own type arguments.
     /// </summary>

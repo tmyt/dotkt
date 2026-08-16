@@ -13,9 +13,16 @@
 - A single `BirCarrier.DecodeBody(version, byte[])` / `EncodeBody(version, node)`
   (`toolchain/bir-common/TypeNode.cs`) dispatches on `version`. An UNKNOWN version is REJECTED
   (loud `NotSupportedException`, never a silent mis-decode).
-- Carriers: `KotlinInlineAttribute(string version, byte[] content)` (inline-fn body) and
+- Carriers include `KotlinInlineAttribute(string version, byte[] content)` (inline-fn body),
   `KotlinSuspendFunctionTypeAttribute(string version, byte[] content)` (a `suspend (…) -> T` position's
-  pre-erasure `fn` `Type` shape). The old bare `(string)` ctors are DELETED (no dual-track). Producers
+  pre-erasure `fn` `Type` shape), and `KotlinConstructorAdapterAttribute(string version, byte[] content)`
+  (an `@ClrTypeAlias` constructor's declaration-authored terminal delegation vector). The latter lets a consuming
+  `bir2cir` lower an adapter such as `(cause)` to the exact physical `(message,cause)` constructor without recovering
+  semantics from a name or choosing a same-arity CLR member. The payload carries
+  `{parameters,signature,statements,arguments,terminalSignature}` in BIR vocabulary. `statements` is the ordered
+  evaluation prefix authored by constructor delegation; a consumer substitutes its materialized source arguments
+  and executes that prefix before evaluating the terminal physical constructor argument vector.
+  The old bare `(string)` ctors are DELETED (no dual-track). Producers
   (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`bir2cir` cross-module splice,
   `dll2klib` carrier decoding) all route through the one codec.
 - A decoded `[KotlinInline]` content is the current payload object
@@ -198,10 +205,11 @@ recover Kotlin meaning. External CLR properties are read through Property/Method
 identity fields (`propertyName`, `propertyAccessor`, `propertyAssociation`, `kotlinAccessors`) and `prop:get|set`
 calls are forbidden in final CIR.
 
-When that dedicated accessor implements an external CLR property, bir2cir records the exact external accessor in a
-`clrInterfaceImpls` or `clrOverride`/`clrOverrideMember`/`clrOverrideRet` descriptor. The latter is paired with
-`clrOverrideSig`; return and parameter types together identify the CLR MethodDef. A class accessor can itself be the MethodImpl
-body. A default accessor declared on an interface requires the CLR explicit-interface shape instead: bir2cir emits a
+When that dedicated accessor implements an external CLR property, bir2cir records the exact external accessor as one
+scalar member reference. An external base-class virtual carries the `requiresClrOverride:true` MethodImpl instruction
+and its exact operand in the declaration's `clrOverrideRef`; external interface
+slots are named in the owner-scoped `interfaceSlotRefs` table. A class accessor can itself be the MethodImpl body.
+A default accessor declared on an interface requires the CLR explicit-interface shape instead: bir2cir emits a
 private forwarding body with `clrInterfaceSlotBridge:true`, and ilemit maps that CIR instruction directly to a
 `Private|Virtual|Final|NewSlot` MethodDef plus the stated MethodImpl. Neither path derives a slot from an accessor name.
 When otherwise-identical generic slots differ by constraints, the MethodImpl descriptor also carries the exact
@@ -428,10 +436,11 @@ this shape removes: whoever received it would have to choose, and choosing is th
 
 The carriers are `memberRef` on a node, and on a DECLARATION `baseCtorRef` (a constructor's delegation to an
 external base) and `clrOverrideRef` (the external base virtual a method overrides — the MethodImpl target).
-The declaration-side pair answers to the same rule as the node-side one, and for the same reason: a MethodImpl
-target and a base-constructor delegation are stated in transitional pieces — a name here, a parameter vector
-there, an owner and a return elsewhere — and reassembling those pieces into a member is the selection this
-reference exists to prevent.
+An external-base override also carries `requiresClrOverride:true`, a durable emission instruction independent of
+the operand: the schema requires the instruction and reference together, while the member identity remains scalar.
+Each carrier is the sole external-member identity for its operation. The retired flat owner/name/signature families
+are forbidden in CIR; reintroducing one would create a second authority and force a consumer to reconcile it with
+the scalar reference.
 
 ### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
 The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/

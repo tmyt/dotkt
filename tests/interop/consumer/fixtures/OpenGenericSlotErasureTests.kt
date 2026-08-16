@@ -2,8 +2,8 @@
 //
 // A `T?` on an unconstrained `T` is `System.Object`, so `openGenericSlotBoxOf<Int>(7)` produces a bare `object`. When that
 // value flows into a .NET generic member, the slot it fills is stated OPEN: `Enumerable.Repeat<T>`'s first parameter
-// is `!!0` in the call's `memberSig`, and it stays `!!0` because that open form is what the emitter matches the
-// member by. The conversion into it must therefore be typed by the CLOSED slot — the call's own type argument,
+// is `!!0` in bir2cir's resolved declaration parameters, and it stays `!!0` while bir2cir authors the scalar
+// memberRef. The conversion into it must therefore be typed by the CLOSED slot — the call's own type argument,
 // `Nullable<int32>` here. Converting to the open node instead emits a cast to whatever `!!0` lowers to at the CALL
 // SITE (the caller's own type parameter, or `object`), which pushes an `object` where a `Nullable<int32>` is
 // required and fails JIT verification: the whole method dies with InvalidProgramException before printing anything.
@@ -14,8 +14,8 @@
 // The CLOSED slot is equally the answer when the callee is NOT generic. A .NET member's parameter is a resolved CLR
 // slot whatever its arity, so the erased `object` still has to be narrowed into it — including into a REFERENCE slot
 // like `string`, where the narrowing is a `castclass` the CLR insists on even though both sides are references. The
-// non-generic cases below are the ones a `memberSig`-presence test missed: a generic .NET call carries `memberSig`
-// from the moment it is bound, while a non-generic one carries `argTypes` until member resolution stamps `memberSig`,
+// non-generic cases below are the ones an internal resolved-parameter-presence test missed: a generic .NET call has
+// declaration parameters from the moment it is bound, while a non-generic one carries `argTypes` until member resolution,
 // long after this narrowing is decided. They ran (object and string are reference-compatible at run time) but the
 // emitted method did not verify — `[found ref 'object'][expected ref 'string']` — so the RUN assertion alone would
 // not have caught it; the suite's ILVerify lane is what makes them a witness.

@@ -34,6 +34,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinPropertyAccessorAttr = "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute";
     const string KotlinSourceMethodAttr = "DotKt.Runtime.CompilerServices.KotlinSourceMethodAttribute";
     const string KotlinDeclarationIdentityAttr = "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute";
+    const string KotlinConstructorAdapterAttr = "DotKt.Runtime.CompilerServices.KotlinConstructorAdapterAttribute";
     const string KotlinExtensionCoreAttr = "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute";
     const string KotlinStaticCarrierAttr = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
     const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
@@ -144,6 +145,46 @@ sealed partial class ReferenceMetadataIndex
     // ownerFqn -> declared parameter count -> the ctor declarations of that arity (#86 D1). A list, because a
     // same-arity overload set must be REFUSED rather than resolved by arity alone.
     readonly Dictionary<string, Dictionary<int, List<CtorBinding>>> _ctorsByOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, List<AliasConstructorAdapter>> _aliasConstructorAdaptersByOwner =
+        new(StringComparer.Ordinal);
+
+    public bool TryAliasConstructorAdapter(
+        string owner, TypeNode[] signature, TypeNode[] ownerArgs, out AliasConstructorAdapter adapter)
+    {
+        adapter = null;
+        owner = BareOwnerFqn(owner);
+        if (!_aliasConstructorAdaptersByOwner.TryGetValue(owner, out var declared)) return false;
+        var matches = declared
+            .Select(candidate => AliasConstructorDelegationExpansion.Specialize(candidate, ownerArgs))
+            .Where(candidate => SameTypeSequence(candidate.Signature, signature))
+            .GroupBy(AliasAdapterKey, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        if (matches.Length > 1)
+            throw new InvalidOperationException(
+                $"conflicting constructor-adapter metadata for alias '{owner}' signature "
+                + $"({string.Join(", ", signature.Select(TypeNode.ToJson))})");
+        if (matches.Length == 0) return false;
+        adapter = matches[0];
+        return true;
+    }
+
+    static bool SameTypeSequence(IReadOnlyList<TypeNode> left, IReadOnlyList<TypeNode> right)
+    {
+        if (left.Count != right.Count) return false;
+        for (var i = 0; i < left.Count; i++) if (left[i] != right[i]) return false;
+        return true;
+    }
+
+    static string AliasAdapterKey(AliasConstructorAdapter adapter) => new JsonObject
+    {
+        ["parameters"] = new JsonArray(adapter.Parameters
+            .Select(parameter => (JsonNode)JsonValue.Create(parameter)).ToArray()),
+        ["signature"] = new JsonArray(adapter.Signature.Select(TypeJson.Write).ToArray()),
+        ["statements"] = adapter.Statements.DeepClone(),
+        ["arguments"] = adapter.Arguments.DeepClone(),
+        ["terminalSignature"] = new JsonArray(adapter.TerminalSignature.Select(TypeJson.Write).ToArray()),
+    }.ToJsonString();
     // Reference-owner hierarchy in BIR's dotted Kotlin vocabulary.  Calls retain their Kotlin
     // receiver owner in BIR; inherited CLR MemberRefs are selected later by bir2cir, so that pass
     // needs the same constructed base/interface graph for referenced types as it has for local CIR
@@ -378,6 +419,13 @@ sealed partial class ReferenceMetadataIndex
                     _ctorsByOwner[c.Owner] = byArity = new Dictionary<int, List<CtorBinding>>();
                 if (!byArity.TryGetValue(c.ParamCount, out var ctors)) byArity[c.ParamCount] = ctors = new List<CtorBinding>();
                 ctors.Add(c);
+            }
+            foreach (var adapter in asm.DotKt.AliasConstructorAdapters)
+            {
+                var owner = BareOwnerFqn(adapter.Owner);
+                if (!_aliasConstructorAdaptersByOwner.TryGetValue(owner, out var adapters))
+                    _aliasConstructorAdaptersByOwner[owner] = adapters = new List<AliasConstructorAdapter>();
+                adapters.Add(adapter.Adapter);
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ExactPhysicalTypeByDottedName)
@@ -3866,6 +3914,9 @@ sealed partial class ReferenceMetadataIndex
                     {
                         if (CallableDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
+                        if (dotKtAuthored && AliasConstructorAdapterOf(
+                                ctor.GetCustomAttributesData(), ctor.DeclaringType?.Assembly) is { } adapter)
+                            metadata.AliasConstructorAdapters.Add(new(DottedFqn(ownerFqn), adapter));
                         // #86 D1 — a `new`'s arguments fill the constructor's declaration slots, so the ctor's shape is
                         // indexed exactly as a method's is. `Cell<T>(x: T?)` erases to `.ctor(object)` and its carrier
                         // holds the pre-erasure `T?`.
@@ -4326,6 +4377,54 @@ sealed partial class ReferenceMetadataIndex
     {
         if (type.DeclaringType != null) return ExactPhysicalMetadataName(type.DeclaringType) + "+" + type.Name;
         return string.IsNullOrEmpty(type.Namespace) ? type.Name : type.Namespace + "." + type.Name;
+    }
+
+    static AliasConstructorAdapter AliasConstructorAdapterOf(
+        IList<CustomAttributeData> attributes, Assembly declaringAssembly)
+    {
+        if (declaringAssembly == null) return null;
+        var carrier = attributes.FirstOrDefault(candidate =>
+            candidate.AttributeType.FullName == KotlinConstructorAdapterAttr
+            && candidate.AttributeType.Assembly == declaringAssembly
+            && HasAttribute(candidate.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr));
+        if (carrier == null) return null;
+        try
+        {
+            if (carrier.ConstructorArguments.Count != 2)
+                throw new FormatException("constructor-adapter carrier does not have (version, bytes)");
+            var version = carrier.ConstructorArguments[0].Value as string
+                ?? throw new FormatException("constructor-adapter carrier version is not a string");
+            var payload = BirCarrier.DecodeBody(
+                version, ReadByteArrayArg(carrier.ConstructorArguments[1])) as JsonObject
+                ?? throw new FormatException("constructor-adapter carrier body is not an object");
+            var parameters = (payload["parameters"] as JsonArray)?.Select(node =>
+                    (node as JsonValue)?.GetValue<string>()
+                    ?? throw new FormatException("constructor-adapter parameter is not a string"))
+                .ToArray() ?? throw new FormatException("constructor-adapter carrier has no parameters");
+            var signature = ReadCarrierTypes(payload, "signature");
+            var statements = payload["statements"] as JsonArray
+                ?? throw new FormatException("constructor-adapter carrier has no statements");
+            var arguments = payload["arguments"] as JsonArray
+                ?? throw new FormatException("constructor-adapter carrier has no arguments");
+            var terminal = ReadCarrierTypes(payload, "terminalSignature");
+            if (parameters.Length != signature.Length)
+                throw new FormatException("constructor-adapter parameter/signature lengths differ");
+            return new AliasConstructorAdapter(
+                parameters, signature, (JsonArray)statements.DeepClone(),
+                (JsonArray)arguments.DeepClone(), terminal);
+        }
+        catch (Exception ex) when (ex is not InvalidDataException)
+        {
+            throw new InvalidDataException("malformed trusted constructor-adapter metadata", ex);
+        }
+    }
+
+    static TypeNode[] ReadCarrierTypes(JsonObject payload, string key)
+    {
+        if (payload[key] is not JsonArray values)
+            throw new FormatException($"constructor-adapter carrier has no {key}");
+        return values.Select(TypeJson.Read).Select(type => type
+            ?? throw new FormatException($"constructor-adapter {key} contains no structured type")).ToArray();
     }
 
     // A reflected byte[] ctor argument materializes under MetadataLoadContext as an IReadOnlyList<CustomAttributeTypedArgument>
@@ -5507,6 +5606,7 @@ sealed class ReferenceDotKtMetadata
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
     public readonly List<MethodImplBinding> MethodImplBindings = new();                   // trusted exact accessor bridge -> CLR slot
     public readonly List<CtorBinding> CtorBindings = new();                               // per-ctor declaration shape (#86 D1)
+    public readonly List<ReferencedAliasConstructorAdapter> AliasConstructorAdapters = new();
     public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ExactPhysicalTypeByDottedName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
@@ -5608,3 +5708,5 @@ sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string
 // parameters retained; `NullableGenericParams[i]` is the pre-erasure `[KotlinNullableGeneric]` carrier of that slot
 // when it has one.
 sealed record CtorBinding(string Owner, int ParamCount, TypeNode[] ParamTypeNodes, TypeNode[] NullableGenericParams);
+
+sealed record ReferencedAliasConstructorAdapter(string Owner, AliasConstructorAdapter Adapter);

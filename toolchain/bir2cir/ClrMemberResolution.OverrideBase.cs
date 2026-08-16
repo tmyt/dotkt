@@ -7,19 +7,18 @@ using DotKt.Bir;
 
 // W1-S4 (#46/#183) — RESOLVED-CLR-IR carry for the DECLARATION-SIDE override base slot. A Kotlin class member that
 // overrides a .NET base-CLASS virtual accessor (`override val message` on a `kotlin.Exception`->System.Exception base:
-// prop_get<message> plus `clrOverride`="System.Exception" and `clrOverrideMember`="get_Message" from
+// prop_get<message> plus `pendingOverrideOwner`="System.Exception" and `pendingOverrideMember`="get_Message" from
 // DeclarationRename) needs ilemit to
 // `DefineMethodOverride` against the EXACT base virtual so the emitted method reuses the base vtable slot (else a fresh
 // newslot is minted and `callvirt System.Exception::get_Message` binds the base value, not the override).
 //
 // Until now ilemit resolved that base virtual with `baseT.GetMethod(name, ps) ?? baseT.GetMethod(name)` — a name+params
 // match with a NAME-ONLY first-pick fallback (exactly the fallback class #46 removes at call sites). This pass moves the
-// resolution HERE: it resolves the base virtual off the ref.dll MLC and stamps its DECLARED param signature as
-// `clrOverrideSig` (a class/method generic param as a positional `tv`, same vocabulary as `memberSig`), so ilemit LINKS
-// the unique base slot (0 = hard ABI error, >1 = malformed) and never first-picks. Runs inside ClrMemberResolution's
-// Walk (last pass, fully-lowered tree) on every method DECLARATION node carrying `clrOverride`.
+// resolution HERE: it resolves the base virtual off the ref.dll MLC and stamps the complete scalar `clrOverrideRef`,
+// so ilemit LINKS the unique base slot (0 = hard ABI error, >1 = malformed) and never first-picks. Runs inside ClrMemberResolution's
+// Walk (last pass, fully-lowered tree) on every method DECLARATION node carrying `pendingOverrideOwner`.
 //
-// SCOPE: `clrOverride` is stamped ONLY on PROPERTY-ACCESSOR overrides of a .NET base CLASS virtual (the external
+// SCOPE: `pendingOverrideOwner` is stamped ONLY on PROPERTY-ACCESSOR overrides of a .NET base CLASS virtual (the external
 // Property/MethodSemantics slot on a non-generic BCL class such as System.Exception — a plain-method override binds
 // its base slot implicitly by CLR
 // name+sig matching, no DefineMethodOverride). The matcher below also handles a generic base def (positional-tv params
@@ -28,26 +27,26 @@ static partial class ClrMemberResolution
 {
     static void ResolveOverrideBase(JsonObject node)
     {
-        var ownerSpec = TypeJson.Read(node["clrOverride"]) as TypeNode.Fqn;
+        var ownerSpec = TypeJson.Read(node["pendingOverrideOwner"]) as TypeNode.Fqn;
         var owner = ownerSpec?.Name;
         var implementationName = (node["name"] as JsonValue)?.GetValue<string>();
-        var slotName = (node["clrOverrideMember"] as JsonValue)?.GetValue<string>() ?? implementationName;
-        var rawReturnNode = TypeJson.Read(node["clrOverrideRet"]);
+        var slotName = (node["pendingOverrideMember"] as JsonValue)?.GetValue<string>() ?? implementationName;
+        var rawReturnNode = TypeJson.Read(node["pendingOverrideReturn"]);
         var returnNode = rawReturnNode == null ? null : BirTypeLowering.CanonicalPhysicalSlotType(rawReturnNode);
         if (owner == null || implementationName == null || slotName == null || node["params"] is not JsonArray) return;
         // Freeze the exact external slot before final MethodDef allocation can rename the implementing declaration.
         // ilemit consumes this descriptor one-to-one and must never fall back to the implementation's own name.
-        node["clrOverrideMember"] = slotName;
+        node["pendingOverrideMember"] = slotName;
         if (returnNode == null)
             throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' is missing the exact base return descriptor");
         var open = ResolveOwnerType(ownerSpec);
         if (open == null)
-            throw new InvalidOperationException($"bir2cir: override base owner '{owner}' does not resolve to a .NET type (#46/#183 clrOverride carry)");
+            throw new InvalidOperationException($"bir2cir: override base owner '{owner}' does not resolve to a .NET type (#46/#183 pendingOverrideOwner carry)");
         // Read EVERY param type — a null-drop would shrink the arity and could bind a wrong-arity base overload
         // (BaseContinuationImpl's create(completion)/create(value,completion)/create(args[],completion) family), so an
         // unreadable node is a hard error, not silently skipped.
         var argNodes = (node["params"] as JsonArray).Select((p, i) => TypeJson.Read((p as JsonObject)?["type"])
-            ?? throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' param #{i} has an unreadable type node (#46/#183 clrOverride carry)")).ToList();
+            ?? throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' param #{i} has an unreadable type node (#46/#183 pendingOverrideOwner carry)")).ToList();
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         var cands = new List<MethodInfo>();
         try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == slotName && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
@@ -55,17 +54,22 @@ static partial class ClrMemberResolution
             $"override base={owner}.{slotName}({DescArgs(argNodes)}):{returnNode}");
         // The incoming return describes the implementation's resolved Kotlin/constructed-owner view and is used
         // above to select the slot.  ilemit links against the declaration in the reference assembly, so carry the
-        // winner's declared CLR return in the same vocabulary as clrOverrideSig (including positional type vars).
+        // winner's declared CLR return in the memberRef vocabulary (including positional type vars).
         // The same slot as one scalar identity. The three descriptors above state the base member in pieces —
         // name here, parameters there, owner and return elsewhere — and a MethodImpl target is exactly the
         // place where assembling those pieces back into a member is selection.
+        // Keep the semantic instruction independently of the identity it requires. The instruction is the
+        // durable trigger ilemit consumes; the reference is its already-selected MethodImpl operand. Keeping
+        // those roles distinct lets the CIR gate detect either half being dropped without restoring a second
+        // owner/name/signature spelling of the member.
+        node["requiresClrOverride"] = true;
         node["clrOverrideRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerSpec.Args);
         // …and the pieces go. They were this resolution's INPUT — they named the slot to look for — and leaving
         // them makes the reference travel beside the thing it replaced, which is how a consumer keeps triggering
         // on the old key and never notices the new one exists.
-        node.Remove("clrOverride");
-        node.Remove("clrOverrideMember");
-        node.Remove("clrOverrideRet");
+        node.Remove("pendingOverrideOwner");
+        node.Remove("pendingOverrideMember");
+        node.Remove("pendingOverrideReturn");
     }
 
     // Pick the UNIQUE base virtual to override. An override's DECLARED params ARE the base slot's params (that is what

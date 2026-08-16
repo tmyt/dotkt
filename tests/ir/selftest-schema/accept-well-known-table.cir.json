@@ -124,7 +124,7 @@
               "name": "System.Int32"
             },
             "name": "MaxValue",
-            "memberRef": {
+            "fieldRef": {
               "kind": "field",
               "assembly": "System.Runtime",
               "declaringType": {
