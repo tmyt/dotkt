@@ -7,6 +7,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **Generic external calls carry the resolved member reference too (#370, step 3).** A generic call's parameter
+  vector arrives from the frontend, so it is present whether or not a declaration was ever found; the resolved
+  declaration is the separate answer this pass computes, and it is now serialized like any other. The gate that
+  holds this asks about the NODE KIND rather than about a transitional descriptor: a kind that exists only
+  because an external member was resolved must carry a reference, full stop — which is already what the
+  emitter demands of it, so a node without one now reddens at the layer that dropped the identity instead of
+  several stages later.
+
 - **bir2cir writes the resolved member reference for every external call, constructor, accessor and field
   (#370, step 2).** Each site that already picked a unique .NET member now serializes THAT member as a
   complete `memberRef` beside the transitional descriptor — 17k references across the stdlib and test corpus,

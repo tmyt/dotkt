@@ -335,6 +335,62 @@
               ]
             }
           }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrGenericStatic",
+            "type": {
+              "t": "fqn",
+              "name": "System.Linq.Enumerable"
+            },
+            "method": "Cast",
+            "args": [],
+            "typeArgs": [
+              {
+                "t": "fqn",
+                "name": "object"
+              }
+            ],
+            "memberSig": [
+              {
+                "t": "fqn",
+                "name": "System.Collections.IEnumerable"
+              }
+            ],
+            "memberOwner": {
+              "t": "fqn",
+              "name": "System.Linq.Enumerable"
+            },
+            "memberRef": {
+              "kind": "method",
+              "assembly": "System.Linq",
+              "declaringType": {
+                "t": "fqn",
+                "name": "System.Linq.Enumerable"
+              },
+              "name": "Cast",
+              "genericArity": 1,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IEnumerable`1",
+                "args": [
+                  {
+                    "t": "tv",
+                    "scope": "method",
+                    "i": 0
+                  }
+                ]
+              },
+              "callingConvention": "static",
+              "parameterTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.Collections.IEnumerable"
+                }
+              ]
+            }
+          }
         }
       ]
     }
