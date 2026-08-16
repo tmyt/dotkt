@@ -40,7 +40,7 @@ universe as the signatures they support, so every category is in #336 scope.
 | primitive, array, byref, pointer, nullable, generic and function types | `Emitter.Types.cs`, `Emitter.Delegates.cs` |
 | external constructors/methods/fields/properties/events and attributes | `Emitter.Resolve.cs`, `Emitter.Metadata.cs`, `Emitter.ClrInterop.cs` |
 | emitted helper calls, operators, locals and conversions | `Emitter.Operators.cs`, `Emitter.Expressions.cs`, `Emitter.Statements.cs` |
-| generated bridges, explicit slot wiring, and delegate signatures | `Emitter.ReverseBridge.cs`, `Emitter.Assembly.cs`, `Emitter.Resolve.cs`, `Emitter.Delegates.cs` |
+| generated bridges, explicit slot wiring, and delegate signatures | `Emitter.Assembly.cs`, `Emitter.Resolve.cs`, `Emitter.Delegates.cs` |
 | runtime/TPA lookup and host fallback | `RuntimeReferences.cs`, `Emitter.Resolve.cs`, `Emitter.Assembly.cs` |
 
 The largest mechanical clusters at the baseline are `Emitter.Operators.cs` (89 sites), `Emitter.Bodies.cs` (60),
