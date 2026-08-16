@@ -2191,9 +2191,22 @@ sealed partial class ReferenceMetadataIndex
     // + parameter count normally identify one overload; when several remain, accept an exact/ABI-equivalent semantic
     // shape only. Identical duplicate declarations collapse to one structural shape. No first-pick is performed.
     public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity,
-        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature)
+        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature) =>
+        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, callSignature, out declarationSignature,
+            out _, out _);
+
+    /// <summary>
+    /// As above, and also hands back the DECLARATION it selected (#370). The parameter vector was the only
+    /// thing this ever returned, which left the caller describing a member it had in its hand — and a
+    /// description has to be turned back into a member by whoever reads it.
+    /// </summary>
+    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity,
+        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature,
+        out MethodInfo declaration, out Type declaringOwner)
     {
         declarationSignature = null;
+        declaration = null;
+        declaringOwner = null;
         if (ownerFqn == null || name == null || callSignature == null)
             return false;
         var bareOwner = BareOwnerFqn(ownerFqn);
@@ -2204,26 +2217,74 @@ sealed partial class ReferenceMetadataIndex
         var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
             .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
                 && m.GetParameters().Length == callSignature.Count)
-            .Select(m => m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray())
-            .Where(ps => ps.All(p => p != null))
+            .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
+            .Where(c => c.ps.All(p => p != null))
             .ToList();
         if (candidates.Count == 0)
             return false;
 
-        var exact = candidates.Where(ps => ps.SequenceEqual(callSignature)).ToList();
+        var exact = candidates.Where(c => c.ps.SequenceEqual(callSignature)).ToList();
         var compatible = exact.Count > 0
             ? exact
-            : candidates.Where(ps => ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
+            : candidates.Where(c => c.ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
                 .ToList();
         var source = compatible.Count > 0 ? compatible : candidates;
+        // Declarations that are the SAME MEMBER collapse to one — the duplicate expect/actual rows a merged
+        // stdlib produces. Sameness is judged on the physical metadata identity, not on the rendered parameter
+        // vector: that vector strips generic arity, flattens `+` nesting, drops array rank and knows nothing of
+        // custom modifiers, so grouping by it would merge declarations that ARE different members and then
+        // hand one of them over as an exact identity. Two distinct members still refuse, which is the point.
         var shapes = source
-            .GroupBy(ps => string.Join(",", ps.Select(TypeNode.ToJson)), StringComparer.Ordinal)
+            .GroupBy(c => c.method.DeclaringType?.FullName + "|" + MetadataSignatureKey(c.method), StringComparer.Ordinal)
             .Select(g => g.First())
             .ToList();
         if (shapes.Count != 1)
             return false;
-        declarationSignature = shapes[0];
+        declarationSignature = shapes[0].ps;
+        declaration = shapes[0].method;
+        declaringOwner = owner;
         return true;
+    }
+
+    // A member's physical signature as metadata states it: the parameter and return types by their own names,
+    // with by-ref, pointer, array rank and custom modifiers intact. Used to decide whether two declarations are
+    // one member; the document's rendered vector cannot answer that because it is lossy in exactly those places.
+    static string MetadataSignatureKey(MethodInfo method)
+    {
+        var sb = new StringBuilder();
+        sb.Append(method.Name).Append('`').Append(method.GetGenericArguments().Length).Append('(');
+        foreach (var p in method.GetParameters())
+        {
+            AppendMetadataType(sb, p.ParameterType);
+            foreach (var m in p.GetRequiredCustomModifiers()) sb.Append(" modreq(").Append(m.FullName).Append(')');
+            foreach (var m in p.GetOptionalCustomModifiers()) sb.Append(" modopt(").Append(m.FullName).Append(')');
+            sb.Append(',');
+        }
+        sb.Append("):");
+        AppendMetadataType(sb, method.ReturnType);
+        return sb.ToString();
+    }
+
+    static void AppendMetadataType(StringBuilder sb, Type t)
+    {
+        if (t == null) { sb.Append("<null>"); return; }
+        if (t.IsByRef) { AppendMetadataType(sb, t.GetElementType()); sb.Append('&'); return; }
+        if (t.IsPointer) { AppendMetadataType(sb, t.GetElementType()); sb.Append('*'); return; }
+        if (t.IsArray)
+        {
+            AppendMetadataType(sb, t.GetElementType());
+            int rank; try { rank = t.GetArrayRank(); } catch { rank = 1; }
+            sb.Append('[').Append(rank).Append(']');
+            return;
+        }
+        if (t.IsGenericParameter) { sb.Append(t.DeclaringMethod != null ? "!!" : "!").Append(t.GenericParameterPosition); return; }
+        sb.Append(t.FullName ?? t.Name);
+        if (t.IsGenericType && !t.IsGenericTypeDefinition)
+        {
+            sb.Append('<');
+            foreach (var a in t.GetGenericArguments()) { AppendMetadataType(sb, a); sb.Append(','); }
+            sb.Append('>');
+        }
     }
 
     // BIR's resolved Kotlin descriptor can retain semantic nullability that the metadata-only ref declaration has

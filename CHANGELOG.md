@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A call into a previously-compiled DotKt assembly names the member it resolved (#370, step 6).** That
+  resolution already selected one declaration and returned only its parameter vector, leaving the caller
+  describing a member it had in its hand — and a description has to be turned back into a member by whoever
+  reads it. It now hands back the declaration too, and the call carries it: 2,997 static calls across the
+  stdlib and test corpus.
+
 - **An applied external attribute names the constructor it invokes (#370, step 5).** `[Obsolete("x")]` is a call
   to `Obsolete(string)`, and when the attribute type lives in another assembly that call is an external member
   reference like any other — it was the last one carried with no identity at all. The declared argument vector
