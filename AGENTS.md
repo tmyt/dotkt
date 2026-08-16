@@ -33,7 +33,7 @@ changed behavior. Once those checks pass and the diff is stable enough to
 review, run the independent local reviews in separate processes when their
 CLIs are available. Reviews are a fixed budget, not a loop:
 
-- Claude reviews once per pull-request iteration: one review of the stable
+- Claude reviews once per pull request iteration: one review of the stable
   diff before handoff. Fixes made in response to findings get focused
   validation and the final gate, not another review round; only substantial
   new work pushed to the same pull request afterwards constitutes a new
