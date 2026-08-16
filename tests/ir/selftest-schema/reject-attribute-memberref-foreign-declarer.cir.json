@@ -1,0 +1,57 @@
+{
+  "types": [
+    {
+      "name": "Probe",
+      "kind": "class",
+      "methods": [
+        {
+          "name": "probe",
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "System.String"
+          },
+          "body": [],
+          "attrs": [
+            {
+              "attr": {
+                "t": "fqn",
+                "name": "System.Runtime.CompilerServices.NullableAttribute"
+              },
+              "argTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.Byte"
+                }
+              ],
+              "attrExternal": true,
+              "attrAssembly": "System.Runtime",
+              "args": [],
+              "memberRef": {
+                "kind": "ctor",
+                "assembly": "System.Runtime",
+                "declaringType": {
+                  "t": "fqn",
+                  "name": "System.Object"
+                },
+                "name": ".ctor",
+                "genericArity": 0,
+                "returnType": {
+                  "t": "fqn",
+                  "name": "void"
+                },
+                "callingConvention": "instance",
+                "parameterTypes": [
+                  {
+                    "t": "fqn",
+                    "name": "System.Byte"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

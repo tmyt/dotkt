@@ -7,6 +7,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **An applied external attribute names the constructor it invokes (#370, step 5).** `[Obsolete("x")]` is a call
+  to `Obsolete(string)`, and when the attribute type lives in another assembly that call is an external member
+  reference like any other — it was the last one carried with no identity at all. The declared argument vector
+  says what the call site passes, not which declaration answers, so the constructor is now selected by the same
+  structural match every other member goes through and written down — on every carrier an attribute list rides
+  on, including the return position, which lives under its own key. 8,022 applied attributes across the stdlib
+  and test corpus, held by a gate that asks for one wherever an application says it is external.
+
 - **A base-constructor delegation and an override's base slot become one identity each (#370, step 4).** Both
   were stated in pieces — a name here, a parameter vector there, an owner and a return elsewhere — and a
   MethodImpl target is exactly the place where reassembling those pieces into a member is the selection this
