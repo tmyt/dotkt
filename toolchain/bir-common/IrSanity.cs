@@ -21,11 +21,13 @@
 //   3. STRUCTURAL — `binOp` has both `lhs`+`rhs`; `cond` has `cond`+`then`+`else`.
 //   4. OWNER PRESENCE — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 //   5. `for` `cmp` ∈ {<=, <, >=} — an unknown cmp silently miscompiles to an infinite loop.
-//   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries `suspendCall:true` (only a METHOD still
-//      carrying `mods.suspend` is exempt — a ctor / static-initializer group never is; see CheckScope).
+//   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries `suspendCall:true`. No exemption: every
+//      body in a CIR document is one ilemit emits (see CheckScope).
 //   7. STAMP AGREEMENT — a node's `sty` must not name a DIFFERENT TYPE than the `ret`/`dynRet` beside it (spec §2.7:
 //      a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`). See CheckStampAgreement for the
 //      accepted-equivalence set and why it is what it is.
+//   8. SUSPEND MODIFIER CONSUMED — no method DECLARATION (abstract or concrete) still carries `mods.suspend`: the
+//      Kotlin modifier is bir2cir's to consume, and CIR is a physical CLR graph.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
@@ -48,12 +50,13 @@ public sealed class IrSanityException : Exception
 // counts as a declaration" rather than growing a second walker that could disagree with this one.
 public enum IrSanityChecks
 {
-    /// <summary>Checks 1-7 — the POST-LOWERING CIR gate (bir2cir on its CIR output; ilemit at EmitAssembly).</summary>
+    /// <summary>Checks 1-8 — the POST-LOWERING CIR gate (bir2cir on its CIR output; ilemit at EmitAssembly).</summary>
     All,
     /// <summary>
     /// Check 7 alone — the spec §2.7 `sty` chokepoint, run by bir2cir on the fully-passed BIR while the stamp still
-    /// exists (BirTypeLowering strips it on the way to CIR). Checks 1-6 are CIR invariants and several of them do not
-    /// hold of a pre-lowering tree, so this mode runs the one check that is meaningful there and nothing else.
+    /// exists (BirTypeLowering strips it on the way to CIR). The others are CIR invariants and several of them do not
+    /// hold of a pre-lowering tree — `mods.suspend` and `suspendCall` are exactly what BIR is supposed to carry — so
+    /// this mode runs the one check that is meaningful there and nothing else.
     /// </summary>
     StyStampsOnly,
 }
@@ -94,22 +97,26 @@ public static class IrSanity
                 if (f.TryGetProperty("init", out var iv) && iv.ValueKind != JsonValueKind.Null
                     && f.TryGetProperty("static", out var st) && st.ValueKind == JsonValueKind.True)
                     inits.Add(iv);
-            // ALWAYS suspension-checked (checkSuspension: true). ilemit emits a type initializer from the fields
-            // alone and never consults `mods.suspend` on the containing type (Emitter.Assembly.cs pass 4b), so
-            // nothing here is exempt — and `decl` is the CONTAINER, whose modifiers say nothing about this body.
-            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c, checkSuspension: true, which);
+            if (inits.Count > 0) CheckScope(owner + "..cctor", null, inits, decl: c, which);
         }
     }
 
     static void CheckMethodDecl(string owner, JsonElement m, IrSanityChecks which)
     {
+        var name = m.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
+        // 8. SUSPEND MODIFIER CONSUMED — checked BEFORE the bodiless early-outs, because an abstract slot carries the
+        // modifier just as a concrete one does. `mods.suspend` is Kotlin frontend vocabulary that bir2cir consumes
+        // (cold lowering + the [KotlinFunction(Suspend)] metadata stamp); CIR is a physical CLR graph, so a survivor
+        // means the cold lowering did not run on this declaration and ilemit would emit its un-lowered Kotlin body.
+        if (which != IrSanityChecks.StyStampsOnly && IsSuspendDecl(m))
+            throw new IrSanityException(PosPrefix(m) + owner + "." + name,
+                "declaration still carries 'mods.suspend': the Kotlin suspend modifier is consumed by bir2cir's "
+                + "cold-core lowering and must not reach CIR (every suspend declaration becomes a state machine, a "
+                + "cold entry and a Task bridge; one the stdlib self-build retains keeps only its physical stub body)");
         // Abstract / bodiless methods (interface members, abstract decls) emit no IL — nothing to check.
         if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
         if (!m.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
-        var name = m.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
-        // The ONLY scope the suspension check exempts, and only when this METHOD still carries `mods.suspend` — the
-        // exact flag ilemit's own guard keys on before it walks a method body (see CheckRefs check 6).
-        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m, checkSuspension: !IsSuspendDecl(m), which);
+        CheckScope(owner + "." + name, ParamNames(m), new List<JsonElement> { body }, decl: m, which);
     }
 
     static void CheckCtorDecl(string owner, JsonElement c, IrSanityChecks which)
@@ -122,21 +129,17 @@ public static class IrSanity
         if (c.TryGetProperty("preStmts", out var pre) && pre.ValueKind == JsonValueKind.Array) roots.Add(pre);
         if (c.TryGetProperty("thisArgs", out var ta) && ta.ValueKind == JsonValueKind.Array) roots.Add(ta);
         if (c.TryGetProperty("baseArgs", out var ba) && ba.ValueKind == JsonValueKind.Array) roots.Add(ba);
-        // ALWAYS suspension-checked (checkSuspension: true). ilemit's suspend guard lives in EmitMethodBody only;
-        // EmitCtorBody has none, so a constructor body is emitted whatever modifiers it carries.
-        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c, checkSuspension: true, which);
+        CheckScope(owner + "..ctor", ParamNames(c), roots, decl: c, which);
     }
 
     // Validate one `_locals`/`_cfgLabels` scope: collect its declared local names + label ids across all root trees,
     // then check every reference against them. `decl` supplies the #112 Phase-2 source position for the message.
     //
-    // `checkSuspension` is check 6's gate, and the CALLER owns it because the exemption is not a property of the
-    // tree — it is a property of whether ilemit will walk this particular KIND of body. Only a method scope can be
-    // exempt (and only for its own `mods.suspend`); a constructor and a static-initializer group never are, because
-    // ilemit emits those without consulting the flag. Deriving it here from `decl` was the bug: the .cctor scope's
-    // `decl` is the CONTAINING TYPE, so a type carrying `mods.suspend` silently disabled the check over a body
-    // ilemit really does emit.
-    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl, bool checkSuspension,
+    // Every scope this reaches is a body ilemit emits, so check 6 applies to all of them alike — a method, a
+    // constructor and a static-initializer group are the same question. An earlier version let the CALLER exempt a
+    // scope whose declaration carried `mods.suspend`; deriving that from `decl` was a bug (the .cctor scope's `decl`
+    // is the CONTAINING TYPE), and the exemption itself is gone with the flag it keyed on.
+    static void CheckScope(string declLabel, HashSet<string> paramNames, List<JsonElement> roots, JsonElement decl,
                            IrSanityChecks which)
     {
         var pos = PosPrefix(decl);
@@ -144,41 +147,26 @@ public static class IrSanity
         // the declared-name set nor the label set, and skips collecting them.
         if (which == IrSanityChecks.StyStampsOnly)
         {
-            foreach (var r in roots) CheckRefs(pos + declLabel, r, null, null, checkSuspension: false, which);
+            foreach (var r in roots) CheckRefs(pos + declLabel, r, null, null, which);
             return;
         }
         var declared = paramNames != null ? new HashSet<string>(paramNames) : new HashSet<string>();
         var labels = new HashSet<int>();
         foreach (var r in roots) { CollectDeclared(r, declared); CollectSanityLabels(r, labels); }
-        // Check 6 asks only of the bodies ilemit turns into IL, and a METHOD that STILL carries `mods.suspend` is
-        // not one: ilemit's guard on that exact flag (`ModFlag(m, "suspend")`, Emitter.Bodies.cs) returns before it
-        // ever reaches the statement walk — a throwing stub in a stdlib build, a loud refusal in an app build.
-        // Checking those bodies would only restate that guard one layer earlier, in the one place it is expected to
-        // be hit.
-        //
-        // Such a survivor is STDLIB-ONLY by construction, and not because a refused shape goes un-lowered — a
-        // non-segmentable suspend fun still gets a cold entry + bridge, with a call-time throw for a body. The two
-        // mechanisms that actually leave the flag on disk are both in SuspendColdLowering: the self-build RETAINS the
-        // original beside the cold entry (kotc's pre-ignition @RestrictsSuspension `sequence{}`/`iterator{}` path
-        // still calls SequenceScope.yield/yieldAll by name), where an app build removes it; and the admit gate
-        // excludes an `inline` suspend fun outside an app build, which is how the coroutine PRIMITIVES — whose call
-        // sites are reconstructed inline instead — keep their standalone bodies.
-        //
-        // Measured at this commit: all 7 `suspendCall` survivors in the runtime stdlib CIR sit in such declarations
-        // (SequenceScope.yieldAll x2, SequenceBuilderIterator.yield/yieldAll, ContinuationKt.suspendCoroutine,
-        // DeepRecursiveScopeImpl.callRecursive x2) and ZERO sit in an emitted body; the app corpus has none at all,
-        // and neither does the 252-file reference CIR (RefBodySquash replaces its bodies with a throw stub before
-        // this runs, so a ref build needs no separate exemption). The synthesized cold entries and state-machine
-        // `invokeSuspend` bodies — where an escape would actually land — carry no `mods.suspend` and ARE checked.
+        // Check 6 has NO exemption: every body in a CIR document is one ilemit turns into IL, so a `suspendCall` in
+        // any of them is a suspension with no resume point. The declarations that used to be exempt were those still
+        // carrying `mods.suspend` — the stdlib surface the cold lowering deliberately does not lower — and bir2cir now
+        // states their physical body as an explicit call-time throw (SuspendResidueLowering) and drops the modifier,
+        // so neither the flag nor an un-lowered suspension reaches CIR at all (check 8).
         foreach (var r in roots)
         {
             CheckNoDupLabels(pos + declLabel, r);
-            CheckRefs(pos + declLabel, r, declared, labels, checkSuspension, which);
+            CheckRefs(pos + declLabel, r, declared, labels, which);
         }
     }
 
-    // Does this declaration still carry `mods.suspend`? §2.1 makes `mods` the single source (a redundant top-level
-    // `suspend` field was removed), so this reads the structured slot only.
+    // Does this declaration still carry `mods.suspend` (check 8)? §2.1 makes `mods` the single source (a redundant
+    // top-level `suspend` field was removed), so this reads the structured slot only.
     static bool IsSuspendDecl(JsonElement decl) =>
         decl.ValueKind == JsonValueKind.Object
         && decl.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object
@@ -253,7 +241,7 @@ public static class IrSanity
 
     // Walk the tree, checking each node's MEANING invariant. Unmatched kinds (and type nodes, whose `k` vocabulary is
     // disjoint from these) just recurse.
-    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels, bool checkSuspension,
+    static void CheckRefs(string decl, JsonElement node, HashSet<string> declared, HashSet<int> labels,
                           IrSanityChecks which)
     {
         if (node.ValueKind == JsonValueKind.Object)
@@ -267,7 +255,7 @@ public static class IrSanity
                 CheckStampAgreement(decl, node, kEl.GetString());
                 if (which == IrSanityChecks.StyStampsOnly)
                 {
-                    foreach (var p0 in node.EnumerateObject()) CheckRefs(decl, p0.Value, declared, labels, checkSuspension, which);
+                    foreach (var p0 in node.EnumerateObject()) CheckRefs(decl, p0.Value, declared, labels, which);
                     return;
                 }
                 // 6. SUSPENSION LOWERED. `suspendCall:true` is kotc's FRONTEND FACT that this call site suspends;
@@ -279,8 +267,9 @@ public static class IrSanity
                 // the caller reads the raw `Task`/COROUTINE_SUSPENDED sentinel where the awaited value belongs, and
                 // the state machine never gets a resume point. Loud here beats an InvalidCastException at runtime.
                 //
-                // `checkSuspension` is false for exactly the bodies ilemit never emits — see CheckScope.
-                if (checkSuspension && node.TryGetProperty("suspendCall", out var scEl) && scEl.ValueKind == JsonValueKind.True)
+                // Unconditional: the StyStampsOnly (BIR) traversal has already returned above, and every body a CIR
+                // document declares is one ilemit emits.
+                if (node.TryGetProperty("suspendCall", out var scEl) && scEl.ValueKind == JsonValueKind.True)
                     throw new IrSanityException(decl, $"'{kEl.GetString()}' still carries 'suspendCall': a suspension escaped the cold lowering (every suspending call must be rewritten into its cold Continuation shape before CIR)");
                 switch (kEl.GetString())
                 {
@@ -341,10 +330,10 @@ public static class IrSanity
                         break;
                 }
             }
-            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels, checkSuspension, which);
+            foreach (var p in node.EnumerateObject()) CheckRefs(decl, p.Value, declared, labels, which);
         }
         else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels, checkSuspension, which);
+            foreach (var x in node.EnumerateArray()) CheckRefs(decl, x, declared, labels, which);
     }
 
     static HashSet<string> ParamNames(JsonElement m)

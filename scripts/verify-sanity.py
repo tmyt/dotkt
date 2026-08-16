@@ -20,13 +20,16 @@
 #   3. STRUCTURAL        — binOp has lhs+rhs; cond has cond+then+else.
 #   4. OWNER PRESENCE    — fields carry ownerType; owner:null callStatic/newDelegate/newBoundDelegate carry calleeOwner.
 #   5. `for` cmp in {<=, <, >=}.
-#   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries suspendCall:true (only a METHOD
-#      still carrying mods.suspend is exempt; IrSanity.CheckScope documents why, and why a ctor/.cctor is not).
+#   6. SUSPENSION LOWERED — no node in a body ilemit EMITS still carries suspendCall:true. No exemption:
+#      every body a CIR document declares is one ilemit emits.
 #   7. STAMP AGREEMENT — a node's `sty` does not name a DIFFERENT type than the `ret`/`dynRet` beside it
 #      (spec 2.7). IrSanity.CheckStampAgreement carries the accepted-equivalence set and its corpus evidence;
 #      `_stamps_agree` below is its mirror, arm for arm. NOTE that the emitted CIR corpus contains no `sty`
 #      at all (BirTypeLowering strips it), so the CHOKEPOINT for this check is bir2cir's own pre-lowering
 #      call — here it is pinned by the tests/ir/selftest fixtures, exactly like check 6.
+#   8. SUSPEND MODIFIER CONSUMED — no method DECLARATION (abstract or concrete) still carries mods.suspend:
+#      the Kotlin modifier is bir2cir's to consume (cold lowering + the [KotlinFunction(Suspend)] stamp),
+#      and CIR describes a physical CLR graph.
 import json, sys, glob, os
 
 
@@ -167,12 +170,9 @@ class Sanity:
     def err(self, f, decl, msg):
         self.viol.append((f, decl, msg))
 
-    def check_scope(self, f, decl_label, param_names, roots, decl, check_suspension):
-        # Check 6 asks only of the bodies ilemit turns into IL. A METHOD that STILL carries `mods.suspend` is not
-        # one — ilemit's guard on that exact flag stubs it (stdlib build) or refuses it loudly (app build) without
-        # ever reaching the statement walk. The CALLER decides, because only a method scope can be exempt: ilemit
-        # emits constructors and type initializers without consulting the flag. IrSanity.CheckScope has the full
-        # reasoning and the corpus calibration.
+    def check_scope(self, f, decl_label, param_names, roots, decl):
+        # Check 6 has no exemption: every scope this reaches is a body ilemit turns into IL — a method, a
+        # constructor and a static-initializer group alike. IrSanity.CheckScope has the full reasoning.
         declared = set(param_names) | _collect_declared(roots)
         labels = _collect_labels(roots)
         dl = _pos_prefix(decl) + decl_label
@@ -186,12 +186,12 @@ class Sanity:
                     _seen.add(o["id"])
             _walk(r, dupf)
         # meaning refs
-        def reff(o, _dl=dl, _f=f, _susp=check_suspension):
+        def reff(o, _dl=dl, _f=f):
             k = o.get("k")
             # 6. SUSPENSION LOWERED — kotc's frontend `suspendCall` fact is consumed by bir2cir's cold lowering,
             # which rebuilds the call out of fresh untagged nodes. A survivor means a suspension escaped it and
             # ilemit will emit an ordinary invocation with no resume point.
-            if _susp and isinstance(k, str) and o.get("suspendCall") is True:
+            if isinstance(k, str) and o.get("suspendCall") is True:
                 self.err(_f, _dl, f"'{k}' still carries 'suspendCall': a suspension escaped the cold lowering "
                                   "(every suspending call must be rewritten into its cold Continuation shape before CIR)")
             # 7. STAMP AGREEMENT — unlike check 6 this asks of EVERY scope: `sty` is consumed by bir2cir's type
@@ -256,16 +256,22 @@ class Sanity:
         for m in (c.get("methods") or []):
             if not isinstance(m, dict):
                 continue
+            name = m.get("name") if isinstance(m.get("name"), str) else "?"
+            # 8. SUSPEND MODIFIER CONSUMED — asked BEFORE the bodiless early-outs: an abstract slot carries the
+            # modifier just as a concrete one does.
+            mods = m.get("mods")
+            if isinstance(mods, dict) and mods.get("suspend") is True:
+                self.err(f, _pos_prefix(m) + f"{owner}.{name}",
+                         "declaration still carries 'mods.suspend': the Kotlin suspend modifier is consumed by "
+                         "bir2cir's cold-core lowering and must not reach CIR (every suspend declaration becomes a "
+                         "state machine, a cold entry and a Task bridge; one the stdlib self-build retains keeps "
+                         "only its physical stub body)")
             if m.get("abstract") is True:
                 continue
             body = m.get("body")
             if not isinstance(body, list):
                 continue
-            name = m.get("name") if isinstance(m.get("name"), str) else "?"
-            # The ONLY exemptible scope, and only for this METHOD's own mods.suspend (see check_scope).
-            mods = m.get("mods")
-            susp = isinstance(mods, dict) and mods.get("suspend") is True
-            self.check_scope(f, f"{owner}.{name}", self._param_names(m), [body], m, check_suspension=not susp)
+            self.check_scope(f, f"{owner}.{name}", self._param_names(m), [body], m)
         for ct in (c.get("ctors") or []):
             if not isinstance(ct, dict):
                 continue
@@ -281,14 +287,13 @@ class Sanity:
                 roots.append(ct["thisArgs"])
             if isinstance(ct.get("baseArgs"), list):
                 roots.append(ct["baseArgs"])
-            # ilemit's suspend guard is in EmitMethodBody only; a ctor body is emitted regardless.
-            self.check_scope(f, f"{owner}..ctor", self._param_names(ct), roots, ct, check_suspension=True)
+            self.check_scope(f, f"{owner}..ctor", self._param_names(ct), roots, ct)
         if not is_interface:
             inits = [fd["init"] for fd in (c.get("fields") or [])
                      if isinstance(fd, dict) and fd.get("init") is not None and fd.get("static") is True]
             if inits:
                 # ilemit builds a type initializer from the fields alone; the CONTAINER's modifiers say nothing about it.
-                self.check_scope(f, f"{owner}..cctor", set(), inits, c, check_suspension=True)
+                self.check_scope(f, f"{owner}..cctor", set(), inits, c)
 
     def check_file(self, f, doc):
         if not isinstance(doc, dict):

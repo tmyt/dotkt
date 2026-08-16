@@ -1210,13 +1210,10 @@ sealed partial class Emitter
         // convention) so the emitted `.event` is a clean reflectable member. bir2cir stamps the flag on the rewritten accessor.
         if (m.TryGetProperty("specialName", out var spn) && spn.GetBoolean()) attrs |= MethodAttributes.SpecialName;
 
-        // NOTE: ilemit no longer rewrites a `suspend fun`'s signature to `Task<T>`. The cold-core coroutine lowering
-        // (bir2cir, bundle-6) already arrives here as ordinary CIR: the public `Task<T>` bridge is its OWN method
-        // carrying `suspendBridge:true` (from which bir2cir RoundtripMetadata generates the `[KotlinFunction(Suspend)]`
-        // attr, #71 S2), and the cold entry / state-machine class are plain methods/types. A leftover `"suspend":true`
-        // method falls through to the normal signature path;
-        // at body time it emits a throwing stub in a STDLIB build (expected — the coroutine primitives have no SM form)
-        // but is an emit-time ERROR in an app build (a bir2cir transform miss — see EmitMethodBody's suspend guard).
+        // NOTE: a coroutine arrives here as ordinary CIR and nothing on this path knows it is one. The cold-core
+        // lowering (bir2cir) has already made the public `Task<T>` bridge its OWN method carrying `suspendBridge:true`
+        // (from which bir2cir RoundtripMetadata generates the `[KotlinFunction(Suspend)]` attr, #71 S2), and the cold
+        // entry / state-machine class are plain methods/types. The Kotlin `suspend` modifier itself does not reach CIR.
 
         MethodBuilder mb;
         Type[] ps;

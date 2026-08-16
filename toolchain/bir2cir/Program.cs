@@ -808,6 +808,20 @@ sealed class Pipeline
         if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
 
+        // PHASE 1.7 — RESIDUAL SUSPEND DECLARATIONS. The two phases above leave the `suspend` modifier on exactly the
+        // declarations the stdlib self-build retains without a state machine (the Kotlin surface kept beside its cold
+        // entry, and the inline coroutine primitives whose call sites are reconstructed inline). Those have no
+        // state-machine body, so bir2cir states their physical one — an explicit call-time throw — instead of letting a
+        // later layer invent a body for a modifier it cannot interpret. In an app build every suspend declaration is
+        // lowered, so a survivor is refused here. Runs after BOTH suspend phases and before type lowering. The
+        // REFERENCE build is exempt for the same reason it needs no `newSuspendLambda` phase: RefBodySquash replaces
+        // EVERY body there with the metadata-only throw, which is already the physical body of a declaration that
+        // cannot be executed — and its kotlin.* type tokens are kept verbatim, so an authored `NotSupportedException
+        // (kotlin.String)` would have no CLR ctor to bind.
+        if (!_options.RefBuild)
+            SuspendResidueLowering.ApplyAll(
+                staged.Select(s => s.Root).ToList(), _options.StdlibMode == BuildStdlibMode.App);
+
         // KOTLIN ERASURE-NARROWED OVERRIDE -> FINAL CLR METHODIMPL (#344 / #86 D3). The declaration-move half ran
         // early, but the bridge half must see the FINAL declarations: one logical suspend override becomes a public
         // Task member AND a continuation cold entry, and each is a distinct CLR slot. SuspendColdLowering carries the
@@ -1175,6 +1189,11 @@ sealed class Pipeline
             // the job ilemit's deleted `_stripMetadata` did. DotKt.Stdlib.dll is the shipping runtime assembly (never
             // metadata-read); keep it lean, matching the old strip.
             else RoundtripMetadata.StripRuntimeAttrs(lowered);
+            // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
+            // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still
+            // sees a suspend surface). CIR describes the physical graph, so the flag stops here — ilemit has no
+            // coroutine semantics to apply to it, and IrSanity refuses one that survives.
+            SuspendResidueLowering.DropModifier(lowered);
             // #48/#146: mint the ilemit-facing `attrExternal` bool from an applied-attribute's `{t:fqn}` type node —
             // consume kotc's `attrClr` origin flag for an imported .NET attr (all builds), and mark the cross-module
             // @KotlinDefault external in APP/user-library builds (it only REFERENCES the stdlib-defined type; the ref/rt

@@ -259,7 +259,6 @@ sealed partial class Emitter
             Bcl("System.Collections.Generic.IList`1"),
             Bcl("System.Collections.Generic.ICollection`1"),
         };
-        _stdlibStub = mode != BuildStdlibMode.App;           // either stdlib build stubs un-emittable methods
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
         _stdlibRuntime = mode == BuildStdlibMode.Runtime;
     }
@@ -267,10 +266,6 @@ sealed partial class Emitter
     // A call to a generic method `fun <T> id(x:T)` carries `typeArgs` -> instantiate it (MakeGenericMethod).
     // `retType`/`paramTypes` give the SUBSTITUTED (concrete) signature, since the instantiation's own reflection
     // still reports `!!0` (and throws pre-bake) — needed so value args to `object`/concrete params get boxed.
-    // Set by `--build-stdlib=metadata|runtime` (either stdlib self-build): while compiling the pure-kotlin stdlib,
-    // methods the backend can't yet emit are stubbed (throw) instead of aborting the whole assembly — the "= TODO()"
-    // stdlib still emits and loads. Driven by the `--build-stdlib` flag (superseded the old stdlib-build env read).
-    readonly bool _stdlibStub;
     readonly bool _stdlibAssembly;
     readonly bool _stdlibRuntime;
 
