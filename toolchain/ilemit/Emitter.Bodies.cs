@@ -767,8 +767,9 @@ sealed partial class Emitter
     // needed): IList->ICollection, IReadOnlyList->IReadOnlyCollection, got==want. No IDictionary rows (Map collapses to
     // IDictionary at head — no seam). `got`/`want` are reference interface types by construction of the predicate, so
     // no explicit reference-type check is needed; T may be a concrete type, an emitted TypeBuilder, or a generic param.
-    // RUNTIME CONTRACT: the FORWARD casts are statically guaranteed (mutable BCL/user collections list the readonly
-    // faces — the interface-emit path); the REVERSE casts succeed only because the stdlib collection backing
+    // RUNTIME CONTRACT: the FORWARD casts are statically guaranteed — every emitted type naming a mutable collection
+    // face also DECLARES the readonly sibling, stated in CIR by bir2cir's ReadOnlyCollectionViewInterfaces, and the
+    // BCL's own mutable collections declare both; the REVERSE casts succeed only because the stdlib collection backing
     // (List<T>/HashSet<T>/T[]) implements every mutable face — a foreign value implementing ONLY the readonly Kotlin
     // face flowing into a collapsed mutable slot would throw InvalidCastException at the seam (fail-loud, and it is
     // bir2cir's collapse decision, not ilemit's — tracked interop follow-up, out of scope here).

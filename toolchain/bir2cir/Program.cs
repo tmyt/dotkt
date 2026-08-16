@@ -1140,6 +1140,14 @@ sealed class Pipeline
             // each missing slot with an ordinary public forwarding member (wired by name by ilemit's interface loop). The
             // return-DROPPING slots (Add/set_Item/RemoveAt) are the separate family ilemit's void-drop bridge handles.
             if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered);
+            // The READ-ONLY sibling of every mutable collection face this unit's types name. Kotlin's `MutableList<E>`
+            // IS-A `List<E>`, but their lowered CLR faces (`IList<T>` / `IReadOnlyList<T>`) are unrelated interfaces,
+            // so the read-only view is real only when the emitted type declares it. Runs AFTER the mutable faces are
+            // final (CollectionBclSlotSynthesis adds the ICollection<E> face of a list implementer) and BEFORE the
+            // interface-slot manifests below, so the sibling is an ordinary stated interface everywhere downstream.
+            // All builds: the rule is keyed on the lowered BCL face, which the reference build (whose surface stays
+            // Kotlin-faced) simply never has.
+            ReadOnlyCollectionViewInterfaces.Apply(lowered);
             // #128: a Kotlin class implementing a reference-KLIB-projected .NET generic interface instantiated with a
             // VALUE-TYPE arg (`class C : IComparer<Int>`) declares its override with the projected member's `T?` params,
             // which lower to `Compare(Nullable<int32>,…)` — but the CONSTRUCTED CLR slot wants BARE `int32`. Synthesize a

@@ -1,0 +1,79 @@
+{
+  "fileClass": "ReadOnlyViewProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [
+    {
+      "name": "StringListFace",
+      "kind": "interface",
+      "abstract": true,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "kotlin.collections.MutableList", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    },
+    {
+      "name": "StringBagFace",
+      "kind": "interface",
+      "abstract": true,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "kotlin.collections.MutableCollection", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    },
+    {
+      "name": "StringSetFace",
+      "kind": "interface",
+      "abstract": true,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "kotlin.collections.MutableSet", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    },
+    {
+      "name": "StringMapFace",
+      "kind": "interface",
+      "abstract": true,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "kotlin.collections.MutableMap", "args": [ { "t": "fqn", "name": "kotlin.String" }, { "t": "fqn", "name": "kotlin.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    },
+    {
+      "name": "StringReadOnlyFace",
+      "kind": "interface",
+      "abstract": true,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "kotlin.collections.List", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    }
+  ],
+  "refTypes": [],
+  "methods": []
+}

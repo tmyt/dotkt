@@ -1,0 +1,16 @@
+# The READ-ONLY view of a mutable collection is a CLR representation decision, so bir2cir states it in the
+# `interfaces` array; ilemit emits InterfaceImpl rows one-to-one and infers no sibling. No emitted corpus witnesses
+# the rule on its own: every Kotlin source that reaches it also reaches a dozen other passes, and the emitted
+# metadata cannot tell a stated face from an inferred one.
+#
+# `MutableList` -> IList<T>, and the sibling read-only face IReadOnlyList<T> is appended after the stated faces.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.String"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.String"}]}]
+# `MutableCollection` and `MutableSet` both lower to ICollection<T>, whose sibling is IReadOnlyCollection<T>.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ICollection","args":[{"t":"fqn","name":"System.String"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.String"}]}]
+# A map face gets NO sibling: BCL IDictionary<K,V> has no read-only twin in the lattice DotKt uses (both Kotlin
+# `Map` and `MutableMap` alias IDictionary), so the array stays exactly as stated.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IDictionary","args":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}]}]
+-"System.Collections.Generic.IReadOnlyDictionary"
+# An already-read-only face is left alone — the rule adds the read-only sibling of a mutable face, never the
+# mutable sibling of a read-only one, and never a second copy of a face already stated.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.String"}]}]

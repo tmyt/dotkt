@@ -79,6 +79,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **The read-only view of a mutable collection is stated in CIR, not inferred by the emitter (#400).** A Kotlin
+  `MutableList<E>` IS-A `List<E>`, but the CLR faces they lower to — `IList<T>` and `IReadOnlyList<T>` — are unrelated
+  interfaces, so an emitted type's read-only view is real only when the type declares it. `ilemit` used to notice a
+  mutable collection face on a TypeDef and add the read-only sibling itself, which is a decision about what a Kotlin
+  declaration becomes on the CLR and therefore `bir2cir`'s. `bir2cir` now states the sibling (`IList`→`IReadOnlyList`,
+  `ICollection`/`ISet`→`IReadOnlyCollection`) in the `interfaces` array of every type that names the mutable face —
+  classes and interfaces alike — and `ilemit` emits one InterfaceImpl row per stated entry and infers nothing. The
+  relation lives in one shared table (`toolchain/bir-common/CollectionViewFaces.cs`), and the IR-sanity gate both
+  tools run now REFUSES a document that states a mutable face without its read-only view, so an omission fails at the
+  CIR boundary instead of as an `InvalidCastException` in an unrelated caller. The emitted physical surface is
+  unchanged: the same InterfaceImpl rows, in the same order, and no MethodImpl is needed for the sibling — its
+  members are the ones the mutable face already forced onto the type, which the CLR binds implicitly.
+
 - **A `companion object` of a generic class is now ONE object across every instantiation (#383).** CLR static storage
   belongs to each closed constructed generic type, so the nested carrier every companion received in #275 gave
   `Foo<int>.Companion` and `Foo<string>.Companion` a singleton each — with separate state — while Kotlin's own uses,

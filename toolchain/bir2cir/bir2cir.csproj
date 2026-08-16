@@ -19,6 +19,9 @@
     <!-- Shared layer-agnostic IR SANITY invariants (#84 P4 / #112 P4). Run by BOTH bir2cir (on its CIR output) and
          ilemit (at the head of EmitAssembly); scripts/verify-sanity.py mirrors them offline. -->
     <Compile Include="../bir-common/IrSanity.cs" Link="IrSanity.cs" />
+    <!-- Shared mutable/read-only collection face relation: bir2cir STATES the read-only sibling in `interfaces`,
+         the IrSanity gate above REFUSES a document that omits one. One table so the two cannot drift. -->
+    <Compile Include="../bir-common/CollectionViewFaces.cs" Link="CollectionViewFaces.cs" />
     <!-- Shared "may this type be an instance field?" oracle + the diagnostics its three minting sites share
          (suspend SM spills, suspend-lambda captures, closure captures). bir2cir is the only tool that mints
          heap storage for a Kotlin value, so it is the only linker. -->
