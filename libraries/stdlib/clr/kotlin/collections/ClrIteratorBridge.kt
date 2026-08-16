@@ -3,8 +3,10 @@
 // The iterator bridge between Kotlin's collection protocol (Iterator.hasNext()/next()) and the BCL's
 // (IEnumerator.MoveNext()/Current). Design: docs/design-clr-collection-binding.md. NEVER bind Kotlin Iterator -> CLR
 // IEnumerator directly (the semantics differ); bind Iterable -> IEnumerable and bridge here. Proven working (a @Clr List
-// iterated via this adapter yields its elements). The reverse direction (a Kotlin Iterable implementor needs a
-// generated GetEnumerator) is a separate piece (EnumeratorOverKotlinIterator), not yet wired.
+// iterated via this adapter yields its elements). The REVERSE direction — a Kotlin Iterable implementor owing the CLR a
+// GetEnumerator — cannot be written in Kotlin at all (IEnumerator<T> and the non-generic IEnumerator declare two
+// `Current` slots differing only in return type), so bir2cir authors it as CIR: the compiler-owned
+// `dotkt$EnumeratorOverKotlinIterator<T>` adapter plus both GetEnumerator halves on each implementer.
 
 package kotlin.collections
 

@@ -36,7 +36,9 @@ Binding the identities directly would make `hasNext()` consume an element or req
 
 ### Kotlin iterable exposed as CLR
 
-`EnumeratorOverKotlinIterator<T>` wraps a Kotlin iterator as an `IEnumerator<T>`. Generated `GetEnumerator()` bridges let a Kotlin `Iterable<T>` implementation satisfy CLR enumeration consumers without changing Kotlin's iterator contract.
+`dotkt$EnumeratorOverKotlinIterator<T>` wraps a Kotlin iterator as an `IEnumerator<T>`. Generated `GetEnumerator()` bridges let a Kotlin `Iterable<T>` implementation satisfy CLR enumeration consumers without changing Kotlin's iterator contract.
+
+bir2cir authors both halves as ordinary CIR — the adapter's TypeDef, fields, constructor, method bodies, and the `GetEnumerator()`/`dotkt$NonGenericGetEnumerator()` pair on each qualifying class, each carrying the exact MethodImpl descriptor of the slot it fills. The adapter cannot be written in Kotlin, because `IEnumerator<T>` and the non-generic `IEnumerator` declare two `Current` slots that differ only in return type; it is emitted once per module, since its CLR identity never appears in a signature.
 
 ## Member behavior
 
@@ -48,7 +50,7 @@ For-loops over BCL-bound collections lower to the CLR enumeration protocol. An e
 
 - The stdlib declares collection identities, bound members, and real fallback bodies.
 - bir2cir applies type/member substitutions and chooses the appropriate iteration protocol.
-- ilemit emits the resolved CIR and structural adapter types; it does not recognize Kotlin collection symbols.
+- ilemit emits the resolved CIR, adapter type included; it synthesizes no member and recognizes no Kotlin collection symbol.
 - dll2klib maps CLR collection signatures back to their Kotlin-facing types for source consumption.
 
 These responsibilities follow [architecture.md](architecture.md). User-visible equality, mutability, and representation rules are documented in [dotkt-semantics.md](dotkt-semantics.md).
