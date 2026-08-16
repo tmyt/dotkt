@@ -91,14 +91,6 @@ public annotation class ClrProperty(val access: Int, val name: String)
 @Target(AnnotationTarget.VALUE_PARAMETER)
 public annotation class ClrRefArgument
 
-// Like @ClrIntrinsic on a MEMBER, but the member binds to the named .NET member DYNAMICALLY: a CALL to it is emitted as
-// a runtime reflective dispatch instead of a static method reference. Slower, but it sidesteps static resolution that
-// otherwise cascades -- e.g. a Kotlin abstract collection (AbstractMutableList.SubList) calling get_Item where the
-// interface is a BCL `clrg:IList` (which ilemit's static FindMethod skips), or the IReadOnlyList/IList get_Item dual
-// slot. Use ONLY where static @ClrIntrinsic cannot be resolved; the implementation side stays static (covariant bridge).
-@Target(AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
-public annotation class ClrIntrinsicAsDynamic(val name: String)
-
 // Carries a parameter's DEFAULT-VALUE expression as embedded BIR so a CROSS-MODULE caller that OMITS the argument can
 // have it filled. The frontend KLIB drops a callee's default VALUES (hands them back as IrErrorExpression), and .NET
 // `[DefaultParameterValue]` metadata can only carry a CONSTANT of the parameter's own type — it cannot represent a

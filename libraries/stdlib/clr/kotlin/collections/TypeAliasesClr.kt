@@ -62,37 +62,13 @@ public actual class ArrayList<E> : MutableList<E>, RandomAccess {
     // consuming its return (`if (add(e)) …`) emits a `brfalse` over an empty stack -> InvalidProgram. Every element is
     // always appended, so `modified` is simply whether the loop ran at all. (MutableSet.addAll below CAN consume the
     // boolean — HashSet<T>.Add returns bool.)
-    actual override fun addAll(elements: Collection<E>): Boolean {
-        var modified = false
-        for (element in elements) { add(element); modified = true }
-        return modified
-    }
-    actual override fun addAll(index: Int, elements: Collection<E>): Boolean {
-        var insertIndex = index
-        var changed = false
-        for (element in elements) {
-            add(insertIndex, element)
-            insertIndex++
-            changed = true
-        }
-        return changed
-    }
-    actual override fun removeAll(elements: Collection<E>): Boolean {
-        var modified = false
-        var i = 0
-        while (i < size) {
-            if (elements.contains(get(i))) { removeAt(i); modified = true } else { i++ }
-        }
-        return modified
-    }
-    actual override fun retainAll(elements: Collection<E>): Boolean {
-        var modified = false
-        var i = 0
-        while (i < size) {
-            if (!elements.contains(get(i))) { removeAt(i); modified = true } else { i++ }
-        }
-        return modified
-    }
+    // ArrayList IS `System.Collections.Generic.List<E>` (@ClrTypeAlias), so no TypeDef is emitted for it and it can
+    // never carry the compiler-authored Kotlin slot interfaces — every receiver of this class takes the BCL default.
+    // Forward to that single implementation instead of restating the same algorithm here.
+    actual override fun addAll(elements: Collection<E>): Boolean = clrCollAddAll(this, elements)
+    actual override fun addAll(index: Int, elements: Collection<E>): Boolean = clrListAddAllAt(this, index, elements)
+    actual override fun removeAll(elements: Collection<E>): Boolean = clrCollRemoveAll(this, elements)
+    actual override fun retainAll(elements: Collection<E>): Boolean = clrCollRetainAll(this, elements)
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
 
@@ -363,27 +339,11 @@ public actual class HashSet<E> : MutableSet<E> {
     actual override fun add(element: E): Boolean = TODO("clr binding should be implemented")
     @kotlin.clr.ClrIntrinsic("Remove")
     actual override fun remove(element: E): Boolean = TODO("clr binding should be implemented")
-    actual override fun addAll(elements: Collection<E>): Boolean {
-        var modified = false
-        for (element in elements) { if (add(element)) modified = true }
-        return modified
-    }
-    actual override fun removeAll(elements: Collection<E>): Boolean {
-        var modified = false
-        for (element in elements) { if (remove(element)) modified = true }
-        return modified
-    }
-    actual override fun retainAll(elements: Collection<E>): Boolean {
-        val toRemove = ArrayList<E>()
-        val it = iterator()
-        while (it.hasNext()) {
-            val e = it.next()
-            if (!elements.contains(e)) toRemove.add(e)
-        }
-        var modified = false
-        for (e in toRemove) { if (remove(e)) modified = true }
-        return modified
-    }
+    // HashSet IS `System.Collections.Generic.HashSet<E>` (@ClrTypeAlias) — no TypeDef, so never a slot implementer.
+    // Same single-implementation forwarding as ArrayList above.
+    actual override fun addAll(elements: Collection<E>): Boolean = clrCollAddAll(this, elements)
+    actual override fun removeAll(elements: Collection<E>): Boolean = clrCollRemoveAll(this, elements)
+    actual override fun retainAll(elements: Collection<E>): Boolean = clrCollRetainAll(this, elements)
     @kotlin.clr.ClrIntrinsic("Clear")
     actual override fun clear() { TODO("clr binding should be implemented") }
 }

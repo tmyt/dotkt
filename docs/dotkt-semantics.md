@@ -663,6 +663,40 @@ removal (no guarantee). DotKt binds them to insertion-ordered containers instead
   slots + the reverse `GetEnumerator` bridge, so it flows through `Set`/`MutableSet` slots like any BCL set.
 - **Plain `HashMap`/`HashSet` stay UNORDERED** (`Dictionary`/`HashSet`) — Kotlin contracts no order for them.
 
+## 5c-quater. `removeAll`/`retainAll`/`addAll` dispatch through a compiler-owned slot interface — and their SELF-ALIASING forms are defined
+
+`MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and `MutableList<E>` IS `IList<E>`, and neither
+BCL interface has a slot for Kotlin's `removeAll(elements)`, `retainAll(elements)`, `addAll(elements)` or
+`MutableList.addAll(index, elements)`. All four are virtual Kotlin members a user class may override, and the receiver
+may equally be a plain BCL value (`mutableListOf()` is a `List<T>`, `HashSet()` is a `HashSet<T>`) with no Kotlin body
+at all. DotKt reconciles those two categories physically, with no runtime reflection:
+
+- every call becomes a `kotlin.collections.ClrCollectionDefaults` dispatcher call (`clrCollRemoveAll`,
+  `clrCollRetainAll`, `clrCollAddAll`, `clrListAddAllAt`);
+- every emitted Kotlin class declaring one of the members gains the compiler-owned
+  `DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots` / `KotlinMutableListSlots` interface with an exact
+  MethodImpl per member, so the dispatcher reaches the OVERRIDE by ordinary virtual dispatch;
+- a receiver with no such interface runs a default written only over slots that physically exist.
+
+Those interfaces are **compiler vocabulary** and are `internal`, so user Kotlin source cannot name them; dll2klib
+also keeps the compiler's reserved `DotKt.Runtime.CompilerServices` namespace out of a projected type's Kotlin
+supertype list. Their element-collection parameter is deliberately erased to `Any`, which makes the capability test
+independent of the instantiation the dispatcher was called at. (A constructed `Slots<E>` test would be correct only
+while the dispatchers keep an invariant `ICollection<T>`/`IList<T>` receiver — a property of those signatures rather
+than of the design, whose failure mode is a silently skipped override. No witness of it missing exists; the erased
+form is chosen for robustness, not to fix an observed bug.)
+
+Two consequences worth stating:
+
+- **Kotlin's contract "removes all of this collection's elements that are also contained in the specified collection"
+  is taken literally for duplicates.** `mutableListOf(1, 2, 2, 3).removeAll(listOf(2))` leaves `[1, 3]`, not
+  `[1, 2, 3]`.
+- **The self-aliasing forms are DEFINED**, where the Kotlin KDoc says nothing. Each default snapshots the collection it
+  iterates before mutating, so `c.removeAll(c)` empties `c`, `c.retainAll(c)` leaves it unchanged, `c.addAll(c)`
+  appends the original contents once, and `l.addAll(i, l)` inserts the original contents at `i` — instead of throwing
+  a concurrent-modification error out of an invalidated BCL enumerator. (A Kotlin implementer that OVERRIDES one of
+  the members defines its own behavior for these forms, exactly as on any other platform.)
+
 ## 5c-bis. Nested collection type-arguments collapse to their INVARIANT CLR sibling (`List`→`IList` at depth ≥ 1)
 
 §5c's head-position Map collapse has a general cause: CLR generics are **invariant**, and the read-only

@@ -16,68 +16,14 @@ sealed partial class Emitter
     static bool IsVirtual(JsonElement e) => e.TryGetProperty("virtual", out var v) && v.GetBoolean();
 
     // ---- expressions: push one value, return its CLR type ----
-    // @ClrIntrinsicAsDynamic dispatch: `recv.GetType().GetMethod(name).Invoke(recv, [args...])`, emitted inline (no
-    // helper assembly). Resolves the bound member at RUNTIME, so ilemit needs NO static resolution -- this sidesteps the
-    // BCL-`clrg:`-interface skip in FindMethod (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) and
-    // the IReadOnlyList/IList dual get_Item. Slower (reflection + boxing) but correct; used only where static fails.
-    // True if the emitted type implements a BCL `clr:`/`clrg:` interface -- i.e. a substituted Kotlin collection whose
-    // Kotlin members (get_Item/iterator/addAll) may live on the BCL interface that static FindMethod skips. Gates the
-    // dynamic-dispatch fallback to these, so a genuine missing-method on a non-collection type still throws.
-    bool OwnerHasClrInterface(string ownerType)
-    {
-        var (open, _) = ParseOwner(ownerType);
-        if (!_types.TryGetValue(open, out var ti) || ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var ifs)) return false;
-        // A CLR/BCL interface is a reference-KLIB-projected .NET type: NOT emitted in THIS assembly AND not a Kotlin `kotlin.*`
-        // interface — the structured successor of the retired `clr:`/`clrg:` interface-token check (#48), kept narrow so
-        // a referenced *Kotlin* interface does not spuriously widen the dynamic-dispatch fallback.
-        foreach (var i in ifs.EnumerateArray())
-            if (DotKt.Bir.TypeNode.Read(i) is DotKt.Bir.TypeNode.Fqn f
-                && !_types.ContainsKey(BareTypeKey(f.Name))
-                && !f.Name.StartsWith("kotlin.", StringComparison.Ordinal)) return true;
-        return false;
-    }
-
-    Type EmitDynamicCall(JsonElement e)
-    {
-        var name = e.GetProperty("method").GetString();
-        var args = e.GetProperty("args").EnumerateArray().ToArray();
-        var recvT = EmitExpr(e.GetProperty("recv"));
-        if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);   // box a value-type OR a `gp:T` receiver to object
-        var recvLocal = _il.DeclareLocal(Bcl("System.Object"));
-        _il.Emit(OpCodes.Stloc, recvLocal);
-        // mi = recv.GetType().GetMethod(name)   (this for Invoke)
-        _il.Emit(OpCodes.Ldloc, recvLocal);
-        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetType"));
-        _il.Emit(OpCodes.Ldstr, name);
-        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Type.GetMethod"));
-        // Invoke(target=recv, object[] args)
-        _il.Emit(OpCodes.Ldloc, recvLocal);
-        _il.Emit(OpCodes.Ldc_I4, args.Length);
-        _il.Emit(OpCodes.Newarr, Bcl("System.Object"));
-        for (int i = 0; i < args.Length; i++)
-        {
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Ldc_I4, i);
-            var at = EmitExpr(args[i]);
-            if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);   // box a value-type OR a `gp:T` arg before stelem_ref into object[]
-            _il.Emit(OpCodes.Stelem_Ref);
-        }
-        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("MethodInfo.Invoke"));
-        // result: pop a dropped void return, else unbox/cast to the CIR-declared dynRet. The spec is a CLR spelling —
-        // bir2cir derives Unit->void upstream, so ilemit never sees a Kotlin `unit`/`kotlin.Unit` here (if it did, that
-        // would be a bir2cir lowering defect, not something ilemit should silently absorb). The slot is a structured
-        // TypeNode (post type-flip) OR a legacy string — MapType(JsonElement) dispatches both; only the bare-string
-        // "void"/"System.Void" legacy spelling needed the special-case. (Regression guard: before the flip this read the
-        // slot ONLY as a string, so a structured `dynRet` fell through to "void" and POPPED a live bool — e.g. a
-        // dynamic-dispatched `it.MoveNext()` loop condition -> `brfalse` on an empty stack -> InvalidProgram.)
-        JsonElement retEl = default; bool hasRet = false;
-        if (e.TryGetProperty("dynRet", out var rr) && rr.ValueKind != JsonValueKind.Null) { retEl = rr; hasRet = true; }
-        else if (e.TryGetProperty("ret", out var rr2) && rr2.ValueKind != JsonValueKind.Null) { retEl = rr2; hasRet = true; }
-        var retT = hasRet ? MapType(retEl) : Bcl("System.Void");
-        if (retT == Bcl("System.Void")) { _il.Emit(OpCodes.Pop); return Bcl("System.Void"); }
-        _il.Emit(OpCodes.Unbox_Any, retT);   // universal: unbox a value type, cast a ref type, resolve a generic param
-        return retT;
-    }
+    // (#400) There is NO runtime-reflection dispatch here any more. ilemit used to emit
+    // `recv.GetType().GetMethod(name).Invoke(recv, [args...])` for a call it could not link statically — a name-only
+    // binder that preserved no overload, declaring slot, explicit-interface implementation or generic arity, and that
+    // produced an opaque NullReferenceException whenever the runtime type had no method of that name (the ordinary
+    // case for a BCL-backed collection). Every producer of that path is gone: the Kotlin collection members with no
+    // BCL slot now have a physical representation authored in bir2cir — the ClrCollectionDefaults dispatchers plus a
+    // real DotKt.Runtime.CompilerServices.Kotlin*Slots interface slot on each implementer — so a member ilemit cannot
+    // link is an upstream drop and must fail loudly.
 
     Type EmitExpr(JsonElement e)
     {
@@ -232,28 +178,19 @@ sealed partial class Emitter
             }
             case "callInstance":
             {
-                // @ClrIntrinsicAsDynamic member: dispatch by RUNTIME reflection (recv.GetType().GetMethod(name).Invoke),
-                // sidestepping static resolution that cascades (a member on a BCL `clrg:` interface FindMethod skips).
-                if (e.TryGetProperty("dyn", out var dynF) && dynF.ValueKind == JsonValueKind.True)
-                    return EmitDynamicCall(e);
                 var cisig = SigNodes(e);
-                MethodInfo m0 = null; Type rt = null;
-                // A @Clr-bound member whose STATIC resolution fails -- it lives on a BCL clrg: interface that FindMethod
-                // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
-                // dispatch. Gated to nodes carrying "dynRet" (the @Clr member calls), so a genuine miss elsewhere throws.
+                MethodInfo m0; Type rt;
                 var ciOwner = ParseOwnerSlot(e.GetProperty("ownerType"));   // keeps a constructed-generic owner's args
                 // An external owner names the member (#370); only a method this compilation emits is still found
-                // by signature here, which is the local axis (#395).
+                // by signature here, which is the local axis (#395). A resolution failure is now a HARD error: the
+                // former `catch (NotSupportedException) … EmitDynamicCall` fallback (#400) turned an unresolvable
+                // member into a runtime name lookup, which is not a call identity at all.
                 if (e.TryGetProperty("memberRef", out _))
                 {
                     m0 = RequiredRef<MethodInfo>(e, "memberRef", "method");
                     rt = m0.ReturnType;
                 }
-                else
-                try { m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e)); }
-                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _)
-                    && !e.TryGetProperty("clrOwnerResolved", out _)
-                    && OwnerHasClrInterface(ciOwner.open)) { return EmitDynamicCall(e); }
+                else m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e));
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 // #108 GUARD (defensive, contract-violation only — never fires on valid CIR). This path pushes the
                 // receiver as a plain value/reference (EmitExpr(recv)) then emits call/callvirt on `m` DIRECTLY. Per
@@ -436,13 +373,14 @@ sealed partial class Emitter
             {
                 // `listOf(...)` -> new List<elem> { ... } via repeated Add.
                 var elem = MapType(e.GetProperty("elem"));
-                var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
-                // The reference first — the search is the fallback for a shape that carries none, never a step
-                // that runs before the answer is read.
-                var listCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newList");
-                var add = RequiredRef<MethodInfo>(e, "addRef", "newList");
                 // The members a collection literal builds through are stated by the pass that minted the node,
                 // so the emitter stops deriving them from the constructed type.
+                var listCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newList");
+                var add = RequiredRef<MethodInfo>(e, "addRef", "newList");
+                // …and so is the type it constructs: the constructor's OWN declaring type, anchored on the
+                // instantiation its reference states. Naming `List`1` here would be this layer deciding which BCL
+                // type a Kotlin list literal becomes, which is the producer's decision and is already recorded.
+                var listT = listCtor.DeclaringType;
                 EmitConstructor(_il, OpCodes.Newobj, listCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
@@ -538,14 +476,13 @@ sealed partial class Emitter
             {
                 // `f(1, *a, 2)` -> new List<elem>(); Add(literal) / AddRange(spread); ToArray().
                 var elem = MapType(e.GetProperty("elem"));
-                var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
-                var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elem);
-                var loc = _il.DeclareLocal(listT);
-                // The four members this builds through are named by the pass that minted the node.
+                // The four members this builds through — and, with them, the accumulator type — are named by the
+                // pass that minted the node; the accumulator local is that constructor's declaring type.
                 var spreadCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "spreadConcat");
                 var spreadAdd = RequiredRef<MethodInfo>(e, "addRef", "spreadConcat");
                 var spreadAddRange = RequiredRef<MethodInfo>(e, "addRangeRef", "spreadConcat");
                 var spreadToArray = RequiredRef<MethodInfo>(e, "toArrayRef", "spreadConcat");
+                var loc = _il.DeclareLocal(spreadCtor.DeclaringType);
                 EmitConstructor(_il, OpCodes.Newobj, spreadCtor);
                 _il.Emit(OpCodes.Stloc, loc);
                 foreach (var p in e.GetProperty("parts").EnumerateArray())
@@ -583,26 +520,29 @@ sealed partial class Emitter
                 // `xs.forEach { it -> body }` (inline) -> enumerate src, bind `it` to a loop local, splice body.
                 // Inlining (not a delegate) lets the body read/write enclosing locals without closure Ref cells.
                 var elem = MapType(e.GetProperty("elem"));
-                var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elem);
-                // When `elem` is a TYPE PARAMETER (method/class), IEnumerable<!!T>/IEnumerator<!!T> are TypeBuilder
-                // instantiations of a BCL generic; TypeBuilder.GetMethod re-anchoring them yields a BROKEN metadata
-                // token (runtime EntryPointNotFound) in a non-inline method. Fall back to the NON-GENERIC IEnumerable/
-                // IEnumerator (no <!!T> -> no bad token) + Unbox_Any the object Current to elem. Concrete elem types
-                // keep the typed enumerator (faster, no box).
-                bool viaNonGeneric = IsTbInstantiation(ienumT);
+                // BOTH enumerator surfaces arrive named by the pass that minted the node; neither is looked up here.
+                // Which of the two this method can SPEAK is the one thing the producer cannot state, and the reason is
+                // narrower than "elem is generic": it is whether `elem` MAPS, in this frame, to a builder of the module
+                // under construction. IEnumerable<builder>/IEnumerator<builder> is an instantiation Reflection.Emit
+                // cannot carry a usable member token for (runtime EntryPointNotFound in a non-inline method), so those
+                // take the non-generic IEnumerable/IEnumerator and Unbox_Any the object Current to elem; everything
+                // else keeps the typed enumerator (faster, no box).
+                //
+                // bir2cir cannot make that call, in either direction. A `tv` does not imply a builder — ResolveTv
+                // answers System.Object for a type-scope tv with no parameter in scope (the flat lifted anon-object),
+                // where the typed enumerator is both speakable and better. Conversely this emitter builds types bir2cir
+                // never sees — closures, per-arity delegate adapters, dotkt$ synthetics — so an "external, therefore
+                // typed" rule computed from CIR would name the arm that cannot be encoded. The mapped element type is
+                // the whole predicate, and it exists only here. Choosing between two members already named is not
+                // member selection, and no BCL type is named to make the choice.
+                bool viaNonGeneric = IsBuilderTypeArgument(elem);
+                var enumerableGet = RequiredRef<MethodInfo>(
+                    e, viaNonGeneric ? "enumerableGetErasedRef" : "enumerableGetRef", "forEachInline");
                 EmitExpr(e.GetProperty("src"));
-                Type enT;
-                if (viaNonGeneric)
-                {
-                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "enumerableGetErasedRef", "forEachInline"));
-                    enT = Bcl("System.Collections.IEnumerator");
-                }
-                else
-                {
-                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "enumerableGetRef", "forEachInline"));
-                    enT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elem);
-                }
-                var en = _il.DeclareLocal(enT); _il.Emit(OpCodes.Stloc, en);
+                EmitMethod(_il, OpCodes.Callvirt, enumerableGet);
+                // The enumerator the walk holds is whatever the selected GetEnumerator returns — a mechanical read of
+                // the reference just emitted, so the local can never disagree with the member that filled it.
+                var en = _il.DeclareLocal(ReturnTypeOf(enumerableGet)); _il.Emit(OpCodes.Stloc, en);
                 var lv = _il.DeclareLocal(elem); _locals[e.GetProperty("var").GetString()] = lv;
                 var start = _il.DefineLabel(); var end = _il.DefineLabel();
                 _loops.Add((LoopLabel(e), start, end));
@@ -755,9 +695,11 @@ sealed partial class Emitter
                 // `mapOf(k to v, …)` -> new Dictionary<K,V> { [k]=v, … } via set_Item.
                 var kt = MapType(e.GetProperty("keyType"));
                 var vt = MapType(e.GetProperty("valType"));
-                var dt = ConstructedType(Bcl("System.Collections.Generic.Dictionary`2"), kt, vt);
                 var mapCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newMap");
                 var setItem = RequiredRef<MethodInfo>(e, "setItemRef", "newMap");
+                // Which BCL map a Kotlin map literal becomes is the minting pass's decision, already recorded on the
+                // constructor's declaring type — reading it back is mechanical; naming `Dictionary`2` would not be.
+                var dt = mapCtor.DeclaringType;
                 EmitConstructor(_il, OpCodes.Newobj, mapCtor);
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
@@ -772,9 +714,10 @@ sealed partial class Emitter
             {
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem"));
-                var setT = ConstructedType(Bcl("System.Collections.Generic.HashSet`1"), elem);
                 var setCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newSet");
                 var add = RequiredRef<MethodInfo>(e, "addRef", "newSet");
+                // Same rule as the list and the map: the constructed type is read off the named constructor.
+                var setT = setCtor.DeclaringType;
                 EmitConstructor(_il, OpCodes.Newobj, setCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
@@ -967,10 +910,6 @@ sealed partial class Emitter
             case "newClr": return EmitClrNew(e);
             case "clrStatic": return EmitClrCall(e, instance: false);
             case "clrInstance": return EmitClrCall(e, instance: true);
-            // W1-S2 (#46): a clrInstance whose interface owner has NO statically-matching BCL slot (the runtime value
-            // implements it under a different concrete type) is emitted by bir2cir as a DELIBERATE dynamic-dispatch node
-            // — replacing ilemit's former SILENT EmitClrCall->EmitDynamicCall downgrade, so the fallback is greppable.
-            case "clrDynInstance": return EmitDynamicCall(e);
             case "clrPropGet": return EmitClrPropGet(e);
             case "clrPropSet": return EmitClrPropSet(e);
             case "clrEventAdd": return EmitClrEvent(e, add: true);
