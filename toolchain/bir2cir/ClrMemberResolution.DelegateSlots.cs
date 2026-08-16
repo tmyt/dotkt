@@ -164,13 +164,16 @@ static partial class ClrMemberResolution
         _adapterHost = null;
     }
 
+    // CHILDREN FIRST. Adapting a construction moves it under a new node, and a JSON value has one parent, so the
+    // move copies it; a nested construction still waiting to be rewritten would be rewritten in the detached copy
+    // and lost. Rewriting bottom-up means the copy is already final.
     static void Collect(JsonNode node, List<JsonObject> into)
     {
         switch (node)
         {
             case JsonObject obj:
-                if (obj.ContainsKey(DelegateSlotKey)) into.Add(obj);
                 foreach (var kv in obj.ToList()) if (kv.Value != null) Collect(kv.Value, into);
+                if (obj.ContainsKey(DelegateSlotKey)) into.Add(obj);
                 break;
             case JsonArray array:
                 foreach (var item in array.ToList()) if (item != null) Collect(item, into);
@@ -249,6 +252,8 @@ static partial class ClrMemberResolution
         var captured = new JsonObject();
         foreach (var kv in construction.ToList()) { captured[kv.Key] = kv.Value?.DeepClone(); construction.Remove(kv.Key); }
 
+        // The adaptation happens AT the construction, so the diagnostic position stays on both halves.
+        if (captured["pos"] is JsonNode position) construction["pos"] = position.DeepClone();
         construction["k"] = "newClosure";
         construction["closureType"] = TypeJson.Write(new TypeNode.Fqn(adapter));
         construction["method"] = "invoke";

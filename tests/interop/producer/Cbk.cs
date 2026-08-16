@@ -35,3 +35,23 @@ namespace Cbk {
         public void Run(System.Action a) { a(); }
     }
 }
+
+// Void-to-value delegate adaptation shapes. Each of these declares an `Invoke` that RETURNS while the Kotlin
+// lambda filling it is Unit-valued, which is the mismatch bir2cir reconciles with an adapter (#400 §7): arity 0
+// and arity 2, a GENERIC OWNER whose parameter is constrained, plus the transpose — a value-returning lambda
+// meeting a `void` Invoke, where no value has to be produced and the construction is merely retargeted.
+namespace CbkUnit {
+    using Cbk;
+    public delegate object NullaryResult();
+    public delegate object BinaryResult<T>(T first, string second);
+    public delegate void IntSink(int value);
+    public sealed class ConstrainedHost<T> where T : IMarker {
+        public object Use(ConstrainedResult<T> transform, Constrained<T> value) => transform(value);
+    }
+    public static class UnitCallbacks {
+        public static object UseNullary(NullaryResult transform) => transform();
+        public static object UseBinary<T>(BinaryResult<T> transform, T first, string second)
+            => transform(first, second);
+        public static string UseSink(IntSink sink) { sink(7); return "sunk"; }
+    }
+}
