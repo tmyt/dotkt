@@ -219,8 +219,14 @@ sealed partial class Emitter
         // The type's own open definition is a TypeBuilder (`Iterator<int>` while Iterator is being emitted), OR one of
         // its args transitively involves a TypeBuilder. The first clause is what `ContainsTypeBuilder` also needed: a
         // constructed-generic-of-a-TypeBuilder is itself a TypeBuilderInstantiation but is not `is TypeBuilder`.
-        (t.GetGenericTypeDefinition() is TypeBuilder
-         || t.GetGenericArguments().Any(a => a is TypeBuilder || a is GenericTypeParameterBuilder || (a.IsGenericType && IsTbInstantiation(a))));
+        (t.GetGenericTypeDefinition() is TypeBuilder || t.GetGenericArguments().Any(IsBuilderTypeArgument));
+
+    // The ARGUMENT half of the rule above, on its own: a type argument that drags this module's own builders into an
+    // instantiation. Asking it of an argument directly answers, for a definition that is NOT a TypeBuilder (every BCL
+    // generic), exactly what IsTbInstantiation answers of the instantiation — without constructing that instantiation
+    // to ask. Shared rather than restated so the two cannot drift apart.
+    static bool IsBuilderTypeArgument(Type t) =>
+        t is TypeBuilder or GenericTypeParameterBuilder || (t.IsGenericType && IsTbInstantiation(t));
 
     // True when `t` is (or transitively contains) a generic PARAMETER — a GenericTypeParameterBuilder of the enclosing
     // emitting context. Distinguishes a concrete owner instantiation (`Holder<int>`) from an erased-context one

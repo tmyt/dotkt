@@ -373,13 +373,14 @@ sealed partial class Emitter
             {
                 // `listOf(...)` -> new List<elem> { ... } via repeated Add.
                 var elem = MapType(e.GetProperty("elem"));
-                var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
-                // The reference first — the search is the fallback for a shape that carries none, never a step
-                // that runs before the answer is read.
-                var listCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newList");
-                var add = RequiredRef<MethodInfo>(e, "addRef", "newList");
                 // The members a collection literal builds through are stated by the pass that minted the node,
                 // so the emitter stops deriving them from the constructed type.
+                var listCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newList");
+                var add = RequiredRef<MethodInfo>(e, "addRef", "newList");
+                // …and so is the type it constructs: the constructor's OWN declaring type, anchored on the
+                // instantiation its reference states. Naming `List`1` here would be this layer deciding which BCL
+                // type a Kotlin list literal becomes, which is the producer's decision and is already recorded.
+                var listT = listCtor.DeclaringType;
                 EmitConstructor(_il, OpCodes.Newobj, listCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
@@ -475,14 +476,13 @@ sealed partial class Emitter
             {
                 // `f(1, *a, 2)` -> new List<elem>(); Add(literal) / AddRange(spread); ToArray().
                 var elem = MapType(e.GetProperty("elem"));
-                var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
-                var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elem);
-                var loc = _il.DeclareLocal(listT);
-                // The four members this builds through are named by the pass that minted the node.
+                // The four members this builds through — and, with them, the accumulator type — are named by the
+                // pass that minted the node; the accumulator local is that constructor's declaring type.
                 var spreadCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "spreadConcat");
                 var spreadAdd = RequiredRef<MethodInfo>(e, "addRef", "spreadConcat");
                 var spreadAddRange = RequiredRef<MethodInfo>(e, "addRangeRef", "spreadConcat");
                 var spreadToArray = RequiredRef<MethodInfo>(e, "toArrayRef", "spreadConcat");
+                var loc = _il.DeclareLocal(spreadCtor.DeclaringType);
                 EmitConstructor(_il, OpCodes.Newobj, spreadCtor);
                 _il.Emit(OpCodes.Stloc, loc);
                 foreach (var p in e.GetProperty("parts").EnumerateArray())
@@ -520,26 +520,29 @@ sealed partial class Emitter
                 // `xs.forEach { it -> body }` (inline) -> enumerate src, bind `it` to a loop local, splice body.
                 // Inlining (not a delegate) lets the body read/write enclosing locals without closure Ref cells.
                 var elem = MapType(e.GetProperty("elem"));
-                var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elem);
-                // When `elem` is a TYPE PARAMETER (method/class), IEnumerable<!!T>/IEnumerator<!!T> are TypeBuilder
-                // instantiations of a BCL generic; TypeBuilder.GetMethod re-anchoring them yields a BROKEN metadata
-                // token (runtime EntryPointNotFound) in a non-inline method. Fall back to the NON-GENERIC IEnumerable/
-                // IEnumerator (no <!!T> -> no bad token) + Unbox_Any the object Current to elem. Concrete elem types
-                // keep the typed enumerator (faster, no box).
-                bool viaNonGeneric = IsTbInstantiation(ienumT);
+                // BOTH enumerator surfaces arrive named by the pass that minted the node; neither is looked up here.
+                // Which of the two this method can SPEAK is the one thing the producer cannot state, and the reason is
+                // narrower than "elem is generic": it is whether `elem` MAPS, in this frame, to a builder of the module
+                // under construction. IEnumerable<builder>/IEnumerator<builder> is an instantiation Reflection.Emit
+                // cannot carry a usable member token for (runtime EntryPointNotFound in a non-inline method), so those
+                // take the non-generic IEnumerable/IEnumerator and Unbox_Any the object Current to elem; everything
+                // else keeps the typed enumerator (faster, no box).
+                //
+                // bir2cir cannot make that call, in either direction. A `tv` does not imply a builder — ResolveTv
+                // answers System.Object for a type-scope tv with no parameter in scope (the flat lifted anon-object),
+                // where the typed enumerator is both speakable and better. Conversely this emitter builds types bir2cir
+                // never sees — closures, per-arity delegate adapters, dotkt$ synthetics — so an "external, therefore
+                // typed" rule computed from CIR would name the arm that cannot be encoded. The mapped element type is
+                // the whole predicate, and it exists only here. Choosing between two members already named is not
+                // member selection, and no BCL type is named to make the choice.
+                bool viaNonGeneric = IsBuilderTypeArgument(elem);
+                var enumerableGet = RequiredRef<MethodInfo>(
+                    e, viaNonGeneric ? "enumerableGetErasedRef" : "enumerableGetRef", "forEachInline");
                 EmitExpr(e.GetProperty("src"));
-                Type enT;
-                if (viaNonGeneric)
-                {
-                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "enumerableGetErasedRef", "forEachInline"));
-                    enT = Bcl("System.Collections.IEnumerator");
-                }
-                else
-                {
-                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "enumerableGetRef", "forEachInline"));
-                    enT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elem);
-                }
-                var en = _il.DeclareLocal(enT); _il.Emit(OpCodes.Stloc, en);
+                EmitMethod(_il, OpCodes.Callvirt, enumerableGet);
+                // The enumerator the walk holds is whatever the selected GetEnumerator returns — a mechanical read of
+                // the reference just emitted, so the local can never disagree with the member that filled it.
+                var en = _il.DeclareLocal(ReturnTypeOf(enumerableGet)); _il.Emit(OpCodes.Stloc, en);
                 var lv = _il.DeclareLocal(elem); _locals[e.GetProperty("var").GetString()] = lv;
                 var start = _il.DefineLabel(); var end = _il.DefineLabel();
                 _loops.Add((LoopLabel(e), start, end));
@@ -692,9 +695,11 @@ sealed partial class Emitter
                 // `mapOf(k to v, …)` -> new Dictionary<K,V> { [k]=v, … } via set_Item.
                 var kt = MapType(e.GetProperty("keyType"));
                 var vt = MapType(e.GetProperty("valType"));
-                var dt = ConstructedType(Bcl("System.Collections.Generic.Dictionary`2"), kt, vt);
                 var mapCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newMap");
                 var setItem = RequiredRef<MethodInfo>(e, "setItemRef", "newMap");
+                // Which BCL map a Kotlin map literal becomes is the minting pass's decision, already recorded on the
+                // constructor's declaring type — reading it back is mechanical; naming `Dictionary`2` would not be.
+                var dt = mapCtor.DeclaringType;
                 EmitConstructor(_il, OpCodes.Newobj, mapCtor);
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
@@ -709,9 +714,10 @@ sealed partial class Emitter
             {
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem"));
-                var setT = ConstructedType(Bcl("System.Collections.Generic.HashSet`1"), elem);
                 var setCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newSet");
                 var add = RequiredRef<MethodInfo>(e, "addRef", "newSet");
+                // Same rule as the list and the map: the constructed type is read off the named constructor.
+                var setT = setCtor.DeclaringType;
                 EmitConstructor(_il, OpCodes.Newobj, setCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
