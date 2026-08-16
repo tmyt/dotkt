@@ -36,6 +36,21 @@ class RevBridgeMutableBag(private val backing: MutableList<Int>) : MutableIterab
     override fun iterator(): MutableIterator<Int> = backing.iterator()
 }
 
+// A same-named OVERLOAD does not occupy the `GetEnumerator()` CLR signature the enumerable face demands, so the
+// bridge is still owed. (`GetEnumerator(Int)` and `GetEnumerator()` are two distinct MethodDefs.)
+class RevBridgeOverloadedName(private val items: List<Int>) : Iterable<Int> {
+    override fun iterator(): Iterator<Int> = items.iterator()
+    fun GetEnumerator(seed: Int): Int = seed + items.size
+}
+
+// A nullary `GetEnumerator()` of the author's own DOES occupy that signature, whatever it returns. The bridge then
+// takes a collision-free physical name and is bound by its MethodImpl descriptor alone, so the CLR slot is still
+// filled and the author's member keeps the public spelling.
+class RevBridgeOwnGetEnumerator(private val items: List<Int>) : Iterable<Int> {
+    override fun iterator(): Iterator<Int> = items.iterator()
+    fun GetEnumerator(): Int = items.size
+}
+
 class ReverseEnumeratorBridgeTests {
     // The generic face at a constructed instantiation, through Kotlin `for`-in and through compiled stdlib bodies
     // (which see the receiver as `IEnumerable<E>` and therefore go through `GetEnumerator`).
@@ -110,6 +125,32 @@ class ReverseEnumeratorBridgeTests {
         var joined = ""
         while (wordCursor.MoveNext()) joined += wordCursor.Current as String
         assertEquals("abb", joined)
+    }
+
+    // A same-named overload must not suppress the bridge: the type still needs the nullary `GetEnumerator()` slot,
+    // and the author's own overload keeps working.
+    @TestAttribute
+    fun aSameNamedOverloadDoesNotSuppressTheBridge() {
+        val bag = RevBridgeOverloadedName(listOf(1, 2, 3))
+        assertEquals(listOf(1, 2, 3), bag.toList())
+        assertEquals(6, bag.count() + bag.GetEnumerator(3))
+        var sum = 0
+        for (x in bag) sum += x
+        assertEquals(6, sum)
+    }
+
+    // The author's own nullary `GetEnumerator()` occupies the physical signature; the bridge takes another name and
+    // the CLR enumerable face still works, while the author's member still answers its own call.
+    @TestAttribute
+    fun anOwnNullaryGetEnumeratorStillLeavesTheSlotFilled() {
+        val bag = RevBridgeOwnGetEnumerator(listOf(4, 5))
+        assertEquals(2, bag.GetEnumerator())
+        assertEquals(listOf(4, 5), bag.toList())
+        assertEquals(9, bag.sum())
+        val raw = (bag as Any as RevBridgeRawEnumerable).GetEnumerator()
+        var seen = 0
+        while (raw.MoveNext()) seen++
+        assertEquals(2, seen)
     }
 
     // The non-generic face is independent of the generic one: enumerating through each in turn yields the same

@@ -11,8 +11,16 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import roundtrip.collslots.Feed
 import roundtrip.collslots.TrackedBag
 import roundtrip.collslots.makeTrackedBag
+
+// The enumerable face of this class arrives entirely through the PRODUCER assembly: `Feed<T> : Iterable<T>` is
+// declared there, so nothing in this module states `IEnumerable<Int>` for it. The reverse bridge is owed all the
+// same, and must be found by walking the referenced supertype graph.
+class CrossModuleFeedNumbers : Feed<Int> {
+    override fun iterator(): Iterator<Int> = listOf(1, 2, 3).iterator()
+}
 
 class KotlinCollectionSlotTests {
     @TestAttribute
@@ -46,6 +54,18 @@ class KotlinCollectionSlotTests {
         val readOnly: Collection<Int> = b
         assertEquals(4, readOnly.count())
         assertEquals("1,2,3,4", readOnly.joinToString(","))
+    }
+
+    // An implementer of a producer-declared `Iterable`-derived interface: the face is reachable only through the
+    // referenced assembly's metadata, and the bridge must still be stated on this consumer's own class.
+    @TestAttribute
+    fun anImplementerOfAReferencedIterableInterfaceGetsItsBridge() {
+        val numbers = CrossModuleFeedNumbers()
+        assertEquals(listOf(1, 2, 3), numbers.toList())
+        assertEquals(6, numbers.sum())
+        var seen = 0
+        for (n in numbers) seen += n
+        assertEquals(6, seen)
     }
 
     @TestAttribute

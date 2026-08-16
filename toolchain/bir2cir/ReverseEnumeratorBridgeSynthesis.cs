@@ -35,6 +35,9 @@ static class ReverseEnumeratorBridgeSynthesis
     public const string AdapterName = "dotkt$EnumeratorOverKotlinIterator";
     const string NonGenericBridgeName = "dotkt$NonGenericGetEnumerator";
     const string GetEnumeratorName = "GetEnumerator";
+    // The collision-free physical spelling of the generic bridge, for the class that already declares a nullary
+    // `GetEnumerator` of its own. `$` is Kotlin's own unspeakable marker, so this can never collide with source.
+    const string AliasGetEnumeratorName = "dotkt$GenericGetEnumerator";
 
     // The Kotlin iteration protocol the adapter wraps. `Iterable<T>.iterator(): Iterator<T>` — the member NAME is
     // part of that Kotlin contract, not a guess about a physical spelling.
@@ -102,15 +105,27 @@ static class ReverseEnumeratorBridgeSynthesis
         if (Str(type["kind"]) != "class") return false;                    // interfaces carry no bodies
         if (Str(type["name"]) is not string owner || owner.Length == 0) return false;
         if (type["methods"] is not JsonArray methods) return false;
-        // Idempotence, and the shape where the class already answers the slot itself: a nullary `GetEnumerator`
-        // declared here already occupies the physical name, and a second one would be a duplicate MethodDef.
-        if (methods.OfType<JsonObject>().Any(m => Str(m["name"]) == GetEnumeratorName && Arity(m) == 0)) return false;
-        // The wrapped Kotlin iteration source must be THIS class's own declaration: a class that merely inherits
-        // `iterator()` also inherits the base's bridge, and re-declaring one would take a fresh vtable slot.
+        // The wrapped Kotlin iteration source is THIS class's own `iterator()` declaration. A class that OVERRIDES a
+        // base's `iterator()` needs its own bridge, because the base's bridge calls the base's declaration through a
+        // slot the override may not occupy; a class that declares none and whose base already carries a bridge
+        // inherits that bridge, and re-declaring one would take a fresh vtable slot for no gain. (A class that
+        // declares none and whose base carries none — an `iterator()` supplied by a non-enumerable superclass or by
+        // an interface default — is left without a bridge; that hole predates this pass and is tracked separately.)
         if (!defs.TryGetValue(owner, out var def)) return false;
         if (methods.OfType<JsonObject>().FirstOrDefault(m => IsIteratorDeclaration(m, defs, refs))
             is not JsonObject iterator) return false;
         if (Element(def, defs, refs, TypeJson.Read(iterator["ret"])) is not { } element) return false;
+
+        // The physical MethodDef `GetEnumerator()` may already be occupied by a Kotlin declaration of exactly that
+        // CLR signature — the allocated signature is name plus generic arity plus the parameter vector, so a second
+        // one is a duplicate MethodDef whatever its return type. Give the bridge a collision-free physical name in
+        // that case; it is bound by its MethodImpl descriptor and never by its name, and the author's own member
+        // keeps the public spelling. An OVERLOAD (`GetEnumerator(x)`) occupies a different signature entirely and
+        // must not suppress the bridge, which is the slot the CLR actually demands.
+        var nameTaken = methods.OfType<JsonObject>().Any(m =>
+            Str(m["name"]) == GetEnumeratorName && !Bool(m["static"])
+            && (m["params"] as JsonArray)?.Count == 0 && Arity(m) == 0);
+        var genericName = nameTaken ? AliasGetEnumeratorName : GetEnumeratorName;
 
         var self = SelfOwner(owner, TypeParameterFrame.Count(type));
         var iteratorCall = new JsonObject
@@ -125,7 +140,7 @@ static class ReverseEnumeratorBridgeSynthesis
             ["args"] = new JsonArray(),
         };
         // `IEnumerator<E> GetEnumerator() => new dotkt$EnumeratorOverKotlinIterator<E>(this.iterator())`.
-        var generic = Method(GetEnumeratorName, "public", Constructed(IEnumeratorT, element), new JsonArray
+        var genericBody = new JsonArray
         {
             new JsonObject
             {
@@ -141,7 +156,10 @@ static class ReverseEnumeratorBridgeSynthesis
                     ["localCtorIndex"] = 0,
                 },
             },
-        });
+        };
+        var generic = Method(genericName, nameTaken ? "private" : "public",
+            Constructed(IEnumeratorT, element), genericBody);
+        if (nameTaken) generic["generated"] = true;
         generic["clrInterfaceImpls"] = new JsonArray(Descriptor(
             Constructed(IEnumerableT, element), GetEnumeratorName, Constructed(IEnumeratorT, element)));
 
@@ -159,7 +177,7 @@ static class ReverseEnumeratorBridgeSynthesis
                     ["ownerType"] = TypeJson.Write(self),
                     ["virtual"] = true,
                     ["recv"] = new JsonObject { ["k"] = "this" },
-                    ["method"] = GetEnumeratorName,
+                    ["method"] = genericName,
                     ["sig"] = new JsonArray(),
                     ["ret"] = TypeJson.Write(Constructed(IEnumeratorT, element)),
                     ["args"] = new JsonArray(),

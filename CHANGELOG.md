@@ -128,10 +128,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   registry, the `TypeInfo.BridgeRoles` marker registry, the name-based `GetEnumerator` skip in its interface wiring,
   and the eight fixed-member roles (`Enumerable.GetEnumerator`, `Enumerator.MoveNext/Current/Reset`,
   `EnumeratorT.Current`, `EnumerableT.GetEnumerator`, `Disposable.Dispose`, `NotSupportedException.ctor0`) that had
-  no other consumer. Emitted metadata is unchanged except that the synthesized members no longer carry
-  `final`/`hidebysig` — matching every other `bir2cir`-authored MethodImpl bridge — and that the metadata-only
-  reference standard library, which states no BCL enumerable face and therefore owes no bridge, no longer carries a
-  dead copy of the adapter.
+  no other consumer. The runtime standard library's emitted metadata is unchanged except that the synthesized
+  members no longer carry `final`/`hidebysig` — matching every other `bir2cir`-authored MethodImpl bridge — and the
+  metadata-only reference standard library, which states no BCL enumerable face and therefore owes no bridge, no
+  longer carries a dead copy of the adapter. In an application or user-library build the adapter is now an ordinary
+  CIR TypeDef when round-trip metadata is stamped, so it carries the same `[NullableContext]` carrier every other
+  compiler-authored type does. The change also FIXES a shape the emitter could not reach: a class implementing an
+  `Iterable`-derived interface declared in ANOTHER assembly, whose enumerable face the emitter's worklist never
+  followed, failed to load with "Method 'GetEnumerator' … does not have an implementation".
 
 - **The body of an un-lowered `suspend` declaration is authored by `bir2cir`, and the Kotlin `suspend` modifier no
   longer reaches CIR (#400).** `ilemit` used to synthesize a throwing body for any declaration that still carried
