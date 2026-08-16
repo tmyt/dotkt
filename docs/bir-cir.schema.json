@@ -111,8 +111,8 @@
         "t":    { "const": "array" },
         "elem": { "$ref": "#/$defs/type" },
         "rank": {
-          "type": "integer", "minimum": 2, "maximum": 32,
-          "description": "CIR-only: the ECMA multi-dimensional ARRAY rank (the CLR caps it at 32). ABSENT is the SZARRAY `T[]` — the only shape Kotlin source can spell — so a rank of 1 is a malformed document, not a vector. Present only where an external member declares `T[,…]`, whose signature differs from `T[]`; collapsing the two would make such overloads indistinguishable. kotc MUST omit it."
+          "type": "integer", "minimum": 1, "maximum": 32,
+          "description": "CIR-only: the rank of a GENERAL ECMA array (the CLR caps it at 32). ABSENT is the SZARRAY `T[]` — the vector, and the only array shape Kotlin source can spell. PRESENT means the general array: rank 2 or more is `T[,…]`, and rank 1 is the single-dimensional non-vector `T[*]`, which ECMA keeps distinct from `T[]` and reflection distinguishes with IsSZArray. An external member may declare both, and collapsing them would make those overloads indistinguishable. kotc MUST omit it."
         }
       },
       "required": ["t", "elem"],

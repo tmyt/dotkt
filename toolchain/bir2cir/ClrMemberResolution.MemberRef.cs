@@ -274,15 +274,7 @@ static partial class ClrMemberResolution
         // BirTypeLowering lowers them. The collapse below applies to storage slots, not to what a slot holds.
         if (t.IsByRef) return new TypeNode.ByRef(PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
         if (t.IsPointer) return new TypeNode.Ptr(PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
-        if (t.IsArray)
-        {
-            var elem = PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false);
-            int rank = SafeArrayRank(t);
-            // Reflection reports rank 1 for BOTH `T[]` and the rare `T[*]`; the vector spelling is the one
-            // this compiler can produce, and inventing a distinction reflection cannot see would be worse
-            // than the shared spelling.
-            return rank > 1 ? new TypeNode.Array(elem, rank) : new TypeNode.Array(elem);
-        }
+        if (t.IsArray) return ArrayOf(t, PhysicalTypeOf(t.GetElementType(), ownerArgs, typeArg: false));
         var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
         var kotlinName = AliasKey(def);
         TypeNode[] loweredArgs = null;
@@ -298,6 +290,14 @@ static partial class ClrMemberResolution
         var head = BirTypeLowering.PhysicalHead(kotlinName,
             _refs.Aliases.TryGetValue(kotlinName, out var bcl) ? bcl : null, loweredArgs, collapseInvariant: typeArg);
         return MetadataSpelling(head, def, kotlinName);
+    }
+
+    // The vector and the general array are different types even at rank 1 — `T[]` and `T[*]` — and reflection
+    // says which is which through IsSZArray. Collapsing them would let one reference name either.
+    static TypeNode ArrayOf(Type t, TypeNode elem)
+    {
+        bool sz; try { sz = t.IsSZArray; } catch { sz = true; }
+        return sz ? new TypeNode.Array(elem) : TypeNode.Array.General(elem, SafeArrayRank(t));
     }
 
     /// <summary>

@@ -26,7 +26,7 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 # member of another assembly. Frozen like KINDS/TYPE_TAGS, so a new carrier key is a deliberate vocabulary
 # change. `declaringType` is the shape's discriminator (no other document shape has it), which is what
 # catches a parallel member-identity spelling invented under some other key.
-MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef"}
+MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -35,6 +35,17 @@ MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccesso
 MEMBER_REF_KIND_BY_CARRIER = {
     "baseCtorRef": {"ctor"},
     "clrOverrideRef": {"method", "propertyAccessor", "eventAccessor"},
+    "ctorRef": {"ctor"},
+    "addRef": {"method"},
+    "setItemRef": {"method", "propertyAccessor"},
+}
+
+# A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such
+# a node, because an emitter handed one and not the other is back to filling the gap by name.
+COLLECTION_TEMPLATE_REFS = {
+    "newList": ("ctorRef", "addRef"),
+    "newSet": ("ctorRef", "addRef"),
+    "newMap": ("ctorRef", "setItemRef"),
 }
 
 # The transitional owner descriptor each declaration-side carrier travels with, in BOTH directions: one
@@ -321,10 +332,11 @@ class V:
             if f.endswith(".cir.json") and clr is None and "SuspendFnType" not in path and "suspendFnType" not in path:
                 self.err(f, path, "ilemit-facing CIR fn is missing required fn.clr delegate family")
         if t == "array" and "rank" in o:
-            # rank names the ECMA multi-dimensional ARRAY; the SZ array omits it. A serialized 1 would be a
-            # second spelling of the vector, which is exactly the ambiguity the key exists to remove.
-            if not isinstance(o["rank"], int) or isinstance(o["rank"], bool) or o["rank"] < 2:
-                self.err(f, path, f"array.rank must be an integer >= 2 (an SZ array omits it), got {o['rank']!r}")
+            # A stated rank names the GENERAL array; the vector omits it. Rank 1 is meaningful here — it is
+            # `T[*]`, which ECMA keeps distinct from `T[]` — so the check is that a rank exists at all and is
+            # in range, not that it is above one.
+            if not isinstance(o["rank"], int) or isinstance(o["rank"], bool) or not 1 <= o["rank"] <= 32:
+                self.err(f, path, f"array.rank must be an integer between 1 and 32, got {o['rank']!r}")
         if t == "mod" and not isinstance(o.get("req"), bool):
             self.err(f, path, f"mod.req must be bool (true=modreq, false=modopt), got {o.get('req')!r}")
         if t == "star" and f.endswith(".cir.json"):
@@ -743,6 +755,10 @@ class V:
                         # ilemit still reads the owner descriptor, so a reference without it validates clean
                         # here and dies at emit — the failure lands one layer past the document that caused it.
                         self.err(f, path, f"{ref_key} is present without the {owner_key} the emitter still reads")
+            if f.endswith(".cir.json"):
+                for required_key in COLLECTION_TEMPLATE_REFS.get(o.get("k"), ()):
+                    if required_key not in o:
+                        self.err(f, path, f"{o['k']} must carry {required_key}: a collection literal names the members it builds through")
             if f.endswith(".cir.json") and "memberRef" not in o:
                 kind = o.get("k")
                 if kind in MEMBER_REF_REQUIRED_KINDS:

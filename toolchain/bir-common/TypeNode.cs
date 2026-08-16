@@ -100,12 +100,18 @@ public abstract record TypeNode
     public sealed record Oblivious(TypeNode Of) : TypeNode;
 
     /// <summary>
-    /// `array`: <c>Array&lt;T&gt;</c>. <c>Rank</c> absent (1) is the ECMA SZARRAY <c>T[]</c> — the only shape
-    /// Kotlin source can spell. A <c>Rank</c> of 2 or more is the CIR-only multi-dimensional ARRAY
-    /// <c>T[,…]</c>, which exists because an external <c>T[,]</c> parameter is a DIFFERENT member signature
-    /// from <c>T[]</c> and collapsing them would make two overloads indistinguishable.
+    /// `array`: <c>Array&lt;T&gt;</c>. An ABSENT <c>Rank</c> is the ECMA SZARRAY <c>T[]</c> — the vector, and
+    /// the only array shape Kotlin source can spell. A PRESENT rank is the CIR-only general ARRAY: rank 2 or
+    /// more is <c>T[,…]</c>, and rank 1 is the rare single-dimensional non-vector <c>T[*]</c>, which ECMA
+    /// treats as a different type from <c>T[]</c> — reflection tells them apart with <c>IsSZArray</c>, and an
+    /// external member may declare both. Every one of these distinctions exists for the same reason: without
+    /// it two overloads produce one signature, and a reference that cannot tell them apart selects by luck.
     /// </summary>
-    public sealed record Array(TypeNode Elem, int Rank = 1) : TypeNode;
+    public sealed record Array(TypeNode Elem, int Rank = 1, bool SzArray = true) : TypeNode
+    {
+        /// <summary>The general (non-vector) array of the given rank — <c>T[*]</c> at rank 1.</summary>
+        public static Array General(TypeNode elem, int rank) => new(elem, rank, SzArray: false);
+    }
 
     /// <summary>The CLR's own limit on array rank; a document beyond it describes no representable type.</summary>
     public const int MaxArrayRank = 32;
@@ -172,13 +178,15 @@ public abstract record TypeNode
                 return new Oblivious(Read(e.GetProperty("of")));
             case "array":
             {
-                int rank = e.TryGetProperty("rank", out var rk) ? rk.GetInt32() : 1;
-                // An SZ array omits `rank`; a stated rank names the multi-dimensional array, whose rank the
-                // CLR caps at 32. Either bound refuses a document nothing can represent rather than passing
-                // it to a metadata writer that would.
-                if (e.TryGetProperty("rank", out _) && (rank < 2 || rank > MaxArrayRank))
-                    throw new FormatException($"array.rank must be between 2 and {MaxArrayRank} (an SZ array omits it), got {rank}");
-                return new Array(Read(e.GetProperty("elem")), rank);
+                // An absent `rank` is the vector. A PRESENT one names the general array — including rank 1,
+                // the non-vector `T[*]` that ECMA keeps distinct from `T[]`. The CLR caps rank at 32, so a
+                // value outside that describes nothing a metadata writer could emit.
+                if (!e.TryGetProperty("rank", out var rk))
+                    return new Array(Read(e.GetProperty("elem")));
+                int rank = rk.GetInt32();
+                if (rank < 1 || rank > MaxArrayRank)
+                    throw new FormatException($"array.rank must be between 1 and {MaxArrayRank}, got {rank}");
+                return Array.General(Read(e.GetProperty("elem")), rank);
             }
             case "byRef":
                 return new ByRef(Read(e.GetProperty("of")));
@@ -237,8 +245,12 @@ public abstract record TypeNode
             {
                 if (a.Rank < 1 || a.Rank > MaxArrayRank)
                     throw new ArgumentException($"array rank must be between 1 and {MaxArrayRank}, got {a.Rank}");
+                if (a.SzArray && a.Rank != 1)
+                    throw new ArgumentException($"an SZ array has rank 1 by definition, got {a.Rank}");
                 var o = new JsonObject { ["t"] = "array", ["elem"] = Write(a.Elem) };
-                if (a.Rank > 1) o["rank"] = a.Rank;
+                // The vector omits its rank; every general array states one, rank 1 included — that is the
+                // only thing separating `T[*]` from `T[]` in this document.
+                if (!a.SzArray) o["rank"] = a.Rank;
                 return o;
             }
             case ByRef b:
@@ -346,8 +358,12 @@ public static class TypeNodeSelfTest
             (new TypeNode.Ptr(new TypeNode.Fqn("System.Int32")),
                 "{\"t\":\"ptr\",\"of\":{\"t\":\"fqn\",\"name\":\"System.Int32\"}}"),
             // int[,] — a DIFFERENT member signature from int[]; rank is absent for an SZ array.
-            (new TypeNode.Array(new TypeNode.Fqn("System.Int32"), 2),
+            (TypeNode.Array.General(new TypeNode.Fqn("System.Int32"), 2),
                 "{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":2}"),
+            // int[*] — the single-dimensional NON-vector. ECMA keeps it distinct from int[], and a stated
+            // rank of 1 is the only thing that says so.
+            (TypeNode.Array.General(new TypeNode.Fqn("System.Int32"), 1),
+                "{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":1}"),
             // `in DateTime` = modreq(InAttribute) ref DateTime — the modifier sits at the position it modifies.
             (new TypeNode.Mod(true, new TypeNode.Fqn("System.Runtime.InteropServices.InAttribute"),
                     new TypeNode.ByRef(new TypeNode.Fqn("System.DateTime"))),
@@ -376,12 +392,15 @@ public static class TypeNodeSelfTest
             n++;
         }
 
-        // An SZ array and a rank-1 spelling are not two ways to say the same thing: rank exists only to name
-        // the multi-dimensional signature, so a serialized `rank` below 2 is a malformed document, not a vector.
+        // A vector and a rank-1 general array are DIFFERENT types, and the document distinguishes them by
+        // whether a rank is stated at all — so neither may be read as the other.
+        if (TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":1}")
+            == TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"}}"))
+            throw new Exception("[C# TypeNode] `T[*]` and `T[]` must not compare equal");
         try
         {
-            TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":1}");
-            throw new Exception("[C# TypeNode] expected a FormatException for array rank 1");
+            TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":0}");
+            throw new Exception("[C# TypeNode] expected a FormatException for array rank 0");
         }
         catch (FormatException) { /* expected */ }
         try

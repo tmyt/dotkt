@@ -298,6 +298,9 @@ static partial class ClrMemberResolution
             case "clrPropSet": ResolveProp(node, write: true); break;
             case "clrEventAdd": ResolveEvent(node); break;
             case "clrEventRemove": ResolveEvent(node); break;
+            case "newList": ResolveCollectionTemplate(node, "newList"); break;
+            case "newSet": ResolveCollectionTemplate(node, "newSet"); break;
+            case "newMap": ResolveCollectionTemplate(node, "newMap"); break;
             case "field": ResolveFieldAccess(node, write: false); break;
             case "setFieldExpr": ResolveFieldAccess(node, write: true); break;
             case "setField": ResolveFieldAccess(node, write: true); break;
