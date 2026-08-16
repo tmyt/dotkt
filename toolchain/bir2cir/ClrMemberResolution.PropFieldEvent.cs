@@ -220,6 +220,12 @@ static partial class ClrMemberResolution
         var handlerType = SubstOwnerParams(acc.GetParameters().Single().ParameterType,
             declaringSpec.Args ?? Array.Empty<TypeNode>());
         ResolveDelegateCtor(node, handlerType);
+        // A LITERAL lambda handler is an ordinary delegate construction filling the event's delegate slot, and
+        // takes the same rule every other delegate slot takes: it is retargeted (or adapted) to the event's own
+        // delegate here, so the subscription emits the construction verbatim instead of re-deriving the target
+        // from the accessor's reflected parameter.
+        if (node["handler"] is JsonObject handler && MarkDelegateSlot(handler, handlerType))
+            node["handlerExact"] = true;
         node["accessor"] = acc.Name;
         node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
         StampResolvedMemberReturn(node, acc.ReturnType);

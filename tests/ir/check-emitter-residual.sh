@@ -43,12 +43,13 @@ if (( found )); then
 	echo "  and make sure docs/architecture.md invariant 10 covers that reason."
 	exit 1
 fi
-# Kotlin cannot declare the CLR `allows ref struct` anti-constraint, so no source fixture can independently put it
-# on the generic frame captured by UnitWrapAdapter. Pin the required clone rule at the emitter boundary instead:
-# dropping this bit makes a helper MethodSpec over Span<T> invalid even though every expressible Kotlin fixture passes.
-if ! grep -qF 'GenericParameterAttributes.SpecialConstraintMask | GenericParameterAttributes.AllowByRefLike' \
-	"$ROOT/toolchain/ilemit/Emitter.Delegates.cs"; then
-	echo "EMITTER RESIDUAL: RED — UnitWrapAdapter no longer preserves the allows-ref-struct anti-constraint."
+# The generic-frame clone this used to pin belonged to the emitter-authored Unit delegate adapter, which is gone:
+# bir2cir now authors that adapter as an ordinary CIR class whose parameters ARE the delegate's own, so it declares
+# no constraints to clone and no anti-constraint to preserve. Nothing in ilemit rewrites a generic frame any more,
+# which is what the pin was guarding; the check below is the general one.
+if grep -qE 'DefineGenericParameters' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs" \
+	&& ! grep -qF 'PersistedAssemblyBuilder' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs"; then
+	echo "EMITTER RESIDUAL: RED — a generic frame is minted in Emitter.Delegates.cs with no encoding-workaround rationale."
 	exit 1
 fi
 echo "EMITTER RESIDUAL: GREEN — every member lookup in ilemit states why invariant 10 allows it."
