@@ -65,6 +65,19 @@ abstract class GiSegment<S : GiSegment<S>> {
 }
 class GiSeg : GiSegment<GiSeg>()
 
+// Two generic MethodDefs on one local generic owner have the same name and method arity but swap owner/method-generic
+// parameter positions. The selected overload is intentionally the non-last declaration in each class. Borrowing the
+// last name-keyed MethodBuilder's substituted parameter vector would swap a value slot with a reference slot, making
+// the emitted call unverifiable even though its MethodSpec token still names the right declaration.
+class GiGenericMethodOwnerA<T> {
+    fun <U> select(left: T, right: List<U>): String = "owner:$left/${right.size}"
+    fun <U> select(left: List<U>, right: T): String = "list:${left.size}/$right"
+}
+class GiGenericMethodOwnerB<T> {
+    fun <U> select(left: List<U>, right: T): String = "list:${left.size}/$right"
+    fun <U> select(left: T, right: List<U>): String = "owner:$left/${right.size}"
+}
+
 // ---- il-gencolladd : non-inlined generic collection building (.map/.add) + a non-generic .map ------------------
 fun <T> gcaMapSelf(xs: Array<T>): List<T> = xs.map { it }
 fun <T> gcaBuildAndCount(xs: Array<T>): Int {
@@ -153,6 +166,8 @@ class GenericTypesTests {
         a.link(b)
         assertTrue(a.next === b)          // self-bounded generic field access -> true
         assertNull(b.next)               // true (b.next == null)
+        assertEquals("owner:7/2", GiGenericMethodOwnerA<Int>().select<String>(7, listOf("a", "b")))
+        assertEquals("list:2/7", GiGenericMethodOwnerB<Int>().select<String>(listOf("a", "b"), 7))
     }
 
     @TestAttribute
