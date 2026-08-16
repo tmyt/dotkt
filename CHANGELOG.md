@@ -88,9 +88,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   classes and interfaces alike — and `ilemit` emits one InterfaceImpl row per stated entry and infers nothing. The
   relation lives in one shared table (`toolchain/bir-common/CollectionViewFaces.cs`), and the IR-sanity gate both
   tools run now REFUSES a document that states a mutable face without its read-only view, so an omission fails at the
-  CIR boundary instead of as an `InvalidCastException` in an unrelated caller. The emitted physical surface is
-  unchanged: the same InterfaceImpl rows, in the same order, and no MethodImpl is needed for the sibling — its
-  members are the ones the mutable face already forced onto the type, which the CLR binds implicitly.
+  CIR boundary instead of as an `InvalidCastException` in an unrelated caller. The emitted InterfaceImpl rows are
+  identical, in the same order. `bir2cir` authors no MethodImpl for the sibling — its members are the ones the mutable
+  face already forced onto the type, which the CLR binds implicitly — but ilemit's own still-implicit interface-slot
+  wiring now sees the stated face and emits a redundant explicit MethodImpl binding the read-only `get_Item` slot to
+  the same public method that already satisfied it (six rows across the runtime stdlib). That row is semantically
+  identical to the implicit binding it restates, projects and re-consumes identically through `dll2klib` and a
+  cross-module build, and disappears when the emitter's implicit wiring does.
 
 - **A `companion object` of a generic class is now ONE object across every instantiation (#383).** CLR static storage
   belongs to each closed constructed generic type, so the nested carrier every companion received in #275 gave

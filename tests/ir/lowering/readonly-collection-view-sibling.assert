@@ -1,16 +1,27 @@
 # The READ-ONLY view of a mutable collection is a CLR representation decision, so bir2cir states it in the
 # `interfaces` array; ilemit emits InterfaceImpl rows one-to-one and infers no sibling. No emitted corpus witnesses
 # the rule on its own: every Kotlin source that reaches it also reaches a dozen other passes, and the emitted
-# metadata cannot tell a stated face from an inferred one.
+# metadata looks the same whether the face was stated or inferred, which is exactly the confusion the rule ends.
+# Each line below is one full `interfaces` array, so an assertion fails on an extra entry as well as a missing one.
 #
-# `MutableList` -> IList<T>, and the sibling read-only face IReadOnlyList<T> is appended after the stated faces.
+# `MutableList` -> IList<T>: the sibling IReadOnlyList<T> is appended after the stated faces.
 +"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.String"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.String"}]}]
 # `MutableCollection` and `MutableSet` both lower to ICollection<T>, whose sibling is IReadOnlyCollection<T>.
 +"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ICollection","args":[{"t":"fqn","name":"System.String"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.String"}]}]
+# A dll2klib-projected .NET `ISet<T>` reaches bir2cir as the BCL face directly, with no Kotlin alias in front of it.
+# It is the third row of the relation and the one no Kotlin collection type produces, since `MutableSet` aliases
+# ICollection: without this document the ISet arm would be unreachable and could be deleted unnoticed.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ISet","args":[{"t":"fqn","name":"System.String"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.String"}]}]
+# The element type is carried through unchanged, including a type VARIABLE — the sibling of `IList<!0>` is
+# `IReadOnlyList<!0>`, not a sibling over some erased element. The existential view stated between them also shows
+# the siblings are appended after every stated face rather than beside the face that obliged them.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"tv","scope":"type","i":0}]},{"t":"fqn","name":"GenericListFace$star"},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"tv","scope":"type","i":0}]}]
+# A type whose Kotlin supertypes ALREADY name both faces (`MutableList<Int>` and `List<Int>`) gets no second copy.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}]
 # A map face gets NO sibling: BCL IDictionary<K,V> has no read-only twin in the lattice DotKt uses (both Kotlin
 # `Map` and `MutableMap` alias IDictionary), so the array stays exactly as stated.
 +"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IDictionary","args":[{"t":"fqn","name":"System.String"},{"t":"fqn","name":"System.String"}]}]
 -"System.Collections.Generic.IReadOnlyDictionary"
 # An already-read-only face is left alone — the rule adds the read-only sibling of a mutable face, never the
-# mutable sibling of a read-only one, and never a second copy of a face already stated.
+# mutable sibling of a read-only one.
 +"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.String"}]}]

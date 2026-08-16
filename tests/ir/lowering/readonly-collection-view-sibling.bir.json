@@ -46,6 +46,50 @@
       "methods": []
     },
     {
+      "name": "ProjectedSetFace",
+      "kind": "interface",
+      "abstract": true,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "System.Collections.Generic.ISet", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    },
+    {
+      "name": "GenericListFace",
+      "kind": "interface",
+      "abstract": true,
+      "vis": "public",
+      "base": null,
+      "typeParams": [ { "name": "E" } ],
+      "interfaces": [
+        { "t": "fqn", "name": "kotlin.collections.MutableList", "args": [ { "t": "tv", "scope": "type", "i": 0 } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    },
+    {
+      "name": "BothFacesAlreadyStated",
+      "kind": "interface",
+      "abstract": true,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "kotlin.collections.MutableList", "args": [ { "t": "fqn", "name": "kotlin.Int" } ] },
+        { "t": "fqn", "name": "kotlin.collections.List", "args": [ { "t": "fqn", "name": "kotlin.Int" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    },
+    {
       "name": "StringMapFace",
       "kind": "interface",
       "abstract": true,
