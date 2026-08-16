@@ -33,6 +33,21 @@ class KotlinCollectionSlotTests {
         assertEquals("[3, 8, 9]", b.render())
     }
 
+    // The reverse enumerator bridge across the boundary (#400): the producer's `GetEnumerator` and its module-private
+    // `dotkt$EnumeratorOverKotlinIterator` adapter live in the PRODUCER assembly, and this consumer reaches them
+    // through the ordinary CLR enumerable face — a `for`-in here, and a compiled stdlib body reached through the
+    // read-only `Collection<E>` slot.
+    @TestAttribute
+    fun crossModuleEnumerationGoesThroughTheProducersGetEnumerator() {
+        val b: TrackedBag<Int> = makeTrackedBag()
+        var sum = 0
+        for (e in b) sum += e
+        assertEquals(10, sum)
+        val readOnly: Collection<Int> = b
+        assertEquals(4, readOnly.count())
+        assertEquals("1,2,3,4", readOnly.joinToString(","))
+    }
+
     @TestAttribute
     fun crossModuleConcreteCallStillDispatchesToTheSameBody() {
         val b: TrackedBag<Int> = makeTrackedBag()

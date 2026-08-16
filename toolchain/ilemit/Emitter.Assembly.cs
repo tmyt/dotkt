@@ -437,9 +437,6 @@ sealed partial class Emitter
         // Iterate with the registry KEY (the BIR/full name, e.g. `p.Impl` for a packaged type, `Box` for a generic):
         // FindMethod looks the type up in `_types` by that key, NOT by `ti.TB.Name` (the *simple* name, which only
         // coincides with the key for a non-generic root-package type — so namespaced/generic types broke with KeyNotFound).
-        // C3b reverse bridge: now that the Kotlin Iterator interface's hasNext/next exist, emit the IEnumerator adapter
-        // (once) so qualifying classes' generated GetEnumerator can reference it. Emitter.ReverseBridge.cs.
-        EmitEnumeratorAdapter();
         foreach (var (typeKey, ti) in _types)
             if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("interfaces", out var ifs))
             {
@@ -490,9 +487,6 @@ sealed partial class Emitter
                     var spec = SigCanon(specFqn);            // the canonical overload/dedup key for this interface spec
                     var specName = specFqn.Name;
                     if (!ifSeen.Add(spec)) continue;
-                    // The reverse GetEnumerator bridge fires below on a `clr:`/`clrg:` collection interface (the form
-                    // bir2cir lowers Kotlin Set/MutableCollection/List/... to in every runnable build). ilemit holds NO
-                    // Kotlin-collection-name knowledge — the Kotlin↔CLR identity was consumed upstream.
                     // A canonicalized shared synthetic (`dotkt$CharSequence`) this app REFERENCES from the rt stdlib
                     // dll — NOT re-emitted here, so absent from `_types` — is an EXTERNAL interface: bind the class's
                     // overrides to it by reflection, exactly like a `clr:` interface, so the interface slots are wired
@@ -508,12 +502,6 @@ sealed partial class Emitter
                     if (!_types.ContainsKey(specName) || externalSynthIface)
                     {
                         var itype = externalSynthIface ? ResolveType(specName) : MapType(specFqn);
-                        // C3b reverse bridge: if this is a @Clr collection interface (IEnumerable<E>-derived) and the
-                        // class has only a Kotlin iterator(), synthesize GetEnumerator (handles the two overloads itself).
-                        // Self-guards (idempotent + only when THIS class declares its own iterator()): a grandchild that
-                        // overrides iterator() over an abstract Iterable base still gets its adapter, while a
-                        // non-overriding child no-ops and inherits the base's.
-                        GenerateGetEnumeratorIfNeeded(ti, itype);
                         // A SELF-REFERENTIAL constructed generic interface (e.g. `V : IComparable<V>`, V the emitted
                         // type) is a TypeBuilderInstantiation whose .GetMethods() throws. Enumerate the OPEN
                         // definition's methods and re-anchor each to the instantiation via TypeBuilder.GetMethod
@@ -543,7 +531,6 @@ sealed partial class Emitter
                         foreach (var im in ifaceMs)
                         {
                             // #370-residual: the local axis: wiring a MethodImpl on a type being built (#395)
-                            if (im.Name == "GetEnumerator") continue;   // handled by the reverse bridge above
                             // OVERLOADED body methods (e.g. the generic CompareTo(V) + the non-generic IComparable bridge
                             // CompareTo(object)) collide in the name-keyed ti.Methods — wiring the wrong one to the slot
                             // is a TypeLoad "signature ... do not match". Disambiguate by the interface method's
@@ -984,8 +971,6 @@ sealed partial class Emitter
 
         // Pass 6: bake types (base before derived). Enums were already baked up front.
         foreach (var ti in Ordered()) { if (!ti.IsEnum) { T($"pass6 createType: {ti.TB?.Name}"); ti.TB.CreateType(); } }
-        // The reverse-bridge adapter references the (now-baked) Kotlin Iterator type, so bake it after the user types.
-        if (_enumAdapterTB != null && !_enumAdapterTB.IsCreated()) _enumAdapterTB.CreateType();
         // The Unit-return delegate adapters forward to a void delegate type `ft` (a BCL Action or a canonical
         // KAction), so bake them AFTER the canonical delegates whose signatures they may reference.
         if (_unitAdapterTB != null && !_unitAdapterTB.IsCreated()) _unitAdapterTB.CreateType();
@@ -1232,14 +1217,6 @@ sealed partial class Emitter
         ti.MethodsBySig.TryAdd(DefinitionSigKey(logicalName, m), mb);
         ti.MethodsBySig.TryAdd(SigKey(logicalName, m), mb);
         ti.MethodNameCounts[name] = ti.MethodNameCounts.TryGetValue(name, out var nameCount) ? nameCount + 1 : 1;
-        // #139: record the bir2cir reverse-enumerator-bridge role marker (never a Kotlin name). A "hasNext"/"next" role
-        // identifies THE Kotlin iterator interface the adapter wraps; an "iterator" role is the this.iterator() a
-        // synthesized GetEnumerator calls. Read by Emitter.ReverseBridge.cs; no effect on emitted metadata.
-        if (m.TryGetProperty("clrBridgeRole", out var brJson) && brJson.GetString() is { } bridgeRole)
-        {
-            ti.BridgeRoles[bridgeRole] = mb;
-            if (bridgeRole is "hasNext" or "next") _iterBridgeIface = ti;
-        }
         _mparams[mb] = ps;   // MethodBuilder.GetParameters() throws pre-bake; record param types for call-site boxing
         DefineParamNames(mb, m);
         if (objOverride)

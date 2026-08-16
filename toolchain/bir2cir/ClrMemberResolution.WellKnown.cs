@@ -1,7 +1,7 @@
 // #370: the FIXED BCL members ilemit expands a Kotlin operation into.
 //
 // `enumValues()` becomes `Enum.GetValues`, string `+` becomes `String.Concat`, a runtime-classifier read becomes
-// `Object.GetType`, an emitted enumerator's slots are `IEnumerator`'s. The source wrote none of them —
+// `Object.GetType`. The source wrote none of them —
 // but "did the source write it" is not the question. The question is whether ilemit encodes an EXTERNAL member as a
 // CIL operand, and it does, in every one of these.
 //
@@ -30,18 +30,11 @@ static partial class ClrMemberResolution
         ("Object.Equals",         "System.Object",   "Equals",            new[] { "System.Object" }),
         ("Enum.GetValues",        "System.Enum",     "GetValues",         new[] { "System.Type" }),
         ("Enum.Parse",            "System.Enum",     "Parse",             new[] { "System.Type", "System.String" }),
-        ("Enumerable.GetEnumerator", "System.Collections.IEnumerable", "GetEnumerator", new string[0]),
-        ("Enumerator.MoveNext",   "System.Collections.IEnumerator", "MoveNext",    new string[0]),
-        ("Enumerator.Current",    "System.Collections.IEnumerator", "get_Current", new string[0]),
-        ("Enumerator.Reset",      "System.Collections.IEnumerator", "Reset",       new string[0]),
-        ("Disposable.Dispose",    "System.IDisposable", "Dispose",        new string[0]),
         ("Array.IndexOf",         "System.Array",    "IndexOf",           new[] { "System.Array", "System.Object" }),
         ("Comparable.CompareTo",  "System.IComparable", "CompareTo",      new[] { "System.Object" }),
         // The OPEN declarations of the generic collection slots. Their instantiation is over a type parameter of
         // a type the emitter synthesizes, which no document can name — but the DECLARATION is fixed, and
         // anchoring a named declaration onto an owner is mechanical rather than a second choice of member.
-        ("EnumeratorT.Current",   "System.Collections.Generic.IEnumerator", "get_Current", new string[0]),
-        ("EnumerableT.GetEnumerator", "System.Collections.Generic.IEnumerable", "GetEnumerator", new string[0]),
         ("ReadOnlyCollectionT.Count", "System.Collections.Generic.IReadOnlyCollection", "get_Count", new string[0]),
         // The rest of the generic collection faces a Kotlin collection implements. All open declarations, all
         // fixed: the emitter anchors each onto the type it is building.
@@ -58,7 +51,6 @@ static partial class ClrMemberResolution
     static readonly (string Role, string Owner, string[] Params)[] WellKnownCtors =
     {
         ("Object.ctor",                  "System.Object",                  new string[0]),
-        ("NotSupportedException.ctor0",  "System.NotSupportedException",   new string[0]),
         ("IndexOutOfRangeException.ctor","System.IndexOutOfRangeException", new[] { "System.String" }),
         // The OPEN `Nullable<T>..ctor(T)`. A coercion computes the constructed owner from the slot it is filling,
         // which no document states — but the declaration does not vary, and anchoring is mechanical.
@@ -427,38 +419,5 @@ static partial class ClrMemberResolution
         // example a marker interface or an interface whose slots are all inherited). Without the empty marker,
         // ilemit cannot distinguish that answer from a producer omission without reconstructing the hierarchy.
         if (slotSets.Count > 0) type["interfaceSlotRefs"] = slotSets;
-        StampEnumeratorAdapterCtor(type);
-    }
-
-    // The reverse enumerator bridge wraps this type's iterator in the shipped adapter. Its constructor is external
-    // exactly when this compilation does NOT emit the adapter, which is the ordinary local/external split: a stdlib
-    // build emits it and uses its own ConstructorBuilder, an app build links the shipped one and so must be given
-    // its identity. The trigger is the same structural fact the bridge itself keys on — an `iterator` bridge role —
-    // and the declaration is selected by the signature the local emission builds, never by position.
-    static void StampEnumeratorAdapterCtor(JsonObject type)
-    {
-        if (type.ContainsKey("enumeratorAdapterCtorRef")) return;
-        if (type["methods"] is not JsonArray methods
-            || methods.OfType<JsonObject>().FirstOrDefault(m =>
-                (m["clrBridgeRole"] as JsonValue)?.GetValue<string>() == "iterator") is not JsonObject iter)
-            return;
-        // The adapter is instantiated with the element the bridge actually wraps, which the iterator's own return
-        // type states: Iterator<E> -> adapter<E>. Reading it from the wrapped member rather than from a supertype
-        // list keeps the two in step whatever collection interface the type reached the bridge through.
-        if (TypeJson.Read(iter["ret"]) is not TypeNode.Fqn iterRet
-            || iterRet.Args is not { Length: 1 } elem)
-            return;
-        var open = _refs.PhysicalTypeNamed("dotkt$EnumeratorOverKotlinIterator", 1);
-        if (open == null) return;   // this compilation emits the adapter: the local branch needs no reference
-        var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
-            .Where(c => c.GetParameters() is { Length: 1 } ps
-                && ps[0].ParameterType.IsGenericType
-                && ps[0].ParameterType.GetGenericTypeDefinition().FullName == "kotlin.collections.Iterator`1")
-            .ToList();
-        if (ctors.Count != 1)
-            throw new InvalidOperationException(
-                $"bir2cir: the shipped enumerator adapter declares {ctors.Count} constructors taking "
-                + "kotlin.collections.Iterator`1, so the reverse bridge cannot be given one identity (#370)");
-        type["enumeratorAdapterCtorRef"] = MemberRefJson(ctors[0], MemberRefNode.Kinds.Ctor, open, elem);
     }
 }

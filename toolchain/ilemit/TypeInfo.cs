@@ -37,9 +37,6 @@ sealed class TypeInfo
     // name-only lookup is safe: with one member there is no overload to mis-select, with several the descriptor is
     // the only thing that picks the right one.
     public readonly Dictionary<string, int> MethodNameCounts = new();
-    // #139 reverse-enumerator-bridge markers: `clrBridgeRole` ("hasNext"/"next"/"iterator", bir2cir-stamped) -> the
-    // method builder, so the GetEnumerator adapter is driven off a semantic marker not the Kotlin FQN/member names.
-    public readonly Dictionary<string, MethodBuilder> BridgeRoles = new();
     public ConstructorBuilder Ctor;       // primary ctor (Ctors[0]) — convenience for the common single-ctor path
     public JsonElement CtorDef;
     public readonly List<ConstructorBuilder> Ctors = new();   // all ctors (primary + secondary)

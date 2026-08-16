@@ -51,9 +51,14 @@ declare -A EXPECTED_DISCOVERED=(
 	# +4 (#400): VarargSpreadConcatTests. A mixed vararg spread is the only source shape that builds through the
 	# spread accumulator, and the standard library writes none, so that construction had no gate coverage at all.
 	# One method per element shape its instantiation can take.
-	["tests/basic"]=429
+	# +6 (#400): ReverseEnumeratorBridgeTests. The GetEnumerator bridge is now ordinary CIR authored by bir2cir, and
+	# its two CLR faces (IEnumerable<E> and the non-generic IEnumerable) are separate slots no Kotlin declaration can
+	# fill; the non-generic one had no coverage at all.
+	["tests/basic"]=435
 	["tests/coroutines"]=158
-	["tests/roundtrip/consumer"]=74
+	# +1 (#400): the reverse enumerator bridge across the module boundary — the producer's GetEnumerator and its
+	# module-private adapter, reached from this consumer through the ordinary CLR enumerable face.
+	["tests/roundtrip/consumer"]=75
 	["tests/roundtrip/bidirectional/consumer"]=8
 	["tests/interop/consumer"]=139
 )
