@@ -7,6 +7,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **ilemit can resolve a member reference exactly, and every one in the corpus is proven to name what the
+  emitter links today (#370, step 9).** The new resolver looks the declaring type up in the assembly the
+  reference names, enumerates only what that type declares, and takes the one member whose signature — every
+  parameter, the return, by-ref, pointer, array shape, custom modifiers, calling convention — equals the one
+  stated. Nothing about it can choose: zero matches names the complete reference and stops, and more than one
+  is a defect in the identity rather than a cue to pick. Beside it, a transitional check resolves BOTH ways on
+  every build and refuses to continue if they name different members, which is what turns "the reference is
+  right" from an argument into a measurement over 33k references. It found two real defects on its first runs.
+
 - **A collection literal names the members it builds through, and two identities stop merging (#370, step 8).**
   `listOf(1, 2)` says what to BUILD; the constructor and the `Add` behind it were left for the emitter to find
   by name. Choosing `List`1` with a parameterless constructor and a one-argument `Add` is this layer's decision

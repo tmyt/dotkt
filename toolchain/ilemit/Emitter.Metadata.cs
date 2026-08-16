@@ -95,6 +95,7 @@ sealed partial class Emitter
                 : ClrRef(attr);
             var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
             var nctor = at.GetConstructor(argTypes);
+            ShadowParity(a, "memberRef", nctor, $"applied attribute [{attr}]");
             return TryAttribute(nctor, argTypes, args, namedArgs, attr);
         }
         // The attribute type must be emitted in THIS assembly (present in _types). A stdlib-only annotation that the app

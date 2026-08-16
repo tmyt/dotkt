@@ -1344,7 +1344,11 @@ sealed partial class Emitter
         if (instance) cands.AddRange(SafeInterfaces(type).SelectMany(Candidates));
         cands = cands.GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
         var hits = cands.Where(m => DeclaringTypeIdentity(m) == declaredOwner && MatchesCandidate(m)).ToList();
-        if (hits.Count == 1) return ConstructedMethod(hits[0], typeArgs);
+        if (hits.Count == 1)
+        {
+            ShadowParity(e, "memberRef", hits[0], $"clrGeneric {type?.FullName}.{name}");
+            return ConstructedMethod(hits[0], typeArgs);
+        }
         var desc = $"{type?.FullName}.{name}<{typeArgs.Length}>{sigEl}";
         if (hits.Count == 0)
             throw new InvalidOperationException(

@@ -329,6 +329,9 @@ sealed partial class Emitter
     {
         readonly Type _declaringType;
         readonly MethodInfo _definition;
+
+        /// <summary>The DECLARATION this signature view describes — what a comparison must look at.</summary>
+        internal MethodInfo Declaration => _definition;
         readonly Type[] _ownerArguments;
         readonly Type[] _methodArguments;
 
@@ -385,6 +388,9 @@ sealed partial class Emitter
     {
         readonly Type _declaringType;
         readonly ConstructorInfo _definition;
+
+        /// <summary>The DECLARATION this signature view describes — what a comparison must look at.</summary>
+        internal ConstructorInfo Declaration => _definition;
         readonly Type[] _ownerArguments;
 
         public SignatureConstructor(Type declaringType, ConstructorInfo definition)
@@ -425,6 +431,9 @@ sealed partial class Emitter
     {
         readonly Type _declaringType;
         readonly FieldInfo _definition;
+
+        /// <summary>The DECLARATION this signature view describes — what a comparison must look at.</summary>
+        internal FieldInfo Declaration => _definition;
         readonly Type[] _ownerArguments;
 
         public SignatureField(Type declaringType, FieldInfo definition)
