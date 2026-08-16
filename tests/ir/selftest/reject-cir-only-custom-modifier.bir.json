@@ -1,0 +1,29 @@
+{
+  "methods": [
+    {
+      "name": "probe",
+      "params": [
+        {
+          "name": "p",
+          "type": {
+            "t": "mod",
+            "req": true,
+            "m": {
+              "t": "fqn",
+              "name": "System.Runtime.InteropServices.InAttribute"
+            },
+            "of": {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            }
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "void"
+      },
+      "body": []
+    }
+  ]
+}

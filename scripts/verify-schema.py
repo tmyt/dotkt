@@ -20,7 +20,15 @@
 # method's body (validated here). See spec §7.
 import json, sys, glob, os
 
-TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef"}
+TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef", "ptr", "mod"}
+
+# #370: the document keys that carry a scalar `memberRef` — ONE complete, already-resolved reference to a
+# member of another assembly. Frozen like KINDS/TYPE_TAGS, so a new carrier key is a deliberate vocabulary
+# change. `declaringType` is the shape's discriminator (no other document shape has it), which is what
+# catches a parallel member-identity spelling invented under some other key.
+MEMBER_REF_KEYS = {"memberRef"}
+
+MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
 # Keys that legitimately hold a bare STRING scalar: format vocabulary (k/t tags, enums),
 # object-language NAME payloads, and the documented owner/member/attribute reference
@@ -81,6 +89,9 @@ STR_OK = {
     "attrAssembly",                             # exact external custom-attribute declaration assembly identity;
                                                 # disambiguates private same-FQN compiler-synthesized lookalikes. This
                                                 # names a metadata scope, not a document value-type slot.
+    "assembly", "callingConvention",            # #370 memberRef: the PHYSICAL defining-assembly simple name the
+                                                # emitted reference must be scoped to, and the HASTHIS bit. A metadata
+                                                # scope and an enum — validated structurally in member_ref.
     "fileClass", "fileClassFQN", "pkg",         # file-class / package identifiers
     "f",                                        # #112 P2: the decl-level source-position FILE path (pos.{f,l,c});
                                                 # `l`/`c` are ints. A diagnostics-only breadcrumb, NOT a type slot.
@@ -240,6 +251,7 @@ class V:
             "fqn": ["name"], "tv": ["scope", "i"], "fn": ["suspend", "ret", "params"],
             "star": [],
             "nullable": ["of"], "oblivious": ["of"], "array": ["elem"], "byRef": ["of"],
+            "ptr": ["of"], "mod": ["req", "m", "of"],
         }[t]
         for r in req:
             if r not in o:
@@ -265,8 +277,108 @@ class V:
             # it is not a CLR value/delegate slot and intentionally keeps the pure Kotlin fn shape.
             if f.endswith(".cir.json") and clr is None and "SuspendFnType" not in path and "suspendFnType" not in path:
                 self.err(f, path, "ilemit-facing CIR fn is missing required fn.clr delegate family")
+        if t == "array" and "rank" in o:
+            # rank names the ECMA multi-dimensional ARRAY; the SZ array omits it. A serialized 1 would be a
+            # second spelling of the vector, which is exactly the ambiguity the key exists to remove.
+            if not isinstance(o["rank"], int) or isinstance(o["rank"], bool) or o["rank"] < 2:
+                self.err(f, path, f"array.rank must be an integer >= 2 (an SZ array omits it), got {o['rank']!r}")
+        if t == "mod" and not isinstance(o.get("req"), bool):
+            self.err(f, path, f"mod.req must be bool (true=modreq, false=modopt), got {o.get('req')!r}")
         if t == "star" and f.endswith(".cir.json"):
             self.err(f, path, "Kotlin star projection must be lowered by bir2cir before CIR")
+        # The three ECMA signature carriers are bir2cir-authored CIR facts: Kotlin source cannot spell a
+        # pointer, a multi-dimensional array or a custom modifier, so one in kotc's BIR is a producer defect.
+        if f.endswith(".bir.json"):
+            if t in ("ptr", "mod"):
+                self.err(f, path, f"type {t!r} is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
+            if t == "array" and "rank" in o:
+                self.err(f, path, "array.rank is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
+        # …and they belong to a MEMBER REFERENCE, nowhere else. Ordinary type slots are rewritten by many
+        # lowering passes that reconstruct an array as a vector and know nothing of pointers or modifiers, so
+        # one of these outside a reference would be silently flattened — re-creating the very collisions the
+        # carriers exist to prevent. Confining them to the reference keeps those passes correct by construction.
+        if (t in ("ptr", "mod") or (t == "array" and "rank" in o)) and "/memberRef" not in path:
+            carrier = "array.rank" if t == "array" else t
+            self.err(f, path, f"type {carrier} may only appear inside a memberRef signature, not in an ordinary type slot")
+        # The other direction: a member reference is a PHYSICAL identity, so the Kotlin type-system facts have
+        # no place in one. `oblivious` is a nullability annotation the CLR signature does not carry, and `star`
+        # is a Kotlin projection; either inside a signature would be a second spelling of a physical shape, and
+        # two spellings of one member are two members to a consumer that compares them exactly.
+        if "/memberRef" in path and t in ("oblivious", "star"):
+            self.err(f, path, f"type {t!r} is a Kotlin type-system fact and has no place in a physical member signature")
+
+    def member_ref_carrier(self, f, path, key, val):
+        """A frozen memberRef carrier key holds ONE reference — never a list of them.
+
+        A candidate SET reaching a consumer is the failure mode this whole shape exists to remove: whoever
+        received it would have to choose, and choosing is the decision that belongs to the producer. Each
+        element of such a list validates perfectly well on its own, so nothing else here would notice.
+        """
+        if not isinstance(val, dict):
+            self.err(f, path, f"{key} must be ONE member reference object, got {type(val).__name__} "
+                              "(a candidate set is member selection deferred downstream)")
+            return
+        # NOTE for a later step: a carrier that legitimately holds SEVERAL references (a MethodImpl list, say)
+        # is a different shape and needs its own arm here — each element one reference, the list itself not a
+        # candidate set. Until such a carrier is registered, a list under any carrier is the smuggling above.
+        self.member_ref(f, path, val)
+        if f.endswith(".bir.json"):
+            self.err(f, path, "memberRef is a bir2cir-authored resolved member identity and must not appear in kotc BIR")
+
+    def member_ref(self, f, path, o):
+        """#370: a memberRef must be a COMPLETE member identity — the point of the shape (spec §2.2.2).
+
+        Every field here exists because some consumer would otherwise have to reconstruct it, and
+        reconstruction is member SELECTION. So an incomplete reference is refused at the wire rather than
+        left to fail as a lookup that found nothing (or, worse, found the wrong member).
+        """
+        kind = o.get("kind")
+        if kind not in MEMBER_REF_KINDS:
+            self.err(f, path, f"memberRef.kind={kind!r} is not in {sorted(MEMBER_REF_KINDS)}")
+        for required in ("kind", "assembly", "declaringType", "name", "genericArity", "returnType"):
+            if required not in o:
+                self.err(f, path, f"memberRef missing required field {required!r}")
+        if kind != "ctor" and o.get("name") == ".ctor":
+            self.err(f, path, f"memberRef.name `.ctor` names a constructor, but kind is {kind!r}")
+        allowed = {"kind", "assembly", "declaringType", "name", "genericArity", "returnType",
+                   "callingConvention", "parameterTypes"}
+        for extra in set(o) - allowed:
+            self.err(f, path, f"memberRef carries unknown field {extra!r}")
+        if not isinstance(o.get("assembly"), str) or not o["assembly"]:
+            self.err(f, path, "memberRef.assembly must be a non-empty simple assembly name")
+        declaring = o.get("declaringType")
+        if not isinstance(declaring, dict) or declaring.get("t") != "fqn":
+            self.err(f, path, "memberRef.declaringType must be an fqn Type node")
+        elif "args" in declaring and not declaring["args"]:
+            # One spelling per shape: a non-generic declarer OMITS args. An empty list would be a second way
+            # to say the same thing, and two spellings of one identity are two identities to a consumer that
+            # compares them.
+            self.err(f, path, "memberRef.declaringType must omit `args` when the declarer is non-generic, not carry an empty list")
+        if not isinstance(o.get("name"), str) or not o["name"]:
+            self.err(f, path, "memberRef.name must be a non-empty metadata member name")
+        arity = o.get("genericArity")
+        if not isinstance(arity, int) or isinstance(arity, bool) or arity < 0:
+            self.err(f, path, f"memberRef.genericArity must be a non-negative integer, got {arity!r}")
+        elif arity > 0 and kind != "method":
+            self.err(f, path, f"memberRef.genericArity must be 0 for kind {kind!r} (only a method has its own generic parameters)")
+        if not isinstance(o.get("returnType"), dict) or "t" not in o["returnType"]:
+            self.err(f, path, "memberRef.returnType must be a Type node")
+        if kind == "field":
+            for absent in ("callingConvention", "parameterTypes"):
+                if absent in o:
+                    self.err(f, path, f"memberRef.{absent} must be absent for a field")
+        elif kind in MEMBER_REF_KINDS:
+            if o.get("callingConvention") not in ("static", "instance"):
+                self.err(f, path, f"memberRef.callingConvention={o.get('callingConvention')!r} must be `static` or `instance`")
+            if not isinstance(o.get("parameterTypes"), list):
+                self.err(f, path, f"memberRef.parameterTypes must be a Type-node array for kind {kind!r}")
+        if kind == "ctor":
+            if o.get("name") != ".ctor":
+                self.err(f, path, f"memberRef.name for a ctor must be `.ctor`, got {o.get('name')!r}")
+            if o.get("callingConvention") != "instance":
+                self.err(f, path, "a ctor memberRef must be `instance`")
+            if o.get("returnType") != {"t": "fqn", "name": "void"}:
+                self.err(f, path, "a ctor memberRef must return void")
 
     def plan_scope(self, f, o, path, bound):
         """§2.7 NESTING RULE: every `bindRef` resolves OUTWARD to an enclosing plan's binding.
@@ -322,6 +434,20 @@ class V:
                 self.err(f, path, f"object carries BOTH k={o.get('k')!r} and t={o.get('t')!r} (node/type roles are disjoint)")
             elif "t" in o:
                 self.type_node(f, path, o)
+            # #370, two independent triggers, because either one alone leaves a hole. The KEY is authoritative:
+            # whatever sits under a frozen carrier is a member reference and is checked as one, so a reference
+            # that dropped a required field cannot escape validation by no longer looking like one. And
+            # `declaringType` — which no other document shape has — catches a resolved identity smuggled in
+            # under a key nobody registered, i.e. a second member-identity vocabulary growing beside this one.
+            for carrier_key in MEMBER_REF_KEYS & set(o):
+                self.member_ref_carrier(f, path + "/" + carrier_key, carrier_key, o[carrier_key])
+            if "declaringType" in o:
+                carrier = path.rsplit("/", 1)[-1].split("[")[0]
+                if carrier not in MEMBER_REF_KEYS:
+                    self.member_ref(f, path, o)
+                    self.err(f, path, f"a resolved member identity must ride on a frozen memberRef carrier key, not {carrier!r}")
+                    if f.endswith(".bir.json"):
+                        self.err(f, path, "memberRef is a bir2cir-authored resolved member identity and must not appear in kotc BIR")
             if isinstance(o.get("k"), str):
                 k = o["k"]
                 self.kinds_seen.add(k)
