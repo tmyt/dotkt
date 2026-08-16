@@ -111,6 +111,22 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **The read-only view of a mutable collection is stated in CIR, not inferred by the emitter (#400).** A Kotlin
+  `MutableList<E>` IS-A `List<E>`, but the CLR faces they lower to — `IList<T>` and `IReadOnlyList<T>` — are unrelated
+  interfaces, so an emitted type's read-only view is real only when the type declares it. `ilemit` used to notice a
+  mutable collection face on a TypeDef and add the read-only sibling itself, which is a decision about what a Kotlin
+  declaration becomes on the CLR and therefore `bir2cir`'s. `bir2cir` now states the sibling (`IList`→`IReadOnlyList`,
+  `ICollection`/`ISet`→`IReadOnlyCollection`) in the `interfaces` array of every type that names the mutable face —
+  classes and interfaces alike — and `ilemit` emits one InterfaceImpl row per stated entry and infers nothing. The
+  relation lives in one shared table (`toolchain/bir-common/CollectionViewFaces.cs`), and the IR-sanity gate both
+  tools run now REFUSES a document that states a mutable face without its read-only view, so an omission fails at the
+  CIR boundary instead of as an `InvalidCastException` in an unrelated caller. The emitted InterfaceImpl rows are
+  identical, in the same order. `bir2cir` authors no MethodImpl for the sibling — its members are the ones the mutable
+  face already forced onto the type, which the CLR binds implicitly — but ilemit's own still-implicit interface-slot
+  wiring now sees the stated face and emits a redundant explicit MethodImpl binding the read-only `get_Item` slot to
+  the same public method that already satisfied it (four rows in the runtime stdlib). That row is semantically
+  identical to the implicit binding it restates, projects and re-consumes identically through `dll2klib` and a
+  cross-module build, and disappears when the emitter's implicit wiring does.
 - **A collection literal's constructed BCL type now comes from the reference that names its constructor (#400).**
   `newList`/`newSet`/`newMap`/`spreadConcat` already carried the exact constructor and accumulator `bir2cir` chose,
   but `ilemit` still built the result type by naming `List`1`/`HashSet`1`/`Dictionary`2` itself — a second, parallel

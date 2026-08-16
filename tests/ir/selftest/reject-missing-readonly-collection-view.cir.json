@@ -1,0 +1,21 @@
+{
+  "fileClass": "SelftestKt",
+  "fields": [],
+  "methods": [],
+  "types": [
+    {
+      "name": "MutableFaceOnly",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "System.Collections.Generic.IList", "args": [ { "t": "fqn", "name": "System.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    }
+  ]
+}

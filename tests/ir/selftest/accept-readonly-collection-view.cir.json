@@ -1,0 +1,38 @@
+{
+  "fileClass": "SelftestKt",
+  "fields": [],
+  "methods": [],
+  "types": [
+    {
+      "name": "BothFaces",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "System.Collections.Generic.IList", "args": [ { "t": "fqn", "name": "System.String" } ] },
+        { "t": "fqn", "name": "System.Collections.Generic.IReadOnlyList", "args": [ { "t": "fqn", "name": "System.String" } ] },
+        { "t": "fqn", "name": "System.Collections.Generic.ICollection", "args": [ { "t": "fqn", "name": "System.String" } ] },
+        { "t": "fqn", "name": "System.Collections.Generic.IReadOnlyCollection", "args": [ { "t": "fqn", "name": "System.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    },
+    {
+      "name": "MapFaceOwesNothing",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "System.Collections.Generic.IDictionary", "args": [ { "t": "fqn", "name": "System.String" }, { "t": "fqn", "name": "System.String" } ] }
+      ],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": []
+    }
+  ]
+}

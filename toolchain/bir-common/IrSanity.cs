@@ -26,6 +26,10 @@
 //   7. STAMP AGREEMENT — a node's `sty` must not name a DIFFERENT TYPE than the `ret`/`dynRet` beside it (spec §2.7:
 //      a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`). See CheckStampAgreement for the
 //      accepted-equivalence set and why it is what it is.
+//   8. COLLECTION VIEW COMPLETENESS — a type stating a MUTABLE collection face also states its READ-ONLY sibling
+//      (bir-common/CollectionViewFaces.cs). This one is about a TYPE's interface set rather than a body, so it runs
+//      once per declaration instead of per scope. It is CIR-only in effect: the relation is over the LOWERED BCL
+//      faces, and a document still speaking Kotlin collection names cannot trip it.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
@@ -48,11 +52,11 @@ public sealed class IrSanityException : Exception
 // counts as a declaration" rather than growing a second walker that could disagree with this one.
 public enum IrSanityChecks
 {
-    /// <summary>Checks 1-7 — the POST-LOWERING CIR gate (bir2cir on its CIR output; ilemit at EmitAssembly).</summary>
+    /// <summary>Checks 1-8 — the POST-LOWERING CIR gate (bir2cir on its CIR output; ilemit at EmitAssembly).</summary>
     All,
     /// <summary>
     /// Check 7 alone — the spec §2.7 `sty` chokepoint, run by bir2cir on the fully-passed BIR while the stamp still
-    /// exists (BirTypeLowering strips it on the way to CIR). Checks 1-6 are CIR invariants and several of them do not
+    /// exists (BirTypeLowering strips it on the way to CIR). Checks 1-6 and 8 are CIR invariants and several of them do not
     /// hold of a pre-lowering tree, so this mode runs the one check that is meaningful there and nothing else.
     /// </summary>
     StyStampsOnly,
@@ -73,8 +77,39 @@ public static class IrSanity
                 {
                     var tn = t.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
                     var iface = t.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "interface";
+                    if (which == IrSanityChecks.All) CheckCollectionViewFaces(tn, t);
                     CheckContainer(tn, t, iface, which);
                 }
+        }
+    }
+
+    // Check 8 — a type's stated `interfaces` must be closed under the read-only collection view. The read-only face
+    // of a mutable collection is not derived by the CLR (`IList<T>` does not inherit `IReadOnlyList<T>`), so a
+    // Kotlin value flowing from a mutable type into a read-only slot reaches a castclass that succeeds only if the
+    // type declares that face. bir2cir states it; a document arriving without it would emit a type whose read-only
+    // view exists in Kotlin and not on the CLR, and the failure would surface as an InvalidCastException in an
+    // unrelated caller. Refuse it at the boundary instead.
+    static void CheckCollectionViewFaces(string owner, JsonElement type)
+    {
+        if (!type.TryGetProperty("interfaces", out var ifaces) || ifaces.ValueKind != JsonValueKind.Array) return;
+        var stated = new List<TypeNode.Fqn>();
+        foreach (var i in ifaces.EnumerateArray())
+            // Read exactly as tolerantly as the emitter does (ilemit's ReadFqn): an interface entry may be a legacy
+            // STRING for a canonical synthetic, and TypeNode.Read throws on anything that is not a `{t:…}` object.
+            // Throwing here would leave the emitter's boundary reporting a raw FormatException rather than a sanity
+            // diagnostic, and would make a check whose policy is never to false-positive the loudest thing in the
+            // file. Every tolerated shape is arg-less, so it obliges no sibling either way.
+            if (i.ValueKind == JsonValueKind.Object && i.TryGetProperty("t", out var disc)
+                && disc.ValueKind == JsonValueKind.String && TypeNode.Read(i) is TypeNode.Fqn f)
+                stated.Add(f);
+        foreach (var face in stated)
+        {
+            var sibling = CollectionViewFaces.ReadOnlySibling(face);
+            if (sibling == null || stated.Contains(sibling)) continue;
+            throw new IrSanityException(owner,
+                $"type states the mutable collection face '{TypeNode.ToJson(face)}' without its read-only view "
+                + $"'{TypeNode.ToJson(sibling)}'; the read-only face is a CLR representation decision bir2cir must "
+                + "state (bir-common/CollectionViewFaces.cs), not one the emitter may infer");
         }
     }
 

@@ -71,6 +71,13 @@ head of `EmitAssembly`, ahead of any resolution.
   deleted. The arms a fixture genuinely pins are the vocabulary table, `kotlin.Nothing`, and the two above.
   Note the CHOKEPOINT for this invariant is not here — `sty` is stripped on the way to CIR, so bir2cir checks it on
   the pre-lowering BIR and `tests/ir/lowering/reject-stale-sty-after-passes` is what pins that call.
+- The **collection-view completeness** invariant (check 8) — `reject-missing-readonly-collection-view` states
+  `IList<String>` and nothing else, which is the CIR of a type whose Kotlin read-only view has no CLR face to land
+  on, so a caller passing it into a `List<String>` slot would fail at an `InvalidCastException` far from here.
+  `accept-readonly-collection-view` is the same type with both faces stated, plus a map face (BCL
+  `IDictionary<K,V>` has no read-only twin in the lattice DotKt uses) that must stay untouched. Neither half has a
+  natural witness: bir2cir states the sibling on every type that owes one, so the refusal never occurs in the
+  corpus, and a check that had stopped checking would leave the acceptance green.
 - The **width of that exemption**, which is the easy thing to get wrong — `reject-unlowered-suspension-in-ctor`
   and `reject-unlowered-suspension-in-static-init` carry `mods.suspend` on the constructor and on the
   containing type, and must STILL be refused. ilemit's suspend guard lives in `EmitMethodBody` alone: it emits

@@ -215,6 +215,19 @@ private forwarding body with `clrInterfaceSlotBridge:true`, and ilemit maps that
 When otherwise-identical generic slots differ by constraints, the MethodImpl descriptor also carries the exact
 `typeParams` declarations; ilemit compares that resolved vector opaquely and does not reinterpret Kotlin bounds.
 
+A declaration's `interfaces` array is likewise the COMPLETE physical interface set of the emitted TypeDef: ilemit
+emits one InterfaceImpl row per entry, in the stated order, and adds no interface of its own to a declared type.
+(The emitter still synthesizes one adapter TYPE with interfaces of its own — the reverse enumerator bridge — which
+is a separate obligation to move into ordinary CIR declarations.) A face the CLR representation
+of a Kotlin declaration owes but the source never named is bir2cir's to state. The standing case is the read-only
+view of a mutable collection: Kotlin's `MutableList<E>` IS-A `List<E>`, but their lowered faces `IList<T>` and
+`IReadOnlyList<T>` are unrelated CLR interfaces, so bir2cir adds the read-only sibling (`IList`→`IReadOnlyList`,
+`ICollection`/`ISet`→`IReadOnlyCollection`) to every type that names the mutable one. The sibling obliges no
+MethodImpl descriptor of its own: its members are the same names and signatures the mutable face already forced onto
+the type, and the CLR binds an interface slot to a matching public virtual method implicitly, per interface. (ilemit's
+own interface-slot wiring — the separate #400 obligation to delete it — does currently emit a redundant explicit
+MethodImpl for such a slot; it names the same body the implicit binding would have selected.)
+
 Fake-override resolution remains a frontend decision. kotc records a concrete selected declaration on an interface
 fake override as `inheritedImplementation`, and records each default property accessor inherited by a class in
 `inheritedDefaultAccessors` together with its class-frame Kotlin signature. These selected identities include the
