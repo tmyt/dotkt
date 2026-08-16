@@ -7,6 +7,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **The Kotlin-only mutable-collection members have a physical CLR representation, and runtime-reflection dispatch is
+  gone (#400).** `MutableCollection<E>` is `ICollection<E>` and `MutableList<E>` is `IList<E>`, neither of which has a
+  slot for Kotlin's `removeAll`/`retainAll`/`addAll(elements)`/`addAll(index, elements)`. `removeAll` and `retainAll`
+  used to reach a `clrDynInstance` node that `ilemit` emitted as `recv.GetType().GetMethod(name).Invoke(recv, args)` —
+  a name-only runtime lookup returning null, i.e. an opaque `NullReferenceException`, for every BCL-backed receiver
+  (`mutableListOf`, `HashSet`) — and `addAll` reached an unconditional static helper that silently bypassed a Kotlin
+  implementer's override. Both are replaced by one contract: `bir2cir` routes all four to
+  `kotlin.collections.ClrCollectionDefaults` dispatchers, and a new pass (`KotlinCollectionSlotSynthesis`, the mirror
+  of `CollectionBclSlotSynthesis`) gives every emitted Kotlin class that declares one of them the compiler-owned
+  `DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots`/`KotlinMutableListSlots` interface plus an exact
+  `clrInterfaceImpls` MethodImpl bridge, so an override is reached by ordinary virtual dispatch — locally and
+  cross-module. The slot interfaces are non-generic and their element-collection parameter is erased to `Any`: a
+  constructed `Slots<E>` test would be defeated by an element type erased to `System.Object` at the call site and
+  would then silently skip the override. `removeAll` now honours Kotlin's contract for duplicates, and the
+  self-aliasing forms (`c.removeAll(c)`, `c.retainAll(c)`, `c.addAll(c)`, `l.addAll(i, l)`) are defined; see
+  `docs/dotkt-semantics.md` §5c-quater.
+
 - **External members cross CIR as one complete scalar identity (#370).** `bir2cir` now serializes every external
   call, constructor, delegate target, MethodImpl target, field/accessor, attribute constructor, and compiler-authored
   operand as a `memberRef` containing the physical assembly, exact declaring instantiation, metadata name, generic
@@ -76,6 +93,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   member on the subclass so `Sub.Shared` resolves; the CLR does not inherit statics into a derived TypeDef, so
   emitting one produced a second, unrelated member — and, once it was correctly marked static, one that was
   simultaneously static and an override. The subclass now emits nothing for it and `Sub.Shared` is `Base.Shared`.
+
+### Removed
+
+- **The runtime-reflection dispatch layer (#400).** Deleted with its last producer: the `clrDynInstance` CIR node kind
+  (and its entries in `scripts/verify-schema.py`), `bir2cir`'s interface-owner-miss catch that minted it, `ilemit`'s
+  `EmitDynamicCall`/`OwnerHasClrInterface` emitter, the `callInstance` `dyn:true` branch, and the catch-based
+  static-resolution fallback — an unresolvable member is now a hard error at the layer that dropped it. The
+  `Type.GetMethod` and `MethodInfo.Invoke` well-known roles are gone from all three lockstep tables. The
+  `@ClrIntrinsicAsDynamic` annotation is removed with its `ReferenceMetadataIndex` arm and its `AGENTS.md`
+  undefined-behavior entry: it had zero use sites and there was no producer anywhere of the `dyn:true` flag it was
+  meant to set, and an instrumented emitter run over the whole corpus recorded zero firings of it and of the catch
+  fallback.
 
 ### Changed
 
