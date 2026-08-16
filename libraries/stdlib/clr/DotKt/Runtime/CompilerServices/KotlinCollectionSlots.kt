@@ -32,20 +32,24 @@ package DotKt.Runtime.CompilerServices
 // test cannot miss. The bridge re-establishes the exact type by casting back to the implementer's own element
 // instantiation, so a genuinely mismatched argument fails LOUD (InvalidCastException) instead of silently.
 //
-// These are compiler vocabulary, not a user-facing API: user code must not implement them directly (the compiler
-// authors every implementation). They are public because bir2cir emits `InterfaceImpl` rows referencing them from
-// OTHER assemblies, which requires CLR-public accessibility.
+// These are compiler vocabulary, not a user-facing API. They are `internal`, which makes them UNNAMEABLE from a
+// user module's Kotlin source, while still being emitted as CLR-PUBLIC TypeDefs — kotc emits no `vis` field for an
+// interface declaration, so ilemit gives every interface `TypeAttributes.Public` — which is what bir2cir needs to
+// author `InterfaceImpl` rows referencing them from OTHER assemblies. dll2klib additionally drops the compiler's
+// reserved `DotKt.Runtime.CompilerServices` namespace from a projected type's Kotlin supertype list, so a consumer
+// never sees one either. `kotlin.collections.ClrCollectionDefaults` is in this same module and resolves them
+// normally.
 
 /** The Kotlin-only `MutableCollection` slots that `System.Collections.Generic.ICollection<E>` does not carry. */
-public interface KotlinMutableCollectionSlots {
+internal interface KotlinMutableCollectionSlots {
     /** Physical carrier of `MutableCollection.removeAll`; [elements] is the receiver's own `Collection<E>`. */
-    public fun dotktRemoveAll(elements: Any): Boolean
+    fun dotktRemoveAll(elements: Any): Boolean
 
     /** Physical carrier of `MutableCollection.retainAll`; [elements] is the receiver's own `Collection<E>`. */
-    public fun dotktRetainAll(elements: Any): Boolean
+    fun dotktRetainAll(elements: Any): Boolean
 
     /** Physical carrier of `MutableCollection.addAll`; [elements] is the receiver's own `Collection<E>`. */
-    public fun dotktAddAll(elements: Any): Boolean
+    fun dotktAddAll(elements: Any): Boolean
 }
 
 /**
@@ -56,7 +60,7 @@ public interface KotlinMutableCollectionSlots {
  * `dotktAddAll` as second declaration slots and an implementer that satisfied only the derived ones would fail to
  * load. A `MutableList` implementer carries BOTH interfaces, each with its own exact MethodImpl rows.
  */
-public interface KotlinMutableListSlots {
+internal interface KotlinMutableListSlots {
     /** Physical carrier of `MutableList.addAll(index, elements)`; [elements] is the receiver's own `Collection<E>`. */
-    public fun dotktAddAllAt(index: Int, elements: Any): Boolean
+    fun dotktAddAllAt(index: Int, elements: Any): Boolean
 }

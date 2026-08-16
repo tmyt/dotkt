@@ -1865,6 +1865,15 @@ internal sealed class AssemblyScanner
                 // bridge. Only the generic face has Kotlin meaning.
                 if (signatures.IsKotlinComparable(supertype) && supertype.Argument.Count == 0)
                     continue;
+                // A compiler-owned physical slot carrier is not a Kotlin supertype. `DotKt.Runtime.CompilerServices`
+                // is the compiler's reserved namespace, so an interface implemented from it exists only to give a
+                // Kotlin member a CLR slot the mapped BCL face lacks — e.g. the KotlinMutableCollectionSlots carrier
+                // for `removeAll`/`retainAll`/`addAll`. Its members are private MethodImpl bridges, dropped from the
+                // projection as non-public, so surfacing the interface would hand the consumer a supertype whose
+                // abstract members nothing appears to implement and would make a cross-module subclass of an open
+                // producer collection class unresolvable. A reserved-namespace rule, not a list of type names.
+                if (signatures.IsCompilerOwnedSlotCarrier(supertype))
+                    continue;
                 result.Supertype.Add(supertype);
             }
             if (result.Supertype.Count == 0)
@@ -5460,6 +5469,12 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
 
     public bool IsKotlinComparable(KType type) =>
         type.HasClassName && _names.ClassName(type.ClassName) == "kotlin.Comparable";
+
+    // True for a type in the compiler's reserved `DotKt.Runtime.CompilerServices` namespace: a physical slot carrier
+    // bir2cir attaches to an emitted TypeDef, never part of the Kotlin surface a consumer resolves against.
+    public bool IsCompilerOwnedSlotCarrier(KType type) =>
+        type.HasClassName && _names.ClassName(type.ClassName) is string fqn
+        && fqn.StartsWith(MetadataAttributes.DotKtNs, System.StringComparison.Ordinal);
 
     public KType SuspendResult(KType physical)
     {
