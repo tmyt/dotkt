@@ -112,7 +112,9 @@ static class UnsafeAccessorLowering
                 obj.Remove("memberOwnerTypeParams");
                 obj.Remove("memberMethodTypeParams");
                 obj.Remove("memberReturnType");
-                obj.Remove("memberSignature");
+                // Every `new` carries the frontend-selected constructor declaration signature.  Same-unit
+                // constructor binding consumes it after physical lowering; it is not an UnsafeAccessor-only fact.
+                if (Str(obj["k"]) != "new") obj.Remove("memberSignature");
                 foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList()) Walk(child);
             }
             else if (node is JsonArray array)
@@ -672,7 +674,6 @@ static class UnsafeAccessorLowering
         access.Remove("memberVisibility");
         access.Remove("memberOwnerTypeParams");
         access.Remove("memberMethodTypeParams");
-        access.Remove("memberSignature");
         if (TypeJson.Read(access["type"]) is not TypeNode.Fqn ownerType) return;
         hosts.TryGetValue(ownerType.Name, out var targetHost);
         if (targetHost != null && DirectPrivateAccessIsValid(caller.Name, targetHost.Name, hosts)) return;

@@ -112,6 +112,9 @@ static class BirTypeLowering
     {
         // signature positions (the original TypeProperties set)
         "type", "ownerType", "calleeOwner", "ret", "suspendRet", "base", "interfaces", "argTypes", "delegationSig",
+        // BIR-only exact constructor declaration vector.  UnsafeAccessor consumes it when it rewrites the edge;
+        // otherwise same-unit constructor binding consumes its physically-lowered form after this pass.
+        "memberSignature",
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
         "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",

@@ -113,7 +113,9 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	(t.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol)?.let { tp ->
 		// While splicing an `inline fun`'s body, its OWN type params are substituted with the call's type arguments.
 		typeArgSubst[tp.owner]?.let { return it }
-		return tvOf(tp.owner)
+		val lexical = tvOf(tp.owner)
+		liftedTypeArgSubst[lexical.scope to lexical.i]?.let { return it }
+		return lexical
 	}
 	// The intrinsic `kotlin.clr.ClrRef<T>` -> `byRef T` (a managed reference).
 	if (t.classFqName?.asString() == "kotlin.clr.ClrRef")

@@ -281,7 +281,7 @@ internal fun BirEmitter.inlineReceiverParts(
 	// bir2cir can substitute the payload's `tv{scope:type,i}` (the i-th type param of the callee's OWNING generic class)
 	// with the i-th carried arg — exactly as it substitutes `tv{scope:method,i}` from the node's `typeArgs`. Without
 	// this, a CROSS-class same-module generic-owner member inline splice (this emitter has no same-class restriction)
-	// leaves `tv{scope:type}` unbound and ilemit's ResolveTv silently falls back to `object` — a value-type miscompile.
+	// leaves `tv{scope:type}` unbound and the strict CIR emitter rejects the foreign generic frame.
 	// REUSE `birType` (not raw `IrSimpleType.arguments`) so the args are BYTE-CONSISTENT with every other type on the
 	// wire: star -> `kotlin.Any`, nullable markers preserved, and the FLATTENED enclosing+own type-param order that
 	// `tvOf`'s scope:type index (`innerEnclosingTypeParams(owner).size + param.index`) expects.

@@ -59,9 +59,16 @@ sealed partial class Emitter
     static readonly HashSet<string> PrimShorthand = new(StringComparer.Ordinal)
     { "void", "object", "string", "int", "long", "short", "sbyte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "byte" };
 
-    // A generic TYPE ARGUMENT of `System.Void` is illegal in .NET; Kotlin `Unit`/`Nothing` map to `void` for a return
-    // position but as a type arg (`Continuation<Unit>`, `Map<K, Unit>`, …) they must be a real type -> `object`.
-    Type MapArg(string t) { var r = MapType(t); return r == Bcl("System.Void") ? Bcl("System.Object") : r; }
+    // Generic arguments must already be physical value types in CIR. `System.Void` is not a legal CLR generic
+    // argument; converting it to object here would reconstruct the Kotlin Unit/Nothing representation.
+    Type MapArg(string t) => RequireGenericArgument(MapType(t), t);
+
+    Type RequireGenericArgument(Type type, object source)
+    {
+        if (type == Bcl("System.Void"))
+            throw new NotSupportedException($"invalid CIR generic argument `System.Void` from {source}");
+        return type;
+    }
 
     Type GenericType(string spec)
     {
@@ -69,11 +76,8 @@ sealed partial class Emitter
         var open = spec.Substring(0, br);
         var inner = spec.Substring(br + 1, spec.Length - br - 2);
         var args = SplitTopLevel(inner).Select(MapArg).ToArray();
-        // A Kotlin generic type @ClrIntrinsic-aliased to a NON-generic BCL type (e.g. Comparator<T> ->
-        // System.Collections.IComparer) still carries the Kotlin type args in the spec, but the BCL target has no `N
-        // arity. If `open`N` doesn't exist, fall back to the non-generic type (drop the args).
-        var openGen = TryResolveType(open + "`" + args.Length);
-        return openGen != null ? ConstructedType(openGen, args) : ResolveType(open);
+        var openGen = ResolveType(open + "`" + args.Length);
+        return ConstructedType(openGen, args);
     }
 
     static List<string> SplitTopLevel(string s)
@@ -89,24 +93,24 @@ sealed partial class Emitter
         return res;
     }
 
-    // #37 m1: a type slot is a STRUCTURED Type node (birType-emitted / bir2cir clr*) OR a legacy STRING token (kotc's
-    // own clrInstance interop `type`, the m3 `sig`/typeArgs tokens). Dispatch on the JSON kind; the string path keeps
-    // the shorthand/legacy-token resolver below, the object path walks TypeNode.
-    Type MapType(JsonElement e) =>
-        e.ValueKind == JsonValueKind.String ? MapType(e.GetString())
-        : e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e))
-        : Bcl("System.Object");
+    // Final CIR type slots are structured Type nodes. Bare strings remain valid only in explicitly identity-shaped
+    // fields consumed through ClrRef(string), never as a substitute for a missing/malformed value type.
+    Type MapType(JsonElement e) => e.ValueKind == JsonValueKind.Object
+        ? MapType(DotKt.Bir.TypeNode.Read(e))
+        : throw new NotSupportedException($"invalid CIR type slot: expected Type object, got {e.ValueKind}");
 
     Type MapType(DotKt.Bir.TypeNode t) => t switch
     {
         DotKt.Bir.TypeNode.ByRef b => MapType(b.Of).MakeByRefType(),
-        DotKt.Bir.TypeNode.Array a => MapType(a.Elem).MakeArrayType(),
+        DotKt.Bir.TypeNode.Array { SzArray: true, Rank: 1 } a => MapType(a.Elem).MakeArrayType(),
+        DotKt.Bir.TypeNode.Array a => MapType(a.Elem).MakeArrayType(a.Rank),
+        DotKt.Bir.TypeNode.Ptr p => MapType(p.Of).MakePointerType(),
         DotKt.Bir.TypeNode.Nullable n => MapNullable(n),
         DotKt.Bir.TypeNode.Fn fn => FuncType(fn),
         DotKt.Bir.TypeNode.Tv tv => ResolveTv(tv),
         DotKt.Bir.TypeNode.Fqn { Args: null } f => MapType(f.Name),   // reuse the shorthand / bare-FQN resolver
         DotKt.Bir.TypeNode.Fqn f => ConstructGeneric(f.Name, f.Args),
-        _ => Bcl("System.Object"),
+        _ => throw new NotSupportedException($"unencodable CIR type node `{t.GetType().Name}`"),
     };
 
     // #37/#48: nullability realizes value-vs-reference HERE (MapType resolves the inner type, so it's the natural
@@ -122,10 +126,10 @@ sealed partial class Emitter
     }
 
     // A constructed generic from a structured Fqn(name, args): an emitted open type -> MakeGenericType, else a
-    // referenced .NET generic by arity-suffixed FQN. (A void type-arg -> object, illegal as a .NET type arg.)
+    // referenced .NET generic by arity-suffixed FQN. Every argument must already be CLR-legal in CIR.
     Type ConstructGeneric(string name, DotKt.Bir.TypeNode[] args)
     {
-        var mapped = args.Select(a => { var r = MapType(a); return r == Bcl("System.Void") ? Bcl("System.Object") : r; }).ToArray();
+        var mapped = args.Select(a => RequireGenericArgument(MapType(a), a)).ToArray();
         if (_types.TryGetValue(name, out var oti)) return ConstructedType(oti.AsType, mapped);
         // A NESTED generic whose arity backtick rides an OUTER type already carries a backtick in `name` (e.g. the #3
         // generic ConfigureAwait(false) awaiter `System...ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter` — arity `1 is
@@ -143,18 +147,9 @@ sealed partial class Emitter
         if (pool != null)
             foreach (var g in pool.Values)
                 if (g.GenericParameterPosition == tv.I) return g;
-        // Fall back to the OTHER scope's pool by position (kotc's scope tag can disagree with the CLR's split for a
-        // param that flattens across type+method — mirrors the old name-lookup which checked both pools).
-        var other = tv.Scope == "method" ? _curTypeParams : _curMethodParams;
-        if (other != null)
-            foreach (var g in other.Values)
-                if (g.GenericParameterPosition == tv.I) return g;
-        // A type-scope tv with no generic param in scope: a FLAT lifted anon-object (`dotkt$objN`) implementing a
-        // generic interface `Iterator<T>` where T rode the enclosing (lost) generic context — kotc emits it flat, so
-        // the CLR view is the monomorphic ERASURE `Iterator<object>` (the same object erasure bir2cir applies to a
-        // nullable-generic / Continuation). Falling to object keeps the metadata emittable; the object is used
-        // monomorphically at runtime.
-        return Bcl("System.Object");
+        throw new NotSupportedException(
+            $"unresolved CIR {tv.Scope} generic parameter at index {tv.I}; "
+            + "bir2cir must provide the exact CLR generic-parameter frame");
     }
 
     // Structured CIR function type -> the exact CLR delegate family selected by bir2cir.
@@ -210,16 +205,13 @@ sealed partial class Emitter
         {
             "void" => Bcl("System.Void"), "int" => Bcl("System.Int32"), "long" => Bcl("System.Int64"),
             "double" => Bcl("System.Double"), "float" => Bcl("System.Single"), "bool" => Bcl("System.Boolean"),
-            "char" => Bcl("System.Char"), "string" => Bcl("System.String"),
+            "char" => Bcl("System.Char"), "string" => Bcl("System.String"), "object" => Bcl("System.Object"),
             "uint" => Bcl("System.UInt32"), "ulong" => Bcl("System.UInt64"), "byte" => Bcl("System.Byte"), "ushort" => Bcl("System.UInt16"),
             // .NET-aligned 8-bit tokens (#54): token "sbyte" is SIGNED (kotlin.Byte, -128..127); token "byte" is
             // UNSIGNED (kotlin.UByte, System.Byte, 0..255) — matching int/short/long naming.
             "short" => Bcl("System.Int16"), "sbyte" => Bcl("System.SByte"),
-            // A bare FQN identity (kotc's pure-FQN output — NO `@`/`clr:` marker): ilemit DERIVES where the type lives.
-            // An in-assembly emitted type (`_types`, incl. the constructed `Name[args]` form) wins FIRST, else a
-            // referenced .NET type by reflection (`System.X`), else fall back to object (the pre-existing default for an
-            // erased/unknown non-dotted token). This is the ilemit half of "kotc emits pure FQNs; ilemit derives
-            // resolution" — so a plain `kotlin.Int`/`Foo`/`kotlin.Any` reference resolves to its emitted TypeBuilder.
+            // A bare FQN identity (kotc's pure-FQN output — NO `@`/`clr:` marker): an in-assembly emitted type wins;
+            // every other identity must resolve exactly from the declared reference universe.
             // A bare constructed-generic `Name[args]` whose open name isn't emitted here (e.g. the `ownerType` of a
             // referenced `kotlin.Result[int]` member call) resolves as a referenced generic (GenericType arity-suffixes).
             // A dot-LESS name not emitted in THIS assembly but present in a REFERENCED (--ref, LoadFrom'd) assembly is a
@@ -227,10 +219,7 @@ sealed partial class Emitter
             // class (`Vec`/`Lib`/`Pt`, no namespace). Resolve it by reflection, don't fall to object. Before the TYPE flip
             // these rode the `@dotkt$X`/`@Name` emitted-type-hint branch; kotc/bir2cir now emit the bare FQN, so a
             // dot-less name that ResolvesExternally must route to ResolveType here (mirrors the externalSynthIface path).
-            _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t)
-                 : (t != null && t.Contains('.')) ? ResolveType(t)
-                 : (t != null && ResolvesExternally(t)) ? ResolveType(t)
-                 : Bcl("System.Object")),
+            _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t) : ResolveType(t)),
         };
     }
 

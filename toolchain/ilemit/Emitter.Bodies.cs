@@ -431,32 +431,19 @@ sealed partial class Emitter
         }
     }
 
-    // Emit `new T(..)` ctor args honoring the node's declared ctor param types (`argTypes`): a value/generic-param
-    // arg flowing into an `object`/reference ctor param must be BOXED (`Result<T>..ctor(object)` receiving a bare
-    // `!!T` was InvalidProgram at a value instantiation), exactly like EmitArgsTyped does for method calls.
-    // Falls back to raw emission when the node carries no (or arity-mismatched) argTypes, or a type fails to map.
-    void EmitNewArgs(JsonElement e, JsonElement nargs, Type[] classArgs = null)
+    // Emit `new T(..)` ctor args honoring the node's use-site physical parameter vector (`argTypes`): a
+    // value/generic-param arg flowing into an `object`/reference ctor param must be BOXED
+    // (`Result<T>..ctor(object)` receiving a bare `!!T` was InvalidProgram at a value instantiation), exactly like
+    // EmitArgsTyped does for method calls. bir2cir has already linked the declaration independently.
+    // A missing/arity-mismatched vector still has no coercion targets; a present vector must map completely.
+    void EmitNewArgs(JsonElement e, JsonElement nargs)
     {
         Type[] want = null;
         if (e.TryGetProperty("argTypes", out var at) && at.ValueKind == JsonValueKind.Array
             && at.GetArrayLength() == nargs.GetArrayLength())
-            want = at.EnumerateArray().Select(x => { try { return CtorArgTarget(x, classArgs); } catch { return null; } }).ToArray();
+            want = at.EnumerateArray().Select(MapType).ToArray();
         int i = 0;
         foreach (var a in nargs.EnumerateArray()) { if (want?[i] != null) EmitArg(a, want[i]); else EmitExpr(a); i++; }
-    }
-
-    // The target type for a ctor arg. A `new` node's `argTypes` are the ctor's DECLARED param types — for a generic
-    // class those are its OWN open type-vars (`!i`). In a NON-generic caller (`main`), a type-scope tv has no generic
-    // param in scope, so MapType/ResolveTv falls back to `object` and the value arg would be BOXED — yet the CONSTRUCTED
-    // ctor (`Box<int>::.ctor(!0)`) wants the concrete value `int`. Substitute the declared type-var by its position with
-    // the constructed instantiation's concrete arg (`classArgs`) so the target is `int`, not `object`. Inside a generic
-    // caller `classArgs[i]` IS the in-scope generic param, so this is a no-op there (matches the prior ResolveTv result).
-    Type CtorArgTarget(JsonElement x, Type[] classArgs)
-    {
-        if (classArgs != null && x.ValueKind == JsonValueKind.Object
-            && DotKt.Bir.TypeNode.Read(x) is DotKt.Bir.TypeNode.Tv { Scope: "type" } tv && tv.I < classArgs.Length)
-            return classArgs[tv.I];
-        return MapType(x);
     }
 
     // Prefer a BIR-carried concrete result type (`retType`) over reflecting an un-baked builder's `!0`/`!!0`.

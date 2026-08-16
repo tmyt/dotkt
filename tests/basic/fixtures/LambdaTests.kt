@@ -93,6 +93,57 @@ fun String.extensionReferenceDoubleLen(): Int = length * 2
 fun String.extensionReferenceRepeatBy(n: Int): String = repeat(n)
 fun String.extensionReferenceLogTo(sb: StringBuilder): Unit { sb.append("[").append(this).append("]") }
 
+// Generic-frame closure: these shapes used to compile only because ilemit reinterpreted an unresolved `!i` as
+// `!!i` (or vice versa), then erased a completely missing slot to object. Each declaration now names its own frame.
+class FunctionReferenceGenericOwner<T>(val value: T) {
+    fun read(): T = value
+    fun replace(next: T): T = next
+    fun <U> echo(next: U): U = next
+
+    fun concreteGenericCall(): String = echo("concrete")
+}
+
+fun <T> functionReferenceGenericUnbound(value: T): T {
+    val read: (FunctionReferenceGenericOwner<T>) -> T = FunctionReferenceGenericOwner<T>::read
+    return read(FunctionReferenceGenericOwner(value))
+}
+
+fun <T> functionReferenceGenericOwnerCall(value: T): T =
+    FunctionReferenceGenericOwner(value).replace(value)
+
+fun <T> genericClosureInsideLiftedObject(value: T): T {
+    val holder = object {
+        fun read(): T {
+            val capture = { value }
+            return capture()
+        }
+    }
+    return holder.read()
+}
+
+fun <A, B, C> sparseGenericLambda(value: C): C {
+    val identity: (C) -> C = { it }
+    return identity(value)
+}
+
+class GenericCtorFrameBox<A, B>(val value: A)
+
+class GenericCtorFrameHost<X, Y> {
+    fun make(value: Y): GenericCtorFrameBox<Y, String> = GenericCtorFrameBox(value)
+}
+
+interface GenericStarPreserver<A> {
+    fun <X> preserve(value: X): X
+}
+
+private class GenericStarPreserverImpl : GenericStarPreserver<Int> {
+    override fun <X> preserve(value: X): X = value
+}
+
+class GenericStarCaller<X> {
+    fun call(box: GenericStarPreserver<*>, value: X): X = box.preserve(value)
+}
+
 class LambdaTests {
     @TestAttribute
     fun capturingAdder() {
@@ -190,6 +241,17 @@ class LambdaTests {
         val h: (String, StringBuilder) -> Unit = String::extensionReferenceLogTo
         h("a", sb); h("b", sb)
         assertEquals("[a][b]", sb.toString())                                           // [a][b]
+    }
+
+    @TestAttribute
+    fun genericFramesStayDeclarationOwned() {
+        assertEquals("member", functionReferenceGenericUnbound("member"))
+        assertEquals(42, functionReferenceGenericOwnerCall(42))
+        assertEquals("concrete", FunctionReferenceGenericOwner(0).concreteGenericCall())
+        assertEquals("closure", genericClosureInsideLiftedObject("closure"))
+        assertEquals(37, sparseGenericLambda<String, Long, Int>(37))
+        assertEquals(42, GenericCtorFrameHost<String, Int>().make(42).value)
+        assertEquals("caller", GenericStarCaller<String>().call(GenericStarPreserverImpl(), "caller"))
     }
 
 }

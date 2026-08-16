@@ -672,10 +672,9 @@ sealed partial class Emitter
                             // arity+signature) — never a covariant bridge: the bridge is NON-generic, so a non-generic
                             // methodimpl body for a generic declaration fails the CLR's signature-match ("Signature of the
                             // body and declaration in a method implementation do not match" -> TypeLoadException). The
-                            // spurious mismatch here is only because ifaceRet (a method-scope Tv `!!R`) resolves to
-                            // `object` in this wiring context (ResolveTv has no method params in scope), NOT a real
-                            // narrowing. Detect a generic MethodBuilder via _methodTypeParams (IsGenericMethodDefinition
-                            // is unreliable on an un-baked builder).
+                            // A generic body has its own return frame and can never use this non-generic bridge shape.
+                            // Detect it from _methodTypeParams (IsGenericMethodDefinition is unreliable on an un-baked
+                            // builder) before interpreting the non-generic return comparison.
                             var bodyIsGeneric = bodyMethod is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
                             // #370-residual: TYPE-shape comparison deciding whether a local adapter is required.
                             if (!bodyIsGeneric && ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
@@ -782,10 +781,8 @@ sealed partial class Emitter
                     throw new InvalidOperationException(
                         $"ilemit: resolved base MethodImpl body {ti.TB.Name}.{SigKey(bridgeName, m)} is absent");
                 // A GENERIC slot's descriptor states its parameter vector in the BRIDGE's own vocabulary, so a
-                // method-scope `tv` in it names one of the bridge's own type parameters. With no method pool in scope
-                // `ResolveTv` falls back to the enclosing TYPE's parameters by position — `object` on a non-generic
-                // owner, an unrelated class parameter on a generic one — and the resolved vector then matches no
-                // member of the base at all.
+                // method-scope `tv` in it names one of the bridge's own type parameters. Install that exact method
+                // frame while consuming the descriptor; resolving it against the enclosing type would cross ownership.
                 _curMethodParams = _methodTypeParams.TryGetValue(bridge, out var bridgeTps) ? bridgeTps : null;
                 foreach (var impl in impls.EnumerateArray())
                 {
@@ -1504,7 +1501,7 @@ sealed partial class Emitter
     (string open, Type constructed) ParseOwnerT(DotKt.Bir.TypeNode.Fqn f)
     {
         if (f.Args == null) return (f.Name, null);
-        var args = f.Args.Select(a => { var r = MapType(a); return r == Bcl("System.Void") ? Bcl("System.Object") : r; }).ToArray();
+        var args = f.Args.Select(a => RequireGenericArgument(MapType(a), a)).ToArray();
         if (_types.TryGetValue(f.Name, out var ti)) return (f.Name, ConstructedType(ti.TB, args));
         // bir2cir may carry an exact nested generic TypeDef token whose outer segment already owns the CLR arity
         // (`Outer`1+Nested`). Appending another suffix would name a different, absent TypeDef.

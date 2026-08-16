@@ -347,6 +347,10 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// map cross-captured an OUTER function's same-named param: let<T,R:=Unit> spliced inside mapNotNullTo<T,R>
 	// rewrote the OUTER `R` to kotlin.Unit) -> the call's substituted type-argument BIR (see birType).
 	internal val typeArgSubst = HashMap<IrTypeParameter, TypeNode>()
+	// A synthetic declaration can contain FIR-copied type-parameter symbols that retain the same positional lexical
+	// identity but are not reference-equal to the enclosing declaration's symbol. Active only while a lifted method is
+	// rendered; the positional key closes those copies into that method's fresh dense generic frame.
+	internal val liftedTypeArgSubst = HashMap<Pair<String, Int>, TypeNode>()
 
 	// Lambda lifting: non-capturing lambdas become named static methods appended to the file class;
 	// capturing lambdas become synthesized closure classes appended to the file's types.

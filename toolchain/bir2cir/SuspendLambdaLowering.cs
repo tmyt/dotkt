@@ -217,8 +217,8 @@ static class SuspendLambdaLowering
         // CONSTRUCTION type args (#75 Batch B, 2A): a materialized suspend carrier renumbers its enclosing tvs to a
         // dense 0-based SM param space and carries the ORIGINAL enclosing tvs (any scope/index) on `typeArgs` — the
         // construction channel, distinct from `typeParams` (the SM's own name declarations). Instantiate the open SM
-        // with THOSE originals. When absent (kotc's own source-lambda emission), fall back to the positional
-        // `smName<tv{type,0..N-1}>` — keeping source-lambda output BYTE-IDENTICAL.
+        // with THOSE originals. Every generic producer must state this construction edge; reconstructing it from the
+        // state machine's parameter positions would confuse an enclosing method frame with an enclosing type frame.
         TypeNode smInst;
         if (ctorTypeArgs != null && ctorTypeArgs.Count != typeArgs.Count)
             throw new NotSupportedException(
@@ -228,7 +228,9 @@ static class SuspendLambdaLowering
         if (typeArgs.Count == 0)
             smInst = new TypeNode.Fqn(smName);
         else if (ctorTypeArgs == null)
-            smInst = new TypeNode.Fqn(smName, Enumerable.Range(0, typeArgs.Count).Select(i => (TypeNode)new TypeNode.Tv("type", i)).ToArray());
+            throw new NotSupportedException(
+                $"bir2cir: suspend-lambda lowering: generic `{smName}` has no construction `typeArgs`; "
+                + "the producer must bind every state-machine type parameter to its exact enclosing frame");
         else
         {
             smInst = new TypeNode.Fqn(smName, ctorTypeArgs.Select((ta, i) =>

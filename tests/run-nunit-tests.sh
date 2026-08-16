@@ -51,7 +51,8 @@ declare -A EXPECTED_DISCOVERED=(
 	# +4 (#400): VarargSpreadConcatTests. A mixed vararg spread is the only source shape that builds through the
 	# spread accumulator, and the standard library writes none, so that construction had no gate coverage at all.
 	# One method per element shape its instantiation can take.
-	["tests/basic"]=429
+	# +1 (#400): strict generic-frame ownership across synthetic methods, lifted closures, and local member linking.
+	["tests/basic"]=430
 	["tests/coroutines"]=158
 	["tests/roundtrip/consumer"]=74
 	["tests/roundtrip/bidirectional/consumer"]=8

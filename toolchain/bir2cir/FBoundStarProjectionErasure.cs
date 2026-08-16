@@ -827,6 +827,20 @@ static class FBoundStarProjectionErasure
             if (useKind == "newBoundDelegate") call["calleeOwner"] = ownerType.DeepClone();
         }
 
+        // `ret` is the selected declaration's return vocabulary; `dynRet`/`sty` are already instantiated caller facts.
+        // Close only the former from the declaration we actually selected. Rewriting the caller facts by positional
+        // owner indices corrupts an unrelated caller-owned `type#i` when this call appears in a generic function.
+        void CloseDeclarationResult(TypeNode declarationResult)
+        {
+            var currentResult = TypeJson.Read(call["ret"]);
+            // An instantiated frontend result can be a bound approximation (`T` on `G<*>` -> `Comparable<*>`) or a
+            // caller-owned generic. Only the unchanged declaration token proves this slot still needs closing.
+            if (declarationResult == null || currentResult == null || !currentResult.Equals(declarationResult)) return;
+            var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+                ?? Array.Empty<TypeNode>();
+            call["ret"] = TypeJson.Write(CloseDeclarationType(declarationResult, args, methodArgs));
+        }
+
         var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
             out var sourcePropertyName, out var accessorKind);
         var sourceMember = propertyCall ? sourcePropertyName : authoredMethod;
@@ -852,6 +866,7 @@ static class FBoundStarProjectionErasure
                 declarationId, owners) is { } found)
         {
             var (declaring, declaration) = found;
+            CloseDeclarationResult(TypeJson.Read(declaration["ret"]));
             BindOwner(declaring.ErasedName);
             call["virtual"] = true; // erased owner is an interface; CIR must carry callvirt explicitly
             if (ContainsOwnerTvInSignature(declaration) || !IsPublic(declaration))
@@ -867,6 +882,7 @@ static class FBoundStarProjectionErasure
                 declarationId, owners, defs) is { } baseFound)
         {
             var (bridgeOwner, declaringName, declaration) = baseFound;
+            CloseDeclarationResult(TypeJson.Read(declaration["ret"]));
             BindOwner(bridgeOwner.ErasedName);
             call["method"] = BaseStarMethodName(declaringName, defs[declaringName], declaration);
             call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
@@ -881,8 +897,9 @@ static class FBoundStarProjectionErasure
         // participates in the decision.
         if (refs.TryStarProjectionMember(f, sourceMember, accessorKind, ga, authoredSignature, pc,
                 declarationId,
-                out var erasedOwner, out var erasedMethod, out var erasedSignature))
+                out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationResult))
         {
+            CloseDeclarationResult(declarationResult);
             BindOwner(erasedOwner);
             call["method"] = erasedMethod;
             call["sig"] = new JsonArray(erasedSignature.Select(TypeJson.Write).ToArray());
@@ -896,6 +913,28 @@ static class FBoundStarProjectionErasure
         // it will select the unique nearest declaration after all synthetic types exist.
         if (pc == 0 && call["sig"] == null) call["sig"] = new JsonArray();
     }
+
+    static TypeNode CloseDeclarationType(TypeNode type, IReadOnlyList<TypeNode> ownerArgs,
+        IReadOnlyList<TypeNode> methodArgs) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < ownerArgs.Count
+            => ownerArgs[tv.I] is TypeNode.Star ? new TypeNode.Fqn("kotlin.Any") : ownerArgs[tv.I],
+        TypeNode.Tv { Scope: "method" } tv when tv.I >= 0 && tv.I < methodArgs.Count
+            => methodArgs[tv.I] is TypeNode.Star ? new TypeNode.Fqn("kotlin.Any") : methodArgs[tv.I],
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
+            args.Select(arg => CloseDeclarationType(arg, ownerArgs, methodArgs)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(CloseDeclarationType(n.Of, ownerArgs, methodArgs)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(CloseDeclarationType(o.Of, ownerArgs, methodArgs)),
+        TypeNode.Array a => new TypeNode.Array(CloseDeclarationType(a.Elem, ownerArgs, methodArgs)),
+        TypeNode.ByRef b => new TypeNode.ByRef(CloseDeclarationType(b.Of, ownerArgs, methodArgs)),
+        TypeNode.Ptr p => new TypeNode.Ptr(CloseDeclarationType(p.Of, ownerArgs, methodArgs)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+            CloseDeclarationType(fn.Ret, ownerArgs, methodArgs),
+            fn.Params.Select(parameter => CloseDeclarationType(parameter, ownerArgs, methodArgs)).ToArray(),
+            fn.Recv == null ? null : CloseDeclarationType(fn.Recv, ownerArgs, methodArgs), fn.Clr,
+            fn.Ctx?.Select(context => CloseDeclarationType(context, ownerArgs, methodArgs)).ToArray()),
+        _ => type,
+    };
 
     static void MarkPhysicalPropertyCall(JsonObject call, bool propertyCall,
         string sourcePropertyName, string accessorKind, string physicalIdentity = null)
