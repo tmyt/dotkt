@@ -257,19 +257,27 @@ static class ReverseEnumeratorBridgeSynthesis
         ["ret"] = TypeJson.Write(ret),
     };
 
-    static JsonObject Method(string name, string vis, TypeNode ret, JsonArray body) => new()
+    // Every body authored here is a straight-line `return`/`throw` except the empty `Dispose`, so state that the
+    // body cannot fall through: without it the emitter appends its verifier-safe default-return epilogue, which is
+    // dead code plus a `.locals init` slot on every one of these methods.
+    static JsonObject Method(string name, string vis, TypeNode ret, JsonArray body, bool terminates = true)
     {
-        ["name"] = name,
-        ["static"] = false,
-        ["override"] = false,
-        ["virtual"] = true,
-        ["abstract"] = false,
-        ["objectOverride"] = false,
-        ["vis"] = vis,
-        ["params"] = new JsonArray(),
-        ["ret"] = TypeJson.Write(ret),
-        ["body"] = body,
-    };
+        var method = new JsonObject
+        {
+            ["name"] = name,
+            ["static"] = false,
+            ["override"] = false,
+            ["virtual"] = true,
+            ["abstract"] = false,
+            ["objectOverride"] = false,
+            ["vis"] = vis,
+            ["params"] = new JsonArray(),
+            ["ret"] = TypeJson.Write(ret),
+            ["body"] = body,
+        };
+        if (terminates) method["bodyTerminates"] = true;
+        return method;
+    }
 
     // ---- the adapter -----------------------------------------------------------------------------------------
 
@@ -353,12 +361,11 @@ static class ReverseEnumeratorBridgeSynthesis
                 },
             },
         });
-        reset["bodyTerminates"] = true;
         reset["clrInterfaceImpls"] = new JsonArray(Descriptor(
             new TypeNode.Fqn(IEnumerator), "Reset", new TypeNode.Fqn("void")));
 
         // `void Dispose() {}` — nothing is held that the CLR could release.
-        var dispose = Method("Dispose", "public", new TypeNode.Fqn("void"), new JsonArray());
+        var dispose = Method("Dispose", "public", new TypeNode.Fqn("void"), new JsonArray(), terminates: false);
         dispose["clrInterfaceImpls"] = new JsonArray(Descriptor(
             new TypeNode.Fqn(IDisposable), "Dispose", new TypeNode.Fqn("void")));
 
