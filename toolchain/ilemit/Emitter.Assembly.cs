@@ -786,8 +786,13 @@ sealed partial class Emitter
                         // the worst outcome available: an abstract base slot becomes a type-load failure with nothing
                         // naming the producer, and a concrete virtual one keeps dispatching to the base body — the
                         // override simply never runs. Same contract as the emitted-base miss below.
-                        if (FindExternalBaseSlot(ownerFqn, memberNode.GetString(), DescribedArity(impl), ps, ret, impl)
-                            is not MethodInfo externalSlot)
+                        var externalSlot = FindExternalBaseSlot(ownerFqn, memberNode.GetString(), DescribedArity(impl), ps, ret, impl);
+                        // The reference travelling with this descriptor must name the same slot, and where it is
+                        // present it IS the slot — the search survives only so the two can be compared.
+                        if (externalSlot != null)
+                            ShadowParity(impl, "memberRef", externalSlot, $"clrBaseImpls {open}.{memberNode.GetString()}");
+                        if (PrimaryFromRef(impl, "memberRef") is MethodInfo referencedSlot) externalSlot = referencedSlot;
+                        if (externalSlot is null)
                             throw new InvalidOperationException(
                                 $"ilemit: {ti.TB.Name}.{bridgeName}: clrBaseImpls names "
                                 + $"'{memberNode.GetString()}' on the referenced base '{open}', which does not resolve "
