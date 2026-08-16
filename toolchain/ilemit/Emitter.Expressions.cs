@@ -341,6 +341,11 @@ sealed partial class Emitter
                 // The owner selected in CIR is complete. A bare generic TypeDef here is malformed CIR; ilemit must not
                 // invent a representative instantiation or reconstruct a retired compiler ABI.
                 ShadowParity(e, "memberRef", resolved, $"callStatic {name}");
+                // A call into a previously-compiled DotKt assembly is an external member like any other. Where a
+                // reference travels with it, that is the callee; a member of THIS compilation carries none, and the
+                // search above still answers for it. Method type arguments are applied after either way — those are
+                // the node's own, not part of which declaration is meant.
+                if (PrimaryFromRef(e, "memberRef") is MethodInfo referencedStatic) resolved = referencedStatic;
                 var mb = ApplyTypeArgs(resolved, e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
@@ -395,6 +400,10 @@ sealed partial class Emitter
                 var add = GenericMethod(listT, "Add");
                 ShadowParity(e, "ctorRef", listCtor, "newList constructor");
                 ShadowParity(e, "addRef", add, "newList Add");
+                // The members a collection literal builds through are stated by the pass that minted the node,
+                // so the emitter stops deriving them from the constructed type.
+                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refListCtor) listCtor = refListCtor;
+                if (PrimaryFromRef(e, "addRef") is MethodInfo refAdd) add = refAdd;
                 EmitConstructor(_il, OpCodes.Newobj, listCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
@@ -708,6 +717,8 @@ sealed partial class Emitter
                 var setItem = GenericMethod(dt, "set_Item");
                 ShadowParity(e, "ctorRef", mapCtor, "newMap constructor");
                 ShadowParity(e, "setItemRef", setItem, "newMap set_Item");
+                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refMapCtor) mapCtor = refMapCtor;
+                if (PrimaryFromRef(e, "setItemRef") is MethodInfo refSetItem) setItem = refSetItem;
                 EmitConstructor(_il, OpCodes.Newobj, mapCtor);
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
@@ -727,6 +738,8 @@ sealed partial class Emitter
                 var add = GenericMethod(setT, "Add");
                 ShadowParity(e, "ctorRef", setCtor, "newSet constructor");
                 ShadowParity(e, "addRef", add, "newSet Add");
+                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refSetCtor) setCtor = refSetCtor;
+                if (PrimaryFromRef(e, "addRef") is MethodInfo refSetAdd) add = refSetAdd;
                 EmitConstructor(_il, OpCodes.Newobj, setCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {

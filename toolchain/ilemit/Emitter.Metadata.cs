@@ -96,6 +96,9 @@ sealed partial class Emitter
             var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
             var nctor = at.GetConstructor(argTypes);
             ShadowParity(a, "memberRef", nctor, $"applied attribute [{attr}]");
+            // An applied attribute is a call, and the constructor it calls is named like any other member.
+            // Selecting it from the declared argument vector was the last place a blob encoder chose a member.
+            if (PrimaryFromRef(a, "memberRef") is ConstructorInfo referencedCtor) nctor = referencedCtor;
             return TryAttribute(nctor, argTypes, args, namedArgs, attr);
         }
         // The attribute type must be emitted in THIS assembly (present in _types). A stdlib-only annotation that the app
