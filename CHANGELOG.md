@@ -7,6 +7,26 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **bir2cir writes the resolved member reference for every external call, constructor, accessor and field
+  (#370, step 2).** Each site that already picked a unique .NET member now serializes THAT member as a
+  complete `memberRef` beside the transitional descriptor — 17k references across the stdlib and test corpus,
+  covering all five member kinds. The reference states the DECLARER rather than the receiver, with the
+  receiver's type arguments projected along the declaration edge, so a member reached through a base class or
+  base interface no longer has to be re-anchored by whoever consumes it. It also carries what the old
+  descriptor could not: the physical defining assembly (the stdlib's reference and runtime twins differ in
+  name, and an emitted reference must name the one that ships), the declared return type, and the pointer,
+  array-rank and custom-modifier shapes that otherwise make two distinct members look like one. The
+  transitional descriptor is untouched; the schema gate now reddens if a migrated node carries one of the two
+  without the other.
+
+  The reference is spelled in the vocabulary the TARGET declares, which is not the vocabulary the member is
+  resolved in: a stdlib member resolves against the reference twin, which declares the Kotlin surface
+  (`List<List<T>>`), while the member the reference names lives in the runtime twin, which declares the
+  physical shape (`IReadOnlyList<IList<T>>`). The map between them is position-dependent — a read-only
+  collection collapses to its invariant sibling in a storage slot but keeps the covariant face in a head or
+  method-slot position — so the serializer applies the lowering pass's own rule instead of a uniform alias
+  step, which would name a member neither twin declares.
+
 - **A single scalar CIR member reference, and the ECMA signature vocabulary it needs (#370, step 1).** The BIR/CIR
   contract gains `memberRef`: one complete, already-resolved reference to a member of another assembly (kind,
   physical defining assembly, exact declaring type and its instantiation, metadata name, generic arity, calling

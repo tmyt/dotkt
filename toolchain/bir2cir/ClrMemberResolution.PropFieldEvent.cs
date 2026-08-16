@@ -46,6 +46,7 @@ static partial class ClrMemberResolution
             node["accessor"] = acc.Name;
             node["memberSig"] = MemberSig(acc.GetParameters());
             node["memberOwner"] = DeclaringTypeDescriptor(acc);
+            node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
             StampMemberRet(node, acc.ReturnType);
             if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall);
             return;
@@ -56,6 +57,7 @@ static partial class ClrMemberResolution
         if (FindFieldMember(open, name, flags) is FieldInfo fld)
         {
             node["member"] = "field";
+            node["memberRef"] = FieldRefJson(fld, open, ownerFqn.Args);
             StampMemberRet(node, fld.FieldType);
             return;
         }
@@ -216,6 +218,7 @@ static partial class ClrMemberResolution
         node["accessor"] = acc.Name;
         node["memberSig"] = MemberSig(acc.GetParameters());
         node["memberOwner"] = DeclaringTypeDescriptor(acc);
+        node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
         StampMemberRet(node, acc.ReturnType);
         if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall: false);
     }
@@ -271,7 +274,11 @@ static partial class ClrMemberResolution
                     $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a property accessor on the referenced owner — "
                     + "a cross-assembly property's storage is reachable only through its accessors");
             // A direct external FIELD read/write: its declared type is the foreign declaration this node stands for.
-            if (direct != null) StampMemberRet(node, direct.FieldType);
+            if (direct != null)
+            {
+                node["memberRef"] = FieldRefJson(direct, open, ownerFqn.Args);
+                StampMemberRet(node, direct.FieldType);
+            }
             return;
         }
         RetargetToBaseInterface(node, "ownerType", open, acc, ownerFqn);
@@ -279,6 +286,7 @@ static partial class ClrMemberResolution
         node["accessor"] = acc.Name;
         node["memberSig"] = MemberSig(acc.GetParameters());
         node["memberOwner"] = DeclaringTypeDescriptor(acc);
+        node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
         StampMemberRet(node, acc.ReturnType);
         node["dispatch"] = Dispatch(acc, open, superCall: false);
     }

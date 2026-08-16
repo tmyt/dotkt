@@ -45,7 +45,8 @@ namespace DotKt.Bir;
 /// <param name="ReturnType">The OPEN declared return type — the void <c>fqn</c> for a void method and for a
 /// constructor, and the declared FIELD type when <see cref="Kind"/> is <c>field</c>. Part of member identity:
 /// two members can differ only by return type (an inherited slot shadowed by a covariant redeclaration).</param>
-/// <param name="CallingConvention">HASTHIS: <c>static</c> or <c>instance</c>. Absent for a field.</param>
+/// <param name="CallingConvention">HASTHIS, and whether the signature is vararg: <c>static</c>,
+/// <c>instance</c>, <c>varargStatic</c> or <c>varargInstance</c>. Absent for a field.</param>
 /// <param name="ParameterTypes">The OPEN declared parameter vector. Absent for a field.</param>
 public sealed record MemberRefNode(
     string Kind,
@@ -75,6 +76,31 @@ public sealed record MemberRefNode(
 
     public const string Static = "static";
     public const string Instance = "instance";
+    // A vararg signature is a different member from its fixed-arity neighbour, so the convention records it
+    // rather than being refused: the frontend accepted the program, and a producer that aborted here would be
+    // rejecting source over a fact it could simply state.
+    public const string VarargStatic = "varargStatic";
+    public const string VarargInstance = "varargInstance";
+
+    static bool IsConvention(string? cc) => cc is Static or Instance or VarargStatic or VarargInstance;
+    static bool IsInstanceConvention(string? cc) => cc is Instance or VarargInstance;
+
+    /// <summary>
+    /// The generic arity a metadata FullName encodes, summed over the nesting chain: `Outer`1+Inner`1` has two
+    /// parameters, of which the outer one comes first. Reading it back is how the declaring type's argument
+    /// list is checked against the name it is attached to.
+    /// </summary>
+    public static int ArityOfName(string fullName)
+    {
+        int total = 0;
+        for (int i = fullName.IndexOf('`'); i >= 0; i = fullName.IndexOf('`', i + 1))
+        {
+            int j = i + 1, n = 0;
+            while (j < fullName.Length && char.IsAsciiDigit(fullName[j])) { n = n * 10 + (fullName[j] - '0'); j++; }
+            total += n;
+        }
+        return total;
+    }
 
     /// <summary>The canonical void spelling shared with the rest of the document vocabulary.</summary>
     public static readonly TypeNode Void = new TypeNode.Fqn("void");
@@ -115,6 +141,16 @@ public sealed record MemberRefNode(
         // would acquire two identities that never compare equal.
         if (DeclaringType is TypeNode.Fqn { Args: { Length: 0 } })
             throw new FormatException("memberRef.declaringType must omit `args` when the declarer is non-generic, not carry an empty list");
+        // The declarer's name states its own arity, so an argument list of any other length describes an
+        // instantiation that type cannot have. Checking it is what catches a projection that silently ran
+        // short or long — an identity that still looks coherent but names nothing.
+        if (DeclaringType is TypeNode.Fqn declarer)
+        {
+            int want = ArityOfName(declarer.Name), got = declarer.Args?.Length ?? 0;
+            if (want != got)
+                throw new FormatException(
+                    $"memberRef.declaringType `{declarer.Name}` declares {want} generic parameter(s) but carries {got} argument(s)");
+        }
         if (Kind != Kinds.Ctor && Name == CtorName)
             throw new FormatException($"memberRef.name `{CtorName}` names a constructor, but kind is `{Kind}`");
         if (GenericArity < 0) throw new FormatException($"memberRef.genericArity must be >= 0, got {GenericArity}");
@@ -127,14 +163,15 @@ public sealed record MemberRefNode(
         }
         else
         {
-            if (CallingConvention is not (Static or Instance))
-                throw new FormatException($"memberRef.callingConvention=`{CallingConvention}` must be `static` or `instance`");
+            if (!IsConvention(CallingConvention))
+                throw new FormatException(
+                    $"memberRef.callingConvention=`{CallingConvention}` must be `static`, `instance`, `varargStatic` or `varargInstance`");
             if (ParameterTypes is null) throw new FormatException($"memberRef.parameterTypes is required for kind `{Kind}`");
         }
         if (Kind == Kinds.Ctor)
         {
             if (Name != CtorName) throw new FormatException($"memberRef.name for a ctor must be `{CtorName}`, got `{Name}`");
-            if (CallingConvention != Instance) throw new FormatException("a ctor memberRef must be `instance`");
+            if (!IsInstanceConvention(CallingConvention)) throw new FormatException("a ctor memberRef must be an instance convention");
             if (ReturnType != Void) throw new FormatException("a ctor memberRef must return void");
         }
     }
@@ -364,6 +401,19 @@ public static class MemberRefNodeSelfTest
         Refuse("an empty declaring-args list", () => new MemberRefNode(MemberRefNode.Kinds.Method, "A",
             new TypeNode.Fqn("T", System.Array.Empty<TypeNode>()), "m", 0, MemberRefNode.Void,
             MemberRefNode.Instance, System.Array.Empty<TypeNode>()).Validate());
+        // A declarer's name states its own arity, nesting chain included, so any other argument count names
+        // an instantiation that type cannot have.
+        Refuse("too few declaring args", () => new MemberRefNode(MemberRefNode.Kinds.Method, "A",
+            new TypeNode.Fqn("Outer`1+Inner`1", new TypeNode[] { new TypeNode.Fqn("System.Int32") }), "m", 0,
+            MemberRefNode.Void, MemberRefNode.Instance, System.Array.Empty<TypeNode>()).Validate());
+        Refuse("args on a non-generic declarer", () => new MemberRefNode(MemberRefNode.Kinds.Method, "A",
+            new TypeNode.Fqn("T", new TypeNode[] { new TypeNode.Fqn("System.Int32") }), "m", 0,
+            MemberRefNode.Void, MemberRefNode.Instance, System.Array.Empty<TypeNode>()).Validate());
+        if (MemberRefNode.ArityOfName("Outer`1+Inner`2") != 3 || MemberRefNode.ArityOfName("Plain") != 0)
+            throw new Exception("[C# MemberRefNode] nesting-chain arity must be summed over the whole name");
+        // A vararg member is a different member, not an unrepresentable one.
+        new MemberRefNode(MemberRefNode.Kinds.Method, "A", new TypeNode.Fqn("T"), "m", 0, MemberRefNode.Void,
+            MemberRefNode.VarargStatic, System.Array.Empty<TypeNode>()).Validate();
 
         // A key present with a JSON null states the field and states nothing — the shape a half-written
         // reference takes. Absence is the only way to omit an optional field.
@@ -376,7 +426,7 @@ public static class MemberRefNodeSelfTest
             "\"name\":\"m\",\"genericArity\":0,\"returnType\":{\"t\":\"fqn\",\"name\":\"void\"}," +
             "\"callingConvention\":null,\"parameterTypes\":[]}"));
 
-        Console.WriteLine($"[C# MemberRefNode] self-test OK ({cases.Length} fixture cases + identity + 15 refusals)");
+        Console.WriteLine($"[C# MemberRefNode] self-test OK ({cases.Length} fixture cases + identity + 17 refusals)");
     }
 
     static void Refuse(string what, Action act)

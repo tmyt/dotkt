@@ -1199,6 +1199,144 @@ sealed partial class ReferenceMetadataIndex
         catch { _netMlc = null; }
     }
 
+    Assembly _physicalStdlib; bool _physicalStdlibInit;
+
+    /// <summary>
+    /// The SHIPPED declaration of a member resolved against the reference twin, or null when there is none or it
+    /// cannot be identified unambiguously.
+    /// </summary>
+    /// <remarks>
+    /// The reference twin declares the Kotlin surface and the runtime twin declares the physical shape; a member
+    /// reference must state the latter, because that is the assembly the emitted reference is scoped to and the
+    /// one the emitter resolves against. Deriving the physical shape from the surface means undoing every erasure
+    /// the reference build applied — the arg-position variance collapse, the generic-classifier and contravariant
+    /// collapses, and a value type's nullability, which the surface cannot express at all because `kotlin.Float`
+    /// is a class there and `Nullable&lt;class&gt;` is not a type. Each of those was found by a build failing on it.
+    ///
+    /// So read the shipped declaration instead of reconstructing it. Selection stays here, where it belongs, and
+    /// refuses rather than guesses: same declaring type name, same member name, same generic arity, same parameter
+    /// count, and exactly one candidate. An ambiguous or absent twin falls back to the reflected member, which is
+    /// correct for every reference whose twin is itself (a BCL assembly is its own physical form).
+    /// </remarks>
+    readonly Dictionary<MemberInfo, MemberInfo> _shippedCache = new();
+
+    public MethodBase PhysicalTwinOf(MethodBase member, Type declaringDef)
+    {
+        if (_shippedCache.TryGetValue(member, out var cached)) return cached as MethodBase;
+        MethodBase found = null;
+        try { found = FindShippedMethod(member, declaringDef); } catch { found = null; }
+        _shippedCache[member] = found;
+        return found;
+    }
+
+    MethodBase FindShippedMethod(MethodBase member, Type declaringDef)
+    {
+        var owner = PhysicalOwnerOf(declaringDef);
+        if (owner == null) return null;
+        var arity = member.IsGenericMethod ? member.GetGenericArguments().Length : 0;
+        var want = member.GetParameters();
+        var candidates = (member is ConstructorInfo
+                // A type initializer is a constructor to reflection and never a member anything references, so it
+                // would otherwise make every parameterless constructor of a type with static state ambiguous.
+                ? owner.GetConstructors(MemberProbeFlags).Cast<MethodBase>().Where(c => !c.IsStatic)
+                : owner.GetMethods(MemberProbeFlags).Cast<MethodBase>()
+                    .Where(m => string.Equals(m.Name, member.Name, StringComparison.Ordinal)))
+            // Metadata parameter counts exclude `this`, so without the static bit an instance member and a static
+            // one of the same name and arity land in the same bucket and either could answer for the other.
+            .Where(m => m.IsStatic == member.IsStatic
+                && m.GetParameters().Length == want.Length
+                && (m.IsGenericMethod ? m.GetGenericArguments().Length : 0) == arity)
+            .ToList();
+        if (candidates.Count == 1) return candidates[0];
+        if (candidates.Count == 0) return null;
+        // Same name, same shape, several of them — a facade like `maxOrNull` has one per element type. Choose by
+        // the one thing both twins spell alike: each parameter's alias-resolved type identity. This picks WHICH
+        // declaration is meant; the signature still comes from the declaration itself, so a position the surface
+        // cannot express is taken from the shipped side either way.
+        var key = string.Join(",", want.Select(p => TwinStableKey(p.ParameterType)));
+        var matched = candidates
+            .Where(m => string.Join(",", m.GetParameters().Select(p => TwinStableKey(p.ParameterType))) == key)
+            .ToList();
+        return matched.Count == 1 ? matched[0] : null;
+    }
+
+    /// <summary>A type's identity in the spelling both twins share: the alias resolved, the shape kept.</summary>
+    string TwinStableKey(Type t)
+    {
+        if (t == null) return "?";
+        if (t.IsByRef) return TwinStableKey(t.GetElementType()) + "&";
+        if (t.IsPointer) return TwinStableKey(t.GetElementType()) + "*";
+        if (t.IsArray) return TwinStableKey(t.GetElementType()) + "[" + t.GetArrayRank() + "]";
+        if (t.IsGenericParameter) return "!" + t.GenericParameterPosition;
+        var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
+        var name = string.Join(".", (def.FullName ?? def.Name).Split('+')
+            .Select(seg => { var i = seg.IndexOf('`'); return i >= 0 ? seg[..i] : seg; }));
+        if (Aliases.TryGetValue(name, out var bcl)) name = bcl;
+        var args = t.IsGenericType && !t.IsGenericTypeDefinition
+            ? "<" + string.Join(",", t.GetGenericArguments().Select(TwinStableKey)) + ">" : "";
+        return name + args;
+    }
+
+    public FieldInfo PhysicalTwinOf(FieldInfo field, Type declaringDef)
+    {
+        if (_shippedCache.TryGetValue(field, out var cached)) return cached as FieldInfo;
+        FieldInfo found = null;
+        try
+        {
+            var owner = PhysicalOwnerOf(declaringDef);
+            var hits = owner?.GetFields(MemberProbeFlags)
+                .Where(f => string.Equals(f.Name, field.Name, StringComparison.Ordinal)
+                    && f.IsStatic == field.IsStatic).ToList();
+            found = hits is { Count: 1 } ? hits[0] : null;
+        }
+        catch { found = null; }
+        _shippedCache[field] = found;
+        return found;
+    }
+
+    const BindingFlags MemberProbeFlags =
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+    /// <summary>
+    /// The shipped form of a declaring type, or null when this type has none.
+    /// </summary>
+    /// <remarks>
+    /// The declaring type must be the ALIAS-RESOLVED one, the same the reference names. An @ClrTypeAlias'd builtin
+    /// resolves to its BCL twin and is therefore its own shipped form; looking the raw Kotlin carrier up in the
+    /// runtime stdlib instead would read a different type's members into a reference scoped to the BCL.
+    ///
+    /// Which assemblies HAVE a separate shipped form is the catalog's knowledge, asked rather than restated: a
+    /// second twin pair, or a rename, then needs no edit here and cannot disagree with the mapping the reference's
+    /// own assembly name comes from.
+    /// </remarks>
+    Type PhysicalOwnerOf(Type declaringDef)
+    {
+        if (declaringDef == null) return null;
+        var asm = PhysicalStdlibAssembly();
+        if (asm == null || declaringDef.Assembly?.GetName()?.Name is not string owning
+            || string.Equals(ManagedReferenceCatalog.PhysicalAssemblyName(owning), owning, StringComparison.Ordinal))
+            return null;
+        var def = declaringDef.IsGenericType && !declaringDef.IsGenericTypeDefinition
+            ? declaringDef.GetGenericTypeDefinition() : declaringDef;
+        try { return asm.GetType(def.FullName, throwOnError: false); } catch { return null; }
+    }
+
+    Assembly PhysicalStdlibAssembly()
+    {
+        if (_physicalStdlibInit) return _physicalStdlib;
+        _physicalStdlibInit = true;
+        EnsureNetMlc();
+        var path = _compileRefs?.PhysicalStdlibPath;
+        if (_netMlc == null || string.IsNullOrEmpty(path)) return null;
+        try { _physicalStdlib = _netMlc.LoadFromAssemblyPath(path); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"bir2cir: warning: could not read the shipped stdlib twin {path} — {ex.GetType().Name}: {ex.Message}");
+            _physicalStdlib = null;
+        }
+        return _physicalStdlib;
+    }
+
     public void DisposeNet() { try { _netMlc?.Dispose(); } catch { } _netMlc = null; }
 
     public int OwnerArity(string ownerFqn)
