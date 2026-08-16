@@ -10,8 +10,15 @@
 // choice of `List`1` with a parameterless constructor and a one-argument `Add` is the shape THIS pass picked
 // when it minted the node. So it names them, and the emitter stops asking.
 //
+// That includes the TYPE the literal constructs. A reference states its member's declaring type together with
+// the instantiation the use site anchors it on, so the constructor named below already says `List<int>` —
+// the emitter reads the constructed type back off it and names no BCL type of its own (#400).
+//
 // The signatures below are the declarations' own — `Add(!0)`, `set_Item(!0, !1)` — matched structurally like
 // every other member, so a BCL that grows an overload cannot silently change which one is meant.
+//
+// A node whose element/key/value type cannot be read is a node this pass cannot complete. It fails here, where
+// the missing fact is, rather than travelling to the emitter as a construction with nothing to construct.
 
 using System.Reflection;
 using System.Text.Json.Nodes;
@@ -35,7 +42,11 @@ static partial class ClrMemberResolution
         var args = kind == "newMap"
             ? new[] { TypeJson.Read(node["keyType"]), TypeJson.Read(node["valType"]) }
             : new[] { TypeJson.Read(node["elem"]) };
-        if (args.Any(a => a == null)) return;
+        if (args.Any(a => a == null))
+            throw new InvalidOperationException(
+                $"bir2cir: {kind} states no readable "
+                + (kind == "newMap" ? "keyType/valType" : "elem")
+                + " and so names no constructed type (#400)");
         var ownerFqn = new TypeNode.Fqn(template.Owner, args);
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
@@ -69,7 +80,9 @@ static partial class ClrMemberResolution
     static void ResolveSpreadConcat(JsonObject node)
     {
         if (node.ContainsKey("ctorRef")) return;
-        if (TypeJson.Read(node["elem"]) is not TypeNode elem) return;
+        if (TypeJson.Read(node["elem"]) is not TypeNode elem)
+            throw new InvalidOperationException(
+                "bir2cir: spreadConcat states no readable elem and so names no accumulator type (#400)");
         var args = new[] { elem };
         var open = ResolveOwnerType(new TypeNode.Fqn(SpreadOwner, args))
             ?? throw new InvalidOperationException(
@@ -111,12 +124,16 @@ static partial class ClrMemberResolution
     /// The enumerator protocol an inlined `for` walks. Both arms are named: WHICH arm the emitter takes is a
     /// Reflection.Emit fact (an instantiation over a type still being built cannot carry a usable member token),
     /// so that choice stays where the knowledge is — but choosing between two members already named is not
-    /// member selection, and neither arm's members are derived by name any more.
+    /// member selection, and neither arm's members are derived by name any more. The emitter asks the GENERIC
+    /// arm's reference which owner it anchored on to make that choice and takes the enumerator's own type from
+    /// whichever GetEnumerator it then emits, so both arms must be present on every node (#400).
     /// </summary>
     static void ResolveForEachInline(JsonObject node)
     {
         if (node.ContainsKey("moveNextRef")) return;
-        if (TypeJson.Read(node["elem"]) is not TypeNode elem) return;
+        if (TypeJson.Read(node["elem"]) is not TypeNode elem)
+            throw new InvalidOperationException(
+                "bir2cir: forEachInline states no readable elem and so names no enumerator protocol (#400)");
         var element = new TypeNode.Tv("type", 0);
 
         StampProtocolMember(node, "enumerableGetRef", "System.Collections.Generic.IEnumerable",

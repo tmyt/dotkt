@@ -79,6 +79,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **A collection literal's constructed BCL type now comes from the reference that names its constructor (#400).**
+  `newList`/`newSet`/`newMap`/`spreadConcat` already carried the exact constructor and accumulator `bir2cir` chose,
+  but `ilemit` still built the result type by naming `List`1`/`HashSet`1`/`Dictionary`2` itself — a second, parallel
+  decision about which BCL type a Kotlin literal becomes. It now reads that type off the named constructor's
+  declaring instantiation, and `forEachInline` likewise takes its enumerator local from whichever `GetEnumerator` it
+  emits instead of naming `IEnumerator`. Which enumerator arm the emitter can encode remains its own call — an
+  instantiation over a type still being built cannot carry a usable member token — but that choice is now made by
+  asking the already-resolved generic reference which owner it anchored on, so no BCL type name is left in these
+  expansions. A node whose element/key/value type cannot be read now fails in `bir2cir`, where the fact is missing,
+  instead of reaching the emitter as a construction with nothing to construct. Emitted IL is unchanged.
+
 - **A `companion object` of a generic class is now ONE object across every instantiation (#383).** CLR static storage
   belongs to each closed constructed generic type, so the nested carrier every companion received in #275 gave
   `Foo<int>.Companion` and `Foo<string>.Companion` a singleton each — with separate state — while Kotlin's own uses,
