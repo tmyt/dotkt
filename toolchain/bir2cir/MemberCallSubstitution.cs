@@ -1735,10 +1735,12 @@ static class MemberCallSubstitution
     // earlier rule was obliged to route the call, and failing to do so used to degrade into a runtime
     // `GetType().GetMethod(name).Invoke(...)` lookup. Refuse at compile time instead, naming owner.member.
     //
-    // Scoped to a KOTLIN SPELLING (lowercase-camelCase, and not an accessor prefix), which is the same criterion the
-    // Rule-4 comment above states: an already-renamed BCL spelling (`MoveNext`, `Add`, `get_Count`) legitimately
-    // arrives here from an earlier binding and is resolved by name on the BCL owner. An owner that does not resolve
-    // is not evidence of a miss and is left alone.
+    // Scoped to a KOTLIN SPELLING (lowercase-camelCase), which is the same criterion the Rule-4 comment above states:
+    // an already-renamed BCL spelling (`MoveNext`, `Add`) legitimately arrives here from an earlier binding and is
+    // resolved by name on the BCL owner. A physical accessor name (`get_Count`, `add_Changed`) needs no exclusion of
+    // its own — it is only ever produced by a binding that already proved the owner declares it, so the DERIVED test
+    // below passes it; this rule never parses an accessor spelling (#397). An owner that does not resolve is not
+    // evidence of a miss and is left alone.
     static void AssertInterfaceMemberRouted(string ownerFqn, TypeNode.Fqn ownerFqnNode, string member,
         ReferenceMetadataIndex refs)
     {
@@ -1756,15 +1758,10 @@ static class MemberCallSubstitution
             + "member nothing can link.");
     }
 
-    // A Kotlin source spelling as opposed to an already-bound CLR member name: lowercase-camelCase, excluding the
-    // lowercase CLR accessor prefixes that earlier binding rules author.
+    // A Kotlin source spelling as opposed to an already-bound CLR member name: lowercase-camelCase, and not one of
+    // the compiler's own `dotkt`-marked synthetics (whose owner is always already resolved).
     static bool IsKotlinSpelledMember(string member) =>
         !string.IsNullOrEmpty(member) && char.IsLower(member[0])
-        && !member.StartsWith("get_", StringComparison.Ordinal)
-        && !member.StartsWith("set_", StringComparison.Ordinal)
-        && !member.StartsWith("add_", StringComparison.Ordinal)
-        && !member.StartsWith("remove_", StringComparison.Ordinal)
-        && !member.StartsWith("raise_", StringComparison.Ordinal)
         && !member.StartsWith("dotkt", StringComparison.Ordinal);
 
     // Kotlin collection-interface member -> the rt ClrCollectionDefaults static (recv-first, generic over elem).

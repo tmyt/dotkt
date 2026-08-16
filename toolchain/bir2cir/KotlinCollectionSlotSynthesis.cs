@@ -141,7 +141,9 @@ static class KotlinCollectionSlotSynthesis
                 },
             }),
             ["attrs"] = new JsonArray(),
-            [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
+            // No `physicalSlotBridge` marker here: that is a BIR-phase property-accessor fact the earlier bridge
+            // synthesizers use to hide themselves from declaration scans, and the #37 schema requires it to be
+            // consumed before CIR. This pass runs after type lowering, when nothing scans declarations again.
             ["clrInterfaceImpls"] = new JsonArray(new JsonObject
             {
                 ["owner"] = TypeJson.Fqn(iface),
