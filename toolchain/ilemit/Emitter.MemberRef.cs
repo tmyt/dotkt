@@ -300,6 +300,75 @@ sealed partial class Emitter
     // ---- transitional: prove the reference names what the emitter links today ------------------------
 
     /// <summary>
+    /// The member this node's reference names, or null when it carries none. THE PRIMARY PATH: where a
+    /// reference exists it is the answer, and the descriptor beside it is only still consulted so the two can
+    /// be compared. A node without one is not yet migrated and falls back until it is.
+    /// </summary>
+    MemberInfo PrimaryFromRef(JsonElement node, string carrier)
+    {
+        if (node.ValueKind != JsonValueKind.Object
+            || !node.TryGetProperty(carrier, out var element)
+            || element.ValueKind != JsonValueKind.Object) return null;
+        var reference = MemberRefNode.Read(element);
+        return AnchorOnUseSite(ResolveMemberRef(reference), reference);
+    }
+
+    /// <summary>
+    /// The reference names a DECLARATION, which lives on the open definition; the call is on the use site's
+    /// INSTANTIATION of it, which the reference states in `declaringType.args`. Putting the declaration back
+    /// on that instantiation is mechanical — it is the one thing the reference deliberately does not
+    /// pre-compute, because a MemberRef's signature is the uninstantiated one (ECMA II.9.8) and the
+    /// instantiation belongs to the type spec built around it.
+    /// </summary>
+    MemberInfo AnchorOnUseSite(MemberInfo declaration, MemberRefNode reference)
+    {
+        if (reference.DeclaringType is not TypeNode.Fqn { Args: { Length: > 0 } args }) return declaration;
+        // A definition can only be instantiated with its OWN arity. The reference states the declarer's
+        // instantiation, so a count that disagrees is not an instantiation of this declarer at all — anchoring
+        // does not apply and the declaration stands, which is what a member on a non-generic declarer gets too.
+        var definition = declaration.DeclaringType;
+        if (definition == null || !definition.IsGenericTypeDefinition
+            || definition.GetGenericArguments().Length != args.Length) return declaration;
+        Type owner;
+        try { owner = ConstructedType(definition, args.Select(MapType).ToArray()); }
+        catch { return declaration; }
+        if (owner == null || owner == definition) return declaration;
+        // A constructed owner made entirely of target types is an ordinary reflection type: its members are
+        // reachable directly, and the same metadata token identifies the declaration on it. The Anchor*
+        // helpers next door are for the other case — an owner built over a TypeBuilder, which cannot be
+        // reflected and needs a signature view instead.
+        var reflected = ReflectOnConstructed(owner, declaration);
+        if (reflected != null) return reflected;
+        return declaration switch
+        {
+            ConstructorInfo constructor => AnchorConstructor(owner, constructor),
+            MethodInfo method => AnchorMethod(owner, method),
+            FieldInfo field => AnchorField(owner, field),
+            _ => declaration,
+        };
+    }
+
+    static MemberInfo ReflectOnConstructed(Type owner, MemberInfo declaration)
+    {
+        try
+        {
+            IEnumerable<MemberInfo> candidates = declaration switch
+            {
+                ConstructorInfo => owner.GetConstructors(DeclaredMembers),
+                MethodInfo => owner.GetMethods(DeclaredMembers),
+                FieldInfo => owner.GetFields(DeclaredMembers),
+                _ => null,
+            };
+            if (candidates == null) return null;
+            foreach (var candidate in candidates)
+                if (candidate.MetadataToken == declaration.MetadataToken && candidate.Module == declaration.Module)
+                    return candidate;
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>
     /// Resolve the reference beside the legacy pick and refuse to continue if they name different members.
     /// Runs over every build, which is the only way the claim is about the corpus rather than about a few
     /// examples. Disable with DOTKT_MEMBERREF_PARITY=off only to bisect.
