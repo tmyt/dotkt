@@ -59,6 +59,10 @@ static partial class ClrMemberResolution
         // winner's declared CLR return in the same vocabulary as clrOverrideSig (including positional type vars).
         node["clrOverrideRet"] = TypeJson.Write(MemberSigOf(win.ReturnType));
         node["clrOverrideOwner"] = DeclaringTypeDescriptor(win);
+        // The same slot as one scalar identity. The three descriptors above state the base member in pieces —
+        // name here, parameters there, owner and return elsewhere — and a MethodImpl target is exactly the
+        // place where assembling those pieces back into a member is selection.
+        node["clrOverrideRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerSpec.Args);
     }
 
     // Pick the UNIQUE base virtual to override. An override's DECLARED params ARE the base slot's params (that is what

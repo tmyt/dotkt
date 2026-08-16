@@ -244,12 +244,19 @@ static partial class ClrMemberResolution
                 {
                     // Compatibility debt: alias collapse can erase a Kotlin convenience constructor whose body adapts
                     // to a differently-shaped CLR ctor (notably RuntimeException(cause)). CIR cannot yet serialize that
-                    // adapter. Keep the decision in bir2cir — never ilemit — and make the incomplete identity visible;
-                    // the scalar memberRef + constructor-adapter work must remove this branch before 1.0.
+                    // adapter. Keep the decision in bir2cir — never ilemit — until the constructor-adapter work lands.
+                    //
+                    // BE PRECISE ABOUT WHAT THIS PRODUCES. The reference below names the constructor that WILL be
+                    // invoked, so it is a true identity and the emitter may resolve it exactly. What does not hold is
+                    // the ARGUMENTS: the delegation's own signature is the one this pick just failed to match, so the
+                    // values handed to that constructor are not the ones it declares. The debt is in the adapter, not
+                    // in the member — and reading it as an identity problem is what would send someone looking in the
+                    // wrong place.
                     winner = arity[0];
                 }
                 ctor["baseMemberSig"] = MemberSig(winner.GetParameters());
                 ctor["baseMemberOwner"] = DeclaringTypeDescriptor(winner);
+                ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
             }
         }
     }

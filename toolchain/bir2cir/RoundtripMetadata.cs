@@ -660,8 +660,11 @@ static class RoundtripMetadata
     // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
     // Attribute()'s protected ctor.
     // ---------------------------------------------------------------------------------------------------------------
-    public static JsonObject SynthDefsFile()
+    public static JsonObject SynthDefsFile(ReferenceMetadataIndex refs)
     {
+        // Resolve the shared base delegation BEFORE any ctor is built, so every synthesized class states the
+        // member it delegates to rather than describing it.
+        _attributeBaseCtorRef = ClrMemberResolution.ParameterlessBaseCtorRef(refs, "System.Attribute");
         var types = new JsonArray
         {
             AttrClass(AKFunction, Ctor(Param("System.Int32"))),
@@ -721,6 +724,10 @@ static class RoundtripMetadata
         };
     }
 
+    // The resolved `System.Attribute()` delegation every synthesized attribute class shares. Resolved ONCE per
+    // run: it is the same member for every one of them, and each ctor gets its own copy of the node.
+    static JsonNode _attributeBaseCtorRef;
+
     static JsonObject Ctor(params JsonNode[] paramTypes)
     {
         var ps = new JsonArray();
@@ -732,6 +739,7 @@ static class RoundtripMetadata
             ["baseArgs"] = new JsonArray(),
             ["baseMemberSig"] = new JsonArray(),
             ["baseMemberOwner"] = Fqn("System.Attribute"),
+            ["baseCtorRef"] = _attributeBaseCtorRef?.DeepClone(),
             ["body"] = new JsonArray(),
         };
     }

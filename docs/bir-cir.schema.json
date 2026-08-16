@@ -166,7 +166,7 @@
         },
         "declaringType": {
           "$ref": "#/$defs/tFqn",
-          "description": "The exact DECLARING type: an fqn whose name is the open definition's metadata FullName VERBATIM (arity backtick and `+` nesting included — the physical name the target universe is keyed by, so nothing downstream re-derives either) and whose `args`, when present, are the use-site instantiation of that declaring type. The declarer is stated, never derived — a member the receiver merely inherits is anchored on the type that declares it, so no base walk or most-derived rule is needed downstream."
+          "description": "The exact DECLARING type: an fqn whose name is the open definition's metadata FullName VERBATIM (arity backtick and `+` nesting included — the physical name the target universe is keyed by, so nothing downstream re-derives either) and whose `args`, when present, are the USE SITE's instantiation of that declaring type, projected along the declaration edge. Those arguments are ordinary document type nodes in the document's vocabulary — they are not something the target declares — and a consumer resolves them exactly as it resolves any other type slot. The declarer is stated, never derived — a member the receiver merely inherits is anchored on the type that declares it, so no base walk or most-derived rule is needed downstream."
         },
         "name": {
           "type": "string", "minLength": 1,
@@ -412,6 +412,8 @@
         "clrOverrideRet": { "$ref": "#/$defs/type", "$comment": "CIR-only exact external base-class virtual slot return type. Return type is part of CLR MethodDef identity and must be matched together with clrOverrideSig." },
         "clrOverrideSig": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "CIR-only exact external base-class virtual slot parameter vector." },
         "clrOverrideOwner": { "$ref": "#/$defs/type", "$comment": "CIR-only exact metadata declaring owner of the resolved external base slot." },
+        "clrOverrideRef": { "$ref": "#/$defs/memberRef", "$comment": "The same base slot as ONE resolved identity (#370). The clrOverride/clrOverrideMember/clrOverrideSig/clrOverrideRet/clrOverrideOwner family states it in pieces; a MethodImpl target is exactly where reassembling pieces into a member would be selection. Present whenever clrOverrideOwner is." },
+        "baseCtorRef": { "$ref": "#/$defs/memberRef", "$comment": "A constructor's delegation to an EXTERNAL base constructor, as one resolved identity (#370) — the scalar form of baseMemberSig/baseMemberOwner. Present whenever baseMemberOwner is." },
         "declarationId": { "type": "string", "$comment": "#395 BIR-only frontend-authoritative stable Kotlin declaration fingerprint. bir2cir allocates the physical MethodDef and binds uses from this key after CLR erasure; RoundtripMetadata consumes it into [KotlinDeclarationIdentity]." },
         "declarationSourceName": { "type": "string", "$comment": "#395 bir2cir hand-off preserving the Kotlin source name when declarationId receives a different physical CLR name. Consumed into [KotlinDeclarationIdentity] before CIR." },
         "explicitClrName": { "type": "string", "$comment": "#402 BIR-only source-authored physical MethodDef name from @ClrName or its @JvmName compatibility alias. bir2cir validates and consumes it during final CLR signature allocation; it is forbidden in CIR." },
