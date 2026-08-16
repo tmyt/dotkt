@@ -78,7 +78,7 @@ The split prevents frontend declarations, binding metadata, and executable imple
       obliges, which describe the emitted assembly rather than anything a Kotlin program said.
     The test is whether an EXTERNAL member reaches a CIL operand, NOT whether the Kotlin source wrote the call.
     A Kotlin operation the backend expands into a BCL call — `enumValues()` into `Enum.GetValues`, string `+` into
-    `String.Concat`, a `clrDynInstance` dispatch into `GetType`/`GetMethod`/`Invoke`, an emitted enumerator's slots
+    `String.Concat`, an emitted enumerator's slots
     into `IEnumerator`'s — encodes an external member however the shape got there, so those members arrive named
     like any other: bir2cir stamps them as a per-document `wellKnownRefs` table, keyed by role. They take no
     per-site decision, which is why one table says them all rather than a carrier per node. The EXPANSION stays in

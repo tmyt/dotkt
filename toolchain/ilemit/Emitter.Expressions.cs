@@ -16,68 +16,14 @@ sealed partial class Emitter
     static bool IsVirtual(JsonElement e) => e.TryGetProperty("virtual", out var v) && v.GetBoolean();
 
     // ---- expressions: push one value, return its CLR type ----
-    // @ClrIntrinsicAsDynamic dispatch: `recv.GetType().GetMethod(name).Invoke(recv, [args...])`, emitted inline (no
-    // helper assembly). Resolves the bound member at RUNTIME, so ilemit needs NO static resolution -- this sidesteps the
-    // BCL-`clrg:`-interface skip in FindMethod (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) and
-    // the IReadOnlyList/IList dual get_Item. Slower (reflection + boxing) but correct; used only where static fails.
-    // True if the emitted type implements a BCL `clr:`/`clrg:` interface -- i.e. a substituted Kotlin collection whose
-    // Kotlin members (get_Item/iterator/addAll) may live on the BCL interface that static FindMethod skips. Gates the
-    // dynamic-dispatch fallback to these, so a genuine missing-method on a non-collection type still throws.
-    bool OwnerHasClrInterface(string ownerType)
-    {
-        var (open, _) = ParseOwner(ownerType);
-        if (!_types.TryGetValue(open, out var ti) || ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var ifs)) return false;
-        // A CLR/BCL interface is a reference-KLIB-projected .NET type: NOT emitted in THIS assembly AND not a Kotlin `kotlin.*`
-        // interface — the structured successor of the retired `clr:`/`clrg:` interface-token check (#48), kept narrow so
-        // a referenced *Kotlin* interface does not spuriously widen the dynamic-dispatch fallback.
-        foreach (var i in ifs.EnumerateArray())
-            if (DotKt.Bir.TypeNode.Read(i) is DotKt.Bir.TypeNode.Fqn f
-                && !_types.ContainsKey(BareTypeKey(f.Name))
-                && !f.Name.StartsWith("kotlin.", StringComparison.Ordinal)) return true;
-        return false;
-    }
-
-    Type EmitDynamicCall(JsonElement e)
-    {
-        var name = e.GetProperty("method").GetString();
-        var args = e.GetProperty("args").EnumerateArray().ToArray();
-        var recvT = EmitExpr(e.GetProperty("recv"));
-        if (NeedsBoxToRef(recvT)) _il.Emit(OpCodes.Box, recvT);   // box a value-type OR a `gp:T` receiver to object
-        var recvLocal = _il.DeclareLocal(Bcl("System.Object"));
-        _il.Emit(OpCodes.Stloc, recvLocal);
-        // mi = recv.GetType().GetMethod(name)   (this for Invoke)
-        _il.Emit(OpCodes.Ldloc, recvLocal);
-        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetType"));
-        _il.Emit(OpCodes.Ldstr, name);
-        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Type.GetMethod"));
-        // Invoke(target=recv, object[] args)
-        _il.Emit(OpCodes.Ldloc, recvLocal);
-        _il.Emit(OpCodes.Ldc_I4, args.Length);
-        _il.Emit(OpCodes.Newarr, Bcl("System.Object"));
-        for (int i = 0; i < args.Length; i++)
-        {
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Ldc_I4, i);
-            var at = EmitExpr(args[i]);
-            if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);   // box a value-type OR a `gp:T` arg before stelem_ref into object[]
-            _il.Emit(OpCodes.Stelem_Ref);
-        }
-        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("MethodInfo.Invoke"));
-        // result: pop a dropped void return, else unbox/cast to the CIR-declared dynRet. The spec is a CLR spelling —
-        // bir2cir derives Unit->void upstream, so ilemit never sees a Kotlin `unit`/`kotlin.Unit` here (if it did, that
-        // would be a bir2cir lowering defect, not something ilemit should silently absorb). The slot is a structured
-        // TypeNode (post type-flip) OR a legacy string — MapType(JsonElement) dispatches both; only the bare-string
-        // "void"/"System.Void" legacy spelling needed the special-case. (Regression guard: before the flip this read the
-        // slot ONLY as a string, so a structured `dynRet` fell through to "void" and POPPED a live bool — e.g. a
-        // dynamic-dispatched `it.MoveNext()` loop condition -> `brfalse` on an empty stack -> InvalidProgram.)
-        JsonElement retEl = default; bool hasRet = false;
-        if (e.TryGetProperty("dynRet", out var rr) && rr.ValueKind != JsonValueKind.Null) { retEl = rr; hasRet = true; }
-        else if (e.TryGetProperty("ret", out var rr2) && rr2.ValueKind != JsonValueKind.Null) { retEl = rr2; hasRet = true; }
-        var retT = hasRet ? MapType(retEl) : Bcl("System.Void");
-        if (retT == Bcl("System.Void")) { _il.Emit(OpCodes.Pop); return Bcl("System.Void"); }
-        _il.Emit(OpCodes.Unbox_Any, retT);   // universal: unbox a value type, cast a ref type, resolve a generic param
-        return retT;
-    }
+    // (#400) There is NO runtime-reflection dispatch here any more. ilemit used to emit
+    // `recv.GetType().GetMethod(name).Invoke(recv, [args...])` for a call it could not link statically — a name-only
+    // binder that preserved no overload, declaring slot, explicit-interface implementation or generic arity, and that
+    // produced an opaque NullReferenceException whenever the runtime type had no method of that name (the ordinary
+    // case for a BCL-backed collection). Every producer of that path is gone: the Kotlin collection members with no
+    // BCL slot now have a physical representation authored in bir2cir — the ClrCollectionDefaults dispatchers plus a
+    // real DotKt.Runtime.CompilerServices.Kotlin*Slots interface slot on each implementer — so a member ilemit cannot
+    // link is an upstream drop and must fail loudly.
 
     Type EmitExpr(JsonElement e)
     {
@@ -232,28 +178,19 @@ sealed partial class Emitter
             }
             case "callInstance":
             {
-                // @ClrIntrinsicAsDynamic member: dispatch by RUNTIME reflection (recv.GetType().GetMethod(name).Invoke),
-                // sidestepping static resolution that cascades (a member on a BCL `clrg:` interface FindMethod skips).
-                if (e.TryGetProperty("dyn", out var dynF) && dynF.ValueKind == JsonValueKind.True)
-                    return EmitDynamicCall(e);
                 var cisig = SigNodes(e);
-                MethodInfo m0 = null; Type rt = null;
-                // A @Clr-bound member whose STATIC resolution fails -- it lives on a BCL clrg: interface that FindMethod
-                // skips (e.g. AbstractMutableList.SubList calling get_Item on the IList slot) -- falls back to dynamic
-                // dispatch. Gated to nodes carrying "dynRet" (the @Clr member calls), so a genuine miss elsewhere throws.
+                MethodInfo m0; Type rt;
                 var ciOwner = ParseOwnerSlot(e.GetProperty("ownerType"));   // keeps a constructed-generic owner's args
                 // An external owner names the member (#370); only a method this compilation emits is still found
-                // by signature here, which is the local axis (#395).
+                // by signature here, which is the local axis (#395). A resolution failure is now a HARD error: the
+                // former `catch (NotSupportedException) … EmitDynamicCall` fallback (#400) turned an unresolvable
+                // member into a runtime name lookup, which is not a call identity at all.
                 if (e.TryGetProperty("memberRef", out _))
                 {
                     m0 = RequiredRef<MethodInfo>(e, "memberRef", "method");
                     rt = m0.ReturnType;
                 }
-                else
-                try { m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e)); }
-                catch (NotSupportedException) when (e.TryGetProperty("dynRet", out _)
-                    && !e.TryGetProperty("clrOwnerResolved", out _)
-                    && OwnerHasClrInterface(ciOwner.open)) { return EmitDynamicCall(e); }
+                else m0 = ResolveMethod(ciOwner, e.GetProperty("method").GetString(), out rt, cisig, CalledMethodArity(e));
                 var m = ApplyTypeArgs(m0, e, out var mrt, out var mps);
                 // #108 GUARD (defensive, contract-violation only — never fires on valid CIR). This path pushes the
                 // receiver as a plain value/reference (EmitExpr(recv)) then emits call/callvirt on `m` DIRECTLY. Per
@@ -967,10 +904,6 @@ sealed partial class Emitter
             case "newClr": return EmitClrNew(e);
             case "clrStatic": return EmitClrCall(e, instance: false);
             case "clrInstance": return EmitClrCall(e, instance: true);
-            // W1-S2 (#46): a clrInstance whose interface owner has NO statically-matching BCL slot (the runtime value
-            // implements it under a different concrete type) is emitted by bir2cir as a DELIBERATE dynamic-dispatch node
-            // — replacing ilemit's former SILENT EmitClrCall->EmitDynamicCall downgrade, so the fallback is greppable.
-            case "clrDynInstance": return EmitDynamicCall(e);
             case "clrPropGet": return EmitClrPropGet(e);
             case "clrPropSet": return EmitClrPropSet(e);
             case "clrEventAdd": return EmitClrEvent(e, add: true);
