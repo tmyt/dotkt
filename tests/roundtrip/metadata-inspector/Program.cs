@@ -135,7 +135,7 @@ static void VerifyReverseEnumeratorBridge(string producerPath)
         $"'{adapter}' must carry [CompilerGenerated] so dll2klib excludes it by attribute, not by name");
     Require(adapterDefinition.GetGenericParameters().Count == 1, $"'{adapter}' must have exactly one type parameter");
     var adapterFaces = adapterDefinition.GetInterfaceImplementations()
-        .Select(handle => StripArities(TypeName(md, md.GetInterfaceImplementation(handle).Interface)))
+        .Select(handle => StripArities(TypeName(md, DeclarationOwner(md.GetInterfaceImplementation(handle).Interface))))
         .OrderBy(name => name, StringComparer.Ordinal).ToArray();
     Require(adapterFaces.SequenceEqual(new[]
         {
@@ -177,8 +177,8 @@ static void VerifyReverseEnumeratorBridge(string producerPath)
                 string.Join(", ", rows.Select(row => row.Owner + "::" + row.Member)));
     }
 
-    // A MethodImpl declaration on a constructed generic interface names a TypeSpec; its element type is the
-    // TypeRef/TypeDef the signature blob opens with.
+    // A constructed generic interface — as an InterfaceImpl face or as a MethodImpl declaration's parent — is a
+    // TypeSpec; the type it names is the TypeRef/TypeDef its signature blob opens with.
     EntityHandle DeclarationOwner(EntityHandle parent) => parent.Kind == HandleKind.TypeSpecification
         ? TypeSpecificationTarget(md, (TypeSpecificationHandle)parent)
         : parent;

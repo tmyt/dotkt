@@ -133,7 +133,8 @@ class ReverseEnumeratorBridgeTests {
     fun aSameNamedOverloadDoesNotSuppressTheBridge() {
         val bag = RevBridgeOverloadedName(listOf(1, 2, 3))
         assertEquals(listOf(1, 2, 3), bag.toList())
-        assertEquals(6, bag.count() + bag.GetEnumerator(3))
+        assertEquals(3, bag.count())
+        assertEquals(6, bag.GetEnumerator(3))   // the author's own overload: seed + size
         var sum = 0
         for (x in bag) sum += x
         assertEquals(6, sum)
