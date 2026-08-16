@@ -53,16 +53,19 @@ static partial class ClrMemberResolution
         try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == slotName && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
         var win = PickOverrideBase(cands, argNodes, returnNode,
             $"override base={owner}.{slotName}({DescArgs(argNodes)}):{returnNode}");
-        node["clrOverrideSig"] = MemberSig(win.GetParameters());
         // The incoming return describes the implementation's resolved Kotlin/constructed-owner view and is used
         // above to select the slot.  ilemit links against the declaration in the reference assembly, so carry the
         // winner's declared CLR return in the same vocabulary as clrOverrideSig (including positional type vars).
-        node["clrOverrideRet"] = TypeJson.Write(MemberSigOf(win.ReturnType));
-        node["clrOverrideOwner"] = DeclaringTypeDescriptor(win);
         // The same slot as one scalar identity. The three descriptors above state the base member in pieces —
         // name here, parameters there, owner and return elsewhere — and a MethodImpl target is exactly the
         // place where assembling those pieces back into a member is selection.
         node["clrOverrideRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerSpec.Args);
+        // …and the pieces go. They were this resolution's INPUT — they named the slot to look for — and leaving
+        // them makes the reference travel beside the thing it replaced, which is how a consumer keeps triggering
+        // on the old key and never notices the new one exists.
+        node.Remove("clrOverride");
+        node.Remove("clrOverrideMember");
+        node.Remove("clrOverrideRet");
     }
 
     // Pick the UNIQUE base virtual to override. An override's DECLARED params ARE the base slot's params (that is what

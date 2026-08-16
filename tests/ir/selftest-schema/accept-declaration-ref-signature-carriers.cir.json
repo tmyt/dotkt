@@ -11,11 +11,6 @@
         {
           "params": [],
           "baseArgs": [],
-          "baseMemberSig": [],
-          "baseMemberOwner": {
-            "t": "fqn",
-            "name": "System.Exception"
-          },
           "baseCtorRef": {
             "kind": "ctor",
             "assembly": "System.Runtime",

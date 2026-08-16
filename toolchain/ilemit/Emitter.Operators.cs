@@ -256,7 +256,8 @@ sealed partial class Emitter
             if (NeedsBoxToRef(t)) _il.Emit(OpCodes.Box, t);
             _il.Emit(OpCodes.Stelem_Ref);
         }
-        EmitMethod(_il, OpCodes.Call, Bcl("System.String").GetMethod("Concat", new[] { Bcl("System.Object").MakeArrayType() }));
+        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("String.ConcatArray"));
         return Bcl("System.String");
     }
 
@@ -279,6 +280,7 @@ sealed partial class Emitter
             // the ctor on the MakeGenericType — use TypeBuilder.GetConstructor(constructed, open Nullable<>'s ctor).
             var ctor = ContainsTypeBuilder(want)
                 ? AnchorConstructor(want, Bcl("System.Nullable`1").GetConstructors()[0])
+                // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
                 : want.GetConstructor(new[] { got });
             EmitConstructor(_il, OpCodes.Newobj, ctor);
             return want;
@@ -340,12 +342,12 @@ sealed partial class Emitter
         if (NeedsBoxToRef(rt)) _il.Emit(OpCodes.Box, rt);
         switch (e.GetProperty("method").GetString())
         {
-            case "GetHashCode": EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetHashCode")); return Bcl("System.Int32");
-            case "ToString": EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("ToString")); return Bcl("System.String");
+            case "GetHashCode": EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetHashCode")); return Bcl("System.Int32");
+            case "ToString": EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.ToString")); return Bcl("System.String");
             case "Equals":
                 var at = EmitExpr(e.GetProperty("arg"));
                 if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);
-                EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
+                EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.Equals"));
                 return Bcl("System.Boolean");
         }
         return Bcl("System.Object");
@@ -368,7 +370,7 @@ sealed partial class Emitter
         _il.MarkLabel(nonNull);                                  // a non-null -> a.Equals((object)b)
         var rt2 = EmitExpr(e.GetProperty("rhs"));
         if (NeedsBoxToRef(rt2)) _il.Emit(OpCodes.Box, rt2);
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.Equals"));
         _il.MarkLabel(done);
         return Bcl("System.Boolean");
     }

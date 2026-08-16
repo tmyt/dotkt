@@ -240,6 +240,20 @@ static class BirTypeLowering
         return new TypeNode.Fqn(bcl, loweredArgs);
     }
 
+    /// <summary>
+    /// True for a type name this pass emits when it lowers a Kotlin FUNCTION TYPE to a CLR delegate.
+    /// </summary>
+    /// <remarks>
+    /// A reader that meets one of these in a physical signature is looking at what the document calls `fn`, and
+    /// the difference is not cosmetic: a function type's parameters and return are METHOD SLOTS, while an
+    /// ordinary constructed generic's arguments are storage. Any rule that is positional — the arg-position
+    /// variance collapse, the nullable-generic erasure — answers differently for the two, so a reader that
+    /// cannot tell them apart asks the wrong question of every delegate it sees.
+    /// </remarks>
+    internal static bool IsLoweredFunctionType(string clrFqn) =>
+        clrFqn is "System.Func" or "System.Action"
+            or "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction";
+
     // The method-slot rule, readable by the member-reference serializer.
     //
     // bir2cir resolves a stdlib member against the REFERENCE twin, which declares the Kotlin surface, while the

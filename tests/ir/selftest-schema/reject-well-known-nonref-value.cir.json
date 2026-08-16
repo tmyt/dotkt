@@ -382,5 +382,8 @@
         }
       ]
     }
-  ]
+  ],
+  "wellKnownRefs": {
+    "Object.GetType": "not-a-reference"
+  }
 }

@@ -79,6 +79,7 @@ sealed partial class Emitter
     // Resolve a field by name on an already-RESOLVED (referenced .NET / baked) type, walking its base-class chain
     // (reflection's GetField already includes inherited members). Pure CLR resolution; null if absent.
     static FieldInfo FindReflectedField(Type t, string name) =>
+        // #370-residual: the local axis: a field of a type this compilation is emitting (#395)
         t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
 
     // Resolve a method for emit; out-param gives the substituted (concrete) return type for boxing decisions.
@@ -229,15 +230,19 @@ sealed partial class Emitter
 
     static ConstructorInfo GenericCtor(Type constructed, params Type[] argTypes) =>
         IsTbInstantiation(constructed)
+            // #370-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
             ? AnchorConstructor(constructed, constructed.GetGenericTypeDefinition().GetConstructor(argTypes))
+            // #370-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
             : constructed.GetConstructor(argTypes);
 
     static MethodInfo GenericMethod(Type constructed, string name) =>
         IsTbInstantiation(constructed)
+            // #370-residual: anchoring an ALREADY-resolved method onto a constructed owner, not choosing one
             ? AnchorMethod(constructed, constructed.GetGenericTypeDefinition().GetMethod(name))
             // Runtime 10.0.10's PAB asks the returned ParameterInfo graph for modifier-aware Types. MLC's raw
             // RoModifiedType deliberately leaves several structural reflection APIs unsupported, so route the
             // already-selected member through the same signature adapter used for TypeSpec anchoring.
+            // #370-residual: anchoring an ALREADY-resolved method onto a constructed owner, not choosing one
             : PersistableMethod(constructed.GetMethod(name));
 
     // Substitute an open TYPE's own generic parameters (positionally = `typeArgs`) throughout a member reference as
@@ -565,85 +570,7 @@ sealed partial class Emitter
     // The base-class slot a `clrBaseImpls` descriptor names when its owner lives in a REFERENCED assembly. The
     // owner is a real reflection Type, so the slot is a real MethodInfo: match by name, method generic arity and the
     // descriptor's own (already-constructed) parameter vector. Resolution only — the descriptor decided the slot.
-    MethodInfo FindExternalBaseSlot(DotKt.Bir.TypeNode.Fqn ownerFqn, string member, int arity,
-        JsonElement ps, JsonElement ret, JsonElement descriptor)
-    {
-        var owner = MapType(ownerFqn);
-        if (owner == null) return null;
-        var want = ps.EnumerateArray().Select(p => MapType(p)).ToArray();
-        var wantRet = MapType(ret);
-        // A REFERENCED GENERIC base instantiated at a LOCALLY EMITTED type argument — `class C : Base<LocalType>` —
-        // is a TypeBuilderInstantiation, whose `GetMethods()` throws. That is a perfectly ordinary shape, not an
-        // impossible one: the open definition is enumerated instead and each candidate re-anchored onto the
-        // instantiation, exactly as the referenced-INTERFACE path already does for the same reflection shape.
-        MethodInfo[] all;
-        var reanchor = false;
-        try { all = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance); }
-        catch (NotSupportedException)
-        {
-            all = owner.GetGenericTypeDefinition()
-                .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            reanchor = true;
-        }
-        var args = reanchor ? owner.GetGenericArguments() : null;
-        var cands = all.Where(m => m.Name == member
-                                   && m.GetGenericArguments().Length == arity
-                                   && m.GetParameters().Length == want.Length
-                                   && m.GetParameters()
-                                       .Select(p => reanchor ? SubstituteIfaceArgs(p.ParameterType, args) : p.ParameterType)
-                                       .Zip(want, SlotParamMatches).All(x => x)
-                                   && SlotParamMatches(
-                                       reanchor ? SubstituteIfaceArgs(ReturnTypeOf(m), args) : ReturnTypeOf(m),
-                                       wantRet)
-                                   && ReflectedTypeParamsMatch(descriptor, m, reanchor ? args : null))
-            .ToList();
-        if (cands.Count != 1) return null;
-        return reanchor ? AnchorMethod(owner, cands[0]) : cands[0];
-    }
 
-    // Reflection supplies the MethodInfo named by an already-resolved descriptor; it does not get to choose among
-    // constraint-only declarations. Compare the descriptor's positional !!i constraint shape before returning the
-    // metadata handle. Generic-parameter names are deliberately irrelevant to CLR identity.
-    bool ReflectedTypeParamsMatch(JsonElement descriptor, MethodInfo declaration, Type[] ownerArgs)
-    {
-        if (!descriptor.TryGetProperty("typeParams", out var described)) return true;
-        if (described.ValueKind != JsonValueKind.Array) return false;
-        var describedParams = described.EnumerateArray().ToArray();
-        var declaredParams = declaration.GetGenericArguments();
-        if (describedParams.Length != declaredParams.Length) return false;
-        const GenericParameterAttributes specialMask =
-            GenericParameterAttributes.ReferenceTypeConstraint
-            | GenericParameterAttributes.NotNullableValueTypeConstraint
-            | GenericParameterAttributes.DefaultConstructorConstraint
-            | GenericParameterAttributes.AllowByRefLike;
-        for (var i = 0; i < describedParams.Length; i++)
-        {
-            var wantedAttributes = GenericParameterAttributes.None;
-            foreach (var special in TypeParameterSpecialConstraints(describedParams[i]))
-                wantedAttributes |= special switch
-                {
-                    "class" => GenericParameterAttributes.ReferenceTypeConstraint,
-                    "struct" => GenericParameterAttributes.NotNullableValueTypeConstraint,
-                    "new" => GenericParameterAttributes.DefaultConstructorConstraint,
-                    "allowsRefStruct" => GenericParameterAttributes.AllowByRefLike,
-                    var value => throw new InvalidOperationException(
-                        $"ilemit: MethodImpl descriptor has unknown generic-parameter special constraint '{value}'"),
-                };
-            if ((declaredParams[i].GenericParameterAttributes & specialMask) != wantedAttributes) return false;
-            var wantedConstraints = TypeParameterConstraints(describedParams[i]).Select(MapType).ToList();
-            var actualConstraints = declaredParams[i].GetGenericParameterConstraints()
-                .Select(constraint => ownerArgs == null ? constraint : SubstituteIfaceArgs(constraint, ownerArgs))
-                .ToList();
-            if (wantedConstraints.Count != actualConstraints.Count) return false;
-            foreach (var constraint in wantedConstraints)
-            {
-                var match = actualConstraints.FindIndex(candidate => SlotParamMatches(constraint, candidate));
-                if (match < 0) return false;
-                actualConstraints.RemoveAt(match);
-            }
-        }
-        return true;
-    }
 
     MethodInfo ApplyTypeArgs(MethodInfo m, JsonElement e, out Type retType, out Type[] paramTypes)
     {
@@ -1082,6 +1009,7 @@ sealed partial class Emitter
                 if (!p.IsGenericType)
                     return retVoid && dparams.Length == 0
                         && expectedNs == "System" && expectedName == "Action"
+                        // #370-residual: a TYPE-shape predicate, not a member lookup
                         && p.Namespace == "System" && p.Name == "Action";
                 Type delegateDef;
                 try { delegateDef = p.GetGenericTypeDefinition(); } catch { return false; }
@@ -1277,12 +1205,14 @@ sealed partial class Emitter
     // skips generated types by attribute rather than by `dotkt$` name-sniffing.
     internal void StampCompilerGenerated(TypeBuilder tb) =>
         SetAttribute(tb.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
 
     // #68: same stamp for an ilemit-authored generated METHOD (the covar/dim* variance-bridge synthetics, the reverse-
     // enumerator adapter's own methods) — one consistent `dotkt$` + [CompilerGenerated] marking for every synthetic member.
     internal void StampCompilerGenerated(MethodBuilder mb) =>
         SetAttribute(mb.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
 
     // True when `name` is defined by the exact target compile-reference universe. The module under construction is a
@@ -1311,53 +1241,19 @@ sealed partial class Emitter
     // ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor. NO shape-string, no
     // name/arity first-pick, no assignability scoring: ilemit makes no overload choice (the retired ResolveGenericMethod
     // shapes-match `?? cands.First()` and its `Shape(Type)` helper are deleted).
+    /// <summary>
+    /// The generic method a `clrGeneric*` call names, instantiated with the node's own type arguments.
+    /// </summary>
+    /// <remarks>
+    /// The DEFINITION is a lookup — the reference names it. The instantiation is not part of which declaration is
+    /// meant (ECMA II.9.8 puts it on the method spec), so it is applied here, to whatever the reference named.
+    /// </remarks>
     MethodInfo ResolveGenericMethod(Type type, string name, Type[] typeArgs, JsonElement e, bool instance = false)
     {
-        if (!e.TryGetProperty("memberSig", out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException(
-                $"ilemit: clrGeneric* call to {type?.FullName}.{name}<{typeArgs.Length}> is missing its `memberSig` descriptor " +
-                "(bir2cir must carry the FIR-resolved parameter signature — W1-S1 #46)");
-        var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
-        var declaredOwner = ResolvedOwnerIdentity(e, "memberOwner",
-            $"generic call to {type?.FullName}.{name}<{typeArgs.Length}>");
-        // A generic INSTANCE method reflected off a CONSTRUCTED receiver (`Box<Int>`) has its enclosing-type type-vars
-        // already SUBSTITUTED on each candidate param (`Func<Int32,R>`), while memberSig carries the OPEN `tv(type,i)`.
-        // Resolve a type-scope tv against the constructed owner's type args so the two line up.
-        var ownerArgs = type != null && type.IsGenericType ? type.GetGenericArguments() : null;
-        var flags = BindingFlags.Public | BindingFlags.NonPublic |
-            (instance ? BindingFlags.Instance : BindingFlags.Static);
-        List<MethodInfo> Candidates(Type owner) => owner.GetMethods(flags)
-            .Where(m => IsPublicOrProtected(m) && m.Name == name && m.IsGenericMethodDefinition
-                     && m.GetGenericArguments().Length == typeArgs.Length
-                     && m.GetParameters().Length == declParams.Length)
-            .ToList();
-        bool MatchesCandidate(MethodInfo method)
-        {
-            var candidateOwnerArgs = method.DeclaringType?.IsConstructedGenericType == true
-                ? method.DeclaringType.GetGenericArguments()
-                : ownerArgs;
-            return method.GetParameters()
-                .Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, candidateOwnerArgs))
-                .All(x => x);
-        }
-        var cands = Candidates(type);
-        if (instance) cands.AddRange(SafeInterfaces(type).SelectMany(Candidates));
-        cands = cands.GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
-        var hits = cands.Where(m => DeclaringTypeIdentity(m) == declaredOwner && MatchesCandidate(m)).ToList();
-        if (hits.Count == 1)
-        {
-            ShadowParity(e, "memberRef", hits[0], $"clrGeneric {type?.FullName}.{name}");
-            var definition = PrimaryFromRef(e, "memberRef") as MethodInfo ?? hits[0];
-            return ConstructedMethod(definition, typeArgs);
-        }
-        var desc = $"{type?.FullName}.{name}<{typeArgs.Length}>{sigEl}";
-        if (hits.Count == 0)
-            throw new InvalidOperationException(
-                $"ilemit: no {(instance ? "instance" : "static")} generic method matches the resolved descriptor {desc} " +
-                $"(ABI mismatch; {cands.Count} same-name/arity/param-count candidate(s): {string.Join("; ", cands.Select(m => m.ToString()))})");
+        if (PrimaryFromRef(e, "memberRef") is MethodInfo definition) return ConstructedMethod(definition, typeArgs);
         throw new InvalidOperationException(
-            $"ilemit: resolved generic descriptor {desc} is AMBIGUOUS — {hits.Count} methods match (malformed memberSig): " +
-            string.Join("; ", hits.Select(m => m.ToString())));
+            $"ilemit: generic call to {type?.FullName}.{name}<{typeArgs.Length}> carries no resolved member "
+            + "reference. Every external member arrives named; a node without one is an earlier-layer drop (#370)");
     }
 
     // True iff a structured TypeNode mentions a type variable anywhere — the split between a fully-CONCRETE declared
@@ -1451,6 +1347,7 @@ sealed partial class Emitter
         // The NON-generic `System.Action` (0-arg, void) — a `()->Unit` lambda param (`column(setup, content: ()->Unit)`).
         if (!p.IsGenericType)
             return isVoid && dp.Length == 0 && expectedNs == "System" && expectedName == "Action"
+                   // #370-residual: a TYPE-shape predicate, not a member lookup
                    && p.Name == "Action" && p.Namespace == "System";
         var dn = p.GetGenericTypeDefinition().Name;
         var dns = p.GetGenericTypeDefinition().Namespace;

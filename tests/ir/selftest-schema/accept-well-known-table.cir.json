@@ -382,5 +382,28 @@
         }
       ]
     }
-  ]
+  ],
+  "wellKnownRefs": {
+    "Object.GetType": {
+      "kind": "method",
+      "assembly": "System.Runtime",
+      "declaringType": {
+        "t": "fqn",
+        "name": "System.Math"
+      },
+      "name": "Abs",
+      "genericArity": 0,
+      "returnType": {
+        "t": "fqn",
+        "name": "System.Int32"
+      },
+      "callingConvention": "static",
+      "parameterTypes": [
+        {
+          "t": "fqn",
+          "name": "System.Int32"
+        }
+      ]
+    }
+  }
 }

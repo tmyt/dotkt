@@ -37,6 +37,7 @@ sealed partial class Emitter
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
             Bcl("System.Object"));
         SetAttribute(_unitAdapterTB.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _unitAdapterTB;
     }
@@ -48,6 +49,7 @@ sealed partial class Emitter
             TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
             Bcl("System.Object"));
         SetAttribute(_delegateInvokeAdapterTB.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _delegateInvokeAdapterTB;
     }
@@ -88,6 +90,7 @@ sealed partial class Emitter
             mb.SetParameters(new[] { delegateType }.Concat(invokeParams).ToArray());
             var il = mb.GetILGenerator();
             for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             EmitMethod(il, OpCodes.Callvirt, AnchorMethod(delegateType, def.GetMethod("Invoke")));
             il.Emit(OpCodes.Ret);
             _delegateInvokeAdapters[key] = mb;
@@ -130,6 +133,7 @@ sealed partial class Emitter
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
             EmitConstructor(il, OpCodes.Newobj, AnchorConstructor(delegateType,
+                // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
                 def.GetConstructor(new[] { Bcl("System.Object"), Bcl("System.IntPtr") })));
             il.Emit(OpCodes.Ret);
             _delegateCtorAdapters[key] = mb;
@@ -148,13 +152,14 @@ sealed partial class Emitter
     // delegate's Invoke. `invokeRet` is that Invoke return type (must carry a static `INSTANCE` singleton — `kotlin.Unit`);
     // `paramTypes` are the delegate's parameter types (identical for the void and the Unit delegate — only the return
     // differs), forwarded straight through.
-    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes)
+    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes, FieldInfo singleton)
     {
-        // `invokeRet` is a referenced (baked) `kotlin.Unit` in an app/rt build -> its static INSTANCE reflects directly.
-        // (Were the rt-stdlib itself to ever bind such a delegate while `kotlin.Unit` is still a TypeBuilder, this GetField
-        // would throw a loud NotSupportedException rather than mis-emit — no gate hits it; add a `_types` lookup if it does.)
-        var instF = invokeRet.GetField("INSTANCE", BindingFlags.Public | BindingFlags.Static)
-            ?? throw new NotSupportedException($"cannot reconcile a void lambda into a delegate returning {invokeRet} (no static INSTANCE singleton)");
+        // The singleton the conversion's node names. It does not depend on the adapter's arity — it is one static
+        // field of one type — so it rides the node rather than being fetched by string off the return type here.
+        var instF = singleton
+            ?? throw new InvalidOperationException(
+                $"ilemit: reconciling a void lambda into a delegate returning {invokeRet} needs the "
+                + "`unitInstanceRef` its node carries. Every external member arrives named (#370)");
         var pTypes = new[] { ft }.Concat(paramTypes).ToArray();
         var mb = UnitAdapterHolder().DefineMethod("Unit$" + (_unitAdapterCounter++),
             MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,
@@ -183,7 +188,9 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateCtors.TryGetValue(dtb, out var dctor))
             return AnchorConstructor(ft, dctor);
         return (IsGenericInst(ft) && ContainsTypeBuilder(ft))
+            // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
             ? AnchorConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
+            // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
             : ft.GetConstructor(sig);
     }
 
@@ -200,7 +207,9 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var invoke))
             return AnchorMethod(ft, invoke);
         if (IsGenericInst(ft) && ContainsTypeBuilder(ft))
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             return AnchorMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
+        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
         return ft.GetMethod("Invoke");
     }
 
@@ -213,10 +222,12 @@ sealed partial class Emitter
     // param would come back open, but that only feeds the Unit-adapter trigger, where it is rightly not `kotlin.Unit`.
     Type InvokeRetOf(Type ft)
     {
+        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6); this reads its RETURN TYPE, emitting no member token
         if (!IsGenericInst(ft)) return ft.GetMethod("Invoke")?.ReturnType ?? Bcl("System.Void");
         var def = ft.GetGenericTypeDefinition();
         var r = def is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var declared)
             ? declared.ReturnType
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             : def.GetMethod("Invoke").ReturnType;
         return r.IsGenericParameter && r.GenericParameterPosition < ft.GetGenericArguments().Length
             ? ft.GetGenericArguments()[r.GenericParameterPosition] : r;

@@ -61,4 +61,162 @@ static partial class ClrMemberResolution
                 $"bir2cir: '{template.Owner}.{template.Accumulator}' does not resolve to one declaration for {kind} (#370)");
         node[template.RefKey] = MemberRefJson(accumulator, MemberRefNode.Kinds.Method, open, args);
     }
+
+    /// <summary>
+    /// The members a SPREAD ARGUMENT builds through: `f(1, *a, 2)` accumulates into a `List&lt;T&gt;` and hands over
+    /// its `ToArray()`. Four members, chosen here for the same reason the collection literals' two are.
+    /// </summary>
+    static void ResolveSpreadConcat(JsonObject node)
+    {
+        if (node.ContainsKey("ctorRef")) return;
+        if (TypeJson.Read(node["elem"]) is not TypeNode elem) return;
+        var args = new[] { elem };
+        var open = ResolveOwnerType(new TypeNode.Fqn(SpreadOwner, args))
+            ?? throw new InvalidOperationException(
+                $"bir2cir: spreadConcat accumulates into '{SpreadOwner}', which does not resolve to a .NET type (#370)");
+
+        var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c => c.GetParameters().Length == 0).ToList();
+        node["ctorRef"] = MemberRefJson(
+            TryPickUniqueCtor(ctors, new List<TypeNode>(), args)
+                ?? throw Missing(SpreadOwner, ".ctor"),
+            MemberRefNode.Kinds.Ctor, open, args);
+
+        // The element parameter is the construction's OWN type parameter, positionally — `Add(!0)` — and the
+        // spread arm takes the sequence over it. Stating the vectors is what stops a future overload of either
+        // name from being picked up by the name alone.
+        var element = new TypeNode.Tv("type", 0);
+        StampSpreadMember(node, open, args, "addRef", "Add", new List<TypeNode> { element });
+        StampSpreadMember(node, open, args, "addRangeRef", "AddRange",
+            new List<TypeNode> { new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { element }) });
+        StampSpreadMember(node, open, args, "toArrayRef", "ToArray", new List<TypeNode>());
+    }
+
+    const string SpreadOwner = "System.Collections.Generic.List";
+
+    static void StampSpreadMember(JsonObject node, Type open, TypeNode[] args,
+        string refKey, string name, List<TypeNode> signature)
+    {
+        var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == name && m.GetParameters().Length == signature.Count).ToList();
+        node[refKey] = MemberRefJson(
+            TryPickUnique(candidates, signature, args) ?? throw Missing(SpreadOwner, name),
+            MemberRefNode.Kinds.Method, open, args);
+    }
+
+    static InvalidOperationException Missing(string owner, string member) =>
+        new($"bir2cir: '{owner}.{member}' does not resolve to one declaration for spreadConcat (#370)");
+
+    /// <summary>
+    /// The enumerator protocol an inlined `for` walks. Both arms are named: WHICH arm the emitter takes is a
+    /// Reflection.Emit fact (an instantiation over a type still being built cannot carry a usable member token),
+    /// so that choice stays where the knowledge is — but choosing between two members already named is not
+    /// member selection, and neither arm's members are derived by name any more.
+    /// </summary>
+    static void ResolveForEachInline(JsonObject node)
+    {
+        if (node.ContainsKey("moveNextRef")) return;
+        if (TypeJson.Read(node["elem"]) is not TypeNode elem) return;
+        var element = new TypeNode.Tv("type", 0);
+
+        StampProtocolMember(node, "enumerableGetRef", "System.Collections.Generic.IEnumerable",
+            new[] { elem }, "GetEnumerator", new List<TypeNode>());
+        StampProtocolMember(node, "currentRef", "System.Collections.Generic.IEnumerator",
+            new[] { elem }, "get_Current", new List<TypeNode>());
+        // The non-generic arm's owners take no arguments at all — the erased walk exists precisely because the
+        // constructed ones cannot be spoken here.
+        StampProtocolMember(node, "enumerableGetErasedRef", "System.Collections.IEnumerable",
+            Array.Empty<TypeNode>(), "GetEnumerator", new List<TypeNode>());
+        StampProtocolMember(node, "currentErasedRef", "System.Collections.IEnumerator",
+            Array.Empty<TypeNode>(), "get_Current", new List<TypeNode>());
+        StampProtocolMember(node, "moveNextRef", "System.Collections.IEnumerator",
+            Array.Empty<TypeNode>(), "MoveNext", new List<TypeNode>());
+        _ = element;
+    }
+
+    static void StampProtocolMember(JsonObject node, string refKey, string ownerFqn,
+        TypeNode[] args, string name, List<TypeNode> signature)
+    {
+        var ownerNode = args.Length == 0 ? new TypeNode.Fqn(ownerFqn) : new TypeNode.Fqn(ownerFqn, args);
+        var open = ResolveOwnerType(ownerNode)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: forEachInline walks '{ownerFqn}', which does not resolve to a .NET type (#370)");
+        var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == name && m.GetParameters().Length == signature.Count).ToList();
+        var win = TryPickUnique(candidates, signature, args)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: '{ownerFqn}.{name}' does not resolve to one declaration for forEachInline (#370)");
+        node[refKey] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, args);
+    }
+
+    /// <summary>
+    /// The `Unit` singleton a void lambda needs when it fills a Unit-returning delegate slot.
+    /// </summary>
+    /// <remarks>
+    /// The emitter reconciles the two by wrapping the lambda in an adapter that calls it and returns
+    /// `Unit.INSTANCE`. That adapter is synthesized per arity and belongs to no node — but the FIELD does not
+    /// depend on the arity, or on anything else: it is one static field of one type. So it rides the node whose
+    /// conversion needs it, and the emitter stops naming a stdlib member by string.
+    ///
+    /// A build where `kotlin.Unit` is the type being emitted (the stdlib's own) has no reference to make, and
+    /// none is needed there — that is the local axis.
+    /// </remarks>
+    static void ResolveUnitSingleton(JsonObject node)
+    {
+        if (node.ContainsKey("unitInstanceRef")) return;
+        if (TypeJson.Read(node["funcType"]) is not TypeNode.Fn fn) return;
+        if (fn.Ret is not TypeNode.Fqn { Name: "void" or "System.Void" }) return;
+        var open = ResolveOwnerType(new TypeNode.Fqn(UnitFqn));
+        if (open == null) return;
+        var instance = open.GetField(UnitInstance, BindingFlags.Public | BindingFlags.Static);
+        if (instance == null) return;
+        node["unitInstanceRef"] = FieldRefJson(instance, open, Array.Empty<TypeNode>());
+    }
+
+    const string UnitFqn = "kotlin.Unit";
+    const string UnitInstance = "INSTANCE";
+
+    /// <summary>
+    /// The three BCL members a field-like event accessor's CAS loop runs through.
+    /// </summary>
+    /// <remarks>
+    /// `Delegate.Combine`/`Remove` and `Interlocked.CompareExchange&lt;D&gt;` are as external as anything else, and the
+    /// emitter was picking them — one by a computed name, one by filtering an enumeration on a name predicate.
+    /// Neither shape is visible to a reader scanning for `GetMethod("…")`, which is how they outlived the rest.
+    /// </remarks>
+    static void ResolveEventCas(JsonObject node)
+    {
+        if (node.ContainsKey("combineRef")) return;
+        var kind = (node["kind"] as JsonValue)?.GetValue<string>();
+        if (kind is not ("add" or "remove")) return;
+        if (TypeJson.Read(node["delegateType"]) is not TypeNode delegateType) return;
+
+        var delegateFqn = new TypeNode.Fqn("System.Delegate");
+        var del = ResolveOwnerType(delegateFqn)
+            ?? throw new InvalidOperationException("bir2cir: 'System.Delegate' does not resolve to a .NET type (#370)");
+        var pair = new List<TypeNode> { delegateFqn, delegateFqn };
+        foreach (var name in new[] { "Combine", "Remove" })
+        {
+            var cands = del.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Where(m => m.Name == name && m.GetParameters().Length == 2).ToList();
+            var win = TryPickUnique(cands, pair, Array.Empty<TypeNode>())
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: 'System.Delegate.{name}(Delegate, Delegate)' does not resolve to one declaration (#370)");
+            node[name == "Combine" ? "combineRef" : "removeRef"] =
+                MemberRefJson(win, MemberRefNode.Kinds.Method, del, Array.Empty<TypeNode>());
+        }
+
+        // `CompareExchange<T>(ref T, T, T)` — the ONE generic overload; the non-generic siblings take concrete
+        // slots and are a different member entirely.
+        var interlocked = ResolveOwnerType(new TypeNode.Fqn("System.Threading.Interlocked"))
+            ?? throw new InvalidOperationException("bir2cir: 'System.Threading.Interlocked' does not resolve (#370)");
+        var cas = interlocked.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(m => m.Name == "CompareExchange" && m.IsGenericMethodDefinition
+                && m.GetGenericArguments().Length == 1 && m.GetParameters().Length == 3).ToList();
+        if (cas.Count != 1)
+            throw new InvalidOperationException(
+                $"bir2cir: 'Interlocked.CompareExchange<T>' resolves to {cas.Count} declarations, not one (#370)");
+        node["compareExchangeRef"] = MemberRefJson(cas[0], MemberRefNode.Kinds.Method, interlocked, Array.Empty<TypeNode>());
+        _ = delegateType;
+    }
 }

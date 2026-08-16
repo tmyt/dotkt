@@ -47,9 +47,9 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Stloc, recvLocal);
         // mi = recv.GetType().GetMethod(name)   (this for Invoke)
         _il.Emit(OpCodes.Ldloc, recvLocal);
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetType"));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetType"));
         _il.Emit(OpCodes.Ldstr, name);
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Type").GetMethod("GetMethod", new[] { Bcl("System.String") }));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Type.GetMethod"));
         // Invoke(target=recv, object[] args)
         _il.Emit(OpCodes.Ldloc, recvLocal);
         _il.Emit(OpCodes.Ldc_I4, args.Length);
@@ -62,7 +62,7 @@ sealed partial class Emitter
             if (NeedsBoxToRef(at)) _il.Emit(OpCodes.Box, at);   // box a value-type OR a `gp:T` arg before stelem_ref into object[]
             _il.Emit(OpCodes.Stelem_Ref);
         }
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Reflection.MethodInfo").GetMethod("Invoke", new[] { Bcl("System.Object"), Bcl("System.Object").MakeArrayType() }));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("MethodInfo.Invoke"));
         // result: pop a dropped void return, else unbox/cast to the CIR-declared dynRet. The spec is a CLR spelling —
         // bir2cir derives Unit->void upstream, so ilemit never sees a Kotlin `unit`/`kotlin.Unit` here (if it did, that
         // would be a bir2cir lowering defect, not something ilemit should silently absorb). The slot is a structured
@@ -119,7 +119,9 @@ sealed partial class Emitter
                     return prDeclared;
                 }
                 var fon = ParseOwnerSlot(e.GetProperty("ownerType"));
-                var fb = ResolveField(fon, fnm, out var ft);
+                FieldInfo fb; Type ft;
+                if (PrimaryFromRef(e, "memberRef") is FieldInfo referencedField) { fb = referencedField; ft = FieldTypeOf(fb); }
+                else fb = ResolveField(fon, fnm, out ft);
                 // ECMA-335 ldfld consumes a managed pointer for a value-type receiver.  Property access already takes
                 // this path through EmitAddr above; a genuine public CLR field must do the same.  The field token is the
                 // physical source of truth here (including a referenced constructed generic owner), so this is direct
@@ -311,7 +313,8 @@ sealed partial class Emitter
                 // path for a generic-parameter receiver; scope the workaround to genuinely-emitted value-type instantiations.
                 bool brokenGeneric = iface.IsGenericType && iface.GetGenericTypeDefinition() == Bcl("System.IComparable`1")
                     && IsTbInstantiation(iface) && !recvType.IsGenericParameter;
-                var mi = brokenGeneric ? Bcl("System.IComparable").GetMethod("CompareTo")! : InterfaceMethodOn(iface, e.GetProperty("method").GetString());
+                // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
+                var mi = brokenGeneric ? WellKnown<MethodInfo>("Comparable.CompareTo") : InterfaceMethodOn(iface, e.GetProperty("method").GetString());
                 EmitAddr(e.GetProperty("recv"));
                 EmitExpr(e.GetProperty("arg"));
                 if (brokenGeneric) _il.Emit(OpCodes.Box, recvType);   // arg (type T) -> object for CompareTo(object)
@@ -327,25 +330,26 @@ sealed partial class Emitter
                 // #199/#204 — `owner:null` remains the substitution/recognition axis, while mandatory `calleeOwner`
                 // is the exact dispatch axis. Never global-search by method name: a missing/scoped miss is malformed
                 // CIR and must fail loud instead of silently binding another file class's same-simple-name function.
-                MethodInfo resolved;
+                // A call into a previously-compiled DotKt assembly is an external member like any other, and the
+                // reference is consulted FIRST: running the search anyway would let a missing or ambiguous
+                // candidate set abort before the answer that was already resolved could be read. A member of THIS
+                // compilation carries no reference, and the search below still answers for it.
                 bool exactConstructedOwner = false;
-                if (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
+                var resolved = PrimaryFromRef(e, "memberRef") as MethodInfo;
+                if (resolved == null)
                 {
-                    exactConstructedOwner = DotKt.Bir.TypeNode.Read(ow) is DotKt.Bir.TypeNode.Fqn { Args: not null };
-                    resolved = exactConstructedOwner
-                        ? ResolveMethod(ParseOwnerSlot(ow), name, out _, csig, CalledMethodArity(e))
-                        : FindMethod(ownm, name, csig, CalledMethodArity(e));
+                    // The owner selected in CIR is complete. A bare generic TypeDef here is malformed CIR; ilemit
+                    // must not invent a representative instantiation or reconstruct a retired compiler ABI.
+                    if (e.TryGetProperty("owner", out var ow) && ow.ValueKind != JsonValueKind.Null && SlotName(ow) is string ownm)
+                    {
+                        exactConstructedOwner = DotKt.Bir.TypeNode.Read(ow) is DotKt.Bir.TypeNode.Fqn { Args: not null };
+                        resolved = exactConstructedOwner
+                            ? ResolveMethod(ParseOwnerSlot(ow), name, out _, csig, CalledMethodArity(e))
+                            : FindMethod(ownm, name, csig, CalledMethodArity(e));
+                    }
+                    else
+                        resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
                 }
-                else
-                    resolved = FindCalleeOwnedStatic(e, "callStatic", name, csig, CalledMethodArity(e));
-                // The owner selected in CIR is complete. A bare generic TypeDef here is malformed CIR; ilemit must not
-                // invent a representative instantiation or reconstruct a retired compiler ABI.
-                ShadowParity(e, "memberRef", resolved, $"callStatic {name}");
-                // A call into a previously-compiled DotKt assembly is an external member like any other. Where a
-                // reference travels with it, that is the callee; a member of THIS compilation carries none, and the
-                // search above still answers for it. Method type arguments are applied after either way — those are
-                // the node's own, not part of which declaration is meant.
-                if (PrimaryFromRef(e, "memberRef") is MethodInfo referencedStatic) resolved = referencedStatic;
                 var mb = ApplyTypeArgs(resolved, e, out var srt, out var sps);
                 if (e.TryGetProperty("typeArgs", out _)) EmitArgsTyped(e.GetProperty("args"), sps, mb);
                 else EmitCallArgs(e.GetProperty("args"), mb);
@@ -396,14 +400,12 @@ sealed partial class Emitter
                 // `listOf(...)` -> new List<elem> { ... } via repeated Add.
                 var elem = MapType(e.GetProperty("elem"));
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
-                var listCtor = GenericCtor(listT);
-                var add = GenericMethod(listT, "Add");
-                ShadowParity(e, "ctorRef", listCtor, "newList constructor");
-                ShadowParity(e, "addRef", add, "newList Add");
+                // The reference first — the search is the fallback for a shape that carries none, never a step
+                // that runs before the answer is read.
+                var listCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newList");
+                var add = RequiredRef<MethodInfo>(e, "addRef", "newList");
                 // The members a collection literal builds through are stated by the pass that minted the node,
                 // so the emitter stops deriving them from the constructed type.
-                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refListCtor) listCtor = refListCtor;
-                if (PrimaryFromRef(e, "addRef") is MethodInfo refAdd) add = refAdd;
                 EmitConstructor(_il, OpCodes.Newobj, listCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
@@ -501,18 +503,21 @@ sealed partial class Emitter
                 var listT = ConstructedType(Bcl("System.Collections.Generic.List`1"), elem);
                 var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elem);
                 var loc = _il.DeclareLocal(listT);
-                EmitConstructor(_il, OpCodes.Newobj, listT.GetConstructor(Type.EmptyTypes));
+                // The four members this builds through are named by the pass that minted the node.
+                var spreadCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "spreadConcat");
+                var spreadAdd = RequiredRef<MethodInfo>(e, "addRef", "spreadConcat");
+                var spreadAddRange = RequiredRef<MethodInfo>(e, "addRangeRef", "spreadConcat");
+                var spreadToArray = RequiredRef<MethodInfo>(e, "toArrayRef", "spreadConcat");
+                EmitConstructor(_il, OpCodes.Newobj, spreadCtor);
                 _il.Emit(OpCodes.Stloc, loc);
                 foreach (var p in e.GetProperty("parts").EnumerateArray())
                 {
                     _il.Emit(OpCodes.Ldloc, loc);
                     EmitExpr(p.GetProperty("e"));
-                    EmitMethod(_il, OpCodes.Callvirt, p.GetProperty("spread").GetBoolean()
-                        ? listT.GetMethod("AddRange", new[] { ienumT })
-                        : listT.GetMethod("Add", new[] { elem }));
+                    EmitMethod(_il, OpCodes.Callvirt, p.GetProperty("spread").GetBoolean() ? spreadAddRange : spreadAdd);
                 }
                 _il.Emit(OpCodes.Ldloc, loc);
-                EmitMethod(_il, OpCodes.Callvirt, listT.GetMethod("ToArray", Type.EmptyTypes));
+                EmitMethod(_il, OpCodes.Callvirt, spreadToArray);
                 return elem.MakeArrayType();
             }
             case "arrayGet":
@@ -551,12 +556,12 @@ sealed partial class Emitter
                 Type enT;
                 if (viaNonGeneric)
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
+                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "enumerableGetErasedRef", "forEachInline"));
                     enT = Bcl("System.Collections.IEnumerator");
                 }
                 else
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, GenericMethod(ienumT, "GetEnumerator"));
+                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "enumerableGetRef", "forEachInline"));
                     enT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elem);
                 }
                 var en = _il.DeclareLocal(enT); _il.Emit(OpCodes.Stloc, en);
@@ -565,17 +570,17 @@ sealed partial class Emitter
                 _loops.Add((LoopLabel(e), start, end));
                 _il.MarkLabel(start);
                 _il.Emit(OpCodes.Ldloc, en);
-                EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
+                EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "moveNextRef", "forEachInline"));
                 _il.Emit(OpCodes.Brfalse, end);
                 _il.Emit(OpCodes.Ldloc, en);
                 if (viaNonGeneric)
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("get_Current"));
+                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "currentErasedRef", "forEachInline"));
                     _il.Emit(OpCodes.Unbox_Any, elem);
                 }
                 else
                 {
-                    EmitMethod(_il, OpCodes.Callvirt, GenericMethod(enT, "get_Current"));
+                    EmitMethod(_il, OpCodes.Callvirt, RequiredRef<MethodInfo>(e, "currentRef", "forEachInline"));
                 }
                 _il.Emit(OpCodes.Stloc, lv);
                 foreach (var b in e.GetProperty("body").EnumerateArray()) EmitStmt(b);
@@ -713,12 +718,8 @@ sealed partial class Emitter
                 var kt = MapType(e.GetProperty("keyType"));
                 var vt = MapType(e.GetProperty("valType"));
                 var dt = ConstructedType(Bcl("System.Collections.Generic.Dictionary`2"), kt, vt);
-                var mapCtor = GenericCtor(dt);
-                var setItem = GenericMethod(dt, "set_Item");
-                ShadowParity(e, "ctorRef", mapCtor, "newMap constructor");
-                ShadowParity(e, "setItemRef", setItem, "newMap set_Item");
-                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refMapCtor) mapCtor = refMapCtor;
-                if (PrimaryFromRef(e, "setItemRef") is MethodInfo refSetItem) setItem = refSetItem;
+                var mapCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newMap");
+                var setItem = RequiredRef<MethodInfo>(e, "setItemRef", "newMap");
                 EmitConstructor(_il, OpCodes.Newobj, mapCtor);
                 foreach (var en in e.GetProperty("entries").EnumerateArray())
                 {
@@ -734,12 +735,8 @@ sealed partial class Emitter
                 // `setOf(...)` -> new HashSet<elem> { ... } via repeated Add (Add returns bool -> pop).
                 var elem = MapType(e.GetProperty("elem"));
                 var setT = ConstructedType(Bcl("System.Collections.Generic.HashSet`1"), elem);
-                var setCtor = GenericCtor(setT);
-                var add = GenericMethod(setT, "Add");
-                ShadowParity(e, "ctorRef", setCtor, "newSet constructor");
-                ShadowParity(e, "addRef", add, "newSet Add");
-                if (PrimaryFromRef(e, "ctorRef") is ConstructorInfo refSetCtor) setCtor = refSetCtor;
-                if (PrimaryFromRef(e, "addRef") is MethodInfo refSetAdd) add = refSetAdd;
+                var setCtor = RequiredRef<ConstructorInfo>(e, "ctorRef", "newSet");
+                var add = RequiredRef<MethodInfo>(e, "addRef", "newSet");
                 EmitConstructor(_il, OpCodes.Newobj, setCtor);
                 foreach (var item in e.GetProperty("elems").EnumerateArray())
                 {
@@ -981,6 +978,7 @@ sealed partial class Emitter
                 // `new System.Span<T>(void* ptr, int length)` over the stack buffer -> a real Span for .NET APIs.
                 var elem = MapType(e.GetProperty("elem"));
                 var spanT = ConstructedType(Bcl("System.Span`1"), elem);
+                // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
                 var ctor = spanT.GetConstructor(new[] { Bcl("System.Void").MakePointerType(), Bcl("System.Int32") });
                 EmitExpr(e.GetProperty("ptr"));
                 EmitExpr(e.GetProperty("len"));

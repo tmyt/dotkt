@@ -1140,6 +1140,7 @@ sealed class Pipeline
             // An applied attribute is a call into the assembly that declares it, so its constructor is resolved
             // like any other external member. After Apply, whose statics it shares.
             ClrMemberResolution.ResolveAttributeCtors(lowered, refs);
+            ClrMemberResolution.ResolveWellKnown(lowered, refs);
             // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
             // whole family from the crossing refusal below without any gate noticing.

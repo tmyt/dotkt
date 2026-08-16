@@ -181,7 +181,8 @@ temporary `companionCaptureOwner`/`externalCompanionOwner` strings are declarati
 suspend captures, not Type slots, and must be consumed before CIR. The schema gate enforces those phase boundaries:
 `companionValue`, `kotlinCompanion`, and both capture-owner keys are forbidden in CIR; `newClrStaticDelegate` and
 `capturedTypeParams` are forbidden in BIR. A CIR `newClrStaticDelegate` must already carry the resolved
-`memberSig`/`memberOwner` descriptors required by ilemit.
+`memberRef` of the method it binds — the transitional `memberSig`/`memberOwner` descriptors it used to carry
+are retired (#370), and the validator now refuses them.
 
 Kotlin property accessors follow the same phase ownership (#397). In BIR, each accessor declaration carries the
 source `propertyName`, an explicit `propertyAccessor` role (`get` or `set`), and a file-local `propertyAssociation`;

@@ -112,6 +112,7 @@ verify-tests: pack ## canonical compiler behavior gate (categorized NUnit suites
 
 verify-schema: ## the #37 BIR/CIR freeze enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-tests
 	bash tests/ir/run-schema.sh
+	bash tests/ir/check-emitter-residual.sh
 
 verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants over fresh BIR/CIR); run AFTER verify-tests
 	bash tests/ir/run-sanity.sh

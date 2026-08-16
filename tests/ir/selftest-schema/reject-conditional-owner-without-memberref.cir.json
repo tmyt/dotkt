@@ -18,10 +18,7 @@
             },
             "args": [],
             "memberSig": [],
-            "memberOwner": {
-              "t": "fqn",
-              "name": "System.Exception"
-            }
+            "member": "accessor"
           }
         }
       ]

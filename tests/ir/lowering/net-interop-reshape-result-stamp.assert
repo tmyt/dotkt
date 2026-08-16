@@ -10,8 +10,10 @@
 # the node, and an operand it cannot type standing left of a suspension is refused outright by the stage-0 operand
 # planner — a compile-time rejection of source the frontend accepts.
 
-# The GENERIC branch: `Activator.CreateInstance<StringBuilder>()` -> clrGenericStatic, `ret` intact after memberSig.
-+"k":"clrGenericStatic","type":{"t":"fqn","name":"System.Activator"},"method":"CreateInstance","typeArgs":[{"t":"fqn","name":"System.Text.StringBuilder"}],"memberSig":[],"ret":{"t":"fqn","name":"System.Text.StringBuilder"}
+# The GENERIC branch: `Activator.CreateInstance<StringBuilder>()` -> clrGenericStatic, `ret` intact after typeArgs.
+# (`memberSig` used to sit between them. It is this resolution's INPUT — it selects among the candidates — and
+# #370 stopped inputs from reaching CIR, so `ret` now follows `typeArgs` directly.)
++"k":"clrGenericStatic","type":{"t":"fqn","name":"System.Activator"},"method":"CreateInstance","typeArgs":[{"t":"fqn","name":"System.Text.StringBuilder"}],"ret":{"t":"fqn","name":"System.Text.StringBuilder"}
 
 # The FIELD branch: a .NET field read (`Vector3.X`) -> clrPropGet, `ret` intact after the receiver.
 +"k":"clrPropGet","type":{"t":"fqn","name":"System.Numerics.Vector3"},"name":"X","static":false,"recv":{"k":"local","name":"v"},"ret":{"t":"fqn","name":"System.Single"}

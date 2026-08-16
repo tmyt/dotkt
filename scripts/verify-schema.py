@@ -26,7 +26,9 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 # member of another assembly. Frozen like KINDS/TYPE_TAGS, so a new carrier key is a deliberate vocabulary
 # change. `declaringType` is the shape's discriminator (no other document shape has it), which is what
 # catches a parallel member-identity spelling invented under some other key.
-MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef"}
+MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef",
+                    "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef", "unitInstanceRef",
+                    "combineRef", "removeRef", "compareExchangeRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -38,6 +40,17 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "ctorRef": {"ctor"},
     "addRef": {"method"},
     "setItemRef": {"method", "propertyAccessor"},
+    "addRangeRef": {"method"},
+    "toArrayRef": {"method"},
+    "enumerableGetRef": {"method"},
+    "enumerableGetErasedRef": {"method"},
+    "currentRef": {"method", "propertyAccessor"},
+    "currentErasedRef": {"method", "propertyAccessor"},
+    "moveNextRef": {"method"},
+    "unitInstanceRef": {"field"},
+    "combineRef": {"method"},
+    "removeRef": {"method"},
+    "compareExchangeRef": {"method"},
 }
 
 # A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such
@@ -46,11 +59,39 @@ COLLECTION_TEMPLATE_REFS = {
     "newList": ("ctorRef", "addRef"),
     "newSet": ("ctorRef", "addRef"),
     "newMap": ("ctorRef", "setItemRef"),
+    # A spread argument accumulates into a list and hands over its array: four members, same rule.
+    "spreadConcat": ("ctorRef", "addRef", "addRangeRef", "toArrayRef"),
+    # An inlined `for` walks the enumerator protocol; both arms are named because which one the emitter can
+    # speak is a Reflection.Emit fact, not a choice about which member is meant.
+    "forEachInline": ("enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef"),
 }
 
 # The transitional owner descriptor each declaration-side carrier travels with, in BOTH directions: one
 # without the other is half a migration, and each half resolves on its own so nothing else would notice.
 DECLARATION_REF_PAIRS = (("baseMemberOwner", "baseCtorRef"), ("clrOverrideOwner", "clrOverrideRef"))
+
+# The transitional identity vocabulary #370 retired. A CIR document carrying any of them has a second spelling
+# of a settled member beside the reference that replaced it.
+# The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
+#
+# The role set is FROZEN, for the reason every other key here is: a table that accepts any name accepts a typo,
+# and a typo'd role resolves to nothing at emit time with the producer long out of the picture. It is CIR-only —
+# nothing resolves members before bir2cir runs — and every value is a complete reference.
+WELL_KNOWN_TABLE = "wellKnownRefs"
+WELL_KNOWN_ROLES = frozenset({
+    "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
+    "Object.Equals", "Enum.GetValues", "Enum.Parse", "Type.GetMethod", "MethodInfo.Invoke",
+    "Enumerable.GetEnumerator", "Enumerator.MoveNext", "Enumerator.Current", "Enumerator.Reset",
+    "Disposable.Dispose", "Array.IndexOf", "Comparable.CompareTo",
+    "Object.ctor", "NotSupportedException.ctor", "NotSupportedException.ctor0",
+    "IndexOutOfRangeException.ctor",
+})
+
+RETIRED_DESCRIPTORS = (
+    "memberSig", "memberOwner", "memberRet",
+    "baseMemberSig", "baseMemberOwner",
+    "clrOverride", "clrOverrideSig", "clrOverrideRet", "clrOverrideOwner", "clrOverrideMember",
+)
 
 
 def in_member_ref(path):
@@ -563,11 +604,33 @@ class V:
             # that dropped a required field cannot escape validation by no longer looking like one. And
             # `declaringType` — which no other document shape has — catches a resolved identity smuggled in
             # under a key nobody registered, i.e. a second member-identity vocabulary growing beside this one.
+            if WELL_KNOWN_TABLE in o:
+                table = o[WELL_KNOWN_TABLE]
+                if not f.endswith(".cir.json"):
+                    self.err(f, path, f"{WELL_KNOWN_TABLE} is a CIR fact: nothing resolves a member before bir2cir runs")
+                elif not isinstance(table, dict):
+                    self.err(f, path, f"{WELL_KNOWN_TABLE} must be an object mapping a frozen role to its resolved member")
+                else:
+                    for role, ref in table.items():
+                        where = path + "/" + WELL_KNOWN_TABLE + "/" + role
+                        if role not in WELL_KNOWN_ROLES:
+                            self.err(f, where, f"{role!r} is not a frozen fixed-member role; a role nothing asks for "
+                                               "resolves to nothing at emit time")
+                        elif not isinstance(ref, dict):
+                            self.err(f, where, f"the {role!r} entry must be a resolved memberRef")
+                        else:
+                            self.member_ref(f, where, ref)
             for carrier_key in MEMBER_REF_KEYS & set(o):
                 self.member_ref_carrier(f, path + "/" + carrier_key, carrier_key, o[carrier_key])
             if "declaringType" in o:
                 carrier = path.rsplit("/", 1)[-1].split("[")[0]
-                if carrier not in MEMBER_REF_KEYS:
+                # The fixed-member table is keyed by ROLE, not by carrier: its whole point is that one container
+                # says every member an expansion needs, so its keys are what the emitter asks for rather than
+                # names the contract froze. Its VALUES are still full references and are checked as such.
+                in_table = "/" + WELL_KNOWN_TABLE + "/" in path + "/"
+                if in_table:
+                    self.member_ref(f, path, o)
+                elif carrier not in MEMBER_REF_KEYS:
                     self.member_ref(f, path, o)
                     self.err(f, path, f"a resolved member identity must ride on a frozen memberRef carrier key, not {carrier!r}")
                     if f.endswith(".bir.json"):
@@ -714,10 +777,8 @@ class V:
                         if not isinstance(type_params, list) or len(type_params) != descriptor.get("arity"):
                             self.err(f, descriptor_path, "MethodImpl descriptor typeParams must match its generic arity")
             if o.get("k") == "newClrStaticDelegate" and f.endswith(".cir.json"):
-                if not isinstance(o.get("memberSig"), list):
-                    self.err(f, path, "newClrStaticDelegate.memberSig must be a resolved Type-node array in CIR")
-                if not isinstance(o.get("memberOwner"), dict) or "t" not in o["memberOwner"]:
-                    self.err(f, path, "newClrStaticDelegate.memberOwner must be a resolved Type node in CIR")
+                if not isinstance(o.get("memberRef"), dict):
+                    self.err(f, path, "newClrStaticDelegate must carry the resolved memberRef of the method it binds")
             if f.endswith(".cir.json"):
                 # The declaration-side pair, checked in BOTH directions. A base-constructor delegation and an
                 # external override target are resolved by the same pass and stated in the same transitional
@@ -748,13 +809,16 @@ class V:
                         declared = o.get("argTypes")
                         if isinstance(declared, list) and len(declared) != len(ref.get("parameterTypes") or []):
                             self.err(f, path, "an applied attribute's memberRef takes a different number of arguments than the application states")
-                for owner_key, ref_key in DECLARATION_REF_PAIRS:
-                    if owner_key in o and ref_key not in o:
-                        self.err(f, path, f"{owner_key} is present without the resolved {ref_key} beside it")
-                    if ref_key in o and owner_key not in o:
-                        # ilemit still reads the owner descriptor, so a reference without it validates clean
-                        # here and dies at emit — the failure lands one layer past the document that caused it.
-                        self.err(f, path, f"{ref_key} is present without the {owner_key} the emitter still reads")
+                # The transitional descriptors are RETIRED: the emitter reads the reference and nothing else,
+                # so an owner descriptor beside it is a second spelling of a settled identity — the kind that
+                # drifts from the first and cannot be caught, because whoever compares them compares two
+                # outputs of the same producer.
+                # EVERY retired descriptor, not the two that happened to have a pair. A ban that lists a subset
+                # is a ban a producer can walk around without noticing — and one did: `memberSig` reached CIR on
+                # the generic call while this rule reported clean.
+                for retired in RETIRED_DESCRIPTORS:
+                    if retired in o:
+                        self.err(f, path, f"{retired} is a retired transitional descriptor; the resolved memberRef is the identity")
             if f.endswith(".cir.json"):
                 for required_key in COLLECTION_TEMPLATE_REFS.get(o.get("k"), ()):
                     if required_key not in o:
@@ -768,11 +832,9 @@ class V:
                     self.err(f, path, f"{kind} is an external member reference and must carry a resolved memberRef")
                 elif kind in MEMBER_REF_CONDITIONAL_KINDS:
                     # Sometimes external, sometimes a member of the assembly being built. The transitional
-                    # identity is what says WHICH this node is: `memberOwner` where a declaring type was read,
-                    # `member` for a property or field, which carry a discriminator instead of a signature.
-                    if "memberOwner" in o:
-                        self.err(f, path, f"{kind} carries the transitional memberOwner without the resolved memberRef beside it")
-                    elif o.get("member") in ("accessor", "field"):
+                    # discriminator is what says WHICH this node is: `member` for a property or field, which carries a
+                    # kind marker rather than a signature.
+                    if o.get("member") in ("accessor", "field"):
                         self.err(f, path, f"{kind} carries member={o['member']!r} without the resolved memberRef beside it")
             if isinstance(o.get("mods"), dict):
                 for mk in o["mods"]:

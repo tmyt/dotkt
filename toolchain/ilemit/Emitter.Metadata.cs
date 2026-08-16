@@ -94,11 +94,12 @@ sealed partial class Emitter
                 ? _target.ResolveType(attr, attrAssembly.GetString())
                 : ClrRef(attr);
             var argTypes = a.GetProperty("argTypes").EnumerateArray().Select(s => ClrRef(s)).ToArray();
-            var nctor = at.GetConstructor(argTypes);
-            ShadowParity(a, "memberRef", nctor, $"applied attribute [{attr}]");
             // An applied attribute is a call, and the constructor it calls is named like any other member.
             // Selecting it from the declared argument vector was the last place a blob encoder chose a member.
-            if (PrimaryFromRef(a, "memberRef") is ConstructorInfo referencedCtor) nctor = referencedCtor;
+            if (PrimaryFromRef(a, "memberRef") is not ConstructorInfo nctor)
+                throw new InvalidOperationException(
+                    $"ilemit: applied attribute [{attr}] carries no resolved member reference. Every external "
+                    + "member arrives named; a node without one is an earlier-layer drop (#370)");
             return TryAttribute(nctor, argTypes, args, namedArgs, attr);
         }
         // The attribute type must be emitted in THIS assembly (present in _types). A stdlib-only annotation that the app
@@ -352,6 +353,7 @@ sealed partial class Emitter
             var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
             // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
             if (vararg) SetAttribute(pb.SetCustomAttribute,
+                // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 Bcl("System.ParamArrayAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
             // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an

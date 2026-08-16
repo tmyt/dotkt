@@ -12,13 +12,13 @@ sealed partial class Emitter
 {
     public void EmitAssembly(List<JsonElement> files)
     {
+        LoadWellKnown(files);
         // #84 Phase 4: run the in-process CIR SANITY gate at the CIR boundary, BEFORE any emit — malformed CIR
         // (undeclared local, dangling goto, missing owner) fails LOUD with a precise `sanity: <invariant>` message
         // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
         // See Emitter.Sanity.cs. Pure fail-fast validation — no IL effect (a valid CIR is byte-identical after it).
         CheckCir(files);
         // #370: how many references these documents carry, so the parity check below can be held to all of them.
-        CountMemberRefCarriers(files);
         // #336: PersistedAssemblyBuilder and every external type/member below share one target
         // MetadataLoadContext. The compiler host still supplies Reflection.Emit's implementation, never an emitted
         // identity. Mixing a host Type with this graph is invalid even when its FullName matches a target Type.
@@ -28,6 +28,7 @@ sealed partial class Emitter
         // signal together with compiler-generated embedded metadata carriers before applying Kotlin-only reverse maps.
         const string dotKtMarkerKey = "DotKt.Compiler";
         const string dotKtMarkerValue = "metadata-v1";
+        // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
         var assemblyMetadataCtor = Bcl("System.Reflection.AssemblyMetadataAttribute").GetConstructor(new[] { Bcl("System.String"), Bcl("System.String") });
         SetAttribute(ab.SetCustomAttribute, assemblyMetadataCtor,
             new[] { Bcl("System.String"), Bcl("System.String") }, dotKtMarkerKey, dotKtMarkerValue);
@@ -36,6 +37,7 @@ sealed partial class Emitter
         if (_targetFrameworkMoniker != null)
         {
             var targetFrameworkCtor = Bcl("System.Runtime.Versioning.TargetFrameworkAttribute")
+                // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 .GetConstructor(new[] { Bcl("System.String") });
             SetAttribute(ab.SetCustomAttribute, targetFrameworkCtor,
                 new[] { Bcl("System.String") }, _targetFrameworkMoniker);
@@ -537,6 +539,7 @@ sealed partial class Emitter
                         // here as well would wire the same MethodImpl twice when the declaring owner is later visited.
                         foreach (var im in ifaceMs)
                         {
+                            // #370-residual: the local axis: wiring a MethodImpl on a type being built (#395)
                             if (im.Name == "GetEnumerator") continue;   // handled by the reverse bridge above
                             // OVERLOADED body methods (e.g. the generic CompareTo(V) + the non-generic IComparable bridge
                             // CompareTo(object)) collide in the name-keyed ti.Methods — wiring the wrong one to the slot
@@ -786,12 +789,8 @@ sealed partial class Emitter
                         // the worst outcome available: an abstract base slot becomes a type-load failure with nothing
                         // naming the producer, and a concrete virtual one keeps dispatching to the base body — the
                         // override simply never runs. Same contract as the emitted-base miss below.
-                        var externalSlot = FindExternalBaseSlot(ownerFqn, memberNode.GetString(), DescribedArity(impl), ps, ret, impl);
-                        // The reference travelling with this descriptor must name the same slot, and where it is
-                        // present it IS the slot — the search survives only so the two can be compared.
-                        if (externalSlot != null)
-                            ShadowParity(impl, "memberRef", externalSlot, $"clrBaseImpls {open}.{memberNode.GetString()}");
-                        if (PrimaryFromRef(impl, "memberRef") is MethodInfo referencedSlot) externalSlot = referencedSlot;
+                        // The slot is a lookup: the reference travelling with this descriptor names it.
+                        var externalSlot = PrimaryFromRef(impl, "memberRef") as MethodInfo;
                         if (externalSlot is null)
                             throw new InvalidOperationException(
                                 $"ilemit: {ti.TB.Name}.{bridgeName}: clrBaseImpls names "
@@ -1155,14 +1154,10 @@ sealed partial class Emitter
         isStatic = isStatic || m.GetProperty("static").GetBoolean();
         var objOverride = m.TryGetProperty("objectOverride", out var oo) && oo.GetBoolean();
         // Overriding a .NET base virtual (e.g. `override val Message`) reuses the base slot, like an object-method.
-        var hasClrOverride = m.TryGetProperty("clrOverride", out var clrOverride);
-        var clrOverrideMember = hasClrOverride
-            ? m.TryGetProperty("clrOverrideMember", out var com) && com.ValueKind == JsonValueKind.String
-                && !string.IsNullOrEmpty(com.GetString())
-                    ? com.GetString()
-                    : throw new InvalidOperationException(
-                        $"ilemit: CLR override implementation {ti.TB?.FullName}.{name} has no exact base member descriptor")
-            : null;
+        // The RESOLVED REFERENCE is what says this method overrides a .NET base virtual, and it is also the
+        // slot. Triggering on the old descriptor and then linking through the reference meant a document in the
+        // shape this change produces — reference only — wired no override at all.
+        var hasClrOverride = m.TryGetProperty("clrOverrideRef", out _);
         // The frontend-stated abstract modality decides whether an interface member is a CLR abstract slot. A concrete
         // Kotlin DIM may have an empty Unit body, so body length is not a declaration-semantics oracle.
         // A compiler-authored static interface helper takes no slot, so it must NOT be marked Virtual/NewSlot/Abstract
@@ -1254,21 +1249,19 @@ sealed partial class Emitter
         {
             var objM = name switch
             {
-                "ToString" => Bcl("System.Object").GetMethod("ToString", Type.EmptyTypes),
-                "GetHashCode" => Bcl("System.Object").GetMethod("GetHashCode", Type.EmptyTypes),
-                "Equals" => Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }),
+                "ToString" => WellKnown<MethodInfo>("Object.ToString"),
+                "GetHashCode" => WellKnown<MethodInfo>("Object.GetHashCode"),
+                "Equals" => WellKnown<MethodInfo>("Object.Equals"),
                 _ => null,
             };
             if (objM != null) WireMethodOverride(ti.TB, mb, objM);
         }
         if (hasClrOverride)
         {
-            // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches it
-            // (`callvirt System.Exception::get_Message` -> our override). bir2cir resolved the base slot off the ref.dll
-            // and carried its param signature as `clrOverrideSig` (#46/#183 W1-S4) — LinkOverrideBase links the unique
-            // slot (0 = hard ABI error), replacing the former name-only first-pick fallback.
-            var baseT = ClrRef(clrOverride);
-            WireMethodOverride(ti.TB, mb, LinkOverrideBase(baseT, clrOverrideMember, m, ti.TB));
+            // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches
+            // it (`callvirt System.Exception::get_Message` -> our override). The slot is the reference bir2cir
+            // resolved: one member, stated once, and the same thing that said this method overrides at all.
+            WireMethodOverride(ti.TB, mb, RequiredRef<MethodInfo>(m, "clrOverrideRef", $"the override {name}"));
         }
         // Kotlin's `@kotlin.internal.InlineOnly` says "this fn is meant to be inlined, not called as a method". The direct
         // CLR translation is a [MethodImpl(AggressiveInlining)] hint on the emitted method. kotc reads the annotation and
@@ -1525,7 +1518,6 @@ sealed partial class Emitter
     {
         // How much of what these documents carry this build put through the parity check. A measurement, not
         // the gate — the enforcement is at the call sites, which compare before every legacy resolution.
-        ReportParityCoverage();
         MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData);
         var peHeader = new PEHeaderBuilder(imageCharacteristics: Characteristics.ExecutableImage | Characteristics.Dll);
         var peBuilder = new ManagedPEBuilder(

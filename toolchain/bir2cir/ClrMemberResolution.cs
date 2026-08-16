@@ -254,8 +254,6 @@ static partial class ClrMemberResolution
                     // wrong place.
                     winner = arity[0];
                 }
-                ctor["baseMemberSig"] = MemberSig(winner.GetParameters());
-                ctor["baseMemberOwner"] = DeclaringTypeDescriptor(winner);
                 ctor["baseCtorRef"] = MemberRefJson(winner, MemberRefNode.Kinds.Ctor, open, baseFqn.Args);
             }
         }
@@ -298,6 +296,10 @@ static partial class ClrMemberResolution
             case "clrPropSet": ResolveProp(node, write: true); break;
             case "clrEventAdd": ResolveEvent(node); break;
             case "clrEventRemove": ResolveEvent(node); break;
+            case "spreadConcat": ResolveSpreadConcat(node); break;
+            case "forEachInline": ResolveForEachInline(node); break;
+            case "newDelegate": case "newClosure": ResolveUnitSingleton(node); break;
+            case "clrEventAccessorImpl": ResolveEventCas(node); break;
             case "newList": ResolveCollectionTemplate(node, "newList"); break;
             case "newSet": ResolveCollectionTemplate(node, "newSet"); break;
             case "newMap": ResolveCollectionTemplate(node, "newMap"); break;
@@ -487,8 +489,6 @@ static partial class ClrMemberResolution
         var win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerFqn.Args,
             $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
         CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerFqn.Args);
-        node["memberSig"] = MemberSig(win.GetParameters());
-        node["memberOwner"] = DeclaringTypeDescriptor(win);
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerFqn.Args);
         // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
         // chokepoint can tell "no return" from "nobody stamped one".
@@ -583,8 +583,6 @@ static partial class ClrMemberResolution
             node.Remove("argTypes");
             return;
         }
-        node["memberSig"] = MemberSig(win.GetParameters());
-        node["memberOwner"] = DeclaringTypeDescriptor(win);
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
@@ -643,13 +641,16 @@ static partial class ClrMemberResolution
                       ?? TryPickUnique(InterfaceCandidates(), sig, ownerFqn.Args);
             if (win != null)
             {
-                node["memberOwner"] = DeclaringTypeDescriptor(win);
                 // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
                 // as an ECMA MethodSpec wraps a MemberRef to the uninstantiated signature.
                 node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
                 StampMemberRet(node, win.ReturnType);
             }
             else StampMemberRetUnresolved(node);
+            // The descriptor is this resolution's INPUT — it selects among the candidates above — and inputs do
+            // not belong in the output. Leaving it made the reference travel beside the thing it replaced, which
+            // is the arrangement every other node just stopped carrying.
+            node.Remove("memberSig");
             return;
         }
         // No usable descriptor means there is no resolved identity to consume. A unique name/arity candidate is not
@@ -711,8 +712,6 @@ static partial class ClrMemberResolution
             .ToList();
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
-        node["memberSig"] = MemberSig(win.GetParameters());
-        node["memberOwner"] = DeclaringTypeDescriptor(win);
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");
@@ -737,8 +736,6 @@ static partial class ClrMemberResolution
             .ToList();
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newClrStaticDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
-        node["memberSig"] = MemberSig(win.GetParameters());
-        node["memberOwner"] = DeclaringTypeDescriptor(win);
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampMemberRet(node, win.ReturnType);
         node.Remove("argTypes");

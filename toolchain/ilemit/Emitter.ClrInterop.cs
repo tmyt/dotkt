@@ -10,21 +10,6 @@ using System.Globalization;
 // CLR interop emission: @Clr native calls, property/event access, ctor picking, BCL-intrinsic handlers.
 sealed partial class Emitter
 {
-    static string ResolvedOwnerIdentity(JsonElement holder, string descriptor, string context)
-    {
-        if (!holder.TryGetProperty(descriptor, out var ownerEl) || ownerEl.ValueKind != JsonValueKind.Object)
-            throw new InvalidOperationException($"ilemit: {context} is missing its resolved `{descriptor}` type descriptor");
-        DotKt.Bir.TypeNode owner;
-        try { owner = DotKt.Bir.TypeNode.Read(ownerEl); }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException($"ilemit: {context} has a malformed `{descriptor}` type descriptor", ex);
-        }
-        if (owner is not DotKt.Bir.TypeNode.Fqn fqn || fqn.Args is { Length: > 0 })
-            throw new InvalidOperationException($"ilemit: {context} has a non-scalar `{descriptor}` type descriptor: {ownerEl}");
-        return fqn.Name;
-    }
-
     Type EmitNativeClrSafeCastValue(JsonElement e)
     {
         // `x as? T` for value T -> `T?`: isinst boxed-T, then unbox+wrap, else empty Nullable<T>.
@@ -44,6 +29,7 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Br, done);
         _il.MarkLabel(has);
         _il.Emit(OpCodes.Unbox_Any, elem);
+        // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
         EmitConstructor(_il, OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
         _il.MarkLabel(done);
         return nt;
@@ -66,6 +52,7 @@ sealed partial class Emitter
         var elem = NativeType(e.GetProperty("elem"));
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
         EmitExpr(e.GetProperty("e"));
+        // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
         EmitConstructor(_il, OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
         return nt;
     }
@@ -109,7 +96,7 @@ sealed partial class Emitter
     {
         var t = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, t);
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
         return Bcl("System.Type");
     }
 
@@ -117,7 +104,7 @@ sealed partial class Emitter
     {
         var got = EmitExpr(e.GetProperty("e"));
         if (got != null && NeedsBoxToRef(got)) _il.Emit(OpCodes.Box, got);
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Object").GetMethod("GetType"));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Object.GetType"));
         return Bcl("System.Type");
     }
 
@@ -164,11 +151,12 @@ sealed partial class Emitter
         {
             var et = NativeType(tp);
             _il.Emit(OpCodes.Ldtoken, et);
-            EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
-            EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("GetValues", new[] { Bcl("System.Type") }));
+            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
+            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.GetValues"));
             EmitExpr(e.GetProperty("e"));
             _il.Emit(OpCodes.Box, et);
-            EmitMethod(_il, OpCodes.Call, Bcl("System.Array").GetMethod("IndexOf", new[] { Bcl("System.Array"), Bcl("System.Object") }));
+            // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
+            EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Array.IndexOf"));
             return Bcl("System.Int32");
         }
         EmitExpr(e.GetProperty("e"));
@@ -180,8 +168,8 @@ sealed partial class Emitter
     {
         var et = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, et);
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("GetValues", new[] { Bcl("System.Type") }));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.GetValues"));
         _il.Emit(OpCodes.Castclass, et.MakeArrayType());
         return et.MakeArrayType();
     }
@@ -190,9 +178,9 @@ sealed partial class Emitter
     {
         var et = NativeType(e.GetProperty("type"));
         _il.Emit(OpCodes.Ldtoken, et);
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Type").GetMethod("GetTypeFromHandle"));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
         EmitExpr(e.GetProperty("arg"));
-        EmitMethod(_il, OpCodes.Call, Bcl("System.Enum").GetMethod("Parse", new[] { Bcl("System.Type"), Bcl("System.String") }));
+        EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.Parse"));
         _il.Emit(OpCodes.Unbox_Any, et);
         return et;
     }
@@ -229,36 +217,15 @@ sealed partial class Emitter
     // type is a TypeBuilderInstantiation (`tb`, caller re-anchors) — and match each declared param STRUCTURALLY under
     // positional-tv equality (GenericParamMatches, shared with the S1 generic matcher). Require EXACTLY ONE: 0 is a hard
     // ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor.
-    ConstructorInfo LinkClrCtor(Type type, JsonElement e, out bool tb, string descriptorName = "memberSig",
+    /// <summary>The constructor a `newClr` or a base delegation names. A lookup, not a choice.</summary>
+    ConstructorInfo LinkClrCtor(Type type, JsonElement e, out bool tb, string carrier = "memberRef",
         bool includeNonPublic = false)
     {
-        if (!e.TryGetProperty(descriptorName, out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException($"ilemit: constructor {type?.FullName} is missing its `{descriptorName}` descriptor (bir2cir must carry the resolved physical ctor signature — W1-S2 #46)");
-        var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
-        var ownerDescriptor = descriptorName == "baseMemberSig" ? "baseMemberOwner" : "memberOwner";
-        var declaredOwner = ResolvedOwnerIdentity(e, ownerDescriptor, $"constructor {type?.FullName}");
         tb = IsTbInstantiation(type);
-        var searchType = tb ? type.GetGenericTypeDefinition() : type;
-        // A CONSTRUCTED reflection owner substitutes its class type-vars on each ctor param (`IEnumerable<Int32>`) —
-        // resolve a `tv(type,i)` memberSig entry against those args; the OPEN-def / TbInstantiation path keeps `tv`
-        // positional (ownerArgs null). Mirrors ResolveGenericMethod's ownerArgs branch.
-        Type[] ownerArgs = tb ? null : (type.IsGenericType ? type.GetGenericArguments() : null);
-        var flags = BindingFlags.Public | BindingFlags.Instance
-            | (includeNonPublic ? BindingFlags.NonPublic : 0);
-        var cands = searchType.GetConstructors(flags)
-            .Where(c => DeclaringTypeIdentity(c) == declaredOwner && c.GetParameters().Length == declParams.Length).ToList();
-        var hits = cands.Where(c => c.GetParameters()
-            .Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, ownerArgs)).All(x => x)).ToList();
-        var desc = $"{type?.FullName}::.ctor{sigEl}";
-        if (hits.Count == 1)
-        {
-            var carrier = descriptorName == "baseMemberSig" ? "baseCtorRef" : "memberRef";
-            ShadowParity(e, carrier, hits[0], $"constructor {desc}");
-            return PrimaryFromRef(e, carrier) as ConstructorInfo ?? hits[0];
-        }
-        if (hits.Count == 0)
-            throw new InvalidOperationException($"ilemit: no constructor matches the resolved descriptor {desc} (ABI mismatch; {cands.Count} same-arity candidate(s): {string.Join("; ", cands.Select(c => c.ToString()))})");
-        throw new InvalidOperationException($"ilemit: resolved ctor descriptor {desc} is AMBIGUOUS — {hits.Count} constructors match (malformed memberSig): {string.Join("; ", hits.Select(c => c.ToString()))}");
+        if (PrimaryFromRef(e, carrier) is ConstructorInfo referenced) return referenced;
+        throw new InvalidOperationException(
+            $"ilemit: construction of {type?.FullName} carries no resolved `{carrier}`. Every external member "
+            + "arrives named; a node without one is an earlier-layer drop (#370)");
     }
 
     // W1-S2 (#46) CONSUME-ONLY method linking. bir2cir stamped the resolved member's DECLARED param signature as
@@ -268,82 +235,13 @@ sealed partial class Emitter
     // declared param STRUCTURALLY under positional-tv equality (GenericParamMatches). Require EXACTLY ONE hit: 0 is a
     // hard ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor. No arity probe, no
     // name+arity first-pick, no assignability scoring, no dynamic-dispatch/Bcl("System.Object") degradation.
+    /// <summary>The method a `clr*` call names. A lookup, not a choice.</summary>
     MethodInfo LinkClrMethod(Type type, string name, JsonElement e, bool instance)
     {
-        if (!e.TryGetProperty("memberSig", out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException($"ilemit: clr{(instance ? "Instance" : "Static")} call to {type?.FullName}.{name} is missing its `memberSig` descriptor (bir2cir must carry the FIR-resolved parameter signature — W1-S2 #46)");
-        var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
-        var declaredOwner = ResolvedOwnerIdentity(e, "memberOwner", $"call to {type?.FullName}.{name}");
-        var flags = BindingFlags.Public | BindingFlags.NonPublic |
-            (instance ? BindingFlags.Instance : BindingFlags.Static);
-        Type[] ownerArgs = type.IsGenericType ? type.GetGenericArguments() : null;
-        // A TypeBuilderInstantiation (constructed over an EMITTED arg — `IEnumerator<T>`, T a user class) can't reflect
-        // its members; resolve on the OPEN def and re-anchor the winner via TypeBuilder.GetMethod. Its type-args are
-        // erased for matching (ownerArgs null -> memberSig `tv` stays positional).
-        bool reanchor = IsTbInstantiation(type);
-        var searchType = reanchor ? type.GetGenericTypeDefinition() : type;
-        if (reanchor) ownerArgs = null;
-        // WITHOUT `typeArgs`, exclude generic-method DEFINITIONS so `Task.fromException` binds the non-generic
-        // `Task FromException(Exception)`, not `Task<T> FromException<T>`; WITH `typeArgs` keep BOTH — a generic Kotlin
-        // @ClrIntrinsic (`arrayCopy<T>`) can bind a NON-generic BCL method (`Array.Copy`), the structural match
-        // disambiguates (mirrors bir2cir ClrMemberResolution's candidate filter).
-        bool hasTypeArgs = e.TryGetProperty("typeArgs", out var taEl) && taEl.ValueKind == JsonValueKind.Array && taEl.GetArrayLength() > 0;
-        List<MethodInfo> Match(IEnumerable<MethodInfo> cs) => cs.Where(m => DeclaringTypeIdentity(m) == declaredOwner
-            && (hasTypeArgs || !m.IsGenericMethodDefinition)
-            && m.GetParameters().Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, ownerArgs)).All(x => x))
-            .GroupBy(m => (m.Module, m.MetadataToken)).Select(g => g.First()).ToList();
-        MethodInfo[] Named(Type t) { try { return t.GetMethods(flags).Where(m =>
-            IsPublicOrProtected(m) && m.Name == name && m.GetParameters().Length == declParams.Length).ToArray(); }
-            catch { return Array.Empty<MethodInfo>(); } }
-        var own = Named(searchType);
-        var all = own.AsEnumerable();
-        if (instance) all = all.Concat(SafeInterfaces(searchType).SelectMany(Named));
-        var hits = Match(all);
-        var desc = $"{type?.FullName}.{name}{sigEl}";
-        // A TypeBuilderInstantiation owner re-anchors the winner via TypeBuilder.GetMethod — but that REQUIRES the winner's
-        // declaring type to be the owner's open def. An INHERITED (base-class) member reflected off the open def declares on
-        // the base, so GetMethod throws ArgumentException; the reflected handle is already a usable closed token (mirrors the
-        // deleted ExternalPropAccessor's `catch (ArgumentException) { return mb; }`, which the S3 field/prop axes now share).
-        if (hits.Count == 1)
-        {
-            var hit = ExactDeclaringMethod(hits[0]);
-            // The reference travelling with this descriptor must name the SAME declaration. Checked before the
-            // anchoring below, which is a projection of the winner rather than another choice of member.
-            ShadowParity(e, "memberRef", hit, $"clr{(instance ? "Instance" : "Static")} {desc}");
-            // …and where there IS one, it is the answer — including its anchoring. The reference states the
-            // declarer's instantiation as the use site sees it, which is the very thing the re-anchoring below
-            // reconstructs from the receiver, so running that on top of it anchors an already-anchored member and
-            // substitutes arguments through an edge whose arity no longer matches. Return it. The search above
-            // still runs only so the two can be compared; it goes when the descriptor it reads does.
-            if (PrimaryFromRef(e, "memberRef") is MethodInfo referenced) return referenced;
-            // Re-anchor only a member DECLARED by this generic owner. An inherited slot already carries its own
-            // declaring interface; anchoring `IEnumerator.MoveNext` onto `IEnumerator<T>` manufactures a member that
-            // does not exist. (TypeBuilder.GetMethod used to reject that pair; SignatureMethod must preserve the same
-            // boundary explicitly because it is a metadata description and therefore cannot validate it for us.)
-            if (!reanchor) return hit;
-            try
-            {
-                if (TypeIdentity(type) == declaredOwner) return AnchorMethod(type, hit);
-                // An inherited slot must be anchored on its OWN instantiated declaration, not on the derived
-                // receiver interface. Substitute the receiver's already-known arguments through the reflected base
-                // edge (`IDictionary<K,V>` -> `ICollection<KeyValuePair<K,V>>`) and preserve memberOwner's exact slot.
-                // This is mechanical projection of the selected declaration, not another member search.
-                if (hit.DeclaringType is { IsConstructedGenericType: true } inheritedOwner)
-                    return AnchorMethod(SubstituteIfaceArgs(inheritedOwner, type.GetGenericArguments()), hit);
-                return hit;
-            }
-            catch (ArgumentException) { return hit; }
-        }
-        if (hits.Count == 0)
-            throw new InvalidOperationException($"ilemit: no {(instance ? "instance" : "static")} .NET method matches the resolved descriptor {desc} (ABI mismatch; {own.Length} same-name/arity candidate(s): {string.Join("; ", own.Select(m => m.ToString()))})");
-        throw new InvalidOperationException($"ilemit: resolved descriptor {desc} is AMBIGUOUS — {hits.Count} methods match (malformed memberSig): {string.Join("; ", hits.Select(m => m.ToString()))}");
-    }
-
-    static string DeclaringTypeIdentity(MethodBase member)
-    {
-        var declaring = member?.DeclaringType
-            ?? throw new InvalidOperationException($"ilemit: member '{member}' has no declaring type");
-        return TypeIdentity(declaring);
+        if (PrimaryFromRef(e, "memberRef") is MethodInfo referenced) return referenced;
+        throw new InvalidOperationException(
+            $"ilemit: clr{(instance ? "Instance" : "Static")} call to {type?.FullName}.{name} carries no resolved "
+            + "member reference. Every external member arrives named; a node without one is an earlier-layer drop (#370)");
     }
 
     static bool IsPublicOrProtected(MethodBase member) =>
@@ -358,26 +256,6 @@ sealed partial class Emitter
 
     static Type[] SafeInterfaces(Type t) { try { return t.GetInterfaces(); } catch { return Array.Empty<Type>(); } }
 
-    // GetMethods on a constructed interface includes inherited members whose DeclaringType is a different interface.
-    // PersistedAssemblyBuilder may nevertheless encode such a reflected handle against its ReflectedType: asking
-    // `IEnumerator<T>` for the inherited non-generic `IEnumerator.MoveNext` then writes the impossible MemberRef
-    // `IEnumerator<T>.MoveNext`. bir2cir's memberOwner has already selected the declaration. Re-fetch the SAME metadata
-    // token from that declaration type so emission preserves that scalar fact; this performs no lookup or selection.
-    static MethodInfo ExactDeclaringMethod(MethodInfo method)
-    {
-        var declaring = method.DeclaringType;
-        if (declaring == null) return method;
-        try
-        {
-            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
-                | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-            return declaring.GetMethods(flags)
-                .FirstOrDefault(candidate => candidate.Module == method.Module
-                    && candidate.MetadataToken == method.MetadataToken) ?? method;
-        }
-        catch { return method; }
-    }
-
     // W1-S4 (#46/#183) CONSUME-ONLY declaration-side override linking. A method overriding a .NET base-CLASS virtual
     // (accessor) carries `clrOverride` (the base owner FQN) + `clrOverrideSig` (bir2cir's ref.dll-resolved base-virtual
     // param signature, positional-tv for a generic base). This LINKS the exact base slot for DefineMethodOverride —
@@ -387,53 +265,13 @@ sealed partial class Emitter
     // `baseT.GetMethod(name, ps) ?? baseT.GetMethod(name)` NAME-ONLY first-pick fallback. A generic base's winner is
     // re-anchored onto the emitted type's CONSTRUCTED base instantiation (DefineMethodOverride must reference the slot
     // on `Collection<Item>`, not the open def) — the corpus exercises only the non-generic accessor case.
+    /// <summary>The base virtual an external override implements. A lookup, not a choice.</summary>
     MethodInfo LinkOverrideBase(Type baseT, string name, JsonElement m, Type derivedTb)
     {
-        if (!m.TryGetProperty("clrOverrideSig", out var sigEl) || sigEl.ValueKind != JsonValueKind.Array)
-            throw new InvalidOperationException($"ilemit: override of {baseT?.FullName}.{name} is missing its `clrOverrideSig` descriptor (bir2cir must carry the resolved base-virtual signature — W1-S4 #46/#183)");
-        var declParams = sigEl.EnumerateArray().Select(DotKt.Bir.TypeNode.Read).ToArray();
-        if (!m.TryGetProperty("clrOverrideRet", out var retEl))
-            throw new InvalidOperationException($"ilemit: override of {baseT?.FullName}.{name} is missing its `clrOverrideRet` descriptor");
-        var declRet = DotKt.Bir.TypeNode.Read(retEl);
-        var declaredOwner = ResolvedOwnerIdentity(m, "clrOverrideOwner", $"override of {baseT?.FullName}.{name}");
-        var searchType = baseT.IsGenericType && !baseT.IsGenericTypeDefinition ? baseT.GetGenericTypeDefinition() : baseT;
-        var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-        MethodInfo[] named;
-        try { named = searchType.GetMethods(flags).Where(x => x.Name == name && x.IsVirtual && x.GetParameters().Length == declParams.Length).ToArray(); }
-        catch { named = Array.Empty<MethodInfo>(); }
-        var hits = named.Where(x => DeclaringTypeIdentity(x) == declaredOwner
-            && GenericParamMatches(declRet, ReturnTypeOf(x), null) && x.GetParameters()
-            .Select((p, i) => GenericParamMatches(declParams[i], p.ParameterType, null)).All(y => y))
-            .GroupBy(x => (x.Module, x.MetadataToken)).Select(g => g.First()).ToList();
-        var desc = $"{baseT?.FullName}.{name}{sigEl}";
-        if (hits.Count == 0)
-            throw new InvalidOperationException($"ilemit: no base virtual matches the override descriptor {desc} (ABI mismatch; {named.Length} same-name/arity virtual(s): {string.Join("; ", named.Select(x => x.ToString()))})");
-        if (hits.Count > 1)
-            throw new InvalidOperationException($"ilemit: override descriptor {desc} is AMBIGUOUS — {hits.Count} base virtuals match (malformed clrOverrideSig): {string.Join("; ", hits.Select(x => x.ToString()))}");
-        var win = hits[0];
-        ShadowParity(m, "clrOverrideRef", win, $"override base {desc}");
-        // …and where the reference answers, it is the answer, anchoring included — the walk below reconstructs
-        // the base instantiation from the emitted type's chain, which is what the reference's declaring type
-        // already states. The search above survives only so the two can be compared.
         if (PrimaryFromRef(m, "clrOverrideRef") is MethodInfo referenced) return referenced;
-        // Non-generic declaring base (the accessor case): the reflected slot is a usable closed handle.
-        if (!(win.DeclaringType?.IsGenericType ?? false)) return win;
-        // Generic .NET base: DefineMethodOverride must reference the slot on the emitted type's CONSTRUCTED base
-        // instantiation (`Collection<Item>::InsertItem`). Walk the emitted type's base-CLASS chain for the instantiation
-        // whose generic def is the winner's declaring type; TypeBuilder.GetMethod re-anchors a TypeBuilderInstantiation
-        // base (emitted arg), else find the closed reflected slot by the shared def token.
-        for (var bt = derivedTb?.BaseType; bt != null; bt = bt.BaseType)
-            if (bt.IsGenericType && !bt.IsGenericTypeDefinition
-                && ReferenceEquals(bt.GetGenericTypeDefinition(), win.DeclaringType.GetGenericTypeDefinition()))
-            {
-                try { return AnchorMethod(bt, win); }
-                catch (ArgumentException)
-                {
-                    var closed = bt.GetMethods(flags).FirstOrDefault(x => x.Module == win.Module && x.MetadataToken == win.MetadataToken);
-                    return closed ?? win;
-                }
-            }
-        return win;
+        throw new InvalidOperationException(
+            $"ilemit: override of {baseT?.FullName}.{name} carries no resolved `clrOverrideRef`. Every external "
+            + "member arrives named; a node without one is an earlier-layer drop (#370)");
     }
 
     // The bir2cir clrInstance `dispatch` decision (call | callvirt | constrained) -> the IL opcode. bir2cir computed it
@@ -581,7 +419,10 @@ sealed partial class Emitter
         }
         // A .NET FIELD surfaced as a Kotlin property (bir2cir resolved member:"field"). A `const` (literal) field has no
         // storage — inline its value (a mechanical raw-constant fetch, not a KIND decision), exactly as C# does.
-        var fld = ResolveClrPropField(type, e.GetProperty("name").GetString());
+        // The reference first: a field is a member like any other, and re-finding it by name is the selection
+        // this change exists to remove — a derived type's static field can hide a base instance field of the
+        // same name, and a name lookup cannot tell which one bir2cir resolved.
+        var fld = RequiredRef<FieldInfo>(e, "memberRef", "an external field access");
         if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), FieldTypeOf(fld));
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         MaybeVolatile(fld, e);
@@ -604,7 +445,10 @@ sealed partial class Emitter
             return Bcl("System.Void");
         }
         // A writable .NET FIELD surfaced as a Kotlin (mutable) property -> field store.
-        var fld = ResolveClrPropField(type, e.GetProperty("name").GetString());
+        // The reference first: a field is a member like any other, and re-finding it by name is the selection
+        // this change exists to remove — a derived type's static field can hide a base instance field of the
+        // same name, and a name lookup cannot tell which one bir2cir resolved.
+        var fld = RequiredRef<FieldInfo>(e, "memberRef", "an external field access");
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitNullableCoerced(e.GetProperty("value"), FieldTypeOf(fld));
         MaybeVolatile(fld, e);
@@ -624,22 +468,6 @@ sealed partial class Emitter
     {
         if (e.TryGetProperty("dispatch", out var d) && d.ValueKind == JsonValueKind.String) return d.GetString();
         throw new InvalidOperationException($"ilemit: {what} on {type?.FullName} is missing its `dispatch` decision (bir2cir must carry call|callvirt|constrained — W1-S3 #46)");
-    }
-
-    // Resolve the FieldInfo for a `member:"field"` property node (bir2cir already decided the KIND is a field). GetField
-    // walks base classes; a constructed generic over a TypeBuilder re-anchors on the open def. NOT a KIND probe — the
-    // member is known to be a field, this only produces the handle.
-    FieldInfo ResolveClrPropField(Type type, string name)
-    {
-        const BindingFlags F = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance;
-        try { var fld = type.GetField(name, F); if (fld != null) return fld; }
-        catch (NotSupportedException) { }
-        if (type.IsConstructedGenericType)
-        {
-            var openFld = type.GetGenericTypeDefinition().GetField(name, F);
-            if (openFld != null) return AnchorField(type, openFld);
-        }
-        throw new InvalidOperationException($"ilemit: field '{name}' resolved by bir2cir is absent on .NET type '{type}' (W1-S3 #46/#121)");
     }
 
     // `.NET event +=/-=` -> call the event's add/remove accessor with the handler bound as the event's OWN
@@ -708,20 +536,18 @@ sealed partial class Emitter
         if (_curTi == null || !_curTi.Fields.TryGetValue(fieldName, out var field))
             throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}' (bir2cir ClrEventImplBinding must insert `<E>$delegate` — #187/#113)");
         if (kind == "raise") { EmitClrEventRaise(field, d); return; }
-        EmitClrEventCas(field, d, add: kind == "add");
+        EmitClrEventCas(e, field, d, add: kind == "add");
     }
 
     // The lock-free add/remove CAS loop over the backing delegate field (C#'s field-like-event accessor shape):
     //   D cur = this.field; do { D cmp = cur; D upd = (D)Delegate.Combine/Remove(cmp, value);
     //       cur = Interlocked.CompareExchange<D>(ref this.field, upd, cmp); } while (cur != cmp);
     // arg0 = this, arg1 = the handler `value`. Reference comparison (bne.un), not delegate equality.
-    void EmitClrEventCas(FieldInfo field, Type d, bool add)
+    void EmitClrEventCas(JsonElement node, FieldInfo field, Type d, bool add)
     {
-        var combine = Bcl("System.Delegate").GetMethod(add ? "Combine" : "Remove", new[] { Bcl("System.Delegate"), Bcl("System.Delegate") });
-        var cmpx = ConstructedMethod(
-            Bcl("System.Threading.Interlocked").GetMethods(BindingFlags.Public | BindingFlags.Static)
-                .Single(m => m.Name == "CompareExchange" && m.IsGenericMethodDefinition && m.GetGenericArguments().Length == 1),
-            d);
+        // The three members this loop runs through are named by the pass that authored the accessor.
+        var combine = RequiredRef<MethodInfo>(node, add ? "combineRef" : "removeRef", "clrEventAccessorImpl");
+        var cmpx = ConstructedMethod(RequiredRef<MethodInfo>(node, "compareExchangeRef", "clrEventAccessorImpl"), d);
         var cur = _il.DeclareLocal(d); var cmp = _il.DeclareLocal(d); var upd = _il.DeclareLocal(d);
         var retry = _il.DefineLabel();
         _il.Emit(OpCodes.Ldarg_0); EmitField(_il, OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, cur);
@@ -739,6 +565,7 @@ sealed partial class Emitter
     // arg0 = this; the raise params (== D.Invoke's params) start at arg1. The null check = C#'s field-like `field?.Invoke`.
     void EmitClrEventRaise(FieldInfo field, Type d)
     {
+        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
         var invoke = d.GetMethod("Invoke");
         var handler = _il.DeclareLocal(d);
         var done = _il.DefineLabel();
@@ -766,7 +593,8 @@ sealed partial class Emitter
             && FuncRetType(h.GetProperty("funcType")) == Bcl("System.Void"))
         {
             var ft = EmitExpr(h);                             // the lambda's natural void delegate, on the stack
-            EmitMethod(_il, OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray()));
+            EmitMethod(_il, OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray(),
+                PrimaryFromRef(h, "unitInstanceRef") as FieldInfo));
             EmitDelegateCtor(_il, want);
             return;
         }
@@ -795,6 +623,7 @@ sealed partial class Emitter
                 // value share target+method, so Delegate equality holds and `-=` removes the right handler.
                 var src = EmitExpr(h);                       // stack: the stored delegate value
                 _il.Emit(OpCodes.Dup);
+                // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
                 EmitMethod(_il, OpCodes.Ldvirtftn, src.GetMethod("Invoke"));
                 EmitDelegateCtor(_il, want);
                 break;

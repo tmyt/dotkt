@@ -59,6 +59,36 @@ The split prevents frontend declarations, binding metadata, and executable imple
    to repeat Kotlin overload resolution. Duplicate CIR method signatures are malformed input; `ilemit` refuses them
    instead of inventing an order-dependent name.
 
+10. Every external member `ilemit` encodes as an operand comes from the CIR node's resolved `memberRef`. It performs
+    exact metadata lookup — declaring type in the named assembly, one member whose whole signature equals the one
+    stated — and no selection: no name-and-arity candidate set, no most-derived rule, no assignability, no
+    reflection-order first-wins. A node that names no member is an earlier-layer drop and fails loudly.
+
+    Three things reflect on a member by name and are NOT that, because none of them can name a different member:
+
+    - **Delegate mechanics.** ECMA-335 II.14.6 defines a delegate as a class with exactly one `Invoke` and exactly
+      one `.ctor(object, native int)`. Fetching either on a delegate type has no candidate set to choose from; it is
+      the same kind of act as knowing `newobj` needs a constructor token. This also covers the per-arity
+      `Func`/`Action` adapters the emitter synthesizes for instantiations over a type still being built, which
+      belong to no CIR node and so have no reference to carry.
+    - **The local axis.** A member of the assembly under construction has no assembly identity to reference yet, so
+      wiring an override, a MethodImpl or an accessor onto a type being built still resolves structurally. Closing
+      that is [#395](https://github.com/tmyt/dotkt/issues/395), not this rule.
+    - **Assembly boilerplate.** `typeof` (`GetTypeFromHandle`) and the attribute/metadata stamping the output format
+      obliges, which describe the emitted assembly rather than anything a Kotlin program said.
+    The test is whether an EXTERNAL member reaches a CIL operand, NOT whether the Kotlin source wrote the call.
+    A Kotlin operation the backend expands into a BCL call — `enumValues()` into `Enum.GetValues`, string `+` into
+    `String.Concat`, a `clrDynInstance` dispatch into `GetType`/`GetMethod`/`Invoke`, an emitted enumerator's slots
+    into `IEnumerator`'s — encodes an external member however the shape got there, so those members arrive named
+    like any other: bir2cir stamps them as a per-document `wellKnownRefs` table, keyed by role. They take no
+    per-site decision, which is why one table says them all rather than a carrier per node. The EXPANSION stays in
+    the emitter; that is a question about which layer owns the shape, and it is separable from whether the member
+    is resolved.
+
+    `tests/ir/check-emitter-residual.sh` holds the emitter to this list. It matches all three shapes a by-name
+    lookup takes — the name written, computed, or used as a predicate over an enumerated candidate set — because
+    a check that saw only the first reported green twice while the other two were live.
+
 ## Build modes
 
 `bir2cir` distinguishes metadata, runtime, and application builds. The frontend emits one BIR representation; mode-specific physical representation is selected below the frontend boundary. See [design-compiler-modes.md](design-compiler-modes.md) for the artifact matrix.

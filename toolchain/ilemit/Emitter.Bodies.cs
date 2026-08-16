@@ -53,7 +53,7 @@ sealed partial class Emitter
             // bir2cir has already resolved the Kotlin delegation onto its physical CLR constructor and carried the
             // declaration as baseMemberSig. Reuse the same exact-link path as newClr; this layer does not form or rank
             // a constructor candidate set from the argument expressions.
-            var ctor = LinkClrCtor(ti.ClrBase, c, out var reanchorBaseCtor, "baseMemberSig", includeNonPublic: true);
+            var ctor = LinkClrCtor(ti.ClrBase, c, out var reanchorBaseCtor, "baseCtorRef", includeNonPublic: true);
             if (reanchorBaseCtor) ctor = AnchorConstructor(ti.ClrBase, ctor);
             if (ba.ValueKind == JsonValueKind.Array) EmitArgs(ba, ParametersOf(ctor));
             EmitConstructor(_il, OpCodes.Call, ctor);
@@ -76,7 +76,7 @@ sealed partial class Emitter
         }
         else
         {
-            EmitConstructor(_il, OpCodes.Call, Bcl("System.Object").GetConstructor(Type.EmptyTypes));
+            EmitConstructor(_il, OpCodes.Call, WellKnown<ConstructorInfo>("Object.ctor"));
         }
         foreach (var s in c.GetProperty("body").EnumerateArray()) EmitStmt(s);
         _il.Emit(OpCodes.Ret);
@@ -322,15 +322,17 @@ sealed partial class Emitter
         var ienumT = ConstructedType(Bcl("System.Collections.Generic.IEnumerable`1"), elemT);
         var ienumrT = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elemT);
         EmitExpr(src);
+        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         EmitMethod(_il, OpCodes.Callvirt, ienumT.GetMethod("GetEnumerator"));
         var en = _il.DeclareLocal(ienumrT); _il.Emit(OpCodes.Stloc, en);
         var x = _il.DeclareLocal(elemT);
         var start = _il.DefineLabel(); var end = _il.DefineLabel();
         _il.MarkLabel(start);
         _il.Emit(OpCodes.Ldloc, en);
-        EmitMethod(_il, OpCodes.Callvirt, Bcl("System.Collections.IEnumerator").GetMethod("MoveNext"));
+        EmitMethod(_il, OpCodes.Callvirt, WellKnown<MethodInfo>("Enumerator.MoveNext"));
         _il.Emit(OpCodes.Brfalse, end);
         _il.Emit(OpCodes.Ldloc, en);
+        // #370-residual: the local axis: wiring a slot on a type this compilation is emitting (#395)
         EmitMethod(_il, OpCodes.Callvirt, ienumrT.GetMethod("get_Current"));
         _il.Emit(OpCodes.Stloc, x);
         body(x);
@@ -465,7 +467,7 @@ sealed partial class Emitter
     {
         var il = mb.GetILGenerator();
         il.Emit(OpCodes.Ldstr, "DOTKT-STDLIB stub: " + feature + " not yet supported by the .NET backend");
-        EmitConstructor(il, OpCodes.Newobj, Bcl("System.NotSupportedException").GetConstructor(new[] { Bcl("System.String") }));
+        EmitConstructor(il, OpCodes.Newobj, WellKnown<ConstructorInfo>("NotSupportedException.ctor"));
         il.Emit(OpCodes.Throw);
     }
 
@@ -682,7 +684,7 @@ sealed partial class Emitter
         var ok = _il.DefineLabel();
         _il.Emit(OpCodes.Blt_Un, ok);
         _il.Emit(OpCodes.Ldstr, "StackBuffer index out of bounds");
-        EmitConstructor(_il, OpCodes.Newobj, Bcl("System.IndexOutOfRangeException").GetConstructor(new[] { Bcl("System.String") }));
+        EmitConstructor(_il, OpCodes.Newobj, WellKnown<ConstructorInfo>("IndexOutOfRangeException.ctor"));
         _il.Emit(OpCodes.Throw);
         _il.MarkLabel(ok);
 
@@ -805,6 +807,7 @@ sealed partial class Emitter
         if (got == null) return;
         if (_methodRetType.IsGenericType && _methodRetType.GetGenericTypeDefinition() == Bcl("System.Nullable`1")
             && _methodRetType.GetGenericArguments()[0] == got)
+            // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
             EmitConstructor(_il, OpCodes.Newobj, _methodRetType.GetConstructor(new[] { got }));
         // A value type / `gp:T` returned where the method declares ANY reference type must BOX (C2: the
         // `compareBy { it }` selector lambda returns `it: Int` declared `kotlin.Comparable[object]` = System.IComparable

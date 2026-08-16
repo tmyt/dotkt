@@ -458,9 +458,9 @@ static class ForeignNullableGenericCrossing
                 // THE STAMPED DECLARATION IS THE TRIGGER, not a list of node kinds. `memberSig`/`memberRet` exist on
                 // exactly the nodes ClrMemberResolution resolved against a .NET member — including an accessor-backed
                 // external `field`, whose KIND is Kotlin's too — so keying on them is keyed on the fact itself and
-                // cannot drift from where the stamping happens.
-                if (obj["memberSig"] != null || obj[ClrMemberResolution.MemberRetKey] != null) CheckCall(obj, file);
-                // `memberRet` is a pass-to-pass fact and must not reach CIR: the emitter consumes `memberSig` and
+                // cannot drift from where the stamping happens. The reference is that stamp now; `memberSig` was.
+                if (obj["memberRef"] != null || obj[ClrMemberResolution.MemberRetKey] != null) CheckCall(obj, file);
+                // `memberRet` is a pass-to-pass fact and must not reach CIR: the emitter consumes the reference and
                 // knows nothing of this one.
                 obj.Remove(ClrMemberResolution.MemberRetKey);
                 foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, file);
@@ -472,6 +472,40 @@ static class ForeignNullableGenericCrossing
     }
 
 
+    /// <summary>
+    /// A reference spells a value type's nullability the way METADATA does — `System.Nullable`1&lt;V&gt;` — while the
+    /// erasure question is asked of the document's `nullable` wrapper. Same fact, two vocabularies; this is where
+    /// they meet, so this is where the bridge belongs rather than inside the erasure rule.
+    /// </summary>
+    static TypeNode AsDocumentNullable(TypeNode t) => t switch
+    {
+        TypeNode.Fqn { Args: { Length: 1 } a } f when IsNullableName(f.Name) =>
+            new TypeNode.Nullable(AsDocumentNullable(a[0])),
+        // A lowered function type read back as its delegate. The document calls it `fn`, and the erasure rule is
+        // positional: a function type's parameters and return are method slots, an ordinary generic's arguments
+        // are storage. Restoring the shape is what keeps the question the same one `memberSig` used to ask.
+        TypeNode.Fqn { Args: { Length: > 0 } fa } f when BirTypeLowering.IsLoweredFunctionType(StripArity(f.Name)) =>
+            // An Action has no return: every argument is a parameter. A Func's last argument is its return.
+            StripArity(f.Name).EndsWith("Action", StringComparison.Ordinal)
+                ? new TypeNode.Fn(false, UnitReturn, fa.Select(AsDocumentNullable).ToArray())
+                : new TypeNode.Fn(false, AsDocumentNullable(fa[^1]),
+                    fa.Take(fa.Length - 1).Select(AsDocumentNullable).ToArray()),
+        TypeNode.Fqn { Args: not null } f =>
+            new TypeNode.Fqn(f.Name, f.Args.Select(AsDocumentNullable).ToArray()),
+        TypeNode.Array arr => arr.SzArray
+            ? new TypeNode.Array(AsDocumentNullable(arr.Elem))
+            : TypeNode.Array.General(AsDocumentNullable(arr.Elem), arr.Rank),
+        TypeNode.ByRef b => new TypeNode.ByRef(AsDocumentNullable(b.Of)),
+        _ => t,
+    };
+
+    static readonly TypeNode UnitReturn = new TypeNode.Fqn("kotlin.Unit");
+
+    static string StripArity(string s) { var i = s.IndexOf('`'); return i >= 0 ? s[..i] : s; }
+
+    static bool IsNullableName(string name) =>
+        name is "System.Nullable" or "System.Nullable`1";
+
     static void CheckCall(JsonObject call, string file)
     {
         // A call names its member in `method`; a property/field access names it in `name`; a `newClr` names none.
@@ -480,10 +514,12 @@ static class ForeignNullableGenericCrossing
         // `clrType`, an accessor-backed field in `ownerType`. The message must name the member the author wrote.
         var owner = (TypeJson.Read(call["type"]) ?? TypeJson.Read(call["clrType"]) ?? TypeJson.Read(call["ownerType"]))
             is TypeNode.Fqn f ? f.Name : "<unknown>";
-        if (call["memberSig"] is JsonArray sig)
+        // The parameter vector comes off the resolved reference — the declaration's own, which is the whole point:
+        // the node's argument types are the caller's Kotlin view and would hide the crossing.
+        if (call["memberRef"] is JsonObject reference && reference["parameterTypes"] is JsonArray sig)
             for (var i = 0; i < sig.Count; i++)
-                if (TypeJson.Read(sig[i]) is TypeNode p && NullableGenericErasure.ErasureWouldMove(p))
-                    throw Refuse(file, owner, member, "parameter " + i, p);
+                if (TypeJson.Read(sig[i]) is TypeNode p && NullableGenericErasure.ErasureWouldMove(AsDocumentNullable(p)))
+                    throw Refuse(file, owner, member, "parameter " + i, AsDocumentNullable(p));
         // The RETURN is read off the stamped FOREIGN declaration, never off the node's own `ret`: that one is the
         // caller's Kotlin view and has already been erased as a Kotlin slot, so it says `List<object>` for a member
         // declaring `List<int?>` and the crossing would be invisible.
