@@ -26,6 +26,55 @@ another layer.
   arbitrary Kotlin source. Do not introduce local special cases tied to a
   particular library or function name.
 
+# User-Program Undefined Behavior
+
+Project-specific undefined behavior is limited to the cases listed in this
+section. Do not infer new undefined behavior from an implementation limitation,
+an unsupported feature, or a compiler bug. Except for these cases, Kotlin
+source retains Kotlin semantics together with the documented CLR interop and
+platform deviations.
+
+- The binding annotations that define the compiler-provided stdlib's CLR
+  representation are trusted stdlib/compiler inputs. User-authored use of
+  `ClrTypeAlias`, `ClrIntrinsic`, `ClrProperty`, `ClrConv`,
+  `ClrRefArgument`, `ClrIntrinsicAsDynamic`, `ClrCollectionFactory`, or
+  `ClrArrayFactory` is undefined behavior. User-authored use of the compiler
+  metadata carriers `ClrExternal`, `ClrAwaitBridge`,
+  `KotlinDeclarationIdentity`, and `KotlinDefault` is also undefined behavior.
+  This does not apply to ordinary use of stdlib declarations carrying those
+  annotations, nor to the supported user-facing `ClrName` and `ClrField`
+  annotations.
+- `ClrRef<T>` is compiler vocabulary for a CLR managed reference. Its supported
+  user-program forms are passing `byref(x)` directly to a projected CLR
+  `ref`/`out` parameter and using `var x by byref(refReturningCall())` as the
+  documented live-reference delegate. User-authored parameters, return types,
+  properties, fields, stored values, or other ordinary uses of `ClrRef<T>` are
+  undefined behavior.
+- `StackBuffer<T>` is compiler vocabulary scoped to the literal block of
+  `stackBuffer`. The block parameter may be used only through the supported
+  stack-buffer operations in that block. It must not be returned, stored,
+  captured, passed as an ordinary value, or otherwise escape. A `Span<T>`
+  derived from it may be consumed inside the block but must not escape the
+  block's dynamic extent. Violating these lifetime rules is undefined
+  behavior.
+- In the current implementation, user-authored `ClrEvent<T>` usage is defined
+  only for an event property implemented with `by clrEvent()`. Subscription is
+  supported on such a property and on a compiler-projected CLR event; raising is
+  supported only on a Kotlin-implemented event that has the synthesized raise
+  accessor. Subclassing `ClrEvent<T>`, implementing custom add/remove behavior,
+  or materializing the event handle as an ordinary parameter, return value,
+  local, field, stored value, or captured value is currently undefined
+  behavior. Future versions may define additional `ClrEvent<T>` forms.
+
+These mechanisms are intentionally not gated on a stdlib or user build mode.
+Undefined forms may therefore happen to compile and work. Do not add validation,
+diagnostics, build-mode branches, compatibility fallbacks, or special cases
+solely to accept or reject them. Do not preserve or deliberately break their
+accidental behavior, and do not add fixtures that turn it into a compatibility
+requirement. Tests may exercise the supported forms and the compiler-provided
+stdlib's use of these mechanisms, but must not assert a particular compiler,
+linker, generated-binary, or runtime result for the undefined forms.
+
 # Implementation Review
 
 During implementation, use the narrowest focused checks that exercise the
