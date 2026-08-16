@@ -190,7 +190,7 @@ sealed partial class Emitter
     static readonly string[] WellKnownRoles =
     {
         "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
-        "Object.Equals", "Enum.GetValues", "Enum.Parse", "Type.GetMethod", "MethodInfo.Invoke",
+        "Object.Equals", "Enum.GetValues", "Enum.Parse",
         "Enumerable.GetEnumerator", "Enumerator.MoveNext", "Enumerator.Current", "Enumerator.Reset",
         "Disposable.Dispose", "Array.IndexOf", "Comparable.CompareTo",
         "Object.ctor", "NotSupportedException.ctor", "NotSupportedException.ctor0",

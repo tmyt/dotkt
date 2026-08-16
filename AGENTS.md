@@ -37,7 +37,7 @@ platform deviations.
 - The binding annotations that define the compiler-provided stdlib's CLR
   representation are trusted stdlib/compiler inputs. User-authored use of
   `ClrTypeAlias`, `ClrIntrinsic`, `ClrProperty`, `ClrConv`,
-  `ClrRefArgument`, `ClrIntrinsicAsDynamic`, `ClrCollectionFactory`, or
+  `ClrRefArgument`, `ClrCollectionFactory`, or
   `ClrArrayFactory` is undefined behavior. User-authored use of the compiler
   metadata carriers `ClrExternal`, `ClrAwaitBridge`,
   `KotlinDeclarationIdentity`, and `KotlinDefault` is also undefined behavior.

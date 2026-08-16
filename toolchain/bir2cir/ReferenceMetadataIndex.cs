@@ -5063,11 +5063,11 @@ sealed partial class ReferenceMetadataIndex
         return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
     }
 
-    // The member-level CLR binding: @ClrIntrinsic("Name") (or AsDynamic). Returns the BCL member name (the call is
+    // The member-level CLR binding: @ClrIntrinsic("Name"). Returns the BCL member name (the call is
     // rewritten to owner.Name), or null when the member carries no intrinsic (a rule-3 candidate).
     static string ClrIntrinsicOf(IList<CustomAttributeData> attrs)
     {
-        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic" or "kotlin.clr.ClrIntrinsicAsDynamic");
+        var a = attrs.FirstOrDefault(x => x.AttributeType.FullName is "kotlin.clr.ClrIntrinsic");
         return a != null && a.ConstructorArguments.Count > 0 ? a.ConstructorArguments[0].Value as string : null;
     }
 
