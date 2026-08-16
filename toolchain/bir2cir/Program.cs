@@ -759,6 +759,17 @@ sealed class Pipeline
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
         CovariantInterfaceReturnBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: `MutableCollection<E>`/`MutableList<E>` ARE
+        // `ICollection<E>`/`IList<E>`, which carry no slot for Kotlin's `removeAll`/`retainAll`/`addAll(elements)`/
+        // `addAll(index, elements)`. A Kotlin class overriding one of them would therefore be unreachable through the
+        // BCL face. Give each participating class the compiler-owned `KotlinMutableCollectionSlots`/
+        // `KotlinMutableListSlots` interface plus a private forwarding bridge carrying a resolved `clrInterfaceImpls`
+        // instruction; the `ClrCollectionDefaults` dispatchers test for those interfaces and otherwise run the BCL
+        // default. HERE, in the Kotlin-vocabulary phase, because the pass keys on the frontend `overrides` identity —
+        // which does not survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
+        if (!_options.RefBuild)
+            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
         // happens (`Deferred<Int>.await(): type-TV0` -> `Int`), otherwise a non-generic SM permanently captures an
@@ -1140,14 +1151,6 @@ sealed class Pipeline
             // each missing slot with an ordinary public forwarding member (wired by name by ilemit's interface loop). The
             // return-DROPPING slots (Add/set_Item/RemoveAt) are the separate family ilemit's void-drop bridge handles.
             if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered);
-            // KOTLIN-ONLY collection slots (non-ref builds): the mirror of the pass above. `ICollection<E>`/`IList<E>`
-            // carry NO slot for Kotlin's `removeAll`/`retainAll`/`addAll(elements)`/`addAll(index, elements)`, so a
-            // Kotlin class that OVERRIDES one of them has nothing a call can dispatch on and the override would be
-            // unreachable — the call site only sees the BCL face. Give each declaring class the compiler-owned
-            // `KotlinMutableCollectionSlots`/`KotlinMutableListSlots` interface plus an exact MethodImpl bridge per
-            // member; the ClrCollectionDefaults dispatchers test for those interfaces and otherwise run the BCL
-            // default. After CollectionBclSlotSynthesis, so an IList implementer already lists its ICollection face.
-            if (!_options.RefBuild) KotlinCollectionSlotSynthesis.Apply(lowered);
             // #128: a Kotlin class implementing a reference-KLIB-projected .NET generic interface instantiated with a
             // VALUE-TYPE arg (`class C : IComparer<Int>`) declares its override with the projected member's `T?` params,
             // which lower to `Compare(Nullable<int32>,…)` — but the CONSTRUCTED CLR slot wants BARE `int32`. Synthesize a
