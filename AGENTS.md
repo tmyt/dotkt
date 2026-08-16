@@ -48,7 +48,7 @@ CLIs are available. Reviews are a fixed budget, not a loop:
   the build or gates — is review-exempt as well, and a pull request claiming
   that exemption names it in its description.
 
-This budget is deliberate, adopted after its trial on issue #370: unbounded
+This budget is deliberate: unbounded
 re-review rounds inflated lead time, and out-of-scope findings folded in
 blindly drifted pull requests away from their issue. Do not consider the
 change ready for handoff or ready-for-review until the budgeted reviews have
