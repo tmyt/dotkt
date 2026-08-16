@@ -256,7 +256,6 @@ sealed partial class Emitter
             if (NeedsBoxToRef(t)) _il.Emit(OpCodes.Box, t);
             _il.Emit(OpCodes.Stelem_Ref);
         }
-        // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
         EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("String.ConcatArray"));
         return Bcl("System.String");
     }
@@ -278,10 +277,9 @@ sealed partial class Emitter
         {
             // want = Nullable<got>. When got is an EMITTED value type (a TypeBuilder), Reflection.Emit can't resolve
             // the ctor on the MakeGenericType — use TypeBuilder.GetConstructor(constructed, open Nullable<>'s ctor).
-            var ctor = ContainsTypeBuilder(want)
-                ? AnchorConstructor(want, Bcl("System.Nullable`1").GetConstructors()[0])
-                // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
-                : want.GetConstructor(new[] { got });
+            // The declaration is fixed — `Nullable<T>..ctor(T)` — and the owner this coercion computed is what
+            // it gets anchored onto. Same shape as every other open declaration named once and anchored per use.
+            var ctor = AnchorOn(want, WellKnown<ConstructorInfo>("NullableT.ctor"));
             EmitConstructor(_il, OpCodes.Newobj, ctor);
             return want;
         }

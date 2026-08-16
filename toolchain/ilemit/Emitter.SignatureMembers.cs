@@ -97,6 +97,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return method;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetMethods(flags)
             .Single(candidate => candidate.Module == method.Module && candidate.MetadataToken == method.MetadataToken);
     }
@@ -107,6 +108,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return constructor;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetConstructors(flags)
             .Single(candidate => candidate.Module == constructor.Module && candidate.MetadataToken == constructor.MetadataToken);
     }
@@ -117,6 +119,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return field;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetFields(flags)
             .Single(candidate => candidate.Module == field.Module && candidate.MetadataToken == field.MetadataToken);
     }
@@ -207,12 +210,15 @@ sealed partial class Emitter
 
     // MetadataLoadContext likewise refuses MakeGenericMethod when an argument is a local builder parameter. Represent
     // the MethodSpec as a signature-only MethodInfo; PersistedAssemblyBuilder consumes that description directly.
-    static MethodInfo ConstructedMethod(MethodInfo definition, params Type[] arguments) =>
-        definition is SignatureMethod
+    MethodInfo ConstructedMethod(MethodInfo definition, params Type[] arguments)
+    {
+        var constructed = definition is SignatureMethod
             ? definition.MakeGenericMethod(arguments)
             : definition.Module is not ModuleBuilder && arguments.Any(ContainsTypeBuilder)
                 ? new SignatureMethod(definition.DeclaringType, definition, arguments)
                 : definition.MakeGenericMethod(arguments);
+        return IsSanctioned(definition) ? Sanction(constructed) : constructed;
+    }
 
     // PersistedAssemblyBuilder 10.0.10 reads modifier-aware Types from every declaration member handed to
     // DefineMethodOverride. Normalize that final emission boundary so raw MetadataLoadContext members never leak their
@@ -232,11 +238,17 @@ sealed partial class Emitter
         return new SignatureMethod(owner, method, methodArguments);
     }
 
-    static void WireMethodOverride(TypeBuilder owner, MethodInfo body, MethodInfo declaration) =>
+    void WireMethodOverride(TypeBuilder owner, MethodInfo body, MethodInfo declaration)
+    {
+        AuditExternal(declaration, "a MethodImpl target");
         owner.DefineMethodOverride(body, PersistableMethod(declaration));
+    }
 
-    static void EmitMethod(ILGenerator il, OpCode opcode, MethodInfo method) =>
+    void EmitMethod(ILGenerator il, OpCode opcode, MethodInfo method)
+    {
+        AuditExternal(method, "a call operand");
         il.Emit(opcode, PersistableMethod(method));
+    }
 
     static ConstructorInfo PersistableConstructor(ConstructorInfo constructor)
     {
@@ -251,8 +263,11 @@ sealed partial class Emitter
         return new SignatureConstructor(owner, constructor);
     }
 
-    static void EmitConstructor(ILGenerator il, OpCode opcode, ConstructorInfo constructor) =>
+    void EmitConstructor(ILGenerator il, OpCode opcode, ConstructorInfo constructor)
+    {
+        AuditExternal(constructor, "a newobj operand");
         il.Emit(opcode, PersistableConstructor(constructor));
+    }
 
     static FieldInfo PersistableField(FieldInfo field)
     {
@@ -267,8 +282,11 @@ sealed partial class Emitter
         return new SignatureField(owner, field);
     }
 
-    static void EmitField(ILGenerator il, OpCode opcode, FieldInfo field) =>
+    void EmitField(ILGenerator il, OpCode opcode, FieldInfo field)
+    {
+        AuditExternal(field, "a field operand");
         il.Emit(opcode, PersistableField(field));
+    }
 
     static Type SubstituteSignatureType(Type type, Type declaringType, Type[] ownerArguments,
         Type[] methodParameters = null, Type[] methodArguments = null)

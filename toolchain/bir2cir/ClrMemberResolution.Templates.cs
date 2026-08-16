@@ -177,6 +177,59 @@ static partial class ClrMemberResolution
     const string UnitInstance = "INSTANCE";
 
     /// <summary>
+    /// The static field a `staticField` node reads, named here rather than re-found by name downstream (#370).
+    /// </summary>
+    /// <remarks>
+    /// Every Kotlin `object` reaches its instance through this node, so no singleton is a special case — the
+    /// kotlin.Unit resolver above survives only because it fires on a closure's return slot, where there is no
+    /// `staticField` node to carry anything. An owner this compilation emits does not resolve and correctly
+    /// carries nothing: that is the local axis, which is #395's subject and not this one's.
+    /// </remarks>
+    static void ResolveStaticField(JsonObject node)
+    {
+        if (node.ContainsKey("fieldRef")) return;
+        // `staticField`/`staticFieldSet` use ownerType; the CLR-vocabulary `clrStaticField` uses type.
+        // They are the same physical operation after this point and must receive the same field identity.
+        if (ReadOwnerNode(node["ownerType"] ?? node["type"]) is not TypeNode.Fqn owner
+            || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
+            return;
+        // A type this compilation emits keeps the local axis (#395) and must not be given an external identity,
+        // even though the reference surface can answer for it: the stdlib runtime build compiles against a
+        // PREVIOUS build of the assembly it is producing, so kotlin.text.HexFormat+$Companion resolved there and
+        // was handed a reference to itself that the emitter's own universe then could not contain.
+        if (_localTypes.Contains(owner.Name)) return;
+        var open = ResolveOwnerType(owner);
+        if (open == null) return;
+        var field = open.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
+        if (field == null) return;
+        node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
+    }
+
+    // `lateinitGet` is a direct load of the property storage followed by the null check encoded
+    // by that CIR node.  When an inline/reference payload makes that storage external, name the
+    // field just as an ordinary static/instance field operand does; ilemit must not rediscover it.
+    static void ResolveLateinitField(JsonObject node)
+    {
+        if (node.ContainsKey("fieldRef")) return;
+        if (ReadOwnerNode(node["ownerType"]) is not TypeNode.Fqn owner
+            || (node["name"] as JsonValue)?.GetValue<string>() is not string name)
+            return;
+        if (_localTypes.Contains(owner.Name)) return;
+        var open = ResolveOwnerType(owner);
+        if (open == null) return;
+        var isStatic = node["static"] is JsonValue value && value.TryGetValue<bool>(out var flag) && flag;
+        var flags = BindingFlags.Public | BindingFlags.NonPublic
+            | (isStatic ? BindingFlags.Static : BindingFlags.Instance) | BindingFlags.FlattenHierarchy;
+        var field = open.GetField(name, flags);
+        if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
+        if (field == null)
+            throw new InvalidOperationException(
+                $"bir2cir: external lateinit storage '{owner.Name}.{name}' does not resolve to a field (#370)");
+        node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
+    }
+
+    /// <summary>
     /// The three BCL members a field-like event accessor's CAS loop runs through.
     /// </summary>
     /// <remarks>
@@ -186,8 +239,16 @@ static partial class ClrMemberResolution
     /// </remarks>
     static void ResolveEventCas(JsonObject node)
     {
-        if (node.ContainsKey("combineRef")) return;
         var kind = (node["kind"] as JsonValue)?.GetValue<string>();
+        // A raise emits a callvirt to the concrete event delegate's Invoke.  It is the same
+        // operation as every other delegate invocation, so it carries the same resolved
+        // declaration instead of asking ilemit to recover it from the delegate type.
+        if (kind == "raise")
+        {
+            ResolveDelegateInvoke(node, "delegateType");
+            return;
+        }
+        if (node.ContainsKey("combineRef")) return;
         if (kind is not ("add" or "remove")) return;
         if (TypeJson.Read(node["delegateType"]) is not TypeNode delegateType) return;
 
@@ -218,5 +279,202 @@ static partial class ClrMemberResolution
                 $"bir2cir: 'Interlocked.CompareExchange<T>' resolves to {cas.Count} declarations, not one (#370)");
         node["compareExchangeRef"] = MemberRefJson(cas[0], MemberRefNode.Kinds.Method, interlocked, Array.Empty<TypeNode>());
         _ = delegateType;
+    }
+
+    /// <summary>
+    /// The members a value-type nullability conversion runs through: `Nullable&lt;T&gt;`'s constructor and its two
+    /// accessors.
+    /// </summary>
+    /// <remarks>
+    /// The OWNER varies per site — `Nullable&lt;int&gt;` and `Nullable&lt;char&gt;` are different constructed types with
+    /// different members — so no fixed table can carry these. The node states its element, which is all the
+    /// owner needs, so each conversion names its own three.
+    /// </remarks>
+    static void ResolveNullableConversion(JsonObject node, string kind)
+    {
+        if (node.ContainsKey("ctorRef") || node.ContainsKey("valueRef") || node.ContainsKey("hasValueRef")) return;
+        if (TypeJson.Read(node["elem"]) is not TypeNode elem) return;
+        var args = new[] { elem };
+        var open = ResolveOwnerType(new TypeNode.Fqn(NullableFqn, args))
+            ?? throw new InvalidOperationException(
+                $"bir2cir: {kind} wraps '{NullableFqn}', which does not resolve to a .NET type (#370)");
+        var element = new TypeNode.Tv("type", 0);
+
+        if (kind is "nullableNull" or "nullableWrap")
+        {
+            var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+                .Where(c => c.GetParameters().Length == 1).ToList();
+            node["ctorRef"] = MemberRefJson(
+                TryPickUniqueCtor(ctors, new List<TypeNode> { element }, args)
+                    ?? throw new InvalidOperationException(
+                        $"bir2cir: '{NullableFqn}' has no unique one-argument constructor for {kind} (#370)"),
+                MemberRefNode.Kinds.Ctor, open, args);
+            return;
+        }
+        var accessor = kind == "nullableHasValue" ? "get_HasValue" : "get_Value";
+        var cands = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == accessor && m.GetParameters().Length == 0).ToList();
+        node[kind == "nullableHasValue" ? "hasValueRef" : "valueRef"] = MemberRefJson(
+            TryPickUnique(cands, new List<TypeNode>(), args)
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: '{NullableFqn}.{accessor}' does not resolve to one declaration for {kind} (#370)"),
+            MemberRefNode.Kinds.PropertyAccessor, open, args);
+    }
+
+    const string NullableFqn = "System.Nullable";
+
+    /// <summary>
+    /// The `Invoke` a Kotlin function-type value is called through.
+    /// </summary>
+    /// <remarks>
+    /// One producer, one rule: a node that states a function type states which delegate it lowered to, and that
+    /// delegate's Invoke is determined by the type alone. The emitter used to derive it from the value's emitted
+    /// type at each site — thousands of operands from this one path, which is why the unit that matters is the
+    /// producer and not the occurrence.
+    /// </remarks>
+    static void ResolveDelegateInvoke(JsonObject node, string typeKey)
+    {
+        if (node.ContainsKey("invokeRef")) return;
+        // Most nodes state their own function type. An array initializer states the EXPRESSION whose value it
+        // calls, and that expression is a node with a function type of its own — one level down, same fact.
+        var stated = TypeJson.Read(node["funcType"]) ?? TypeJson.Read(node["clrType"])
+            ?? TypeJson.Read((node[typeKey] as JsonObject)?["funcType"])
+            ?? TypeJson.Read((node[typeKey] as JsonObject)?["sty"])
+            ?? TypeJson.Read(node[typeKey]);
+        if (stated == null)
+            throw new InvalidOperationException(
+                $"bir2cir: a function-type call states no type under funcType/clrType/{typeKey} (#370)");
+        ResolveDelegateInvoke(node, stated);
+    }
+
+    // Used by a semantic producer that still has the handler's function type before transient `sty`
+    // annotations are consumed.  The result is the same ordinary invokeRef carrier used by all
+    // delegate-call nodes; no event-specific identity dialect is introduced.
+    internal static void ResolveDelegateInvoke(
+        JsonObject node, JsonNode stated, ReferenceMetadataIndex refs,
+        IReadOnlySet<string> localTypes)
+    {
+        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        _localTypes = localTypes ?? new HashSet<string>();
+        ResolveDelegateInvoke(node, TypeJson.Read(stated)
+            ?? throw new InvalidOperationException("bir2cir: a delegate invocation has no readable handler type (#370)"));
+    }
+
+    static void ResolveDelegateInvoke(JsonObject node, TypeNode stated)
+    {
+        if (node.ContainsKey("invokeRef")) return;
+        // The document states the Kotlin function type; the lowering already turned it into the delegate the
+        // value physically is. Ask that same lowering rather than re-deriving the delegate here.
+        var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
+        if (physical is TypeNode.Fn fnNode)
+            physical = BirTypeLowering.DelegateFqnOf(
+                (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
+        if (physical is not TypeNode.Fqn delegateFqn)
+            throw new InvalidOperationException(
+                $"bir2cir: a function-type call lowers to {TypeNode.ToJson(physical)}, which is not a named type (#370)");
+        var open = ResolveOwnerType(delegateFqn)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type (#370)");
+        var invoke = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == "Invoke").ToList();
+        if (invoke.Count != 1)
+            throw new InvalidOperationException(
+                $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one (#370)");
+        node["invokeRef"] = MemberRefJson(invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
+            ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
+    }
+
+    /// <summary>
+    /// The constructor a delegate CONSTRUCTION runs through: every delegate's `(object, native int)`.
+    /// </summary>
+    /// <remarks>
+    /// Same producer family as the invoke, and the same rule: the node states the function type, the lowering
+    /// says which delegate that is, and the constructor follows from the type. ECMA-335 II.14.6 fixes the
+    /// signature; what varies — and what a reference has to state — is WHICH constructed delegate.
+    /// </remarks>
+    static void ResolveDelegateCtor(JsonObject node, string typeKey)
+    {
+        if (node.ContainsKey("delegateCtorRef")) return;
+        // The node states its delegate under whichever key its kind uses; all five construction kinds carry one.
+        var stated = TypeJson.Read(node["funcType"]) ?? TypeJson.Read(node["clrType"]) ?? TypeJson.Read(node[typeKey]);
+        if (stated == null)
+            throw new InvalidOperationException(
+                $"bir2cir: a delegate construction states no function type under funcType/clrType/{typeKey} (#370)");
+        ResolveDelegateCtor(node, stated);
+    }
+
+    static void ResolveDelegateCtor(JsonObject node, TypeNode stated, string carrier = "delegateCtorRef")
+    {
+        if (node.ContainsKey(carrier)) return;
+        // A function type stays an `fn` node through the general lowering — its DELEGATE form is a separate
+        // step, and the same one the emitter's own mapping uses. Ask for it rather than assembling `Func`N` here.
+        var physical = BirTypeLowering.LowerType(stated, refBuild: false, force: false, typeArg: false);
+        if (physical is TypeNode.Fn fnNode)
+            physical = BirTypeLowering.DelegateFqnOf(
+                (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
+        if (physical is not TypeNode.Fqn delegateFqn)
+            throw new InvalidOperationException(
+                $"bir2cir: a delegate construction lowers to {TypeNode.ToJson(physical)}, which is not a named type (#370)");
+        var open = ResolveOwnerType(delegateFqn)
+            ?? throw new InvalidOperationException(
+                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type (#370)");
+        var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+            .Where(c => c.GetParameters().Length == 2).ToList();
+        var win = TryPickUniqueCtor(ctors,
+            new List<TypeNode> { new TypeNode.Fqn("System.Object"), new TypeNode.Fqn("System.IntPtr") },
+            delegateFqn.Args ?? Array.Empty<TypeNode>())
+            ?? throw new InvalidOperationException(
+                $"bir2cir: '{delegateFqn.Name}' has no unique (object, native int) constructor — "
+                + $"{ctors.Count} two-argument candidate(s) (#370)");
+        node[carrier] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open,
+            delegateFqn.Args ?? Array.Empty<TypeNode>(), ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
+    }
+
+    static bool IsFunctionShape(TypeNode type) => type switch
+    {
+        TypeNode.Fn => true,
+        TypeNode.Nullable n => IsFunctionShape(n.Of),
+        TypeNode.Oblivious o => IsFunctionShape(o.Of),
+        _ => false,
+    };
+
+    /// <summary>
+    /// The interface slot a constrained call dispatches through.
+    /// </summary>
+    /// <remarks>
+    /// The node states the interface and the member; the emitter was looking the member up on the interface by
+    /// name. Same fact, resolved where resolution belongs.
+    /// </remarks>
+    static void ResolveConstrainedCall(JsonObject node)
+    {
+        if (node.ContainsKey("memberRef")) return;
+        if (TypeJson.Read(node["iface"]) is not TypeNode.Fqn iface) return;
+        if ((node["method"] as JsonValue)?.GetValue<string>() is not string name) return;
+        var open = ResolveOwnerType(iface);
+        if (open == null) return;
+        // constrainedCall has two dialects: the historical compareTo form carries one `arg`, while the
+        // general form carries `args`.  Count the declaration operands from the carrier itself; treating every
+        // general-form call as parameterless silently left its member unresolved.
+        var argCount = node["args"] is JsonArray args
+            ? args.Count
+            : node["arg"] is JsonObject ? 1 : 0;
+        var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+        var cands = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+            .Where(m => m.Name == name && m.GetParameters().Length == argCount
+                && (m.IsGenericMethodDefinition
+                    ? m.GetGenericArguments().Length == methodArity
+                    : methodArity == 0))
+            .ToList();
+        var sig = (node["sig"] as JsonArray)?.Select(TypeJson.Read).ToList();
+        var win = sig == null
+            ? (cands.Count == 1 ? cands[0] : null)
+            : TryPickUnique(cands, sig, iface.Args ?? Array.Empty<TypeNode>());
+        if (win == null)
+            throw new InvalidOperationException(
+                $"bir2cir: constrained call '{iface.Name}.{name}' does not resolve to one declared signature (#370)");
+        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open,
+            iface.Args ?? Array.Empty<TypeNode>());
+        StampDelegateArgumentTargets(node, win, iface.Args ?? Array.Empty<TypeNode>());
+        StampResolvedMemberReturn(node, win.ReturnType);
     }
 }

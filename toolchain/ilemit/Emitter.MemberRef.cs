@@ -12,22 +12,125 @@
 // mismatch takes an afternoon. More than one match means two declarations share a signature the reference
 // cannot tell apart, which is a defect in the identity, not a cue to pick.
 //
-// TRANSITIONAL. While the old descriptors still exist, `ShadowParity` resolves BOTH ways and refuses to
-// continue if they disagree — that is what proves, over the whole corpus rather than by argument, that the
-// reference names what the emitter links today. It disappears with the descriptors it compares against.
-
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Text;
 using System.Text.Json;
 using DotKt.Bir;
 
 sealed partial class Emitter
 {
-    /// <summary>How many references were resolved, and how many were checked against the legacy path.</summary>
-
     /// <summary>Every key a resolved member reference can ride on. The counting below is keyed on this set.</summary>
 
     readonly Dictionary<string, MemberInfo> _wellKnown = new(StringComparer.Ordinal);
+
+    /// <summary>Exact constructed member operands whose identity a resolved reference supplied.</summary>
+    readonly HashSet<string> _provenance = new(StringComparer.Ordinal);
+    readonly HashSet<MemberInfo> _provenanceViews = new(ReferenceEqualityComparer.Instance);
+    /// <summary>Set once the check has something to check against; before that every build would trip it.</summary>
+    bool _auditArmed;
+
+    /// <summary>
+    /// Record that this member's identity came from somewhere #370 sanctions.
+    /// </summary>
+    /// <remarks>
+    /// Three previous versions of the residual gate matched SOURCE SHAPES — a name written, a name computed, a
+    /// candidate set filtered — and each one reported green while a shape it did not match was live. Shapes are
+    /// endless; the property is not. This records provenance at the few places identity legitimately comes from,
+    /// and the emit chokepoints check it, so HOW a member was found stops mattering.
+    /// </remarks>
+    MemberInfo Sanction(MemberInfo member)
+    {
+        // A token identifies only the open declaration. Include the fully constructed owner and MethodSpec
+        // arguments so a carried List<string>.M cannot authorize a reflection-selected List<object>.M that happens
+        // to share its MethodDef token. Mechanical re-anchoring and MethodSpec construction propagate this mark.
+        _provenanceViews.Add(member);
+        if (ProvenanceKey(member) is { } key) _provenance.Add(key);
+        return member;
+    }
+
+    T Sanction<T>(T member) where T : MemberInfo { Sanction((MemberInfo)member); return member; }
+
+    bool IsSanctioned(MemberInfo member) =>
+        _provenanceViews.Contains(member)
+        || ProvenanceKey(member) is { } key && _provenance.Contains(key);
+
+    static bool IsLocallyAuthored(MemberInfo member)
+    {
+        try
+        {
+            var declaration = UnwrapSignatureView(member) ?? member;
+            return declaration.Module is ModuleBuilder
+                || declaration.DeclaringType is TypeBuilder;
+        }
+        catch { return false; }
+    }
+
+    FieldInfo ResolveLocalField((string open, Type constructed) owner, string name, out Type fieldType, string position)
+    {
+        var field = ResolveField(owner, name, out fieldType);
+        // A missing carrier is legal only on the local axis. ResolveField is retained to bind a FieldBuilder owned by
+        // this compilation; if it found metadata from another module, emitting it would turn this path back into the
+        // name-based external resolver #370 removes. Check the site directly rather than trusting the assembly-wide
+        // provenance set, where another occurrence of the same field could hide this omission.
+        if (!IsLocallyAuthored(field))
+            throw new InvalidOperationException(
+                $"ilemit: {position} reaches external field {Describe(field)} without a resolved member reference (#370)");
+        return field;
+    }
+
+    static string ProvenanceKey(MemberInfo member)
+    {
+        try
+        {
+            var declaration = UnwrapSignatureView(member) ?? member;
+            var methodArgs = member is MethodInfo { IsConstructedGenericMethod: true } method
+                ? method.GetGenericArguments() : Type.EmptyTypes;
+            return declaration.Module.Assembly.FullName + "|" + declaration.Module.ScopeName + "|"
+                + declaration.MetadataToken + "|" + ProvenanceTypeIdentity(member.DeclaringType) + "|"
+                + string.Join(",", methodArgs.Select(ProvenanceTypeIdentity));
+        }
+        catch { return null; }
+    }
+
+    static string ProvenanceTypeIdentity(Type type)
+    {
+        if (type == null) return "<none>";
+        if (type.IsGenericParameter)
+            return (type.DeclaringMethod == null ? "!" : "!!") + type.GenericParameterPosition;
+        if (type.HasElementType)
+            return type.IsArray
+                ? ProvenanceTypeIdentity(type.GetElementType()) + "[" + new string(',', type.GetArrayRank() - 1) + "]"
+                : ProvenanceTypeIdentity(type.GetElementType()) + (type.IsByRef ? "&" : "*");
+        if (type.IsConstructedGenericType)
+            return ProvenanceTypeIdentity(type.GetGenericTypeDefinition()) + "["
+                + string.Join(",", type.GetGenericArguments().Select(ProvenanceTypeIdentity)) + "]";
+        return type.AssemblyQualifiedName ?? type.FullName ?? type.Name;
+    }
+
+    /// <summary>
+    /// Refuse to encode an EXTERNAL member whose identity no resolved reference supplied.
+    /// </summary>
+    /// <remarks>
+    /// A member of the assembly under construction has no reference to come from — that is the local axis (#395).
+    /// Everything else reaching an operand or a MethodImpl must have arrived named.
+    /// </remarks>
+    void AuditExternal(MemberInfo member, string position)
+    {
+        if (!_auditArmed || member == null) return;
+        try
+        {
+            var m = UnwrapSignatureView(member);
+            if (m == null || IsLocallyAuthored(member)) return;         // being built here
+            if (IsSanctioned(member)) return;
+            throw new InvalidOperationException(
+                $"ilemit: {position} names the external member {Describe(m)}, whose identity no resolved reference "
+                + "supplied. Every external member ilemit consumes arrives named (#370); if this one cannot, "
+                + "sanction it explicitly and say why in docs/architecture.md invariant 10.");
+        }
+        catch (InvalidOperationException) { throw; }
+        catch { /* a member whose module cannot be read cannot be audited */ }
+    }
 
     /// <summary>
     /// Load the document's table of fixed BCL members — the ones a Kotlin operation EXPANDS into.
@@ -40,6 +143,7 @@ sealed partial class Emitter
     /// </remarks>
     void LoadWellKnown(IEnumerable<JsonElement> files)
     {
+        _auditArmed = true;
         foreach (var file in files)
         {
             if (file.ValueKind != JsonValueKind.Object
@@ -48,6 +152,9 @@ sealed partial class Emitter
             foreach (var entry in table.EnumerateObject())
             {
                 if (entry.Value.ValueKind != JsonValueKind.Object) continue;
+                if (!WellKnownRoles.Contains(entry.Name, StringComparer.Ordinal))
+                    throw new InvalidOperationException(
+                        $"ilemit: fixed-member table contains unknown role '{entry.Name}' (#370)");
                 try
                 {
                     var resolved = ResolveMemberRef(MemberRefNode.Read(entry.Value));
@@ -62,7 +169,7 @@ sealed partial class Emitter
                                 + $"`{entry.Name}`: {Describe(already)} and {Describe(resolved)}");
                         continue;
                     }
-                    _wellKnown[entry.Name] = resolved;
+                    _wellKnown[entry.Name] = Sanction(resolved);
                 }
                 catch (Exception ex)
                 {
@@ -71,6 +178,120 @@ sealed partial class Emitter
                 }
             }
         }
+        var missing = WellKnownRoles.Where(role => !_wellKnown.ContainsKey(role)).ToArray();
+        if (missing.Length != 0)
+            throw new InvalidOperationException(
+                $"ilemit: fixed-member table is incomplete; missing role(s): {string.Join(", ", missing)} (#370)");
+    }
+
+    // Frozen in lockstep with ClrMemberResolution.WellKnownMembers/WellKnownCtors and the schema validator. The
+    // table is assembly-wide at consumption time: documents may repeat it, but their union must be complete even
+    // when a role happens not to be exercised by this particular program.
+    static readonly string[] WellKnownRoles =
+    {
+        "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
+        "Object.Equals", "Enum.GetValues", "Enum.Parse", "Type.GetMethod", "MethodInfo.Invoke",
+        "Enumerable.GetEnumerator", "Enumerator.MoveNext", "Enumerator.Current", "Enumerator.Reset",
+        "Disposable.Dispose", "Array.IndexOf", "Comparable.CompareTo",
+        "Object.ctor", "NotSupportedException.ctor", "NotSupportedException.ctor0",
+        "IndexOutOfRangeException.ctor", "EnumeratorT.Current", "EnumerableT.GetEnumerator",
+        "ReadOnlyCollectionT.Count", "ReadOnlyListT.Item", "CollectionT.Count", "CollectionT.IsReadOnly",
+        "CollectionT.Clear", "ListT.Item", "ListT.RemoveAt", "NullableT.ctor", "SpanT.ctorPointer",
+    };
+
+    /// <summary>
+    /// Put a named DECLARATION onto the owner this site holds.
+    /// </summary>
+    /// <remarks>
+    /// Two mechanisms, one rule. An instantiation over a type still being emitted needs Reflection.Emit's own
+    /// re-anchoring; a pure runtime one reflects the declaration back by metadata token, and TypeBuilder.GetMethod
+    /// throws on it. Every site that names a member and anchors it goes through here, because doing that branch
+    /// by hand at each site is how several of them ended up with only one of the two arms.
+    /// </remarks>
+    MethodInfo AnchorOn(Type owner, MethodInfo declaration)
+    {
+        var anchored = ContainsTypeBuilder(owner) ? AnchorMethod(owner, declaration)
+            : ReflectOnConstructed(owner, declaration) as MethodInfo ?? declaration;
+        return IsSanctioned(declaration) ? Sanction(anchored) : anchored;
+    }
+
+    ConstructorInfo AnchorOn(Type owner, ConstructorInfo declaration)
+    {
+        var anchored = ContainsTypeBuilder(owner) ? AnchorConstructor(owner, declaration)
+            : ReflectOnConstructed(owner, declaration) as ConstructorInfo ?? declaration;
+        return IsSanctioned(declaration) ? Sanction(anchored) : anchored;
+    }
+
+    /// <summary>
+    /// The slots of one external interface as the implementing type named them. An empty array is the producer's
+    /// explicit answer that this owner declares no slots; absence is malformed CIR at every external call site.
+    /// </summary>
+    /// <remarks>
+    /// `owner` is whichever face the caller will anchor against: the constructed interface when it can be
+    /// reflected on, its open definition when it cannot. Substituting only the member SET leaves that decision
+    /// where it was — it is made by trying the reflection and catching, and no predicate reproduces that.
+    /// </remarks>
+    MethodInfo[] NamedInterfaceSlots(TypeInfo ti, TypeNode.Fqn ownerSpec, Type owner)
+    {
+        if (ti.Def.ValueKind != JsonValueKind.Object
+            || !ti.Def.TryGetProperty("interfaceSlotRefs", out var sets)
+            || sets.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException(
+                $"ilemit: type '{ti.TB}' reaches external interface '{owner}' without interfaceSlotRefs (#370)");
+        // This is a carrier identity, not a call-binding key: preserve type-variable scope and position so I<!0>
+        // cannot accept a set or slot stated for I<!1>. SigCanon deliberately wildcards those for overload binding.
+        var ownerKey = DefinitionSigCanon(ownerSpec);
+        var ownerDef = owner.IsGenericType && !owner.IsGenericTypeDefinition
+            ? owner.GetGenericTypeDefinition() : owner;
+        var expectedDeclaringKey = DefinitionSigCanon(new TypeNode.Fqn(ownerDef.FullName,
+            ownerSpec.Args == null ? null : ownerSpec.Args.ToArray()));
+        var assembly = ownerDef.Assembly.GetName().Name;
+        var matches = sets.EnumerateArray().Where(set =>
+            set.ValueKind == JsonValueKind.Object
+            && set.TryGetProperty("owner", out var stated)
+            && ReadFqn(stated) is TypeNode.Fqn statedOwner
+            && DefinitionSigCanon(statedOwner) == ownerKey
+            && set.TryGetProperty("assembly", out var scope)
+            && scope.ValueKind == JsonValueKind.String
+            && string.Equals(scope.GetString(), assembly, StringComparison.Ordinal)).ToArray();
+        if (matches.Length != 1)
+            throw new InvalidOperationException(
+                $"ilemit: type '{ti.TB}' carries {matches.Length} interface-slot set(s) for "
+                + $"'{ownerKey}' in assembly '{assembly}', expected exactly one (#370)");
+        if (!matches[0].TryGetProperty("slots", out var slots) || slots.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException(
+                $"ilemit: type '{ti.TB}' carries a malformed interface-slot set for '{ownerKey}' (#370)");
+        var found = new List<MethodInfo>();
+        foreach (var slot in slots.EnumerateArray())
+        {
+            if (slot.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException(
+                    $"ilemit: type '{ti.TB}' carries a non-reference slot for '{ownerKey}' (#370)");
+            var reference = MemberRefNode.Read(slot);
+            if (reference.Kind != MemberRefNode.Kinds.Method
+                || !string.Equals(reference.Assembly, assembly, StringComparison.Ordinal)
+                || reference.DeclaringType is not TypeNode.Fqn statedOwner
+                || DefinitionSigCanon(statedOwner) != expectedDeclaringKey)
+                throw new InvalidOperationException(
+                    $"ilemit: type '{ti.TB}' carries a slot outside constructed interface '{ownerKey}' "
+                    + $"in assembly '{assembly}' (#370)");
+            // A producer-authored reference that does not resolve is a malformed CIR/reference-set pair. Swallowing
+            // that mismatch here re-enables the reflection fallback this carrier exists to remove and reports only a
+            // later provenance miss, hiding the actual descriptor that disagreed.
+            var resolved = ResolveMemberRef(reference);
+            if (resolved is not MethodInfo m)
+                throw new InvalidOperationException(
+                    $"ilemit: interface slot {reference.Describe()} is not a method (#370)");
+            var anchored = owner == ownerDef ? m : ReflectOnConstructed(owner, m) as MethodInfo ?? m;
+            // Re-anchoring is a mechanical view of the declaration selected by the reference. Preserve that
+            // provenance on the exact MethodInfo later handed to DefineMethodOverride.
+            found.Add(Sanction(anchored));
+        }
+        // The carrier is owner-scoped. Returning null here used to retain the reflection-enumerated set, so a token
+        // sanctioned by an unrelated call/type could make a missing carrier pass the module-wide provenance audit.
+        // An empty set is the exact producer answer for this owner; never fall back to reflection once the type has
+        // supplied its slot contract.
+        return found.ToArray();
     }
 
     /// <summary>The fixed BCL member a role names. Absent means the producer did not state it.</summary>
@@ -94,6 +315,7 @@ sealed partial class Emitter
     /// <summary>The member a reference names, resolved exactly. Never a search.</summary>
     MemberInfo ResolveMemberRef(MemberRefNode reference)
     {
+        // Whatever this returns came from a reference; record it before anything wraps or anchors it.
         var owner = OpenOwnerOf(reference);
         MemberInfo found = reference.Kind == MemberRefNode.Kinds.Field
             ? MatchField(owner, reference)
@@ -124,24 +346,39 @@ sealed partial class Emitter
 
     MethodBase MatchMethodBase(Type owner, MemberRefNode reference)
     {
+        // #370-residual: exact memberRef decoding — the complete carried signature is the predicate, not a selector.
         var candidates = new List<MethodBase>();
         if (reference.Kind == MemberRefNode.Kinds.Ctor)
+            // #370-residual: exact memberRef decoding by complete carried signature.
             candidates.AddRange(owner.GetConstructors(DeclaredMembers));
         else
+            // #370-residual: exact memberRef decoding by complete carried signature.
             candidates.AddRange(owner.GetMethods(DeclaredMembers));
+        // A reference names a member in another assembly. Private/assembly-only MethodDefs cannot be
+        // the target of such a MemberRef, and a compiler-generated explicit MethodImpl body may legally
+        // share its name+signature with the public declaration it implements. Accessibility is therefore
+        // part of the external-link boundary even though it is not part of the CLR signature blob.
+        candidates = candidates.Where(m => m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly).ToList();
         var hits = candidates.Where(m => SignatureEquals(m, reference)).ToList();
         if (hits.Count == 1) return hits[0];
+        // #370-residual: diagnostic-only same-name list after exact memberRef matching failed.
         throw Mismatch(reference, owner, hits.Count, candidates.Where(m => m.Name == reference.Name));
     }
 
     FieldInfo MatchField(Type owner, MemberRefNode reference)
     {
-        var candidates = owner.GetFields(DeclaredMembers);
+        // As for methods above, private/assembly-only fields cannot be linked from another assembly. A producer
+        // naming one is not a valid way to bypass CLR accessibility (cross-module Kotlin access must lower earlier).
+        // #370-residual: exact memberRef decoding — name plus complete carried field type is one identity.
+        var candidates = owner.GetFields(DeclaredMembers)
+            .Where(field => field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly).ToArray();
+        // #370-residual: exact memberRef field-name+type comparison.
         var hits = candidates.Where(field => field.Name == reference.Name
                 && TypeRefEquals(reference.ReturnType, field.FieldType,
                     field.GetRequiredCustomModifiers(), field.GetOptionalCustomModifiers()))
             .ToList();
         if (hits.Count == 1) return hits[0];
+        // #370-residual: diagnostic-only same-name list after exact memberRef matching failed.
         throw Mismatch(reference, owner, hits.Count, candidates.Where(field => field.Name == reference.Name));
     }
 
@@ -289,12 +526,12 @@ sealed partial class Emitter
         return new InvalidOperationException(sb.ToString());
     }
 
-    // ---- transitional: prove the reference names what the emitter links today ------------------------
+    // ---- exact scalar-reference linkage ---------------------------------------------------------------
 
     /// <summary>
-    /// The member this node's reference names, or null when it carries none. THE PRIMARY PATH: where a
-    /// reference exists it is the answer, and the descriptor beside it is only still consulted so the two can
-    /// be compared. A node without one is not yet migrated and falls back until it is.
+    /// The member this node's reference names, or null when the operation is permitted to target a member
+    /// emitted by this compilation. Required external-reference callers wrap this in RequiredRef and fail closed;
+    /// no legacy owner/name/signature descriptor is consulted.
     /// </summary>
     MemberInfo PrimaryFromRef(JsonElement node, string carrier)
     {
@@ -302,7 +539,7 @@ sealed partial class Emitter
             || !node.TryGetProperty(carrier, out var element)
             || element.ValueKind != JsonValueKind.Object) return null;
         var reference = MemberRefNode.Read(element);
-        return AnchorOnUseSite(ResolveMemberRef(reference), reference);
+        return Sanction(AnchorOnUseSite(ResolveMemberRef(reference), reference));
     }
 
     /// <summary>
@@ -356,11 +593,12 @@ sealed partial class Emitter
     {
         try
         {
+            // #370-residual: mechanical re-anchoring by module+metadata token, never member selection.
             IEnumerable<MemberInfo> candidates = declaration switch
             {
-                ConstructorInfo => owner.GetConstructors(DeclaredMembers),
-                MethodInfo => owner.GetMethods(DeclaredMembers),
-                FieldInfo => owner.GetFields(DeclaredMembers),
+                ConstructorInfo => owner.GetConstructors(DeclaredMembers), // #370-residual: token re-anchor
+                MethodInfo => owner.GetMethods(DeclaredMembers),           // #370-residual: token re-anchor
+                FieldInfo => owner.GetFields(DeclaredMembers),             // #370-residual: token re-anchor
                 _ => null,
             };
             if (candidates == null) return null;

@@ -40,3 +40,8 @@ fun <T> invokeNullable(block: (T?) -> String): String = block(null)
 interface SlotConsumer<T> { fun accept(slot: Slot<T?>): String }
 open class SlotBase<T> { fun accept(slot: Slot<T?>): String = slot.value?.toString() ?: "bridge-null" }
 class SlotDerived<T> : SlotBase<T>(), SlotConsumer<T>
+
+// The consumer reaches this declaration through InheritedNullableMiddle<T>. The round trip keeps the nullable generic
+// slot callable through that intermediate base; the separate lowering fixture pins owner/declarer edge projection.
+abstract class InheritedNullableBase<T> { abstract fun take(value: T?): String }
+abstract class InheritedNullableMiddle<T> : InheritedNullableBase<T>()

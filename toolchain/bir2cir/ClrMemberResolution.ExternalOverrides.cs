@@ -41,7 +41,7 @@ static partial class ClrMemberResolution
                 if (entry is not JsonObject method
                     || BoolValue(method["static"])
                     || BoolValue(method["override"])
-                    || method["clrOverride"] != null
+                    || method["pendingOverrideOwner"] != null
                     || (method["name"] as JsonValue)?.GetValue<string>() is not string name
                     || method["params"] is not JsonArray parameters)
                     continue;

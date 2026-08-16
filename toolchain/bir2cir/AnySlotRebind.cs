@@ -169,7 +169,7 @@ static class AnySlotRebind
         };
         if (arg != null) newNode["arg"] = arg.DeepClone();
         foreach (var key in new[] { "ownerType", "virtual", "method", "args", "arg", "sig", "dynRet", "ret", "overrides",
-                                    "recv", "typeArgs", "shapeTypes", "memberSig", "argTypes", "anySlot", "super",
+                                    "recv", "typeArgs", "shapeTypes", "resolvedMemberParams", "argTypes", "anySlot", "super",
                                     DeclarationIdentityBinding.Key })
             obj.Remove(key);
         foreach (var kv in newNode) obj[kv.Key] = kv.Value.DeepClone();

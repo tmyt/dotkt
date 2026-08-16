@@ -33,6 +33,14 @@ import GenInj.Item as GenInjItem
 // il-genim
 import GenIm.Conv
 import GenIm.IConv
+import GenIm.ArityOverload
+import GenIm.IArityOverload
+import Cbk.GenericCallbacks
+import Cbk.IMarker
+import Cbk.Marker
+import Cbk.Constrained
+import Cbk.IBox
+import Cbk.StringBox
 // CLR default interface implementations: only the genuinely abstract member is an implementation obligation.
 import DefaultIface.IDefaultArithmetic
 // #205: generic interface deriving a member-bearing non-generic base interface
@@ -58,6 +66,47 @@ class InheritMyApp : Base() {
 
 // il-genim top-level helper: call the generic interface method through the IConv interface TYPE.
 fun genimViaIface(c: IConv): String = c.Convert<String>("hello")
+
+// The implementation side is the important half of the generic-interface case: ilemit must wire the generic
+// MethodImpl from bir2cir's exact interfaceSlotRefs, not enumerate the external interface and select by name.
+private class KotlinConv : LocalConv {
+    override fun <U> Convert(o: Any?): U = o as U
+}
+
+private fun <T : IArityOverload> genericArity(value: T): String =
+    value.Pick<String>(7)
+
+private class KotlinCallbackEngine : LocalCallbackEngine
+private class KotlinGenericCallbackEngine<T> : LocalGenericCallbackEngine<T>
+private class KotlinConstrainedCallback<T> : LocalConstrainedCallback<T>
+
+private fun inheritedDelegateCall(engine: LocalCallbackEngine): String =
+    engine.Apply(21) { value -> "v" + (value * 2) }
+
+private fun inheritedDelegateReference(engine: LocalCallbackEngine): String {
+    val describe = engine::Describe
+    return describe(22)
+}
+
+private fun genericInheritedDelegateReference(engine: LocalGenericCallbackEngine<Int>): String {
+    val describe = engine::Describe
+    return describe(23)
+}
+
+private fun <T : LocalConstrainedCallback<Int>> localConstrainedDelegateCall(engine: T): String =
+    engine.Apply(24) { value -> "v" + value }
+
+private fun <T> openGenericCustomDelegate(value: T): String =
+    GenericCallbacks.Use<T>({ _: T -> "generic" }, value)
+
+private fun <T> openGenericUnitResultDelegate(value: T): Any? =
+    GenericCallbacks.UseResult<T>({ _: T -> Unit }, value)
+
+private fun <T : IMarker> constrainedOpenGenericUnitResultDelegate(value: Constrained<T>): Any? =
+    GenericCallbacks.UseConstrained<T>({ _: Constrained<T> -> Unit }, value)
+
+private fun <T : IBox<U>, U> dependentConstraintUnitResultDelegate(value: T): Any? =
+    GenericCallbacks.UseDependent<T, U>({ _: T -> Unit }, value)
 
 class DefaultArithmetic : IDefaultArithmetic {
     override fun Required(value: Int): Int = value * 2
@@ -122,6 +171,29 @@ class CSharpInterfaceAndGenericTests {
         val c = Conv()
         assertEquals("hello", genimViaIface(c))         // hello — through interface type
         assertEquals("world", c.Convert<String>("world")) // world — Conv assignable to IConv usage
+    }
+
+    @TestAttribute
+    fun genericExternalInterfaceSlotIsNamed() {
+        val c: IConv = KotlinConv()
+        assertEquals("named", c.Convert<String>("named"))
+    }
+
+    @TestAttribute
+    fun genericCallUsesMethodGenericArity() {
+        assertEquals("String:7", genericArity(ArityOverload()))
+    }
+
+    @TestAttribute
+    fun crossFileLocalInterfaceCarriesExternalSlotAndDelegateTarget() {
+        assertEquals("default:v42", inheritedDelegateCall(KotlinCallbackEngine()))
+        assertEquals("default-ref:22", inheritedDelegateReference(KotlinCallbackEngine()))
+        assertEquals("generic-ref:23", genericInheritedDelegateReference(KotlinGenericCallbackEngine<Int>()))
+        assertEquals("local:v24", localConstrainedDelegateCall(KotlinConstrainedCallback<Int>()))
+        assertEquals("generic", openGenericCustomDelegate(7))
+        assertEquals(Unit, openGenericUnitResultDelegate(8))
+        assertEquals(Unit, constrainedOpenGenericUnitResultDelegate(Constrained<Marker>(Marker())))
+        assertEquals(Unit, dependentConstraintUnitResultDelegate<StringBox, String>(StringBox()))
     }
 
     @TestAttribute

@@ -274,7 +274,7 @@ static class LocalFunctionLowering
                 if (value == null) continue;
                 // These vectors are expressed in the referenced declaration's generic frame, not this local method's
                 // frame. `_syntheticTypeArgs` deliberately retains the original lexical ids for later ref-cell binding.
-                if (key is "sig" or "memberSig" or "clrOverrideSig" or "shapeTypes" or "paramSig"
+                if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                     or "delegationSig" or "_syntheticTypeArgs" || (key == "argTypes" && kind != "new"))
                     continue;
                 if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(RewriteCapturedType(TypeJson.Read(value), capturedToPhysical));

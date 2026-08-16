@@ -7,88 +7,16 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
-- **ilemit can resolve a member reference exactly, and every one in the corpus is proven to name what the
-  emitter links today (#370, step 9).** The new resolver looks the declaring type up in the assembly the
-  reference names, enumerates only what that type declares, and takes the one member whose signature — every
-  parameter, the return, by-ref, pointer, array shape, custom modifiers, calling convention — equals the one
-  stated. Nothing about it can choose: zero matches names the complete reference and stops, and more than one
-  is a defect in the identity rather than a cue to pick. Beside it, a transitional check resolves BOTH ways on
-  every build and refuses to continue if they name different members, which is what turns "the reference is
-  right" from an argument into a measurement over 33k references. It found two real defects on its first runs.
-
-- **A collection literal names the members it builds through, and two identities stop merging (#370, step 8).**
-  `listOf(1, 2)` says what to BUILD; the constructor and the `Add` behind it were left for the emitter to find
-  by name. Choosing `List`1` with a parameterless constructor and a one-argument `Add` is this layer's decision
-  about physical representation, so it states them. Alongside: `T[*]` is no longer written as `T[]` — ECMA
-  keeps the single-dimensional non-vector distinct from the vector, and an external member may declare both —
-  and the key that decides whether two declarations are the same member now carries the calling convention and
-  the return position's custom modifiers, without which `ref readonly` merges into the overload beside it.
-
-- **A property read synthesized after the reshape finds its accessor (#370, step 7).** A call minted by a later
-  pass — a suspension sentinel, say — still carries the Kotlin property name, and no metadata declares a member
-  by that name: the physical accessor name is assigned forty lines further on. Asking the reference index for
-  it, exactly as the reshape does, closes 96% of the calls that reached a consumer with no identity (2,594 to
-  109) and leaves the node carrying the physical name the rest of the pipeline wants anyway.
-
-- **A call into a previously-compiled DotKt assembly names the member it resolved (#370, step 6).** That
-  resolution already selected one declaration and returned only its parameter vector, leaving the caller
-  describing a member it had in its hand — and a description has to be turned back into a member by whoever
-  reads it. It now hands back the declaration too, and the call carries it: 2,997 static calls across the
-  stdlib and test corpus.
-
-- **An applied external attribute names the constructor it invokes (#370, step 5).** `[Obsolete("x")]` is a call
-  to `Obsolete(string)`, and when the attribute type lives in another assembly that call is an external member
-  reference like any other — it was the last one carried with no identity at all. The declared argument vector
-  says what the call site passes, not which declaration answers, so the constructor is now selected by the same
-  structural match every other member goes through and written down — on every carrier an attribute list rides
-  on, including the return position, which lives under its own key. 8,022 applied attributes across the stdlib
-  and test corpus, held by a gate that asks for one wherever an application says it is external.
-
-- **A base-constructor delegation and an override's base slot become one identity each (#370, step 4).** Both
-  were stated in pieces — a name here, a parameter vector there, an owner and a return elsewhere — and a
-  MethodImpl target is exactly the place where reassembling those pieces into a member is the selection this
-  work removes. The pass that already resolves each of them now serializes what it picked, and the schema gate
-  reddens if the transitional owner appears without it.
-
-- **Generic external calls carry the resolved member reference too (#370, step 3).** A generic call's parameter
-  vector arrives from the frontend, so it is present whether or not a declaration was ever found; the resolved
-  declaration is the separate answer this pass computes, and it is now serialized like any other. The gate that
-  holds this asks about the NODE KIND rather than about a transitional descriptor: a kind that exists only
-  because an external member was resolved must carry a reference, full stop — which is already what the
-  emitter demands of it, so a node without one now reddens at the layer that dropped the identity instead of
-  several stages later.
-
-- **bir2cir writes the resolved member reference for every external call, constructor, accessor and field
-  (#370, step 2).** Each site that already picked a unique .NET member now serializes THAT member as a
-  complete `memberRef` beside the transitional descriptor — 17k references across the stdlib and test corpus,
-  covering all five member kinds. The reference states the DECLARER rather than the receiver, with the
-  receiver's type arguments projected along the declaration edge, so a member reached through a base class or
-  base interface no longer has to be re-anchored by whoever consumes it. It also carries what the old
-  descriptor could not: the physical defining assembly (the stdlib's reference and runtime twins differ in
-  name, and an emitted reference must name the one that ships), the declared return type, and the pointer,
-  array-rank and custom-modifier shapes that otherwise make two distinct members look like one. The
-  transitional descriptor is untouched; the schema gate now reddens if a migrated node carries one of the two
-  without the other.
-
-  The reference is spelled in the vocabulary the TARGET declares, which is not the vocabulary the member is
-  resolved in: a stdlib member resolves against the reference twin, which declares the Kotlin surface
-  (`List<List<T>>`), while the member the reference names lives in the runtime twin, which declares the
-  physical shape (`IReadOnlyList<IList<T>>`). The map between them is position-dependent — a read-only
-  collection collapses to its invariant sibling in a storage slot but keeps the covariant face in a head or
-  method-slot position — so the serializer applies the lowering pass's own rule instead of a uniform alias
-  step, which would name a member neither twin declares.
-
-- **A single scalar CIR member reference, and the ECMA signature vocabulary it needs (#370, step 1).** The BIR/CIR
-  contract gains `memberRef`: one complete, already-resolved reference to a member of another assembly (kind,
-  physical defining assembly, exact declaring type and its instantiation, metadata name, generic arity, calling
-  convention, open parameter vector, return type). It exists so a consumer never has to re-combine pieces of an
-  identity, because re-combining candidates is member selection and that decision belongs to bir2cir. Zero exact
-  matches is a target mismatch that must name the complete reference; more than one is an identity defect.
-  Alongside it the type vocabulary gains three CIR-only carriers for shapes external metadata can declare but
-  Kotlin cannot spell — a pointer `T*`, a multi-dimensional array rank, and in-position custom modifiers —
-  without which `void V(in DateTime)` and `void V(DateTime)`, or `T[,]` and `T[]`, are indistinguishable
-  references. Nothing authors or consumes a `memberRef` yet: this step lands the shared model, the normative
-  schema, the validator rules and the self-tests that hold them.
+- **External members cross CIR as one complete scalar identity (#370).** `bir2cir` now serializes every external
+  call, constructor, delegate target, MethodImpl target, field/accessor, attribute constructor, and compiler-authored
+  operand as a `memberRef` containing the physical assembly, exact declaring instantiation, metadata name, generic
+  arity, calling convention, return and parameter signatures, and modifier-aware type shapes. `ilemit` maps that
+  identity to exactly one declaration in the target universe and fails diagnostically on zero or multiple matches;
+  it performs no overload ranking, name/arity fallback, assignability selection, or standard-library ABI inference.
+  The former split #336 owner/signature families and shadow-parity path are retired and forbidden in CIR. Provenance
+  checks at every call, constructor, field, and MethodImpl emission boundary keep compiler-authored expansions under
+  the same rule, while the schema, lowering, runtime, packaged-SDK, reverse-interop, round-trip, ILVerify, and
+  target-universe gates exercise the completed cutover.
 
 - **Explicit CLR callable names and fail-closed physical signature collisions (#402).** `@ClrName` (with `@JvmName`
   as a compatibility alias) now travels as an explicit BIR fact to bir2cir's post-erasure MethodDef allocation.

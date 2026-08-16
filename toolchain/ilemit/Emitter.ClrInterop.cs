@@ -29,8 +29,7 @@ sealed partial class Emitter
         _il.Emit(OpCodes.Br, done);
         _il.MarkLabel(has);
         _il.Emit(OpCodes.Unbox_Any, elem);
-        // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
-        EmitConstructor(_il, OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
+        EmitConstructor(_il, OpCodes.Newobj, RequiredRef<ConstructorInfo>(e, "ctorRef", "a nullable conversion"));
         _il.MarkLabel(done);
         return nt;
     }
@@ -52,8 +51,7 @@ sealed partial class Emitter
         var elem = NativeType(e.GetProperty("elem"));
         var nt = ConstructedType(Bcl("System.Nullable`1"), elem);
         EmitExpr(e.GetProperty("e"));
-        // #370-residual: REMAINING GAP (#370): an external constructor whose OWNER varies per site (Nullable<T>/Span<T>), so it needs a per-node carrier rather than the fixed-member table
-        EmitConstructor(_il, OpCodes.Newobj, nt.GetConstructor(new[] { elem }));
+        EmitConstructor(_il, OpCodes.Newobj, RequiredRef<ConstructorInfo>(e, "ctorRef", "a nullable conversion"));
         return nt;
     }
 
@@ -65,7 +63,7 @@ sealed partial class Emitter
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Stloc, loc);
         _il.Emit(OpCodes.Ldloca, loc);
-        EmitMethod(_il, OpCodes.Call, nt.GetProperty("HasValue").GetGetMethod());
+        EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e, "hasValueRef", "a nullable conversion"));
         return Bcl("System.Boolean");
     }
 
@@ -88,7 +86,7 @@ sealed partial class Emitter
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Stloc, loc);
         _il.Emit(OpCodes.Ldloca, loc);
-        EmitMethod(_il, OpCodes.Call, nt.GetProperty("Value").GetGetMethod());
+        EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e, "valueRef", "a nullable conversion"));
         return elem;
     }
 
@@ -155,7 +153,6 @@ sealed partial class Emitter
             EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.GetValues"));
             EmitExpr(e.GetProperty("e"));
             _il.Emit(OpCodes.Box, et);
-            // #370-residual: a compiler lowering of a Kotlin operation, not a call the source made — retiring these is the intrinsic-binding program, not member identity
             EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Array.IndexOf"));
             return Bcl("System.Int32");
         }
@@ -189,9 +186,8 @@ sealed partial class Emitter
     {
         var type = ClrRef(e.GetProperty("type"));
         var args = e.GetProperty("args");
-        // W1-S2 (#46) CONSUME-ONLY: bir2cir already RESOLVED the ctor overload against the ref.dll MLC and stamped the
-        // winning ctor's DECLARED param signature as `memberSig`; link the UNIQUE matching constructor (0 = hard ABI
-        // error, >1 = malformed) — no exact-then-assignability-then-arity cascade, no delegate-arity scoring.
+        // bir2cir already resolved the constructor and carried its complete scalar memberRef. Link that exact
+        // declaration; there is no argument-applicability or arity fallback here.
         var openCtor = LinkClrCtor(type, e, out var tb);
         if (tb)
         {
@@ -204,7 +200,7 @@ sealed partial class Emitter
             int ai = 0;
             foreach (var a in args.EnumerateArray()) { EmitArg(a, SubstituteIfaceArgs(openPs[ai].ParameterType, classArgs)); ai++; }
             RequireArgCount(ai, openPs.Length, openCtor.ToString());
-            EmitConstructor(_il, OpCodes.Newobj, AnchorConstructor(type, openCtor));
+            EmitConstructor(_il, OpCodes.Newobj, AnchorOn(type, openCtor));
             return type;
         }
         EmitArgs(args, openCtor.GetParameters());
@@ -212,11 +208,8 @@ sealed partial class Emitter
         return type;
     }
 
-    // W1-S2 (#46) CONSUME-ONLY ctor linking. bir2cir stamped the resolved ctor's DECLARED param signature as `memberSig`
-    // (a class type-var as a positional `tv(type,i)`). Enumerate the type's ctors — on the OPEN def when the constructed
-    // type is a TypeBuilderInstantiation (`tb`, caller re-anchors) — and match each declared param STRUCTURALLY under
-    // positional-tv equality (GenericParamMatches, shared with the S1 generic matcher). Require EXACTLY ONE: 0 is a hard
-    // ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor.
+    // The scalar reference names the open declaration. A TypeBuilderInstantiation is re-anchored mechanically after
+    // lookup; that operation changes no member-selection decision.
     /// <summary>The constructor a `newClr` or a base delegation names. A lookup, not a choice.</summary>
     ConstructorInfo LinkClrCtor(Type type, JsonElement e, out bool tb, string carrier = "memberRef",
         bool includeNonPublic = false)
@@ -228,13 +221,8 @@ sealed partial class Emitter
             + "arrives named; a node without one is an earlier-layer drop (#370)");
     }
 
-    // W1-S2 (#46) CONSUME-ONLY method linking. bir2cir stamped the resolved member's DECLARED param signature as
-    // `memberSig` (positional-tv for a generic owner/method). Enumerate the owner's name + static/instance + param-count
-    // candidates (incl. inherited class members via GetMethods, and base-interface members for an interface owner) — on
-    // the OPEN def when the owner is a TypeBuilderInstantiation (re-anchored via TypeBuilder.GetMethod) — and match each
-    // declared param STRUCTURALLY under positional-tv equality (GenericParamMatches). Require EXACTLY ONE hit: 0 is a
-    // hard ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor. No arity probe, no
-    // name+arity first-pick, no assignability scoring, no dynamic-dispatch/Bcl("System.Object") degradation.
+    // The scalar reference supplies the complete declaration identity. This helper only projects that identity into
+    // the target metadata universe; it does not construct or rank a candidate set from the call node.
     /// <summary>The method a `clr*` call names. A lookup, not a choice.</summary>
     MethodInfo LinkClrMethod(Type type, string name, JsonElement e, bool instance)
     {
@@ -256,15 +244,8 @@ sealed partial class Emitter
 
     static Type[] SafeInterfaces(Type t) { try { return t.GetInterfaces(); } catch { return Array.Empty<Type>(); } }
 
-    // W1-S4 (#46/#183) CONSUME-ONLY declaration-side override linking. A method overriding a .NET base-CLASS virtual
-    // (accessor) carries `clrOverride` (the base owner FQN) + `clrOverrideSig` (bir2cir's ref.dll-resolved base-virtual
-    // param signature, positional-tv for a generic base). This LINKS the exact base slot for DefineMethodOverride —
-    // enumerate the base type's name + instance + virtual + param-count candidates, match each param STRUCTURALLY under
-    // positional-tv equality (GenericParamMatches, ownerArgs null -> memberSig `tv` stays positional against the OPEN
-    // base def), require EXACTLY ONE (0 = hard ABI error, >1 = malformed). Replaces the former
-    // `baseT.GetMethod(name, ps) ?? baseT.GetMethod(name)` NAME-ONLY first-pick fallback. A generic base's winner is
-    // re-anchored onto the emitted type's CONSTRUCTED base instantiation (DefineMethodOverride must reference the slot
-    // on `Collection<Item>`, not the open def) — the corpus exercises only the non-generic accessor case.
+    // The declaration-side clrOverrideRef names the exact MethodImpl target. A generic base's resolved declaration is
+    // re-anchored mechanically onto the constructed base before DefineMethodOverride.
     /// <summary>The base virtual an external override implements. A lookup, not a choice.</summary>
     MethodInfo LinkOverrideBase(Type baseT, string name, JsonElement m, Type derivedTb)
     {
@@ -293,9 +274,7 @@ sealed partial class Emitter
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
         var type = ClrRef(e.GetProperty("type"));
         var name = e.GetProperty("method").GetString();
-        // W1-S2 (#46) CONSUME-ONLY: bir2cir already RESOLVED the overload against the ref.dll MLC and stamped the
-        // winning member's DECLARED param signature as `memberSig`; ilemit is a linker (exact structural match, hard
-        // fail on 0/multi) — no arity probe, no name+arity first-pick, no assignability scoring, no silent downgrade.
+        // bir2cir already resolved the overload and carried the complete memberRef; ilemit only links that identity.
         var mi = LinkClrMethod(type, name, e, instance);
         // A generic BCL method (`System.Array.Fill<T>(T[],T,int,int)`) resolved as its open DEFINITION must be
         // instantiated with the call's type args (threaded by bir2cir from the @ClrIntrinsic generic Kotlin callee),
@@ -403,7 +382,7 @@ sealed partial class Emitter
 
     // W1-S3 (#46 / #121) CONSUME-ONLY property GET. bir2cir (ClrMemberResolution) resolved the member against the ref.dll
     // and stamped a `member` discriminator: "accessor" (a real .NET property — carries the
-    // resolved accessor name + `memberSig` + `dispatch`) or "field" (a public/const field). ilemit no longer reclassifies
+    // resolved accessor memberRef + `dispatch`) or "field" (a public/const field). ilemit no longer reclassifies
     // property vs get_ method vs field, and no longer derives dispatch from the reflected accessor.
     Type EmitClrPropGet(JsonElement e)
     {
@@ -426,7 +405,7 @@ sealed partial class Emitter
         if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), FieldTypeOf(fld));
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         MaybeVolatile(fld, e);
-        _il.Emit(fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
+        EmitField(_il, fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
         return FieldTypeOf(fld);
     }
 
@@ -452,7 +431,7 @@ sealed partial class Emitter
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitNullableCoerced(e.GetProperty("value"), FieldTypeOf(fld));
         MaybeVolatile(fld, e);
-        _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
+        EmitField(_il, fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
         return Bcl("System.Void");
     }
 
@@ -476,7 +455,7 @@ sealed partial class Emitter
     // handler signature), so `ldftn`+`newobj <EventDelegate>(object, IntPtr)` is verifiable — exactly what
     // `button.Click += (s,e)=>{}` lowers to in C#.
     // W1-S3 (#46 / #121 / #113) CONSUME-ONLY event add/remove. bir2cir (ClrMemberResolution) resolved the EventInfo off
-    // the ref.dll and stamped the add/remove accessor NAME + `memberSig` (the [handlerDelegate] param) + `dispatch`.
+    // the ref.dll and stamped the add/remove accessor memberRef plus `dispatch`.
     // ilemit LINKS the exact accessor (LinkClrMethod — hard-fails a missing/ambiguous slot, so the old unchecked
     // `GetEvent(...).GetAddMethod()` NRE on a missing/value-type/constructed-generic event is gone) and consumes the
     // carried dispatch. The handler delegate type flows from the resolved accessor's first param (== EventHandlerType).
@@ -490,7 +469,7 @@ sealed partial class Emitter
         if (e.TryGetProperty("handlerExact", out var exact) && exact.GetBoolean())
             EmitExpr(e.GetProperty("handler"));
         else
-            EmitHandlerAsDelegate(e.GetProperty("handler"), delType);
+            EmitHandlerAsDelegate(e.GetProperty("handler"), delType, e);
         if (isStatic) EmitMethod(_il, OpCodes.Call, accessor);
         else EmitClrDispatch(accessor, RequireDispatch(e, type, add ? "clrEventAdd" : "clrEventRemove"), type);
         return Bcl("System.Void");
@@ -535,7 +514,12 @@ sealed partial class Emitter
         // S5 (#113): a missing backing field is a bir2cir/kotc synthesis defect — a legible breadcrumb, not an opaque miss.
         if (_curTi == null || !_curTi.Fields.TryGetValue(fieldName, out var field))
             throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}' (bir2cir ClrEventImplBinding must insert `<E>$delegate` — #187/#113)");
-        if (kind == "raise") { EmitClrEventRaise(field, d); return; }
+        if (kind == "raise")
+        {
+            EmitClrEventRaise(field, d,
+                RequiredRef<MethodInfo>(e, "invokeRef", "clrEventAccessorImpl raise"));
+            return;
+        }
         EmitClrEventCas(e, field, d, add: kind == "add");
     }
 
@@ -563,10 +547,8 @@ sealed partial class Emitter
 
     // `raise_<E>(args...)`: snapshot the backing field, and if non-null invoke it with the raise method's own params.
     // arg0 = this; the raise params (== D.Invoke's params) start at arg1. The null check = C#'s field-like `field?.Invoke`.
-    void EmitClrEventRaise(FieldInfo field, Type d)
+    void EmitClrEventRaise(FieldInfo field, Type d, MethodInfo invoke)
     {
-        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
-        var invoke = d.GetMethod("Invoke");
         var handler = _il.DeclareLocal(d);
         var done = _il.DefineLabel();
         _il.Emit(OpCodes.Ldarg_0); EmitField(_il, OpCodes.Ldfld, field); _il.Emit(OpCodes.Stloc, handler);
@@ -580,7 +562,7 @@ sealed partial class Emitter
 
     // Bind a lambda handler (newDelegate = non-capturing, newClosure = capturing) into a SPECIFIC delegate type.
     // Mirrors the newDelegate/newClosure cases but uses `want` (the event's delegate type) for the ctor.
-    void EmitHandlerAsDelegate(JsonElement h, Type want)
+    void EmitHandlerAsDelegate(JsonElement h, Type want, JsonElement? eventNode = null)
     {
         // The delegate's Invoke return type: when it is a real (non-void) type while the lambda's NATURAL delegate is
         // void-returning (a Unit body maps to void), binding the void method-pointer into the ctor is not verifiable
@@ -594,8 +576,9 @@ sealed partial class Emitter
         {
             var ft = EmitExpr(h);                             // the lambda's natural void delegate, on the stack
             EmitMethod(_il, OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray(),
-                PrimaryFromRef(h, "unitInstanceRef") as FieldInfo));
-            EmitDelegateCtor(_il, want);
+                PrimaryFromRef(h, "unitInstanceRef") as FieldInfo,
+                RequiredRef<MethodInfo>(h, "invokeRef", "a void-to-Unit conversion")));
+            EmitDelegateCtor(_il, want, h, eventNode);
             return;
         }
         switch (k)
@@ -605,17 +588,22 @@ sealed partial class Emitter
                 // overload. Missing/misspelled ownership is malformed CIR, never a global name lookup (#204).
                 var dname = h.GetProperty("method").GetString();
                 var dsig = SigNodes(h);
-                var dtarget = FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig, CalledMethodArity(h));
+                var dmethod = PrimaryFromRef(h, "memberRef") as MethodInfo
+                    ?? FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig, CalledMethodArity(h));
+                var dtarget = h.TryGetProperty("typeArgs", out var dta) && dta.GetArrayLength() > 0
+                    && dmethod.IsGenericMethodDefinition
+                    ? ConstructedMethod(dmethod, dta.EnumerateArray().Select(x => MapType(x)).ToArray())
+                    : dmethod;
                 _il.Emit(OpCodes.Ldnull);
                 EmitMethod(_il, OpCodes.Ldftn, dtarget);
-                EmitDelegateCtor(_il, want);
+                EmitDelegateCtor(_il, want, h, eventNode);
                 break;
             case "newClosure":
                 var (cctor, cinvoke) = ResolveClosure(h);
                 foreach (var c in h.GetProperty("captures").EnumerateArray()) EmitExpr(c);
                 EmitConstructor(_il, OpCodes.Newobj, cctor);
                 EmitMethod(_il, OpCodes.Ldftn, cinvoke);
-                EmitDelegateCtor(_il, want);
+                EmitDelegateCtor(_il, want, h, eventNode);
                 break;
             default:
                 // A stored handler value (a Func/Action local/field). Re-wrap it into the event's delegate
@@ -623,9 +611,12 @@ sealed partial class Emitter
                 // value share target+method, so Delegate equality holds and `-=` removes the right handler.
                 var src = EmitExpr(h);                       // stack: the stored delegate value
                 _il.Emit(OpCodes.Dup);
-                // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
-                EmitMethod(_il, OpCodes.Ldvirtftn, src.GetMethod("Invoke"));
-                EmitDelegateCtor(_il, want);
+                if (eventNode == null)
+                    throw new InvalidOperationException(
+                        "ilemit: a stored delegate re-wrap is missing its resolved Invoke reference");
+                EmitMethod(_il, OpCodes.Ldvirtftn,
+                    RequiredRef<MethodInfo>(eventNode.Value, "invokeRef", "CLR event handler re-wrap"));
+                EmitDelegateCtor(_il, want, eventNode.Value);
                 break;
         }
     }

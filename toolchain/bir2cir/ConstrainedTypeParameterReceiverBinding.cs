@@ -166,8 +166,11 @@ static class ConstrainedTypeParameterReceiverBinding
             switch (node)
             {
                 case JsonObject call:
-                    if (Str(call["k"]) == "callInstance"
-                        && TypeJson.Read(call["ownerType"]) is TypeNode.Fqn owner
+                    var kind = Str(call["k"]);
+                    var genericClrCall = kind == "clrGenericInstance";
+                    var ownerKey = genericClrCall ? "type" : "ownerType";
+                    if (kind is "callInstance" or "clrGenericInstance"
+                        && TypeJson.Read(call[ownerKey]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
                         && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv)
                     {
@@ -179,7 +182,7 @@ static class ConstrainedTypeParameterReceiverBinding
                             if (owner.Args == null
                                 && ConstraintAt(tv, owner.Name, typeParams, methodParams) is TypeNode.Fqn bound
                                 && bound.Args != null)
-                                call["ownerType"] = TypeJson.Write(bound);
+                                call[ownerKey] = TypeJson.Write(bound);
                         }
                         else if (ClosedOwner(owner, arity) is TypeNode.Fqn iface)
                         {
@@ -189,14 +192,20 @@ static class ConstrainedTypeParameterReceiverBinding
                             // this node one-to-one.
                             // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
                             // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
-                            // are carried through untouched — ilemit consumes all three on this node exactly as it
-                            // does on a callInstance, and dropping any of them would make it guess.
+                            // are carried through untouched. A clrGenericInstance's bir2cir-internal matching input is
+                            // `resolvedMemberParams`; constrainedCall uses the same input under its ordinary `sig` slot.
+                            // Move that fact rather than selecting again by name/arity.
+                            if (genericClrCall && call["resolvedMemberParams"] is JsonNode resolvedMemberParams)
+                            {
+                                call.Remove("resolvedMemberParams");
+                                call["sig"] = resolvedMemberParams;
+                            }
                             call["k"] = "constrainedCall";
                             call["recvType"] = TypeJson.Write(tv);
                             call["iface"] = TypeJson.Write(iface);
                             if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
                                 call["ret"] = dynRet.DeepClone();
-                            call.Remove("ownerType");
+                            call.Remove(ownerKey);
                             call.Remove("virtual");
                             call.Remove("dynRet");
                         }

@@ -48,6 +48,7 @@ static class RoundtripMetadata
     const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
     const string AKSourceMethod = Ns + "KotlinSourceMethodAttribute";
     const string AKDeclarationIdentity = Ns + "KotlinDeclarationIdentityAttribute";
+    const string AKConstructorAdapter = Ns + "KotlinConstructorAdapterAttribute";
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
     internal const string AKExtensionCore = Ns + "KotlinExtensionCoreAttribute";
     const string AKStaticCarrier = Ns + "KotlinStaticCarrierAttribute";
@@ -176,7 +177,16 @@ static class RoundtripMetadata
         StampFields(to["fields"]);
         StampProps(to["properties"]);
         if (to["ctors"] is JsonArray ctors)
-            foreach (var c in ctors) if (c is JsonObject co) StampParams(co["params"]);
+            foreach (var c in ctors) if (c is JsonObject co)
+            {
+                if ((co["aliasCtorAdapter"] as JsonValue)?.GetValue<string>() is string adapter)
+                {
+                    Append(co, Marker(AKConstructorAdapter,
+                        StringArg(BirCarrier.JsonV1), BytesArg(adapter)));
+                    co.Remove("aliasCtorAdapter");
+                }
+                StampParams(co["params"]);
+            }
         if (to["types"] is JsonArray nested)
             foreach (var t in nested) if (t is JsonObject nto) StampType(nto);
     }
@@ -682,6 +692,7 @@ static class RoundtripMetadata
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association
             AttrClass(AKSourceMethod, Ctor(Param("System.String"), Param(ByteArrayType()))), // renamed CLR method -> Kotlin source identity
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #395 — frontend callable identity + source name
+            AttrClass(AKConstructorAdapter, Ctor(Param("System.String"), Param(ByteArrayType()))), // alias ctor declaration -> terminal physical delegation
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts
             AttrClass(AKExtensionCore, Ctor(Param("System.String"), Param(ByteArrayType()))), // generic C# wrapper -> Kotlin semantic core
             AttrClass(AKStaticCarrier, Ctor(Param("System.String"), Param(ByteArrayType()))), // one physical static surface for a generic Kotlin owner

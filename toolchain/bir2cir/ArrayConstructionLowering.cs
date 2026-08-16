@@ -77,13 +77,28 @@ static class ArrayConstructionLowering
     static JsonNode Lower(JsonObject o, BirScope scope)
     {
         var k = Str(o["k"]);
+        // The fill loop INVOKES its initializer. Preserve that operation-level static function type before later
+        // lowering removes transient expression `sty`; the initializer may be a plain local rather than a lambda node.
+        if (k == "newArrayInit" && o["funcType"] == null
+            && InitializerType(o["init"]) is TypeNode existingInitType)
+            o["funcType"] = TypeJson.Write(existingInitType);
         if (k == "new" && TypeJson.Read(o["type"]) is TypeNode.Fqn tf && tf.Args == null
             && BirTypeLowering.PrimArrayElem.TryGetValue(tf.Name, out var elemFq))
         {
             var elem = new TypeNode.Fqn(elemFq);
             var args = o["args"] as JsonArray ?? new JsonArray();
             if (args.Count == 2)
-                return new JsonObject { ["k"] = "newArrayInit", ["elem"] = TypeNode.Write(elem), ["size"] = args[0]?.DeepClone(), ["init"] = args[1]?.DeepClone() };
+            {
+                var initType = (o["argTypes"] as JsonArray) is { Count: > 1 } argTypes
+                    ? TypeJson.Read(argTypes[1]) : InitializerType(args[1]);
+                var lowered = new JsonObject
+                {
+                    ["k"] = "newArrayInit", ["elem"] = TypeNode.Write(elem),
+                    ["size"] = args[0]?.DeepClone(), ["init"] = args[1]?.DeepClone(),
+                };
+                if (initType != null) lowered["funcType"] = TypeJson.Write(initType);
+                return lowered;
+            }
             if (args.Count == 1)
             {
                 // #76 UNSIGNED-ARRAY WRAP-CTOR: the @PublishedApi `constructor(storage: SignedArray)` takes the SIGNED
@@ -105,6 +120,10 @@ static class ArrayConstructionLowering
         }
         return null;
     }
+
+    static TypeNode InitializerType(JsonNode init) => init is JsonObject expression
+        ? TypeJson.Read(expression["funcType"]) ?? TypeJson.Read(expression["sty"])
+        : null;
 
     // Rebuild a forArray with `elem` in canonical position (k, label, var, elem, array, body).
     static void StampForArray(JsonObject o, TypeNode elem)

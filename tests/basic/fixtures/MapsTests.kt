@@ -124,6 +124,19 @@ class MapsTests {
     }
 
     @TestAttribute
+    fun nestedMutableEntryAccessors() {
+        // The physical owner is the nested CLR MutableMap.MutableEntry<K,V>.  Its constructed owner arguments
+        // must be lowered as storage slots; recovering `key`/`value` from the prop_get<...> spelling or leaving
+        // the Kotlin type arguments on memberRef emits a token for a member that does not exist.
+        val m = LinkedHashMap<String, Int>()
+        m["a"] = 1
+        m["b"] = 2
+        assertEquals("a,b", m.entries.map { it.key }.joinToString(","))
+        for (entry in m.entries) entry.setValue(entry.value + 1)
+        assertEquals("2,3", m.values.joinToString(","))
+    }
+
+    @TestAttribute
     fun concreteGen() {
         // (a) concrete HashMap<String,Int>: rule-3 put/get/remove (previous-value semantics via the hoisted helper)
         val m = HashMap<String, Int>()

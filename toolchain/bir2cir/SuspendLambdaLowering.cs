@@ -60,7 +60,7 @@ static class SuspendLambdaLowering
             .ToDictionary(group => group.Key,
                 group => group.First()["typeParams"] as JsonArray ?? new JsonArray(),
                 StringComparer.Ordinal);
-        // In the app build the SuspendLambda base is a REFERENCED type (clr: base + clrOverride linkage); in a
+        // In the app build the SuspendLambda base is a REFERENCED type (clr: base + pendingOverrideOwner linkage); in a
         // self-build that declares it, a LOCAL type (bare base + local slot override). Computed per-base because a
         // @RestrictsSuspension lambda uses RestrictedSuspendLambda, which may have a different locality.
         var baseIsLocal = localTypeFqns.Contains(SuspendLambdaFqn);
@@ -374,7 +374,7 @@ static class SuspendLambdaLowering
 	                    // Declaration descriptors are in the CALLEE's generic frame. Only lexical operands owned by
 	                    // the enclosing method move into the dense suspend-SM frame. A constructor has no method type
 	                    // parameters, so method TVs in `new.argTypes` necessarily belong to this lexical caller.
-	                    if (key is "sig" or "memberSig" or "clrOverrideSig" or "shapeTypes" or "paramSig"
+	                    if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
 	                        or "delegationSig" || (key == "argTypes" && kind != "new"))
 	                        continue;
 	                    if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(RemapFrameSlots(TypeJson.Read(value)));

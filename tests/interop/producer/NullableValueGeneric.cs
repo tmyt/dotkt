@@ -51,7 +51,7 @@ namespace NvGen
 
     // A GENERIC overload set, one member of which returns an uninhabitable slot. `Pick<T>(string)` is the sibling
     // that does not, and it must stay callable: bir2cir resolves the declared return through the call's own
-    // `memberSig` rather than stamping a placeholder for the whole set.
+    // frontend-resolved declaration parameters rather than stamping a placeholder for the whole set.
     public static class GenFac
     {
         public static List<int?> Pick<T>(int x) => new List<int?> { x, null };
@@ -88,4 +88,5 @@ namespace NvGen
     {
         public virtual string Take(List<int?> xs) => "net-int";
     }
+
 }

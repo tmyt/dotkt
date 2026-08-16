@@ -45,7 +45,7 @@ static partial class NullableTvErasureCallRealign
     {
         if (call["args"] is not JsonArray args) return null;
         // A callStatic/callInstance carries `sig`; a `new` carries `argTypes`; a call NetInteropBinding has already
-        // bound to a .NET member carries the same vector as `memberSig` — the name changes, the fact does not, and
+        // bound to a .NET member carries the same vector as `resolvedMemberParams` — the name changes, the fact does not, and
         // reading only two of the three left every .NET-interop argument outside the axis (an `object` from an erased
         // stdlib return handed to a `Nullable<bool>` parameter, with nothing to narrow it). Any of them may be absent
         // (resolution then falls back to arity), which is not an error.
@@ -53,13 +53,13 @@ static partial class NullableTvErasureCallRealign
         // WHETHER the descriptor is a resolved CLR signature or Kotlin vocabulary is remembered, because the fallback
         // below trusts the two to different depths — and that is decided by the call's KIND, never by which key holds
         // the vector. A `clr*` node is .NET-bound by construction; its key only records how far resolution has got. A
-        // GENERIC .NET call carries `memberSig` from the moment NetInteropBinding reshapes it, while a NON-GENERIC one
-        // carries `argTypes` until ClrMemberResolution stamps `memberSig` — which happens long AFTER this pass runs.
-        // Reading .NET-boundness off `memberSig`'s presence therefore left every non-generic .NET call on the Kotlin
+        // GENERIC .NET call carries `resolvedMemberParams` from the moment NetInteropBinding reshapes it, while a NON-GENERIC one
+        // carries `argTypes` until ClrMemberResolution stamps `resolvedMemberParams` — which happens long AFTER this pass runs.
+        // Reading .NET-boundness off `resolvedMemberParams`'s presence therefore left every non-generic .NET call on the Kotlin
         // fallback, where the widening screen below drops every reference slot: an erased `object` reached a `string`
         // parameter with no `castclass` at all, and the emitter pushed it into a slot the CLR does not accept.
         var clrBound = IsClrBoundKind(Str(call["k"]));
-        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray ?? call["memberSig"] as JsonArray;
+        var descriptor = call["sig"] as JsonArray ?? call["argTypes"] as JsonArray ?? call["resolvedMemberParams"] as JsonArray;
         if (descriptor != null && descriptor.Count != args.Count) descriptor = null;
         var haveDecl = declParams != null && declParams.Length == args.Count;
         var haveRefusals = declRefused != null && declRefused.Length == args.Count;
@@ -143,7 +143,7 @@ static partial class NullableTvErasureCallRealign
                 dl["funcType"] = TypeJson.Write(target);
             argTypes[i] = args[i] != null ? Eval(args[i], ctx) : null;
             // THE DESCRIPTOR IS OPEN; THE TARGET MUST BE CLOSED. A descriptor states the callee's DECLARED parameter
-            // vector, so a generic callee's slot is still `!!0` there — and `.NET`-bound calls (`memberSig`) keep it
+            // vector, so a generic callee's slot is still `!!0` there — and `.NET`-bound calls (`resolvedMemberParams`) keep it
             // that way deliberately, because that open form is what the emitter matches the member by. Converting a
             // value INTO it needs the closed type: substituting the call's own owner/type arguments turns
             // `Enumerable.Repeat<Int?>`'s `!!0` into `Nullable<int32>`, where using the open node emitted a cast to
@@ -241,7 +241,7 @@ static partial class NullableTvErasureCallRealign
     static bool IsClrBoundKind(string k) => ClrBoundNode.IsCall(k);
 
     // A call NetInteropBinding has already BOUND to a .NET member. Only the WRITE axis applies to it: the callee is
-    // .NET, so its declared parameter types (`memberSig`) ARE the declaration and there is nothing Kotlin to
+    // .NET, so its declared parameter types (`resolvedMemberParams`) ARE the declaration and there is nothing Kotlin to
     // re-derive — but an argument that flowed out of the erasure as a bare `object` still has to be narrowed into the
     // slot that member declares, or the emitter pushes an `object` where a `Nullable<bool>` is required and the whole
     // method fails verification. Its own result is the .NET member's and is never re-derived.
@@ -249,7 +249,7 @@ static partial class NullableTvErasureCallRealign
     // This is the arm the erasure family reaches once a call crosses into .NET: `assertTrue(map.merge(…))` hands an
     // erased stdlib return straight to `ClassicAssert.IsTrue(bool?)`.
     //
-    // The call's own owner and type arguments come along, because `memberSig` is the callee's OPEN declaration —
+    // The call's own owner and type arguments come along, because `resolvedMemberParams` is the callee's OPEN declaration —
     // `Enumerable.Repeat<T>`'s first parameter is `!!0` there and stays `!!0` for the emitter to match the member by.
     // RealignArgs closes it over these before converting anything into it.
     static TypeNode EvalClrCall(JsonObject obj, Ctx ctx)
@@ -257,13 +257,13 @@ static partial class NullableTvErasureCallRealign
         if (obj["recv"] != null) Eval(obj["recv"], ctx);
         var ownerArgs = (TypeJson.Read(obj["type"]) as TypeNode.Fqn)?.Args;
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
-        // No declaration and nothing to refuse: the callee is .NET, so `memberSig` IS its declaration.
+        // No declaration and nothing to refuse: the callee is .NET, so `resolvedMemberParams` IS its declaration.
         RealignArgs(obj, null, null, ownerArgs, methodArgs, ctx);
         // Whatever else the node carries (an index expression, a value) still needs walking; the descriptor keys and
         // the owner `type` are not operands.
         foreach (var kv in obj)
             if (kv.Value != null
-                && kv.Key is not ("recv" or "args" or "k" or "sty" or "type" or "ret" or "memberSig" or "argTypes" or "sig"))
+                && kv.Key is not ("recv" or "args" or "k" or "sty" or "type" or "ret" or "resolvedMemberParams" or "argTypes" or "sig"))
                 Eval(kv.Value, ctx);
         return Str(obj["k"]) == "newClr" ? TypeJson.Read(obj["type"]) : TypeJson.Read(obj["ret"]);
     }

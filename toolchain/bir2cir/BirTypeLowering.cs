@@ -117,8 +117,8 @@ static class BirTypeLowering
         "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",
         "samType", "closureType",
         // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
-        // method-tv positional), lowered to the CLR vocabulary so ilemit exact-matches them (replaces `shapes`).
-        "memberSig",
+        // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
+        "resolvedMemberParams",
         // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
         "elemType", "accType", "clrType", "tupleType", "parameterTypes",
         // A MethodImpl descriptor's parameter vector (`clrInterfaceImpls`/`clrBaseImpls`) is a RAW array of type
@@ -415,6 +415,23 @@ static class BirTypeLowering
         IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
         IReadOnlySet<string> localTypeNames = null)
     {
+        TypeNode LowerSlot(TypeNode type) => returnPosition
+            && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
+                ? VoidType
+                : CanonicalPhysicalSlotType(LowerPhysicalType(
+                    type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames));
+        return LowerSlot(left).Equals(LowerSlot(right));
+    }
+
+    // A representation pass that runs before the full-tree lowering may already have to author a PHYSICAL type
+    // inside a CIR-only carrier. Configure the same facts Lower() will use and invoke the same recursive rule; a
+    // caller must not reproduce only the primitive, alias, collection-collapse or delegate branch it happened to
+    // encounter first. The statics are per-run state, so preserve them just as SamePhysicalSlotType historically did.
+    internal static TypeNode LowerPhysicalType(TypeNode type,
+        IReadOnlyDictionary<string, string> aliases, Func<string, bool> isValueFqn,
+        IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
+        IReadOnlySet<string> localTypeNames = null)
+    {
         var savedAliases = _aliases;
         var savedIsValue = _isValueFqn;
         var savedPhysicalNames = _physicalTypeNames;
@@ -425,12 +442,7 @@ static class BirTypeLowering
             _isValueFqn = isValueFqn ?? (_ => false);
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
-            TypeNode LowerSlot(TypeNode type) => returnPosition
-                && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
-                    ? VoidType
-                    : CanonicalPhysicalSlotType(
-                        LowerType(type, refBuild: false, force: false, typeArg: false));
-            return LowerSlot(left).Equals(LowerSlot(right));
+            return LowerType(type, refBuild: false, force: false, typeArg);
         }
         finally
         {
@@ -500,7 +512,7 @@ static class BirTypeLowering
     // given Kotlin function type has no CLR delegate at all, which is this layer's call to make and not ilemit's.
     // ilemit must not change the nominal ABI based on whether one of the resolved types happens to still be a
     // TypeBuilder.
-    static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
+    internal static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
     {
         var ret = (fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
             ? VoidType : LowerType(fn.Ret, refBuild, force, typeArg: false);
@@ -519,6 +531,31 @@ static class BirTypeLowering
             ? arity <= MaxBclDelegateArity ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
             : arity <= MaxBclDelegateArity ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc";
         return new TypeNode.Fn(false, ret, ps, recv, clr);
+    }
+
+    /// <summary>
+    /// The constructed delegate a lowered function type IS, named.
+    /// </summary>
+    /// <remarks>
+    /// `LowerFnDelegate` leaves the node an `fn` carrying the delegate's family in `clr`, and the emitter builds
+    /// the constructed type from that. A member reference has to NAME the type, so the same construction is
+    /// spelled here — beside the pass that decided the family, so the two cannot drift.
+    ///
+    /// `Action` takes the parameters alone; `Func` takes the parameters then the return. A receiver is the
+    /// leading parameter either way, exactly as the arity above counts it.
+    /// </remarks>
+    internal static TypeNode.Fqn DelegateFqnOf(TypeNode.Fn lowered)
+    {
+        if (lowered.Clr == null) return null;
+        // DelegateParams is the shared property the EMITTER builds its delegate from — it prepends an extension
+        // receiver so a receiver-lambda and the flat closure bound to it land on the same CLR delegate. Rebuilding
+        // that list here instead is a second implementation of one decision, and the two disagreed.
+        var args = new List<TypeNode>(lowered.DelegateParams);
+        bool returnsVoid = lowered.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+        if (!returnsVoid) args.Add(lowered.Ret);
+        return args.Count == 0
+            ? new TypeNode.Fqn(lowered.Clr)
+            : new TypeNode.Fqn(lowered.Clr, args.ToArray());
     }
 
     // Read a structured Type node out of the BIR JSON, lower it, and write it back.
