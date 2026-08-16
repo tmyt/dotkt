@@ -1,0 +1,9 @@
+# MemberCallSubstitution's DERIVED completeness gate. A Kotlin-spelled member on a @ClrTypeAlias'd interface owner
+# that the resolved BCL type does not declare must be a compile-time routing MISS, naming owner.member — never a
+# call nothing can link, and never (as before #400) a runtime GetType().GetMethod(name).Invoke lookup.
+#
+# Valid Kotlin source cannot witness this: every Kotlin collection member without a physical slot is routed, which
+# is exactly why the rule needs a synthetic document to keep it from being silently defeated.
+unrouted Kotlin member 'kotlin.collections.MutableCollection.sortAll'
+declares no 'sortAll'
+must be routed to a physical implementation

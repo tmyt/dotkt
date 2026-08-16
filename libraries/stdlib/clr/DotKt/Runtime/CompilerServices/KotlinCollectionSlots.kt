@@ -23,14 +23,21 @@ package DotKt.Runtime.CompilerServices
 // interfaces and otherwise runs the BCL default.
 //
 // WHY THE ELEMENT SURFACE IS ERASED TO `Any`. These interfaces are deliberately NON-generic and their element
-// collection parameter is `Any` (`System.Object`). A generic `…Slots<E>` would make the capability test depend on
-// the CALL SITE's generic fidelity: bir2cir legitimately erases a collection element type to `System.Object` in
-// several places (measured on the current corpus: `clrCollIsEmpty<System.Object>` in `Collections__3`/`Sets`,
-// `clrCollContainsAll<System.Object>` in `AbstractSet`, `clrCollAdd<object>` in `NullableTests`/`Gencoll`), and at
-// such a site `receiver is …Slots<object>` would MISS a `Counting<int>` receiver and silently fall through to the
-// BCL default — a fail-OPEN path that skips a user override with no diagnostic. An erased, instantiation-independent
-// test cannot miss. The bridge re-establishes the exact type by casting back to the implementer's own element
-// instantiation, so a genuinely mismatched argument fails LOUD (InvalidCastException) instead of silently.
+// collection parameter is `Any` (`System.Object`), so the capability test is independent of the instantiation the
+// dispatcher was called at. A generic `…Slots<E>` would instead be correct only as long as a separate argument holds:
+// that a dispatcher instantiated at `<X>` can only ever receive a receiver whose Kotlin element type is `X`. That is
+// true today — the dispatchers take an INVARIANT `ICollection<T>`/`IList<T>` receiver, so a `<System.Object>`
+// instantiation can only be handed an `ICollection<object>` — but it is a property of the helper signatures, not of
+// the slot design, and nothing pins it. bir2cir does erase collection element types to `System.Object` elsewhere
+// (`clrCollIsEmpty<System.Object>`, `clrCollContainsAll<System.Object>`, `clrCollAdd<object>` all occur in the
+// current corpus), so a constructed test would have to be re-argued from scratch after any change to a dispatcher's
+// parameter typing, and getting it wrong is fail-OPEN: the override is skipped with no diagnostic. The erased test
+// cannot be defeated that way and costs strictly less (one non-generic `isinst`). The bridge re-establishes the exact
+// type by casting back to the implementer's own element instantiation, so a genuinely mismatched argument fails LOUD
+// (InvalidCastException) instead of silently.
+//
+// NOTE, so the claim is not overstated: no witness of a constructed test actually missing exists, precisely because
+// of the invariance argument above. This is a robustness choice, not a reproduced bug fix.
 //
 // These are compiler vocabulary, not a user-facing API. They are `internal`, which makes them UNNAMEABLE from a
 // user module's Kotlin source, while still being emitted as CLR-PUBLIC TypeDefs — kotc emits no `vis` field for an

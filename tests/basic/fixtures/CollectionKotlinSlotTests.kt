@@ -21,7 +21,7 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 
 // A Kotlin class implementing MutableCollection DIRECTLY and overriding all three collection-level members.
-class CollectionKotlinSlotCounting<E> : MutableCollection<E> {
+open class CollectionKotlinSlotCounting<E> : MutableCollection<E> {
     private val backing = ArrayList<E>()
     var removeAllCalls: Int = 0
     var retainAllCalls: Int = 0
@@ -45,7 +45,7 @@ class CollectionKotlinSlotCounting<E> : MutableCollection<E> {
         for (e in elements) { backing.add(e); changed = true }
         return changed
     }
-    override fun removeAll(elements: Collection<E>): Boolean {
+    open override fun removeAll(elements: Collection<E>): Boolean {
         removeAllCalls++
         var changed = false
         for (e in elements) if (backing.remove(e)) changed = true
@@ -129,6 +129,24 @@ class CollectionKotlinSlotCountingList : MutableList<Int> {
 // A class-delegation forwarder over a BCL-backed delegate: `MutableList<T> by backing`. The compiler generates
 // forwarders for every member including the four here, and the delegate is a plain `System.Collections.Generic.List`.
 class CollectionKotlinSlotDelegating(backing: MutableList<Int>) : MutableList<Int> by backing
+
+
+// A subclass of a slot-holding implementer: it must inherit the slot interface and receive no bridge of its own,
+// and the base's bridge must still reach THIS override. Deliberately does not call `super.` — a `super` call from a
+// subclass of a same-assembly GENERIC base emits an un-substituted owner and is broken independently of collections
+// (witnessed by a plain `open class GenBase<E>` / `class Sub : GenBase<Int>()` probe), so using it here would pin an
+// unrelated defect into this battery.
+class CollectionKotlinSlotSubclass : CollectionKotlinSlotCounting<Int>() {
+    var subclassRemoveAllCalls: Int = 0
+    // Records the call and does nothing else ON PURPOSE. The point of this fixture is WHICH BODY the inherited slot
+    // reaches; calling an inherited member of the generic base from this non-generic subclass would drag in an
+    // unrelated defect (an inherited-owner call from a non-generic subclass of a same-assembly generic base emits an
+    // un-substituted owner — the same family as `super.` into a generic base).
+    override fun removeAll(elements: Collection<Int>): Boolean {
+        subclassRemoveAllCalls++
+        return false
+    }
+}
 
 class CollectionKotlinSlotTests {
 
@@ -305,13 +323,66 @@ class CollectionKotlinSlotTests {
         assertEquals("[1, 9, 4, 7]", render(d))
     }
 
-    // ---- element types that get erased --------------------------------------------------------------------------
-    // The capability test is deliberately NON-generic. If it were `is KotlinMutableCollectionSlots<E>` this case
-    // would silently take the BCL default instead of the override, because the element type reaches the dispatcher
-    // erased in exactly these shapes.
+    // ---- element types the dispatcher is instantiated at ----------------------------------------------------------
+    // NOT a witness of erasure: both call sites below instantiate the dispatcher at the concrete element
+    // (`clrCollRemoveAll<System.String>` / `clrCollRetainAll<System.Int32>`), because the dispatchers take an
+    // INVARIANT `ICollection<T>` receiver. What these pin is that a nullable reference element and a value-type
+    // element both reach the override — the shapes where a constructed capability test would have had to be
+    // re-argued. See the note on KotlinCollectionSlots.kt for why the slot surface is erased anyway.
+
 
     @TestAttribute
-    fun overrideSurvivesElementErasure() {
+    fun oneGenericImplementerAtTwoInstantiations() {
+        // Each bridge castclasses the erased argument back to ITS OWN element instantiation; two live
+        // instantiations of the same implementer in one program must not confuse that.
+        val ints = CollectionKotlinSlotCounting<Int>()
+        ints.add(1); ints.add(2)
+        val strs = CollectionKotlinSlotCounting<String>()
+        strs.add("a"); strs.add("b")
+
+        val ic: MutableCollection<Int> = ints
+        val sc: MutableCollection<String> = strs
+        assertTrue(ic.removeAll(listOf(1)))
+        assertTrue(sc.removeAll(listOf("a")))
+        assertEquals(1, ints.removeAllCalls)
+        assertEquals(1, strs.removeAllCalls)
+        assertEquals("[2]", ints.snapshot().toString())
+        assertEquals("[b]", strs.snapshot().toString())
+    }
+
+    @TestAttribute
+    fun selfAliasOnASlotHoldingReceiverUsesTheOverride() {
+        // The self-aliasing forms are defined by the BCL default only for a BCL-backed receiver. On a receiver that
+        // carries the Kotlin slot the OVERRIDE decides, exactly as on any other platform.
+        // Asserted on the CALL COUNTERS only: once the override runs, the resulting contents are the override's own
+        // business (this one iterates the argument directly), and the compiler-defined snapshot semantics of the BCL
+        // default deliberately do NOT apply.
+        val k = CollectionKotlinSlotCounting<Int>()
+        k.add(1); k.add(2)
+        val c: MutableCollection<Int> = k
+        c.removeAll(c)
+        assertEquals(1, k.removeAllCalls)
+
+        val r = CollectionKotlinSlotCounting<Int>()
+        r.add(1); r.add(2)
+        val rc: MutableCollection<Int> = r
+        rc.retainAll(rc)
+        assertEquals(1, r.retainAllCalls)
+    }
+
+    @TestAttribute
+    fun inheritedSlotReachesASubclassOverride() {
+        // A subclass gets NO bridge of its own: the base's bridge forwards virtually, so the most-derived override
+        // must still win. This is what lets the pass skip every class whose base already carries the interface.
+        val s = CollectionKotlinSlotSubclass()
+        val c: MutableCollection<Int> = s
+        assertFalse(c.removeAll(listOf(2)))         // the subclass override's own answer, not the BCL default's
+        assertEquals(1, s.subclassRemoveAllCalls)
+        assertEquals(0, s.removeAllCalls)            // the BASE override must NOT have run
+    }
+
+    @TestAttribute
+    fun overrideReachedAtNullableAndValueElements() {
         val nullable = CollectionKotlinSlotCounting<String?>()
         nullable.add("a"); nullable.add(null); nullable.add("b")
         val cn: MutableCollection<String?> = nullable

@@ -29,7 +29,10 @@ using DotKt.Bir;
 // entirely — silently falling back to the BCL default.
 //
 // The bridge's parameter typing likewise comes from the OVERRIDDEN declaration, substituted into the implementer's
-// frame — never from guessing which parameter "looks like" the collection.
+// frame — never from guessing which parameter "looks like" the collection. Its collection parameter is ERASED to
+// `Any` to match the non-generic slot interface, then cast back to the implementer's own instantiation, so the
+// capability test at the call site never has to be re-argued from the dispatcher's generic arguments (see the note
+// on KotlinCollectionSlots.kt — a robustness choice, not a reproduced bug fix).
 //
 // Runs in the Kotlin-vocabulary phase, right after CovariantInterfaceReturnBridge: that is where `overrides` still
 // exists (it does not survive to CIR) and where the supertype graph is still Kotlin's own. Non-ref builds only —

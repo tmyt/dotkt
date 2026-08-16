@@ -18,9 +18,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   of `CollectionBclSlotSynthesis`) gives every emitted Kotlin class that declares one of them the compiler-owned
   `DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots`/`KotlinMutableListSlots` interface plus an exact
   `clrInterfaceImpls` MethodImpl bridge, so an override is reached by ordinary virtual dispatch — locally and
-  cross-module. The slot interfaces are non-generic and their element-collection parameter is erased to `Any`: a
-  constructed `Slots<E>` test would be defeated by an element type erased to `System.Object` at the call site and
-  would then silently skip the override. `removeAll` now honours Kotlin's contract for duplicates, and the
+  cross-module. The slot interfaces are non-generic and their element-collection parameter is erased to `Any`, so
+  the capability test is independent of the instantiation the dispatcher was called at; a constructed `Slots<E>` test
+  would instead be correct only while the dispatchers keep an invariant receiver parameter, and its failure mode is a
+  silently skipped override. They are `internal` (unnameable from user Kotlin source) while still emitting as
+  CLR-public TypeDefs, and dll2klib keeps the compiler's reserved `DotKt.Runtime.CompilerServices` namespace out of
+  projected Kotlin supertype lists. `removeAll` now honours Kotlin's contract for duplicates, and the
   self-aliasing forms (`c.removeAll(c)`, `c.retainAll(c)`, `c.addAll(c)`, `l.addAll(i, l)`) are defined; see
   `docs/dotkt-semantics.md` §5c-quater.
 

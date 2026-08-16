@@ -678,9 +678,13 @@ at all. DotKt reconciles those two categories physically, with no runtime reflec
   MethodImpl per member, so the dispatcher reaches the OVERRIDE by ordinary virtual dispatch;
 - a receiver with no such interface runs a default written only over slots that physically exist.
 
-Those interfaces are **compiler vocabulary**: user code must not implement them directly, and their element-collection
-parameter is deliberately erased to `Any` so the capability test cannot be defeated by an element type that reached the
-call site erased to `System.Object`.
+Those interfaces are **compiler vocabulary** and are `internal`, so user Kotlin source cannot name them; dll2klib
+also keeps the compiler's reserved `DotKt.Runtime.CompilerServices` namespace out of a projected type's Kotlin
+supertype list. Their element-collection parameter is deliberately erased to `Any`, which makes the capability test
+independent of the instantiation the dispatcher was called at. (A constructed `Slots<E>` test would be correct only
+while the dispatchers keep an invariant `ICollection<T>`/`IList<T>` receiver — a property of those signatures rather
+than of the design, whose failure mode is a silently skipped override. No witness of it missing exists; the erased
+form is chosen for robustness, not to fix an observed bug.)
 
 Two consequences worth stating:
 
