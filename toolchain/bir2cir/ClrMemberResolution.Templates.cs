@@ -475,6 +475,6 @@ static partial class ClrMemberResolution
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open,
             iface.Args ?? Array.Empty<TypeNode>());
         StampDelegateArgumentTargets(node, win, iface.Args ?? Array.Empty<TypeNode>());
-        StampMemberRet(node, win.ReturnType);
+        StampResolvedMemberReturn(node, win.ReturnType);
     }
 }

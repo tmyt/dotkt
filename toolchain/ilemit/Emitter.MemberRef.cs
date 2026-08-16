@@ -12,10 +12,6 @@
 // mismatch takes an afternoon. More than one match means two declarations share a signature the reference
 // cannot tell apart, which is a defect in the identity, not a cue to pick.
 //
-// TRANSITIONAL. While the old descriptors still exist, `ShadowParity` resolves BOTH ways and refuses to
-// continue if they disagree — that is what proves, over the whole corpus rather than by argument, that the
-// reference names what the emitter links today. It disappears with the descriptors it compares against.
-
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Text;
@@ -24,8 +20,6 @@ using DotKt.Bir;
 
 sealed partial class Emitter
 {
-    /// <summary>How many references were resolved, and how many were checked against the legacy path.</summary>
-
     /// <summary>Every key a resolved member reference can ride on. The counting below is keyed on this set.</summary>
 
     readonly Dictionary<string, MemberInfo> _wellKnown = new(StringComparer.Ordinal);
@@ -532,12 +526,12 @@ sealed partial class Emitter
         return new InvalidOperationException(sb.ToString());
     }
 
-    // ---- transitional: prove the reference names what the emitter links today ------------------------
+    // ---- exact scalar-reference linkage ---------------------------------------------------------------
 
     /// <summary>
-    /// The member this node's reference names, or null when it carries none. THE PRIMARY PATH: where a
-    /// reference exists it is the answer, and the descriptor beside it is only still consulted so the two can
-    /// be compared. A node without one is not yet migrated and falls back until it is.
+    /// The member this node's reference names, or null when the operation is permitted to target a member
+    /// emitted by this compilation. Required external-reference callers wrap this in RequiredRef and fail closed;
+    /// no legacy owner/name/signature descriptor is consulted.
     /// </summary>
     MemberInfo PrimaryFromRef(JsonElement node, string carrier)
     {

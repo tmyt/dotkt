@@ -98,7 +98,7 @@ sealed partial class Emitter
                 var fnm = e.GetProperty("name").GetString();
                 // W1-S3 (#46 / #121) CONSUME-ONLY: an EXTERNAL owner's backing field is PRIVATE cross-assembly, so the
                 // read goes through the public getter — bir2cir (ClrMemberResolution) decided that KIND and stamped
-                // `member:"accessor"` + the resolved accessor name + memberSig + dispatch. ilemit no longer reinterprets a
+                // `member:"accessor"` + the resolved accessor memberRef + dispatch. ilemit no longer reinterprets a
                 // `field` into a `get_` accessor (the ExternalPropAccessor probe is gone). Absent = a LOCAL owner (its
                 // backing field is directly accessible) or a genuine public @ClrField -> the direct Ldfld path below.
                 // (No Throwable.message/cause correction here either: bir2cir substitutes those to clrPropGet upstream.)
@@ -204,7 +204,7 @@ sealed partial class Emitter
                 if (!_types.TryGetValue(open, out var ti))
                 {
                     // External type (e.g. `new kotlin.ranges.IntRange(1,3)` from an APP linking the rt where IntRange
-                    // lives): bir2cir resolved its physical declaration and stamped `memberSig`. Link that descriptor
+                    // lives): bir2cir resolved its physical declaration and stamped `memberRef`. Link that identity
                     // exactly; this path must not choose a constructor from the argument expressions.
                     var ext = constructed ?? ResolveType(open);
                     var ctorE = LinkClrCtor(ext, e, out var reanchor);
@@ -454,8 +454,7 @@ sealed partial class Emitter
             }
             case "clrGenericStatic":
             {
-                // Generic static call (LINQ): CONSUME the FIR-resolved `memberSig` descriptor — exact structural match,
-                // MakeGenericMethod, call. ilemit picks NO overload (0 or >1 = hard link error; see ResolveGenericMethod).
+                // Generic static call (LINQ): resolve the scalar memberRef, apply MethodSpec arguments, and call.
                 var type = ClrRef(e.GetProperty("type"));
                 var typeArgs = e.GetProperty("typeArgs").EnumerateArray().Select(a => MapType(a)).ToArray();
                 var argEls = e.GetProperty("args").EnumerateArray().ToList();
@@ -468,7 +467,7 @@ sealed partial class Emitter
             }
             case "clrGenericInstance":
             {
-                // Generic instance call (`obj.M<T>(...)`): same CONSUME-ONLY memberSig match as the static path, but
+                // Generic instance call (`obj.M<T>(...)`): same scalar memberRef lookup as the static path, but
                 // address the constructed receiver type and `callvirt`. (Shares ResolveGenericMethod's MakeGenericMethod core.)
                 var type = ClrRef(e.GetProperty("type"));
                 var typeArgs = e.GetProperty("typeArgs").EnumerateArray().Select(a => MapType(a)).ToArray();
@@ -872,7 +871,7 @@ sealed partial class Emitter
             case "newBoundClrDelegate":
             {
                 // `netObj::method` -> a delegate bound to a .NET instance method. W1-S5 (#46/#183): CONSUME the FIR-
-                // resolved `memberSig` descriptor bir2cir carried (ClrMemberResolution.ResolveBoundClrDelegate) — LINK
+                // resolved `memberRef` bir2cir carried (ClrMemberResolution.ResolveBoundClrDelegate) — LINK
                 // the UNIQUE instance target (0 = hard ABI error, >1 = malformed), never a name-only first-pick.
                 var ft = MapType(e.GetProperty("funcType"));
                 // `clrType` is a STRUCTURED TypeNode post type-flip (was a bare string); ClrRef(JsonElement) dispatches both.

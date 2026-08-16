@@ -1178,10 +1178,11 @@ sealed partial class Emitter
         isStatic = isStatic || m.GetProperty("static").GetBoolean();
         var objOverride = m.TryGetProperty("objectOverride", out var oo) && oo.GetBoolean();
         // Overriding a .NET base virtual (e.g. `override val Message`) reuses the base slot, like an object-method.
-        // The RESOLVED REFERENCE is what says this method overrides a .NET base virtual, and it is also the
-        // slot. Triggering on the old descriptor and then linking through the reference meant a document in the
-        // shape this change produces — reference only — wired no override at all.
-        var hasClrOverride = m.TryGetProperty("clrOverrideRef", out _);
+        // `requiresClrOverride` is the one-to-one CIR instruction to emit a MethodImpl; `clrOverrideRef` is its
+        // already-selected operand. Keeping the trigger separate from the operand makes either missing half a
+        // malformed document instead of silently changing virtual dispatch.
+        var hasClrOverride = m.TryGetProperty("requiresClrOverride", out var clrOverrideRequired)
+            && clrOverrideRequired.GetBoolean();
         // The frontend-stated abstract modality decides whether an interface member is a CLR abstract slot. A concrete
         // Kotlin DIM may have an empty Unit body, so body length is not a declaration-semantics oracle.
         // A compiler-authored static interface helper takes no slot, so it must NOT be marked Virtual/NewSlot/Abstract
@@ -1283,8 +1284,8 @@ sealed partial class Emitter
         if (hasClrOverride)
         {
             // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches
-            // it (`callvirt System.Exception::get_Message` -> our override). The slot is the reference bir2cir
-            // resolved: one member, stated once, and the same thing that said this method overrides at all.
+            // it (`callvirt System.Exception::get_Message` -> our override). The slot is the one scalar reference
+            // bir2cir resolved; the independent boolean above is only the emission instruction, not another identity.
             WireMethodOverride(ti.TB, mb, RequiredRef<MethodInfo>(m, "clrOverrideRef", $"the override {name}"));
         }
         // Kotlin's `@kotlin.internal.InlineOnly` says "this fn is meant to be inlined, not called as a method". The direct
@@ -1314,6 +1315,7 @@ sealed partial class Emitter
             var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
             var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps);
             DefineParamNames(cb, c);   // ctor param NAMES + [Optional]/DefaultParameterValue (named-arg ctor calls)
+            StampMemberAttrs(cb.SetCustomAttribute, c); // declaration carriers/annotations belong to the ctor row
             ti.Ctors.Add(cb);
             ti.CtorDefs.Add(c);
         }

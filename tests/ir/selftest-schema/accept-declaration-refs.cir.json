@@ -42,6 +42,7 @@
             "t": "fqn",
             "name": "System.String"
           },
+          "requiresClrOverride": true,
           "clrOverrideRef": {
             "kind": "method",
             "assembly": "System.Runtime",

@@ -28,6 +28,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | field-backed `lateinit var` | ordinary mutable field plus checked Kotlin reads | no; CLR metadata has no `lateinit` modifier | `[KotlinLateinit]` on the backing field; `dll2klib` restores `IS_LATEINIT` and sets the declaration-owned `@ClrField` flag used by Kotlin 2.4 static-property fake overrides |
 | companion-block statics on generic `G<T>` | members of one compiler-generated, public, non-generic CLR carrier | CLR statics on `G<T>` would be duplicated per closed type and a bare generic owner is not a legal MemberRef parent | `[KotlinStaticCarrier(version, bytes)]` on the carrier names semantic `G`; `dll2klib` merges its declarations back into `G` |
 | inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
+| `@ClrTypeAlias` constructor whose Kotlin delegation ends at a different physical signature | the selected physical CLR constructor | no; the alias TypeDef/body is absent from the runtime twin | `[KotlinConstructorAdapter(version, bytes)]` on the reference constructor, carrying the declaration parameter vector, terminal arguments, and terminal signature |
 | Kotlin `val` backed by a **`@ClrField` public field** | public field | no; a plain public field looks writable | `[KotlinReadOnly]` — survives **only** for the `@ClrField` plain-field case; a normal `val` is now a get-only CLR property, recoverable from plain metadata (see [design-clr-property-model.md](design-clr-property-model.md)) |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
 | a nullable GENERIC `T?` on an unconstrained `T` (`fun <T> f(x: T?): T?`, `Holder<T?>`, `Array<T?>`, `(T) -> T?`) | `System.Object` at that position — the one CLR slot that carries a real null for a value AND a reference instantiation (#86) | no; `object` names neither `T` nor the `?` | `[KotlinNullableGeneric(pre-erasure type node)]` **plus** the slot's own `[Nullable(2)]` byte |
@@ -59,7 +60,8 @@ classification.
                compiler-generated embedded carrier definitions,
                [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinCompanionExtension(receiver,name,kind)] /
                [KotlinExtensionCore(wrapper-to-core)] /
-               [KotlinInline(body)] / [KotlinReadOnly] / [KotlinLateinit] / [KotlinPropertyStorage] / [KotlinStaticCarrier] /
+               [KotlinInline(body)] / [KotlinConstructorAdapter(delegation)] / [KotlinReadOnly] / [KotlinLateinit] /
+               [KotlinPropertyStorage] / [KotlinStaticCarrier] /
                .NET NRT [Nullable*]
   project: dll2klib verifies assembly + carrier provenance, then writes standard KLIB metadata
             (suspend: Task<T> unwrapped to T)

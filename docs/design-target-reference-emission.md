@@ -67,15 +67,10 @@ target generic definition combined with an emit-time type parameter is represent
 Raw output carries target scopes directly and is covered by SDK, reverse-interop, ILVerify, stdlib, coroutine, and
 round-trip gates.
 
-## Transitional CIR member identity
+## CIR member identity
 
-#336 carries the resolved declaring type and declared parameter signature separately as `memberOwner` and
-`memberSig` (with constructor/override equivalents). These arrays are signature components, not candidate sets:
-`ilemit` may enumerate target metadata only to find the single declaration matching the complete carried identity,
-and must fail on zero or multiple matches. It may not choose by name, arity, assignability, inheritance preference,
-or reflection order.
-
-This flat representation is transitional. #370 will replace the related fields with one scalar `memberRef` containing
-all ECMA identity facts required for direct encoding, including declaring owner, name, generic arity, calling
-convention, return and parameter signatures, and custom modifiers. The scalar migration is required before 1.0.0;
-it is intentionally not coupled to the atomic target-universe switch in #336.
+#370 retired #336's split owner/signature descriptors. Every external member now crosses the CIR boundary as one
+scalar `memberRef` containing the target assembly, exact declaring type, name, generic arity, calling convention,
+return and parameter signatures, and custom modifiers. `ilemit` maps that identity to exactly one target metadata
+declaration and fails on zero or multiple matches; it does not choose by name, arity, assignability, inheritance
+preference, or reflection order.

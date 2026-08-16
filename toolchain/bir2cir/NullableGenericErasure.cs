@@ -40,7 +40,7 @@ using DotKt.Bir;
 // instantiation and still erases, because the rule is uniform rather than bound-consulting: one physical form per
 // declaration, decided without resolving where each bound leads.
 //
-// A declaration BOUND ELSEWHERE is authoritative and is NOT re-erased: a `memberSig`, and the `argTypes` a `clr*`
+// A declaration BOUND ELSEWHERE is authoritative and is NOT re-erased: a `resolvedMemberParams`, and the `argTypes` a `clr*`
 // node carries under another name, state what a .NET member really declares, so a genuine `List<int?>` parameter
 // keeps its `Nullable<int32>` argument. Kotlin's canonical `G<object>` does not inhabit it, and that crossing is
 // REFUSED by ForeignNullableGenericCrossing rather than silently adapted.
@@ -62,7 +62,7 @@ static class NullableGenericErasure
         // possibly-value `X?` is `System.Object` here.
         Argument,
         // A declaration BOUND ELSEWHERE, whose slots this pass does not get to move: a resolved .NET member's
-        // `memberSig`, and the `funcType` of a delegate over a member that is already declared. Only the
+        // `resolvedMemberParams`, and the `funcType` of a delegate over a member that is already declared. Only the
         // inexpressible open `Nullable(Tv)` is rewritten; a concrete `V?` the target really declares is never
         // restated, because moving the delegate without moving the target is what leaves the two incompatible.
         Bound,
@@ -439,7 +439,7 @@ static class NullableGenericErasure
     // arguments of a reified instantiation, so `listOf<Int?>` instantiates at `object` FROM THE START rather than
     // being built at `Nullable<int32>` and reconciled afterwards (two unrelated invariant generics no cast joins).
     //
-    // A `memberSig` and the `argTypes` a `clr*` node carries under another name both state a declaration made
+    // A `resolvedMemberParams` and the `argTypes` a `clr*` node carries under another name both state a declaration made
     // ELSEWHERE, and are never restated in Kotlin's vocabulary — see EraseBound.
     //
     // An `elem` is the one type slot the recursion cannot classify from its own shape: it is an ELEMENT written
@@ -462,10 +462,10 @@ static class NullableGenericErasure
                     {
                         "elem" => elemPos,
                         "typeArgs" => Pos.Argument,
-                        // `memberSig` is always a resolved .NET declaration; `argTypes` is the SAME vector under
+                        // `resolvedMemberParams` is always a resolved .NET declaration; `argTypes` is the SAME vector under
                         // another name once a call is `clr*`-bound (NetInteropBinding writes the callee's declared
                         // signature there), while on a Kotlin `new` it is the caller's own substituted view.
-                        "memberSig" => Pos.Bound,
+                        "resolvedMemberParams" => Pos.Bound,
                         "argTypes" when ClrBoundNode.IsAny(k) => Pos.Bound,
                         _ => pos,
                     };

@@ -21,6 +21,12 @@ those facts exists to stop a consumer having to reconstruct it, and reconstructi
 - `reject-memberref-stray-carrier-key` — a resolved identity under an unregistered key, i.e. a second
   member-identity vocabulary growing beside the scalar one. `declaringType` is the discriminator that
   catches it wherever it is smuggled in.
+- `reject-bir2cir-internal-member-fact` — a pass-to-pass resolution fact leaked into serialized CIR. Internal
+  matching inputs may exist while bir2cir is resolving a declaration, but neither BIR nor CIR may expose them.
+- `reject-external-base-ctor-without-ref` / `reject-clr-override-instruction-without-ref` — declaration-side
+  external operands remain mandatory after the transitional owner/signature descriptors are retired. The base
+  type plus compilation-local type set identifies an external constructor delegation; an explicit MethodImpl has
+  a separate durable instruction, and neither may reach ilemit without its exact scalar operand.
 - `reject-array-rank-one` — `rank` names the multi-dimensional ECMA array; a 1 would be a second spelling of
   the SZ vector, and two spellings of one shape is exactly the ambiguity the key was added to remove.
 

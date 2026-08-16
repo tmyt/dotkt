@@ -117,8 +117,8 @@ static class BirTypeLowering
         "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",
         "samType", "closureType",
         // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
-        // method-tv positional), lowered to the CLR vocabulary so ilemit exact-matches them (replaces `shapes`).
-        "memberSig",
+        // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
+        "resolvedMemberParams",
         // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
         "elemType", "accType", "clrType", "tupleType", "parameterTypes",
         // A MethodImpl descriptor's parameter vector (`clrInterfaceImpls`/`clrBaseImpls`) is a RAW array of type

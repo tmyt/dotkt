@@ -1,0 +1,15 @@
+{
+  "methods": [{
+    "name": "probe",
+    "params": [],
+    "ret": { "t": "fqn", "name": "System.Int32" },
+    "body": [{
+      "k": "ret",
+      "value": {
+        "k": "staticField",
+        "ownerType": { "t": "fqn", "name": "External.Widget" },
+        "name": "Value"
+      }
+    }]
+  }]
+}

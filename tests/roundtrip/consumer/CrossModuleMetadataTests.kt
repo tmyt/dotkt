@@ -41,6 +41,7 @@ import kotlinx.genov.arrOf
 import genq.Slot
 import genq.GenericSlots
 import genq.FunctionSlots
+import genq.InheritedNullableMiddle
 import genq.SlotDerived
 import genq.holderOf
 import genq.invokeNullable
@@ -121,6 +122,10 @@ fun runCrossModuleSuspend(block: suspend () -> Int): Int {
 
 private class InvariantTypeProbe<T>(val value: T)
 
+private class CrossModuleInheritedIntSlot : InheritedNullableMiddle<Int>() {
+    override fun take(value: Int?): String = value?.toString() ?: "inherited-null"
+}
+
 private interface LocalStarDerived<T> : ReferencedStarBase<T>
 private class LocalStarDerivedImpl : LocalStarDerived<String> {
     override fun inherited(): String = "referenced-base"
@@ -200,6 +205,12 @@ class GenericMetadataRoundtripTests {
         // propagated from SlotConsumer<T> and remain callable through the concrete derived type after re-import.
         val derived = SlotDerived<String>()
         ClassicAssert.AreEqual("bridge", derived.accept(Slot<String?>("bridge")))
+
+        // The inherited nullable-generic slot remains wired when reached through the intermediate base after re-import.
+        // The synthetic lowering fixture separately forces a descriptor owner distinct from its CLR declarer.
+        val inherited: InheritedNullableMiddle<Int> = CrossModuleInheritedIntSlot()
+        ClassicAssert.AreEqual("7", inherited.take(7))
+        ClassicAssert.AreEqual("inherited-null", inherited.take(null))
     }
 
     // #86 D2: `Array<X?>` across the module boundary at a VALUE element. The producing assembly emits `object[]` and

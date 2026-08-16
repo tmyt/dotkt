@@ -1,0 +1,53 @@
+{
+  "fileClass": "ExternalInheritedGenericMethodImplProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [],
+  "properties": [],
+  "types": [
+    {
+      "name": "ExternalInheritedGenericMethodImplProbe",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": {
+        "t": "fqn",
+        "name": "kotlin.collections.AbstractList",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "dotkt$probe$contains",
+          "static": false,
+          "override": false,
+          "virtual": false,
+          "vis": "private",
+          "params": [
+            { "name": "item", "type": { "t": "fqn", "name": "kotlin.Int" } }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.Boolean" },
+          "body": [],
+          "clrBaseImpls": [
+            {
+              "owner": {
+                "t": "fqn",
+                "name": "kotlin.collections.AbstractList",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              },
+              "member": "contains",
+              "arity": 0,
+              "params": [{ "t": "fqn", "name": "kotlin.Int" }],
+              "ret": { "t": "fqn", "name": "kotlin.Boolean" }
+            }
+          ]
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    }
+  ],
+  "refTypes": []
+}

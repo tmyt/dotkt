@@ -98,7 +98,7 @@ class NullableValueGenericInteropTests {
     }
 
     // A GENERIC overload set whose OTHER member returns an uninhabitable slot. The declared return is resolved
-    // through this call's own `memberSig`, so the crossing one is refused (tests/compile-fail) and this one is not.
+    // through this call's own resolved memberRef input, so the crossing one is refused (tests/compile-fail) and this one is not.
     @TestAttribute
     fun siblingOfACrossingGenericOverloadStillBinds() {
         assertEquals("gen:a", GenFac.Pick<Int>("a"))    // gen:a

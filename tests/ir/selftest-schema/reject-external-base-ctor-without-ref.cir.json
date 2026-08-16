@@ -1,0 +1,15 @@
+{
+  "types": [
+    {
+      "name": "MissingBaseCtorRef",
+      "kind": "class",
+      "base": { "t": "fqn", "name": "System.Exception" },
+      "ctors": [
+        {
+          "params": [],
+          "baseArgs": []
+        }
+      ]
+    }
+  ]
+}

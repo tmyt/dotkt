@@ -22,6 +22,7 @@ static class Bir2Cir
             {
                 TypeNodeSelfTest.Run();
                 MemberRefNodeSelfTest.Run();
+                AliasConstructorDelegationExpansion.SelfTest();
                 return 0;
             }
             var options = DriverOptions.Parse(args);
@@ -167,7 +168,7 @@ sealed class Pipeline
         // The type FQNs DECLARED in this compilation (every input file's own `types`). SuspendColdLowering
         // uses it to decide whether the cold-core base (kotlin.coroutines.clr.internal.ContinuationImpl) is
         // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
-        // (app build -> clr: base + clrOverride linkage).
+        // (app build -> clr: base + pendingOverrideOwner linkage).
         var localTypeFqns = new HashSet<string>(StringComparer.Ordinal);
         foreach (var b in birFiles)
         {
@@ -298,6 +299,13 @@ sealed class Pipeline
         InlineBirStash.Reset();
         foreach (var b in birFiles) InlineBirStash.Stash(b.Root);
 
+        // An @ClrTypeAlias constructor may be a Kotlin adapter whose physical target has a different signature.
+        // Capture the module-wide declaration graph before AliasHelperHoist drops those TypeDefs.  A consumer expands
+        // it at the head of phase 1 so every expression copied out of an alias constructor flows through the same
+        // semantic/representation lowerings as an expression authored directly in that consumer.
+        var aliasConstructorDelegations = AliasConstructorDelegationExpansion.Collect(
+            birFiles.Select(file => file.Root), refs, carryForReference: _options.RefBuild);
+
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
@@ -305,6 +313,7 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
+            if (!_options.RefBuild) aliasConstructorDelegations.Apply(bir.Root);
             // SYNTHETIC CLR-REPRESENTATION TYPES (#52 kotc-purity): kotc emits only the FACTS — a capturing lambda's
             // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence / KProperty use references
             // the identity; a heap ref-cell rides the `refTypes` registry. Assemble the actual closure / interface /
@@ -504,7 +513,7 @@ sealed class Pipeline
             // literal `null` into a null-less value slot. Runs right after NetInteropBinding (consumes its `clrPropSet`
             // nodes) and before BirTypeLowering (owner args + the wrap's elem are still `kotlin.*`). Non-ref only.
             if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs);
-            // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `memberSig` descriptor
+            // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `resolvedMemberParams` descriptor
             // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
             // exact-matches it. The retired ShapeSynthesis pass (lossy `shapes` string derived off the @ClrTypeAlias
             // index) is DELETED; ilemit no longer re-resolves the overload by name/arity/shape-string.
@@ -1171,9 +1180,9 @@ sealed class Pipeline
             // @KotlinDefault external in APP/user-library builds (it only REFERENCES the stdlib-defined type; the ref/rt
             // self-build defines it locally in `_types` and stays a bare-FQN local stamp).
             AttrExternalNormalize.Apply(lowered, _options.StdlibMode == BuildStdlibMode.App);
-            // W1-S2 (#46): RESOLVED-CLR-IR carry — resolve every clrStatic/clrInstance/newClr against the ref.dll MLC and
-            // stamp the winning member's DECLARED param signature as `memberSig` (+ `dispatch` on clrInstance), deleting the
-            // lossy `argTypes`. ilemit becomes a pure linker (exact structural match, hard-fail on 0/multi). Runs LAST — on
+            // W1-S2 (#46): resolve every clrStatic/clrInstance/newClr against the ref.dll MLC. Internal
+            // `resolvedMemberParams` carries matching inputs between bir2cir passes; Apply consumes it into the scalar
+            // memberRef (+ `dispatch` on clrInstance). ilemit is a pure linker. Runs LAST — on
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
@@ -1190,8 +1199,8 @@ sealed class Pipeline
             // The other side of the erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type inhabits
             // once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have no
             // conversion between them and an adapter would change the argument's identity, so the crossing is
-            // refused rather than silently mis-typed. Checked HERE, immediately after the resolution that stamps
-            // `memberSig`: before it, most `clr*` nodes still carry the caller's `argTypes` and the .NET declaration
+            // refused rather than silently mis-typed. Checked HERE, immediately after resolution has established the
+            // member's declared physical signature: before it, most `clr*` nodes still carry caller-side `argTypes` and the .NET declaration
             // this refusal is about has not been read yet.
             ForeignNullableGenericCrossing.Check(lowered, outputName);
         }

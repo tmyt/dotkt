@@ -186,9 +186,8 @@ sealed partial class Emitter
     {
         var type = ClrRef(e.GetProperty("type"));
         var args = e.GetProperty("args");
-        // W1-S2 (#46) CONSUME-ONLY: bir2cir already RESOLVED the ctor overload against the ref.dll MLC and stamped the
-        // winning ctor's DECLARED param signature as `memberSig`; link the UNIQUE matching constructor (0 = hard ABI
-        // error, >1 = malformed) — no exact-then-assignability-then-arity cascade, no delegate-arity scoring.
+        // bir2cir already resolved the constructor and carried its complete scalar memberRef. Link that exact
+        // declaration; there is no argument-applicability or arity fallback here.
         var openCtor = LinkClrCtor(type, e, out var tb);
         if (tb)
         {
@@ -209,11 +208,8 @@ sealed partial class Emitter
         return type;
     }
 
-    // W1-S2 (#46) CONSUME-ONLY ctor linking. bir2cir stamped the resolved ctor's DECLARED param signature as `memberSig`
-    // (a class type-var as a positional `tv(type,i)`). Enumerate the type's ctors — on the OPEN def when the constructed
-    // type is a TypeBuilderInstantiation (`tb`, caller re-anchors) — and match each declared param STRUCTURALLY under
-    // positional-tv equality (GenericParamMatches, shared with the S1 generic matcher). Require EXACTLY ONE: 0 is a hard
-    // ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor.
+    // The scalar reference names the open declaration. A TypeBuilderInstantiation is re-anchored mechanically after
+    // lookup; that operation changes no member-selection decision.
     /// <summary>The constructor a `newClr` or a base delegation names. A lookup, not a choice.</summary>
     ConstructorInfo LinkClrCtor(Type type, JsonElement e, out bool tb, string carrier = "memberRef",
         bool includeNonPublic = false)
@@ -225,13 +221,8 @@ sealed partial class Emitter
             + "arrives named; a node without one is an earlier-layer drop (#370)");
     }
 
-    // W1-S2 (#46) CONSUME-ONLY method linking. bir2cir stamped the resolved member's DECLARED param signature as
-    // `memberSig` (positional-tv for a generic owner/method). Enumerate the owner's name + static/instance + param-count
-    // candidates (incl. inherited class members via GetMethods, and base-interface members for an interface owner) — on
-    // the OPEN def when the owner is a TypeBuilderInstantiation (re-anchored via TypeBuilder.GetMethod) — and match each
-    // declared param STRUCTURALLY under positional-tv equality (GenericParamMatches). Require EXACTLY ONE hit: 0 is a
-    // hard ABI-mismatch error, >1 a malformed-descriptor error, each printing the full descriptor. No arity probe, no
-    // name+arity first-pick, no assignability scoring, no dynamic-dispatch/Bcl("System.Object") degradation.
+    // The scalar reference supplies the complete declaration identity. This helper only projects that identity into
+    // the target metadata universe; it does not construct or rank a candidate set from the call node.
     /// <summary>The method a `clr*` call names. A lookup, not a choice.</summary>
     MethodInfo LinkClrMethod(Type type, string name, JsonElement e, bool instance)
     {
@@ -253,15 +244,8 @@ sealed partial class Emitter
 
     static Type[] SafeInterfaces(Type t) { try { return t.GetInterfaces(); } catch { return Array.Empty<Type>(); } }
 
-    // W1-S4 (#46/#183) CONSUME-ONLY declaration-side override linking. A method overriding a .NET base-CLASS virtual
-    // (accessor) carries `clrOverride` (the base owner FQN) + `clrOverrideSig` (bir2cir's ref.dll-resolved base-virtual
-    // param signature, positional-tv for a generic base). This LINKS the exact base slot for DefineMethodOverride —
-    // enumerate the base type's name + instance + virtual + param-count candidates, match each param STRUCTURALLY under
-    // positional-tv equality (GenericParamMatches, ownerArgs null -> memberSig `tv` stays positional against the OPEN
-    // base def), require EXACTLY ONE (0 = hard ABI error, >1 = malformed). Replaces the former
-    // `baseT.GetMethod(name, ps) ?? baseT.GetMethod(name)` NAME-ONLY first-pick fallback. A generic base's winner is
-    // re-anchored onto the emitted type's CONSTRUCTED base instantiation (DefineMethodOverride must reference the slot
-    // on `Collection<Item>`, not the open def) — the corpus exercises only the non-generic accessor case.
+    // The declaration-side clrOverrideRef names the exact MethodImpl target. A generic base's resolved declaration is
+    // re-anchored mechanically onto the constructed base before DefineMethodOverride.
     /// <summary>The base virtual an external override implements. A lookup, not a choice.</summary>
     MethodInfo LinkOverrideBase(Type baseT, string name, JsonElement m, Type derivedTb)
     {
@@ -290,9 +274,7 @@ sealed partial class Emitter
         // `ClrRef` (not `ResolveType`) so a method on a constructed generic .NET type (`Collection<int>`) resolves.
         var type = ClrRef(e.GetProperty("type"));
         var name = e.GetProperty("method").GetString();
-        // W1-S2 (#46) CONSUME-ONLY: bir2cir already RESOLVED the overload against the ref.dll MLC and stamped the
-        // winning member's DECLARED param signature as `memberSig`; ilemit is a linker (exact structural match, hard
-        // fail on 0/multi) — no arity probe, no name+arity first-pick, no assignability scoring, no silent downgrade.
+        // bir2cir already resolved the overload and carried the complete memberRef; ilemit only links that identity.
         var mi = LinkClrMethod(type, name, e, instance);
         // A generic BCL method (`System.Array.Fill<T>(T[],T,int,int)`) resolved as its open DEFINITION must be
         // instantiated with the call's type args (threaded by bir2cir from the @ClrIntrinsic generic Kotlin callee),
@@ -400,7 +382,7 @@ sealed partial class Emitter
 
     // W1-S3 (#46 / #121) CONSUME-ONLY property GET. bir2cir (ClrMemberResolution) resolved the member against the ref.dll
     // and stamped a `member` discriminator: "accessor" (a real .NET property — carries the
-    // resolved accessor name + `memberSig` + `dispatch`) or "field" (a public/const field). ilemit no longer reclassifies
+    // resolved accessor memberRef + `dispatch`) or "field" (a public/const field). ilemit no longer reclassifies
     // property vs get_ method vs field, and no longer derives dispatch from the reflected accessor.
     Type EmitClrPropGet(JsonElement e)
     {
@@ -423,7 +405,7 @@ sealed partial class Emitter
         if (fld.IsLiteral) return EmitLiteralValue(fld.GetRawConstantValue(), FieldTypeOf(fld));
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         MaybeVolatile(fld, e);
-        _il.Emit(fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
+        EmitField(_il, fld.IsStatic ? OpCodes.Ldsfld : OpCodes.Ldfld, fld);
         return FieldTypeOf(fld);
     }
 
@@ -449,7 +431,7 @@ sealed partial class Emitter
         if (!isStatic && !fld.IsStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         EmitNullableCoerced(e.GetProperty("value"), FieldTypeOf(fld));
         MaybeVolatile(fld, e);
-        _il.Emit(fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
+        EmitField(_il, fld.IsStatic ? OpCodes.Stsfld : OpCodes.Stfld, fld);
         return Bcl("System.Void");
     }
 
@@ -473,7 +455,7 @@ sealed partial class Emitter
     // handler signature), so `ldftn`+`newobj <EventDelegate>(object, IntPtr)` is verifiable — exactly what
     // `button.Click += (s,e)=>{}` lowers to in C#.
     // W1-S3 (#46 / #121 / #113) CONSUME-ONLY event add/remove. bir2cir (ClrMemberResolution) resolved the EventInfo off
-    // the ref.dll and stamped the add/remove accessor NAME + `memberSig` (the [handlerDelegate] param) + `dispatch`.
+    // the ref.dll and stamped the add/remove accessor memberRef plus `dispatch`.
     // ilemit LINKS the exact accessor (LinkClrMethod — hard-fails a missing/ambiguous slot, so the old unchecked
     // `GetEvent(...).GetAddMethod()` NRE on a missing/value-type/constructed-generic event is gone) and consumes the
     // carried dispatch. The handler delegate type flows from the resolved accessor's first param (== EventHandlerType).

@@ -51,7 +51,7 @@ sealed partial class Emitter
             // generic base (`Collection<int>`) needs the static helper to map the open ctor onto the instantiation.
             var ba = c.TryGetProperty("baseArgs", out var b) && b.ValueKind == JsonValueKind.Array ? b : default;
             // bir2cir has already resolved the Kotlin delegation onto its physical CLR constructor and carried the
-            // declaration as baseMemberSig. Reuse the same exact-link path as newClr; this layer does not form or rank
+            // declaration as baseCtorRef. Reuse the same exact-link path as newClr; this layer does not form or rank
             // a constructor candidate set from the argument expressions.
             var ctor = LinkClrCtor(ti.ClrBase, c, out var reanchorBaseCtor, "baseCtorRef", includeNonPublic: true);
             if (reanchorBaseCtor) ctor = AnchorOn(ti.ClrBase, ctor);

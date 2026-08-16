@@ -1413,7 +1413,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				val gExt = if (!isStatic) extensionReceiver(call) else null
 				val shapeParams = (if (gExt != null) listOf(gExt.type) else emptyList()) + regularParams(callee).map { it.type }
 				// kotc emits the DECLARED parameter types as PURE-KOTLIN `birType` identities (`shapeTypes`); bir2cir
-				// projects them into the resolved physical `memberSig` and drops `shapeTypes`. No CLR-shape knowledge here.
+				// hands them to bir2cir as `shapeTypes`; bir2cir alone resolves the physical scalar memberRef. No CLR-shape knowledge here.
 				val shapeTypes = shapeParams.joinToString(",") { birType(it).toJson() }
 				// Positional filling, like every other .NET/restored-member call path: building `args` from the
 				// expressions that happen to be present DELETES an omitted default's slot, so a later provided

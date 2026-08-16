@@ -192,15 +192,13 @@ static class ConstrainedTypeParameterReceiverBinding
                             // this node one-to-one.
                             // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
                             // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
-                            // are carried through untouched — ilemit consumes all three on this node exactly as it
-                            // does on a callInstance, and dropping any of them would make it guess.
-                            // A clrGenericInstance's exact descriptor is named `memberSig`; constrainedCall uses the
-                            // same descriptor under its ordinary `sig` slot. Move that fact rather than asking the
-                            // constrained resolver to select again by name/arity.
-                            if (genericClrCall && call["memberSig"] is JsonNode memberSig)
+                            // are carried through untouched. A clrGenericInstance's bir2cir-internal matching input is
+                            // `resolvedMemberParams`; constrainedCall uses the same input under its ordinary `sig` slot.
+                            // Move that fact rather than selecting again by name/arity.
+                            if (genericClrCall && call["resolvedMemberParams"] is JsonNode resolvedMemberParams)
                             {
-                                call.Remove("memberSig");
-                                call["sig"] = memberSig;
+                                call.Remove("resolvedMemberParams");
+                                call["sig"] = resolvedMemberParams;
                             }
                             call["k"] = "constrainedCall";
                             call["recvType"] = TypeJson.Write(tv);

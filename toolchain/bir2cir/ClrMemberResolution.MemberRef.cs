@@ -4,7 +4,7 @@
 // so that no later layer re-combines pieces of an identity. Re-combining candidates is member selection, and
 // that decision is settled here, against the compile-reference universe, or it is not settled at all.
 //
-// EVERY NAME IN HERE IS THE TARGET'S OWN. The transitional `memberSig` vocabulary next door spells a type
+// EVERY NAME IN HERE IS THE TARGET'S OWN. The bir2cir-internal `resolvedMemberParams` fact spells a type
 // the way the rest of the document does — arity backtick stripped, `+` nesting flattened to `.`, delegates
 // rewritten as Kotlin function types, `System.Nullable`1` collapsed to a nullability wrapper. That is the
 // right vocabulary for a document about a Kotlin program, and the wrong one for an identity, because it is
@@ -21,8 +21,8 @@
 // in-position `mod` intact. The one spelling that is not verbatim is the void return, which names a type
 // that can appear nowhere else in a signature and therefore makes no member ambiguous.
 //
-// `MemberSigOf` is deliberately left alone. Changing what it emits would change the bytes of every existing
-// descriptor, and this reference is what replaces it — not a reason to churn it.
+// `MemberSigOf` remains the internal projection used while selecting the declaration; it never crosses the CIR
+// boundary and therefore cannot become a second consumer-visible identity.
 //
 // The DECLARER, not the receiver, is what gets named. A member the receiver merely inherits is anchored on
 // the type that declares it, with the receiver's type arguments projected along the declaration edge — which

@@ -26,7 +26,7 @@ using DotKt.Bir;
 // a `Nullable<V>` inside a reified argument, which the BCL surface almost never does — and a DIRECT `Nullable<V>`
 // parameter or return is untouched, because a Kotlin scalar `Int?` IS a `System.Nullable<int32>` and crosses exactly.
 //
-// WHICH NODES ARE ASKED is the presence of a stamped .NET declaration (`memberSig`/`memberRet`), not a list of node
+// WHICH NODES ARE ASKED is the presence of a stamped .NET declaration (`resolvedMemberParams`/`resolvedMemberReturn`), not a list of node
 // kinds: those keys exist on exactly the nodes ClrMemberResolution resolved, so the trigger cannot drift from the
 // stamping. That reaches a bound method reference, an event accessor and an accessor-backed external field — each of
 // which carries a declaration and none of which a kind list assembled by hand had included.
@@ -37,7 +37,7 @@ using DotKt.Bir;
 // and an array element are. A second copy of that walk lived here and said the opposite about delegate parameters,
 // which refused programs Kotlin runs.
 //
-// Runs on the LOWERED tree, where `memberSig`/`ret` are the final CLR signature: earlier the same node may still be
+// Runs on the LOWERED tree, where `resolvedMemberParams`/`ret` are the final CLR signature: earlier the same node may still be
 // mid-resolution and a Kotlin-vocabulary `Nullable(Tv)` would be read as a foreign declaration it is not.
 static class ForeignNullableGenericCrossing
 {
@@ -72,7 +72,7 @@ static class ForeignNullableGenericCrossing
     // pass-to-pass fact: RoundtripMetadata mints it into `[KotlinNullableGeneric]` in a ref/app build, and in the
     // runtime build — which mints nothing — it is still on the slot when this runs, because this is its last
     // reader. Either way `nullableGeneric`/`nullableGenericRet` must not reach CIR, so this drops them, exactly
-    // as the call-side sweep below drops `memberRet`. That is also why bir2cir writes no CIR file until this has
+    // as the call-side sweep below drops `resolvedMemberReturn`. That is also why bir2cir writes no CIR file until this has
     // run: a file serialized inside the lowering loop would freeze the record of every file but the last.
     public static void CheckImplementedSlots(IReadOnlyList<(JsonNode Root, string File)> roots,
         ReferenceMetadataIndex refs)
@@ -455,14 +455,14 @@ static class ForeignNullableGenericCrossing
         switch (node)
         {
             case JsonObject obj:
-                // THE STAMPED DECLARATION IS THE TRIGGER, not a list of node kinds. `memberSig`/`memberRet` exist on
+                // THE STAMPED DECLARATION IS THE TRIGGER, not a list of node kinds. `resolvedMemberParams`/`resolvedMemberReturn` exist on
                 // exactly the nodes ClrMemberResolution resolved against a .NET member — including an accessor-backed
                 // external `field`, whose KIND is Kotlin's too — so keying on them is keyed on the fact itself and
-                // cannot drift from where the stamping happens. The reference is that stamp now; `memberSig` was.
-                if (obj["memberRef"] != null || obj[ClrMemberResolution.MemberRetKey] != null) CheckCall(obj, file);
-                // `memberRet` is a pass-to-pass fact and must not reach CIR: the emitter consumes the reference and
+                // cannot drift from where the stamping happens. The reference is that stamp now; `resolvedMemberParams` was.
+                if (obj["memberRef"] != null || obj[ClrMemberResolution.ResolvedMemberReturnKey] != null) CheckCall(obj, file);
+                // `resolvedMemberReturn` is a pass-to-pass fact and must not reach CIR: the emitter consumes the reference and
                 // knows nothing of this one.
-                obj.Remove(ClrMemberResolution.MemberRetKey);
+                obj.Remove(ClrMemberResolution.ResolvedMemberReturnKey);
                 foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, file);
                 break;
             case JsonArray arr:
@@ -483,7 +483,7 @@ static class ForeignNullableGenericCrossing
             new TypeNode.Nullable(AsDocumentNullable(a[0])),
         // A lowered function type read back as its delegate. The document calls it `fn`, and the erasure rule is
         // positional: a function type's parameters and return are method slots, an ordinary generic's arguments
-        // are storage. Restoring the shape is what keeps the question the same one `memberSig` used to ask.
+        // are storage. Restoring the shape is what keeps the question the same one `resolvedMemberParams` used to ask.
         TypeNode.Fqn { Args: { Length: > 0 } fa } f when BirTypeLowering.IsLoweredFunctionType(StripArity(f.Name)) =>
             // An Action has no return: every argument is a parameter. A Func's last argument is its return.
             StripArity(f.Name).EndsWith("Action", StringComparison.Ordinal)
@@ -523,7 +523,7 @@ static class ForeignNullableGenericCrossing
         // The RETURN is read off the stamped FOREIGN declaration, never off the node's own `ret`: that one is the
         // caller's Kotlin view and has already been erased as a Kotlin slot, so it says `List<object>` for a member
         // declaring `List<int?>` and the crossing would be invisible.
-        if (TypeJson.Read(call[ClrMemberResolution.MemberRetKey]) is TypeNode ret
+        if (TypeJson.Read(call[ClrMemberResolution.ResolvedMemberReturnKey]) is TypeNode ret
             && NullableGenericErasure.ErasureWouldMove(ret))
             throw Refuse(file, owner, member, "return", ret);
     }
