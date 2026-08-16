@@ -46,9 +46,9 @@ static class RefBodySquash
         {
             if (m is not JsonObject method) continue;
             // Abstract/interface members have NO IL body — ilemit refuses a body for them; adding one would be
-            // emitted-as-nothing at best and is semantically wrong. A suspend member carries `steps`/`cpsFields`
-            // and NO `body` (ilemit emits its own throwing stub under stdlib-compile); leave it untouched. We only
-            // squash a member that actually carries a `body` statement array.
+            // emitted-as-nothing at best and is semantically wrong. We only squash a member that actually carries a
+            // `body` statement array. A declaration the suspend cold lowering left un-lowered is an ordinary member
+            // here: it carries a body like any other and is squashed like any other.
             if (IsAbstract(method)) continue;
             if (method["body"] is JsonArray body)
             {

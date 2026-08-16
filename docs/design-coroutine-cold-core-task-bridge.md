@@ -520,11 +520,13 @@ UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes
 
 The only members NOT admitted are the reference-KLIB `@ClrAwaitBridge` declarations, the old kotc CPS/sequence
 path (`steps`/`coClass`), and stdlib inline coroutine intrinsics (`suspendCoroutine*`, left un-lowered in stdlib
-builds because their call sites are reconstructed inline). A declaration that is not admitted keeps no emittable
-body: `SuspendResidueLowering` replaces it with an explicit `throw NotSupportedException(...)` in CIR — as it does
-for the stdlib self-build's RETAINED original beside its cold entry — and the `suspend` modifier is dropped once
-`[KotlinFunction(Suspend)]` has been stamped from it, so no Kotlin coroutine vocabulary reaches ilemit. An app build
-has no such residue, and a survivor there is refused in bir2cir.
+builds because their call sites are reconstructed inline). A concrete declaration that is not admitted keeps no
+emittable body: `SuspendResidueLowering` replaces it with an explicit `throw NotSupportedException(...)` in CIR — as
+it does for the stdlib self-build's RETAINED original beside its cold entry. Two shapes are deliberately outside that
+pass: an ABSTRACT declaration, which declares a slot and no body, and the REFERENCE build, whose bodies are all
+replaced by `RefBodySquash`'s metadata-only `throw NotImplementedException()` anyway. The `suspend` modifier itself is
+dropped once `[KotlinFunction(Suspend)]` has been stamped from it, so no Kotlin coroutine vocabulary reaches ilemit.
+An app build has no such residue, and a survivor there is refused in bir2cir.
 
 **Consequences (all deletions land in the same change):**
 

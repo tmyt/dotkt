@@ -462,12 +462,12 @@ static partial class SuspendColdLowering
     ///   * any descriptor-bearing node with a non-re-readable operand LEFT of a suspension-bearing one (#286 and
     ///     the whole reorder family).
     ///
-    /// SCOPE — the bodies ilemit turns into IL, which at this phase is every constructor, every static-initializer
-    /// group, and every method except a `mods.suspend` one this pass will NOT rewrite into a state machine. Such a
-    /// method is left for ilemit's suspend guard, which emits a throwing stub (rt-stdlib) or refuses (app) without
-    /// walking the body — the rt-stdlib's `suspendCoroutine`/`suspendCoroutineUninterceptedOrReturn` primitives are
-    /// exactly that, and legitimately keep a raw `suspendCall` inside. A suspend method this pass DOES transform is
-    /// checked: its body becomes the state machine's `invokeSuspend`, which is emitted.
+    /// SCOPE — the bodies that survive to become IL, which at this phase is every constructor, every
+    /// static-initializer group, and every method except a `mods.suspend` one this pass will NOT rewrite into a state
+    /// machine. That body is DISCARDED: SuspendResidueLowering replaces the residual declaration's body with a
+    /// call-time throw (the rt-stdlib's `suspendCoroutine`/`suspendCoroutineUninterceptedOrReturn` primitives are
+    /// exactly that case), so an unplanned operand inside it can never reach codegen. A suspend method this pass DOES
+    /// transform is checked: its body becomes the state machine's `invokeSuspend`, which is emitted.
     static void AssertOperandsPlanned(IReadOnlyList<JsonNode> roots, HashSet<string> materialised)
     {
         foreach (var r in roots)

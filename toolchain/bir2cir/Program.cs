@@ -808,7 +808,7 @@ sealed class Pipeline
         if (!_options.RefBuild)
             SuspendLambdaLowering.ApplyAll(staged.Select(s => s.Root).ToList(), localTypeFqns, suspendCalleeRet, refs);
 
-        // PHASE 1.7 — RESIDUAL SUSPEND DECLARATIONS. The two phases above leave the `suspend` modifier on exactly the
+        // PHASE 1.7a — RESIDUAL SUSPEND DECLARATIONS. The two phases above leave the `suspend` modifier on exactly the
         // declarations the stdlib self-build retains without a state machine (the Kotlin surface kept beside its cold
         // entry, and the inline coroutine primitives whose call sites are reconstructed inline). Those have no
         // state-machine body, so bir2cir states their physical one — an explicit call-time throw — instead of letting a

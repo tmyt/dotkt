@@ -5,7 +5,7 @@
 # it — not because they are unimportant, but because the producer has been fixed so the shape they guard no longer
 # reaches them. A rule with no witness quietly stops being a rule; these documents are the witness.
 #
-# Six rules are covered today.
+# Seven rules are covered today.
 #
 #   docs/bir-cir-spec.md §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. bir2cir
 #   checks this on the fully-passed BIR, just before BirTypeLowering strips the stamp, so the emitted CIR corpus
@@ -33,6 +33,12 @@
 #
 #   A generic owner's companion statics live on one non-generic physical carrier, including while reference bodies are
 #   retained long enough to emit field initializers. `reference-generic-static-self-init` pins the self-call owner.
+#
+#   Layer ownership (the suspend residue) — a `suspend` declaration the cold lowering does not admit gets its physical
+#   body from bir2cir, and in an APP build there is no such declaration at all, so one is a cold-lowering miss and is
+#   refused there rather than reaching an emitter that would have to invent a body for it.
+#   `reject-unlowered-suspend-declaration` is that refusal's witness; no Kotlin source produces the shape (the admit
+#   gate it trips is the retired kotc CPS path), which is why it has to be authored here.
 #
 # ACCEPT case — `<name>.bir.json` plus a `<name>.assert` file of lines:
 #     +<substring>   the emitted CIR MUST contain it
