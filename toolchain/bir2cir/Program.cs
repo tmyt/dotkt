@@ -1140,6 +1140,14 @@ sealed class Pipeline
             // each missing slot with an ordinary public forwarding member (wired by name by ilemit's interface loop). The
             // return-DROPPING slots (Add/set_Item/RemoveAt) are the separate family ilemit's void-drop bridge handles.
             if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered);
+            // KOTLIN-ONLY collection slots (non-ref builds): the mirror of the pass above. `ICollection<E>`/`IList<E>`
+            // carry NO slot for Kotlin's `removeAll`/`retainAll`/`addAll(elements)`/`addAll(index, elements)`, so a
+            // Kotlin class that OVERRIDES one of them has nothing a call can dispatch on and the override would be
+            // unreachable — the call site only sees the BCL face. Give each declaring class the compiler-owned
+            // `KotlinMutableCollectionSlots`/`KotlinMutableListSlots` interface plus an exact MethodImpl bridge per
+            // member; the ClrCollectionDefaults dispatchers test for those interfaces and otherwise run the BCL
+            // default. After CollectionBclSlotSynthesis, so an IList implementer already lists its ICollection face.
+            if (!_options.RefBuild) KotlinCollectionSlotSynthesis.Apply(lowered);
             // #128: a Kotlin class implementing a reference-KLIB-projected .NET generic interface instantiated with a
             // VALUE-TYPE arg (`class C : IComparer<Int>`) declares its override with the projected member's `T?` params,
             // which lower to `Compare(Nullable<int32>,…)` — but the CONSTRUCTED CLR slot wants BARE `int32`. Synthesize a
