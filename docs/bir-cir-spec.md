@@ -216,7 +216,9 @@ When otherwise-identical generic slots differ by constraints, the MethodImpl des
 `typeParams` declarations; ilemit compares that resolved vector opaquely and does not reinterpret Kotlin bounds.
 
 A declaration's `interfaces` array is likewise the COMPLETE physical interface set of the emitted TypeDef: ilemit
-emits one InterfaceImpl row per entry, in the stated order, and adds none of its own. A face the CLR representation
+emits one InterfaceImpl row per entry, in the stated order, and adds no interface of its own to a declared type.
+(The emitter still synthesizes one adapter TYPE with interfaces of its own — the reverse enumerator bridge — which
+is a separate obligation to move into ordinary CIR declarations.) A face the CLR representation
 of a Kotlin declaration owes but the source never named is bir2cir's to state. The standing case is the read-only
 view of a mutable collection: Kotlin's `MutableList<E>` IS-A `List<E>`, but their lowered faces `IList<T>` and
 `IReadOnlyList<T>` are unrelated CLR interfaces, so bir2cir adds the read-only sibling (`IList`→`IReadOnlyList`,

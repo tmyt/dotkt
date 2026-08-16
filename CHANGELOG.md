@@ -92,7 +92,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   identical, in the same order. `bir2cir` authors no MethodImpl for the sibling — its members are the ones the mutable
   face already forced onto the type, which the CLR binds implicitly — but ilemit's own still-implicit interface-slot
   wiring now sees the stated face and emits a redundant explicit MethodImpl binding the read-only `get_Item` slot to
-  the same public method that already satisfied it (six rows across the runtime stdlib). That row is semantically
+  the same public method that already satisfied it (four rows in the runtime stdlib). That row is semantically
   identical to the implicit binding it restates, projects and re-consumes identically through `dll2klib` and a
   cross-module build, and disappears when the emitter's implicit wiring does.
 

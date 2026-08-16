@@ -25,7 +25,10 @@ using DotKt.Bir;
 //
 // The rule is structural: keyed on the BCL interface identity a declaration lowered to, never on a Kotlin type or
 // member name, and applied to classes and interfaces alike (an interface extending the mutable face must expose the
-// sibling to its own implementers, which may name only the interface).
+// sibling to its own implementers, which may name only the interface). That last shape does not LOAD today for an
+// unrelated reason: CollectionBclSlotSynthesis fills the BCL-only slots (Contains/CopyTo/IsReadOnly/IndexOf) of a
+// DIRECTLY-listed face only, so a class naming just the user interface is missing them. The face this pass states
+// is correct either way; it is the missing slots that reject the type.
 static class ReadOnlyCollectionViewInterfaces
 {
     public static void Apply(JsonNode root)

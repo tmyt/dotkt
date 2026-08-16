@@ -2,16 +2,21 @@
 # `interfaces` array; ilemit emits InterfaceImpl rows one-to-one and infers no sibling. No emitted corpus witnesses
 # the rule on its own: every Kotlin source that reaches it also reaches a dozen other passes, and the emitted
 # metadata looks the same whether the face was stated or inferred, which is exactly the confusion the rule ends.
-# Each line below is one full `interfaces` array, so an assertion fails on an extra entry as well as a missing one.
 #
-# `MutableList` -> IList<T>: the sibling IReadOnlyList<T> is appended after the stated faces.
+# Each line below is one COMPLETE `interfaces` array, so an assertion fails on an extra entry as well as a missing
+# one; each fixture type carries a distinct element type so no line can be satisfied by a different type's array.
+#
+# `MutableList<String>` -> IList<string>: the sibling IReadOnlyList<string> is appended after the stated faces.
 +"interfaces":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.String"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.String"}]}]
-# `MutableCollection` and `MutableSet` both lower to ICollection<T>, whose sibling is IReadOnlyCollection<T>.
+# `MutableCollection<String>` -> ICollection<string>, whose sibling is IReadOnlyCollection<string>.
 +"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ICollection","args":[{"t":"fqn","name":"System.String"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.String"}]}]
+# `MutableSet<Int>` lowers to the SAME ICollection face as MutableCollection — the element type is what tells this
+# fixture's set arm apart from its collection arm, so neither can pass on the other's behalf.
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ICollection","args":[{"t":"fqn","name":"System.Int32"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.Int32"}]}]
 # A dll2klib-projected .NET `ISet<T>` reaches bir2cir as the BCL face directly, with no Kotlin alias in front of it.
 # It is the third row of the relation and the one no Kotlin collection type produces, since `MutableSet` aliases
 # ICollection: without this document the ISet arm would be unreachable and could be deleted unnoticed.
-+"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ISet","args":[{"t":"fqn","name":"System.String"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.String"}]}]
++"interfaces":[{"t":"fqn","name":"System.Collections.Generic.ISet","args":[{"t":"fqn","name":"System.Int64"}]},{"t":"fqn","name":"System.Collections.Generic.IReadOnlyCollection","args":[{"t":"fqn","name":"System.Int64"}]}]
 # The element type is carried through unchanged, including a type VARIABLE — the sibling of `IList<!0>` is
 # `IReadOnlyList<!0>`, not a sibling over some erased element. The existential view stated between them also shows
 # the siblings are appended after every stated face rather than beside the face that obliged them.

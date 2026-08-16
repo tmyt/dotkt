@@ -10,7 +10,16 @@
       "vis": "public",
       "base": null,
       "interfaces": [
-        { "t": "fqn", "name": "kotlin.collections.MutableList", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+        {
+          "t": "fqn",
+          "name": "kotlin.collections.MutableList",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.String"
+            }
+          ]
+        }
       ],
       "fields": [],
       "ctors": [],
@@ -24,7 +33,16 @@
       "vis": "public",
       "base": null,
       "interfaces": [
-        { "t": "fqn", "name": "kotlin.collections.MutableCollection", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+        {
+          "t": "fqn",
+          "name": "kotlin.collections.MutableCollection",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.String"
+            }
+          ]
+        }
       ],
       "fields": [],
       "ctors": [],
@@ -32,13 +50,22 @@
       "methods": []
     },
     {
-      "name": "StringSetFace",
+      "name": "IntSetFace",
       "kind": "interface",
       "abstract": true,
       "vis": "public",
       "base": null,
       "interfaces": [
-        { "t": "fqn", "name": "kotlin.collections.MutableSet", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+        {
+          "t": "fqn",
+          "name": "kotlin.collections.MutableSet",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            }
+          ]
+        }
       ],
       "fields": [],
       "ctors": [],
@@ -52,7 +79,16 @@
       "vis": "public",
       "base": null,
       "interfaces": [
-        { "t": "fqn", "name": "System.Collections.Generic.ISet", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+        {
+          "t": "fqn",
+          "name": "System.Collections.Generic.ISet",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.Long"
+            }
+          ]
+        }
       ],
       "fields": [],
       "ctors": [],
@@ -65,9 +101,23 @@
       "abstract": true,
       "vis": "public",
       "base": null,
-      "typeParams": [ { "name": "E" } ],
+      "typeParams": [
+        {
+          "name": "E"
+        }
+      ],
       "interfaces": [
-        { "t": "fqn", "name": "kotlin.collections.MutableList", "args": [ { "t": "tv", "scope": "type", "i": 0 } ] }
+        {
+          "t": "fqn",
+          "name": "kotlin.collections.MutableList",
+          "args": [
+            {
+              "t": "tv",
+              "scope": "type",
+              "i": 0
+            }
+          ]
+        }
       ],
       "fields": [],
       "ctors": [],
@@ -81,8 +131,26 @@
       "vis": "public",
       "base": null,
       "interfaces": [
-        { "t": "fqn", "name": "kotlin.collections.MutableList", "args": [ { "t": "fqn", "name": "kotlin.Int" } ] },
-        { "t": "fqn", "name": "kotlin.collections.List", "args": [ { "t": "fqn", "name": "kotlin.Int" } ] }
+        {
+          "t": "fqn",
+          "name": "kotlin.collections.MutableList",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            }
+          ]
+        },
+        {
+          "t": "fqn",
+          "name": "kotlin.collections.List",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            }
+          ]
+        }
       ],
       "fields": [],
       "ctors": [],
@@ -96,7 +164,20 @@
       "vis": "public",
       "base": null,
       "interfaces": [
-        { "t": "fqn", "name": "kotlin.collections.MutableMap", "args": [ { "t": "fqn", "name": "kotlin.String" }, { "t": "fqn", "name": "kotlin.String" } ] }
+        {
+          "t": "fqn",
+          "name": "kotlin.collections.MutableMap",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.String"
+            },
+            {
+              "t": "fqn",
+              "name": "kotlin.String"
+            }
+          ]
+        }
       ],
       "fields": [],
       "ctors": [],
@@ -110,7 +191,16 @@
       "vis": "public",
       "base": null,
       "interfaces": [
-        { "t": "fqn", "name": "kotlin.collections.List", "args": [ { "t": "fqn", "name": "kotlin.String" } ] }
+        {
+          "t": "fqn",
+          "name": "kotlin.collections.List",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.String"
+            }
+          ]
+        }
       ],
       "fields": [],
       "ctors": [],
