@@ -48,10 +48,15 @@ namespace CbkUnit {
     public sealed class ConstrainedHost<T> where T : IMarker {
         public object Use(ConstrainedResult<T> transform, Constrained<T> value) => transform(value);
     }
+    // A BYREF-LIKE Invoke parameter. `Action<Span<int>>` is a legal delegate because the family's parameter carries
+    // the `allows ref struct` anti-constraint, so anything standing for that parameter must admit it too.
+    public delegate object SpanResult(Span<int> value);
     public static class UnitCallbacks {
         public static object UseNullary(NullaryResult transform) => transform();
         public static object UseBinary<T>(BinaryResult<T> transform, T first, string second)
             => transform(first, second);
         public static string UseSink(IntSink sink) { sink(7); return "sunk"; }
+        public static object UseSpan(SpanResult transform, int[] values) => transform(values.AsSpan());
+        public static int SpanTotal(Span<int> values) { var total = 0; foreach (var v in values) total += v; return total; }
     }
 }

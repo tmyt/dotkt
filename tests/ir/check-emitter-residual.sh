@@ -44,9 +44,10 @@ if (( found )); then
 	exit 1
 fi
 # The generic-frame clone this used to pin belonged to the emitter-authored Unit delegate adapter, which is gone:
-# bir2cir now authors that adapter as an ordinary CIR class whose parameters ARE the delegate's own, so it declares
-# no constraints to clone and no anti-constraint to preserve. Nothing in ilemit rewrites a generic frame any more,
-# which is what the pin was guarding; the check below is the general one.
+# bir2cir now authors that adapter as an ordinary CIR class, and the `allows ref struct` anti-constraint its
+# parameters need is STATED there (ClrMemberResolution.DelegateSlots.AdapterClass) rather than cloned here — it is
+# pinned by tests/ir/lowering/unit-delegate-adapter.assert and driven by the interop battery's Span fixture.
+# What this guards now is that no generic frame is minted in the emitter at all.
 if grep -qE 'DefineGenericParameters' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs" \
 	&& ! grep -qF 'PersistedAssemblyBuilder' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs"; then
 	echo "EMITTER RESIDUAL: RED — a generic frame is minted in Emitter.Delegates.cs with no encoding-workaround rationale."

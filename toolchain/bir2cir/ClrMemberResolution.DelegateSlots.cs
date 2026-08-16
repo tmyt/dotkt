@@ -29,11 +29,14 @@ using DotKt.Bir;
 //
 // The adapter class is generic in the delegate's PARAMETER TYPES, not in the enclosing frame's type variables:
 // `Adapter<T0..Tn-1>` holds an `Action<T0..Tn-1>` and declares `invoke(T0..Tn-1)`. The site instantiates it with
-// the actual parameter types, whatever they mention. That is what makes the adapter constraint-free: a delegate
-// family declares no constraints on its own parameters, so a slot that is legal as `Action<X>`'s argument is
-// legal as `Adapter<X>`'s. Generalizing over the frame's type variables instead would have to re-declare their
-// constraints, because a constrained construction (`Constrained<T> where T : IMarker`) appearing INSIDE a
-// parameter would then be spelled over an unconstrained parameter of the adapter.
+// the actual parameter types, whatever they mention. That is what frees the adapter from POSITIVE constraints: a
+// delegate family declares none on its own parameters, so whatever is legal as `Action<X>`'s argument is legal as
+// `Adapter<X>`'s, and any bound `X` itself owes was already satisfied where `X` was written. Generalizing over the
+// frame's type variables instead would have to re-declare their constraints, because a constrained construction
+// (`Constrained<T> where T : IMarker`) appearing INSIDE a parameter would then be spelled over an unconstrained
+// parameter of the adapter. The one attribute the position DOES owe is the byref-like ANTI-constraint: a delegate
+// parameter may be a `ref struct` (`Action<Span<int>>` is a legal delegate), and a parameter standing for it has
+// to admit that instantiation — see `AdapterClass`.
 //
 // The decision is MARKED during resolution — where the selected member and its parameter vector are known — and
 // MATERIALIZED once every resolution pass has run, so a construction is rewritten after the passes that read its
@@ -332,7 +335,17 @@ static partial class ClrMemberResolution
         };
         if (arity > 0)
             declaration["typeParams"] = new JsonArray(
-                Enumerable.Range(0, arity).Select(i => (JsonNode)JsonValue.Create("T" + i)).ToArray());
+                Enumerable.Range(0, arity).Select(i => (JsonNode)new JsonObject
+                {
+                    ["name"] = "T" + i,
+                    // The adapter's parameter STANDS FOR the delegate's own parameter, so it must admit every
+                    // type that one admits — and a delegate family's parameters admit a byref-like type
+                    // (`Action<Span<int>>` is a legal .NET delegate). Without the anti-constraint the adapter
+                    // rejects the instantiation the natural delegate already made. This is the only generic
+                    // attribute the position needs: positive constraints belong to whatever type is substituted
+                    // in, which the frame that supplies it has already satisfied.
+                    ["specialConstraints"] = new JsonArray { "allowsRefStruct" },
+                }).ToArray());
         declaration["base"] = null;
         declaration["interfaces"] = new JsonArray();
         declaration["fields"] = new JsonArray { field };
@@ -358,13 +371,11 @@ static partial class ClrMemberResolution
                 ["ownerType"] = self.DeepClone(),
                 ["recv"] = new JsonObject { ["k"] = "this" },
                 ["name"] = "d",
-                ["sty"] = frameJson.DeepClone(),
             },
             ["args"] = new JsonArray(Enumerable.Range(0, arity).Select(i => (JsonNode)new JsonObject
             {
                 ["k"] = "local",
                 ["name"] = "p" + i,
-                ["sty"] = TypeJson.Write(new TypeNode.Tv("type", i)),
             }).ToArray()),
         };
         ResolveDelegateInvoke(call, "funcType");
@@ -380,7 +391,6 @@ static partial class ClrMemberResolution
             ["k"] = "staticField",
             ["ownerType"] = new JsonObject { ["t"] = "fqn", ["name"] = UnitFqn },
             ["name"] = UnitInstance,
-            ["sty"] = new JsonObject { ["t"] = "fqn", ["name"] = UnitFqn },
         };
         ResolveStaticField(read);
         return read;

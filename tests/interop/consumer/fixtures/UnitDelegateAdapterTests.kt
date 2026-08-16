@@ -5,7 +5,8 @@
 //
 // The battery covers the axes the adaptation is a function of: the delegate's ARITY (0, 1, 2), the natural
 // delegate's TARGET (a non-capturing lambda's static target vs a capturing lambda's closure instance), and the
-// generic FRAME the site sits in (none, a generic method, a generic OWNER with a constrained parameter). The
+// generic FRAME the site sits in (none, a generic method, a generic OWNER with a constrained parameter), and a
+// BYREF-LIKE parameter, which a delegate family admits and an adapter parameter standing for it must admit too. The
 // transpose — a value-returning lambda meeting a `void` Invoke — is here too, because the Kotlin coercion to Unit
 // makes it the SAME construction with nothing to produce, and it must stay a plain retarget.
 //
@@ -34,11 +35,18 @@ private fun <T> binaryCapturingUnitDelegate(first: T, log: StringBuilder): Any? 
     UnitCallbacks.UseBinary<T>({ a: T, b: String -> log.append(b).append(a.toString()); Unit }, first, "b")
 
 // A generic OWNER whose parameter is CONSTRAINED. The adapter is instantiated at `Constrained<T>` from inside a
-// frame whose `T : IMarker`; the adapter itself needs no constraint, because its parameter is the delegate's whole
-// parameter type rather than that type's own argument.
+// frame whose `T : IMarker`; the adapter itself needs no positive constraint, because its parameter is the
+// delegate's whole parameter type rather than that type's own argument, and the bound on that argument was
+// already satisfied where the frame wrote it.
 private fun <T : IMarker> constrainedGenericOwnerUnitDelegate(
     host: ConstrainedHost<T>, value: Constrained<T>, log: StringBuilder): Any? =
     host.Use({ _: Constrained<T> -> log.append("owner"); Unit }, value)
+
+// A BYREF-LIKE delegate parameter. The natural `Action<Span<Int>>` is legal because the delegate family's own
+// parameter admits a ref struct, so the adapter's parameter — which stands for exactly that one — has to admit the
+// same instantiation or the adapter class cannot be constructed at all.
+private fun spanParameterUnitDelegate(log: StringBuilder): Any? =
+    UnitCallbacks.UseSpan({ s -> log.append(UnitCallbacks.SpanTotal(s)); Unit }, intArrayOf(1, 2, 3))
 
 // The transpose: a VALUE-returning lambda meeting a `void` Invoke. Kotlin coerces the lambda to Unit, so the
 // natural delegate is already void-returning and the construction is retargeted to the custom delegate, never
@@ -73,6 +81,13 @@ class UnitDelegateAdapterTests {
         val host = ConstrainedHost<Marker>()
         assertEquals(Unit, constrainedGenericOwnerUnitDelegate(host, Constrained<Marker>(Marker()), log))
         assertEquals("owner", log.toString())
+    }
+
+    @TestAttribute
+    fun byRefLikeDelegateParameterFillsAValueReturningDelegate() {
+        val log = StringBuilder()
+        assertEquals(Unit, spanParameterUnitDelegate(log))
+        assertEquals("6", log.toString())
     }
 
     @TestAttribute

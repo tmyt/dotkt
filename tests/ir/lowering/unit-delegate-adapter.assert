@@ -6,11 +6,14 @@
 # The construction states the SLOT's delegate and the adapter instantiation, both closed over the call site's
 # owner argument.
 +"funcType":{"t":"fqn","name":"System.Func","args":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]},"typeArgs":[{"t":"fqn","name":"System.Int32"}]
-# The adapter is generic in the DELEGATE'S PARAMETER, so its own parameter carries no constraint to reconstruct.
-+"name":"dotkt$UnitDelegateAdapterProbeKt$UnitDelegateAdapter0","kind":"class","generated":true,"typeParams":["T0"],"base":null,"interfaces":[],"fields":[{"name":"d","type":{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"void"},"params":[{"t":"tv","scope":"type","i":0}],"clr":"System.Action"}}]
+# The adapter is generic in the DELEGATE'S PARAMETER, so it has no positive constraint to reconstruct — and
+# carries the byref-like ANTI-constraint, because a delegate parameter may be a ref struct.
++"name":"dotkt$UnitDelegateAdapterProbeKt$UnitDelegateAdapter0","kind":"class","generated":true,"typeParams":[{"name":"T0","specialConstraints":["allowsRefStruct"]}],"base":null,"interfaces":[],"fields":[{"name":"d","type":{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"void"},"params":[{"t":"tv","scope":"type","i":0}],"clr":"System.Action"}}]
 # Its body is ordinary CIR: call the held delegate through its named Invoke, then read the Unit singleton with the
 # same staticField node every Kotlin object instance is read with — a complete field identity, not a name.
-+"k":"return","value":{"k":"staticField","ownerType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE","sty":{"t":"fqn","name":"kotlin.Unit"},"fieldRef":{"kind":"field","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE"
++"k":"return","value":{"k":"staticField","ownerType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE","fieldRef":{"kind":"field","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.Unit"},"name":"INSTANCE"
+# `sty` is a BIR-only transient stripped before CIR; a node authored AFTER that strip must not reintroduce it.
+-"sty"
 # The retired carriers: the emitter has no second constructor to choose between and no singleton to be handed.
 -"unitInstanceRef"
 -"targetDelegateCtorRef"
