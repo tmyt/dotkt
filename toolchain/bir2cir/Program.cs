@@ -759,6 +759,17 @@ sealed class Pipeline
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
         CovariantInterfaceReturnBridge.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: `MutableCollection<E>`/`MutableList<E>` ARE
+        // `ICollection<E>`/`IList<E>`, which carry no slot for Kotlin's `removeAll`/`retainAll`/`addAll(elements)`/
+        // `addAll(index, elements)`. A Kotlin class overriding one of them would therefore be unreachable through the
+        // BCL face. Give each participating class the compiler-owned `KotlinMutableCollectionSlots`/
+        // `KotlinMutableListSlots` interface plus a private forwarding bridge carrying a resolved `clrInterfaceImpls`
+        // instruction; the `ClrCollectionDefaults` dispatchers test for those interfaces and otherwise run the BCL
+        // default. HERE, in the Kotlin-vocabulary phase, because the pass keys on the frontend `overrides` identity —
+        // which does not survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
+        if (!_options.RefBuild)
+            KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
         // happens (`Deferred<Int>.await(): type-TV0` -> `Int`), otherwise a non-generic SM permanently captures an

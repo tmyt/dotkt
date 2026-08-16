@@ -1272,15 +1272,20 @@ static class MemberCallSubstitution
             return CallEvalLowering.PreserveUnreadValueBefore(
                 mappedCompanionRecv, prop, $"mapped companion property '{companionOwnerFqn}.{member}'");
         }
-        // PRE-Rule-2 semantic override: MutableCollection.add is @ClrIntrinsic("Add") (the binding drives the
-        // implementor-side DeclarationRename), but the CALL semantics diverge — Kotlin `add` returns the
-        // changed-Boolean while `ICollection<T>.Add` is VOID (a brIf on the phantom result was a stack underflow),
-        // and 1-arg `addAll` has no ICollection slot at all. Route these calls to the ClrCollectionDefaults
-        // helpers BEFORE the intrinsic rule; the 2-arg add(index, e)/addAll(index, c) Insert forms fall through.
+        // PRE-Rule-2 semantic override: the Kotlin MUTATION members of an @ClrTypeAlias'd collection interface whose
+        // spelling has no usable slot on the BCL face. `add` is @ClrIntrinsic("Add") (the binding drives the
+        // implementor-side DeclarationRename) but the CALL semantics diverge — Kotlin `add` returns the
+        // changed-Boolean while `ICollection<T>.Add` is VOID (a brIf on the phantom result was a stack underflow);
+        // `addAll`, `removeAll`, `retainAll` and `MutableList.addAll(index, …)` have no ICollection/IList slot at
+        // all. Route all of them to the ClrCollectionDefaults dispatchers BEFORE the intrinsic rule. Those
+        // dispatchers test the compiler-authored Kotlin slot interface first, so a Kotlin implementer's OVERRIDE is
+        // reached, and fall back to a BCL-only default otherwise — the earlier unconditional helper call silently
+        // bypassed such an override, and the unrouted `removeAll`/`retainAll` reached a runtime name lookup.
+        // The 2-arg add(index, e) Insert form falls through to the intrinsic.
         if (instance && kind == "interface" && ownerFqn.StartsWith("kotlin.collections.", StringComparison.Ordinal)
-            && args.Count == 1 && member is "add" or "Add" or "addAll")
-            return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
-                member == "addAll" ? "clrCollAddAll" : "clrCollAdd", CollElemArg(node, refs, ctx, ownerFqnNode), args);
+            && CollectionSlotHelper(member, args.Count, ownerFqn) is string slotHelper)
+            return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt", slotHelper,
+                CollElemArg(node, refs, ctx, ownerFqnNode), args);
 
         // PRE-Rule-2 semantic override: MutableList.set(i,e) / removeAt(i) @ClrIntrinsic(set_Item/RemoveAt), but the
         // BCL slots are VOID while Kotlin RETURNS the previous/removed element — binding the intrinsic directly
@@ -1498,22 +1503,16 @@ static class MemberCallSubstitution
         // GetEnumerator/...). The ref.dll member is kept under its Kotlin name (`get`/`compareTo`), so rules 2/3 miss by
         // name; but the emitted name is already the BCL member, which exists on the alias's BCL type. A BCL name is
         // PascalCase or a get_/set_ accessor (Kotlin members are lowercase camelCase) -> route to clrInstance/clrPropGet
-        // on the BCL type. A lowercase-camelCase name that reaches here is an UNBOUND Kotlin member with no BCL
-        // equivalent by that name (MutableCollection.addAll/removeAll/retainAll on ICollection) -> still route it to a
-        // clrInstance on the BCL owner: ilemit resolves the BCL member when one matches, and falls to dynamic dispatch
-        // (recv.GetType().GetMethod(name)) when none does. EITHER WAY this is correct AND it rescues the call from the
-        // clrg:/shorthand owner that plain `callInstance` resolution (ilemit ParseOwner / ResolveMethod) cannot handle.
+        // on the BCL type. This also rescues the call from the shorthand owner that plain `callInstance` resolution
+        // (ilemit ParseOwner / ResolveMethod) cannot handle.
         //
-        // MAKE-IT-LOUD gate (H1): the "falls to dynamic dispatch" escape is ONLY legitimate for an INTERFACE owner —
-        // the intended `MutableCollection.addAll/removeAll/retainAll` on `ICollection<T>`, where the runtime value
-        // implements the interface under a concrete type so reflection finds the slot. A lowercase-camelCase member on a
-        // CLR-bound NON-interface owner (a concrete BCL class) is an UNBOUND Kotlin member with no BCL equivalent by that
-        // name AND no @ClrIntrinsic/@ClrProperty/rule-3 binding: it is a genuine routing MISS. Left unrefused it would
-        // emit a clrInstance that ilemit can neither resolve statically nor (post-gate) dispatch dynamically → an opaque
-        // runtime NRE. Refuse it here, at compile time, naming `owner.member`. A concrete owner must declare the exact
-        // reflected method when that CLR owner can be resolved. An unresolved owner is not evidence of a miss and an
-        // interface retains the intentional dynamic-dispatch path. A static miss already throws loudly at ilemit (the
-        // dynamic path is instance-only).
+        // MAKE-IT-LOUD gate (H1): a lowercase-camelCase Kotlin member reaching here has no BCL equivalent by that name
+        // AND no @ClrIntrinsic/@ClrProperty/rule-3 binding — a genuine routing MISS on either owner kind. It used to be
+        // tolerated for an INTERFACE owner because ilemit could still find the member by runtime name lookup; that
+        // escape is gone (the Kotlin members without a physical slot are all routed above, to a dispatcher that reaches
+        // a Kotlin override through a real interface slot), so both owner kinds refuse at compile time, naming
+        // `owner.member`. An owner that does not resolve is not evidence of a miss and is left alone.
+        if (instance && kind == "interface") AssertInterfaceMemberRouted(ownerFqn, ownerFqnNode, member, refs);
         if (instance && kind != "interface" && !string.IsNullOrEmpty(member)
             && refs.TryDeclaresAccessibleInstanceMethod(
                 ownerFqn, ownerFqnNode?.Args?.Length ?? 0, member, out var declaresMember)
@@ -1715,6 +1714,56 @@ static class MemberCallSubstitution
         return (k, v);
     }
 
+    // Kotlin MUTATION members of an @ClrTypeAlias'd collection interface -> the ClrCollectionDefaults dispatcher that
+    // implements them. This map only says WHERE each member is implemented; MEMBERSHIP of the "no physical slot" set
+    // is DERIVED from the resolved BCL type (AssertCollectionMemberRouted below), so a member that acquires or loses
+    // a BCL slot changes the compiler's behavior without anyone editing a list, and a derived-unbacked member with no
+    // entry here is a hard error rather than a silent fall-through.
+    static string CollectionSlotHelper(string member, int argCount, string ownerFqn) => (member, argCount) switch
+    {
+        ("add" or "Add", 1) => "clrCollAdd",
+        ("addAll", 1) => "clrCollAddAll",
+        ("removeAll", 1) => "clrCollRemoveAll",
+        ("retainAll", 1) => "clrCollRetainAll",
+        ("addAll", 2) when ownerFqn == "kotlin.collections.MutableList" => "clrListAddAllAt",
+        _ => null,
+    };
+
+    // The routing above must be COMPLETE for a CLR-bound INTERFACE owner: once this pass is done, no Kotlin-spelled
+    // member may reach the BCL owner under a name that owner does not declare. The test is the DERIVED rule, not a
+    // name list — ask the resolved physical type whether it declares a member of this exact name. If it does not, an
+    // earlier rule was obliged to route the call, and failing to do so used to degrade into a runtime
+    // `GetType().GetMethod(name).Invoke(...)` lookup. Refuse at compile time instead, naming owner.member.
+    //
+    // Scoped to a KOTLIN SPELLING (lowercase-camelCase), which is the same criterion the Rule-4 comment above states:
+    // an already-renamed BCL spelling (`MoveNext`, `Add`) legitimately arrives here from an earlier binding and is
+    // resolved by name on the BCL owner. A physical accessor name (`get_Count`, `add_Changed`) needs no exclusion of
+    // its own — it is only ever produced by a binding that already proved the owner declares it, so the DERIVED test
+    // below passes it; this rule never parses an accessor spelling (#397). An owner that does not resolve is not
+    // evidence of a miss and is left alone.
+    static void AssertInterfaceMemberRouted(string ownerFqn, TypeNode.Fqn ownerFqnNode, string member,
+        ReferenceMetadataIndex refs)
+    {
+        if (!IsKotlinSpelledMember(member)
+            || !refs.TryDeclaresAccessibleInstanceMethod(
+                ownerFqn, ownerFqnNode?.Args?.Length ?? 0, member, out var declares)
+            || declares)
+            return;
+        throw new InvalidOperationException(
+            $"bir2cir: unrouted Kotlin member '{ownerFqn}.{member}' — the CLR interface its @ClrTypeAlias names "
+            + $"declares no '{member}', so the member has no physical slot. A Kotlin member in that position must be "
+            + "routed to a physical implementation (for the collection interfaces, a kotlin.collections."
+            + "ClrCollectionDefaults dispatcher plus the DotKt.Runtime.CompilerServices Kotlin slot interface that "
+            + "makes an override reachable). Add the routing or the missing helper; do not let it fall through to a "
+            + "member nothing can link.");
+    }
+
+    // A Kotlin source spelling as opposed to an already-bound CLR member name: lowercase-camelCase, and not one of
+    // the compiler's own `dotkt`-marked synthetics (whose owner is always already resolved).
+    static bool IsKotlinSpelledMember(string member) =>
+        !string.IsNullOrEmpty(member) && char.IsLower(member[0])
+        && !member.StartsWith("dotkt", StringComparison.Ordinal);
+
     // Kotlin collection-interface member -> the rt ClrCollectionDefaults static (recv-first, generic over elem).
     // iterator() and listIterator() are handled separately (different owner / default index).
     static readonly Dictionary<string, string> CollectionDefaults = new(StringComparer.Ordinal)
@@ -1778,7 +1827,10 @@ static class MemberCallSubstitution
         {
             ("kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable") => new[] { Gen("kotlin.collections.ClrEnumerable") },
             (_, "clrCollAdd") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), tv },
-            (_, "clrCollAddAll") => new TypeNode[] { Gen("kotlin.collections.MutableCollection"), Gen("kotlin.collections.Collection") },
+            (_, "clrCollAddAll" or "clrCollRemoveAll" or "clrCollRetainAll") =>
+                new TypeNode[] { Gen("kotlin.collections.MutableCollection"), Gen("kotlin.collections.Collection") },
+            (_, "clrListAddAllAt") => new TypeNode[]
+                { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), Gen("kotlin.collections.Collection") },
             (_, "clrCollContains") => new TypeNode[] { Gen("kotlin.collections.Collection"), tv },
             (_, "clrCollContainsAll") => new TypeNode[] { Gen("kotlin.collections.Collection"), Gen("kotlin.collections.Collection") },
             (_, "clrCollIsEmpty") => new[] { Gen("kotlin.collections.Collection") },

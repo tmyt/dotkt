@@ -616,24 +616,17 @@ static partial class ClrMemberResolution
         // (`Array.Copy(Array,…)`) OR a generic one (`Array.Fill<T>`) — the structural param match then disambiguates.
         bool hasTypeArgs = node["typeArgs"] is JsonArray ta && ta.Count > 0;
         if (!hasTypeArgs) cands = cands.Where(m => !m.IsGenericMethodDefinition).ToList();
-        MethodInfo win;
-        try
-        {
-            win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
-                $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
-        }
-        // Interface-owner miss -> a DELIBERATE dynamic-dispatch node (the runtime value implements the BCL slot under a
-        // different concrete type). Replaces ilemit EmitClrCall's SILENT runtime-reflection downgrade — now greppable.
-        // GATED to a genuine "no such member": the name+arity does NOT exist on the owner or its base interfaces (the
-        // legitimate lowercase-Kotlin `removeAll`/`addAll` case). A NON-empty candidate set that merely failed to match
-        // is an ABI mismatch / matcher gap and RE-THROWS the hard error — never silently downgraded (the very class
-        // W1-S2 deletes; the new matcher being stricter must NOT re-create it one layer up).
-        catch (InvalidOperationException) when (instance && open.IsInterface && node["recv"] != null && cands.Count == 0)
-        {
-            node["k"] = "clrDynInstance";
-            node.Remove("argTypes");
-            return;
-        }
+        // An INTERFACE-owner miss with no candidate at all used to become a `clrDynInstance` node, which ilemit
+        // emitted as `recv.GetType().GetMethod(name).Invoke(recv, args)`. That runtime name-only lookup preserved no
+        // overload, declaring slot, explicit-interface implementation or generic arity, and it returned null — an
+        // opaque NullReferenceException — whenever the receiver was a plain BCL collection, which is the common case.
+        // The Kotlin members that motivated it (`removeAll`/`retainAll`/`addAll`) now have a physical representation:
+        // MemberCallSubstitution routes them to the `kotlin.collections.ClrCollectionDefaults` dispatchers, and every
+        // Kotlin implementer carries a real `DotKt.Runtime.CompilerServices.Kotlin*Slots` interface slot so its
+        // override is reached by ordinary virtual dispatch. A member arriving here unresolved is therefore an upstream
+        // routing gap, not something to resolve at run time; PickUnique's hard error propagates.
+        var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
+            $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
         StampResolvedMemberReturn(node, win.ReturnType);
