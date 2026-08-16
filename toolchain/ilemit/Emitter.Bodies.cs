@@ -128,27 +128,6 @@ sealed partial class Emitter
         _methodRetType = mb.ReturnType;
         _curTypeParams = EffectiveTps(ti);
         _curMethodParams = _methodTypeParams.TryGetValue(mb, out var mp) ? mp : null;
-        if (ModFlag(m, "suspend"))
-        {
-            // A leftover `mods.suspend` method reaching ilemit means the real coroutine state machine (cold entry +
-            // `ContinuationImpl` SM class + public `Task<T>` bridge) was NOT synthesized — that lowering is bir2cir's
-            // (cold-core, bundle-6); ilemit itself is coroutine-codegen-free.
-            //
-            // In a STDLIB build (ref OR rt) this is EXPECTED: the coroutine PRIMITIVES — suspendCoroutine[Unintercepted
-            // OrReturn], yield/yieldAll, callRecursive, and the kotlin.clr.CoroutinesKt await/delay bridge — have no
-            // state-machine form; bir2cir deliberately leaves their DEFINITIONS un-lowered "for the ilemit throw-stub"
-            // (SuspendColdLowering.cs), transforming only their CALL SITES. Their bodies are effectively dead (no real
-            // caller survives), so a throwing stub is the correct emission. Keep it, unchanged.
-            if (_stdlibStub) { EmitThrowStub(mb, "suspend (reference stub)"); return; }
-            // In an APP build there are no such primitives — every suspend fn is a real coroutine that bir2cir must
-            // lower. Reaching here is therefore a bir2cir transform MISS (a disqualified/un-lowered suspend shape). Fail
-            // LOUD at emit time — naming the method — instead of silently emitting a throwing stub that surfaces as a
-            // distant runtime throw. A NEW error here is a real bir2cir defect to fix upstream, NOT to re-silence.
-            throw new NotSupportedException(
-                $"ilemit: suspend method '{ti.TB?.Name}.{mname}' reached codegen un-lowered — bir2cir's cold-core suspend " +
-                $"lowering must transform it into a public Task bridge + plain state-machine methods before ilemit (which " +
-                $"is coroutine-codegen-free). This is a bir2cir transform MISS.");
-        }
         BeginMethod(mb.GetILGenerator(), m, isStatic: mb.IsStatic);
         PrescanCfgLabels(m.GetProperty("body"));
         foreach (var s in m.GetProperty("body").EnumerateArray()) EmitStmt(s);
@@ -437,15 +416,6 @@ sealed partial class Emitter
     static Type Subst(Type t, Type[] typeArgs) =>
         t != null && t.IsGenericParameter && t.DeclaringMethod == null && t.GenericParameterPosition < typeArgs.Length
             ? typeArgs[t.GenericParameterPosition] : t;
-
-    // Emit a body that just throws — stubs a method the backend can't yet emit during the stdlib build.
-    void EmitThrowStub(MethodBuilder mb, string feature)
-    {
-        var il = mb.GetILGenerator();
-        il.Emit(OpCodes.Ldstr, "DOTKT-STDLIB stub: " + feature + " not yet supported by the .NET backend");
-        EmitConstructor(il, OpCodes.Newobj, WellKnown<ConstructorInfo>("NotSupportedException.ctor"));
-        il.Emit(OpCodes.Throw);
-    }
 
     // Emit call args, boxing each value arg passed to a reference/object param (param types known explicitly).
     // CIR must already contain the complete physical argument vector. Default realization belongs to bir2cir.

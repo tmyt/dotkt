@@ -313,6 +313,9 @@ additive (a new modifier = a new key). No comma strings, no `Contains`/`StartsWi
   bir2cir authors it when lifted code needs the CLR `FamORAssem` accessibility; kotc never emits it.
 - **Modifier semantics that drive lowering stay first-class** where a consumer keys on them (e.g. `suspend`
   already gates cold-lowering) — `mods.suspend` is the single source; a redundant top-level `suspend` field is removed.
+  `suspend` is also the one modifier that is **BIR-only**: bir2cir consumes it (the cold lowering, then the
+  `[KotlinFunction(Suspend)]` metadata stamp) and drops it, so no CIR declaration carries it and ilemit has no
+  coroutine vocabulary to interpret.
 Reference KLIB declarations preserve the corresponding standard Kotlin modifier flags.
 
 (The full per-kind field table is enforced by the schema and validators; this section

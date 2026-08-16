@@ -54,10 +54,11 @@
 // `calleeOwner = Tn(FileClass)` so ilemit dispatches `<name>$dotkt_suspend` in the correct same-simple-name
 // package's file class. It is advisory: owner stays null, so the owner-null recognition machinery is untouched.
 //
-// Runs AFTER MemberCallSubstitution and BEFORE BirTypeLowering. Active in app AND rt-stdlib builds; SKIPPED
-// only in the REF build (RefBuild — ref suspend fns stay metadata-only, the ref.dll carries the Suspend flag
-// but no cold entry). Its synthesized nodes are emitted in the SUBSTITUTED call form but in the kotlin.* TYPE
-// vocabulary, so they flow through BirTypeLowering.
+// Runs AFTER MemberCallSubstitution and BEFORE BirTypeLowering, in app, rt-stdlib AND reference builds alike: a
+// consuming module needs the ref.dll to declare the same cold entry the runtime twin defines, so the reference build
+// executes the same declaration transform and only its BODIES are squashed away afterwards (RefBodySquash). Its
+// synthesized nodes are emitted in the SUBSTITUTED call form but in the kotlin.* TYPE vocabulary, so they flow
+// through BirTypeLowering.
 
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -74,8 +75,9 @@ static partial class SuspendColdLowering
     // is a real coroutine that must be cold-lowered (InlineSplice splices its call sites, but the emitted standalone
     // method still reaches ilemit). In a STDLIB build the ONLY inline suspend funs are the coroutine PRIMITIVES
     // (`suspendCoroutine`/`suspendCoroutineUninterceptedOrReturn`) — intrinsics whose call sites are reconstructed inline
-    // (EmitSuspendCoroutineCall) and whose standalone bodies must stay un-lowered for the ilemit throw-stub. So the inline
-    // shape gate is lifted ONLY in app builds; stdlib builds keep excluding inline funs (current behavior).
+    // (EmitSuspendCoroutineCall) and whose standalone bodies have no state-machine form at all. So the inline shape gate
+    // is lifted ONLY in app builds; stdlib builds keep excluding inline funs, and SuspendResidueLowering then states the
+    // excluded declaration's physical body as an explicit call-time throw.
     static bool _appBuild;
 
     // #22 — names of the top-level intrinsic-block CLOSURE classes consumed (reconstructed INLINE) by
@@ -197,8 +199,8 @@ static partial class SuspendColdLowering
     internal static readonly HashSet<string> InlineLoopKinds = new(StringComparer.Ordinal)
         { "forEachInline", "repeatInline" };
 
-    // Node kinds whose PRESENCE around a suspension disqualifies the fun (leave untouched for the ilemit
-    // throw-stub): suspend lambdas / closures / inline collection loops.
+    // Node kinds whose PRESENCE around a suspension disqualifies the fun (its cold entry becomes a call-time
+    // throw — ColdEntryStub): suspend lambdas / closures / inline collection loops.
     internal static readonly HashSet<string> LambdaKinds =
         new(OtherFrameBaseKinds.Concat(InlineLoopKinds), StringComparer.Ordinal);
 
@@ -286,7 +288,7 @@ static partial class SuspendColdLowering
     // #199 — FileClass is part of the identity so two TOP-LEVEL suspend funs with the SAME simple name in
     // DIFFERENT packages (Owner=null for both — kotc emits top-level method names as bare simple names) do NOT
     // collide. Without it `a.foo` and `b.foo` share FunKey(null,"foo",sig): the loser is dropped from `entries`
-    // and left un-lowered -> ilemit "reached codegen un-lowered" / runtime EntryPointNotFound. A MEMBER's Owner is
+    // and left un-lowered -> a bir2cir refusal (SuspendResidueLowering) / runtime EntryPointNotFound. A MEMBER's Owner is
     // already the class FQN (`a.Box` vs `b.Box`) so it needs no FileClass to disambiguate, but including it is
     // harmless (a class lives in exactly one file). The Container (`Owner ?? FileClass`) is the FQN identity used
     // to key the return-type maps below.

@@ -34,6 +34,12 @@
 #   A generic owner's companion statics live on one non-generic physical carrier, including while reference bodies are
 #   retained long enough to emit field initializers. `reference-generic-static-self-init` pins the self-call owner.
 #
+#   Layer ownership (the suspend residue) — a `suspend` declaration the cold lowering does not admit gets its physical
+#   body from bir2cir, and in an APP build there is no such declaration at all, so one is a cold-lowering miss and is
+#   refused there rather than reaching an emitter that would have to invent a body for it.
+#   `reject-unlowered-suspend-declaration` is that refusal's witness; no Kotlin source produces the shape (the admit
+#   gate it trips is the retired kotc CPS path), which is why it has to be authored here.
+
 #   bir-common/CollectionViewFaces.cs — a type naming a MUTABLE collection face also names its READ-ONLY sibling,
 #   because the CLR does not derive one from the other. The emitted metadata cannot witness the rule: it looks the
 #   same whether bir2cir stated the face or an emitter inferred it, which is exactly the confusion the rule ends.

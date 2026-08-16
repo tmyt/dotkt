@@ -519,8 +519,14 @@ UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes
 | concrete + NOT segmentable (v1 limit, or M4 own-generic-on-generic-class) | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
 
 The only members NOT admitted are the reference-KLIB `@ClrAwaitBridge` declarations, the old kotc CPS/sequence
-path (`steps`/`coClass`), and stdlib inline coroutine
-intrinsics (`suspendCoroutine*`, un-lowered in stdlib builds for the ilemit `_stdlibStub`).
+path (`steps`/`coClass`), and stdlib inline coroutine intrinsics (`suspendCoroutine*`, left un-lowered in stdlib
+builds because their call sites are reconstructed inline). A concrete declaration that is not admitted keeps no
+emittable body: `SuspendResidueLowering` replaces it with an explicit `throw NotSupportedException(...)` in CIR — as
+it does for the stdlib self-build's RETAINED original beside its cold entry. Two shapes are deliberately outside that
+pass: an ABSTRACT declaration, which declares a slot and no body, and the REFERENCE build, whose bodies are all
+replaced by `RefBodySquash`'s metadata-only `throw NotImplementedException()` anyway. The `suspend` modifier itself is
+dropped once `[KotlinFunction(Suspend)]` has been stamped from it, so no Kotlin coroutine vocabulary reaches ilemit.
+An app build has no such residue, and a survivor there is refused in bir2cir.
 
 **Consequences (all deletions land in the same change):**
 
@@ -543,12 +549,12 @@ intrinsics (`suspendCoroutine*`, un-lowered in stdlib builds for the ilemit `_st
   and the bridge's cold call targets the enclosing class owner (not `owner:null` = the file class).
 
 **R1b — the cross-assembly `clr*` existence guard (#100).** A `clr*` suspend call is rewritten to the cold
-entry on the REFERENCED owner. bir2cir reads the ref.dll (`DotKt.Private.Stdlib.dll`), which — because the
-transform is skipped in the ref build — carries the `[KotlinFunction(Suspend)]` flag (`MemberBinding.Suspend`)
-but NO cold-entry method; the cold entry lives in the rt.dll, resolved by ilemit against the naming convention.
-So the R1b existence check consults the SUSPEND FLAG through the referenced owner's reflected hierarchy
-(`HasSuspendMemberInHierarchy`), NOT a literal `$dotkt_suspend` method probe (which would false-negative on
-every stdlib call). Flag present ⇒ the cold ABI exists by R1's invariant ⇒ rewrite. Flag ABSENT ⇒ a hard,
+entry on the REFERENCED owner. bir2cir reads the ref.dll (`DotKt.Private.Stdlib.dll`), which carries the
+`[KotlinFunction(Suspend)]` flag (`MemberBinding.Suspend`) on the Kotlin surface member. The R1b existence
+check consults that SUSPEND FLAG through the referenced owner's reflected hierarchy
+(`HasSuspendMemberInHierarchy`) rather than probing for a literal `$dotkt_suspend` method: the flag is the
+declared Kotlin fact, while the cold entry's presence in a particular referenced artifact is a property of how
+that artifact was produced. Flag present ⇒ the cold ABI exists by R1's invariant ⇒ rewrite. Flag ABSENT ⇒ a hard,
 actionable bir2cir error (the referenced assembly predates the cold ABI or is a hand-written .NET assembly) —
 no dual-track fallback. The `await` marker and `suspendCoroutine*` intrinsics are intercepted upstream and
 never reach the guard. NB the flag check proves "a suspend member of an assembly", not "an assembly built

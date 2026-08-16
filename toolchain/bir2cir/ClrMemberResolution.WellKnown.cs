@@ -58,7 +58,6 @@ static partial class ClrMemberResolution
     static readonly (string Role, string Owner, string[] Params)[] WellKnownCtors =
     {
         ("Object.ctor",                  "System.Object",                  new string[0]),
-        ("NotSupportedException.ctor",   "System.NotSupportedException",   new[] { "System.String" }),
         ("NotSupportedException.ctor0",  "System.NotSupportedException",   new string[0]),
         ("IndexOutOfRangeException.ctor","System.IndexOutOfRangeException", new[] { "System.String" }),
         // The OPEN `Nullable<T>..ctor(T)`. A coercion computes the constructed owner from the slot it is filling,

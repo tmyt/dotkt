@@ -10,7 +10,8 @@
 #   2. CANONICAL NODE KINDS (§2.5/§2.6): every {k:...} is in the frozen KINDS set and every
 #      type tag {t:...} is in TYPE_TAGS — both lowerCamel; an unknown/typo'd/retired spelling reds.
 #   3. WELL-FORMED TYPES (§1): each {t} carries its required fields with the right value shapes.
-#   4. mods keys ⊆ MOD_KEYS, vis ∈ VIS (§2.1).
+#   4. mods keys ⊆ MOD_KEYS, vis ∈ VIS (§2.1), and `mods.suspend` — Kotlin vocabulary bir2cir consumes —
+#      appears in BIR only.
 #
 # The carrier (§0) — [KotlinInline]/[KotlinSuspendFunctionType] ride as CLR attributes on the
 # emitted assembly, not as document nodes; their version is guarded loudly at decode time by
@@ -101,7 +102,7 @@ WELL_KNOWN_ROLES = frozenset({
     "Object.Equals", "Enum.GetValues", "Enum.Parse",
     "Enumerable.GetEnumerator", "Enumerator.MoveNext", "Enumerator.Current", "Enumerator.Reset",
     "Disposable.Dispose", "Array.IndexOf", "Comparable.CompareTo",
-    "Object.ctor", "NotSupportedException.ctor", "NotSupportedException.ctor0",
+    "Object.ctor", "NotSupportedException.ctor0",
     "IndexOutOfRangeException.ctor",
     "EnumeratorT.Current", "EnumerableT.GetEnumerator", "ReadOnlyCollectionT.Count",
     "ReadOnlyListT.Item", "CollectionT.Count", "CollectionT.IsReadOnly", "CollectionT.Clear",
@@ -1014,6 +1015,13 @@ class V:
                 for mk in o["mods"]:
                     if mk not in MOD_KEYS:
                         self.err(f, path + "/mods", f"unknown mod key {mk!r}")
+                # `suspend` is Kotlin frontend vocabulary with no CLR meaning, and every consumer of it is a
+                # bir2cir pass: the cold-core lowering that turns a suspend declaration into a state machine, a
+                # cold entry and a Task bridge, and the [KotlinFunction(Suspend)] metadata stamp. One in CIR means
+                # a declaration reached the emitter with its Kotlin coroutine body intact.
+                if f.endswith(".cir.json") and o["mods"].get("suspend") is True:
+                    self.err(f, path + "/mods",
+                             "mods.suspend is consumed by bir2cir and must not appear in CIR")
             if isinstance(o.get("vis"), str) and o["vis"] not in VIS:
                 self.err(f, path, f"unknown vis {o['vis']!r}")
             if o.get("vis") == "protectedInternal" and f.endswith(".bir.json"):

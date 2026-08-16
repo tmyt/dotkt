@@ -4,39 +4,27 @@
     {
       "name": "coldEntryCallCarriesNoTag",
       "params": [],
-      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.Int"
+      },
       "body": [
         {
           "k": "return",
           "value": {
             "k": "callStatic",
             "owner": null,
-            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "calleeOwner": {
+              "t": "fqn",
+              "name": "SelftestKt"
+            },
             "method": "f$dotkt_suspend",
             "sig": [],
-            "ret": { "t": "fqn", "name": "kotlin.Int" },
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.Int"
+            },
             "args": []
-          }
-        }
-      ]
-    },
-    {
-      "name": "unloweredCoroutinePrimitiveIsExempt",
-      "mods": { "suspend": true },
-      "params": [],
-      "ret": { "t": "fqn", "name": "kotlin.Int" },
-      "body": [
-        {
-          "k": "return",
-          "value": {
-            "k": "callStatic",
-            "owner": null,
-            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
-            "method": "suspendCoroutineUninterceptedOrReturn",
-            "sig": [],
-            "ret": { "t": "fqn", "name": "kotlin.Int" },
-            "args": [],
-            "suspendCall": true
           }
         }
       ]
