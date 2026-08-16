@@ -547,12 +547,12 @@ has no such residue, and a survivor there is refused in bir2cir.
   and the bridge's cold call targets the enclosing class owner (not `owner:null` = the file class).
 
 **R1b — the cross-assembly `clr*` existence guard (#100).** A `clr*` suspend call is rewritten to the cold
-entry on the REFERENCED owner. bir2cir reads the ref.dll (`DotKt.Private.Stdlib.dll`), which — because the
-transform is skipped in the ref build — carries the `[KotlinFunction(Suspend)]` flag (`MemberBinding.Suspend`)
-but NO cold-entry method; the cold entry lives in the rt.dll, resolved by ilemit against the naming convention.
-So the R1b existence check consults the SUSPEND FLAG through the referenced owner's reflected hierarchy
-(`HasSuspendMemberInHierarchy`), NOT a literal `$dotkt_suspend` method probe (which would false-negative on
-every stdlib call). Flag present ⇒ the cold ABI exists by R1's invariant ⇒ rewrite. Flag ABSENT ⇒ a hard,
+entry on the REFERENCED owner. bir2cir reads the ref.dll (`DotKt.Private.Stdlib.dll`), which carries the
+`[KotlinFunction(Suspend)]` flag (`MemberBinding.Suspend`) on the Kotlin surface member. The R1b existence
+check consults that SUSPEND FLAG through the referenced owner's reflected hierarchy
+(`HasSuspendMemberInHierarchy`) rather than probing for a literal `$dotkt_suspend` method: the flag is the
+declared Kotlin fact, while the cold entry's presence in a particular referenced artifact is a property of how
+that artifact was produced. Flag present ⇒ the cold ABI exists by R1's invariant ⇒ rewrite. Flag ABSENT ⇒ a hard,
 actionable bir2cir error (the referenced assembly predates the cold ABI or is a hand-written .NET assembly) —
 no dual-track fallback. The `await` marker and `suspendCoroutine*` intrinsics are intercepted upstream and
 never reach the guard. NB the flag check proves "a suspend member of an assembly", not "an assembly built
