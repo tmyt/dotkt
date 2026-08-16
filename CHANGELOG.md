@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **A property read synthesized after the reshape finds its accessor (#370, step 7).** A call minted by a later
+  pass — a suspension sentinel, say — still carries the Kotlin property name, and no metadata declares a member
+  by that name: the physical accessor name is assigned forty lines further on. Asking the reference index for
+  it, exactly as the reshape does, closes 96% of the calls that reached a consumer with no identity (2,594 to
+  109) and leaves the node carrying the physical name the rest of the pipeline wants anyway.
+
 - **A call into a previously-compiled DotKt assembly names the member it resolved (#370, step 6).** That
   resolution already selected one declaration and returned only its parameter vector, leaving the caller
   describing a member it had in its hand — and a description has to be turned back into a member by whoever

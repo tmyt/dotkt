@@ -415,6 +415,23 @@ static partial class ClrMemberResolution
         var callSig = selectionSig.Select(TypeJson.Read).Where(t => t != null).ToArray();
         if (callSig.Length != selectionSig.Count) return;
         var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+        // A PROPERTY read still carrying its Kotlin name. The nodes MemberCallSubstitution reshaped were
+        // renamed to the physical accessor there, but a call synthesized after that pass — a suspension
+        // sentinel, say — arrives with the source property name and a `prop` role, and no metadata declares a
+        // member by that name. Ask the reference index for the accessor's physical name, exactly as the
+        // reshape does; without it the search is for a member that does not exist under that spelling.
+        var accessorKind = (node["prop"] as JsonValue)?.GetValue<string>();
+        if (accessorKind is "get" or "set")
+        {
+            if (!_refs.TryKotlinPropertyAccessor(ownerFqn.Name, name, accessorKind, callSig.Length, methodArity,
+                    callSig, ownerFqn.Args ?? Array.Empty<TypeNode>(), out var physicalAccessor, out var accessorVirtual))
+                return;
+            KotlinPropertyAccessors.PreserveCallIdentity(node, name, accessorKind);
+            node.Remove("prop");
+            node["method"] = physicalAccessor;
+            if (accessorVirtual) node["virtual"] = true;
+            name = physicalAccessor;
+        }
         if (!_refs.TryResolveStaticMemberSignature(
                 ownerFqn.Name, name, methodArity, callSig, out var declarationSig,
                 out var declaration, out var declaringOwner))
