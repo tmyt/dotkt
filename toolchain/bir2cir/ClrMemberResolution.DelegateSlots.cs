@@ -38,7 +38,11 @@ using DotKt.Bir;
 // parameter may be a `ref struct` (`Action<Span<int>>` is a legal delegate), and a parameter standing for it has
 // to admit that instantiation — see `AdapterClass`.
 //
-// The decision is MARKED during resolution — where the selected member and its parameter vector are known — and
+// A SLOT is any declared position a construction fills: an argument's parameter, a delegate-typed property
+// setter's parameter, a public delegate field, an event's handler. All four take the one rule, because "which
+// delegate does this lambda build" is the same question in each.
+//
+// The decision is MARKED during resolution — where the selected member and its declared type are known — and
 // MATERIALIZED once every resolution pass has run, so a construction is rewritten after the passes that read its
 // Kotlin-shaped `funcType` are done with it.
 static partial class ClrMemberResolution
@@ -57,6 +61,11 @@ static partial class ClrMemberResolution
         var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
             ?? Array.Empty<TypeNode>();
         if (methodArgs.Any(t => t == null)) return;
+        // A parameter vector that cannot be CLOSED names no slot. Every resolver above already refuses to select a
+        // generic declaration whose type arguments the site does not state, but the completeness of the
+        // substitution is this rule's own precondition — a leftover callee type variable here would be read as one
+        // of the CALLER's, and the construction would be pointed at a delegate that is not the parameter's.
+        if (method.IsGenericMethodDefinition && methodArgs.Length != method.GetGenericArguments().Length) return;
         StampDelegateArgumentTargets(call, method.GetParameters(), ownerArgs, methodArgs, argumentKey);
     }
 
@@ -104,12 +113,15 @@ static partial class ClrMemberResolution
     /// <remarks>
     /// Only the slot is recorded, never the outcome: the construction's own `funcType` can still be rewritten by
     /// a later pass, so what to do about the pair is decided when both halves are final.
+    ///
+    /// LAST WRITER WINS. A later resolution can re-point the same operation at a different declaration; the mark
+    /// belongs to whichever declaration the operation ends up naming, and keeping the first would materialize a
+    /// slot the call no longer has.
     /// </remarks>
     internal static bool MarkDelegateSlot(JsonObject construction, TypeNode slotType)
     {
         if ((construction["k"] as JsonValue)?.GetValue<string>() is not ("newDelegate" or "newClosure")) return false;
-        if (construction.ContainsKey(DelegateSlotKey)) return true;
-        if (DelegateFqnOfSlot(slotType) is not TypeNode.Fqn slotDelegate) return false;
+        if (DelegateFqnOfSlot(slotType) is not TypeNode.Fqn slotDelegate) return construction.ContainsKey(DelegateSlotKey);
         construction[DelegateSlotKey] = TypeJson.Write(slotDelegate);
         return true;
     }
@@ -192,13 +204,52 @@ static partial class ClrMemberResolution
         var natural = TypeJson.Read(construction["funcType"]);
         if (natural is not TypeNode.Fn naturalFn) return;   // already retargeted to a named delegate
         var naturalDelegate = BirTypeLowering.DelegateFqnOf(naturalFn);
-        if (naturalDelegate == null || naturalDelegate.Equals(slot)) return;
+        if (naturalDelegate == null || SameDelegate(naturalDelegate, slot)) return;
         if (naturalFn.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" }
             && SlotInvokeReturn(slot) is TypeNode slotReturn
             && slotReturn is not TypeNode.Fqn { Args: null, Name: "void" or "System.Void" })
             AdaptVoidConstruction(construction, naturalFn, slot, slotReturn);
         else
             Retarget(construction, slot);
+    }
+
+    // ONE delegate, TWO vocabularies. The natural side is spelled as the document spells a type — an arity-free
+    // dotted name, a `nullable` wrapper, a function type still an `fn` — while the slot side was read off metadata,
+    // where a generic name carries its arity backtick, `Nullable<T>` is an ordinary construction and a function type
+    // is already its delegate. Comparing the two spellings directly answers "different" for every external
+    // `Func`/`Action` parameter a Kotlin lambda fills, which would send the whole population down the retarget arm
+    // and put a second spelling of the same type into CIR. Compare on a key that erases the vocabulary difference
+    // and nothing else, so only a REAL difference of delegate identity is acted on.
+    static bool SameDelegate(TypeNode natural, TypeNode slot) =>
+        DelegateIdentityKey(natural).Equals(DelegateIdentityKey(slot));
+
+    static TypeNode DelegateIdentityKey(TypeNode type) => type switch
+    {
+        TypeNode.Fn { Clr: not null } fn => DelegateIdentityKey(BirTypeLowering.DelegateFqnOf(fn)),
+        TypeNode.Fqn f => new TypeNode.Fqn(WithoutArity(f.Name),
+            f.Args?.Select(DelegateIdentityKey).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Fqn("System.Nullable", new[] { DelegateIdentityKey(n.Of) }),
+        TypeNode.Oblivious o => DelegateIdentityKey(o.Of),
+        TypeNode.Array a => new TypeNode.Array(DelegateIdentityKey(a.Elem), a.Rank, a.SzArray),
+        TypeNode.ByRef b => new TypeNode.ByRef(DelegateIdentityKey(b.Of)),
+        TypeNode.Ptr p => new TypeNode.Ptr(DelegateIdentityKey(p.Of)),
+        _ => type,
+    };
+
+    // Drop every `\u0060N` arity group, keeping the rest of the name — including `+` nesting, which truncating at the
+    // first backtick would destroy and which distinguishes two different nested declarations.
+    static string WithoutArity(string name)
+    {
+        if (name.IndexOf('\u0060') < 0) return name;
+        var text = new System.Text.StringBuilder(name.Length);
+        for (var i = 0; i < name.Length; i++)
+        {
+            if (name[i] != '\u0060') { text.Append(name[i]); continue; }
+            i++;
+            while (i < name.Length && char.IsAsciiDigit(name[i])) i++;
+            i--;
+        }
+        return text.ToString();
     }
 
     // Point a construction at the delegate its slot declares. The two carriers ilemit consumes are the
@@ -208,9 +259,7 @@ static partial class ClrMemberResolution
     {
         construction["funcType"] = TypeJson.Write(slot);
         construction.Remove("delegateCtorRef");
-        construction.Remove("invokeRef");
         ResolveDelegateCtor(construction, slot);
-        ResolveDelegateInvoke(construction, slot);
     }
 
     // The declared return of a delegate's `Invoke`, in the instantiation the slot names. ECMA-335 II.14.6 gives a
@@ -265,7 +314,6 @@ static partial class ClrMemberResolution
         if (parameters.Length > 0)
             construction["typeArgs"] = new JsonArray(parameters.Select(TypeJson.Write).ToArray());
         ResolveDelegateCtor(construction, slot);
-        ResolveDelegateInvoke(construction, slot);
     }
 
     // One adapter class per (natural delegate family, arity, produced return) in a file — the shape depends on

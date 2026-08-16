@@ -46,6 +46,11 @@ static partial class ClrMemberResolution
             node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
             StampResolvedMemberReturn(node, acc.ReturnType);
             if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall);
+            // A WRITE's value fills the setter's parameter, which is an ordinary delegate slot when the property is
+            // delegate-typed. The declaring owner may have been projected onto a base interface just above, so read
+            // the slot in that final frame.
+            if (write) MarkWrittenDelegateSlot(node, SubstOwnerParams(acc.GetParameters()[^1].ParameterType,
+                (ReadOwnerNode(node["type"]) as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()));
             return;
         }
         // A genuine public CLR FIELD is a foreign declaration too — `public List<int?> Items` is the same crossing a
@@ -56,9 +61,20 @@ static partial class ClrMemberResolution
             node["member"] = "field";
             node["memberRef"] = FieldRefJson(fld, open, ownerFqn.Args);
             StampResolvedMemberReturn(node, fld.FieldType);
+            if (write) MarkWrittenDelegateSlot(node,
+                SubstOwnerParams(fld.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()));
             return;
         }
         throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")} — #46 W1-S3)");
+    }
+
+    // A WRITE's value node fills the storage it is written into, exactly as an argument fills a parameter. A
+    // delegate-typed setter parameter or field is therefore an ordinary delegate slot, and a literal lambda written
+    // into it must construct THAT delegate. The nodes spell their value under two keys.
+    static void MarkWrittenDelegateSlot(JsonObject node, TypeNode slotType)
+    {
+        if (node["value"] is JsonObject value) MarkDelegateSlot(value, slotType);
+        else if (node["e"] is JsonObject expression) MarkDelegateSlot(expression, slotType);
     }
 
     // The property accessor MethodInfo for `name`: a real .NET PropertyDef's authoritative MethodSemantics accessor
@@ -287,6 +303,8 @@ static partial class ClrMemberResolution
             {
                 node["memberRef"] = FieldRefJson(direct, open, ownerFqn.Args);
                 StampResolvedMemberReturn(node, direct.FieldType);
+                if (write) MarkWrittenDelegateSlot(node,
+                    SubstOwnerParams(direct.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()));
             }
             return;
         }
@@ -296,5 +314,7 @@ static partial class ClrMemberResolution
         node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
         StampResolvedMemberReturn(node, acc.ReturnType);
         node["dispatch"] = Dispatch(acc, open, superCall: false);
+        if (write) MarkWrittenDelegateSlot(node, SubstOwnerParams(acc.GetParameters()[^1].ParameterType,
+            (ReadOwnerNode(node["ownerType"]) as TypeNode.Fqn ?? ownerFqn).Args ?? Array.Empty<TypeNode>()));
     }
 }

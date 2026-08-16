@@ -55,11 +55,12 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=158
 	["tests/roundtrip/consumer"]=74
 	["tests/roundtrip/bidirectional/consumer"]=8
-	# +6 (#400): UnitDelegateAdapterTests. The void-to-value delegate adaptation had exactly three witnesses,
+	# +7 (#400): UnitDelegateAdapterTests. The void-to-value delegate adaptation had exactly three witnesses,
 	# all arity-1 non-capturing lambdas in a generic method; one per remaining axis (arity 0/2, a capturing
-	# target, a constrained generic owner, a byref-like parameter) plus the value-lambda-into-void-delegate
-	# transpose.
-	["tests/interop/consumer"]=145
+	# target, a constrained generic owner, a byref-like parameter), the value-lambda-into-void-delegate
+	# transpose, and the non-argument slots — a delegate property setter and a public delegate field, which had
+	# no witness at all and which the retired emitter path refused outright.
+	["tests/interop/consumer"]=146
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a

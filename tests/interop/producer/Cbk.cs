@@ -41,6 +41,7 @@ namespace Cbk {
 // and arity 2, a GENERIC OWNER whose parameter is constrained, plus the transpose — a value-returning lambda
 // meeting a `void` Invoke, where no value has to be produced and the construction is merely retargeted.
 namespace CbkUnit {
+    using System;
     using Cbk;
     public delegate object NullaryResult();
     public delegate object BinaryResult<T>(T first, string second);
@@ -58,5 +59,16 @@ namespace CbkUnit {
         public static string UseSink(IntSink sink) { sink(7); return "sunk"; }
         public static object UseSpan(SpanResult transform, int[] values) => transform(values.AsSpan());
         public static int SpanTotal(Span<int> values) { var total = 0; foreach (var v in values) total += v; return total; }
+    }
+
+    // A delegate STORED rather than passed: a setter parameter and a public field are declared delegate slots too,
+    // and a literal lambda written into either must construct that delegate — including the adapted Unit form.
+    public sealed class DelegateStore {
+        public IntSink Sink { get; set; }
+        public NullaryResult Valued { get; set; }
+        public IntSink SinkField;
+        public string RunSink(int v) { Sink(v); return "sink"; }
+        public object RunValued() => Valued();
+        public string RunSinkField(int v) { SinkField(v); return "field"; }
     }
 }

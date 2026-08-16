@@ -3,10 +3,11 @@
 // delegate returning `object`. No method pointer is delegate-compatible with such a slot (`void` is assignable to
 // nothing), so bir2cir authors an adapter that calls the natural delegate and returns the `Unit` singleton.
 //
-// The battery covers the axes the adaptation is a function of: the delegate's ARITY (0, 1, 2), the natural
-// delegate's TARGET (a non-capturing lambda's static target vs a capturing lambda's closure instance), and the
-// generic FRAME the site sits in (none, a generic method, a generic OWNER with a constrained parameter), and a
-// BYREF-LIKE parameter, which a delegate family admits and an adapter parameter standing for it must admit too. The
+// The battery covers the axes the adaptation is a function of: the delegate's ARITY (0, 1, 2); the natural
+// delegate's TARGET (a non-capturing lambda's static target vs a capturing lambda's closure instance); the generic
+// FRAME the site sits in (none, a generic method, a generic OWNER with a constrained parameter); a BYREF-LIKE
+// parameter, which a delegate family admits and an adapter parameter standing for it must admit too; and the KIND
+// of slot being filled (an argument's parameter, a property setter's parameter, a public delegate field). The
 // transpose — a value-returning lambda meeting a `void` Invoke — is here too, because the Kotlin coercion to Unit
 // makes it the SAME construction with nothing to produce, and it must stay a plain retarget.
 //
@@ -19,6 +20,7 @@ import Cbk.GenericCallbacks
 import Cbk.IMarker
 import Cbk.Marker
 import CbkUnit.ConstrainedHost
+import CbkUnit.DelegateStore
 import CbkUnit.UnitCallbacks
 
 // Arity 0, CAPTURING: the natural `Action` is built from a closure instance, and the adapter holds that value.
@@ -54,6 +56,20 @@ private fun spanParameterUnitDelegate(log: StringBuilder): Any? =
 private fun valueLambdaIntoVoidDelegate(log: StringBuilder): String =
     UnitCallbacks.UseSink({ v: Int -> log.append(v) })
 
+// A delegate slot is not only a parameter. A .NET property SETTER's parameter and a public delegate FIELD are
+// declared slots too, and a literal lambda stored into one must construct that slot's delegate — including the
+// adapted Unit form, where the value the getter side observes is the Unit singleton and nothing else.
+private fun storedDelegateSlots(log: StringBuilder): String {
+    val store = DelegateStore()
+    store.Sink = { v: Int -> log.append(v) }          // custom void delegate, from a value-returning lambda
+    store.SinkField = { v: Int -> log.append(v * 2) } // the same slot, reached as a public field
+    store.Valued = { log.append("v"); Unit }          // Invoke RETURNS: the adapted form
+    val sunk = store.RunSink(3)
+    val fielded = store.RunSinkField(4)
+    val valued = store.RunValued()
+    return sunk + "|" + fielded + "|" + (valued === Unit) + "|" + log.toString()
+}
+
 class UnitDelegateAdapterTests {
     @TestAttribute
     fun nullaryCapturingLambdaFillsAValueReturningDelegate() {
@@ -88,6 +104,12 @@ class UnitDelegateAdapterTests {
         val log = StringBuilder()
         assertEquals(Unit, spanParameterUnitDelegate(log))
         assertEquals("6", log.toString())
+    }
+
+    @TestAttribute
+    fun literalLambdaStoredIntoADelegatePropertyAndField() {
+        // Boolean.toString() is the CLR-native "True"/"False" (docs/dotkt-semantics.md), not Kotlin/JVM lowercase.
+        assertEquals("sink|field|True|38v", storedDelegateSlots(StringBuilder()))
     }
 
     @TestAttribute

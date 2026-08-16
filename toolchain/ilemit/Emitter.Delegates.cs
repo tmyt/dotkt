@@ -57,6 +57,8 @@ sealed partial class Emitter
             mb = DelegateInvokeAdapterHolder().DefineMethod(
                 (returnsValue ? "InvokeFunc" : "InvokeAction") + actual.Length,
                 MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+            // #400-residual: the ENCODING workaround's own frame — a MethodSpec that moves the composite type off the
+            // TypeSpec PersistedAssemblyBuilder cannot encode. It stands for no CIR declaration and decides nothing.
             var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
                 .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
             var delegateType = ConstructedType(def, gps);
@@ -104,6 +106,8 @@ sealed partial class Emitter
             mb = DelegateInvokeAdapterHolder().DefineMethod(
                 (returnsValue ? "NewFunc" : "NewAction") + actual.Length,
                 MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+            // #400-residual: the ENCODING workaround's own frame — the constructor twin of the Invoke helper above,
+            // for the same PersistedAssemblyBuilder limitation. It stands for no CIR declaration and decides nothing.
             var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
                 .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
             var delegateType = ConstructedType(def, gps);

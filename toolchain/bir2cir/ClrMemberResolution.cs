@@ -307,10 +307,9 @@ static partial class ClrMemberResolution
             case "clrEventRemove": ResolveEvent(node); break;
             case "spreadConcat": ResolveSpreadConcat(node); break;
             case "forEachInline": ResolveForEachInline(node); break;
-            case "newDelegate": case "newClosure":
-                ResolveDelegateCtor(node, "funcType");
-                ResolveDelegateInvoke(node, "funcType");
-                break;
+            // A CONSTRUCTION names the constructor it runs, and nothing else: its value is called through the
+            // Invoke the CALL states, so no invoke identity belongs on the construction itself.
+            case "newDelegate": case "newClosure": ResolveDelegateCtor(node, "funcType"); break;
             case "clrEventAccessorImpl": ResolveEventCas(node); break;
             // A static field is the same member whether it is read or written, and whether it arrived through the
             // Kotlin or the @Clr spelling. Found by enumerating the emitter's node kinds against this dispatch

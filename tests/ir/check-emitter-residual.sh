@@ -43,14 +43,28 @@ if (( found )); then
 	echo "  and make sure docs/architecture.md invariant 10 covers that reason."
 	exit 1
 fi
-# The generic-frame clone this used to pin belonged to the emitter-authored Unit delegate adapter, which is gone:
-# bir2cir now authors that adapter as an ordinary CIR class, and the `allows ref struct` anti-constraint its
-# parameters need is STATED there (ClrMemberResolution.DelegateSlots.AdapterClass) rather than cloned here — it is
-# pinned by tests/ir/lowering/unit-delegate-adapter.assert and driven by the interop battery's Span fixture.
-# What this guards now is that no generic frame is minted in the emitter at all.
-if grep -qE 'DefineGenericParameters' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs" \
-	&& ! grep -qF 'PersistedAssemblyBuilder' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs"; then
-	echo "EMITTER RESIDUAL: RED — a generic frame is minted in Emitter.Delegates.cs with no encoding-workaround rationale."
+# A generic frame MINTED in the delegate emitter is the shape the retired Unit adapter had: a helper the emitter
+# invents, over parameters it chooses, whose constraints it must then reconstruct. bir2cir authors that adapter as
+# an ordinary CIR class now (including the `allows ref struct` anti-constraint its parameters owe — pinned by
+# tests/ir/lowering/unit-delegate-adapter.assert and driven by the interop battery's Span fixture), so what is left
+# here may only be an encoding workaround, and each one says so on the spot. Same rule and same shape as the
+# member-lookup check above: the marker sits at the site, not in a list that drifts from it.
+FRAME_MARK='#400-residual'
+frames=0
+while IFS= read -r hit; do
+	[[ -n "$hit" ]] || continue
+	frames=1
+	line="${hit%%:*}"
+	if ! sed -n "$((line > 2 ? line - 2 : 1)),${line}p" "$ROOT/toolchain/ilemit/Emitter.Delegates.cs" \
+		| grep -q -- "$FRAME_MARK"; then
+		echo "EMITTER RESIDUAL: RED — a generic frame is minted at Emitter.Delegates.cs:$line with no stated reason."
+		echo "  A frame the emitter invents is a declaration CIR did not state. Either bir2cir authors it, or mark"
+		echo "  the site '$FRAME_MARK: <encoding reason>'."
+		exit 1
+	fi
+done < <(grep -nE '\.DefineGenericParameters\(' "$ROOT/toolchain/ilemit/Emitter.Delegates.cs" | cut -d: -f1)
+if (( ! frames )); then
+	echo "EMITTER RESIDUAL: RED — the minted-frame check matched nothing; its grep no longer describes the code."
 	exit 1
 fi
 echo "EMITTER RESIDUAL: GREEN — every member lookup in ilemit states why invariant 10 allows it."
