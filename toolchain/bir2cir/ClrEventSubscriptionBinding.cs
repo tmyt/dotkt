@@ -23,15 +23,18 @@ static class ClrEventSubscriptionBinding
         readonly string _scope;
         readonly ReferenceMetadataIndex _refs;
         readonly IReadOnlyDictionary<(string Owner, string Event), JsonNode> _forwardedOwners;
+        readonly IReadOnlySet<string> _localTypes;
         int _next;
 
         public Binder(
             JsonNode root,
             ReferenceMetadataIndex refs,
-            IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners)
+            IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners,
+            IReadOnlySet<string> localTypes)
         {
             _refs = refs;
             _forwardedOwners = forwardedOwners;
+            _localTypes = localTypes;
             var fileClass = root is JsonObject f ? Str(f["fileClass"]) : null;
             _scope = string.Concat((fileClass ?? "File").Select(c => char.IsLetterOrDigit(c) ? c : '_'));
         }
@@ -119,6 +122,9 @@ static class ClrEventSubscriptionBinding
                 ["recv"] = removeReceiver,
                 ["handler"] = Local("handler", closureHandlerType),
             };
+            // The synthesized remove method receives the same spilled source delegate as the add operation.  Keep
+            // that delegate's Invoke identity before its transient expression type is gone.
+            ClrMemberResolution.ResolveDelegateInvoke(remove, handlerType, _refs, _localTypes);
             var synthClass = new JsonObject
             {
                 ["name"] = closureName,
@@ -160,19 +166,20 @@ static class ClrEventSubscriptionBinding
                 ["k"] = "var", ["name"] = handlerLocal, ["type"] = handlerType.DeepClone(),
                 ["init"] = handler?.DeepClone(),
             });
-            stmts.Add(new JsonObject
+            var add = new JsonObject
             {
-                ["k"] = "exprStmt",
-                ["expr"] = new JsonObject
-                {
-                    ["k"] = "clrEventAdd",
-                    ["type"] = ownerType.DeepClone(),
-                    ["event"] = eventGet["name"]?.DeepClone(),
-                    ["static"] = isStatic,
-                    ["recv"] = isStatic ? null : Local(receiverLocal, ownerType),
-                    ["handler"] = Local(handlerLocal, handlerType),
-                },
-            });
+                ["k"] = "clrEventAdd",
+                ["type"] = ownerType.DeepClone(),
+                ["event"] = eventGet["name"]?.DeepClone(),
+                ["static"] = isStatic,
+                ["recv"] = isStatic ? null : Local(receiverLocal, ownerType),
+                ["handler"] = Local(handlerLocal, handlerType),
+            };
+            // The subscription spill turns the handler into a plain local and its transient `sty`
+            // is consumed before final member stamping.  Preserve the already-known source delegate
+            // declaration now, so ilemit can re-wrap it without looking up Invoke by name.
+            ClrMemberResolution.ResolveDelegateInvoke(add, handlerType, _refs, _localTypes);
+            stmts.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = add });
 
             var subscriptionType = new JsonObject
             {
@@ -287,8 +294,9 @@ static class ClrEventSubscriptionBinding
     public static JsonNode Apply(
         JsonNode root,
         ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners) =>
-        new Binder(root, refs, forwardedOwners).Apply(root);
+        IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners,
+        IReadOnlySet<string> localTypes) =>
+        new Binder(root, refs, forwardedOwners, localTypes).Apply(root);
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 

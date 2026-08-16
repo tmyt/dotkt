@@ -18,7 +18,7 @@
 
     "//== TYPE (§1) — the universal type representation ==//": null,
     "type": {
-      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Eight variants; `star` is BIR-only and bir2cir must eliminate it before CIR.",
+      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Ten variants; `star` is BIR-only and bir2cir must eliminate it before CIR, while `ptr`, `mod` and tArray.rank are CIR-only signature carriers bir2cir authors so a #370 memberRef can spell any signature the target metadata can declare.",
       "oneOf": [
         { "$ref": "#/$defs/tFqn" },
         { "$ref": "#/$defs/tTv" },
@@ -27,7 +27,9 @@
         { "$ref": "#/$defs/tNullable" },
         { "$ref": "#/$defs/tOblivious" },
         { "$ref": "#/$defs/tArray" },
-        { "$ref": "#/$defs/tByRef" }
+        { "$ref": "#/$defs/tByRef" },
+        { "$ref": "#/$defs/tPtr" },
+        { "$ref": "#/$defs/tMod" }
       ]
     },
     "tFqn": {
@@ -107,7 +109,11 @@
       "description": "Array<T> (this-assembly array). Replaces array:X.",
       "properties": {
         "t":    { "const": "array" },
-        "elem": { "$ref": "#/$defs/type" }
+        "elem": { "$ref": "#/$defs/type" },
+        "rank": {
+          "type": "integer", "minimum": 1, "maximum": 32,
+          "description": "CIR-only: the rank of a GENERAL ECMA array (the CLR caps it at 32). ABSENT is the SZARRAY `T[]` — the vector, and the only array shape Kotlin source can spell. PRESENT means the general array: rank 2 or more is `T[,…]`, and rank 1 is the single-dimensional non-vector `T[*]`, which ECMA keeps distinct from `T[]` and reflection distinguishes with IsSZArray. An external member may declare both, and collapsing them would make those overloads indistinguishable. kotc MUST omit it."
+        }
       },
       "required": ["t", "elem"],
       "additionalProperties": false
@@ -120,6 +126,85 @@
         "of": { "$ref": "#/$defs/type" }
       },
       "required": ["t", "of"],
+      "additionalProperties": false
+    },
+    "tPtr": {
+      "type": "object",
+      "description": "CIR-only: a CLR unmanaged pointer `T*`. Kotlin source cannot spell one, but an external member can DECLARE one, and without this variant such a parameter degrades to the FQN string \"System.Int32*\" — an identity that names no type. kotc MUST omit it.",
+      "properties": {
+        "t":  { "const": "ptr" },
+        "of": { "$ref": "#/$defs/type" }
+      },
+      "required": ["t", "of"],
+      "additionalProperties": false
+    },
+    "tMod": {
+      "type": "object",
+      "description": "CIR-only: an ECMA custom modifier (II.7.1.1) applied AT ITS SIGNATURE POSITION. Part of member identity — `void V(in DateTime)` and `void V(DateTime)` differ only by modreq(InAttribute) on a by-ref parameter, so a reference that drops the modifier cannot select between them. Nesting (rather than a sidecar modifier list) is what keeps each modifier attached to the exact position it modifies. kotc MUST omit it.",
+      "properties": {
+        "t":   { "const": "mod" },
+        "req": { "type": "boolean", "description": "true = modreq (required), false = modopt (optional)" },
+        "m":   { "$ref": "#/$defs/type", "description": "the modifier type, e.g. System.Runtime.InteropServices.InAttribute" },
+        "of":  { "$ref": "#/$defs/type", "description": "the modified type" }
+      },
+      "required": ["t", "req", "m", "of"],
+      "additionalProperties": false
+    },
+
+    "//== MEMBER REFERENCE (#370) — one resolved external-member identity ==//": null,
+    "memberRef": {
+      "type": "object",
+      "description": "CIR-only: ONE complete, already-resolved reference to a member of another assembly, authored by bir2cir and consumed by ilemit as an EXACT lookup. It carries every fact needed to construct the intended ECMA MemberRef/MethodSpec, so no consumer performs member SELECTION: zero target matches is a CIR/target mismatch and more than one is a schema/identity defect — neither is a cue to fall back on name, arity, applicability, assignability or most-derived rules. The signature is the OPEN declared one (II.9.8: a MemberRef carries the UNINSTANTIATED signature); method instantiation rides on the node's own `typeArgs` and owner instantiation on `declaringType.args`.",
+      "properties": {
+        "kind": {
+          "enum": ["method", "ctor", "field", "propertyAccessor", "eventAccessor"],
+          "description": "What the member IS. Selects the lookup family (method/constructor/field) and records the accessor role; the get-vs-set / add-vs-remove ROLE stays on the node kind, never re-derived from a get_/add_ spelling."
+        },
+        "assembly": {
+          "type": "string", "minLength": 1,
+          "description": "Simple name of the assembly that must own the emitted reference. This is the PHYSICAL identity, not the file bir2cir happened to read: fixing the physical CLR representation is bir2cir's job, so where a reference twin and its runtime twin differ in name this already names the runtime one. Full version/culture/PKT identity is deliberately NOT carried — a reference-pack and its implementation assembly legitimately differ there."
+        },
+        "declaringType": {
+          "$ref": "#/$defs/tFqn",
+          "description": "The exact DECLARING type: an fqn whose name is the open definition's metadata FullName VERBATIM (arity backtick and `+` nesting included — the physical name the target universe is keyed by, so nothing downstream re-derives either) and whose `args`, when present, are the USE SITE's instantiation of that declaring type, projected along the declaration edge. Those arguments are ordinary document type nodes in the document's vocabulary — they are not something the target declares — and a consumer resolves them exactly as it resolves any other type slot. The declarer is stated, never derived — a member the receiver merely inherits is anchored on the type that declares it, so no base walk or most-derived rule is needed downstream."
+        },
+        "name": {
+          "type": "string", "minLength": 1,
+          "description": "The exact metadata member name: `.ctor` for a constructor (and ONLY for a constructor), get_X/set_X/add_X/remove_X for an accessor, otherwise verbatim."
+        },
+        "genericArity": {
+          "type": "integer", "minimum": 0,
+          "description": "The member's OWN generic-parameter count; 0 for everything but a generic method. Stated rather than inferred from a call site's type-argument count."
+        },
+        "callingConvention": {
+          "enum": ["static", "instance", "varargStatic", "varargInstance"],
+          "description": "The HASTHIS bit, and whether the signature is vararg. Absent for a field. A vararg member is a DIFFERENT member from its fixed-arity neighbour, so the convention states it; whether such a signature can be emitted is a question for the emitter, which is where it can be answered."
+        },
+        "parameterTypes": {
+          "type": "array", "items": { "$ref": "#/$defs/type" },
+          "description": "The OPEN declared parameter vector (positional `tv`, byref/pointer/array-rank and in-position `mod` modifiers all preserved). Every type name in it is the TARGET's verbatim metadata FullName — arity backtick and `+` nesting included, delegates NOT rewritten as function types, `System.Nullable`1` NOT collapsed — because the document's ordinary spelling merges types an identity must keep apart (stripping at the first backtick turns `Outer`1+Inner` into plain `Outer`). Absent for a field."
+        },
+        "returnType": {
+          "$ref": "#/$defs/type",
+          "description": "The OPEN declared return type — the void fqn for a void method AND for a constructor, and the declared FIELD type when kind is `field`. Part of member identity: an inherited slot can be shadowed by a redeclaration that differs only in return type."
+        }
+      },
+      "required": ["kind", "assembly", "declaringType", "name", "genericArity", "returnType"],
+      "additionalProperties": false,
+      "$comment": "A field carries neither `callingConvention` nor `parameterTypes`; every other kind carries both. A ctor is named `.ctor`, is `instance`, has arity 0 and returns void, and no other kind may bear that name. ONE SPELLING PER SHAPE, since a consumer compares these exactly: a non-generic declarer omits `args` rather than carrying an empty list, and a signature carries no `oblivious` or `star` — those are Kotlin type-system facts, not physical CLR shapes. `declaringType.args` is FLATTENED over the enclosing-type chain, matching tv{scope:type}. A non-nested name states that list's arity; a nested name does not state whether its inner declaration captures enclosing parameters, so bir2cir validates its length against the resolved TypeDef while authoring the reference. The context-free validator pins every other part of the shape."
+    },
+    "interfaceSlotSet": {
+      "type": "object",
+      "description": "CIR-only: the complete declared slot set for one exact external interface use. The owner keeps the constructed instantiation distinct, assembly fixes its metadata scope, and an empty slots array is the explicit answer that the interface declares no slots. A consuming type carries one set for every external owner it reaches; omission is not permission to enumerate metadata in ilemit.",
+      "properties": {
+        "owner": { "$ref": "#/$defs/tFqn" },
+        "assembly": { "type": "string", "minLength": 1 },
+        "slots": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/memberRef" }
+        }
+      },
+      "required": ["owner", "assembly", "slots"],
       "additionalProperties": false
     },
 
@@ -303,7 +388,8 @@
         "arity": { "type": "integer", "minimum": 0 },
         "params": { "type": "array", "items": { "$ref": "#/$defs/type" } },
         "ret": { "$ref": "#/$defs/type" },
-        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Optional exact generic-parameter declarations, including constraints, when CLR overloads otherwise share member/arity/params/ret." }
+        "typeParams": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "Optional exact generic-parameter declarations, including constraints, when CLR overloads otherwise share member/arity/params/ret." },
+        "memberRef": { "$ref": "#/$defs/memberRef", "$comment": "Required when clrBaseImpls names a declaration in another assembly; bir2cir resolves the descriptor and ilemit links this identity one-to-one." }
       },
       "required": ["owner", "member", "arity", "params", "ret"],
       "additionalProperties": false
@@ -336,11 +422,9 @@
         "clrInterfaceSlotBridge": { "type": "boolean", "$comment": "CIR-only instruction: this private interface MethodDef is the final forwarding body of an explicit MethodImpl. ilemit maps it to Private|Virtual|Final|NewSlot without inferring the role from its name or body." },
         "clrInterfaceImpls": { "type": "array", "items": { "$ref": "#/$defs/methodImplDescriptor" }, "$comment": "CIR-only exact interface declaration slots implemented by this MethodDef." },
         "clrBaseImpls": { "type": "array", "items": { "$ref": "#/$defs/methodImplDescriptor" }, "$comment": "CIR-only exact base-class declaration slots implemented by this MethodDef." },
-        "clrOverride": { "$ref": "#/$defs/type", "$comment": "bir2cir-resolved external base owner selected from the frontend override closure." },
-        "clrOverrideMember": { "type": "string", "$comment": "CIR-only exact external base-class virtual slot name when the implementing MethodDef deliberately has another physical name. ilemit combines it with clrOverride/clrOverrideSig/clrOverrideOwner and emits the resolved MethodImpl one-to-one." },
-        "clrOverrideRet": { "$ref": "#/$defs/type", "$comment": "CIR-only exact external base-class virtual slot return type. Return type is part of CLR MethodDef identity and must be matched together with clrOverrideSig." },
-        "clrOverrideSig": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "CIR-only exact external base-class virtual slot parameter vector." },
-        "clrOverrideOwner": { "$ref": "#/$defs/type", "$comment": "CIR-only exact metadata declaring owner of the resolved external base slot." },
+        "requiresClrOverride": { "type": "boolean", "$comment": "CIR-only MethodImpl emission instruction for an external base virtual. When true it requires clrOverrideRef; the boolean states the operation role, not a second member identity." },
+        "clrOverrideRef": { "$ref": "#/$defs/memberRef", "$comment": "CIR-only exact external base virtual implemented by this MethodDef. This scalar is the complete MethodImpl target; requiresClrOverride is its independent emission instruction, never a parallel owner/name/signature descriptor." },
+        "baseCtorRef": { "$ref": "#/$defs/memberRef", "$comment": "CIR-only exact external base constructor invoked by this constructor delegation. No parallel owner/signature descriptor is permitted." },
         "declarationId": { "type": "string", "$comment": "#395 BIR-only frontend-authoritative stable Kotlin declaration fingerprint. bir2cir allocates the physical MethodDef and binds uses from this key after CLR erasure; RoundtripMetadata consumes it into [KotlinDeclarationIdentity]." },
         "declarationSourceName": { "type": "string", "$comment": "#395 bir2cir hand-off preserving the Kotlin source name when declarationId receives a different physical CLR name. Consumed into [KotlinDeclarationIdentity] before CIR." },
         "explicitClrName": { "type": "string", "$comment": "#402 BIR-only source-authored physical MethodDef name from @ClrName or its @JvmName compatibility alias. bir2cir validates and consumes it during final CLR signature allocation; it is forbidden in CIR." },
@@ -468,11 +552,11 @@
         { "properties": { "k": { "const": "arraySet" }, "array": { "$ref": "#/$defs/node" }, "index": { "$ref": "#/$defs/node" }, "value": { "$ref": "#/$defs/node" } }, "required": ["array", "index", "value"] },
         { "properties": { "k": { "const": "arrayLen" }, "array": { "$ref": "#/$defs/node" } }, "required": ["array"] },
         { "properties": { "k": { "const": "newArraySized" }, "elem": { "$ref": "#/$defs/type" }, "size": { "$ref": "#/$defs/node" } }, "required": ["elem", "size"] },
-        { "properties": { "k": { "const": "newArrayInit" }, "elem": { "$ref": "#/$defs/type" }, "items": { "type": "array", "items": { "$ref": "#/$defs/node" } } }, "required": ["elem", "items"] },
+        { "properties": { "k": { "const": "newArrayInit" }, "elem": { "$ref": "#/$defs/type" }, "size": { "$ref": "#/$defs/node" }, "init": { "$ref": "#/$defs/node" }, "funcType": { "$ref": "#/$defs/type", "$comment": "Static type of the function value invoked by the fill loop; operation-level because init may be a local whose transient sty is removed before CIR." }, "invokeRef": { "$ref": "#/$defs/memberRef", "$comment": "CIR-only exact Invoke used by the array fill loop; carried by the operation because init may be a plain stored function value." } }, "required": ["elem", "size", "init"] },
         { "properties": { "k": { "const": "newClosure" }, "closureType": { "$ref": "#/$defs/type" }, "funcType": { "$ref": "#/$defs/type" }, "captures": { "type": "array" }, "synthClass": { "type": "object", "$comment": "#52 BIR-ONLY transient: the ingredient bag for bir2cir's ClosureSynthesis to ASSEMBLE the closure class (name + capture fields{name,type} + invoke params/ret/body + optional generic typeParams). STRIPPED in CIR — the lean node (closureType+captures values+funcType+typeArgs) is what ilemit consumes for the `new`." } }, "required": ["closureType"] },
         { "properties": { "k": { "const": "newSuspendLambda" }, "arity": { "type": "integer" }, "captures": { "type": "array" }, "params": { "type": "array" }, "suspendRet": { "$ref": "#/$defs/type" }, "typeParams": { "type": "array", "$comment": "the SM's own generic-param NAME declarations (the enclosing free type params it is generic over) — a type-param DECL name list (the `typeParams` name-shorthand, §2.5), NOT a type-USAGE slot; renamed from `typeArgs` in m6" }, "typeParamDecls": { "type": "array", "items": { "$ref": "#/$defs/typeParam" }, "$comment": "BIR-only declaration-form copy of typeParams, retaining constraints for the synthesized state-machine TypeDef; SuspendLambdaLowering consumes it." }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "OPTIONAL construction channel (#75 Batch B, 2A): the ORIGINAL enclosing tvs (type-USAGE nodes, any scope/index) the open SM is INSTANTIATED with — `new smName<typeArgs…>(…)`. Distinct from `typeParams` (the SM's DECL names). Emitted by InlineSplice.MaterializeSuspendCarrier when it renumbers a carrier's enclosing tvs to a dense SM param space; ABSENT on kotc's own source-lambda emission (positional `smName<tv{type,0..N-1}>` fallback)." }, "capValues": { "type": "array", "items": { "$ref": "#/$defs/node" }, "$comment": "OPTIONAL per-capture construction-value overrides (positional, aligned with `captures`; a null slot falls back to the descriptor-name synthesis). Set by SuspendColdLowering (GAP 2, an SM-vocabulary spill) and by InlineSplice 2B (an `__outer` rebound to the splice's receiver temp)." }, "body": { "type": "array", "items": { "$ref": "#/$defs/node" } }, "funcType": { "$ref": "#/$defs/type", "$comment": "Canonical Kotlin function type. An extension receiver is carried only in fn.recv; fn.params contains regular parameters. The physical node params array remains receiver-first because it supplies SM field names/create arguments." } }, "required": ["arity", "funcType"], "$comment": "suspendRet = the T of Continuation<T> (was `resultType`)" },
         { "properties": { "k": { "const": "companionValue" }, "ownerType": { "$ref": "#/$defs/type" }, "companionType": { "$ref": "#/$defs/type" }, "name": { "type": "string" } }, "required": ["ownerType", "companionType", "name"], "$comment": "#275 BIR-only semantic companion singleton access; bir2cir binds it to the trusted nested CLR carrier and no instance survives to CIR." },
-        { "properties": { "k": { "const": "newClrStaticDelegate" }, "clrType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "memberSig": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "memberOwner": { "$ref": "#/$defs/type" }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "funcType": { "$ref": "#/$defs/type" } }, "required": ["clrType", "method", "memberSig", "memberOwner", "funcType"], "$comment": "CIR-only CLR-static callable-reference construction. bir2cir has already resolved the physical memberSig/memberOwner descriptors that ilemit consumes one-to-one." },
+        { "properties": { "k": { "const": "newClrStaticDelegate" }, "clrType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "funcType": { "$ref": "#/$defs/type" } }, "required": ["clrType", "method", "funcType"], "$comment": "CIR-only CLR-static callable-reference construction. Its external target is the complete scalar memberRef; ilemit performs no member selection." },
         { "properties": { "k": { "const": "enumValue" }, "type": { "$ref": "#/$defs/type" }, "name": { "type": "string" } }, "required": ["type", "name"] },
         { "properties": { "k": { "const": "default" }, "type": { "$ref": "#/$defs/type" } }, "required": ["type"] },
         { "properties": { "k": { "const": "nullableWrap" }, "e": { "$ref": "#/$defs/node" }, "elem": { "$ref": "#/$defs/type" } }, "required": ["e", "elem"], "$comment": "value-type nullable wrap; operand `e`, element type `elem` (shared with nullableValue/nullableHasValue/nullableNull)" },

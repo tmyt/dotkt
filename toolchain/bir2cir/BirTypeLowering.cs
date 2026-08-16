@@ -117,8 +117,8 @@ static class BirTypeLowering
         "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",
         "samType", "closureType",
         // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
-        // method-tv positional), lowered to the CLR vocabulary so ilemit exact-matches them (replaces `shapes`).
-        "memberSig",
+        // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
+        "resolvedMemberParams",
         // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
         "elemType", "accType", "clrType", "tupleType", "parameterTypes",
         // A MethodImpl descriptor's parameter vector (`clrInterfaceImpls`/`clrBaseImpls`) is a RAW array of type
@@ -199,6 +199,74 @@ static class BirTypeLowering
         "kotlin.reflect.ClrPropertyStub",
     };
 
+    /// <summary>
+    /// Which CLR type a Kotlin-surface type HEAD becomes, given its already-lowered arguments. The single
+    /// implementation of that decision.
+    /// </summary>
+    /// <remarks>
+    /// This exists because there are two callers, not one. `LowerType` applies it to the declarations this pass
+    /// lowers; the member-reference serializer applies it to a signature read back out of the reference twin,
+    /// which speaks the Kotlin surface while the member being named lives in the runtime twin, which speaks
+    /// this. Those two must agree at EVERY branch — the erasure of a generic classifier, the contravariant
+    /// `Comparable<Any?>` collapse, the arg-position variance collapse, the plain alias — and the only way to
+    /// guarantee they do is for there to be one branch each. A serializer that reproduced "the same rule"
+    /// reproduced two of the four, and named members that exist in neither twin.
+    ///
+    /// `bcl` is the type's @ClrTypeAlias target, or null when it has none; `loweredArgs` is null for a leaf.
+    /// `collapseInvariant` is the caller's position judgement — a storage slot collapses, a head or method slot
+    /// does not — because only the caller knows which of the two vocabularies its position came from.
+    /// </remarks>
+    internal static TypeNode PhysicalHead(string kotlinFqn, string bcl, TypeNode[] loweredArgs, bool collapseInvariant)
+    {
+        // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not the
+        // generic stdlib class); drop the self-referential arg (`where T : Enum`).
+        if (ErasesGenericApplicationToNonGenericClassifier(kotlinFqn) && loweredArgs != null)
+            return new TypeNode.Fqn("System.Enum");
+        // A leaf: a @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) or a non-primitive
+        // BCL (StringBuilder/Regex/IComparable/…) -> the BCL FQN. Otherwise the name stands: user / stdlib /
+        // in-assembly names are unchanged, trusted external DotKt identities become their physical metadata names.
+        if (loweredArgs == null) return new TypeNode.Fqn(bcl ?? PhysicalName(kotlinFqn));
+        if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn), loweredArgs);
+        // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant; no value
+        // type is IComparable<object>). A concrete arg keeps the generic form.
+        if (bcl == "System.IComparable" && loweredArgs.Length == 1 && IsObjectish(loweredArgs[0]))
+            return new TypeNode.Fqn("System.IComparable");
+        // ARG-POSITION VARIANCE COLLAPSE (Root V): in a storage slot a covariant readonly collection interface ->
+        // its INVARIANT sibling, so a concrete invariant value inhabits the nested slot EXACTLY. The head keeps the
+        // covariant alias; CollectionViewCallCoercion materializes any resulting call-site seam as a CIR cast.
+        if (collapseInvariant && InvariantSibling.TryGetValue(kotlinFqn, out var inv))
+            return new TypeNode.Fqn(inv, loweredArgs);
+        // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
+        return new TypeNode.Fqn(bcl, loweredArgs);
+    }
+
+    /// <summary>
+    /// True for a type name this pass emits when it lowers a Kotlin FUNCTION TYPE to a CLR delegate.
+    /// </summary>
+    /// <remarks>
+    /// A reader that meets one of these in a physical signature is looking at what the document calls `fn`, and
+    /// the difference is not cosmetic: a function type's parameters and return are METHOD SLOTS, while an
+    /// ordinary constructed generic's arguments are storage. Any rule that is positional — the arg-position
+    /// variance collapse, the nullable-generic erasure — answers differently for the two, so a reader that
+    /// cannot tell them apart asks the wrong question of every delegate it sees.
+    /// </remarks>
+    internal static bool IsLoweredFunctionType(string clrFqn) =>
+        clrFqn is "System.Func" or "System.Action"
+            or "DotKt.Runtime.CompilerServices.KFunc" or "DotKt.Runtime.CompilerServices.KAction";
+
+    // The method-slot rule, readable by the member-reference serializer.
+    //
+    // bir2cir resolves a stdlib member against the REFERENCE twin, which declares the Kotlin surface, while the
+    // member a reference has to name lives in the RUNTIME twin, which declares what this pass produces. Naming
+    // that member therefore means applying THIS lowering to a signature read back out of metadata — and the
+    // collapse is position-dependent, so a serializer that walks a signature applying only the head alias names a
+    // member that exists in neither twin. Exposing the rule, rather than letting the serializer restate it, is
+    // what stops two spellings of one decision from drifting; that drift is exactly what happened once, and it
+    // was invisible because the descriptor the reference got compared against restated the rule the same way.
+
+    internal static bool IsMethodSlotCarrier(string kotlinFqn) =>
+        InterfaceMethodSlotCarriers.Contains(kotlinFqn);
+
     // A synthesized result slot sometimes has to be named before this lowering pass runs (the suspend
     // TaskCompletionSource<R>/RootContinuation<R> drive is the canonical case). Its public Task<R> must retain the
     // same readonly head type a Kotlin call observes; spelling that BCL head explicitly also exempts this one coherent
@@ -276,8 +344,6 @@ static class BirTypeLowering
                             f.Args?.Select(a => LowerType(a, refBuild, force: false, typeArg: true)).ToArray());
                     // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (a Kotlin enum is a real CLR System.Enum, not
                     // the generic stdlib class); drop the self-referential arg (`where T : Enum`).
-                    if (ErasesGenericApplicationToNonGenericClassifier(f.Name) && f.Args != null)
-                        return new TypeNode.Fqn("System.Enum");
                     var methodSlotCarrier = f.Args != null && InterfaceMethodSlotCarriers.Contains(f.Name);
                     var loweredArgs = f.Args?.Select(a => LowerType(a, refBuild, force,
                         typeArg: methodSlotCarrier ? false : true)).ToArray();
@@ -292,30 +358,8 @@ static class BirTypeLowering
                         // blob path keeps KotlinAllToClr: a custom-attribute blob needs a concrete System.* even in the ref
                         // build, which has no ref.dll to read.
                         if (force && KotlinAllToClr.TryGetValue(f.Name, out var clr)) return new TypeNode.Fqn(clr);
-                        // A @ClrTypeAlias type — a foundational primitive (kotlin.Int -> System.Int32) OR a non-primitive BCL
-                        // (StringBuilder/Regex/IComparable/…) -> the BCL FQN, read from the ref.dll alias index.
-                        if (AliasBcl(f.Name) is string bclNonGen) return new TypeNode.Fqn(bclNonGen);
-                        return new TypeNode.Fqn(PhysicalName(f.Name));
-                        // user / stdlib / in-assembly names stay unchanged; trusted external DotKt identities become
-                        // their exact physical metadata names.
                     }
-                    // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).
-                    if (AliasBcl(f.Name) is string bcl)
-                    {
-                        // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant;
-                        // no value type is IComparable<object>). A concrete arg keeps the generic form.
-                        if (bcl == "System.IComparable" && loweredArgs.Length == 1 && IsObjectish(loweredArgs[0]))
-                            return new TypeNode.Fqn("System.IComparable");
-                        // ARG-POSITION VARIANCE COLLAPSE (Root V): at generic-arg depth >= 1 (typeArg), a covariant readonly
-                        // collection interface -> its INVARIANT sibling, so a concrete invariant value inhabits the nested
-                        // slot EXACTLY. The HEAD (depth-0) keeps the covariant alias; CollectionViewCallCoercion materializes
-                        // any resulting call-site seam as an explicit CIR cast. RefBuild is `kotlin.*` verbatim (line 191); `!refBuild`
-                        // also spares a `force` attribute-blob.
-                        if (typeArg && !refBuild && InvariantSibling.TryGetValue(f.Name, out var inv))
-                            return new TypeNode.Fqn(inv, loweredArgs);
-                        return new TypeNode.Fqn(bcl, loweredArgs);
-                    }
-                    return new TypeNode.Fqn(PhysicalName(f.Name), loweredArgs);
+                    return PhysicalHead(f.Name, AliasBcl(f.Name), loweredArgs, collapseInvariant: typeArg && !refBuild);
                 }
             case TypeNode.Tv:
                 return t;   // scope+i preserved; ilemit maps scope:"type"->!i / scope:"method"->!!i
@@ -371,6 +415,23 @@ static class BirTypeLowering
         IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
         IReadOnlySet<string> localTypeNames = null)
     {
+        TypeNode LowerSlot(TypeNode type) => returnPosition
+            && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
+                ? VoidType
+                : CanonicalPhysicalSlotType(LowerPhysicalType(
+                    type, aliases, isValueFqn, physicalTypeNames, typeArg: false, localTypeNames));
+        return LowerSlot(left).Equals(LowerSlot(right));
+    }
+
+    // A representation pass that runs before the full-tree lowering may already have to author a PHYSICAL type
+    // inside a CIR-only carrier. Configure the same facts Lower() will use and invoke the same recursive rule; a
+    // caller must not reproduce only the primitive, alias, collection-collapse or delegate branch it happened to
+    // encounter first. The statics are per-run state, so preserve them just as SamePhysicalSlotType historically did.
+    internal static TypeNode LowerPhysicalType(TypeNode type,
+        IReadOnlyDictionary<string, string> aliases, Func<string, bool> isValueFqn,
+        IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
+        IReadOnlySet<string> localTypeNames = null)
+    {
         var savedAliases = _aliases;
         var savedIsValue = _isValueFqn;
         var savedPhysicalNames = _physicalTypeNames;
@@ -381,12 +442,7 @@ static class BirTypeLowering
             _isValueFqn = isValueFqn ?? (_ => false);
             _physicalTypeNames = physicalTypeNames ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _localTypeNames = localTypeNames ?? new HashSet<string>(StringComparer.Ordinal);
-            TypeNode LowerSlot(TypeNode type) => returnPosition
-                && type is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null }
-                    ? VoidType
-                    : CanonicalPhysicalSlotType(
-                        LowerType(type, refBuild: false, force: false, typeArg: false));
-            return LowerSlot(left).Equals(LowerSlot(right));
+            return LowerType(type, refBuild: false, force: false, typeArg);
         }
         finally
         {
@@ -456,7 +512,7 @@ static class BirTypeLowering
     // given Kotlin function type has no CLR delegate at all, which is this layer's call to make and not ilemit's.
     // ilemit must not change the nominal ABI based on whether one of the resolved types happens to still be a
     // TypeBuilder.
-    static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
+    internal static TypeNode LowerFnDelegate(TypeNode.Fn fn, bool refBuild, bool force)
     {
         var ret = (fn.Ret is TypeNode.Fqn rf && rf.Args == null && rf.Name == "kotlin.Unit")
             ? VoidType : LowerType(fn.Ret, refBuild, force, typeArg: false);
@@ -475,6 +531,31 @@ static class BirTypeLowering
             ? arity <= MaxBclDelegateArity ? "System.Action" : "DotKt.Runtime.CompilerServices.KAction"
             : arity <= MaxBclDelegateArity ? "System.Func" : "DotKt.Runtime.CompilerServices.KFunc";
         return new TypeNode.Fn(false, ret, ps, recv, clr);
+    }
+
+    /// <summary>
+    /// The constructed delegate a lowered function type IS, named.
+    /// </summary>
+    /// <remarks>
+    /// `LowerFnDelegate` leaves the node an `fn` carrying the delegate's family in `clr`, and the emitter builds
+    /// the constructed type from that. A member reference has to NAME the type, so the same construction is
+    /// spelled here — beside the pass that decided the family, so the two cannot drift.
+    ///
+    /// `Action` takes the parameters alone; `Func` takes the parameters then the return. A receiver is the
+    /// leading parameter either way, exactly as the arity above counts it.
+    /// </remarks>
+    internal static TypeNode.Fqn DelegateFqnOf(TypeNode.Fn lowered)
+    {
+        if (lowered.Clr == null) return null;
+        // DelegateParams is the shared property the EMITTER builds its delegate from — it prepends an extension
+        // receiver so a receiver-lambda and the flat closure bound to it land on the same CLR delegate. Rebuilding
+        // that list here instead is a second implementation of one decision, and the two disagreed.
+        var args = new List<TypeNode>(lowered.DelegateParams);
+        bool returnsVoid = lowered.Ret is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" };
+        if (!returnsVoid) args.Add(lowered.Ret);
+        return args.Count == 0
+            ? new TypeNode.Fqn(lowered.Clr)
+            : new TypeNode.Fqn(lowered.Clr, args.ToArray());
     }
 
     // Read a structured Type node out of the BIR JSON, lower it, and write it back.

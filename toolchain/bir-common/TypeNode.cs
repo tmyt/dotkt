@@ -5,8 +5,9 @@
 // A Type is ALWAYS a JSON object with a `t` discriminator — there is NO bare-string type. Readers
 // dispatch(t); they NEVER split/scan a string. This file is the ONE place a Type is parsed/built.
 //
-// It agrees with kotc.bir.TypeNode for BIR. The one phase extension is Fn.Clr: kotc omits it,
-// bir2cir authors it in CIR, and ilemit requires it.
+// It agrees with kotc.bir.TypeNode for BIR. The phase extensions are all bir2cir-authored CIR facts kotc
+// omits: Fn.Clr (the physical delegate family) and the three ECMA signature carriers Ptr, Array.Rank and
+// Mod, which exist so a #370 memberRef can spell any signature the target metadata can declare.
 
 #nullable enable
 using System.Text;
@@ -98,11 +99,42 @@ public abstract record TypeNode
     /// </summary>
     public sealed record Oblivious(TypeNode Of) : TypeNode;
 
-    /// <summary>`array`: <c>Array&lt;T&gt;</c> (this-assembly array).</summary>
-    public sealed record Array(TypeNode Elem) : TypeNode;
+    /// <summary>
+    /// `array`: <c>Array&lt;T&gt;</c>. An ABSENT <c>Rank</c> is the ECMA SZARRAY <c>T[]</c> — the vector, and
+    /// the only array shape Kotlin source can spell. A PRESENT rank is the CIR-only general ARRAY: rank 2 or
+    /// more is <c>T[,…]</c>, and rank 1 is the rare single-dimensional non-vector <c>T[*]</c>, which ECMA
+    /// treats as a different type from <c>T[]</c> — reflection tells them apart with <c>IsSZArray</c>, and an
+    /// external member may declare both. Every one of these distinctions exists for the same reason: without
+    /// it two overloads produce one signature, and a reference that cannot tell them apart selects by luck.
+    /// </summary>
+    public sealed record Array(TypeNode Elem, int Rank = 1, bool SzArray = true) : TypeNode
+    {
+        /// <summary>The general (non-vector) array of the given rank — <c>T[*]</c> at rank 1.</summary>
+        public static Array General(TypeNode elem, int rank) => new(elem, rank, SzArray: false);
+    }
+
+    /// <summary>The CLR's own limit on array rank; a document beyond it describes no representable type.</summary>
+    public const int MaxArrayRank = 32;
 
     /// <summary>`byRef`: a CLR by-ref <c>ref T</c>.</summary>
     public sealed record ByRef(TypeNode Of) : TypeNode;
+
+    /// <summary>
+    /// `ptr`: a CLR unmanaged pointer <c>T*</c>. CIR-only: Kotlin source cannot spell one, but an external
+    /// member can declare it, and without this variant such a parameter degrades to the FQN string
+    /// <c>"System.Int32*"</c> — an identity that names no type.
+    /// </summary>
+    public sealed record Ptr(TypeNode Of) : TypeNode;
+
+    /// <summary>
+    /// `mod`: an ECMA custom modifier applied AT ITS SIGNATURE POSITION (II.7.1.1). <c>Req</c> selects
+    /// modreq (true) from modopt (false), <c>M</c> is the modifier type and <c>Of</c> the modified type.
+    /// CIR-only, and part of member identity: <c>void V(in DateTime)</c> and <c>void V(DateTime)</c> differ
+    /// only by <c>modreq(InAttribute)</c> on a by-ref parameter, so a member reference that drops the
+    /// modifier cannot select between them. Nesting (rather than a sidecar list) is what keeps the modifier
+    /// attached to the exact position it modifies.
+    /// </summary>
+    public sealed record Mod(bool Req, TypeNode M, TypeNode Of) : TypeNode;
 
     private static bool SeqEq(TypeNode[]? a, TypeNode[]? b)
     {
@@ -145,9 +177,23 @@ public abstract record TypeNode
             case "oblivious":
                 return new Oblivious(Read(e.GetProperty("of")));
             case "array":
-                return new Array(Read(e.GetProperty("elem")));
+            {
+                // An absent `rank` is the vector. A PRESENT one names the general array — including rank 1,
+                // the non-vector `T[*]` that ECMA keeps distinct from `T[]`. The CLR caps rank at 32, so a
+                // value outside that describes nothing a metadata writer could emit.
+                if (!e.TryGetProperty("rank", out var rk))
+                    return new Array(Read(e.GetProperty("elem")));
+                int rank = rk.GetInt32();
+                if (rank < 1 || rank > MaxArrayRank)
+                    throw new FormatException($"array.rank must be between 1 and {MaxArrayRank}, got {rank}");
+                return Array.General(Read(e.GetProperty("elem")), rank);
+            }
             case "byRef":
                 return new ByRef(Read(e.GetProperty("of")));
+            case "ptr":
+                return new Ptr(Read(e.GetProperty("of")));
+            case "mod":
+                return new Mod(e.GetProperty("req").GetBoolean(), Read(e.GetProperty("m")), Read(e.GetProperty("of")));
             default:
                 throw new FormatException($"unknown Type discriminator `t`=\"{t}\"");
         }
@@ -196,9 +242,23 @@ public abstract record TypeNode
             case Oblivious ob:
                 return new JsonObject { ["t"] = "oblivious", ["of"] = Write(ob.Of) };
             case Array a:
-                return new JsonObject { ["t"] = "array", ["elem"] = Write(a.Elem) };
+            {
+                if (a.Rank < 1 || a.Rank > MaxArrayRank)
+                    throw new ArgumentException($"array rank must be between 1 and {MaxArrayRank}, got {a.Rank}");
+                if (a.SzArray && a.Rank != 1)
+                    throw new ArgumentException($"an SZ array has rank 1 by definition, got {a.Rank}");
+                var o = new JsonObject { ["t"] = "array", ["elem"] = Write(a.Elem) };
+                // The vector omits its rank; every general array states one, rank 1 included — that is the
+                // only thing separating `T[*]` from `T[]` in this document.
+                if (!a.SzArray) o["rank"] = a.Rank;
+                return o;
+            }
             case ByRef b:
                 return new JsonObject { ["t"] = "byRef", ["of"] = Write(b.Of) };
+            case Ptr p:
+                return new JsonObject { ["t"] = "ptr", ["of"] = Write(p.Of) };
+            case Mod m:
+                return new JsonObject { ["t"] = "mod", ["req"] = m.Req, ["m"] = Write(m.M), ["of"] = Write(m.Of) };
             default:
                 throw new ArgumentException($"unknown TypeNode variant {t.GetType().Name}");
         }
@@ -291,8 +351,32 @@ public static class TypeNodeSelfTest
                 "{\"t\":\"array\",\"elem\":{\"t\":\"byRef\",\"of\":{\"t\":\"fqn\",\"name\":\"kotlin.Long\"}}}"),
         };
 
+        // CIR-ONLY signature carriers (#370). kotc never emits these, so they are deliberately NOT part of the
+        // cross-language fixture above: only bir2cir authors them and only ilemit reads them.
+        var cirOnly = new (TypeNode node, string json)[]
+        {
+            (new TypeNode.Ptr(new TypeNode.Fqn("System.Int32")),
+                "{\"t\":\"ptr\",\"of\":{\"t\":\"fqn\",\"name\":\"System.Int32\"}}"),
+            // int[,] — a DIFFERENT member signature from int[]; rank is absent for an SZ array.
+            (TypeNode.Array.General(new TypeNode.Fqn("System.Int32"), 2),
+                "{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":2}"),
+            // int[*] — the single-dimensional NON-vector. ECMA keeps it distinct from int[], and a stated
+            // rank of 1 is the only thing that says so.
+            (TypeNode.Array.General(new TypeNode.Fqn("System.Int32"), 1),
+                "{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":1}"),
+            // `in DateTime` = modreq(InAttribute) ref DateTime — the modifier sits at the position it modifies.
+            (new TypeNode.Mod(true, new TypeNode.Fqn("System.Runtime.InteropServices.InAttribute"),
+                    new TypeNode.ByRef(new TypeNode.Fqn("System.DateTime"))),
+                "{\"t\":\"mod\",\"req\":true,\"m\":{\"t\":\"fqn\",\"name\":\"System.Runtime.InteropServices.InAttribute\"},\"of\":{\"t\":\"byRef\",\"of\":{\"t\":\"fqn\",\"name\":\"System.DateTime\"}}}"),
+            (new TypeNode.Mod(false, new TypeNode.Fqn("System.Runtime.CompilerServices.IsConst"),
+                    new TypeNode.Fqn("System.Int32")),
+                "{\"t\":\"mod\",\"req\":false,\"m\":{\"t\":\"fqn\",\"name\":\"System.Runtime.CompilerServices.IsConst\"},\"of\":{\"t\":\"fqn\",\"name\":\"System.Int32\"}}"),
+        };
+
         int n = 0;
-        foreach (var (node, json) in cases)
+        var all = new List<(TypeNode node, string json)>(cases);
+        all.AddRange(cirOnly);
+        foreach (var (node, json) in all)
         {
             // Write must equal the canonical fixture string byte-for-byte.
             string got = TypeNode.ToJson(node);
@@ -308,6 +392,28 @@ public static class TypeNodeSelfTest
             n++;
         }
 
+        // A vector and a rank-1 general array are DIFFERENT types, and the document distinguishes them by
+        // whether a rank is stated at all — so neither may be read as the other.
+        if (TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":1}")
+            == TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"}}"))
+            throw new Exception("[C# TypeNode] `T[*]` and `T[]` must not compare equal");
+        try
+        {
+            TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":0}");
+            throw new Exception("[C# TypeNode] expected a FormatException for array rank 0");
+        }
+        catch (FormatException) { /* expected */ }
+        try
+        {
+            TypeNode.Parse("{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"},\"rank\":99999}");
+            throw new Exception("[C# TypeNode] expected a FormatException for an array rank beyond the CLR limit");
+        }
+        catch (FormatException) { /* expected */ }
+        // An SZ array must NOT acquire a rank key on the way out, or every existing array node changes bytes.
+        if (TypeNode.ToJson(new TypeNode.Array(new TypeNode.Fqn("System.Int32")))
+            != "{\"t\":\"array\",\"elem\":{\"t\":\"fqn\",\"name\":\"System.Int32\"}}")
+            throw new Exception("[C# TypeNode] SZ array must serialize without a rank key");
+
         // Carrier round-trip (bir-json/1: UTF8 <-> JSON).
         var body = TypeNode.Write(cases[1].node);
         byte[] enc = BirCarrier.EncodeBody(BirCarrier.JsonV1, body);
@@ -319,6 +425,6 @@ public static class TypeNodeSelfTest
         try { BirCarrier.EncodeBody("bir-msgpack/1", body); throw new Exception("expected NotSupported for msgpack"); }
         catch (NotSupportedException) { /* expected */ }
 
-        Console.WriteLine($"[C# TypeNode] self-test OK ({n} fixture cases + carrier + msgpack-stub)");
+        Console.WriteLine($"[C# TypeNode] self-test OK ({n} fixture cases incl. {cirOnly.Length} CIR-only + carrier + msgpack-stub)");
     }
 }

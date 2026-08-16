@@ -23,10 +23,34 @@ sealed class ManagedReferenceCatalog
     const string RefStdlibName = "DotKt.Private.Stdlib";
     const string RuntimeStdlibName = "DotKt.Stdlib";
 
+    // Compiler-owned types whose CLR identity is emitted once by the runtime stdlib and referenced by applications.
+    // Keep this registry beside the ref/runtime-twin policy so bir2cir and ilemit cannot disagree about whether an
+    // otherwise-identical generated template is a local TypeDef or an external declaration.
+    static readonly HashSet<string> CanonicalRuntimeSyntheticTypes = new(StringComparer.Ordinal)
+    {
+        "dotkt$CharSequence",
+    };
+
+    public static bool IsCanonicalRuntimeSyntheticType(string name) =>
+        name != null && CanonicalRuntimeSyntheticTypes.Contains(name);
+
     public sealed record Entry(string Path, AssemblyName Identity);
 
     public IReadOnlyList<Entry> Entries { get; }
     public IReadOnlyList<string> Paths { get; }
+
+    /// <summary>
+    /// The runtime stdlib twin's file, when the ref-reader collapse removed it from the resolution set.
+    /// </summary>
+    /// <remarks>
+    /// It is dropped from RESOLUTION so that `kotlin.*` resolves through the reference twin and one Kotlin surface
+    /// stays authoritative — that is deliberate and unchanged. But the reference twin declares the Kotlin surface,
+    /// and a member reference has to name a member of the assembly that SHIPS: the two disagree wherever the
+    /// surface is lossy about the physical shape (a value type's nullability has nowhere to live in a twin where
+    /// `kotlin.Float` is a class). Keeping the path lets a caller read the shipped declaration directly instead of
+    /// reconstructing it from what the surface erased.
+    /// </remarks>
+    public string PhysicalStdlibPath { get; private init; }
 
     ManagedReferenceCatalog(List<Entry> entries, bool refStdlibAliasesRuntime)
     {
@@ -200,6 +224,7 @@ sealed class ManagedReferenceCatalog
         // to the ref twin) — realizing the invariant "ref-readers function with the REFERENCE stdlib ALONE". Done AFTER
         // phase 2 so a genuine same-name conflict (two physical `DotKt.Stdlib` files) still throws first. ilemit never
         // sets the flag; its runtime set carries only `DotKt.Stdlib` (the ref twin is compile-only) so this is inert.
+        string dropped = null;
         if (refStdlibAliasesRuntime
             && entries.Any(e => string.Equals(e.Identity.Name, RefStdlibName, StringComparison.OrdinalIgnoreCase)))
         {
@@ -211,10 +236,28 @@ sealed class ManagedReferenceCatalog
                     $"{toolName}: ref-reader collapse — dropping runtime stdlib twin {RuntimeStdlibName} " +
                     $"({runtimeTwin.Path}); a {RuntimeStdlibName} reference resolves to the reference twin {RefStdlibName}");
                 entries.Remove(runtimeTwin);
+                dropped = runtimeTwin.Path;
             }
         }
-        return new ManagedReferenceCatalog(entries, refStdlibAliasesRuntime);
+        return new ManagedReferenceCatalog(entries, refStdlibAliasesRuntime) { PhysicalStdlibPath = dropped };
     }
+
+    /// <summary>
+    /// The PHYSICAL assembly identity an emitted reference to a member of <paramref name="definingSimpleName"/>
+    /// must be scoped to (#370 memberRef.assembly).
+    /// <para>
+    /// A ref-reader resolves members against the files IT was given, but what the emitted assembly must
+    /// reference is what the program will LOAD. Those are the same identity everywhere except at the one
+    /// documented ref/runtime split above: a ref-reader holds <c>DotKt.Private.Stdlib</c> while the shipped
+    /// assembly is <c>DotKt.Stdlib</c>. This is the exact inverse of the alias the constructor installs for
+    /// the reading direction — the SAME single stdlib-specific mapping, not a fuzzy name match — so the
+    /// physical identity is derived here rather than re-decided by each caller.
+    /// </para>
+    /// </summary>
+    public static string PhysicalAssemblyName(string definingSimpleName) =>
+        string.Equals(definingSimpleName, RefStdlibName, StringComparison.OrdinalIgnoreCase)
+            ? RuntimeStdlibName
+            : definingSimpleName;
 
     // Given several physical files that all share ONE full identity (the lib + runtimes/<rid>/lib builds of a
     // RID-impl package), pick the one the TARGET runtime would actually load (#51).  Priority = the TARGET RID's
@@ -411,6 +454,21 @@ sealed class ManagedReferenceCatalog
             throw new InvalidOperationException(
                 "the compile reference set has no core assembly (expected System.Runtime or System.Private.CoreLib)");
         return new MetadataLoadContext(new ExactPathAssemblyResolver(this), core);
+    }
+
+    /// <summary>
+    /// Create an isolated metadata context that can read the physical stdlib twin by its real assembly identity.
+    /// The ordinary ref-reader context deliberately aliases <c>DotKt.Stdlib</c> to
+    /// <c>DotKt.Private.Stdlib</c>; loading the dropped runtime path into that same context therefore resolves back
+    /// to the reference twin and cannot expose runtime-only declarations.  Keep the semantic/reference context
+    /// unchanged and build a second exact-path universe containing both distinct identities.
+    /// </summary>
+    public MetadataLoadContext CreatePhysicalStdlibMetadataLoadContext()
+    {
+        if (string.IsNullOrEmpty(PhysicalStdlibPath)) return null;
+        var physicalCatalog = Create(Paths.Append(PhysicalStdlibPath),
+            "physical stdlib metadata", refStdlibAliasesRuntime: false);
+        return physicalCatalog.CreateMetadataLoadContext();
     }
 
     public static string[] Split(string value) =>

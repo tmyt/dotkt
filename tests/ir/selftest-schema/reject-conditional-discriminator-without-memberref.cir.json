@@ -1,0 +1,27 @@
+{
+  "methods": [
+    {
+      "name": "probe",
+      "params": [],
+      "ret": {
+        "t": "fqn",
+        "name": "void"
+      },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "field",
+            "ownerType": {
+              "t": "fqn",
+              "name": "Probe.Widget"
+            },
+            "name": "Count",
+            "member": "accessor",
+            "accessor": "get_Count"
+          }
+        }
+      ]
+    }
+  ]
+}

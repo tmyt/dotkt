@@ -17,10 +17,11 @@ static class InheritedDefaultFakeOverrideElision
         {
             if (Str(type["kind"]) != "interface" || type["methods"] is not JsonArray methods) continue;
             var removedAccessors = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            var inheritedMethods = type[KotlinPropertyAccessors.InheritedDefaultMethodsKey] as JsonArray;
             for (var i = methods.Count - 1; i >= 0; i--)
             {
                 if (methods[i] is not JsonObject method || !Bool(method["fakeOverride"])
-                    || method[KotlinPropertyAccessors.InheritedImplementationKey] is not JsonObject) continue;
+                    || method[KotlinPropertyAccessors.InheritedImplementationKey] is not JsonObject implementation) continue;
                 if (KotlinPropertyAccessors.TryIdentity(method, out _, out var accessorKind)
                     && Str(method[KotlinPropertyAccessors.AssociationKey]) is string association)
                 {
@@ -28,8 +29,23 @@ static class InheritedDefaultFakeOverrideElision
                         removedAccessors[association] = roles = new HashSet<string>(StringComparer.Ordinal);
                     roles.Add(accessorKind);
                 }
+                else if (Str(method["name"]) is string member && method["params"] is JsonArray parameters
+                    && method["ret"] is JsonNode ret)
+                {
+                    inheritedMethods ??= new JsonArray();
+                    inheritedMethods.Add(new JsonObject
+                    {
+                        ["member"] = member,
+                        ["params"] = new JsonArray(parameters.OfType<JsonObject>()
+                            .Select(parameter => parameter["type"]?.DeepClone()).ToArray()),
+                        ["ret"] = ret.DeepClone(),
+                        ["implementation"] = implementation.DeepClone(),
+                    });
+                }
                 methods.RemoveAt(i);
             }
+            if (inheritedMethods is { Count: > 0 })
+                type[KotlinPropertyAccessors.InheritedDefaultMethodsKey] = inheritedMethods;
             if (removedAccessors.Count != 0 && type["properties"] is JsonArray properties)
                 for (var i = properties.Count - 1; i >= 0; i--)
                     if (properties[i] is JsonObject property

@@ -1,0 +1,36 @@
+{
+  "types": [
+    {
+      "name": "Probe",
+      "kind": "class",
+      "methods": [
+        {
+          "name": "probe",
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "System.String"
+          },
+          "body": [],
+          "retAttrs": [
+            {
+              "attr": {
+                "t": "fqn",
+                "name": "System.Runtime.CompilerServices.NullableAttribute"
+              },
+              "argTypes": [
+                {
+                  "t": "fqn",
+                  "name": "System.Byte"
+                }
+              ],
+              "attrExternal": true,
+              "attrAssembly": "System.Runtime",
+              "args": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

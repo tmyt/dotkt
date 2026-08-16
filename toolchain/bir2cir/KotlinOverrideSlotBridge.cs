@@ -866,7 +866,7 @@ static class KotlinOverrideSlotBridge
     // narrower predicate aligned with ilemit's one-to-one MethodAttributes.Virtual projection.
     static bool OccupiesClrVirtualSlot(JsonObject method) =>
         Bool(method["override"]) || Bool(method["virtual"]) || Bool(method["abstract"])
-        || Bool(method["objectOverride"]) || method["clrOverride"] != null;
+        || Bool(method["objectOverride"]) || method["pendingOverrideOwner"] != null;
 
     static bool SamePhysicalSignature(TypeNode[] candidateParams, TypeNode candidateRet,
         TypeNode[] slotParams, TypeNode slotRet, ReferenceMetadataIndex refs, Func<string, bool> isValue)

@@ -242,18 +242,16 @@ static class NetInteropBinding
         void CarryRet() { if (node["ret"] == null && Take("ret") is JsonNode retCarry) node["ret"] = retCarry; }
 
         // GENERIC .NET method: the presence of `typeArgs` (a frontend fact) is the signal. ilemit MakeGenericMethods it.
-        // W1-S1 (#46/#44): carry the FIR-RESOLVED member reference into CIR as `memberSig` — the callee's DECLARED
-        // parameter types (kotc's pure-Kotlin `shapeTypes`), kept as STRUCTURED TypeNodes (OPEN: a method type-var stays
-        // `{t:tv,scope:method}`). BirTypeLowering lowers each to the CLR vocabulary (added to TypeKeys), and ilemit does a
-        // deterministic exact structural match (name + generic-arity + param-count + positional-tv equality), requiring
-        // EXACTLY ONE candidate — no lossy `shapes` string, no first-pick. This replaces the retired ShapeSynthesis pass.
+        // W1-S1 (#46/#44): retain the FIR-resolved declaration parameters as bir2cir's internal
+        // `resolvedMemberParams` matching input. They stay structured and open over method type variables;
+        // ClrMemberResolution consumes them to author one complete memberRef before CIR is serialized.
         if (hasTypeArgs)
         {
             node["k"] = isStatic ? "clrGenericStatic" : "clrGenericInstance";
             node["type"] = owner;
             node["method"] = method;
             node["typeArgs"] = Take("typeArgs");
-            node["memberSig"] = NormalizeMemberSig(TakeMemberSig("shapeTypes") as JsonArray);
+            node["resolvedMemberParams"] = NormalizeMemberSig(TakeMemberSig("shapeTypes") as JsonArray);
             CarryRet();   // the generic branch's own result stamp (RESULT STAMPS above); ilemit reads the reflected
                           // definition's return type, so this is read inside bir2cir only — where it is the answer.
             if (!isStatic) node["recv"] = Take("recv");
@@ -617,8 +615,8 @@ static class NetInteropBinding
     static JsonArray DeclarationArgs(JsonObject node) =>
         node["argTypes"] as JsonArray ?? node["shapeTypes"] as JsonArray ?? node["sig"] as JsonArray;
 
-    // W1-S1 (#46): the clrGeneric* `memberSig` = the callee's declared param types, matched STRUCTURALLY by ilemit
-    // against the reflected .NET method DEFINITION. Normalize each entry to how reflection presents the OPEN param:
+    // W1-S1 (#46): the clrGeneric* `resolvedMemberParams` = the callee's declared param types, matched structurally by
+    // ClrMemberResolution against the reflected .NET method definition. Normalize each entry to reflection's OPEN form:
     // a nullability ANNOTATION over a type-var (`T?`, `T!`) reflects as the bare open param `T` (there is no `T?` Type),
     // so unwrap `nullable`/`oblivious` around a `tv` at any depth. Without this the later NullableGenericErasure
     // pass object-erases a `nullable(tv)` entry (the boxed value rep) to `object`, which then fails to match the open

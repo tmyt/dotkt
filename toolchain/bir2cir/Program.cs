@@ -15,6 +15,16 @@ static class Bir2Cir
     {
         try
         {
+            // The shared BIR/CIR codec (bir-common) is <Compile Link/>-shared, so it has no project of its own
+            // and no test host. Running its self-tests HERE exercises the exact compiled copy this tool reads and
+            // writes documents with; tests/ir/run-schema.sh drives it beside the document-level freeze checks.
+            if (args.Length == 1 && args[0] == "--selftest")
+            {
+                TypeNodeSelfTest.Run();
+                MemberRefNodeSelfTest.Run();
+                AliasConstructorDelegationExpansion.SelfTest();
+                return 0;
+            }
             var options = DriverOptions.Parse(args);
             new Pipeline(options).Run();
             return 0;
@@ -158,13 +168,23 @@ sealed class Pipeline
         // The type FQNs DECLARED in this compilation (every input file's own `types`). SuspendColdLowering
         // uses it to decide whether the cold-core base (kotlin.coroutines.clr.internal.ContinuationImpl) is
         // a LOCAL type (rt-stdlib self-build -> bare base + local slot override) or a REFERENCED one
-        // (app build -> clr: base + clrOverride linkage).
+        // (app build -> clr: base + pendingOverrideOwner linkage).
         var localTypeFqns = new HashSet<string>(StringComparer.Ordinal);
         foreach (var b in birFiles)
-            if (b.Root is JsonObject ro && ro["types"] is JsonArray ts)
+        {
+            if (b.Root is not JsonObject ro) continue;
+            if (ro["types"] is JsonArray ts)
                 foreach (var t in ts)
                     if (t is JsonObject to && (to["name"] as JsonValue)?.GetValue<string>() is string tn)
                         localTypeFqns.Add(tn);
+            // A FILE CLASS is a type this compilation emits just as much as a declared one — it simply has no
+            // row in `types`, because ilemit builds it from the file's top-level members. Leaving it out let a
+            // reference assembly declaring the same file class win over the source in front of us, which is
+            // precisely the precedence #15 exists to fix; it stayed invisible only while the mis-binding
+            // produced a signature rather than a named member.
+            if ((ro["fileClass"] as JsonValue)?.GetValue<string>() is string fileClass && fileClass.Length > 0)
+                localTypeFqns.Add(fileClass);
+        }
         // LOCAL-OVER-REF (#15): tell the refs index which FQNs are this-assembly-emitted, so ResolveNetType refuses to
         // bind a locally-declared type to a referenced dll of the same identity — `new`/callInstance/callStatic/field
         // on a source-compiled `demo.Plain` route to the emitted type, not `newClr`/`clr*` against the ref copy.
@@ -279,6 +299,13 @@ sealed class Pipeline
         InlineBirStash.Reset();
         foreach (var b in birFiles) InlineBirStash.Stash(b.Root);
 
+        // An @ClrTypeAlias constructor may be a Kotlin adapter whose physical target has a different signature.
+        // Capture the module-wide declaration graph before AliasHelperHoist drops those TypeDefs.  A consumer expands
+        // it at the head of phase 1 so every expression copied out of an alias constructor flows through the same
+        // semantic/representation lowerings as an expression authored directly in that consumer.
+        var aliasConstructorDelegations = AliasConstructorDelegationExpansion.Collect(
+            birFiles.Select(file => file.Root), refs, carryForReference: _options.RefBuild);
+
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
         // so its cold-entry callee may live in another file — the suspend-member registry spans all files).
@@ -286,6 +313,7 @@ sealed class Pipeline
         foreach (var bir in birFiles)
         {
             var outputName = OutputNameFor(bir.Path);
+            if (!_options.RefBuild) aliasConstructorDelegations.Apply(bir.Root);
             // SYNTHETIC CLR-REPRESENTATION TYPES (#52 kotc-purity): kotc emits only the FACTS — a capturing lambda's
             // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence / KProperty use references
             // the identity; a heap ref-cell rides the `refTypes` registry. Assemble the actual closure / interface /
@@ -485,7 +513,7 @@ sealed class Pipeline
             // literal `null` into a null-less value slot. Runs right after NetInteropBinding (consumes its `clrPropSet`
             // nodes) and before BirTypeLowering (owner args + the wrap's elem are still `kotlin.*`). Non-ref only.
             if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs);
-            // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `memberSig` descriptor
+            // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `resolvedMemberParams` descriptor
             // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
             // exact-matches it. The retired ShapeSynthesis pass (lossy `shapes` string derived off the @ClrTypeAlias
             // index) is DELETED; ilemit no longer re-resolves the overload by name/arity/shape-string.
@@ -611,7 +639,8 @@ sealed class Pipeline
             // the clrEventGet receiver is consumed here, not emitted. Runs BEFORE MemberCallSubstitution so the synthetic
             // call — which has no ref.dll owner — is bound here. `subscribe` also constructs the stdlib close token with
             // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
-            hoisted = ClrEventSubscriptionBinding.Apply(hoisted, refs, clrEventForwardedOwners);
+            hoisted = ClrEventSubscriptionBinding.Apply(
+                hoisted, refs, clrEventForwardedOwners, localTypeFqns);
             // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
             // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
             // these newly-created callback classes are assembled before the remaining whole-tree passes.
@@ -917,13 +946,27 @@ sealed class Pipeline
         // declaration lookup and records that open signature explicitly for one-to-one emission.
         foreach (var stagedFile in staged)
             ClrMemberResolution.EnsurePlainCallDescriptors(stagedFile.Root);
-        ClrMemberResolution.ResolveLocalDelegateTargets(staged.Select(s => s.Root));
+        ClrMemberResolution.ResolveLocalDelegateTargets(staged.Select(s => s.Root), refs);
 
         // Suspend/state-machine and bridge synthesis above can add classes after the initial source-declaration
         // inventory was collected. The final CLR-member stamping pass must see the complete emission-unit set so a
         // local `new` is never mistaken for a referenced type and reflected against the compile universe.
         var emittedLocalTypes = AnySlotRebind.CollectLocalTypes(staged.Select(s => s.Root))
             .Keys.ToHashSet(StringComparer.Ordinal);
+        // Some generated declarations are representation templates for canonical TypeDefs emitted once by the
+        // runtime stdlib.  The shared catalog is the single ownership registry used by bir2cir and ilemit; the exact
+        // shipped type must also exist before an app can treat its template as external.
+        var externalCanonicalTypes = (_options.StdlibMode == BuildStdlibMode.App
+            ? staged.SelectMany(s => s.Root is JsonObject root && root["types"] is JsonArray types
+                ? types.OfType<JsonObject>()
+                : Enumerable.Empty<JsonObject>())
+            .Where(type => (type["generated"] as JsonValue)?.TryGetValue<bool>(out var generated) == true && generated)
+            .Select(type => (type["name"] as JsonValue)?.GetValue<string>())
+            .Where(name => !string.IsNullOrEmpty(name)
+                && ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(name)
+                && refs.PhysicalTypeNamed(name) != null)
+            : Enumerable.Empty<string>())
+            .ToHashSet(StringComparer.Ordinal);
 
         // STAR-PROJECTION BOUND index (#2): the in-assembly generic type-param BOUNDS (`interface Key<E : Element>`
         // -> {Key: [Element]}), collected across ALL staged roots (a `Key<*>` use may live in a sibling file from Key's
@@ -976,7 +1019,9 @@ sealed class Pipeline
             // Fail closed if a late materialization introduced an identity-bearing external call after the early
             // binding boundary; the same authoritative ID lookup applies and no erased overload search is permitted.
             DeclarationIdentityBinding.BindReferenced(substituted, refs, finalLocalDeclarationIds);
-            if (attributeTopLevelOwner) ClrMemberResolution.ResolveReferencedStaticCalls(substituted, refs);
+            if (attributeTopLevelOwner)
+                ClrMemberResolution.ResolveReferencedStaticCalls(
+                    substituted, refs, emittedLocalTypes, externalCanonicalTypes);
             // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
             // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
             // the ref.dll + rt.dll + app views of a signature's nullability agree (the scalar decl flags are retired).
@@ -1048,9 +1093,21 @@ sealed class Pipeline
         // existing actionable collision diagnostic, rather than being intercepted as an ambiguous local lookup.
         // ilemit receives only the winning declaration index and never selects by name/arity/assignability.
         ClrMemberResolution.ResolveLocalConstructors(loweredRoots.Select(s => s.Root));
+        // A call may retain a local receiver owner while its declaration lives on an inherited referenced
+        // interface.  Resolve that local/external boundary only after every physically-lowered local declaration
+        // is visible, so a stale shipped copy of a local owner can never win.
+        ClrMemberResolution.ResolveInheritedExternalCalls(loweredRoots.Select(s => s.Root), refs);
+        // Some lowering stages synthesize or physically reshape calls after the early semantic-signature pass.
+        // Re-run the same exact external binding on the final physical descriptors; the explicit local-type set
+        // keeps every declaration emitted by this compilation on the local axis.
+        foreach (var (lowered, _) in loweredRoots)
+            ClrMemberResolution.ResolveReferencedStaticCalls(
+                lowered, refs, emittedLocalTypes, externalCanonicalTypes);
 
-        // PHASE 3 — passes that consume the physically lowered, module-wide constructor binding.
-        foreach (var (lowered, outputName) in loweredRoots)
+        // PHASE 3A — complete every representation synthesis module-wide before any pass snapshots the final type
+        // graph. A derived type can precede its base in another file; resolving interface manifests inside this loop
+        // would otherwise make their contents depend on source-file order.
+        foreach (var (lowered, _) in loweredRoots)
         {
             // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
             // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
@@ -1089,6 +1146,18 @@ sealed class Pipeline
             // bare-value-signature bridge that forwards to the Nullable method so the slot binds (ilemit re-wraps args);
             // else DefineMethodOverride mismatches the slot -> TypeLoadException. Value-type type-arg positions only.
             if (!_options.RefBuild) ValueTypeIfaceSlotBridge.Apply(lowered, refs);
+        }
+
+        // Late synthesis above authors ordinary calls as part of new bridge bodies. Bind those calls only after every
+        // root has reached its final representation, then resolve local-owner calls inherited from external bases.
+        ClrMemberResolution.ResolveInheritedExternalCalls(loweredRoots.Select(s => s.Root), refs);
+        foreach (var (lowered, _) in loweredRoots)
+            ClrMemberResolution.ResolveReferencedStaticCalls(
+                lowered, refs, emittedLocalTypes, externalCanonicalTypes);
+
+        // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
+        foreach (var (lowered, outputName) in loweredRoots)
+        {
             // REFERENCE build only: squash every declaration body to `throw NotImplementedException()` so the ref
             // assembly is metadata-only. Keeps ALL metadata (signatures/types/supertypes/generics/attrs) intact —
             // only the body STATEMENTS change. This is what makes it safe for a bare-value kotlin.* primitive kept
@@ -1111,13 +1180,18 @@ sealed class Pipeline
             // @KotlinDefault external in APP/user-library builds (it only REFERENCES the stdlib-defined type; the ref/rt
             // self-build defines it locally in `_types` and stays a bare-FQN local stamp).
             AttrExternalNormalize.Apply(lowered, _options.StdlibMode == BuildStdlibMode.App);
-            // W1-S2 (#46): RESOLVED-CLR-IR carry — resolve every clrStatic/clrInstance/newClr against the ref.dll MLC and
-            // stamp the winning member's DECLARED param signature as `memberSig` (+ `dispatch` on clrInstance), deleting the
-            // lossy `argTypes`. ilemit becomes a pure linker (exact structural match, hard-fail on 0/multi). Runs LAST — on
+            // W1-S2 (#46): resolve every clrStatic/clrInstance/newClr against the ref.dll MLC. Internal
+            // `resolvedMemberParams` carries matching inputs between bir2cir passes; Apply consumes it into the scalar
+            // memberRef (+ `dispatch` on clrInstance). ilemit is a pure linker. Runs LAST — on
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, localBasicEnums, emittedLocalTypes);
+            // An applied attribute is a call into the assembly that declares it, so its constructor is resolved
+            // like any other external member. After Apply, whose statics it shares.
+            ClrMemberResolution.ResolveAttributeCtors(lowered, refs);
+            ClrMemberResolution.ResolveWellKnown(lowered, refs);
+            ClrMemberResolution.ResolveInterfaceSlots(lowered, loweredRoots.Select(file => file.Root), refs);
             // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
             // whole family from the crossing refusal below without any gate noticing.
@@ -1125,8 +1199,8 @@ sealed class Pipeline
             // The other side of the erasure: a .NET member may DECLARE a `List<int?>`, which no Kotlin type inhabits
             // once `X?` in a reified argument is `System.Object`. Unrelated invariant reified generics have no
             // conversion between them and an adapter would change the argument's identity, so the crossing is
-            // refused rather than silently mis-typed. Checked HERE, immediately after the resolution that stamps
-            // `memberSig`: before it, most `clr*` nodes still carry the caller's `argTypes` and the .NET declaration
+            // refused rather than silently mis-typed. Checked HERE, immediately after resolution has established the
+            // member's declared physical signature: before it, most `clr*` nodes still carry caller-side `argTypes` and the .NET declaration
             // this refusal is about has not been read yet.
             ForeignNullableGenericCrossing.Check(lowered, outputName);
         }
@@ -1142,10 +1216,26 @@ sealed class Pipeline
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.
         DeclarationIdentityBinding.ValidateFinalPhysicalNames(loweredRoots.Select(file => file.Root));
 
+        // Canonical runtime synthetics were useful as module-wide representation templates, but an application does
+        // not emit their TypeDefs. Remove those declarations from CIR so its local/external ownership is literal:
+        // every surviving reference to the type names the runtime assembly and no duplicate local declaration exists.
+        foreach (var (root, _) in loweredRoots)
+            if (root is JsonObject document && document["types"] is JsonArray types)
+                for (var i = types.Count - 1; i >= 0; i--)
+                    if (types[i] is JsonObject type
+                        && (type["name"] as JsonValue)?.TryGetValue<string>(out var name) == true
+                        && externalCanonicalTypes.Contains(name))
+                        types.RemoveAt(i);
+
         // SERIALIZATION IS THE LAST THING, and not the tail of the loop above. The check that just ran asks each
         // Kotlin body which slot it fills, and the answer is a pass-to-pass record on the declaration that must not
         // reach CIR — so the check consumes it, and it can only do that once every file has been lowered and read.
         // Writing a file's JSON inside the loop froze that record into the CIR of every file but the last.
+        // Preserve the assembly-wide fixed-member contract independently of source-root elision below. A valid
+        // alias-only compilation can have every lowered source root removed by IsEmptyCir; its synthetic CIR root is
+        // then the only surviving carrier, and ilemit must still receive the complete fail-closed role table.
+        var fixedMemberTable = loweredRoots.Select(file => (file.Root as JsonObject)?["wellKnownRefs"])
+            .FirstOrDefault(table => table != null)?.DeepClone();
         foreach (var (lowered, outputName) in loweredRoots)
         {
             // A file whose ENTIRE content was @ClrTypeAlias types (e.g. Primitives.kt, Comparable.kt) is now empty after
@@ -1165,6 +1255,7 @@ sealed class Pipeline
                 throw new InvalidOperationException(
                     $"bir2cir: reserved synthetic CIR name '{CanonicalDelegateSynthesis.OutputName}' collides with an input file");
             var delegateDefinitions = CanonicalDelegateSynthesis.SynthDefsFile();
+            if (fixedMemberTable != null) delegateDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
             files.Insert(0, new CirFile(
                 CanonicalDelegateSynthesis.OutputName,
                 delegateDefinitions.ToJsonString(JsonOptions.Indented)));
@@ -1180,7 +1271,8 @@ sealed class Pipeline
             // and every Kotlin stamp would then silently vanish (its attr class absent -> BuildCab skips).
             if (files.Any(f => f.OutputName == synthName))
                 throw new InvalidOperationException($"bir2cir: reserved synthetic CIR name '{synthName}' collides with an input file");
-            var attributeDefinitions = RoundtripMetadata.SynthDefsFile();
+            var attributeDefinitions = RoundtripMetadata.SynthDefsFile(refs);
+            if (fixedMemberTable != null) attributeDefinitions["wellKnownRefs"] = fixedMemberTable.DeepClone();
             files.Insert(0, new CirFile(synthName, attributeDefinitions.ToJsonString(JsonOptions.Indented)));
         }
 

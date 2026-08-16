@@ -1,0 +1,19 @@
+{
+  "types": [{
+    "name": "Probe",
+    "kind": "class",
+    "methods": [{
+      "name": "bridge",
+      "params": [],
+      "ret": { "t": "fqn", "name": "void" },
+      "body": [],
+      "clrBaseImpls": [{
+        "owner": { "t": "fqn", "name": "External.Base" },
+        "member": "Run",
+        "arity": 0,
+        "params": [],
+        "ret": { "t": "fqn", "name": "void" }
+      }]
+    }]
+  }]
+}

@@ -7,6 +7,17 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **External members cross CIR as one complete scalar identity (#370).** `bir2cir` now serializes every external
+  call, constructor, delegate target, MethodImpl target, field/accessor, attribute constructor, and compiler-authored
+  operand as a `memberRef` containing the physical assembly, exact declaring instantiation, metadata name, generic
+  arity, calling convention, return and parameter signatures, and modifier-aware type shapes. `ilemit` maps that
+  identity to exactly one declaration in the target universe and fails diagnostically on zero or multiple matches;
+  it performs no overload ranking, name/arity fallback, assignability selection, or standard-library ABI inference.
+  The former split #336 owner/signature families and shadow-parity path are retired and forbidden in CIR. Provenance
+  checks at every call, constructor, field, and MethodImpl emission boundary keep compiler-authored expansions under
+  the same rule, while the schema, lowering, runtime, packaged-SDK, reverse-interop, round-trip, ILVerify, and
+  target-universe gates exercise the completed cutover.
+
 - **Explicit CLR callable names and fail-closed physical signature collisions (#402).** `@ClrName` (with `@JvmName`
   as a compatibility alias) now travels as an explicit BIR fact to bir2cir's post-erasure MethodDef allocation.
   User declarations no longer receive automatic `$dotkt$<hash>` names: an unresolved or still-colliding explicit

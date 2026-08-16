@@ -1,0 +1,71 @@
+{
+  "fileClass": "LocalConstrainedDelegateClosedSigProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [
+    {
+      "name": "lambda", "static": true, "override": false, "virtual": false, "vis": "private",
+      "params": [{ "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "ok" } }]
+    },
+    {
+      "name": "probe", "static": true, "override": false, "virtual": false, "vis": "public",
+      "typeParams": [{
+        "name": "T",
+        "constraints": [{ "t": "fqn", "name": "LocalClosedCallback", "args": [{ "t": "fqn", "name": "kotlin.Int" }] }]
+      }],
+      "params": [{ "name": "engine", "type": { "t": "tv", "scope": "method", "i": 0 } }],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": [{
+        "k": "return",
+        "value": {
+          "k": "constrainedCall",
+          "recv": { "k": "local", "name": "engine" },
+          "recvType": { "t": "tv", "scope": "method", "i": 0 },
+          "iface": { "t": "fqn", "name": "LocalClosedCallback", "args": [{ "t": "fqn", "name": "kotlin.Int" }] },
+          "method": "Apply",
+          "sig": [
+            { "t": "fqn", "name": "kotlin.Int" },
+            { "t": "fn", "suspend": false, "ret": { "t": "fqn", "name": "kotlin.String" }, "params": [{ "t": "fqn", "name": "kotlin.Int" }] }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.String" },
+          "args": [
+            { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 },
+            {
+              "k": "newDelegate", "method": "lambda",
+              "calleeOwner": { "t": "fqn", "name": "LocalConstrainedDelegateClosedSigProbeKt" },
+              "sig": [{ "t": "fqn", "name": "kotlin.Int" }],
+              "funcType": {
+                "t": "fn", "suspend": false,
+                "ret": { "t": "fqn", "name": "kotlin.String" },
+                "params": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            }
+          ]
+        }
+      }]
+    }
+  ],
+  "types": [{
+    "name": "LocalClosedCallback", "kind": "interface", "typeParams": [{ "name": "T" }],
+    "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
+    "methods": [{
+      "name": "Apply", "static": false, "override": false, "virtual": true, "abstract": true, "vis": "public",
+      "params": [
+        { "name": "value", "type": { "t": "tv", "scope": "type", "i": 0 } },
+        {
+          "name": "transform",
+          "type": {
+            "t": "fn", "suspend": false,
+            "ret": { "t": "fqn", "name": "kotlin.String" },
+            "params": [{ "t": "tv", "scope": "type", "i": 0 }]
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": []
+    }]
+  }],
+  "refTypes": []
+}

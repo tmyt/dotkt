@@ -1,0 +1,24 @@
+{
+  "methods": [
+    {
+      "name": "probe",
+      "params": [
+        {
+          "name": "p",
+          "type": {
+            "t": "ptr",
+            "of": {
+              "t": "fqn",
+              "name": "System.Int32"
+            }
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "void"
+      },
+      "body": []
+    }
+  ]
+}

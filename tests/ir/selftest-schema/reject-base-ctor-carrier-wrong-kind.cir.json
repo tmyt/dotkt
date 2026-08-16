@@ -1,0 +1,55 @@
+{
+  "types": [
+    {
+      "name": "Probe",
+      "kind": "class",
+      "base": {
+        "t": "fqn",
+        "name": "System.Exception"
+      },
+      "ctors": [
+        {
+          "params": [],
+          "baseArgs": [],
+          "baseMemberSig": [],
+          "baseMemberOwner": {
+            "t": "fqn",
+            "name": "System.Exception"
+          },
+          "baseCtorRef": {
+            "kind": "method",
+            "assembly": "System.Runtime",
+            "declaringType": {
+              "t": "fqn",
+              "name": "System.Exception"
+            },
+            "name": "Ctor",
+            "genericArity": 0,
+            "returnType": {
+              "t": "fqn",
+              "name": "System.Int32"
+            },
+            "callingConvention": "instance",
+            "parameterTypes": [
+              {
+                "t": "mod",
+                "req": true,
+                "m": {
+                  "t": "fqn",
+                  "name": "System.Runtime.InteropServices.InAttribute"
+                },
+                "of": {
+                  "t": "byRef",
+                  "of": {
+                    "t": "fqn",
+                    "name": "System.DateTime"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

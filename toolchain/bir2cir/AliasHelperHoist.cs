@@ -147,7 +147,7 @@ static class AliasHelperHoist
         _ => type,
     };
 
-    // Rewrite types owned by this lexical declaration. Descriptor vectors (`sig`, memberSig, …) describe another
+    // Rewrite types owned by this lexical declaration. Descriptor vectors (`sig`, resolvedMemberParams, …) describe another
     // declaration in that declaration's own frame and therefore stay untouched; typeArgs/owner applications and
     // ordinary value types are use-site facts and do move with this declaration.
     static void RewriteLexicalTypes(JsonNode node, Func<TypeNode, TypeNode> rewrite)
@@ -158,7 +158,7 @@ static class AliasHelperHoist
             {
                 var value = obj[key];
                 if (value == null) continue;
-                if (key is "sig" or "memberSig" or "clrOverrideSig" or "shapeTypes" or "paramSig"
+                if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                     or "delegationSig" or "argTypes")
                     continue;
                 if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(rewrite(TypeJson.Read(value)));

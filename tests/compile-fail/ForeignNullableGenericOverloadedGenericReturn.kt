@@ -2,8 +2,7 @@
 //
 // The chokepoint asks whether a stamp was made, not whether it said anything, so writing `void` for an overload set
 // this could not narrow satisfied it and silently emptied the refusal's input. The call carries the exact
-// `memberSig` the frontend resolved — the same descriptor ilemit links the overload by — so the return is resolved
-// through it and the crossing is seen.
+// frontend-resolved declaration parameters, so bir2cir selects the same scalar memberRef and sees the crossing.
 import ovgen.Fac
 
 fun main() {

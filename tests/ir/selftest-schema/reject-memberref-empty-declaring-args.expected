@@ -1,0 +1,1 @@
+must omit `args` when the declarer is non-generic

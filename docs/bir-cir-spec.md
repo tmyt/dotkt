@@ -13,9 +13,16 @@
 - A single `BirCarrier.DecodeBody(version, byte[])` / `EncodeBody(version, node)`
   (`toolchain/bir-common/TypeNode.cs`) dispatches on `version`. An UNKNOWN version is REJECTED
   (loud `NotSupportedException`, never a silent mis-decode).
-- Carriers: `KotlinInlineAttribute(string version, byte[] content)` (inline-fn body) and
+- Carriers include `KotlinInlineAttribute(string version, byte[] content)` (inline-fn body),
   `KotlinSuspendFunctionTypeAttribute(string version, byte[] content)` (a `suspend (…) -> T` position's
-  pre-erasure `fn` `Type` shape). The old bare `(string)` ctors are DELETED (no dual-track). Producers
+  pre-erasure `fn` `Type` shape), and `KotlinConstructorAdapterAttribute(string version, byte[] content)`
+  (an `@ClrTypeAlias` constructor's declaration-authored terminal delegation vector). The latter lets a consuming
+  `bir2cir` lower an adapter such as `(cause)` to the exact physical `(message,cause)` constructor without recovering
+  semantics from a name or choosing a same-arity CLR member. The payload carries
+  `{parameters,signature,statements,arguments,terminalSignature}` in BIR vocabulary. `statements` is the ordered
+  evaluation prefix authored by constructor delegation; a consumer substitutes its materialized source arguments
+  and executes that prefix before evaluating the terminal physical constructor argument vector.
+  The old bare `(string)` ctors are DELETED (no dual-track). Producers
   (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`bir2cir` cross-module splice,
   `dll2klib` carrier decoding) all route through the one codec.
 - A decoded `[KotlinInline]` content is the current payload object
@@ -44,10 +51,21 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `fn` | `suspend:bool`, `ret:T`, `params:[T…]`, `recv?:T` | a function type; `suspend` is a flag, `recv` = extension receiver | `func:ret:args`, `sfunc:ret:args` |
 | `nullable` | `of:T` | `T?` (NRT-annotated nullable, `NullableAttribute`=2) | `nullable:X` |
 | `oblivious` | `of:T` | `T!` — an NRT-*oblivious* flexible type `(T..T?)` (`NullableAttribute`=0); the CLR term, not the Kotlin-consumer "platform" name | the META `!` platform suffix |
-| `array` | `elem:T` | `Array<T>` (this-assembly array) | `array:X` |
+| `array` | `elem:T`, `rank?:1..32` | `Array<T>`; an absent `rank` is the SZ vector `T[]`. A **CIR-only** stated rank names the general ECMA ARRAY: ≥2 is `T[,…]`, and 1 is the non-vector `T[*]`, a distinct type from `T[]` | `array:X` |
 | `byRef` | `of:T` | a CLR by-ref `ref T` | `byRef:X` |
+| `ptr` | `of:T` | **CIR-only**: a CLR unmanaged pointer `T*` | no Kotlin form |
+| `mod` | `req:bool`, `m:T`, `of:T` | **CIR-only**: an ECMA custom modifier (II.7.1.1) at its signature position — `req` selects modreq from modopt | no Kotlin form |
 
 Notes:
+- **The three CIR-only ECMA signature carriers** (`ptr`, `mod`, `array.rank`) exist for one reason: a §2.2.2
+  `memberRef` must be able to spell any signature the *target metadata* can declare, and these three shapes
+  are declarable there while being unspeakable in Kotlin. They are not new expressiveness for the source
+  language — kotc MUST omit all three, and the validator refuses them in BIR. Dropping them is not neutral:
+  `T*` degrades to the FQN string `"System.Int32*"`, an identity naming no type; `T[,]` and `T[*]` collapse
+  onto `T[]`;
+  and `void V(in DateTime)` becomes indistinguishable from `void V(DateTime)`, since `modreq(InAttribute)` on
+  a by-ref parameter is the only thing separating them. Each is a way for two distinct members to look like
+  one, which is exactly what a resolved reference must never allow.
 - **No CLR-resolution marker in kotc output.** kotc emits `{t:"fqn",name:"kotlin.Int"}` — the *identity*
   only. bir2cir DERIVES the CLR form (primitive opcode, generic construction, referenced-type resolution).
   `clr:`/`clrg:`/`@`/shorthand are DELETED; the resolution decision lives below the kotc boundary.
@@ -170,7 +188,8 @@ temporary `companionCaptureOwner`/`externalCompanionOwner` strings are declarati
 suspend captures, not Type slots, and must be consumed before CIR. The schema gate enforces those phase boundaries:
 `companionValue`, `kotlinCompanion`, and both capture-owner keys are forbidden in CIR; `newClrStaticDelegate` and
 `capturedTypeParams` are forbidden in BIR. A CIR `newClrStaticDelegate` must already carry the resolved
-`memberSig`/`memberOwner` descriptors required by ilemit.
+`memberRef` of the method it binds — the transitional `memberSig`/`memberOwner` descriptors it used to carry
+are retired (#370), and the validator now refuses them.
 
 Kotlin property accessors follow the same phase ownership (#397). In BIR, each accessor declaration carries the
 source `propertyName`, an explicit `propertyAccessor` role (`get` or `set`), and a file-local `propertyAssociation`;
@@ -186,10 +205,11 @@ recover Kotlin meaning. External CLR properties are read through Property/Method
 identity fields (`propertyName`, `propertyAccessor`, `propertyAssociation`, `kotlinAccessors`) and `prop:get|set`
 calls are forbidden in final CIR.
 
-When that dedicated accessor implements an external CLR property, bir2cir records the exact external accessor in a
-`clrInterfaceImpls` or `clrOverride`/`clrOverrideMember`/`clrOverrideRet` descriptor. The latter is paired with
-`clrOverrideSig`; return and parameter types together identify the CLR MethodDef. A class accessor can itself be the MethodImpl
-body. A default accessor declared on an interface requires the CLR explicit-interface shape instead: bir2cir emits a
+When that dedicated accessor implements an external CLR property, bir2cir records the exact external accessor as one
+scalar member reference. An external base-class virtual carries the `requiresClrOverride:true` MethodImpl instruction
+and its exact operand in the declaration's `clrOverrideRef`; external interface
+slots are named in the owner-scoped `interfaceSlotRefs` table. A class accessor can itself be the MethodImpl body.
+A default accessor declared on an interface requires the CLR explicit-interface shape instead: bir2cir emits a
 private forwarding body with `clrInterfaceSlotBridge:true`, and ilemit maps that CIR instruction directly to a
 `Private|Virtual|Final|NewSlot` MethodDef plus the stated MethodImpl. Neither path derives a slot from an accessor name.
 When otherwise-identical generic slots differ by constraints, the MethodImpl descriptor also carries the exact
@@ -333,6 +353,94 @@ referenced declaration, applies the selected runtime actual/type-alias represent
 declaration shape to CIR. Compiler-generated alias helpers also remap the aliased class and member type variables
 onto the helper method's flattened generic-parameter space. ilemit consumes a present CIR `sig` exactly: zero or
 multiple structural matches are ABI errors, never a request to retry by name and arity.
+
+### 2.2.2 `memberRef` — ONE resolved external-member identity (CIR-only, #370)
+A reference to a member of ANOTHER assembly is a single scalar object, not a set of adjacent fields:
+
+```jsonc
+"memberRef": {
+  "kind": "method|ctor|field|propertyAccessor|eventAccessor",
+  "assembly": "System.Runtime",              // PHYSICAL defining-assembly simple name
+  "declaringType": { "t": "fqn", "name": "System.Collections.Generic.List`1", "args": [T…] },   // metadata FullName VERBATIM
+  "name": "Add",                             // exact metadata name (".ctor", "get_X", "add_X", …)
+  "genericArity": 0,
+  "callingConvention": "static|instance|varargStatic|varargInstance",   // absent for a field
+  "parameterTypes": [T…],                    // OPEN declared params; absent for a field
+  "returnType": T                            // OPEN declared return; the field TYPE when kind is `field`
+}
+```
+
+The shape follows from one rule: **bir2cir resolves a Kotlin operation to exactly one declaration, and CIR
+serializes that answer.** Split the answer across a parameter vector, an owner name and a few flags and the
+consumer has to re-combine them — and re-combining candidates *is* member selection, which belongs upstream.
+So a consumer performs an EXACT lookup (resolve `declaringType` in `assembly`, then take the one
+`DeclaredOnly` member whose signature equals this one) and encodes it. Zero matches is a CIR/target mismatch
+and MUST name the complete reference; more than one is a schema/identity defect. Neither is a cue to fall
+back on name, arity, applicability, assignability, most-derived rules, host reflection or declaration order.
+
+Field-by-field, each entry is there because its absence would force a search: without `assembly` the
+consumer scans every loaded assembly for a name; without `returnType` it cannot separate an inherited slot
+from a redeclaration that shadows it by return type alone; without `callingConvention` a static and an
+instance member of the same shape are one candidate; without `genericArity` the arity has to be guessed from
+a call site's type-argument count. `declaringType` names the DECLARER — a member the receiver merely
+inherits is anchored on the type that declares it — spelled as the target's own metadata FullName (arity
+backtick and `+` nesting verbatim, since that is the key the target universe is indexed by), and carries the
+use-site instantiation in `args`, so no base walk or owner projection is needed downstream.
+
+The signature is the **OPEN declared** one (ECMA II.9.8: a MemberRef carries the uninstantiated signature).
+Method instantiation rides on the node's own `typeArgs` and owner instantiation on `declaringType.args`; a
+substituted vector would collapse distinct overloads (`M(!0)` and `M(!1)` become one). `assembly` is the
+simple name only: a reference-pack assembly and its implementation legitimately differ in version/culture/PKT,
+and it is the PHYSICAL identity — where a reference twin and its runtime twin differ in name, this already
+names the runtime one. A vararg signature is a DIFFERENT member from its fixed-arity neighbour, so the
+convention states it rather than the producer refusing to describe it; whether such a signature can be
+emitted is a question for the emitter, asked where it can be answered.
+
+**WHAT THE TARGET DECLARES IS SPELLED AS THE TARGET SPELLS IT.** The declaring head, every parameter, the
+return and every custom modifier are read off the target declaration, so they carry its **verbatim metadata
+FullName**: arity backtick and `+` nesting kept, delegates not rewritten as `fn`, `System.Nullable` not
+collapsed to a nullability wrapper.
+
+`declaringType.args` are the exception, and deliberately: they are not something the target declares, they
+are the **use site's** instantiation of it — the caller's own type arguments, projected along the declaration
+edge. Those are ordinary document type nodes in the document's vocabulary, resolved by a consumer exactly as
+every other type slot is. Reading a type slot is not member selection; the rule this whole section exists to
+protect is that nobody chooses a *member*, and choosing an instantiation the document already states is not
+that. The document's ordinary spelling (§1) is the right vocabulary for talking
+about a Kotlin program and the wrong one for an identity, because it merges types a reference must keep
+apart — stripping at the first backtick turns a type nested in a generic outer into its outer alone, and
+`Ns.Outer+Inner` and `Ns.Outer.Inner` become one string. The single exception is the void return, which names
+a type that appears nowhere else in a signature and so makes no member ambiguous.
+
+**ONE SPELLING PER SHAPE.** A consumer compares these references exactly, so two ways to write one physical
+member would be two members to it. The rules, all validator-enforced:
+
+- a non-generic declarer **omits** `args`; it never carries an empty list, and the length of `args` equals
+  the arity the name itself states;
+- `declaringType.args` is **flattened** over the enclosing-type chain, matching `tv{scope:"type"}` (§1) —
+  `Outer\`1+Inner\`1` carries the outer argument first;
+- a signature carries no `oblivious` and no `star`: those are Kotlin type-system facts, and a physical CLR
+  signature has neither. `nullable` appears only as the `System.Nullable\`1` value-type collapse;
+- `.ctor` names a constructor and nothing else;
+- the CIR-only carriers `ptr`, `mod` and `array.rank` appear **only** inside a `memberRef`. Ordinary type
+  slots are rewritten by lowering passes that reconstruct an array as a vector and know nothing of pointers
+  or modifiers, so one outside a reference would be silently flattened — re-creating exactly the collisions
+  those carriers exist to prevent.
+
+Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
+built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature
+table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
+
+A carrier key holds ONE reference, never a list. A candidate set reaching a consumer is precisely the failure
+this shape removes: whoever received it would have to choose, and choosing is the producer's decision.
+
+The carriers are `memberRef` on a node, and on a DECLARATION `baseCtorRef` (a constructor's delegation to an
+external base) and `clrOverrideRef` (the external base virtual a method overrides — the MethodImpl target).
+An external-base override also carries `requiresClrOverride:true`, a durable emission instruction independent of
+the operand: the schema requires the instruction and reference together, while the member identity remains scalar.
+Each carrier is the sole external-member identity for its operation. The retired flat owner/name/signature families
+are forbidden in CIR; reintroducing one would create a second authority and force a consumer to reconcile it with
+the scalar reference.
 
 ### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
 The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/

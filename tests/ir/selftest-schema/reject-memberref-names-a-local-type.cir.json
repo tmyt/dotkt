@@ -1,0 +1,50 @@
+{
+  "fileClass": "demo.DemoKt",
+  "types": [
+    {
+      "name": "Probe",
+      "kind": "class",
+      "methods": [
+        {
+          "name": "probe",
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "void"
+          },
+          "body": [
+            {
+              "k": "exprStmt",
+              "expr": {
+                "k": "callStatic",
+                "owner": {
+                  "t": "fqn",
+                  "name": "demo.DemoKt"
+                },
+                "method": "hello",
+                "sig": [],
+                "args": [],
+                "memberRef": {
+                  "kind": "method",
+                  "assembly": "OtherAssembly",
+                  "declaringType": {
+                    "t": "fqn",
+                    "name": "demo.DemoKt"
+                  },
+                  "name": "hello",
+                  "genericArity": 0,
+                  "returnType": {
+                    "t": "fqn",
+                    "name": "System.Int32"
+                  },
+                  "callingConvention": "static",
+                  "parameterTypes": []
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

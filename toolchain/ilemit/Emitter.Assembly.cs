@@ -17,6 +17,8 @@ sealed partial class Emitter
         // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
         // See Emitter.Sanity.cs. Pure fail-fast validation — no IL effect (a valid CIR is byte-identical after it).
         CheckCir(files);
+        LoadWellKnown(files);
+        // #370: how many references these documents carry, so the parity check below can be held to all of them.
         // #336: PersistedAssemblyBuilder and every external type/member below share one target
         // MetadataLoadContext. The compiler host still supplies Reflection.Emit's implementation, never an emitted
         // identity. Mixing a host Type with this graph is invalid even when its FullName matches a target Type.
@@ -26,6 +28,7 @@ sealed partial class Emitter
         // signal together with compiler-generated embedded metadata carriers before applying Kotlin-only reverse maps.
         const string dotKtMarkerKey = "DotKt.Compiler";
         const string dotKtMarkerValue = "metadata-v1";
+        // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
         var assemblyMetadataCtor = Bcl("System.Reflection.AssemblyMetadataAttribute").GetConstructor(new[] { Bcl("System.String"), Bcl("System.String") });
         SetAttribute(ab.SetCustomAttribute, assemblyMetadataCtor,
             new[] { Bcl("System.String"), Bcl("System.String") }, dotKtMarkerKey, dotKtMarkerValue);
@@ -34,6 +37,7 @@ sealed partial class Emitter
         if (_targetFrameworkMoniker != null)
         {
             var targetFrameworkCtor = Bcl("System.Runtime.Versioning.TargetFrameworkAttribute")
+                // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 .GetConstructor(new[] { Bcl("System.String") });
             SetAttribute(ab.SetCustomAttribute, targetFrameworkCtor,
                 new[] { Bcl("System.String") }, _targetFrameworkMoniker);
@@ -106,7 +110,7 @@ sealed partial class Emitter
                     // re-emit per-assembly until each is verified cross-assembly. Self-correcting:
                     // only skips when the type ACTUALLY resolves externally, so a --no-stdlib build (or the stdlib's own
                     // ref/rt build, which passes ilemit no --ref) still emits the canonical copy locally.
-                    if (CanonicalSynthetics.Contains(name) && ResolvesExternally(name)) continue;
+                    if (ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(name) && ResolvesExternally(name)) continue;
                     if (kind == "delegate")
                     {
                         // A CIR delegate declaration already carries its exact metadata name (including `arity),
@@ -504,7 +508,7 @@ sealed partial class Emitter
                     // depend on. (Covers both a user `class S : CharSequence` and the synthesized `dotkt$StringCharSequence`.)
                     // Checked on the RAW spec (a canonical synthetic interface spec is the bare name), so a `clr:`/`clrg:`
                     // spec is NOT ParseOwner'd here — doing so eagerly mis-strips a `clrg:` self-ref interface (crash).
-                    bool externalSynthIface = CanonicalSynthetics.Contains(specName)
+                    bool externalSynthIface = ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(specName)
                         && !_types.ContainsKey(specName) && ResolvesExternally(specName);
                     // A REFERENCED interface (not emitted in THIS assembly — a .NET-mapped Continuation<int>, or an
                     // external canonical synthetic): bind each interface method to the class method of the same .NET name
@@ -526,15 +530,27 @@ sealed partial class Emitter
                         // OR a generic STDLIB interface instantiated even with a concrete arg) is a TypeBuilderInstantiation
                         // whose .GetMethods() throws. Try GetMethods; on failure, enumerate the OPEN definition's methods
                         // and re-anchor each to the instantiation via TypeBuilder.GetMethod.
-                        MethodInfo[] ifaceMs; bool reanchor;
-                        try { ifaceMs = itype.GetMethods(); reanchor = false; }
-                        catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
+                        // #370-residual: enumerate only to choose the TypeBuilder anchoring face; NamedInterfaceSlots
+                        // replaces the external set with bir2cir's resolved references before any operand is emitted.
+                        MethodInfo[] ifaceMs; bool reanchor; Type slotOwner; // #370-residual: anchoring-face probe
+                        try { ifaceMs = itype.GetMethods(); reanchor = false; slotOwner = itype; }
+                        catch (NotSupportedException)
+                        {
+                            slotOwner = itype.GetGenericTypeDefinition();
+                            // #370-residual: anchoring-face probe; carried slots replace this external set.
+                            ifaceMs = slotOwner.GetMethods(); reanchor = true;
+                        }
+                        // The slots are named on the type that implements them. Only the member SET is replaced:
+                        // which face to anchor against was decided just above, by the reflection that either
+                        // worked or did not, and that is not a decision a reference can make.
+                        if (NamedInterfaceSlots(ti, specFqn, slotOwner) is { } named) ifaceMs = named;
                         // Reflection's GetMethods() omits a referenced interface's inherited slots. bir2cir's resolved
                         // MethodImpl descriptors name each exact DECLARING interface, and those owners were seeded into
                         // this worklist above. Consume the descriptor when that owner is dequeued; probing base interfaces
                         // here as well would wire the same MethodImpl twice when the declaring owner is later visited.
                         foreach (var im in ifaceMs)
                         {
+                            // #370-residual: the local axis: wiring a MethodImpl on a type being built (#395)
                             if (im.Name == "GetEnumerator") continue;   // handled by the reverse bridge above
                             // OVERLOADED body methods (e.g. the generic CompareTo(V) + the non-generic IComparable bridge
                             // CompareTo(object)) collide in the name-keyed ti.Methods — wiring the wrong one to the slot
@@ -555,9 +571,10 @@ sealed partial class Emitter
                             if (FindExternalInterfaceBridge(ti, itype, im.Name, methodArity, ips, interfaceRet, specFqn)
                                 is MethodBuilder directiveBridge)
                             {
-                                WireMethodOverride(ti.TB, directiveBridge, reanchor ? AnchorMethod(itype, im) : im);
+                                WireMethodOverride(ti.TB, directiveBridge, reanchor ? AnchorOn(itype, im) : im);
                                 continue;
                             }
+                            // #370-residual: local axis — match MethodBuilders emitted in this assembly to a named slot.
                             var cands = ti.MethodsBySig
                                 .Where(kv => kv.Key.Name == im.Name && kv.Key.GenericArity == methodArity)
                                 .Select(kv => kv.Value)
@@ -568,7 +585,7 @@ sealed partial class Emitter
                                 .ToList();
                             if (cands.Count != 1) continue;   // no unique exact CLR identity -> skip, never mis-wire
                             var body = cands[0];
-                            var ifaceM = reanchor ? AnchorMethod(itype, im) : im;
+                            var ifaceM = reanchor ? AnchorOn(itype, im) : im;
                             // A @ClrTypeAlias'd (referenced) interface slot whose return type the Kotlin body DROPS: the
                             // Kotlin member returns a value but the BCL slot is void (MutableCollection.add():Boolean ->
                             // ICollection.Add():void; MutableList.set/removeAt:E -> IList.set_Item/RemoveAt():void). A DIRECT
@@ -668,6 +685,7 @@ sealed partial class Emitter
                             // narrowing. Detect a generic MethodBuilder via _methodTypeParams (IsGenericMethodDefinition
                             // is unreliable on an un-baked builder).
                             var bodyIsGeneric = bodyMethod is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
+                            // #370-residual: TYPE-shape comparison deciding whether a local adapter is required.
                             if (!bodyIsGeneric && ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
                                 ((bodyMethod.ReturnType.Name != ifaceRet.Name && !IsValueType(bodyMethod.ReturnType) && !IsValueType(ifaceRet))   // covariant reference narrowing
                                  || (ifaceRet == Bcl("System.Void") && bodyMethod.ReturnType != Bcl("System.Void"))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
@@ -716,9 +734,20 @@ sealed partial class Emitter
                 var itype = MapType(ibF);
                 // A generic instantiation over an EMITTED TypeBuilder arg can't GetMethods() — enumerate the OPEN
                 // definition and re-anchor each slot onto the instantiation (same pattern as the class wiring).
-                MethodInfo[] ifaceMs; bool reanchor;
+                // #370-residual: enumerate only to choose the TypeBuilder anchoring face; NamedInterfaceSlots
+                // replaces the external set with bir2cir's resolved references before any operand is emitted.
+                MethodInfo[] ifaceMs; bool reanchor; // #370-residual: anchoring-face probe
                 try { ifaceMs = itype.GetMethods(); reanchor = false; }
-                catch (NotSupportedException) { ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true; }
+                catch (NotSupportedException)
+                {
+                    // #370-residual: anchoring-face probe; carried slots replace this external set.
+                    ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true;
+                }
+                // The same resolved slot set drives MethodImpls authored ON an emitted interface as drives class
+                // implementations above. Omitting it here left this second wiring loop selecting declarations by
+                // reflection even though the producer had already named every one (notably star-projection carriers).
+                var slotOwner = reanchor ? itype.GetGenericTypeDefinition() : itype;
+                if (NamedInterfaceSlots(ti, ibF, slotOwner) is { } named) ifaceMs = named;
                 foreach (var im in ifaceMs)
                 {
                     var ips = ParametersOf(im).Select(p => reanchor
@@ -733,7 +762,7 @@ sealed partial class Emitter
                     if (FindExternalInterfaceBridge(ti, itype, im.Name, methodArity, ips, interfaceRet, ibF)
                         is MethodBuilder resolvedBridge)
                     {
-                        WireMethodOverride(ti.TB, resolvedBridge, reanchor ? AnchorMethod(itype, im) : im);
+                        WireMethodOverride(ti.TB, resolvedBridge, reanchor ? AnchorOn(itype, im) : im);
                     }
                     // No exact CIR descriptor means no MethodImpl. Which Kotlin declaration (if any) implements an
                     // external slot is a Frontend/bir2cir decision; ilemit must not rediscover it from names, concrete
@@ -784,8 +813,9 @@ sealed partial class Emitter
                         // the worst outcome available: an abstract base slot becomes a type-load failure with nothing
                         // naming the producer, and a concrete virtual one keeps dispatching to the base body — the
                         // override simply never runs. Same contract as the emitted-base miss below.
-                        if (FindExternalBaseSlot(ownerFqn, memberNode.GetString(), DescribedArity(impl), ps, ret, impl)
-                            is not MethodInfo externalSlot)
+                        // The slot is a lookup: the reference travelling with this descriptor names it.
+                        var externalSlot = PrimaryFromRef(impl, "memberRef") as MethodInfo;
+                        if (externalSlot is null)
                             throw new InvalidOperationException(
                                 $"ilemit: {ti.TB.Name}.{bridgeName}: clrBaseImpls names "
                                 + $"'{memberNode.GetString()}' on the referenced base '{open}', which does not resolve "
@@ -1148,14 +1178,11 @@ sealed partial class Emitter
         isStatic = isStatic || m.GetProperty("static").GetBoolean();
         var objOverride = m.TryGetProperty("objectOverride", out var oo) && oo.GetBoolean();
         // Overriding a .NET base virtual (e.g. `override val Message`) reuses the base slot, like an object-method.
-        var hasClrOverride = m.TryGetProperty("clrOverride", out var clrOverride);
-        var clrOverrideMember = hasClrOverride
-            ? m.TryGetProperty("clrOverrideMember", out var com) && com.ValueKind == JsonValueKind.String
-                && !string.IsNullOrEmpty(com.GetString())
-                    ? com.GetString()
-                    : throw new InvalidOperationException(
-                        $"ilemit: CLR override implementation {ti.TB?.FullName}.{name} has no exact base member descriptor")
-            : null;
+        // `requiresClrOverride` is the one-to-one CIR instruction to emit a MethodImpl; `clrOverrideRef` is its
+        // already-selected operand. Keeping the trigger separate from the operand makes either missing half a
+        // malformed document instead of silently changing virtual dispatch.
+        var hasClrOverride = m.TryGetProperty("requiresClrOverride", out var clrOverrideRequired)
+            && clrOverrideRequired.GetBoolean();
         // The frontend-stated abstract modality decides whether an interface member is a CLR abstract slot. A concrete
         // Kotlin DIM may have an empty Unit body, so body length is not a declaration-semantics oracle.
         // A compiler-authored static interface helper takes no slot, so it must NOT be marked Virtual/NewSlot/Abstract
@@ -1247,21 +1274,19 @@ sealed partial class Emitter
         {
             var objM = name switch
             {
-                "ToString" => Bcl("System.Object").GetMethod("ToString", Type.EmptyTypes),
-                "GetHashCode" => Bcl("System.Object").GetMethod("GetHashCode", Type.EmptyTypes),
-                "Equals" => Bcl("System.Object").GetMethod("Equals", new[] { Bcl("System.Object") }),
+                "ToString" => WellKnown<MethodInfo>("Object.ToString"),
+                "GetHashCode" => WellKnown<MethodInfo>("Object.GetHashCode"),
+                "Equals" => WellKnown<MethodInfo>("Object.Equals"),
                 _ => null,
             };
             if (objM != null) WireMethodOverride(ti.TB, mb, objM);
         }
         if (hasClrOverride)
         {
-            // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches it
-            // (`callvirt System.Exception::get_Message` -> our override). bir2cir resolved the base slot off the ref.dll
-            // and carried its param signature as `clrOverrideSig` (#46/#183 W1-S4) — LinkOverrideBase links the unique
-            // slot (0 = hard ABI error), replacing the former name-only first-pick fallback.
-            var baseT = ClrRef(clrOverride);
-            WireMethodOverride(ti.TB, mb, LinkOverrideBase(baseT, clrOverrideMember, m, ti.TB));
+            // Link the override to the EXACT .NET base virtual so virtual dispatch through the base type reaches
+            // it (`callvirt System.Exception::get_Message` -> our override). The slot is the one scalar reference
+            // bir2cir resolved; the independent boolean above is only the emission instruction, not another identity.
+            WireMethodOverride(ti.TB, mb, RequiredRef<MethodInfo>(m, "clrOverrideRef", $"the override {name}"));
         }
         // Kotlin's `@kotlin.internal.InlineOnly` says "this fn is meant to be inlined, not called as a method". The direct
         // CLR translation is a [MethodImpl(AggressiveInlining)] hint on the emitted method. kotc reads the annotation and
@@ -1290,6 +1315,7 @@ sealed partial class Emitter
             var ps = c.GetProperty("params").EnumerateArray().Select(p => MapType(p.GetProperty("type"))).ToArray();
             var cb = ti.TB.DefineConstructor(AccessOf(c), CallingConventions.Standard, ps);
             DefineParamNames(cb, c);   // ctor param NAMES + [Optional]/DefaultParameterValue (named-arg ctor calls)
+            StampMemberAttrs(cb.SetCustomAttribute, c); // declaration carriers/annotations belong to the ctor row
             ti.Ctors.Add(cb);
             ti.CtorDefs.Add(c);
         }
@@ -1516,6 +1542,8 @@ sealed partial class Emitter
 
     void Save(PersistedAssemblyBuilder ab, MethodBuilder entry)
     {
+        // How much of what these documents carry this build put through the parity check. A measurement, not
+        // the gate — the enforcement is at the call sites, which compare before every legacy resolution.
         MetadataBuilder metadata = ab.GenerateMetadata(out BlobBuilder ilStream, out BlobBuilder fieldData);
         var peHeader = new PEHeaderBuilder(imageCharacteristics: Characteristics.ExecutableImage | Characteristics.Dll);
         var peBuilder = new ManagedPEBuilder(

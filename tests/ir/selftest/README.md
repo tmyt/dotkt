@@ -5,13 +5,21 @@ like a clean corpus. These synthetic documents pin the checks that have no natur
 corpus, and the legitimate shape next door for each — without the positive half, a validator that rejected
 everything would pass the negative half.
 
-The **file extension picks the lane**, because the two validators have different scopes (§2.7 plan vocabulary
-is BIR-only; the sanity invariants are post-lowering CIR):
+In **this** directory the **file extension picks the lane**, because the two validators have different scopes
+(§2.7 plan vocabulary is BIR-only; the sanity invariants are post-lowering CIR):
 
 | files | driver | validator |
 |---|---|---|
-| `*.bir.json` | `tests/ir/run-schema.sh` | `scripts/verify-schema.py` |
-| `*.cir.json` | `tests/ir/run-sanity.sh` | `scripts/verify-sanity.py` |
+| `tests/ir/selftest/*.bir.json` | `tests/ir/run-schema.sh` | `scripts/verify-schema.py` |
+| `tests/ir/selftest/*.cir.json` | `tests/ir/run-sanity.sh` | `scripts/verify-sanity.py` + C# `IrSanity` |
+| `tests/ir/selftest-schema/*.cir.json` | `tests/ir/run-schema.sh` | `scripts/verify-schema.py` |
+
+The third row exists because the schema validator also has CIR-only rules — a shape whose *well-formed* half
+only exists after lowering, such as the resolved #370 `memberRef`. Those fixtures cannot sit here: the
+extension is already spoken for by the sanity lane, which would hand a schema-only refusal to a validator that
+has no opinion about it and (correctly) accept it. So the schema lane's CIR fixtures get their own directory,
+and the rule becomes *directory + extension* picks the lane. Both lanes run the same reject/accept contract
+and the same "one of each or the lane asserts nothing" requirement.
 
 - `reject-*` — the validator MUST reject each, and its message must contain the file's expected substring
   (`reject-<name>.expected`).
@@ -32,6 +40,10 @@ head of `EmitAssembly`, ahead of any resolution.
 
 - The §2.7 **nesting rule** (`plan_scope`) — `reject-dangling-bindref`, `reject-forward-bindref`,
   `reject-nested-plan-unknown-id`, `accept-nested-plans`.
+- The **CIR-only vocabulary that must not appear in kotc BIR** — `reject-cir-only-signature-carrier` (a
+  pointer type), `reject-cir-only-array-rank` (a multi-dimensional array rank) and `reject-memberref-in-bir`
+  (a resolved #370 member identity). Kotlin source cannot spell any of the three, so one in BIR means the
+  frontend projection started deciding physical CLR shape — the layer inversion, not a typo.
 - The §2.7 **granularity rule**: a plan exists only where a value can acquire a SECOND reader, so a call whose
   operand subtree merely *suspends* — `h(f(), 1)` with `f` suspending — is plain BIR with no `callEval` around
   it (`accept-unplanned-suspension-operand`). Where a suspension is planned, and by whom, is bir2cir's

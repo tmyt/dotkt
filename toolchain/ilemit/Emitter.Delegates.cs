@@ -37,6 +37,7 @@ sealed partial class Emitter
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
             Bcl("System.Object"));
         SetAttribute(_unitAdapterTB.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _unitAdapterTB;
     }
@@ -48,6 +49,7 @@ sealed partial class Emitter
             TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
             Bcl("System.Object"));
         SetAttribute(_delegateInvokeAdapterTB.SetCustomAttribute,
+            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _delegateInvokeAdapterTB;
     }
@@ -69,7 +71,7 @@ sealed partial class Emitter
         return ft.GetGenericArguments().Any(a => !a.IsGenericParameter && ContainsTypeBuilder(a));
     }
 
-    MethodInfo DelegateInvokeAdapter(Type ft)
+    MethodInfo DelegateInvokeAdapter(Type ft, MethodInfo openInvoke)
     {
         var def = ft.GetGenericTypeDefinition();
         var actual = ft.GetGenericArguments();
@@ -88,17 +90,20 @@ sealed partial class Emitter
             mb.SetParameters(new[] { delegateType }.Concat(invokeParams).ToArray());
             var il = mb.GetILGenerator();
             for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
-            EmitMethod(il, OpCodes.Callvirt, AnchorMethod(delegateType, def.GetMethod("Invoke")));
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
+            EmitMethod(il, OpCodes.Callvirt, AnchorOn(delegateType, openInvoke));
             il.Emit(OpCodes.Ret);
             _delegateInvokeAdapters[key] = mb;
         }
         return mb.MakeGenericMethod(actual);
     }
 
-    void EmitDelegateInvoke(ILGenerator il, Type ft)
+    // `openInvoke` is the DECLARATION the node named; anchoring it onto the call site's constructed delegate is
+    // mechanical, and the adapter arm needs the same declaration for the body it synthesizes.
+    void EmitDelegateInvoke(ILGenerator il, Type ft, MethodInfo openInvoke)
     {
-        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateInvokeAdapter(ft));
-        else EmitMethod(il, OpCodes.Callvirt, InvokeOf(ft));
+        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateInvokeAdapter(ft, openInvoke));
+        else EmitMethod(il, OpCodes.Callvirt, AnchorOn(ft, openInvoke));
     }
 
     // The same PersistedAssemblyBuilder limitation applies to the delegate `.ctor`: it cannot map
@@ -110,7 +115,10 @@ sealed partial class Emitter
     //
     // The helper definition mentions only its own direct generic parameters, which Reflection.Emit can encode;
     // the call site supplies E[]/List<E>/etc. This is strictly an encoding adapter, not delegate selection.
-    MethodInfo DelegateCtorAdapter(Type ft)
+    // The adapter is shared per arity, and so is the OPEN constructor it needs: `Func`N..ctor(object, native int)`
+    // does not vary with the instantiation. The call site has the node, so the reference reaches here rather than
+    // being fetched by signature inside a body that belongs to no node.
+    MethodInfo DelegateCtorAdapter(Type ft, ConstructorInfo openCtor, MethodInfo openInvoke)
     {
         var def = ft.GetGenericTypeDefinition();
         var actual = ft.GetGenericArguments();
@@ -129,18 +137,43 @@ sealed partial class Emitter
             var il = mb.GetILGenerator();
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldarg_1);
-            EmitConstructor(il, OpCodes.Newobj, AnchorConstructor(delegateType,
-                def.GetConstructor(new[] { Bcl("System.Object"), Bcl("System.IntPtr") })));
+            // The declaration came from the node's resolved delegateCtorRef. Re-anchoring that declaration onto
+            // the helper's generic delegate view is mechanical; looking the constructor up again would discard
+            // the very identity the carrier supplied.
+            EmitConstructor(il, OpCodes.Newobj, Sanction(AnchorOn(delegateType, openCtor)));
             il.Emit(OpCodes.Ret);
             _delegateCtorAdapters[key] = mb;
         }
         return mb.MakeGenericMethod(actual);
     }
 
-    void EmitDelegateCtor(ILGenerator il, Type ft)
+    void EmitDelegateCtor(ILGenerator il, Type ft, JsonElement node, JsonElement? targetNode = null)
     {
-        if (NeedsDelegateInvokeAdapter(ft)) EmitMethod(il, OpCodes.Call, DelegateCtorAdapter(ft));
-        else EmitConstructor(il, OpCodes.Newobj, DelegateCtor(ft));
+        var carried = RequiredRef<ConstructorInfo>(node, "delegateCtorRef", "a delegate construction");
+        // The adapter arm calls a method this compilation synthesizes; the direct arm needs the constructed
+        // delegate's own constructor.  Usually that is the natural function type the node names.  A literal lambda
+        // passed to a custom delegate parameter is deliberately rewrapped to the parameter's delegate type, though;
+        // in that case `ft` comes from the already-resolved containing member signature and the natural carrier
+        // cannot name its different constructor. bir2cir therefore carries the selected parameter delegate's ctor
+        // separately; this branch only compares complete physical types and consumes one of the two references.
+        var sameDelegate = SlotParamMatches(carried.DeclaringType, ft);
+        ConstructorInfo target;
+        if (sameDelegate) target = carried;
+        else if (targetNode is JsonElement explicitTarget)
+            target = RequiredRef<ConstructorInfo>(explicitTarget, "delegateCtorRef", "a target delegate construction");
+        else if (PrimaryFromRef(node, "targetDelegateCtorRef") is ConstructorInfo carriedTarget)
+            target = carriedTarget;
+        else
+            throw new InvalidOperationException(
+                $"ilemit: a delegate construction needs '{ft}', but its delegateCtorRef names "
+                + $"'{carried.DeclaringType}' and it carries no targetDelegateCtorRef (#370)");
+        if (NeedsDelegateInvokeAdapter(ft))
+            EmitMethod(il, OpCodes.Call, DelegateCtorAdapter(ft, target,
+                RequiredRef<MethodInfo>(node, "invokeRef", "a delegate construction")));
+        else
+        {
+            EmitConstructor(il, OpCodes.Newobj, target);
+        }
     }
 
     // `static Unit A(<voidDelegate> d, <params>) { d.Invoke(<params>); return Unit.INSTANCE; }` — the void delegate `ft`
@@ -148,23 +181,99 @@ sealed partial class Emitter
     // delegate's Invoke. `invokeRet` is that Invoke return type (must carry a static `INSTANCE` singleton — `kotlin.Unit`);
     // `paramTypes` are the delegate's parameter types (identical for the void and the Unit delegate — only the return
     // differs), forwarded straight through.
-    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes)
+    MethodInfo UnitWrapAdapter(Type ft, Type invokeRet, Type[] paramTypes, FieldInfo singleton, MethodInfo openInvoke)
     {
-        // `invokeRet` is a referenced (baked) `kotlin.Unit` in an app/rt build -> its static INSTANCE reflects directly.
-        // (Were the rt-stdlib itself to ever bind such a delegate while `kotlin.Unit` is still a TypeBuilder, this GetField
-        // would throw a loud NotSupportedException rather than mis-emit — no gate hits it; add a `_types` lookup if it does.)
-        var instF = invokeRet.GetField("INSTANCE", BindingFlags.Public | BindingFlags.Static)
-            ?? throw new NotSupportedException($"cannot reconcile a void lambda into a delegate returning {invokeRet} (no static INSTANCE singleton)");
-        var pTypes = new[] { ft }.Concat(paramTypes).ToArray();
+        // The singleton the conversion's node names. It does not depend on the adapter's arity — it is one static
+        // field of one type — so it rides the node rather than being fetched by string off the return type here.
+        var instF = singleton
+            ?? throw new InvalidOperationException(
+                $"ilemit: reconciling a void lambda into a delegate returning {invokeRet} needs the "
+                + "`unitInstanceRef` its node carries. Every external member arrives named (#370)");
+        // A lambda converted inside a generic method/type can leave the natural delegate and its parameters
+        // mentioning that caller's generic parameters. A sibling helper method cannot capture another method's
+        // `!!0`; give the helper its own parameters, rewrite the whole signature into that frame, then instantiate
+        // the helper back with the caller's exact parameters at the use site. This is the same MethodSpec encoding
+        // pattern as the Func/Action ctor/invoke adapters above, and makes no member-selection decision.
+        var captured = new List<Type>();
+        void Capture(Type type)
+        {
+            if (type.IsGenericParameter)
+            {
+                if (!captured.Any(existing => ReferenceEquals(existing, type))) captured.Add(type);
+                return;
+            }
+            if (type.HasElementType) { Capture(type.GetElementType()); return; }
+            foreach (var argument in type.GetGenericArguments()) Capture(argument);
+        }
+        Capture(ft);
+        Capture(invokeRet);
+        foreach (var parameter in paramTypes) Capture(parameter);
+        // A captured parameter's own constraint can mention another parameter that is absent from the executable
+        // signature (`T : Box<U>` while only T occurs in the delegate). Close the set before defining the helper's
+        // frame so every rewritten constraint refers to a parameter owned by this helper. The identity set in
+        // Capture makes recursive/interdependent constraints terminate.
+        for (var i = 0; i < captured.Count; i++)
+            foreach (var constraint in captured[i].GetGenericParameterConstraints()) Capture(constraint);
+
         var mb = UnitAdapterHolder().DefineMethod("Unit$" + (_unitAdapterCounter++),
-            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig,
-            invokeRet, pTypes);
+            MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
+        var helperParameters = captured.Count == 0
+            ? Array.Empty<GenericTypeParameterBuilder>()
+            : mb.DefineGenericParameters(Enumerable.Range(0, captured.Count).Select(i => "T" + i).ToArray());
+        Type Rewrite(Type type)
+        {
+            if (type.IsGenericParameter)
+            {
+                for (var i = 0; i < captured.Count; i++)
+                    if (ReferenceEquals(captured[i], type)) return helperParameters[i];
+                return type;
+            }
+            if (type.IsByRef) return Rewrite(type.GetElementType()).MakeByRefType();
+            if (type.IsPointer) return Rewrite(type.GetElementType()).MakePointerType();
+            if (type.IsArray)
+            {
+                var element = Rewrite(type.GetElementType());
+                return type.IsSZArray ? element.MakeArrayType() : element.MakeArrayType(type.GetArrayRank());
+            }
+            if (type.IsGenericType && !type.IsGenericTypeDefinition)
+                return ConstructedType(type.GetGenericTypeDefinition(), type.GetGenericArguments().Select(Rewrite).ToArray());
+            return type;
+        }
+        for (var i = 0; i < captured.Count; i++)
+        {
+            var source = captured[i];
+            var helper = helperParameters[i];
+            helper.SetGenericParameterAttributes(
+                source.GenericParameterAttributes & (GenericParameterAttributes.SpecialConstraintMask | GenericParameterAttributes.AllowByRefLike));
+            // Classify the declarations before rewriting them. A constructed constraint rewritten over
+            // GenericTypeParameterBuilder becomes a Reflection.Emit signature type, on which IsInterface is
+            // intentionally unsupported; its source declaration still carries the authoritative kind.
+            var sourceConstraints = source.GetGenericParameterConstraints();
+            static Type ConstraintDeclaration(Type constraint) =>
+                constraint.IsGenericType && !constraint.IsGenericTypeDefinition
+                    ? constraint.GetGenericTypeDefinition()
+                    : constraint;
+            var baseConstraint = sourceConstraints.FirstOrDefault(constraint =>
+                !ConstraintDeclaration(constraint).IsInterface
+                && ConstraintDeclaration(constraint).FullName != "System.ValueType");
+            if (baseConstraint != null) helper.SetBaseTypeConstraint(Rewrite(baseConstraint));
+            var interfaces = sourceConstraints
+                .Where(constraint => ConstraintDeclaration(constraint).IsInterface)
+                .Select(Rewrite).ToArray();
+            if (interfaces.Length > 0) helper.SetInterfaceConstraints(interfaces);
+        }
+        var helperFt = Rewrite(ft);
+        var helperReturn = Rewrite(invokeRet);
+        var helperArgs = paramTypes.Select(Rewrite).ToArray();
+        var pTypes = new[] { helperFt }.Concat(helperArgs).ToArray();
+        mb.SetReturnType(helperReturn);
+        mb.SetParameters(pTypes);
         var il = mb.GetILGenerator();
         for (int i = 0; i < pTypes.Length; i++) il.Emit(OpCodes.Ldarg, i);
-        EmitDelegateInvoke(il, ft);
+        EmitDelegateInvoke(il, helperFt, openInvoke);
         EmitField(il, OpCodes.Ldsfld, instF);
         il.Emit(OpCodes.Ret);
-        return mb;
+        return captured.Count == 0 ? mb : mb.MakeGenericMethod(captured.ToArray());
     }
 
     // Runtime members of delegate TypeBuilders declared by CIR. Reflection.Emit cannot reflect members from an
@@ -183,7 +292,9 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateCtors.TryGetValue(dtb, out var dctor))
             return AnchorConstructor(ft, dctor);
         return (IsGenericInst(ft) && ContainsTypeBuilder(ft))
+            // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
             ? AnchorConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
+            // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
             : ft.GetConstructor(sig);
     }
 
@@ -200,7 +311,9 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var invoke))
             return AnchorMethod(ft, invoke);
         if (IsGenericInst(ft) && ContainsTypeBuilder(ft))
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             return AnchorMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
+        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
         return ft.GetMethod("Invoke");
     }
 
@@ -213,10 +326,12 @@ sealed partial class Emitter
     // param would come back open, but that only feeds the Unit-adapter trigger, where it is rightly not `kotlin.Unit`.
     Type InvokeRetOf(Type ft)
     {
+        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6); this reads its RETURN TYPE, emitting no member token
         if (!IsGenericInst(ft)) return ft.GetMethod("Invoke")?.ReturnType ?? Bcl("System.Void");
         var def = ft.GetGenericTypeDefinition();
         var r = def is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var declared)
             ? declared.ReturnType
+            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             : def.GetMethod("Invoke").ReturnType;
         return r.IsGenericParameter && r.GenericParameterPosition < ft.GetGenericArguments().Length
             ? ft.GetGenericArguments()[r.GenericParameterPosition] : r;

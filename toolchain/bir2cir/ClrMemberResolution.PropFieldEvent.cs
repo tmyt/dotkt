@@ -12,15 +12,14 @@ using DotKt.Bir;
 // accessor with a field fallback; an event's add/remove resolved via an unchecked `GetEvent`), and RE-DERIVED the
 // call/callvirt/constrained dispatch from the reflected accessor. This pass makes bir2cir the sole resolver: it reads
 // the owner off the ref.dll MLC (ResolveOwnerType — null for a LOCAL emitted owner, whose backing field is directly
-// accessible, so that node is LEFT untouched), decides the member KIND, and stamps a `member` discriminator plus, for an
-// ACCESSOR, the resolved accessor NAME + `memberSig` + `dispatch`. ilemit then LINKS the exact accessor (LinkClrMethod,
-// shared with S2) and consumes the carried dispatch — zero member-kind derivation, zero first-pick.
+// accessible, so that node is LEFT untouched), decides the member KIND, and authors the exact scalar memberRef plus
+// dispatch. ilemit consumes those facts one-to-one — zero member-kind derivation, zero first-pick.
 static partial class ClrMemberResolution
 {
     // ---- property get / set --------------------------------------------------------------------
 
     // A clrPropGet/clrPropSet on a .NET (or referenced-DotKt) owner. Resolve the owner's OPEN def off the ref.dll and
-    // classify: a real .NET property -> an ACCESSOR (carry accessor name + memberSig + dispatch); a public FIELD surfaced as a Kotlin
+    // classify: a real .NET property -> an ACCESSOR (carry its scalar memberRef + dispatch); a public FIELD surfaced as a Kotlin
     // property -> `member:"field"` (ilemit does the ldsfld/ldfld + const-literal inline, a mechanical value fetch, not a
     // KIND decision). 0 members = a hard ABI error.
     static void ResolveProp(JsonObject node, bool write)
@@ -44,19 +43,19 @@ static partial class ClrMemberResolution
             RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
             node["member"] = "accessor";
             node["accessor"] = acc.Name;
-            node["memberSig"] = MemberSig(acc.GetParameters());
-            node["memberOwner"] = DeclaringTypeDescriptor(acc);
-            StampMemberRet(node, acc.ReturnType);
+            node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
+            StampResolvedMemberReturn(node, acc.ReturnType);
             if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall);
             return;
         }
         // A genuine public CLR FIELD is a foreign declaration too — `public List<int?> Items` is the same crossing a
         // parameter of that type is — so its declared type is stamped like any other. It reads through `ldfld`
-        // rather than an accessor, which is why it has no `memberSig` and why nothing else here states its type.
+        // rather than an accessor, which is why it has no `resolvedMemberParams` and why nothing else here states its type.
         if (FindFieldMember(open, name, flags) is FieldInfo fld)
         {
             node["member"] = "field";
-            StampMemberRet(node, fld.FieldType);
+            node["memberRef"] = FieldRefJson(fld, open, ownerFqn.Args);
+            StampResolvedMemberReturn(node, fld.FieldType);
             return;
         }
         throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")} — #46 W1-S3)");
@@ -191,8 +190,8 @@ static partial class ClrMemberResolution
 
     // ---- events --------------------------------------------------------------------------------
 
-    // A clrEventAdd/clrEventRemove on a .NET owner. Resolve the owner off the ref.dll, find the EventInfo, and stamp its
-    // add/remove accessor NAME + `memberSig` (the [handlerDelegate] param) + `dispatch`. Replaces ilemit's unchecked
+    // A clrEventAdd/clrEventRemove on a .NET owner. Resolve the owner off the ref.dll, find the EventInfo, and stamp the
+    // add/remove accessor's complete memberRef plus `dispatch`. Replaces ilemit's unchecked
     // `GetEvent(...).GetAddMethod()` (a NullReferenceException on a missing/value-type/constructed-generic event — #113):
     // a missing event is now a hard ABI error here, and the handler delegate type flows from the resolved accessor param.
     static void ResolveEvent(JsonObject node)
@@ -213,10 +212,17 @@ static partial class ClrMemberResolution
         if (acc == null)
             throw new InvalidOperationException($"bir2cir: event '{name}' on '{open}' has no {(add ? "add" : "remove")} accessor (#46 W1-S3)");
         RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
+        // A stored Kotlin function value is re-wrapped in the event's own delegate type.  The accessor declaration
+        // fixes that target type; carry its constructor here so ilemit does not rediscover a member from the delegate
+        // shape.  RetargetToBaseInterface may have projected the owner onto a declaring base interface, so substitute
+        // the handler slot in that final owner frame.
+        var declaringSpec = ReadOwnerNode(node["type"]) as TypeNode.Fqn ?? ownerFqn;
+        var handlerType = SubstOwnerParams(acc.GetParameters().Single().ParameterType,
+            declaringSpec.Args ?? Array.Empty<TypeNode>());
+        ResolveDelegateCtor(node, handlerType);
         node["accessor"] = acc.Name;
-        node["memberSig"] = MemberSig(acc.GetParameters());
-        node["memberOwner"] = DeclaringTypeDescriptor(acc);
-        StampMemberRet(node, acc.ReturnType);
+        node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.EventAccessor, open, ownerFqn.Args);
+        StampResolvedMemberReturn(node, acc.ReturnType);
         if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall: false);
     }
 
@@ -238,7 +244,7 @@ static partial class ClrMemberResolution
     // must go through the public Property/MethodSemantics accessor when one exists. That KIND choice (accessor vs direct field)
     // was ilemit's ExternalPropAccessor; move it here: resolve the owner off the ref.dll (null = a LOCAL owner whose
     // field IS directly accessible -> leave the plain `field` node), and when the external owner exposes the accessor,
-    // stamp `member:"accessor"` + accessor name + memberSig + dispatch so ilemit LINKS it. A genuine public field
+    // stamp `member:"accessor"` + its memberRef + dispatch. A genuine public field
     // (@ClrField) has no accessor -> left as a plain `field` for ilemit's direct ldfld/stfld.
     static void ResolveFieldAccess(JsonObject node, bool write)
     {
@@ -271,15 +277,18 @@ static partial class ClrMemberResolution
                     $"bir2cir: '{ownerFqn.Name}.{name}' is neither a field nor a property accessor on the referenced owner — "
                     + "a cross-assembly property's storage is reachable only through its accessors");
             // A direct external FIELD read/write: its declared type is the foreign declaration this node stands for.
-            if (direct != null) StampMemberRet(node, direct.FieldType);
+            if (direct != null)
+            {
+                node["memberRef"] = FieldRefJson(direct, open, ownerFqn.Args);
+                StampResolvedMemberReturn(node, direct.FieldType);
+            }
             return;
         }
         RetargetToBaseInterface(node, "ownerType", open, acc, ownerFqn);
         node["member"] = "accessor";
         node["accessor"] = acc.Name;
-        node["memberSig"] = MemberSig(acc.GetParameters());
-        node["memberOwner"] = DeclaringTypeDescriptor(acc);
-        StampMemberRet(node, acc.ReturnType);
+        node["memberRef"] = MemberRefJson(acc, MemberRefNode.Kinds.PropertyAccessor, open, ownerFqn.Args);
+        StampResolvedMemberReturn(node, acc.ReturnType);
         node["dispatch"] = Dispatch(acc, open, superCall: false);
     }
 }

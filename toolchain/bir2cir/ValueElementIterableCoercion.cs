@@ -40,7 +40,7 @@ static class ValueElementIterableCoercion
     const string IterableFqn = "kotlin.collections.Iterable";
 
     // What `System.Linq.Enumerable.Cast<object>(IEnumerable)` produces — the STATIC TYPE the wrap below stamps on
-    // itself. Spelled in the CLR vocabulary the wrap is already written in (its `memberSig` names the non-generic
+    // itself. Spelled in the CLR vocabulary the wrap is already written in (its `resolvedMemberParams` names the non-generic
     // `System.Collections.IEnumerable` the same way); BirTypeLowering passes a resolved BCL FQN through unchanged.
     static readonly TypeNode CastResultTn =
         new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { new TypeNode.Fqn("object") });
@@ -91,11 +91,11 @@ static class ValueElementIterableCoercion
                 ["type"] = TypeJson.Fqn("System.Linq.Enumerable"),
                 ["method"] = "Cast",
                 // typeArgs is a document type slot (ilemit MapType-resolves it) -> a structured `{t:fqn}` node.
-                // `memberSig` (W1-S1 #46) is the FIR-resolved member descriptor: `Enumerable.Cast<TResult>(this
+                // `resolvedMemberParams` (W1-S1 #46) is the FIR-resolved member descriptor: `Enumerable.Cast<TResult>(this
                 // IEnumerable source)`'s DECLARED param is the non-generic `System.Collections.IEnumerable` — a
                 // structured TypeNode ilemit exact-matches.
                 ["typeArgs"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "object" } },
-                ["memberSig"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "System.Collections.IEnumerable" } },
+                ["resolvedMemberParams"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "System.Collections.IEnumerable" } },
                 ["args"] = new JsonArray { args[i].DeepClone() },
                 // The wrap RETYPES the operand — `Cast<object>` turns a `List<Int>` into `IEnumerable<object>` — so
                 // the new node is stamped with what IT produces, not with what the value it wraps used to be (spec

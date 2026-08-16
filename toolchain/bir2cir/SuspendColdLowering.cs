@@ -582,13 +582,13 @@ static partial class SuspendColdLowering
             ["recv"] = This(),
             ["name"] = fieldName,
         };
-        JsonObject TcsCall(string method, TypeNode[] memberSig, params JsonNode[] args) => new()
+        JsonObject TcsCall(string method, TypeNode[] resolvedMemberParams, params JsonNode[] args) => new()
         {
             ["k"] = "clrInstance",
             ["type"] = Tw(tcsType),
             ["method"] = method,
             ["recv"] = TcsField(),
-            ["argTypes"] = new JsonArray(memberSig.Select(Tw).ToArray()),
+            ["argTypes"] = new JsonArray(resolvedMemberParams.Select(Tw).ToArray()),
             ["args"] = new JsonArray(args),
             ["ret"] = Tw(BoolTn),
         };
@@ -1358,7 +1358,7 @@ static partial class SuspendColdLowering
                         // `argTypes` method variables necessarily belong to the caller's lexical scope and move with
                         // the body. This matters for a nested generic suspend lambda: its construction is inserted
                         // into the outer SM before this walk rebases the outer method variables.
-                        if (kv.Key is "sig" or "memberSig" or "clrOverrideSig"
+                        if (kv.Key is "sig" or "resolvedMemberParams"
                             || (kv.Key == "argTypes" && kind != "new")) continue;
                         if (kv.Value != null) RebindMethodTypeVariablesToSm(kv.Value, ownerArity);
                     }
@@ -2777,8 +2777,8 @@ static partial class SuspendColdLowering
                         ["ret"] = Tw(awaiterType),
                     };
                 // A GENERIC extension: the plan resolved its type arguments by unifying the declared receiver against
-                // the configured type, and carries that receiver open over `method.tvN` as the `memberSig` ilemit
-                // exact-matches the definition with.
+                // the configured type, and carries that receiver open over `method.tvN` as bir2cir's internal
+                // `resolvedMemberParams` input for exact memberRef resolution.
                 return new JsonObject
                 {
                     ["k"] = "clrGenericStatic",
@@ -2787,7 +2787,7 @@ static partial class SuspendColdLowering
                     ["typeArgs"] = new JsonArray(plan.ConfiguredGetAwaiterExtTypeArgs
                         .Select(t => TypeJson.Write(CloseAwaitTemplate(t, awaitableType as TypeNode.Fqn, methodTypeArgs)))
                         .ToArray()),
-                    ["memberSig"] = new JsonArray { TypeJson.Write(plan.ConfiguredGetAwaiterExtOpenRecv) },
+                    ["resolvedMemberParams"] = new JsonArray { TypeJson.Write(plan.ConfiguredGetAwaiterExtOpenRecv) },
                     ["args"] = new JsonArray { configured },
                     ["ret"] = Tw(awaiterType),
                 };
@@ -2798,7 +2798,7 @@ static partial class SuspendColdLowering
                 if (plan.GetAwaiterExtGeneric)
                 {
                     // clrGenericStatic ExtClass.GetAwaiter<resultTok>(awaitable). W1-S1 (#46): carry the resolved
-                    // member descriptor `memberSig` = the OPEN declared receiver param `Awaitable<T>` (the awaitable
+                    // member descriptor `resolvedMemberParams` = the OPEN declared receiver param `Awaitable<T>` (the awaitable
                     // constructor over the method type-var), so ilemit exact-matches the `GetAwaiter<T>` extension def.
                     var openAwaitable = awaitableType is TypeNode.Fqn af
                         ? new TypeNode.Fqn(
@@ -2813,7 +2813,7 @@ static partial class SuspendColdLowering
                         ["method"] = "GetAwaiter",
                         ["typeArgs"] = new JsonArray(
                             methodTypeArgs.Select(TypeJson.Write).ToArray()),
-                        ["memberSig"] = new JsonArray { TypeJson.Write(openAwaitable) },
+                        ["resolvedMemberParams"] = new JsonArray { TypeJson.Write(openAwaitable) },
                         ["args"] = new JsonArray { task },
                         ["ret"] = Tw(awaiterType),
                     };
@@ -3087,13 +3087,13 @@ static partial class SuspendColdLowering
                 if (coldDeclarationId != null) clr[DeclarationIdentityBinding.Key] = coldDeclarationId;
                 if (isGeneric)
                 {
-                    // clrGeneric* resolves by the structured `memberSig` descriptor (W1-S1 #46). Preserve typeArgs; append
+                    // clrGeneric* resolves by the structured `resolvedMemberParams` descriptor (W1-S1 #46). Preserve typeArgs; append
                     // the cold entry's trailing completion param `Continuation<Any>` to the hot callee's declared params so
                     // ilemit exact-matches the cold entry (which has one extra trailing param), not the hot signature.
                     if (callNode["typeArgs"] is JsonArray gta) clr["typeArgs"] = gta.DeepClone();
-                    var ms = (callNode["memberSig"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
+                    var ms = (callNode["resolvedMemberParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
                     ms.Add(ContAny());
-                    clr["memberSig"] = ms;
+                    clr["resolvedMemberParams"] = ms;
                 }
                 else
                 {
@@ -3295,8 +3295,8 @@ static partial class SuspendColdLowering
             };
             if (!_baseIsLocal)
             {
-                invoke["clrOverride"] = Tn(BaseContinuationImplFqn);
-                invoke["clrOverrideRet"] = Tw(AnyTn);
+                invoke["pendingOverrideOwner"] = Tn(BaseContinuationImplFqn);
+                invoke["pendingOverrideReturn"] = Tw(AnyTn);
             }
 
             var methods = new JsonArray { invoke };
@@ -3392,8 +3392,8 @@ static partial class SuspendColdLowering
             };
             if (!_baseIsLocal)
             {
-                invoke["clrOverride"] = Tn(BaseContinuationImplFqn);
-                invoke["clrOverrideRet"] = Tw(AnyTn);
+                invoke["pendingOverrideOwner"] = Tn(BaseContinuationImplFqn);
+                invoke["pendingOverrideReturn"] = Tw(AnyTn);
             }
 
             var methods = new JsonArray { invoke };
@@ -3454,7 +3454,7 @@ static partial class SuspendColdLowering
         //                 -> sm = new SM(captures..., completion); sm.<p0> = args[0]; …; sm.<pN-1> = args[N-1]; return sm
         // Matches BaseContinuationImpl.create's CLR ABI: params (Continuation<*> existential) / (object,
         // Continuation<*> existential) / (object[], Continuation<*> existential), return Continuation<Unit>.
-        // ilemit binds the base slot by the bir2cir-authored clrOverrideSig, so these physical params must match.
+        // bir2cir resolves these physical params to one clrOverrideRef before ilemit sees the declaration.
         IEnumerable<JsonObject> CreateMethods()
         {
             if (_arity == 0)
@@ -3592,8 +3592,8 @@ static partial class SuspendColdLowering
             };
             if (!_baseIsLocal)
             {
-                m["clrOverride"] = Tn(BaseContinuationImplFqn);
-                m["clrOverrideRet"] = ContUnit();
+                m["pendingOverrideOwner"] = Tn(BaseContinuationImplFqn);
+                m["pendingOverrideReturn"] = ContUnit();
             }
             return m;
         }

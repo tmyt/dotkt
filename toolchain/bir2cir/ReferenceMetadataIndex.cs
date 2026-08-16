@@ -34,6 +34,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinPropertyAccessorAttr = "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute";
     const string KotlinSourceMethodAttr = "DotKt.Runtime.CompilerServices.KotlinSourceMethodAttribute";
     const string KotlinDeclarationIdentityAttr = "DotKt.Runtime.CompilerServices.KotlinDeclarationIdentityAttribute";
+    const string KotlinConstructorAdapterAttr = "DotKt.Runtime.CompilerServices.KotlinConstructorAdapterAttribute";
     const string KotlinExtensionCoreAttr = "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute";
     const string KotlinStaticCarrierAttr = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
     const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
@@ -144,6 +145,46 @@ sealed partial class ReferenceMetadataIndex
     // ownerFqn -> declared parameter count -> the ctor declarations of that arity (#86 D1). A list, because a
     // same-arity overload set must be REFUSED rather than resolved by arity alone.
     readonly Dictionary<string, Dictionary<int, List<CtorBinding>>> _ctorsByOwner = new(StringComparer.Ordinal);
+    readonly Dictionary<string, List<AliasConstructorAdapter>> _aliasConstructorAdaptersByOwner =
+        new(StringComparer.Ordinal);
+
+    public bool TryAliasConstructorAdapter(
+        string owner, TypeNode[] signature, TypeNode[] ownerArgs, out AliasConstructorAdapter adapter)
+    {
+        adapter = null;
+        owner = BareOwnerFqn(owner);
+        if (!_aliasConstructorAdaptersByOwner.TryGetValue(owner, out var declared)) return false;
+        var matches = declared
+            .Select(candidate => AliasConstructorDelegationExpansion.Specialize(candidate, ownerArgs))
+            .Where(candidate => SameTypeSequence(candidate.Signature, signature))
+            .GroupBy(AliasAdapterKey, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        if (matches.Length > 1)
+            throw new InvalidOperationException(
+                $"conflicting constructor-adapter metadata for alias '{owner}' signature "
+                + $"({string.Join(", ", signature.Select(TypeNode.ToJson))})");
+        if (matches.Length == 0) return false;
+        adapter = matches[0];
+        return true;
+    }
+
+    static bool SameTypeSequence(IReadOnlyList<TypeNode> left, IReadOnlyList<TypeNode> right)
+    {
+        if (left.Count != right.Count) return false;
+        for (var i = 0; i < left.Count; i++) if (left[i] != right[i]) return false;
+        return true;
+    }
+
+    static string AliasAdapterKey(AliasConstructorAdapter adapter) => new JsonObject
+    {
+        ["parameters"] = new JsonArray(adapter.Parameters
+            .Select(parameter => (JsonNode)JsonValue.Create(parameter)).ToArray()),
+        ["signature"] = new JsonArray(adapter.Signature.Select(TypeJson.Write).ToArray()),
+        ["statements"] = adapter.Statements.DeepClone(),
+        ["arguments"] = adapter.Arguments.DeepClone(),
+        ["terminalSignature"] = new JsonArray(adapter.TerminalSignature.Select(TypeJson.Write).ToArray()),
+    }.ToJsonString();
     // Reference-owner hierarchy in BIR's dotted Kotlin vocabulary.  Calls retain their Kotlin
     // receiver owner in BIR; inherited CLR MemberRefs are selected later by bir2cir, so that pass
     // needs the same constructed base/interface graph for referenced types as it has for local CIR
@@ -378,6 +419,13 @@ sealed partial class ReferenceMetadataIndex
                     _ctorsByOwner[c.Owner] = byArity = new Dictionary<int, List<CtorBinding>>();
                 if (!byArity.TryGetValue(c.ParamCount, out var ctors)) byArity[c.ParamCount] = ctors = new List<CtorBinding>();
                 ctors.Add(c);
+            }
+            foreach (var adapter in asm.DotKt.AliasConstructorAdapters)
+            {
+                var owner = BareOwnerFqn(adapter.Owner);
+                if (!_aliasConstructorAdaptersByOwner.TryGetValue(owner, out var adapters))
+                    _aliasConstructorAdaptersByOwner[owner] = adapters = new List<AliasConstructorAdapter>();
+                adapters.Add(adapter.Adapter);
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ExactPhysicalTypeByDottedName)
@@ -1132,6 +1180,34 @@ sealed partial class ReferenceMetadataIndex
 
     // The shared MLC probe (cache + candidate spellings + forwarder collapse) — the caller applies the owner-universe
     // policy (ResolveNetType excludes kotlin.*/dotkt$ synthetics/local; ResolveRefType excludes only the latter two).
+    /// <summary>
+    /// The type named by <paramref name="fqn"/> as DECLARED BY a specific reference assembly (#370). An applied
+    /// external attribute may state its declaring scope precisely because the FQN alone is ambiguous — a
+    /// compiler-synthesized attribute can share it with a private lookalike — so the stated scope selects
+    /// rather than the ordinary probe guessing.
+    /// </summary>
+    public Type ResolveRefTypeIn(string fqn, string assemblySimpleName)
+    {
+        if (string.IsNullOrEmpty(fqn) || string.IsNullOrEmpty(assemblySimpleName)) return null;
+        EnsureNetMlc();
+        if (_netMlc == null) return null;
+        Type found = null;
+        foreach (var asm in _netRefAsms)
+        {
+            if (!string.Equals(asm.GetName().Name, assemblySimpleName, StringComparison.OrdinalIgnoreCase)) continue;
+            var match = SafeGetType(asm, fqn);
+            if (match == null) continue;
+            // Two references answering to one simple name is an ambiguity, not a race to be first: the whole
+            // point of stating the scope was to name ONE declaration. Every sibling resolver in this file
+            // refuses the same way.
+            if (found != null && found != match)
+                throw new InvalidOperationException(
+                    $"bir2cir: type '{fqn}' is defined by more than one reference named '{assemblySimpleName}'");
+            found = match;
+        }
+        return found;
+    }
+
     Type ProbeNetType(string fqn, int genericArity)
     {
         // CLR permits a non-generic and one or more generic TypeDefs to share the same source-facing FQN (Task and
@@ -1199,7 +1275,175 @@ sealed partial class ReferenceMetadataIndex
         catch { _netMlc = null; }
     }
 
-    public void DisposeNet() { try { _netMlc?.Dispose(); } catch { } _netMlc = null; }
+    MetadataLoadContext _physicalMlc;
+    Assembly _physicalStdlib; bool _physicalStdlibInit;
+
+    /// <summary>
+    /// The SHIPPED declaration of a member resolved against the reference twin, or null when there is none or it
+    /// cannot be identified unambiguously.
+    /// </summary>
+    /// <remarks>
+    /// The reference twin declares the Kotlin surface and the runtime twin declares the physical shape; a member
+    /// reference must state the latter, because that is the assembly the emitted reference is scoped to and the
+    /// one the emitter resolves against. Deriving the physical shape from the surface means undoing every erasure
+    /// the reference build applied — the arg-position variance collapse, the generic-classifier and contravariant
+    /// collapses, and a value type's nullability, which the surface cannot express at all because `kotlin.Float`
+    /// is a class there and `Nullable&lt;class&gt;` is not a type. Each of those was found by a build failing on it.
+    ///
+    /// So read the shipped declaration instead of reconstructing it. Selection stays here, where it belongs, and
+    /// refuses rather than guesses: same declaring type name, same member name, same generic arity, same parameter
+    /// count, and exactly one candidate. An ambiguous or absent twin falls back to the reflected member, which is
+    /// correct for every reference whose twin is itself (a BCL assembly is its own physical form).
+    /// </remarks>
+    readonly Dictionary<MemberInfo, MemberInfo> _shippedCache = new();
+
+    public MethodBase PhysicalTwinOf(MethodBase member, Type declaringDef)
+    {
+        if (_shippedCache.TryGetValue(member, out var cached)) return cached as MethodBase;
+        MethodBase found = null;
+        try { found = FindShippedMethod(member, declaringDef); } catch { found = null; }
+        _shippedCache[member] = found;
+        return found;
+    }
+
+    MethodBase FindShippedMethod(MethodBase member, Type declaringDef)
+    {
+        var owner = PhysicalOwnerOf(declaringDef);
+        if (owner == null) return null;
+        var arity = member.IsGenericMethod ? member.GetGenericArguments().Length : 0;
+        var want = member.GetParameters();
+        var candidates = (member is ConstructorInfo
+                // A type initializer is a constructor to reflection and never a member anything references, so it
+                // would otherwise make every parameterless constructor of a type with static state ambiguous.
+                ? owner.GetConstructors(MemberProbeFlags).Cast<MethodBase>().Where(c => !c.IsStatic)
+                : owner.GetMethods(MemberProbeFlags).Cast<MethodBase>()
+                    .Where(m => string.Equals(m.Name, member.Name, StringComparison.Ordinal)))
+            // Metadata parameter counts exclude `this`, so without the static bit an instance member and a static
+            // one of the same name and arity land in the same bucket and either could answer for the other.
+            .Where(m => m.IsStatic == member.IsStatic
+                && m.GetParameters().Length == want.Length
+                && (m.IsGenericMethod ? m.GetGenericArguments().Length : 0) == arity)
+            .ToList();
+        if (candidates.Count == 1) return candidates[0];
+        if (candidates.Count == 0) return null;
+        // Same name, same shape, several of them — a facade like `maxOrNull` has one per element type. Choose by
+        // the one thing both twins spell alike: each parameter's alias-resolved type identity. This picks WHICH
+        // declaration is meant; the signature still comes from the declaration itself, so a position the surface
+        // cannot express is taken from the shipped side either way.
+        var key = string.Join(",", want.Select(p => TwinStableKey(p.ParameterType)));
+        var matched = candidates
+            .Where(m => string.Join(",", m.GetParameters().Select(p => TwinStableKey(p.ParameterType))) == key)
+            .ToList();
+        return matched.Count == 1 ? matched[0] : null;
+    }
+
+    /// <summary>A type's identity in the spelling both twins share: the alias resolved, the shape kept.</summary>
+    string TwinStableKey(Type t)
+    {
+        if (t == null) return "?";
+        if (t.IsByRef) return TwinStableKey(t.GetElementType()) + "&";
+        if (t.IsPointer) return TwinStableKey(t.GetElementType()) + "*";
+        if (t.IsArray) return TwinStableKey(t.GetElementType()) + "[" + t.GetArrayRank() + "]";
+        if (t.IsGenericParameter) return "!" + t.GenericParameterPosition;
+        var def = t.IsGenericType && !t.IsGenericTypeDefinition ? t.GetGenericTypeDefinition() : t;
+        var name = string.Join(".", (def.FullName ?? def.Name).Split('+')
+            .Select(seg => { var i = seg.IndexOf('`'); return i >= 0 ? seg[..i] : seg; }));
+        if (Aliases.TryGetValue(name, out var bcl)) name = bcl;
+        var args = t.IsGenericType && !t.IsGenericTypeDefinition
+            ? "<" + string.Join(",", t.GetGenericArguments().Select(TwinStableKey)) + ">" : "";
+        return name + args;
+    }
+
+    public FieldInfo PhysicalTwinOf(FieldInfo field, Type declaringDef)
+    {
+        if (_shippedCache.TryGetValue(field, out var cached)) return cached as FieldInfo;
+        FieldInfo found = null;
+        try
+        {
+            var owner = PhysicalOwnerOf(declaringDef);
+            var hits = owner?.GetFields(MemberProbeFlags)
+                .Where(f => string.Equals(f.Name, field.Name, StringComparison.Ordinal)
+                    && f.IsStatic == field.IsStatic).ToList();
+            found = hits is { Count: 1 } ? hits[0] : null;
+        }
+        catch { found = null; }
+        _shippedCache[field] = found;
+        return found;
+    }
+
+    const BindingFlags MemberProbeFlags =
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+
+    /// <summary>
+    /// The shipped form of a declaring type, or null when this type has none.
+    /// </summary>
+    /// <remarks>
+    /// The declaring type must be the ALIAS-RESOLVED one, the same the reference names. An @ClrTypeAlias'd builtin
+    /// resolves to its BCL twin and is therefore its own shipped form; looking the raw Kotlin carrier up in the
+    /// runtime stdlib instead would read a different type's members into a reference scoped to the BCL.
+    ///
+    /// Which assemblies HAVE a separate shipped form is the catalog's knowledge, asked rather than restated: a
+    /// second twin pair, or a rename, then needs no edit here and cannot disagree with the mapping the reference's
+    /// own assembly name comes from.
+    /// </remarks>
+    Type PhysicalOwnerOf(Type declaringDef)
+    {
+        if (declaringDef == null) return null;
+        var asm = PhysicalStdlibAssembly();
+        if (asm == null || declaringDef.Assembly?.GetName()?.Name is not string owning
+            || string.Equals(ManagedReferenceCatalog.PhysicalAssemblyName(owning), owning, StringComparison.Ordinal))
+            return null;
+        var def = declaringDef.IsGenericType && !declaringDef.IsGenericTypeDefinition
+            ? declaringDef.GetGenericTypeDefinition() : declaringDef;
+        try { return asm.GetType(def.FullName, throwOnError: false); } catch { return null; }
+    }
+
+    /// <summary>
+    /// The shipped declaration of a type named only by the assembly that ships it. A canonical synthetic
+    /// interface is emitted once into the runtime stdlib and referenced from there; the reference twin
+    /// describes the Kotlin surface and has no name for it at all, so the reference surface can never
+    /// resolve one. Naming a slot on such a type therefore has to read the twin that ships it — the same
+    /// type the emitter resolves, reached by the same bare name.
+    /// </summary>
+    public Type PhysicalTypeNamed(string name, int arity = 0)
+    {
+        if (string.IsNullOrEmpty(name)) return null;
+        var asm = PhysicalStdlibAssembly();
+        if (asm == null) return null;
+        try
+        {
+            return asm.GetType(name, throwOnError: false)
+                ?? (arity > 0 ? asm.GetType($"{name}`{arity}", throwOnError: false) : null);
+        }
+        catch { return null; }
+    }
+
+    Assembly PhysicalStdlibAssembly()
+    {
+        if (_physicalStdlibInit) return _physicalStdlib;
+        _physicalStdlibInit = true;
+        var path = _compileRefs?.PhysicalStdlibPath;
+        if (string.IsNullOrEmpty(path)) return null;
+        try
+        {
+            _physicalMlc = _compileRefs.CreatePhysicalStdlibMetadataLoadContext();
+            _physicalStdlib = _physicalMlc?.LoadFromAssemblyPath(path);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"bir2cir: warning: could not read the shipped stdlib twin {path} — {ex.GetType().Name}: {ex.Message}");
+            _physicalStdlib = null;
+        }
+        return _physicalStdlib;
+    }
+
+    public void DisposeNet()
+    {
+        try { _physicalMlc?.Dispose(); } catch { }
+        _physicalMlc = null;
+        try { _netMlc?.Dispose(); } catch { }
+        _netMlc = null;
+    }
 
     public int OwnerArity(string ownerFqn)
     {
@@ -2024,40 +2268,173 @@ sealed partial class ReferenceMetadataIndex
     // erasure seam (`generateSequence(seed: T?, next: (T)->T?)` reflects as `T, Func<T,object>`). Method generic arity
     // + parameter count normally identify one overload; when several remain, accept an exact/ABI-equivalent semantic
     // shape only. Identical duplicate declarations collapse to one structural shape. No first-pick is performed.
-    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity,
-        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature)
+    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity, bool isStatic,
+        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature) =>
+        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, isStatic, callSignature, out declarationSignature,
+            out _, out _);
+
+    /// <summary>
+    /// As above, and also hands back the DECLARATION it selected (#370). The parameter vector was the only
+    /// thing this ever returned, which left the caller describing a member it had in its hand — and a
+    /// description has to be turned back into a member by whoever reads it.
+    /// </summary>
+    public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity, bool isStatic,
+        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature,
+        out MethodInfo declaration, out Type declaringOwner)
     {
         declarationSignature = null;
+        declaration = null;
+        declaringOwner = null;
         if (ownerFqn == null || name == null || callSignature == null)
             return false;
         var bareOwner = BareOwnerFqn(ownerFqn);
         var ownerArity = _ownerArity.TryGetValue(bareOwner, out var oa) ? oa : 0;
-        var owner = ResolveRefType(bareOwner, ownerArity);
+        // A hoisted alias helper exists only in the assembly that ships it — the reference twin carries the alias
+        // implementation this pass replaced, never the static it was hoisted into — so the reference surface has no
+        // name for it and never will. Read the declaration from the shipped twin, the assembly the call links against.
+        // An already-physical owner is authoritative as written. A semantic dotted nested owner is projected through
+        // the trusted DotKt type index to its exact `Outer`N+Inner`M` metadata identity — never guessed by trying
+        // separator/arity combinations. The same exact name is tried in both twins because a shipped-only helper can
+        // legitimately be absent from the reference surface.
+        var exactOwner = ExactPhysicalTypeName(ownerFqn);
+        // A bare semantic name with generic arguments must not win a same-named non-generic declaration
+        // (`EventHandler` beside `EventHandler<T>`). Only a spelling that already encodes physical arity/nesting is
+        // authoritative before the arity-aware probes.
+        var physicalSpelling = ownerFqn.Contains('`') || ownerFqn.Contains('+');
+        var owner = (physicalSpelling || ownerArity == 0 ? ResolveRefType(ownerFqn) : null)
+            ?? (exactOwner == null ? null : ResolveRefType(exactOwner))
+            ?? ResolveRefType(bareOwner, ownerArity)
+            ?? PhysicalTypeNamed(ownerFqn)
+            ?? (exactOwner == null ? null : PhysicalTypeNamed(exactOwner))
+            ?? PhysicalTypeNamed(bareOwner, ownerArity);
         if (owner == null)
             return false;
-        var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-            .Where(m => m.Name == name && m.GetGenericArguments().Length == methodArity
-                && m.GetParameters().Length == callSignature.Count)
-            .Select(m => m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray())
-            .Where(ps => ps.All(p => p != null))
+        // Instance as well as static: a call on a referenced Kotlin owner — every method on an `object`, reached
+        // through its INSTANCE — is as external as a static one, and the receiver rides the node's `recv` rather
+        // than the signature, so the two searches differ only in which members they look at.
+        var candidates = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.Static | BindingFlags.Instance)
+            .Where(m => m.IsStatic == isStatic && m.Name == name && m.GetGenericArguments().Length == methodArity
+                && m.GetParameters().Length == callSignature.Count
+                && (m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly))
+            .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
+            .Where(c => c.ps.All(p => p != null))
             .ToList();
+        // A member the owner reaches through an interface it implements is declared on that interface, not on the
+        // owner — ArrayDeque<T> states addLast itself but Add, Insert, RemoveAt and set_Item come from IList<T>.
+        // The reference is to the declaring type either way, so when the owner answers for nothing, ask the
+        // interfaces it implements. Only when the owner itself has no candidate, so an owner-declared member is
+        // never displaced by an interface one.
+        if (candidates.Count == 0)
+            candidates = owner.GetInterfaces()
+                .SelectMany(i => i.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                .Where(m => m.IsStatic == isStatic && m.Name == name && m.GetGenericArguments().Length == methodArity
+                    && m.GetParameters().Length == callSignature.Count
+                    && (m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly))
+                .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
+                .Where(c => c.ps.All(p => p != null))
+                .ToList();
+        // The call may already have been renamed to its PHYSICAL spelling while the reference surface still
+        // describes the Kotlin one — ArrayDeque implements MutableList<T> there and has no Add at all, though the
+        // assembly that ships it does. When the reference surface knows the owner but not the member, ask the
+        // shipped twin, which is the assembly the call links against.
+        if (candidates.Count == 0 && PhysicalTypeNamed(bareOwner, ownerArity) is { } shipped && shipped != owner)
+        {
+            owner = shipped;
+            candidates = shipped.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
+                    | BindingFlags.Static | BindingFlags.Instance)
+                .Where(m => m.IsStatic == isStatic && m.Name == name && m.GetGenericArguments().Length == methodArity
+                    && m.GetParameters().Length == callSignature.Count
+                    && (m.IsPublic || m.IsFamily || m.IsFamilyOrAssembly))
+                .Select(m => (method: m, ps: m.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray()))
+                .Where(c => c.ps.All(p => p != null))
+                .ToList();
+        }
         if (candidates.Count == 0)
             return false;
 
-        var exact = candidates.Where(ps => ps.SequenceEqual(callSignature)).ToList();
+        var exact = candidates.Where(c => c.ps.SequenceEqual(callSignature)).ToList();
         var compatible = exact.Count > 0
             ? exact
-            : candidates.Where(ps => ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
+            : candidates.Where(c => c.ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
                 .ToList();
         var source = compatible.Count > 0 ? compatible : candidates;
+        // Type.GetMethods includes inherited declarations.  When this exact owner declares a matching member, normal
+        // CLR member lookup selects that declaration (including a `new` forwarding slot) rather than treating the
+        // hidden base member as a second overload.  Keep inherited candidates only when the stated owner has no
+        // matching declaration of its own.  This choice is based on metadata ownership, not source names or order.
+        var declaredHere = source.Where(c => c.method.DeclaringType == owner).ToList();
+        if (declaredHere.Count > 0) source = declaredHere;
+        // Declarations that are the SAME MEMBER collapse to one — the duplicate expect/actual rows a merged
+        // stdlib produces. Sameness is judged on the physical metadata identity, not on the rendered parameter
+        // vector: that vector strips generic arity, flattens `+` nesting, drops array rank and knows nothing of
+        // custom modifiers, so grouping by it would merge declarations that ARE different members and then
+        // hand one of them over as an exact identity. Two distinct members still refuse, which is the point.
         var shapes = source
-            .GroupBy(ps => string.Join(",", ps.Select(TypeNode.ToJson)), StringComparer.Ordinal)
+            .GroupBy(c => c.method.DeclaringType?.FullName + "|" + MetadataSignatureKey(c.method), StringComparer.Ordinal)
             .Select(g => g.First())
             .ToList();
         if (shapes.Count != 1)
             return false;
-        declarationSignature = shapes[0];
+        declarationSignature = shapes[0].ps;
+        declaration = shapes[0].method;
+        declaringOwner = owner;
         return true;
+    }
+
+    // A member's physical signature as metadata states it: the parameter and return types by their own names,
+    // with by-ref, pointer, array rank and custom modifiers intact. Used to decide whether two declarations are
+    // one member; the document's rendered vector cannot answer that because it is lossy in exactly those places.
+    static string MetadataSignatureKey(MethodInfo method)
+    {
+        var sb = new StringBuilder();
+        // The calling convention is part of the signature: a vararg member is not the fixed-arity one beside it.
+        sb.Append(method.Name).Append('`').Append(method.GetGenericArguments().Length)
+          .Append('[').Append(method.CallingConvention).Append("](");
+        foreach (var p in method.GetParameters())
+        {
+            AppendMetadataSlot(sb, p.ParameterType, p.GetRequiredCustomModifiers(), p.GetOptionalCustomModifiers());
+            sb.Append(',');
+        }
+        sb.Append("):");
+        // The RETURN carries modifiers too — `ref readonly` is modreq(InAttribute) there and nowhere else — so
+        // omitting them merges a member with the one it differs from only in that.
+        var ret = method.ReturnParameter;
+        AppendMetadataSlot(sb, method.ReturnType,
+            ret?.GetRequiredCustomModifiers() ?? Type.EmptyTypes,
+            ret?.GetOptionalCustomModifiers() ?? Type.EmptyTypes);
+        return sb.ToString();
+    }
+
+    static void AppendMetadataSlot(StringBuilder sb, Type t, Type[] required, Type[] optional)
+    {
+        AppendMetadataType(sb, t);
+        foreach (var m in required) sb.Append(" modreq(").Append(m.FullName).Append(')');
+        foreach (var m in optional) sb.Append(" modopt(").Append(m.FullName).Append(')');
+    }
+
+    static void AppendMetadataType(StringBuilder sb, Type t)
+    {
+        if (t == null) { sb.Append("<null>"); return; }
+        if (t.IsByRef) { AppendMetadataType(sb, t.GetElementType()); sb.Append('&'); return; }
+        if (t.IsPointer) { AppendMetadataType(sb, t.GetElementType()); sb.Append('*'); return; }
+        if (t.IsArray)
+        {
+            AppendMetadataType(sb, t.GetElementType());
+            int rank; try { rank = t.GetArrayRank(); } catch { rank = 1; }
+            bool sz; try { sz = t.IsSZArray; } catch { sz = rank == 1; }
+            // `T[]` and `T[*]` are different types at the same rank, so the key has to say which.
+            sb.Append(sz ? "[]" : "[*" + rank + "]");
+            return;
+        }
+        if (t.IsGenericParameter) { sb.Append(t.DeclaringMethod != null ? "!!" : "!").Append(t.GenericParameterPosition); return; }
+        sb.Append(t.FullName ?? t.Name);
+        if (t.IsGenericType && !t.IsGenericTypeDefinition)
+        {
+            sb.Append('<');
+            foreach (var a in t.GetGenericArguments()) { AppendMetadataType(sb, a); sb.Append(','); }
+            sb.Append('>');
+        }
     }
 
     // BIR's resolved Kotlin descriptor can retain semantic nullability that the metadata-only ref declaration has
@@ -2066,19 +2443,31 @@ sealed partial class ReferenceMetadataIndex
     static bool DeclarationDescribesCall(TypeNode declaration, TypeNode call)
     {
         if (declaration == call) return true;
+        // A star projection states no bound, so it describes whatever the declaration says — the erasure the
+        // reference twin shows as `object` is one such answer, not a different type. Without this a
+        // Comparable<*> selector could not meet compareBy's Comparable<object> parameter.
+        if (call is TypeNode.Star) return true;
         if (declaration is TypeNode.Oblivious dOb)
             return DeclarationDescribesCall(dOb.Of, call);
         if (call is TypeNode.Oblivious cOb)
             return DeclarationDescribesCall(declaration, cOb.Of);
         if (call is TypeNode.Nullable cNull)
         {
-            if (declaration is TypeNode.Tv dt && cNull.Of == dt) return true;
-            if (declaration is TypeNode.Fqn df && cNull.Of is TypeNode.Fqn cf)
-                return DeclarationDescribesCall(df, cf);
+            // Nullability of a REFERENCE slot is not part of CLR identity, so a call stating T? still describes a
+            // declaration of T whatever kind T is. This used to unwrap only for an Fqn or a type variable, which
+            // left a nullable ARRAY — every `UIntArray?` receiver of a _UArraysKt extension — matching nothing.
+            if (declaration is not TypeNode.Nullable)
+                return DeclarationDescribesCall(declaration, cNull.Of);
         }
         if (declaration is TypeNode.Fqn { Args: null } erased
             && ParamKey(erased) == "obj"
             && call is TypeNode.Nullable { Of: TypeNode.Tv })
+            return true;
+        // A Kotlin primitive-array CLASS and the CLR array it IS are one type under two spellings, and which one
+        // arrives here depends only on how far the call has been lowered — a call still stating kotlin.IntArray
+        // meets a declaration the reference twin reflects as int[]. The kinds differ, so no same-kind arm below
+        // can see them, and ParamKey is already the single place that knows the two are the same type.
+        if (declaration is TypeNode.Array != call is TypeNode.Array && ParamKey(declaration) == ParamKey(call))
             return true;
         if (declaration is TypeNode.Fqn dfqn && call is TypeNode.Fqn cfqn)
         {
@@ -3525,6 +3914,9 @@ sealed partial class ReferenceMetadataIndex
                     {
                         if (CallableDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
+                        if (dotKtAuthored && AliasConstructorAdapterOf(
+                                ctor.GetCustomAttributesData(), ctor.DeclaringType?.Assembly) is { } adapter)
+                            metadata.AliasConstructorAdapters.Add(new(DottedFqn(ownerFqn), adapter));
                         // #86 D1 — a `new`'s arguments fill the constructor's declaration slots, so the ctor's shape is
                         // indexed exactly as a method's is. `Cell<T>(x: T?)` erases to `.ctor(object)` and its carrier
                         // holds the pre-erasure `T?`.
@@ -3985,6 +4377,54 @@ sealed partial class ReferenceMetadataIndex
     {
         if (type.DeclaringType != null) return ExactPhysicalMetadataName(type.DeclaringType) + "+" + type.Name;
         return string.IsNullOrEmpty(type.Namespace) ? type.Name : type.Namespace + "." + type.Name;
+    }
+
+    static AliasConstructorAdapter AliasConstructorAdapterOf(
+        IList<CustomAttributeData> attributes, Assembly declaringAssembly)
+    {
+        if (declaringAssembly == null) return null;
+        var carrier = attributes.FirstOrDefault(candidate =>
+            candidate.AttributeType.FullName == KotlinConstructorAdapterAttr
+            && candidate.AttributeType.Assembly == declaringAssembly
+            && HasAttribute(candidate.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr));
+        if (carrier == null) return null;
+        try
+        {
+            if (carrier.ConstructorArguments.Count != 2)
+                throw new FormatException("constructor-adapter carrier does not have (version, bytes)");
+            var version = carrier.ConstructorArguments[0].Value as string
+                ?? throw new FormatException("constructor-adapter carrier version is not a string");
+            var payload = BirCarrier.DecodeBody(
+                version, ReadByteArrayArg(carrier.ConstructorArguments[1])) as JsonObject
+                ?? throw new FormatException("constructor-adapter carrier body is not an object");
+            var parameters = (payload["parameters"] as JsonArray)?.Select(node =>
+                    (node as JsonValue)?.GetValue<string>()
+                    ?? throw new FormatException("constructor-adapter parameter is not a string"))
+                .ToArray() ?? throw new FormatException("constructor-adapter carrier has no parameters");
+            var signature = ReadCarrierTypes(payload, "signature");
+            var statements = payload["statements"] as JsonArray
+                ?? throw new FormatException("constructor-adapter carrier has no statements");
+            var arguments = payload["arguments"] as JsonArray
+                ?? throw new FormatException("constructor-adapter carrier has no arguments");
+            var terminal = ReadCarrierTypes(payload, "terminalSignature");
+            if (parameters.Length != signature.Length)
+                throw new FormatException("constructor-adapter parameter/signature lengths differ");
+            return new AliasConstructorAdapter(
+                parameters, signature, (JsonArray)statements.DeepClone(),
+                (JsonArray)arguments.DeepClone(), terminal);
+        }
+        catch (Exception ex) when (ex is not InvalidDataException)
+        {
+            throw new InvalidDataException("malformed trusted constructor-adapter metadata", ex);
+        }
+    }
+
+    static TypeNode[] ReadCarrierTypes(JsonObject payload, string key)
+    {
+        if (payload[key] is not JsonArray values)
+            throw new FormatException($"constructor-adapter carrier has no {key}");
+        return values.Select(TypeJson.Read).Select(type => type
+            ?? throw new FormatException($"constructor-adapter {key} contains no structured type")).ToArray();
     }
 
     // A reflected byte[] ctor argument materializes under MetadataLoadContext as an IReadOnlyList<CustomAttributeTypedArgument>
@@ -5166,6 +5606,7 @@ sealed class ReferenceDotKtMetadata
     public readonly List<MemberBinding> MemberBindings = new();                           // per-member @ClrIntrinsic + shape
     public readonly List<MethodImplBinding> MethodImplBindings = new();                   // trusted exact accessor bridge -> CLR slot
     public readonly List<CtorBinding> CtorBindings = new();                               // per-ctor declaration shape (#86 D1)
+    public readonly List<ReferencedAliasConstructorAdapter> AliasConstructorAdapters = new();
     public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ExactPhysicalTypeByDottedName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
@@ -5267,3 +5708,5 @@ sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string
 // parameters retained; `NullableGenericParams[i]` is the pre-erasure `[KotlinNullableGeneric]` carrier of that slot
 // when it has one.
 sealed record CtorBinding(string Owner, int ParamCount, TypeNode[] ParamTypeNodes, TypeNode[] NullableGenericParams);
+
+sealed record ReferencedAliasConstructorAdapter(string Owner, AliasConstructorAdapter Adapter);

@@ -1,0 +1,15 @@
+{
+  "methods": [{
+    "name": "probe",
+    "params": [],
+    "ret": { "t": "fqn", "name": "void" },
+    "body": [{
+      "k": "exprStmt",
+      "expr": {
+        "k": "new",
+        "type": { "t": "fqn", "name": "External.Widget" },
+        "args": []
+      }
+    }]
+  }]
+}

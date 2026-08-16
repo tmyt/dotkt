@@ -54,7 +54,7 @@ partial class Emitter
         var ctor = tb.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, new Type[] { iterClosed });
         var cil = ctor.GetILGenerator();
         cil.Emit(OpCodes.Ldarg_0);
-        EmitConstructor(cil, OpCodes.Call, Bcl("System.Object").GetConstructor(Type.EmptyTypes));
+        EmitConstructor(cil, OpCodes.Call, WellKnown<ConstructorInfo>("Object.ctor"));
         cil.Emit(OpCodes.Ldarg_0); cil.Emit(OpCodes.Ldarg_1); EmitField(cil, OpCodes.Stfld, fIt);
         cil.Emit(OpCodes.Ret);
 
@@ -75,13 +75,13 @@ partial class Emitter
         mil.Emit(OpCodes.Ldc_I4_1); mil.Emit(OpCodes.Ret);
         mil.MarkLabel(lblFalse);
         mil.Emit(OpCodes.Ldc_I4_0); mil.Emit(OpCodes.Ret);
-        WireMethodOverride(tb, mMove, ienum.GetMethod("MoveNext"));
+        WireMethodOverride(tb, mMove, WellKnown<MethodInfo>("Enumerator.MoveNext"));
 
         // T get_Current()  -- the generic IEnumerator<T>.Current slot
         var mCurG = tb.DefineMethod("get_Current", ifaceImpl | MethodAttributes.SpecialName, T, Type.EmptyTypes);
         var cgi = mCurG.GetILGenerator();
         cgi.Emit(OpCodes.Ldarg_0); EmitField(cgi, OpCodes.Ldfld, fCur); cgi.Emit(OpCodes.Ret);
-        WireMethodOverride(tb, mCurG, AnchorMethod(ienumT, ienumGenDef.GetMethod("get_Current")));
+        WireMethodOverride(tb, mCurG, AnchorOn(ienumT, WellKnown<MethodInfo>("EnumeratorT.Current")));
 
         // object System.Collections.IEnumerator.get_Current()  -- the non-generic slot (boxes a value T)
         var mCurO = tb.DefineMethod("dotkt$NonGenericCurrent",
@@ -90,19 +90,19 @@ partial class Emitter
         StampCompilerGenerated(mCurO);   // #68: ilemit-authored generated member
         var coi = mCurO.GetILGenerator();
         coi.Emit(OpCodes.Ldarg_0); EmitField(coi, OpCodes.Ldfld, fCur); coi.Emit(OpCodes.Box, T); coi.Emit(OpCodes.Ret);
-        WireMethodOverride(tb, mCurO, ienum.GetMethod("get_Current"));
+        WireMethodOverride(tb, mCurO, WellKnown<MethodInfo>("Enumerator.Current"));
 
         // void Reset() => throw new NotSupportedException();  (Kotlin iterators are not resettable)
         var mReset = tb.DefineMethod("Reset", ifaceImpl, Bcl("System.Void"), Type.EmptyTypes);
         var ri = mReset.GetILGenerator();
-        EmitConstructor(ri, OpCodes.Newobj, Bcl("System.NotSupportedException").GetConstructor(Type.EmptyTypes));
+        EmitConstructor(ri, OpCodes.Newobj, WellKnown<ConstructorInfo>("NotSupportedException.ctor0"));
         ri.Emit(OpCodes.Throw);
-        WireMethodOverride(tb, mReset, ienum.GetMethod("Reset"));
+        WireMethodOverride(tb, mReset, WellKnown<MethodInfo>("Enumerator.Reset"));
 
         // void Dispose() {}
         var mDisp = tb.DefineMethod("Dispose", ifaceImpl, Bcl("System.Void"), Type.EmptyTypes);
         mDisp.GetILGenerator().Emit(OpCodes.Ret);
-        WireMethodOverride(tb, mDisp, idisp.GetMethod("Dispose"));
+        WireMethodOverride(tb, mDisp, WellKnown<MethodInfo>("Disposable.Dispose"));
 
         _enumAdapterTB = tb;
         _enumAdapterCtor = ctor;
@@ -158,10 +158,12 @@ partial class Emitter
         }
         else
         {
+            // The shipped adapter is external, so its constructor arrives named like every other external member
+            // (#370): the producer resolved the same declaration the local branch builds, and picking one out of
+            // GetConstructors() — which said nothing about WHICH constructor — is not a question asked here any more.
             adapterClosed = ConstructedType(externalAdapterOpen, elemType);
-            adapterCtor = ContainsTypeBuilder(elemType)
-                ? AnchorConstructor(adapterClosed, externalAdapterOpen.GetConstructors()[0])
-                : adapterClosed.GetConstructors()[0];
+            adapterCtor = AnchorOn(adapterClosed,
+                RequiredRef<ConstructorInfo>(ti.Def, "enumeratorAdapterCtorRef", "ctor"));
         }
         var ienumElem = ConstructedType(Bcl("System.Collections.Generic.IEnumerator`1"), elemType);
         var ienumerableGenDef = Bcl("System.Collections.Generic.IEnumerable`1");
@@ -178,9 +180,7 @@ partial class Emitter
         gi.Emit(OpCodes.Ret);
         // Re-anchor only when the element type involves a TypeBuilder (a class type param); for a CONCRETE element type
         // IEnumerable<int> is a pure runtime type, so TypeBuilder.GetMethod would throw — use normal reflection.
-        var getEnumIfaceM = ContainsTypeBuilder(elemType)
-            ? AnchorMethod(ienumerableElem, ienumerableGenDef.GetMethod("GetEnumerator"))
-            : ienumerableElem.GetMethod("GetEnumerator");
+        var getEnumIfaceM = AnchorOn(ienumerableElem, WellKnown<MethodInfo>("EnumerableT.GetEnumerator"));
         WireMethodOverride(ti.TB, gGen, getEnumIfaceM);
         ti.Methods["GetEnumerator"] = gGen;
 
@@ -194,7 +194,7 @@ partial class Emitter
         ni.Emit(OpCodes.Ldarg_0);
         EmitMethod(ni, OpCodes.Callvirt, gGenSelf);
         ni.Emit(OpCodes.Ret);
-        WireMethodOverride(ti.TB, gNon, Bcl("System.Collections.IEnumerable").GetMethod("GetEnumerator"));
+        WireMethodOverride(ti.TB, gNon, WellKnown<MethodInfo>("Enumerable.GetEnumerator"));
         return true;
     }
 }

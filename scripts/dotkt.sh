@@ -78,7 +78,11 @@ bir_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$extra_refset")"
 runtime_refs="$extra_refset"
 emit_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$extra_refset")"
 if (( use_stdlib )); then
-	bir_compile_refs="$(refset_join "$bir_compile_refs" "$STDLIB_REF_DLL")"
+	# BOTH twins, exactly as the MSBuild driver passes them. The ref-reader collapse drops the runtime twin from
+	# RESOLUTION, so `kotlin.*` still resolves through the reference twin alone; what the extra entry buys is the
+	# ability to read the SHIPPED declaration of a member, which the Kotlin surface cannot always express. Passing
+	# a different reference set here than the real driver does is how a build works one way and not the other.
+	bir_compile_refs="$(refset_join "$bir_compile_refs" "$STDLIB_REF_DLL" "$STDLIB_RT_DLL")"
 	runtime_refs="$(refset_join "$runtime_refs" "$STDLIB_RT_DLL")"
 	emit_compile_refs="$(refset_join "$emit_compile_refs" "$STDLIB_RT_DLL")"
 fi

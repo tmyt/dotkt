@@ -1,0 +1,7 @@
+# The descriptor intentionally names the constructed intermediate owner, while `contains(E)` is declared by its
+# generic base. bir2cir must search the inherited set, specialize the declaring edge to Int32 for comparison, and emit
+# the memberRef at the actual declaration without copying the descriptor owner's identity into it.
++"owner":{"t":"fqn","name":"kotlin.collections.AbstractList\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"member":"contains"
++"declaringType":{"t":"fqn","name":"kotlin.collections.AbstractCollection\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"name":"contains"
++"parameterTypes":[{"t":"tv","scope":"type","i":0}]
+-"declaringType":{"t":"fqn","name":"kotlin.collections.AbstractList\u00601"

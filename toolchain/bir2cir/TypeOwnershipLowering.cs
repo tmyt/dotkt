@@ -57,7 +57,7 @@ static class TypeOwnershipLowering
                     // `typeArgs`, value types, etc.) remain in the walk. `new.argTypes` describes an application at the
                     // current use site and is rewritten; descriptor argTypes on calls/members remain in the referenced
                     // declaration's own frame.
-                    if (lexicalTypeVariablesOnly && (key is "sig" or "memberSig" or "clrOverrideSig"
+                    if (lexicalTypeVariablesOnly && (key is "sig" or "resolvedMemberParams"
                         or "shapeTypes" or "paramSig" or "delegationSig" || (key == "argTypes" && kind != "new")))
                         continue;
                     if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(rewrite(TypeJson.Read(value)));
@@ -197,7 +197,7 @@ static class TypeOwnershipLowering
                     if (value == null || (!root && key == "synthClass")) continue;
                     // Descriptor vectors name the referenced declaration's frame, not the synthesized class's lexical
                     // frame. This is the same boundary used by NormalizeOwnerCapturePrefixes above.
-                    if (key is "sig" or "memberSig" or "clrOverrideSig" or "shapeTypes" or "paramSig"
+                    if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                         or "delegationSig" or "memberOwnerTypeParams" or "memberMethodTypeParams"
                         or "memberReturnType" or "memberSignature" or "memberType"
                         || (key == "argTypes" && kind != "new"))
