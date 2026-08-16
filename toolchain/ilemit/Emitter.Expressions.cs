@@ -584,17 +584,23 @@ sealed partial class Emitter
                 // Inlining (not a delegate) lets the body read/write enclosing locals without closure Ref cells.
                 var elem = MapType(e.GetProperty("elem"));
                 // BOTH enumerator surfaces arrive named by the pass that minted the node; neither is looked up here.
-                // Which of the two this method can SPEAK is the one thing the producer cannot know: when `elem` is a
-                // type parameter or a type this compilation is still emitting, IEnumerable<!!T>/IEnumerator<!!T> are
-                // Reflection.Emit instantiations of a BCL generic, and re-anchoring a member on them yields a BROKEN
-                // metadata token (runtime EntryPointNotFound) in a non-inline method. That is a property of the
-                // emission machinery, not of the Kotlin program or its CLR representation, so it is decided here —
-                // by asking the ALREADY-RESOLVED generic reference which owner it is anchored on, not by naming a
-                // BCL type. The erased arm walks the non-generic IEnumerable/IEnumerator (no <!!T> -> no bad token)
-                // and Unbox_Any's the object Current to elem; concrete elem types keep the typed enumerator.
-                var enumerableGet = RequiredRef<MethodInfo>(e, "enumerableGetRef", "forEachInline");
-                bool viaNonGeneric = IsTbInstantiation(enumerableGet.DeclaringType);
-                if (viaNonGeneric) enumerableGet = RequiredRef<MethodInfo>(e, "enumerableGetErasedRef", "forEachInline");
+                // Which of the two this method can SPEAK is the one thing the producer cannot state, and the reason is
+                // narrower than "elem is generic": it is whether `elem` MAPS, in this frame, to a builder of the module
+                // under construction. IEnumerable<builder>/IEnumerator<builder> is an instantiation Reflection.Emit
+                // cannot carry a usable member token for (runtime EntryPointNotFound in a non-inline method), so those
+                // take the non-generic IEnumerable/IEnumerator and Unbox_Any the object Current to elem; everything
+                // else keeps the typed enumerator (faster, no box).
+                //
+                // bir2cir cannot make that call, in either direction. A `tv` does not imply a builder — ResolveTv
+                // answers System.Object for a type-scope tv with no parameter in scope (the flat lifted anon-object),
+                // where the typed enumerator is both speakable and better. Conversely this emitter builds types bir2cir
+                // never sees — closures, per-arity delegate adapters, dotkt$ synthetics — so an "external, therefore
+                // typed" rule computed from CIR would name the arm that cannot be encoded. The mapped element type is
+                // the whole predicate, and it exists only here. Choosing between two members already named is not
+                // member selection, and no BCL type is named to make the choice.
+                bool viaNonGeneric = IsBuilderTypeArgument(elem);
+                var enumerableGet = RequiredRef<MethodInfo>(
+                    e, viaNonGeneric ? "enumerableGetErasedRef" : "enumerableGetRef", "forEachInline");
                 EmitExpr(e.GetProperty("src"));
                 EmitMethod(_il, OpCodes.Callvirt, enumerableGet);
                 // The enumerator the walk holds is whatever the selected GetEnumerator returns — a mechanical read of

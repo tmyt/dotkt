@@ -85,10 +85,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   decision about which BCL type a Kotlin literal becomes. It now reads that type off the named constructor's
   declaring instantiation, and `forEachInline` likewise takes its enumerator local from whichever `GetEnumerator` it
   emits instead of naming `IEnumerator`. Which enumerator arm the emitter can encode remains its own call — an
-  instantiation over a type still being built cannot carry a usable member token — but that choice is now made by
-  asking the already-resolved generic reference which owner it anchored on, so no BCL type name is left in these
-  expansions. A node whose element/key/value type cannot be read now fails in `bir2cir`, where the fact is missing,
-  instead of reaching the emitter as a construction with nothing to construct. Emitted IL is unchanged.
+  instantiation over a type still being built cannot carry a usable member token, and neither a type variable nor a
+  reference resolution decides that from CIR — but it is now made by testing the element type the node already
+  carries, so nothing in these five expansions names a BCL type to pick an operand or an owner. A node whose
+  element/key/value type cannot be read now fails in `bir2cir`, where the fact is missing, instead of reaching the
+  emitter as a construction with nothing to construct. Emitted IL is unchanged, and a mixed vararg spread
+  (`f(1, *xs, 2)`) — the only source shape that builds through the spread accumulator, and previously exercised by no
+  gate fixture at all — is now covered across primitive, reference, locally-emitted and open element types.
 
 - **A `companion object` of a generic class is now ONE object across every instantiation (#383).** CLR static storage
   belongs to each closed constructed generic type, so the nested carrier every companion received in #275 gave

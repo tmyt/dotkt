@@ -14,6 +14,11 @@
 // the instantiation the use site anchors it on, so the constructor named below already says `List<int>` —
 // the emitter reads the constructed type back off it and names no BCL type of its own (#400).
 //
+// The two spellings agree because this pass runs on the ALREADY-LOWERED tree: the reference's declaring
+// arguments are the node's own `elem`/`keyType`/`valType` put back through physical type lowering, which is
+// idempotent by then. That fixed point is what makes the constructor's declaring type the same type the emitter
+// used to build from the node — it is a property of WHERE this pass sits, not a coincidence of the two paths.
+//
 // The signatures below are the declarations' own — `Add(!0)`, `set_Item(!0, !1)` — matched structurally like
 // every other member, so a BCL that grows an overload cannot silently change which one is meant.
 //
@@ -121,12 +126,13 @@ static partial class ClrMemberResolution
         new($"bir2cir: '{owner}.{member}' does not resolve to one declaration for spreadConcat (#370)");
 
     /// <summary>
-    /// The enumerator protocol an inlined `for` walks. Both arms are named: WHICH arm the emitter takes is a
-    /// Reflection.Emit fact (an instantiation over a type still being built cannot carry a usable member token),
-    /// so that choice stays where the knowledge is — but choosing between two members already named is not
-    /// member selection, and neither arm's members are derived by name any more. The emitter asks the GENERIC
-    /// arm's reference which owner it anchored on to make that choice and takes the enumerator's own type from
-    /// whichever GetEnumerator it then emits, so both arms must be present on every node (#400).
+    /// The enumerator protocol an inlined `for` walks. Both arms are named, and WHICH arm the emitter takes is
+    /// deliberately not decided here: the predicate is whether the element type maps to a Reflection.Emit builder
+    /// in the emitting frame, and that is not a function of anything this layer can see. A `tv` does not settle it
+    /// (the emitter answers System.Object for a type-scope tv with no parameter in scope), and the emitter builds
+    /// types this pass never sees at all — closures, per-arity delegate adapters, dotkt$ synthetics. So both arms
+    /// are stated and the emitter picks between two members already named; it takes the enumerator's own type from
+    /// whichever GetEnumerator it emits, so both arms must be present on every node (#400).
     /// </summary>
     static void ResolveForEachInline(JsonObject node)
     {
