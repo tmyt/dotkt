@@ -1,0 +1,34 @@
+{
+  "fileClass": "RejectUnroutedCollectionMemberKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "callsAnUnroutedKotlinCollectionMember",
+      "static": true,
+      "params": [
+        { "name": "c", "type": { "t": "fqn", "name": "kotlin.collections.MutableCollection",
+                                 "args": [{ "t": "fqn", "name": "kotlin.Int" }] } }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Boolean" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "kotlin.collections.MutableCollection",
+                           "args": [{ "t": "fqn", "name": "kotlin.Int" }] },
+            "virtual": true,
+            "recv": { "k": "local", "name": "c" },
+            "method": "sortAll",
+            "sig": [],
+            "ret": { "t": "fqn", "name": "kotlin.Boolean" },
+            "args": []
+          }
+        }
+      ]
+    }
+  ]
+}

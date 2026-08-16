@@ -997,7 +997,7 @@ internal fun BirEmitter.annotationDef(klass: IrClass): String {
  *  kotc does NOT filter/select annotations: from kotc's view an annotation is just METADATA, so EVERY annotation is
  *  passed through to the BIR verbatim (incl. @ClrTypeAlias, @ClrIntrinsic, and every other `kotlin.*` annotation).
  *  The ref.dll consumer (bir2cir) is the CLR layer that decides what to do with each attribute. (The old keep-list —
- *  drop `kotlin.*` except @ClrIntrinsic/@ClrIntrinsicAsDynamic — was a kotc-side SELECT and is removed: a
+ *  drop `kotlin.*` except @ClrIntrinsic — was a kotc-side SELECT and is removed: a
  *  metadata-selection policy must NOT live in kotc.) If emitting some Kotlin-internal annotation type breaks
  *  downstream (its `: System.Attribute` type or an arg type being unresolvable at ilemit), that is a bir2cir/ilemit
  *  concern, NOT a reason to re-introduce a kotc filter. */

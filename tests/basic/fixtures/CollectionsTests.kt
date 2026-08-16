@@ -29,6 +29,8 @@
 //   il-mapfilter   -> mapfilter_mapFilter   map/filter routed to the real Kotlin body (List) vs LINQ (Array)
 //   il-mutcoll     -> mutcoll_mutableOps    MutableList add/remove/clear/removeAt + generic ArrayList<R> build
 //   il-mutset      -> mutset_setRemoveAt    MutableList.set/removeAt RETURN the previous/removed element
+//   (#400)         -> readOnlyViewOfUserMutableCollection  a user class naming only the MUTABLE collection face
+//                     still has the CLR read-only view, because bir2cir states the sibling interface
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace); il-iter's IntBox
 // is renamed IterIntBox because GenericsTests already owns `IntBox`, and the two `Countdown` classes are
@@ -88,6 +90,62 @@ class IterableCountdown(var n: Int) : Iterator<Int> {
 }
 class Range3 : Iterable<Int> {
     override fun iterator(): Iterator<Int> = IterableCountdown(3)
+}
+
+
+// ---- #400 : the READ-ONLY view of a user class that implements only the MUTABLE collection face ----------------
+// Kotlin's MutableList<E> IS-A List<E>, so passing one of these into a `List<E>`/`Collection<E>` slot is a no-op in
+// the source language. On the CLR it is a cast between IList<T> and IReadOnlyList<T>, two interfaces neither of
+// which derives from the other, so it is total only because bir2cir states the read-only face on the emitted type.
+// A class declaring ONLY the mutable Kotlin face is the shape that shows it: the BCL collections declare both
+// faces themselves, and inheriting from AbstractMutableList would take the face from the stdlib base instead.
+class CollUserList<E>(private val inner: MutableList<E> = mutableListOf()) : MutableList<E> {
+    override val size: Int get() = inner.size
+    override fun isEmpty(): Boolean = inner.isEmpty()
+    override fun contains(element: E): Boolean = inner.contains(element)
+    override fun iterator(): MutableIterator<E> = inner.iterator()
+    override fun containsAll(elements: Collection<E>): Boolean = inner.containsAll(elements)
+    override fun get(index: Int): E = inner[index]
+    override fun indexOf(element: E): Int = inner.indexOf(element)
+    override fun lastIndexOf(element: E): Int = inner.lastIndexOf(element)
+    override fun listIterator(): MutableListIterator<E> = inner.listIterator()
+    override fun listIterator(index: Int): MutableListIterator<E> = inner.listIterator(index)
+    override fun subList(fromIndex: Int, toIndex: Int): MutableList<E> = inner.subList(fromIndex, toIndex)
+    override fun add(element: E): Boolean = inner.add(element)
+    override fun add(index: Int, element: E) { inner.add(index, element) }
+    override fun addAll(index: Int, elements: Collection<E>): Boolean = inner.addAll(index, elements)
+    override fun addAll(elements: Collection<E>): Boolean = inner.addAll(elements)
+    override fun clear() { inner.clear() }
+    override fun remove(element: E): Boolean = inner.remove(element)
+    override fun removeAll(elements: Collection<E>): Boolean = inner.removeAll(elements)
+    override fun removeAt(index: Int): E = inner.removeAt(index)
+    override fun retainAll(elements: Collection<E>): Boolean = inner.retainAll(elements)
+    override fun set(index: Int, element: E): E = inner.set(index, element)
+}
+// The bare mutable-collection face (ICollection<T>), whose read-only sibling is IReadOnlyCollection<T>.
+class CollUserBag(private val inner: MutableList<String> = mutableListOf()) : MutableCollection<String> {
+    override val size: Int get() = inner.size
+    override fun isEmpty(): Boolean = inner.isEmpty()
+    override fun contains(element: String): Boolean = inner.contains(element)
+    override fun iterator(): MutableIterator<String> = inner.iterator()
+    override fun containsAll(elements: Collection<String>): Boolean = inner.containsAll(elements)
+    override fun add(element: String): Boolean = inner.add(element)
+    override fun addAll(elements: Collection<String>): Boolean = inner.addAll(elements)
+    override fun clear() { inner.clear() }
+    override fun remove(element: String): Boolean = inner.remove(element)
+    override fun removeAll(elements: Collection<String>): Boolean = inner.removeAll(elements)
+    override fun retainAll(elements: Collection<String>): Boolean = inner.retainAll(elements)
+}
+// Read-only-typed consumers: `List<T>` lowers to IReadOnlyList<T>, `Collection<T>` to IReadOnlyCollection<T>.
+fun collSumReadOnlyList(xs: List<Int>): Int {
+    var total = 0
+    for (i in 0 until xs.size) total += xs[i]
+    return total
+}
+fun collJoinReadOnlyCollection(xs: Collection<String>): String {
+    val sb = StringBuilder()
+    for (x in xs) { sb.append(x); sb.append(";") }
+    return sb.toString()
 }
 
 // ---- il-mutcoll : generic ArrayList<R> built by iterate + .add (the shape the real stdlib map/filter use) ------
@@ -397,6 +455,27 @@ class CollectionsTests {
         m.clear()
         assertEquals(0, m.size)                         // 0
         assertEquals("11,22,33", listOf(1, 2, 3).mapTo2 { it * 11 }.joinToString(",")) // 11,22,33
+    }
+
+    @TestAttribute
+    fun readOnlyViewOfUserMutableCollection() {
+        // A user class that names only the MUTABLE Kotlin face still has the CLR read-only view, because bir2cir
+        // states the sibling interface on the emitted type (#400). Without it these calls would be an
+        // InvalidCastException at the argument cast, or unverifiable IL.
+        val list = CollUserList<Int>()
+        list.add(1); list.add(2); list.add(3)
+        assertEquals(6, collSumReadOnlyList(list))              // IList<int32> value into an IReadOnlyList<int32> slot
+        val asList: List<Int> = list                            // and held in a read-only-typed local
+        assertEquals(3, asList.size)
+        assertEquals(1, asList[0])
+        assertEquals(6, collSumReadOnlyList(asList))
+
+        val bag = CollUserBag()
+        bag.add("p"); bag.add("q")
+        assertEquals("p;q;", collJoinReadOnlyCollection(bag))   // ICollection<string> into an IReadOnlyCollection<string> slot
+        val asColl: Collection<String> = bag
+        assertEquals(2, asColl.size)
+        assertEquals("p;q;", collJoinReadOnlyCollection(asColl))
     }
 
     @TestAttribute

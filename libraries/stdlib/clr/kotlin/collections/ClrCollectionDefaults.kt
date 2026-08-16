@@ -9,6 +9,9 @@
 
 package kotlin.collections
 
+import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
+import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
+
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 
 /** Raw ICollection Add — VOID on the BCL (the Kotlin changed-Boolean wrapper is [clrCollAdd]). */
@@ -26,10 +29,74 @@ public fun <T> clrCollAdd(c: MutableCollection<T>, element: T): Boolean {
     return c.size != before
 }
 
-/** `MutableCollection.addAll`: no BCL slot on ICollection — element-wise [clrCollAdd], ORing the changes. */
+// ---- Kotlin-only mutation members: capability dispatch, then the BCL default -----------------------------------
+//
+// `addAll` / `removeAll` / `retainAll` / `addAll(index, …)` are VIRTUAL Kotlin members of `MutableCollection` /
+// `MutableList` with no slot on `ICollection<T>` / `IList<T>`. Each of the four dispatchers below is the ONE place
+// where the two legitimate receiver categories are reconciled:
+//
+//   * a Kotlin implementer carries the compiler-authored [KotlinMutableCollectionSlots] / [KotlinMutableListSlots]
+//     interface, so its (possibly overridden) member is reached through a real virtual slot;
+//   * a BCL-backed receiver has no Kotlin body, so the default below runs, written ONLY over members that do have a
+//     physical slot (`Remove`, `Insert`, `GetEnumerator`) plus the already-routed [clrCollAdd] / [clrCollContains].
+//
+// The capability test is on a NON-generic interface on purpose — see the note on [KotlinMutableCollectionSlots]:
+// a constructed test would be defeated by an element type erased to `System.Object` at the call site and would then
+// silently skip a user override.
+//
+// Every default SNAPSHOTS the collection it iterates before mutating, so the self-aliasing forms are defined rather
+// than throwing a concurrent-modification error out of a BCL enumerator: `c.removeAll(c)` empties `c`,
+// `c.retainAll(c)` leaves it unchanged, and `c.addAll(c)` appends the original contents once.
+
+/** Snapshot any Kotlin collection into a private list, so a mutation of the receiver cannot invalidate iteration. */
+private fun <T> clrCollSnapshot(source: Collection<T>): ArrayList<T> {
+    val out = ArrayList<T>()
+    for (e in source) out.add(e)
+    return out
+}
+
+/** `MutableCollection.addAll`: Kotlin slot if the receiver has one, else element-wise [clrCollAdd]. */
 public fun <T> clrCollAddAll(c: MutableCollection<T>, elements: Collection<T>): Boolean {
+    val slots = c as? KotlinMutableCollectionSlots
+    if (slots != null) return slots.dotktAddAll(elements)
     var changed = false
-    for (e in elements) if (clrCollAdd(c, e)) changed = true
+    for (e in clrCollSnapshot(elements)) if (clrCollAdd(c, e)) changed = true
+    return changed
+}
+
+/**
+ * `MutableCollection.removeAll`: Kotlin slot if the receiver has one, else remove EVERY occurrence of each named
+ * element (Kotlin's contract is "removes all of this collection's elements that are also contained in [elements]",
+ * so a duplicate in the receiver must not survive).
+ */
+public fun <T> clrCollRemoveAll(c: MutableCollection<T>, elements: Collection<T>): Boolean {
+    val slots = c as? KotlinMutableCollectionSlots
+    if (slots != null) return slots.dotktRemoveAll(elements)
+    var changed = false
+    for (e in clrCollSnapshot(elements)) while (c.remove(e)) changed = true
+    return changed
+}
+
+/**
+ * `MutableCollection.retainAll`: Kotlin slot if the receiver has one, else drop every element of the receiver that
+ * is not contained in [elements]. Both sides are snapshotted first so `c.retainAll(c)` is a well-defined no-op.
+ */
+public fun <T> clrCollRetainAll(c: MutableCollection<T>, elements: Collection<T>): Boolean {
+    val slots = c as? KotlinMutableCollectionSlots
+    if (slots != null) return slots.dotktRetainAll(elements)
+    val keep = clrCollSnapshot(elements)
+    var changed = false
+    for (e in clrCollSnapshot(c)) if (!clrCollContains(keep, e)) { c.remove(e); changed = true }
+    return changed
+}
+
+/** `MutableList.addAll(index, elements)`: Kotlin slot if the receiver has one, else element-wise `Insert`. */
+public fun <T> clrListAddAllAt(list: MutableList<T>, index: Int, elements: Collection<T>): Boolean {
+    val slots = list as? KotlinMutableListSlots
+    if (slots != null) return slots.dotktAddAllAt(index, elements)
+    var at = index
+    var changed = false
+    for (e in clrCollSnapshot(elements)) { list.add(at, e); at++; changed = true }
     return changed
 }
 

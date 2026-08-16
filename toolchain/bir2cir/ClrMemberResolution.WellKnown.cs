@@ -1,7 +1,7 @@
 // #370: the FIXED BCL members ilemit expands a Kotlin operation into.
 //
-// `enumValues()` becomes `Enum.GetValues`, string `+` becomes `String.Concat`, a `clrDynInstance` dispatch becomes
-// `GetType`/`GetMethod`/`Invoke`, an emitted enumerator's slots are `IEnumerator`'s. The source wrote none of them —
+// `enumValues()` becomes `Enum.GetValues`, string `+` becomes `String.Concat`, a runtime-classifier read becomes
+// `Object.GetType`, an emitted enumerator's slots are `IEnumerator`'s. The source wrote none of them —
 // but "did the source write it" is not the question. The question is whether ilemit encodes an EXTERNAL member as a
 // CIL operand, and it does, in every one of these.
 //
@@ -30,8 +30,6 @@ static partial class ClrMemberResolution
         ("Object.Equals",         "System.Object",   "Equals",            new[] { "System.Object" }),
         ("Enum.GetValues",        "System.Enum",     "GetValues",         new[] { "System.Type" }),
         ("Enum.Parse",            "System.Enum",     "Parse",             new[] { "System.Type", "System.String" }),
-        ("Type.GetMethod",        "System.Type",     "GetMethod",         new[] { "System.String" }),
-        ("MethodInfo.Invoke",     "System.Reflection.MethodBase", "Invoke", new[] { "System.Object", "System.Object[]" }),
         ("Enumerable.GetEnumerator", "System.Collections.IEnumerable", "GetEnumerator", new string[0]),
         ("Enumerator.MoveNext",   "System.Collections.IEnumerator", "MoveNext",    new string[0]),
         ("Enumerator.Current",    "System.Collections.IEnumerator", "get_Current", new string[0]),

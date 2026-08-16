@@ -27,10 +27,40 @@
 #      `_stamps_agree` below is its mirror, arm for arm. NOTE that the emitted CIR corpus contains no `sty`
 #      at all (BirTypeLowering strips it), so the CHOKEPOINT for this check is bir2cir's own pre-lowering
 #      call — here it is pinned by the tests/ir/selftest fixtures, exactly like check 6.
-#   8. SUSPEND MODIFIER CONSUMED — no method DECLARATION (abstract or concrete) still carries mods.suspend:
+#   8. COLLECTION VIEW COMPLETENESS — a type stating a MUTABLE collection face also states its READ-ONLY
+#      sibling. The mirror of IrSanity.CheckCollectionViewFaces + bir-common/CollectionViewFaces.cs; unlike
+#      1-7 it is a fact about a TYPE's `interfaces`, not about a body scope.
+#   9. SUSPEND MODIFIER CONSUMED — no method DECLARATION (abstract or concrete) still carries mods.suspend:
 #      the Kotlin modifier is bir2cir's to consume (cold lowering + the [KotlinFunction(Suspend)] stamp),
 #      and CIR describes a physical CLR graph.
 import json, sys, glob, os
+
+
+# ---- check 8: the read-only sibling of a mutable collection face -----------------------------------------
+# The mirror of bir-common/CollectionViewFaces.cs. `IList<T>` does not derive from `IReadOnlyList<T>` on the
+# CLR, so a Kotlin value flowing from a mutable type into a read-only slot reaches a castclass that is total
+# only when the type declares that face. bir2cir states it; ilemit must not infer it.
+_READONLY_SIBLING = {
+    "System.Collections.Generic.IList": "System.Collections.Generic.IReadOnlyList",
+    "System.Collections.Generic.ICollection": "System.Collections.Generic.IReadOnlyCollection",
+    "System.Collections.Generic.ISet": "System.Collections.Generic.IReadOnlyCollection",
+}
+
+
+def _readonly_sibling(face):
+    """The read-only face a stated mutable collection face obliges, or None."""
+    if not isinstance(face, dict) or face.get("t") != "fqn":
+        return None
+    args = face.get("args")
+    if not isinstance(args, list) or len(args) != 1:
+        return None
+    name = _READONLY_SIBLING.get(face.get("name"))
+    return None if name is None else {"t": "fqn", "name": name, "args": [args[0]]}
+
+
+def _type_key(node):
+    """Order-stable structural key for comparing two type nodes."""
+    return json.dumps(node, sort_keys=True, separators=(",", ":"))
 
 
 def _walk(node, fn):
@@ -257,7 +287,7 @@ class Sanity:
             if not isinstance(m, dict):
                 continue
             name = m.get("name") if isinstance(m.get("name"), str) else "?"
-            # 8. SUSPEND MODIFIER CONSUMED — asked BEFORE the bodiless early-outs: an abstract slot carries the
+            # 9. SUSPEND MODIFIER CONSUMED — asked BEFORE the bodiless early-outs: an abstract slot carries the
             # modifier just as a concrete one does.
             mods = m.get("mods")
             if isinstance(mods, dict) and mods.get("suspend") is True:
@@ -295,6 +325,20 @@ class Sanity:
                 # ilemit builds a type initializer from the fields alone; the CONTAINER's modifiers say nothing about it.
                 self.check_scope(f, f"{owner}..cctor", set(), inits, c)
 
+    def check_collection_view_faces(self, f, owner, t):
+        ifaces = t.get("interfaces")
+        if not isinstance(ifaces, list):
+            return
+        stated = {_type_key(i) for i in ifaces if isinstance(i, dict)}
+        for i in ifaces:
+            sibling = _readonly_sibling(i)
+            if sibling is None or _type_key(sibling) in stated:
+                continue
+            self.err(f, owner,
+                     f"type states the mutable collection face '{_type_key(i)}' without its read-only view "
+                     f"'{_type_key(sibling)}'; the read-only face is a CLR representation decision bir2cir "
+                     "must state (bir-common/CollectionViewFaces.cs), not one the emitter may infer")
+
     def check_file(self, f, doc):
         if not isinstance(doc, dict):
             return
@@ -304,6 +348,7 @@ class Sanity:
             if not isinstance(t, dict):
                 continue
             tn = t.get("name") if isinstance(t.get("name"), str) else "?"
+            self.check_collection_view_faces(f, tn, t)
             self.check_container(f, tn, t, is_interface=(t.get("kind") == "interface"))
 
 

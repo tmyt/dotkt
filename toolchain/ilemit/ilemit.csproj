@@ -21,6 +21,9 @@
     <!-- Shared layer-agnostic IR SANITY invariants (#84 P4 / #112 P4). Run by BOTH bir2cir (on its CIR output) and
          ilemit (at the head of EmitAssembly); scripts/verify-sanity.py mirrors them offline. -->
     <Compile Include="../bir-common/IrSanity.cs" Link="IrSanity.cs" />
+    <!-- Shared mutable/read-only collection face relation the IrSanity gate above checks: bir2cir STATES the
+         read-only sibling in `interfaces`, and a document that omits one is refused before any emit. -->
+    <Compile Include="../bir-common/CollectionViewFaces.cs" Link="CollectionViewFaces.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />

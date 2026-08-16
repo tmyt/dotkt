@@ -26,7 +26,11 @@
 //   7. STAMP AGREEMENT — a node's `sty` must not name a DIFFERENT TYPE than the `ret`/`dynRet` beside it (spec §2.7:
 //      a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`). See CheckStampAgreement for the
 //      accepted-equivalence set and why it is what it is.
-//   8. SUSPEND MODIFIER CONSUMED — no method DECLARATION (abstract or concrete) still carries `mods.suspend`: the
+//   8. COLLECTION VIEW COMPLETENESS — a type stating a MUTABLE collection face also states its READ-ONLY sibling
+//      (bir-common/CollectionViewFaces.cs). This one is about a TYPE's interface set rather than a body, so it runs
+//      once per declaration instead of per scope. It is CIR-only in effect: the relation is over the LOWERED BCL
+//      faces, and a document still speaking Kotlin collection names cannot trip it.
+//   9. SUSPEND MODIFIER CONSUMED — no method DECLARATION (abstract or concrete) still carries `mods.suspend`: the
 //      Kotlin modifier is bir2cir's to consume, and CIR is a physical CLR graph.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
@@ -50,7 +54,7 @@ public sealed class IrSanityException : Exception
 // counts as a declaration" rather than growing a second walker that could disagree with this one.
 public enum IrSanityChecks
 {
-    /// <summary>Checks 1-8 — the POST-LOWERING CIR gate (bir2cir on its CIR output; ilemit at EmitAssembly).</summary>
+    /// <summary>Checks 1-9 — the POST-LOWERING CIR gate (bir2cir on its CIR output; ilemit at EmitAssembly).</summary>
     All,
     /// <summary>
     /// Check 7 alone — the spec §2.7 `sty` chokepoint, run by bir2cir on the fully-passed BIR while the stamp still
@@ -76,8 +80,39 @@ public static class IrSanity
                 {
                     var tn = t.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
                     var iface = t.TryGetProperty("kind", out var k) && k.ValueKind == JsonValueKind.String && k.GetString() == "interface";
+                    if (which == IrSanityChecks.All) CheckCollectionViewFaces(tn, t);
                     CheckContainer(tn, t, iface, which);
                 }
+        }
+    }
+
+    // Check 8 — a type's stated `interfaces` must be closed under the read-only collection view. The read-only face
+    // of a mutable collection is not derived by the CLR (`IList<T>` does not inherit `IReadOnlyList<T>`), so a
+    // Kotlin value flowing from a mutable type into a read-only slot reaches a castclass that succeeds only if the
+    // type declares that face. bir2cir states it; a document arriving without it would emit a type whose read-only
+    // view exists in Kotlin and not on the CLR, and the failure would surface as an InvalidCastException in an
+    // unrelated caller. Refuse it at the boundary instead.
+    static void CheckCollectionViewFaces(string owner, JsonElement type)
+    {
+        if (!type.TryGetProperty("interfaces", out var ifaces) || ifaces.ValueKind != JsonValueKind.Array) return;
+        var stated = new List<TypeNode.Fqn>();
+        foreach (var i in ifaces.EnumerateArray())
+            // Read exactly as tolerantly as the emitter does (ilemit's ReadFqn): an interface entry may be a legacy
+            // STRING for a canonical synthetic, and TypeNode.Read throws on anything that is not a `{t:…}` object.
+            // Throwing here would leave the emitter's boundary reporting a raw FormatException rather than a sanity
+            // diagnostic, and would make a check whose policy is never to false-positive the loudest thing in the
+            // file. Every tolerated shape is arg-less, so it obliges no sibling either way.
+            if (i.ValueKind == JsonValueKind.Object && i.TryGetProperty("t", out var disc)
+                && disc.ValueKind == JsonValueKind.String && TypeNode.Read(i) is TypeNode.Fqn f)
+                stated.Add(f);
+        foreach (var face in stated)
+        {
+            var sibling = CollectionViewFaces.ReadOnlySibling(face);
+            if (sibling == null || stated.Contains(sibling)) continue;
+            throw new IrSanityException(owner,
+                $"type states the mutable collection face '{TypeNode.ToJson(face)}' without its read-only view "
+                + $"'{TypeNode.ToJson(sibling)}'; the read-only face is a CLR representation decision bir2cir must "
+                + "state (bir-common/CollectionViewFaces.cs), not one the emitter may infer");
         }
     }
 
@@ -104,7 +139,7 @@ public static class IrSanity
     static void CheckMethodDecl(string owner, JsonElement m, IrSanityChecks which)
     {
         var name = m.TryGetProperty("name", out var nm) && nm.ValueKind == JsonValueKind.String ? nm.GetString() : "?";
-        // 8. SUSPEND MODIFIER CONSUMED — checked BEFORE the bodiless early-outs, because an abstract slot carries the
+        // 9. SUSPEND MODIFIER CONSUMED — checked BEFORE the bodiless early-outs, because an abstract slot carries the
         // modifier just as a concrete one does. `mods.suspend` is Kotlin frontend vocabulary that bir2cir consumes
         // (cold lowering + the [KotlinFunction(Suspend)] metadata stamp); CIR is a physical CLR graph, so a survivor
         // means the cold lowering did not run on this declaration and ilemit would emit its un-lowered Kotlin body.
@@ -157,7 +192,7 @@ public static class IrSanity
         // any of them is a suspension with no resume point. The declarations that used to be exempt were those still
         // carrying `mods.suspend` — the stdlib surface the cold lowering deliberately does not lower — and bir2cir now
         // states their physical body as an explicit call-time throw (SuspendResidueLowering) and drops the modifier,
-        // so neither the flag nor an un-lowered suspension reaches CIR at all (check 8).
+        // so neither the flag nor an un-lowered suspension reaches CIR at all (check 9).
         foreach (var r in roots)
         {
             CheckNoDupLabels(pos + declLabel, r);
@@ -165,7 +200,7 @@ public static class IrSanity
         }
     }
 
-    // Does this declaration still carry `mods.suspend` (check 8)? §2.1 makes `mods` the single source (a redundant
+    // Does this declaration still carry `mods.suspend` (check 9)? §2.1 makes `mods` the single source (a redundant
     // top-level `suspend` field was removed), so this reads the structured slot only.
     static bool IsSuspendDecl(JsonElement decl) =>
         decl.ValueKind == JsonValueKind.Object

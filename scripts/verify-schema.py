@@ -99,7 +99,7 @@ INTERFACE_SLOTS = "interfaceSlotRefs"
 ENUMERATOR_ADAPTER_CTOR = "enumeratorAdapterCtorRef"
 WELL_KNOWN_ROLES = frozenset({
     "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
-    "Object.Equals", "Enum.GetValues", "Enum.Parse", "Type.GetMethod", "MethodInfo.Invoke",
+    "Object.Equals", "Enum.GetValues", "Enum.Parse",
     "Enumerable.GetEnumerator", "Enumerator.MoveNext", "Enumerator.Current", "Enumerator.Reset",
     "Disposable.Dispose", "Array.IndexOf", "Comparable.CompareTo",
     "Object.ctor", "NotSupportedException.ctor0",
@@ -278,7 +278,7 @@ STR_OK = {
 # (§2.2.1). Every OTHER kind's `type` is a value type and stays enforced. Their argTypes/ret/typeArgs remain
 # enforced value/type-arg slots.
 CLR_OWNER_KINDS = {
-    "clrStatic", "clrInstance", "clrDynInstance", "clrGenericStatic", "clrGenericInstance",
+    "clrStatic", "clrInstance", "clrGenericStatic", "clrGenericInstance",
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventGet", "clrEventAdd", "clrEventRemove", "constrainedCall",
     "clrEventRaise",   # §4.3: the raise handle read — its `type` is the receiver's owner FQN (BIR-only; bir2cir -> callInstance)
 }
@@ -351,8 +351,6 @@ KINDS = {
     "clrEventBacking", "clrEventAccessor", "clrEventRaise",
     # --- CLR-lowered (bir2cir → CIR) ---
     "newClr", "clrInstance", "clrStatic", "clrGenericStatic", "clrGenericInstance",
-    "clrDynInstance",   # W1-S2 (#46): a clrInstance on an interface owner with no static BCL slot — a DELIBERATE
-                        # runtime-reflection dispatch node (replacing ilemit's former silent EmitDynamicCall downgrade)
     "clrPropGet", "clrPropSet", "clrStaticField", "clrEventAdd", "clrEventRemove",
     # .NET-event IMPLEMENT (§4.2, #187): the bir2cir-lowered CIR forms of the synthesis — a resolved accessor body (CAS
     # loop / raise, carrying the backing field + concrete delegate D) and a type-level `.event` metadata record.

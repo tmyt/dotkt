@@ -39,6 +39,11 @@
 #   refused there rather than reaching an emitter that would have to invent a body for it.
 #   `reject-unlowered-suspend-declaration` is that refusal's witness; no Kotlin source produces the shape (the admit
 #   gate it trips is the retired kotc CPS path), which is why it has to be authored here.
+
+#   bir-common/CollectionViewFaces.cs — a type naming a MUTABLE collection face also names its READ-ONLY sibling,
+#   because the CLR does not derive one from the other. The emitted metadata cannot witness the rule: it looks the
+#   same whether bir2cir stated the face or an emitter inferred it, which is exactly the confusion the rule ends.
+#   `readonly-collection-view-sibling` asserts the stated array, including the two faces that owe nothing.
 #
 # ACCEPT case — `<name>.bir.json` plus a `<name>.assert` file of lines:
 #     +<substring>   the emitted CIR MUST contain it
