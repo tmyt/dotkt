@@ -79,6 +79,19 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **The body of an un-lowered `suspend` declaration is authored by `bir2cir`, and the Kotlin `suspend` modifier no
+  longer reaches CIR (#400).** `ilemit` used to synthesize a throwing body for any declaration that still carried
+  `mods.suspend` in a standard-library build, and to refuse one in an application build — Kotlin coroutine policy
+  (what `suspend` means, which builds may leave one un-lowered) living in the emitter. The two declarations the
+  cold-core lowering deliberately does not lower — the Kotlin surface the stdlib self-build retains beside its cold
+  entry, and the inline coroutine primitives whose call sites are reconstructed inline — now get an explicit
+  `throw NotSupportedException(…)` body stated as ordinary CIR, derived from the declaration's own facts rather than
+  from any function-name list. The modifier itself is dropped once `[KotlinFunction(Suspend)]` has been stamped from
+  it, so CIR carries no Kotlin coroutine vocabulary at all, and the shared IR-sanity gate refuses both a surviving
+  modifier and, with no exemption left, any surviving `suspendCall`. The runtime standard library's IL is unchanged
+  apart from the stub message text; the reference twin's stubs are now the same metadata-only
+  `throw NotImplementedException()` every other reference body carries.
+
 - **A `companion object` of a generic class is now ONE object across every instantiation (#383).** CLR static storage
   belongs to each closed constructed generic type, so the nested carrier every companion received in #275 gave
   `Foo<int>.Companion` and `Foo<string>.Companion` a singleton each — with separate state — while Kotlin's own uses,

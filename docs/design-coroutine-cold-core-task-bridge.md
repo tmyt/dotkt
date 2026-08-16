@@ -519,8 +519,12 @@ UNCONDITIONALLY. The classifier assigns each admitted member one of three shapes
 | concrete + NOT segmentable (v1 limit, or M4 own-generic-on-generic-class) | a call-time `throw NotSupportedException(reason)` cold entry + bridge, and a bir2cir WARNING naming the fun + the refusal site |
 
 The only members NOT admitted are the reference-KLIB `@ClrAwaitBridge` declarations, the old kotc CPS/sequence
-path (`steps`/`coClass`), and stdlib inline coroutine
-intrinsics (`suspendCoroutine*`, un-lowered in stdlib builds for the ilemit `_stdlibStub`).
+path (`steps`/`coClass`), and stdlib inline coroutine intrinsics (`suspendCoroutine*`, left un-lowered in stdlib
+builds because their call sites are reconstructed inline). A declaration that is not admitted keeps no emittable
+body: `SuspendResidueLowering` replaces it with an explicit `throw NotSupportedException(...)` in CIR — as it does
+for the stdlib self-build's RETAINED original beside its cold entry — and the `suspend` modifier is dropped once
+`[KotlinFunction(Suspend)]` has been stamped from it, so no Kotlin coroutine vocabulary reaches ilemit. An app build
+has no such residue, and a survivor there is refused in bir2cir.
 
 **Consequences (all deletions land in the same change):**
 

@@ -54,10 +54,14 @@ head of `EmitAssembly`, ahead of any resolution.
 
 - The **suspension-lowered** invariant (check 6) — `reject-unlowered-suspension` is a `suspendCall:true` left
   in an ordinary method body, which ilemit would emit as a plain invocation with no resume point.
-  `accept-lowered-suspension` holds both legitimate neighbours: the cold-lowered `f$dotkt_suspend` call that
-  carries no tag, and the coroutine PRIMITIVE that bir2cir deliberately leaves un-lowered — still
-  `mods.suspend`, so ilemit stubs or refuses it and never walks its body. The exemption has no negative in the
-  corpus either, so it is pinned here rather than left to a comment.
+  `accept-lowered-suspension` is the legitimate neighbour: the cold-lowered `f$dotkt_suspend` call, which
+  carries no tag.
+- The **suspend-modifier-consumed** invariant (check 8) — `reject-suspend-declaration-in-cir` carries
+  `mods.suspend` on a declaration. Check 6 used to EXEMPT such a method, because ilemit keyed its own
+  stdlib-stub/app-refusal policy on the same flag before walking a body. That policy moved into bir2cir, which
+  now states the physical body of an un-lowered suspend declaration itself and drops the modifier, so the flag
+  is refused outright and the exemption is gone. The fixture also still carries the escaped `suspendCall`, so a
+  regression that restored the exemption without restoring the flag would be caught by check 6 alone.
 - The **stamp-agreement** invariant (check 7, spec §2.7). Four refusals, one per way the relation can refute:
   `reject-stale-sty` is the shape that motivated the check — a call retyped to `List<object>` whose frontend `sty`
   still claims `List<Int?>`, two unrelated invariant reified generics, so a slot declared from the stamp is invalid
@@ -71,9 +75,8 @@ head of `EmitAssembly`, ahead of any resolution.
   deleted. The arms a fixture genuinely pins are the vocabulary table, `kotlin.Nothing`, and the two above.
   Note the CHOKEPOINT for this invariant is not here — `sty` is stripped on the way to CIR, so bir2cir checks it on
   the pre-lowering BIR and `tests/ir/lowering/reject-stale-sty-after-passes` is what pins that call.
-- The **width of that exemption**, which is the easy thing to get wrong — `reject-unlowered-suspension-in-ctor`
-  and `reject-unlowered-suspension-in-static-init` carry `mods.suspend` on the constructor and on the
-  containing type, and must STILL be refused. ilemit's suspend guard lives in `EmitMethodBody` alone: it emits
-  a constructor body, and builds a type initializer from the fields, without ever consulting the flag. An
-  exemption derived from the scope's declaration rather than from its KIND lets a suspension through exactly
-  there, and these two are what say so.
+- The **width the exemption once had**, which was the easy thing to get wrong —
+  `reject-unlowered-suspension-in-ctor` and `reject-unlowered-suspension-in-static-init` carry `mods.suspend` on
+  the constructor and on the containing type, and must be refused. They pinned the exemption's boundary while it
+  existed; with no exemption left they are the guard against one being reintroduced from a scope's declaration
+  rather than from its kind.

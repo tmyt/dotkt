@@ -1,0 +1,19 @@
+{
+  "fileClass": "RejectUnloweredSuspendKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "notAdmittedToColdLowering",
+      "static": true,
+      "mods": { "suspend": true },
+      "steps": [],
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "suspendRet": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [{ "k": "return", "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 } }]
+    }
+  ]
+}

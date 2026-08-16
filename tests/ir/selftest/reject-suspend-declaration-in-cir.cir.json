@@ -1,0 +1,26 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "unloweredCoroutinePrimitive",
+      "mods": { "suspend": true },
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "callStatic",
+            "owner": null,
+            "calleeOwner": { "t": "fqn", "name": "SelftestKt" },
+            "method": "suspendCoroutineUninterceptedOrReturn",
+            "sig": [],
+            "ret": { "t": "fqn", "name": "kotlin.Int" },
+            "args": [],
+            "suspendCall": true
+          }
+        }
+      ]
+    }
+  ]
+}
