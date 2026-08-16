@@ -76,12 +76,13 @@ static class SuspendResidueLowering
                     + "shape (state machine + `$dotkt_suspend` cold entry + public Task bridge), and a shape the v1 "
                     + "classifier refuses gets a call-time-throw COLD ENTRY rather than a retained original — so this "
                     + "is a cold-lowering MISS, not a supported residue.");
-            // An abstract declaration owns no body slot; there is nothing to author and ilemit emits no IL for it.
-            if (method["body"] is not JsonArray) continue;
+            // An ABSTRACT declaration declares a slot and no body — there is nothing to author, and authoring one
+            // would contradict the declaration (ilemit refuses IL for an abstract slot).
+            if (Bool(method["abstract"]) || method["body"] is not JsonArray) continue;
             method["body"] = ThrowStubBody(
-                $"{owner}.{name}: this suspend declaration is left un-lowered by bir2cir's cold-core coroutine "
-                + "lowering (docs/design-coroutine-cold-core-task-bridge.md §11), so it has no state-machine body "
-                + "and cannot be invoked; its cold entry is the callable ABI.");
+                $"{owner}.{name}: this suspend declaration has no state-machine body — bir2cir's cold-core coroutine "
+                + "lowering leaves it un-lowered in a standard-library build (docs/design-coroutine-cold-core-task-"
+                + "bridge.md §11). It is compile-time surface only and cannot be invoked.");
             method["bodyTerminates"] = true;
         }
     }
@@ -140,7 +141,9 @@ static class SuspendResidueLowering
     };
 
     static bool IsSuspend(JsonObject method) =>
-        method["mods"] is JsonObject mods && mods["suspend"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+        method["mods"] is JsonObject mods && Bool(mods["suspend"]);
+
+    static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
     static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }
