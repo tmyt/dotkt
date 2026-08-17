@@ -1228,11 +1228,9 @@ internal fun BirEmitter.kPropertyStub(name: String): String =
  * Supported scope: a TOP-LEVEL property (`::x`), a MEMBER property either BOUND (`obj::p`, receiver captured in a
  * field) or UNBOUND (`Type::p`, receiver becomes the `get`/`set`'s own leading param), and a TOP-LEVEL extension
  * property in its bound/unbound forms — including generic and referenced-assembly accessors. A MEMBER extension
- * property with both dispatch and extension receivers (`KProperty2`) and a `length` reference RESOLVED on a
- * .NET-mapped CharSequence owner (String/StringBuilder/the polymorphic kotlin.CharSequence — bir2cir renames its
- * slot; a USER CharSequence implementer is faithful) are clean deferrals. `lateinit var` and `@ClrField` member
- * references use the backing-field path below. The compiler-synthesized KProperty argument of a delegate's
- * getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
+ * property with both dispatch and extension receivers (`KProperty2`) is a clean deferral. `lateinit var` and
+ * `@ClrField` member references use the backing-field path below. The compiler-synthesized KProperty argument of a
+ * delegate's getValue/setValue/provideDelegate is NOT this path — those call sites materialize `kPropertyStub` directly
  * without going through `expr()`/this dispatch; the origin check below is a defensive fallback only.
  */
 internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
@@ -1265,21 +1263,6 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	val fieldBacked = prop.isConst || isLateinitProperty(prop) || isClrField(prop)
 	val getterFn = node.getter?.owner ?: prop.getter
 		?: return unsupported(node, "this property reference", "the referenced property has no getter")
-	// #57: a `length` reference whose accessor is RESOLVED on a .NET-MAPPED CharSequence owner is a clean deferral —
-	// its slot is renamed/collapsed by bir2cir (`get_length` -> System.String/StringBuilder `get_Length`, or the
-	// polymorphic kotlin.CharSequence face), a bir2cir-owned rewrite the lift's plain get_/set_ accessor call cannot
-	// express. The discriminator is the ACCESSOR's RESOLVED declaring owner (`getterFn.parent`), NOT an
-	// override-chain walk: fir2ir materializes a per-class fake override, so a user `class B : A`, `A : CharSequence`
-	// resolves `B::length`'s getter in B (owner = B) — a user class whose OWN emitted `get_length` slot (its
-	// synthesized `dotkt$CharSequence` implementation) the lift names faithfully, DIRECT or INHERITED. A `String`/
-	// `StringBuilder`/bare-`CharSequence` receiver resolves the getter in the .NET-mapped owner itself, where the
-	// rename bites. (The retired override-chain walk conflated the two — every user override transitively reaches
-	// kotlin.CharSequence — so it over-deferred the direct user-class case while missing the indirect one.)
-	val declOwnerFq = (getterFn.parent as? IrClass)?.fqNameWhenAvailable?.asString()
-	if (prop.name.asString() == "length"
-		&& declOwnerFq in setOf("kotlin.CharSequence", "kotlin.String", "kotlin.text.StringBuilder"))
-		return unsupported(node, "this property reference",
-			"a length reference addressed at a .NET-mapped CharSequence owner has no supported lowering yet")
 	val setterFn = if (prop.isVar) (node.setter?.owner ?: prop.setter) else null
 	val declClass = getterFn.parent as? IrClass
 	val name = prop.name.asString()
@@ -1317,6 +1300,9 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 	// fresh type-parameter frame. Preserve the former before rebinding every definition-side rendering to `type#i`.
 	// ilemit must never guess that a `method#i` embedded in a generated type really meant its `type#i`.
 	val constructionTypeArgs = freeTps.map { typeArgSubst[it] ?: tvOf(it) }
+	val constructionPropertyInterface = birType(node.type) as? TypeNode.Fqn
+		?: return unsupported(node, "this property reference",
+			"its inferred type was not a KProperty/KMutableProperty interface")
 	val constructionRecvType = if (capturedRecv != null) birType(capturedRecv.type) else null
 	val constructionArgs = if (capturedRecv != null) expr(capturedRecv) else ""
 	val staticReceiverEvaluation = staticReceiverToEvaluate?.let { expr(it) }
@@ -1334,9 +1320,7 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 		?: companionCaptureClass?.let { clrExternalOwner(it) ?: typeName(it) }
 	val companionCaptureTag = companionCaptureOwner?.let { ""","companionCaptureOwner":${str(it)}""" } ?: ""
 
-	val ifaceSpec = birType(node.type) as? TypeNode.Fqn
-		?: return unsupported(node, "this property reference",
-			"its inferred type was not a KProperty/KMutableProperty interface")
+	val ifaceSpec = birType(node.type) as TypeNode.Fqn
 	val ifaceArgs = ifaceSpec.args.orEmpty()
 	val arity0 = ifaceSpec.name == "kotlin.reflect.KProperty0" || ifaceSpec.name == "kotlin.reflect.KMutableProperty0"
 	val vType = ifaceArgs.lastOrNull() ?: OBJ
@@ -1533,7 +1517,11 @@ internal fun BirEmitter.propertyRef(node: IrPropertyReference): String {
 
 	val classType = if (freeTps.isEmpty()) TypeNode.Fqn(cname) else TypeNode.Fqn(cname, constructionTypeArgs)
 	val ctorSig = if (bound) constructionRecvType!!.toJson() else ""
-	val creation = """{"k":"new","type":${classType.toJson()},"argTypes":[$ctorSig],"args":[$constructionArgs]$companionCaptureTag}"""
+	// This is the complete Kotlin-side fact bir2cir needs when the value later fills a function slot. It deliberately
+	// carries the KProperty interface identity instead of asking the representation layer to rediscover semantics from
+	// the generated class name, interfaces, or method body.
+	val propertyFunctionTag = ""","propertyFunction":{"iface":${constructionPropertyInterface.toJson()}}"""
+	val creation = """{"k":"new","type":${classType.toJson()},"argTypes":[$ctorSig],"args":[$constructionArgs]$companionCaptureTag$propertyFunctionTag}"""
 	if (staticReceiverEvaluation != null)
 		"""{"k":"valueBlock","stmts":[{"k":"exprStmt","expr":$staticReceiverEvaluation}],"result":$creation}"""
 	else creation

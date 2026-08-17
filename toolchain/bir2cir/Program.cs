@@ -280,6 +280,11 @@ sealed class Pipeline
         // .bir.json than C's declaration. Feeds LocalStaticOwnerBinding, which moves such a call's declaring type onto
         // the CLR owner axis before the ownerless (reference-universe) recognizers get a look at it.
         var localStatics = LocalStaticOwnerBinding.Collect(birFiles.Select(f => f.Root));
+        // Property-reference values may be written into a function-typed field declared by a sibling BIR file.
+        // Preserve the module's declared field slots before per-file lowering so the representation boundary never
+        // has to infer a field type from a use or from a generated property's physical class.
+        var propertyFunctionFields = PropertyReferenceFunctionLowering.CollectFieldSlots(
+            birFiles.Select(f => f.Root));
 
         // #63 (F4): the app-local file-class method names a `newDelegate` target `ldftn`-resolves against, collected
         // MODULE-WIDE across every input file — ilemit's FindStatic binds a delegate method by bare name against ALL
@@ -500,6 +505,12 @@ sealed class Pipeline
             // kotc lowers itself (ClrEvent<T>/ClrRef<T>/byref — they don't exist in any ref, so they never resolve here).
             // Non-ref only (the stdlib self-build injects no dll2klib .NET interop).
             if (!_options.RefBuild) NetInteropBinding.Apply(bir.Root, refs);
+            // PROPERTY-REFERENCE FUNCTION MATERIALIZATION (#242): kotc emits a genuine KProperty construction plus
+            // its callable KProperty interface fact. Once every inline/default payload has been spliced and .NET calls
+            // expose their declared parameter vectors, adapt any such value that fills a function-typed slot to a
+            // forwarding CLR closure. The walk is structural over locals/fields/returns/call and delegate arguments/
+            // array writes/joins, so one representation rule covers aliases, vararg packs, and nested values alike.
+            PropertyReferenceFunctionLowering.Apply(bir.Root, propertyFunctionFields);
             // A Kotlin static member call whose declaring type is emitted by THIS compilation: the declaring identity
             // IS the CLR owner, so move it onto the owner axis now — after the .NET binder has had first refusal and
             // before the ownerless recognizers below, which resolve names against the reference universe and must

@@ -189,6 +189,9 @@ static class StringCharSequenceBridge
             case "callInstance":
                 WrapCallArgs(node, env);
                 return node;
+            case "delegateInvoke":
+                WrapDelegateInvokeArgs(node, env);
+                return node;
             case "newDelegate":
             case "newClosure":
                 SyncDelegateFuncRet(node);
@@ -218,10 +221,13 @@ static class StringCharSequenceBridge
         var n = Math.Min(sig.Count, args.Count);
         for (var i = 0; i < n; i++)
         {
-            if (TypeJson.Read(sig[i]) is not TypeNode tn || args[i] is not JsonNode a) continue;
-            if (IsCharSeqT(tn))
+            if (TypeJson.Read(sig[i]) is not TypeNode openSlot || args[i] is not JsonNode a) continue;
+            // `sig` is declaration-relative. Close an interface/class/method type variable against this call before
+            // asking whether its physical slot is CharSequence; generated and ordinary generic calls share this rule.
+            var slot = SpecializeCallType(openSlot, node);
+            if (IsCharSeqT(slot))
             {
-                var c = CoerceCharSeqArg(a, env, nonNullSlot: tn is TypeNode.Fqn);
+                var c = CoerceCharSeqArg(a, env, nonNullSlot: slot is TypeNode.Fqn);
                 if (!ReferenceEquals(c, a)) args[i] = c;
                 continue;
             }
@@ -236,8 +242,27 @@ static class StringCharSequenceBridge
             // A generic callee's sig is declaration-relative (`tv{method,i}` / `tv{type,i}`); specialize it with
             // the call's own typeArgs/owner args before comparing its delegate parameters with the caller-static
             // source type. The synthesized closure remains generic over any CALLER-frame TVs that survive.
-            if (TryDelegateReturnAdapter(node, tn, a, env) is JsonNode adapted)
+            if (TryDelegateReturnAdapter(node, openSlot, a, env) is JsonNode adapted)
                 args[i] = adapted;
+        }
+    }
+
+    // A function value's `funcType` is its complete CLR delegate signature (including an extension receiver through
+    // DelegateParams). Treat invocation arguments exactly like ordinary call arguments: a Kotlin String flowing into
+    // a CharSequence parameter must be materialized as the synthetic interface adapter. This is deliberately a
+    // delegate-boundary rule, independent of whether the producer was a lambda, callable reference, or stored value.
+    static void WrapDelegateInvokeArgs(JsonObject node, Env env)
+    {
+        if (TypeJson.Read(node["funcType"]) is not TypeNode.Fn function
+            || node["args"] is not JsonArray args
+            || args.Count != function.DelegateParams.Length)
+            return;
+        for (var i = 0; i < args.Count; i++)
+        {
+            var slot = function.DelegateParams[i];
+            if (!IsCharSeqT(slot) || args[i] is not JsonNode argument) continue;
+            var coerced = CoerceCharSeqArg(argument, env, nonNullSlot: slot is TypeNode.Fqn);
+            if (!ReferenceEquals(coerced, argument)) args[i] = coerced;
         }
     }
 

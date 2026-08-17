@@ -13,7 +13,7 @@
 //   il-charminus     -> charminus_charArithmetic     Char-Char -> Int; Char+/-Int -> Char
 //   il-charseq       -> charseq_userCharSequence     user class : CharSequence (length/get/subSequence)
 //   il-charseqbcl    -> charseqbcl_computedReceiver   #148 computed/BCL-origin String receiver into stdlib ext
-//   il-charseqlenref -> charseqlenref_propertyRef    #57 property-ref to length on user CharSequence (direct+inherited)
+//   il-charseqlenref -> charseqlenref_propertyRef    #57/#242 property-ref to length on user/.NET-mapped CharSequence owners
 //   il-charseqmore   -> charseqmore_polymorphic      #149-2/3/4 String branch / StringBuilder / x!!.isNullOrEmpty
 //   il-charseqs      -> charseqs_stringLowering      CharSequence lowers to System.String (no user impl)
 //   il-charseqx      -> charseqx_stdlibExt           cross-assembly stdlib CharSequence-ext (hasSurrogatePairAt)
@@ -67,6 +67,17 @@ open class StrLenRefA(val s: String) : CharSequence {
     override fun subSequence(startIndex: Int, endIndex: Int): CharSequence = StrLenRefA(s.substring(startIndex, endIndex))
 }
 class StrLenRefB(s: String) : StrLenRefA(s)   // inherits length INDIRECTLY through StrLenRefA
+fun strLenRefReturn(): (String) -> Int = String::length
+fun strLenRefApply(f: (String) -> Int, value: String): Int = f(value)
+val topLevelStrLenRef: (String) -> Int = String::length
+class StrLenRefHolder {
+    val member: (String) -> Int = String::length
+}
+class StrLenRefPair<A, B>(val first: A, val second: B) {
+    fun secondRef(): () -> B = this::second
+}
+fun strLenRefVararg(value: String, vararg refs: (String) -> Int): Int = refs[0](value)
+fun <T : CharSequence> genericCharSequenceLengthRef(): (T) -> Int = CharSequence::length
 
 // ---- il-charseqbcl : computed/BCL-origin String receiver into stdlib CharSequence exts ------------------------
 class StrBclCfg(val body: String)
@@ -168,6 +179,66 @@ class StringsTests {
         assertEquals(5, ua.get(a))       // 5
         assertEquals(6, ub.get(b))       // 6
         assertEquals("length", da.name)  // length
+
+        // #242: kotc projects these exactly like the user-CharSequence references above. bir2cir owns the
+        // String/StringBuilder/CharSequence physical accessor choice inside the generated forwarder.
+        val stringBound: KProperty0<Int> = "kotlin"::length
+        val stringUnbound: KProperty1<String, Int> = String::length
+        val charSequence: CharSequence = a
+        val charSequenceBound: KProperty0<Int> = charSequence::length
+        val charSequenceUnbound: KProperty1<CharSequence, Int> = CharSequence::length
+        val builder = StringBuilder("builder")
+        val builderBound: KProperty0<Int> = builder::length
+        val builderUnbound: KProperty1<StringBuilder, Int> = StringBuilder::length
+        val stringBoundFunction: () -> Int = "mapped"::length
+        val stringUnboundFunction: (String) -> Int = String::length
+        val charSequenceFunction: (CharSequence) -> Int = CharSequence::length
+        val builderFunction: (StringBuilder) -> Int = StringBuilder::length
+        val widenedFunction: (String) -> Any = String::length
+        var capturedFunction: (String) -> Int = String::length
+        val callCaptured = { value: String -> capturedFunction(value) }
+        assertEquals(6, stringBound.get())
+        assertEquals(3, stringUnbound.get("CLR"))
+        assertEquals(5, charSequenceBound.get())
+        assertEquals(6, charSequenceUnbound.get(b))
+        assertEquals(7, builderBound.get())
+        assertEquals(3, builderUnbound.get(StringBuilder("CIR")))
+        assertEquals(6, stringBoundFunction())
+        assertEquals(4, stringUnboundFunction("BIR!"))
+        assertEquals(6, charSequenceFunction(b))
+        assertEquals(6, charSequenceFunction("String"))
+        assertEquals(5, builderFunction(StringBuilder("CIL!!")))
+        assertEquals(3, widenedFunction("box"))
+        assertEquals(7, callCaptured("capture"))
+        assertEquals(6, strLenRefReturn()("return"))
+        assertEquals(8, strLenRefApply(String::length, "argument"))
+        assertEquals(8, topLevelStrLenRef("topLevel"))
+        assertEquals(6, StrLenRefHolder().member("member"))
+        assertEquals("second", StrLenRefPair(1, "second").secondRef()())
+        assertEquals(6, strLenRefVararg("vararg", String::length))
+        var reassignedFunction: (String) -> Int = { -1 }
+        reassignedFunction = String::length
+        val conditionalFunction: (String) -> Int = if (builder.length > 0) String::length else String::length
+        val inlineResultFunction: (String) -> Int = run { String::length }
+        val propertyAlias: KProperty1<String, Int> = String::length
+        val functionFromAlias: (String) -> Int = propertyAlias
+        @Suppress("UNCHECKED_CAST")
+        val explicitlyCastFunction = String::length as (String) -> Int
+        val consumeFunction: ((String) -> Int) -> Int = { it("callee") }
+        val narrowedCharSequenceFunction: (String) -> Int = CharSequence::length
+        val functionArray = arrayOf<(String) -> Int>({ -1 })
+        functionArray[0] = String::length
+        crossFileStrLenRef = String::length
+        assertEquals(8, reassignedFunction("reassign"))
+        assertEquals(6, conditionalFunction("branch"))
+        assertEquals(6, inlineResultFunction("inline"))
+        assertEquals(5, functionFromAlias("alias"))
+        assertEquals(4, explicitlyCastFunction("cast"))
+        assertEquals(6, consumeFunction(String::length))
+        assertEquals(6, narrowedCharSequenceFunction("narrow"))
+        assertEquals(6, genericCharSequenceLengthRef<StrLenRefB>()(b))
+        assertEquals(5, functionArray[0]("array"))
+        assertEquals(9, crossFileStrLenRef("crossFile"))
     }
 
     @TestAttribute
