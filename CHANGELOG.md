@@ -142,14 +142,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   CIR TypeDef when round-trip metadata is stamped, so it carries the same `[NullableContext]` carrier every other
   compiler-authored type does. The change also FIXES a shape the emitter could not reach: a class implementing an
   `Iterable`-derived interface declared in ANOTHER assembly, whose enumerable face the emitter's worklist never
-  followed, failed to load with "Method 'GetEnumerator' … does not have an implementation".
+  followed, failed to load with "Method 'GetEnumerator' … does not have an implementation". The final closure also
+  resolves `iterator()` supplied by a non-enumerable base class or an interface default, locally and through a
+  referenced assembly, and preserves a narrower iterator element behind a two-parameter internal adapter rather than
+  constructing the one-parameter adapter at a type its input does not implement. The element is resolved from the
+  return type's actual `Iterator<E>` supertype rather than guessed from that type's own generic arguments, covering
+  primitive iterators and arbitrary user iterator subclasses; provider selection also retains a physically renamed
+  declaration's Kotlin source identity and does not let an inaccessible private base member suppress a selected
+  interface default.
 
-- **Which delegate a literal lambda constructs is decided in `bir2cir`, and the Unit/void adapter is ordinary CIR
+- **Which delegate a lambda or callable reference constructs is decided in `bir2cir`, and the Unit/void adapter is ordinary CIR
   (#400).** `ilemit` used to compare the reflected parameter type at each call site with the lambda's own delegate and
   re-wrap the construction when they differed, and — when the slot's `Invoke` returned a value while the Kotlin lambda
   was `Unit`-valued — to author the reconciling adapter itself: a synthesized
   `DotKt.Runtime.CompilerServices.UnitDelegateAdapters` TypeDef, one `Unit$N` MethodDef per conversion, a rewritten
-  generic frame with cloned constraints, and a hand-built body. `bir2cir` now marks every literal construction with the
+  generic frame with cloned constraints, and a hand-built body. `bir2cir` now marks every construction with the
   delegate its slot declares and, after the last resolution pass, makes the construction state what it physically
   builds: the same delegate (nothing to state), a different bindable one (its `funcType`, `delegateCtorRef` and
   `invokeRef` become the slot's), or — for the void-into-value mismatch — an ordinary `newClosure` over an adapter class
@@ -157,9 +164,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   through the same `staticField` node every Kotlin `object` instance is read with. The adapter is generic in the
   delegate's PARAMETER TYPES rather than in the enclosing frame's type variables, so it declares no constraints at all
   and none have to be reconstructed: a delegate family constrains none of its own parameters, so any type legal as
-  `Action<X>`'s argument is legal as the adapter's. The same rule now covers a literal lambda subscribed to a .NET
-  event, which reaches the accessor already being the event's delegate. The `unitInstanceRef` and
-  `targetDelegateCtorRef` CIR carriers are retired.
+  `Action<X>`'s argument is legal as the adapter's. Bound Kotlin methods, bound CLR methods and CLR static methods now
+  take the same declared-slot rule as lambdas; previously their natural `Func`/`Action` delegate could be passed to a
+  different custom delegate slot by type-punning. Event subscription remains the stored-handler form the producer
+  actually emits, while exact event-forwarder parameters retain their explicit `handlerExact` path. The
+  `unitInstanceRef` and `targetDelegateCtorRef` CIR carriers are retired.
 
 - **The body of an un-lowered `suspend` declaration is authored by `bir2cir`, and the Kotlin `suspend` modifier no
   longer reaches CIR (#400).** `ilemit` used to synthesize a throwing body for any declaration that still carried

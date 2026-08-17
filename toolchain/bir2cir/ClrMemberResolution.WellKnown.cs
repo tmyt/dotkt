@@ -32,18 +32,6 @@ static partial class ClrMemberResolution
         ("Enum.Parse",            "System.Enum",     "Parse",             new[] { "System.Type", "System.String" }),
         ("Array.IndexOf",         "System.Array",    "IndexOf",           new[] { "System.Array", "System.Object" }),
         ("Comparable.CompareTo",  "System.IComparable", "CompareTo",      new[] { "System.Object" }),
-        // The OPEN declarations of the generic collection slots. Their instantiation is over a type parameter of
-        // a type the emitter synthesizes, which no document can name — but the DECLARATION is fixed, and
-        // anchoring a named declaration onto an owner is mechanical rather than a second choice of member.
-        ("ReadOnlyCollectionT.Count", "System.Collections.Generic.IReadOnlyCollection", "get_Count", new string[0]),
-        // The rest of the generic collection faces a Kotlin collection implements. All open declarations, all
-        // fixed: the emitter anchors each onto the type it is building.
-        ("ReadOnlyListT.Item",    "System.Collections.Generic.IReadOnlyList", "get_Item", new[] { "System.Int32" }),
-        ("CollectionT.Count",     "System.Collections.Generic.ICollection", "get_Count",  new string[0]),
-        ("CollectionT.IsReadOnly","System.Collections.Generic.ICollection", "get_IsReadOnly", new string[0]),
-        ("CollectionT.Clear",     "System.Collections.Generic.ICollection", "Clear",      new string[0]),
-        ("ListT.Item",            "System.Collections.Generic.IList", "get_Item",         new[] { "System.Int32" }),
-        ("ListT.RemoveAt",        "System.Collections.Generic.IList", "RemoveAt",         new[] { "System.Int32" }),
     };
 
     // Constructors with a FIXED owner. `newobj` needs a token exactly as `call` does, so these are the same

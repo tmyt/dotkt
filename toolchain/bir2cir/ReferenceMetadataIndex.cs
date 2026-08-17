@@ -775,7 +775,7 @@ sealed partial class ReferenceMetadataIndex
     // frame. KotlinOverrideSlotBridge uses this only to determine whether an INHERITED ordinary CLR method can capture
     // an interface DIM property slot. Returning the declaration vector keeps the physical-signature comparison in
     // bir2cir; no accessor role is inferred from the method name here.
-    public IEnumerable<(TypeNode[] Parameters, TypeNode Return, bool IsVirtual)> AccessibleDeclaredInstanceMethods(
+    public IEnumerable<(TypeNode[] Parameters, TypeNode Return, bool IsVirtual, bool IsAbstract)> AccessibleDeclaredInstanceMethods(
         TypeNode.Fqn ownerSpec, string methodName, int methodArity)
     {
         if (ownerSpec == null || string.IsNullOrEmpty(methodName)) yield break;
@@ -796,8 +796,34 @@ sealed partial class ReferenceMetadataIndex
                 yield return (
                     member.ParamTypeNodes.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
                     SupertypeGraph.SubstOwnerTvs(member.ReturnTypeNode, args),
-                    member.IsVirtual);
+                    member.IsVirtual,
+                    member.IsAbstract);
             }
+        }
+    }
+
+    // Exact declared Kotlin-source method on a referenced owner, with its physical MethodDef name retained. A
+    // compiler-assigned/explicit CLR spelling can differ from the source member selected by Kotlin; callers that
+    // synthesize a call need both identities and must not reconstruct one from the other.
+    public IEnumerable<(string PhysicalName, TypeNode[] Parameters, TypeNode Return, bool IsVirtual, bool IsAbstract)>
+        AccessibleDeclaredKotlinInstanceMethods(TypeNode.Fqn ownerSpec, string sourceMethodName, int methodArity)
+    {
+        if (ownerSpec == null || string.IsNullOrEmpty(sourceMethodName)) yield break;
+        if (!TryMembersByBirOwner(BareOwnerFqn(ownerSpec.Name), out var members)) yield break;
+        var args = ownerSpec.Args ?? Array.Empty<TypeNode>();
+        foreach (var member in members)
+        {
+            if (member.IsStatic || !member.IsPublic
+                || (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) != sourceMethodName
+                || member.MethodArity != methodArity
+                || member.ParamTypeNodes == null || member.ReturnTypeNode == null)
+                continue;
+            yield return (
+                member.Name,
+                member.ParamTypeNodes.Select(type => SupertypeGraph.SubstOwnerTvs(type, args)).ToArray(),
+                SupertypeGraph.SubstOwnerTvs(member.ReturnTypeNode, args),
+                member.IsVirtual,
+                member.IsAbstract);
         }
     }
 

@@ -12,6 +12,8 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import roundtrip.collslots.Feed
+import roundtrip.collslots.ExternalDefaultIterator
+import roundtrip.collslots.ExternalIteratorProvider
 import roundtrip.collslots.TrackedBag
 import roundtrip.collslots.makeTrackedBag
 
@@ -21,6 +23,9 @@ import roundtrip.collslots.makeTrackedBag
 class CrossModuleFeedNumbers : Feed<Int> {
     override fun iterator(): Iterator<Int> = listOf(1, 2, 3).iterator()
 }
+
+class CrossModuleInheritedIterator(items: List<String>) : ExternalIteratorProvider<String>(items), Feed<String>
+class CrossModuleDefaultIterator : ExternalDefaultIterator, Iterable<Int>
 
 class KotlinCollectionSlotTests {
     @TestAttribute
@@ -66,6 +71,20 @@ class KotlinCollectionSlotTests {
         var seen = 0
         for (n in numbers) seen += n
         assertEquals(6, seen)
+    }
+
+    @TestAttribute
+    fun aReferencedNonEnumerableBaseCanProvideTheIteratorBody() {
+        val values = CrossModuleInheritedIterator(listOf("x", "yy", "zzz"))
+        assertEquals("x|yy|zzz", values.joinToString("|"))
+        assertEquals(6, values.sumOf { it.length })
+    }
+
+    @TestAttribute
+    fun aReferencedInterfaceDefaultCanProvideTheIteratorBody() {
+        val values = CrossModuleDefaultIterator()
+        assertEquals(listOf(4, 5, 6), values.toList())
+        assertEquals(15, values.sum())
     }
 
     @TestAttribute

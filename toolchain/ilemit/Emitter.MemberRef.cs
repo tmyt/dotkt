@@ -194,8 +194,7 @@ sealed partial class Emitter
         "Array.IndexOf", "Comparable.CompareTo",
         "Object.ctor",
         "IndexOutOfRangeException.ctor",
-        "ReadOnlyCollectionT.Count", "ReadOnlyListT.Item", "CollectionT.Count", "CollectionT.IsReadOnly",
-        "CollectionT.Clear", "ListT.Item", "ListT.RemoveAt", "NullableT.ctor", "SpanT.ctorPointer",
+        "NullableT.ctor", "SpanT.ctorPointer",
     };
 
     /// <summary>

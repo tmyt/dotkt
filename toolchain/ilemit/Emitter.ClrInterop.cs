@@ -456,9 +456,9 @@ sealed partial class Emitter
     // ilemit LINKS the exact accessor (LinkClrMethod — hard-fails a missing/ambiguous slot, so the old unchecked
     // `GetEvent(...).GetAddMethod()` NRE on a missing/value-type/constructed-generic event is gone) and consumes the
     // carried dispatch.
-    // The handler arrives in one of two STATED forms: `handlerExact` — a value that already IS the event's delegate,
-    // which includes a literal lambda bir2cir pointed at that delegate (ClrMemberResolution.DelegateSlots) — or a
-    // stored function value, re-wrapped below through the source delegate's own Invoke.
+    // The handler arrives in one of two STATED forms: `handlerExact` — an event-forwarder parameter already typed as
+    // the event's exact delegate — or a subscription's stored function value, re-wrapped below through the source
+    // delegate's own Invoke.
     Type EmitClrEvent(JsonElement e, bool add)
     {
         var type = ClrRef(e.GetProperty("type"));

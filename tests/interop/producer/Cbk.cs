@@ -53,12 +53,20 @@ namespace CbkUnit {
     // the `allows ref struct` anti-constraint, so anything standing for that parameter must admit it too.
     public delegate object SpanResult(Span<int> value);
     public static class UnitCallbacks {
+        public static int StaticMarks { get; private set; }
+        public static void ResetStaticMarks() => StaticMarks = 0;
+        public static void MarkStatic() => StaticMarks++;
         public static object UseNullary(NullaryResult transform) => transform();
         public static object UseBinary<T>(BinaryResult<T> transform, T first, string second)
             => transform(first, second);
         public static string UseSink(IntSink sink) { sink(7); return "sunk"; }
         public static object UseSpan(SpanResult transform, int[] values) => transform(values.AsSpan());
         public static int SpanTotal(Span<int> values) { var total = 0; foreach (var v in values) total += v; return total; }
+    }
+
+    public sealed class UnitTarget {
+        public int Marks { get; private set; }
+        public void Mark() => Marks++;
     }
 
     // A delegate STORED rather than passed: a setter parameter and a public field are declared delegate slots too,
