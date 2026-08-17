@@ -23,6 +23,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FEED="$ROOT/build/nuget-feed"
 CACHE="$ROOT/build/test-package-cache"
 CONFIGURATION="Debug"
+METADATA_INSPECTOR_PROJECT="$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj"
+METADATA_INSPECTOR_DLL="$ROOT/tests/roundtrip/metadata-inspector/bin/$CONFIGURATION/net10.0/CompanionMetadataInspector.dll"
 
 # --- the suite projects to build / test / ilverify. Verdict is per-project `dotnet test` $? + exact discovery
 #     count + ilverify (see TASK 2). ---------------------------------------------------------------------------
@@ -110,6 +112,15 @@ VER="$VER_PREFIX${VER_SUFFIX:+-$VER_SUFFIX}"
 ls "$FEED"/DotKt.Sdk.*.nupkg >/dev/null 2>&1 || { echo "run-nunit-tests: no DotKt.Sdk nupkg in $FEED — run 'make pack'"; exit 1; }
 echo "run-nunit-tests: local SDK version $VER  (feed: $FEED)"
 
+# Build the shared metadata inspector once. Individual artifact checks execute this exact binary so they neither
+# repeat MSBuild/restore work nor depend on the order in which the NUnit projects happen to run.
+if ! dotnet build "$METADATA_INSPECTOR_PROJECT" -c "$CONFIGURATION" --no-incremental -v:q --nologo \
+	>"$ROOT/build/nunit-metadata-inspector.build.log" 2>&1; then
+	echo "run-nunit-tests: METADATA INSPECTOR BUILD FAIL — see build/nunit-metadata-inspector.build.log"
+	tail -25 "$ROOT/build/nunit-metadata-inspector.build.log"
+	exit 1
+fi
+
 # Build the tiny local package used by PackageReferenceTests. It deliberately reaches the Kotlin consumer as a
 # NuGet package (not a ProjectReference), replacing the former Avalonia-specific surrogate with the exact contract
 # under test: a virtual member from a PackageReference can be overridden by Kotlin.
@@ -148,8 +159,8 @@ for proj in "${PROJECTS[@]}"; do
 		ownership_bir="$ROOT/tests/roundtrip/producer/obj/dotkt-bir/NestedOwnership.bir.json"
 		ownership_cir="$ROOT/tests/roundtrip/producer/obj/dotkt-cir/NestedOwnership.cir.json"
 		consumer_dll="$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll"
-		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
-			-- "$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" "$ownership_bir" "$ownership_cir" "$consumer_dll" \
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			"$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" "$ownership_bir" "$ownership_cir" "$consumer_dll" \
 			>"$ROOT/build/nunit-$name.metadata.log" 2>&1; then
 			echo "  companion + nested-ownership BIR/CIR/DLL/KLIB metadata OK"
 		else
@@ -177,24 +188,24 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/dotkt-reference-klibs/InteropProducer.klib"
-		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
-			-- --klib-csharp-extension-shape "$interop_klib" C1Net C1Net.Ext tripled \
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-csharp-extension-shape "$interop_klib" C1Net C1Net.Ext tripled \
 			>"$ROOT/build/nunit-$name.extension-shape.log" 2>&1; then
 			echo "  C# extension projects as one namespace extension plus one ordinary CLR static"
 		else
 			echo "  C# EXTENSION KLIB SHAPE FAIL — see build/nunit-$name.extension-shape.log"
 			tail -25 "$ROOT/build/nunit-$name.extension-shape.log"; rc=1
 		fi
-		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
-			-- --klib-class-properties "$interop_klib" "ExplicitMethodInterop.ExplicitOperations" "Name" \
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-class-properties "$interop_klib" "ExplicitMethodInterop.ExplicitOperations" "Name" \
 			>"$ROOT/build/nunit-$name.explicit-property.log" 2>&1; then
 			echo "  explicit-interface CLR Property/MethodImpl projects once under its simple Kotlin name"
 		else
 			echo "  EXPLICIT PROPERTY KLIB FAIL — see build/nunit-$name.explicit-property.log"
 			tail -25 "$ROOT/build/nunit-$name.explicit-property.log"; rc=1
 		fi
-		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
-			-- --volatile-consumer "$interop_dll" "MemberShapeTests" \
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--volatile-consumer "$interop_dll" "MemberShapeTests" \
 			"volatileInstanceGet" "volatileInstanceSet" "volatileStaticGet" "volatileStaticSet" \
 			>"$ROOT/build/nunit-$name.volatile.log" 2>&1; then
 			echo "  referenced CLR volatile field access IL OK"
@@ -227,8 +238,8 @@ for proj in "${PROJECTS[@]}"; do
 	fi
 	if [[ "$proj" == "tests/basic" ]]; then
 		basic_dll="$dir/bin/$CONFIGURATION/net10.0/DotKt.Tests.Basic.dll"
-		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
-			-- --volatile-consumer "$basic_dll" 'GenericVolatileBox`1' \
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--volatile-consumer "$basic_dll" 'GenericVolatileBox`1' \
 			"prop_get<value>" "prop_set<value>" "readValueByRef" "writeValueByRef" \
 			>"$ROOT/build/nunit-$name.volatile-generic.log" 2>&1; then
 			echo "  local generic volatile field access IL OK"
