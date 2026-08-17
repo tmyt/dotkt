@@ -71,6 +71,15 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Array-backed sequences iterate safely again (#284).** `sequenceOf(vararg)` and `Array<T>.asSequence()` now reach
+  `Array<T>.iterator()` through a correctly closed generic implementation type instead of faulting the process with
+  `AccessViolationException`. The NUnit gate forces both public entry points through value-element materialization.
+
+- **Intentional `localloc` unverifiability is no longer reported as XFAIL.** The two stack-buffer fixtures now live in
+  a dedicated `ILVERIFY_UNVERIFIABLE` baseline that accepts only ILVerify's `[Unverifiable]` finding kind; a
+  StackUnexpected, DelegateCtor, or any other error on the same method remains a NEW-FAIL. Runtime assertions continue
+  to validate stack-buffer, Span and byref behavior, and stale entries still fail the baseline audit.
+
 - **A generic method on a same-assembly constructed generic owner could borrow its signature from a sibling overload
   (#400).** The call was initially linked by its complete owner/name/arity/parameter descriptor, but MethodSpec
   construction then searched the open TypeBuilder again using only name and generic arity. `ilemit` now preserves the

@@ -4,9 +4,13 @@
 # scopes only (the shared framework + the assembly's own output dir, which already holds NUnit/stdlib/producer).
 # Whole-assembly verification replaces the former per-case, per-dll shell invocations.
 #
-# Green (exit 0) iff every ilverify finding matches an ILVERIFY_XFAIL substring below — the same
-# machine-readable "one reason per known finding" discipline. Any finding
-# outside the baseline is a NEW-FAIL and reddens the gate.
+# Green (exit 0) iff every ilverify finding matches one of the two narrow baselines below:
+#
+#   * ILVERIFY_XFAIL — a real, runtime-safe compiler defect awaiting a fix.
+#   * ILVERIFY_UNVERIFIABLE — intentionally unverifiable ECMA-335 IL whose runtime behavior is separately tested.
+#
+# UNVERIFIABLE entries match only ILVerify's `[Unverifiable]` finding kind; a different error on the same method is
+# a NEW-FAIL. Both maps use the same machine-readable "one reason per known finding" discipline.
 #
 # --audit-baseline additionally reddens on a DEAD key: a baseline entry that matched no finding at all has
 # rotted into a mask for whatever finding lands on that method next. It is reported with scripts/lib.sh's strict
@@ -18,9 +22,8 @@
 # Usage: tests/run-ilverify.sh [--audit-baseline] <emitted-test-assembly.dll> [<more.dll> ...]
 set -euo pipefail
 
-# Known runtime-safe, formal-only findings (substring -> tracking issue + reason). A finding line must contain
-# one of these substrings to be tolerated. Keys are narrow fixture/method or emitted-type identifiers so they only mask
-# the documented shape.
+# Known runtime-safe compiler defects (substring -> tracking issue + reason). Keys are narrow fixture/method or
+# emitted-type identifiers so they only mask the documented shape.
 declare -A ILVERIFY_XFAIL=(
 	# The LAST remaining position split of #86, and a REFERENCE one: `Array<T?>` erases to `object[]`
 	# T-INDEPENDENTLY, while a concrete `Array<String?>` keeps its `string[]` because a reference `?` is not a physical
@@ -35,9 +38,16 @@ declare -A ILVERIFY_XFAIL=(
 	# and cost every C# consumer the element type — or whether an open `Array<T?>`/`List<T?>` should instead keep the
 	# type variable and box only at the value instantiations. Both are ABI decisions, neither is this fix's.
 	["ArrayTests::copyOfGrowsWithNullTail()"]='#86: an open Array<T?> is object[] T-independently while a concrete Array<String?> keeps string[], so copyOf().toList() yields an IReadOnlyList<object> where the slot is an IReadOnlyCollection<string> — runtime-safe (the array really is a string[]; RUN green); closing it needs the REFERENCE half of the carrier-argument decision'
-	# localloc is intentionally unverifiable ECMA-335 IL. The runtime test validates the resulting Span writes/reads.
-	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc, which ILVerify must report as unverifiable; runtime assertions are green"
-	["ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"]="by design: the same stackalloc/localloc unverifiability as its StackBufferTests sibling — this case takes the ADDRESS of a stack slot, so the pointer arithmetic is equally formal-only; runtime assertions are green"
+)
+
+# Intentionally unverifiable ECMA-335 IL (substring -> reason). These are not failed tests and not compiler defects:
+# `localloc` produces a transient unmanaged pointer, so ILVerify correctly classifies its use as unverifiable. The
+# runtime fixtures validate the resulting stack-buffer writes, reads, bounds behavior, Span interop and byref aliasing.
+# The classifier below additionally requires `Error [Unverifiable]`, preventing these method keys from masking a
+# StackUnexpected, DelegateCtor, or any other verification failure.
+declare -A ILVERIFY_UNVERIFIABLE=(
+	["StackBufferTests::stackAllocationAndSpanInterop()"]="by design: stackalloc emits localloc and transient unmanaged-pointer operations; runtime assertions validate the resulting buffer and Span behavior"
+	["ByRefParameterTests::byrefOfAStackSlotEvaluatesItsIndexOnce()"]="by design: taking a stack-buffer slot by reference uses the same localloc-backed unmanaged pointer; runtime assertions validate aliasing and single evaluation"
 )
 
 ILV="$(find "$HOME/.dotnet" -name 'ILVerify.dll' 2>/dev/null | head -1)"
@@ -58,13 +68,25 @@ done
 
 # Which baseline keys actually masked a finding, accumulated across every verified assembly (a key is expected
 # to match in exactly one of them). Read by the --audit-baseline dead-key verdict below.
-declare -A MATCHED=()
+declare -A MATCHED_XFAIL=()
+declare -A MATCHED_UNVERIFIABLE=()
 
-is_xfail() { # <finding line> -> 0 if it matches a baseline substring (recording the key that matched)
+FINDING_CLASS=""
+classify_finding() { # <finding line> -> 0 if classified, setting FINDING_CLASS and recording its key
 	local line="$1" key
+	FINDING_CLASS=""
+	if [[ "$line" == *"Error [Unverifiable]"* ]]; then
+		for key in "${!ILVERIFY_UNVERIFIABLE[@]}"; do
+			[[ "$line" == *"$key"* ]] || continue
+			MATCHED_UNVERIFIABLE["$key"]=1
+			FINDING_CLASS="UNVERIFIABLE"
+			return 0
+		done
+	fi
 	for key in "${!ILVERIFY_XFAIL[@]}"; do
 		[[ "$line" == *"$key"* ]] || continue
-		MATCHED["$key"]=1
+		MATCHED_XFAIL["$key"]=1
+		FINDING_CLASS="XFAIL"
 		return 0
 	done
 	return 1
@@ -77,19 +99,34 @@ for dll in "${DLLS[@]}"; do
 	out="$(dotnet "$ILV" "$dll" -r "$RTDIR/*.dll" -r "$bindir/*.dll" 2>&1 || true)"
 	# Finding lines look like:  [IL]: Error [Kind]: [<asm> : Fixture::method()][offset ...] <msg>
 	mapfile -t findings < <(grep -E '\[IL\]: Error|Error \[' <<<"$out" || true)
-	declare -a newfails=() xfailed=()
+	declare -a newfails=() xfailed=() unverifiable=()
 	for f in "${findings[@]}"; do
-		if is_xfail "$f"; then xfailed+=("$f"); else newfails+=("$f"); fi
+		if classify_finding "$f"; then
+			case "$FINDING_CLASS" in
+				XFAIL) xfailed+=("$f") ;;
+				UNVERIFIABLE) unverifiable+=("$f") ;;
+			esac
+		else
+			newfails+=("$f")
+		fi
 	done
 	if (( ${#newfails[@]} == 0 )); then
-		echo "VERIFY  $(basename "$dll")${xfailed[0]:+  (${#xfailed[@]} XFAIL finding(s), all baseline-listed)}"
+		summary=""
+		if (( ${#xfailed[@]} )); then summary="${#xfailed[@]} XFAIL"; fi
+		if (( ${#unverifiable[@]} )); then
+			[[ -z "$summary" ]] || summary+=", "
+			summary+="${#unverifiable[@]} UNVERIFIABLE"
+		fi
+		[[ -z "$summary" ]] || summary="  ($summary finding(s), all baseline-listed)"
+		echo "VERIFY  $(basename "$dll")$summary"
 		for f in ${xfailed[@]+"${xfailed[@]}"}; do echo "    XFAIL: $f"; done
+		for f in ${unverifiable[@]+"${unverifiable[@]}"}; do echo "    UNVERIFIABLE: $f"; done
 	else
-		echo "VERIFY FAIL  $(basename "$dll") — ${#newfails[@]} finding(s) outside the ILVERIFY_XFAIL baseline:"
+		echo "VERIFY FAIL  $(basename "$dll") — ${#newfails[@]} finding(s) outside the ILVERIFY_XFAIL/ILVERIFY_UNVERIFIABLE baselines:"
 		for f in "${newfails[@]}"; do echo "    NEW-FAIL: $f"; done
 		rc=1
 	fi
-	unset newfails xfailed
+	unset newfails xfailed unverifiable
 done
 
 # DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set. xfail_diff's wording,
@@ -97,8 +134,14 @@ done
 if (( audit )); then
 	mapfile -t audit_keys < <(printf '%s\n' "${!ILVERIFY_XFAIL[@]}" | LC_ALL=C sort)
 	for key in ${audit_keys[@]+"${audit_keys[@]}"}; do
-		[[ -v MATCHED["$key"] ]] && continue
+		[[ -v MATCHED_XFAIL["$key"] ]] && continue
 		echo "FIXED     ilverify:$key — fixed; remove it from the xfail list"
+		rc=1
+	done
+	mapfile -t audit_keys < <(printf '%s\n' "${!ILVERIFY_UNVERIFIABLE[@]}" | LC_ALL=C sort)
+	for key in ${audit_keys[@]+"${audit_keys[@]}"}; do
+		[[ -v MATCHED_UNVERIFIABLE["$key"] ]] && continue
+		echo "FIXED     ilverify-unverifiable:$key — no matching [Unverifiable] finding; remove it from the unverifiable list"
 		rc=1
 	done
 fi

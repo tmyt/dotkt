@@ -35,6 +35,16 @@ class SequenceOperationTests {
         assertEquals(3, xs.asSequence().single { it == 3 })                              // 3
     }
 
+    // #284: array-backed sequences used to reach Array<T>.iterator() through an open generic implementation type
+    // whose captured T was not owned by the emitted type. At T=Int that mismatched the actual Iterator<Int> and the
+    // process died with AccessViolationException. Force both public entry points all the way through iteration and
+    // materialization; a merely constructible Sequence is not sufficient evidence for this failure mode.
+    @TestAttribute
+    fun arrayBackedSequenceIteration() {
+        assertEquals("1,2,3", sequenceOf(1, 2, 3).toList().joinToString(","))
+        assertEquals("4,5,6", arrayOf(4, 5, 6).asSequence().toList().joinToString(","))
+    }
+
     // il-seqfilter: value-type (Int) FilteringSequence — the erased nextItem:T? box round-trip (bundle-6 BUG-1).
     @TestAttribute
     fun valueTypeFilter() {
@@ -48,9 +58,8 @@ class SequenceOperationTests {
 
     // #86 — `Sequence.single{}` keeps a `var single: T? = null` ACCUMULATOR local, the exact shape whose erased
     // object slot has to survive a real null and unbox at the `single as T` read; at T=Int/T=Boolean a bare `T`
-    // slot cannot distinguish "not seen yet" from the value 0/false. Receivers are List.asSequence() throughout —
-    // #284 tracks the sequenceOf/Array.asSequence surfaces, which fault for an unrelated reason and would make
-    // this measure the wrong thing.
+    // slot cannot distinguish "not seen yet" from the value 0/false. Receivers remain List.asSequence() throughout
+    // so this method measures the accumulator seam alone; array-backed sequence iteration is pinned separately above.
     @TestAttribute
     fun valueAccumulatorSingle() {
         val xs = listOf(1, 2, 3, 4, 5, 6)
