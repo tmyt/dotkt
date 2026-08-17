@@ -14,6 +14,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Value-producing `try` expressions in array, string-concatenation, spread-vararg, and collection construction
   elements no longer emit invalid CLR programs (#319).** `bir2cir` now hoists protected regions out of ordered value
   slots whose CLR emitters already hold an accumulator, while preserving key/value and element evaluation order.
+- **An inline function with a value-producing `try` body now works in the first string-concatenation operand
+  (#285).** The inline-spliced value block is normalized before `ilemit` pushes the concatenation accumulator.
 
 ## 0.9.9 (2026-08-17)
 
