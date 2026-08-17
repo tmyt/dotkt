@@ -11,9 +11,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   (#242).** `kotc` now projects them as ordinary Kotlin property references with an explicit callable-interface fact;
   `bir2cir` materializes a CLR delegate when that value fills a function slot and resolves the accessor to its physical
   CLR representation.
-- **Value-producing `try` expressions in array, spread-vararg, and collection construction elements no longer emit
-  invalid CLR programs (#319).** `bir2cir` now hoists protected regions out of the ordered value slots of array, list,
-  set, map, and spread constructions while preserving key/value and element evaluation order.
+- **Value-producing `try` expressions in array, string-concatenation, spread-vararg, and collection construction
+  elements no longer emit invalid CLR programs (#319).** `bir2cir` now hoists protected regions out of ordered value
+  slots whose CLR emitters already hold an accumulator, while preserving key/value and element evaluation order.
 
 ## 0.9.9 (2026-08-17)
 

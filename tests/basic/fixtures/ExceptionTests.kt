@@ -23,7 +23,7 @@
 //                    + sideEffectingOperandBeforeHoistedTry (the LEFT operand's spill temp, typed from the operand)
 //                    + tryInsideAMintedOperandBlock (the try is a `var` init inside a lowering-minted operand block)
 //                    + tryInABranchOfATrySubjectedWhen (recognizing the outer block must not stop the walk inside it)
-//                    + tryInConstructionValueLists (#319 array/list/set/map/spread value-list coverage + order)
+//                    + tryInConstructionValueLists (#319 array/concat/list/set/map/spread value-list coverage + order)
 //
 // Added here rather than migrated: nothingReturningCallInValuePosition (#197) — a `fun f(): Nothing` CALL in a
 // value position, the in-module twin of the cross-module round-trip case. It belongs to this battery because a
@@ -326,6 +326,7 @@ class ExceptionTests {
             excHoistMarked("array-after", 3),
         )
         val objects = arrayOf(try { "object" } catch (e: Exception) { "bad" })
+        val concat = (try { "left" } catch (e: Exception) { "bad" }) + "right"
         val list = listOf(try { 4 } catch (e: Exception) { -1 }, 5)
         val set = setOf(try { 6 } catch (e: Exception) { -1 }, 7)
         val map = mapOf(
@@ -353,6 +354,7 @@ class ExceptionTests {
 
         assertEquals(6, ints.sum())
         assertEquals("object", objects[0])
+        assertEquals("leftright", concat)
         assertEquals(9, list.sum())
         assertEquals(13, set.sum())
         assertEquals(8, map["a"])

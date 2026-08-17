@@ -189,7 +189,9 @@ static class TryValueOperandHoist
         }
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
-            HoistOrdered(parts.Count, i => parts[i], (i, v) => parts[i] = v, atEmpty, pre, scope);
+            // ilemit has already pushed the object[] accumulator and an element index before every part, including
+            // part 0. A protected region in any part therefore starts with a non-empty evaluation stack.
+            HoistOrdered(parts.Count, i => parts[i], (i, v) => parts[i] = v, atEmpty: false, pre, scope);
             return o;
         }
         if (k != null && ConstructionValueLists.TryGetValue(k, out var valueListKey)
@@ -340,7 +342,7 @@ static class TryValueOperandHoist
             return WillHoist(o["lhs"], atEmpty) || WillHoist(o["rhs"], false);
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
-            for (var i = 0; i < parts.Count; i++) if (WillHoist(parts[i], i == 0 && atEmpty)) return true;
+            foreach (var part in parts) if (WillHoist(part, atEmpty: false)) return true;
             return false;
         }
         if (k != null && ConstructionValueLists.TryGetValue(k, out var valueListKey)
