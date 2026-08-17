@@ -23,6 +23,7 @@
 //                    + sideEffectingOperandBeforeHoistedTry (the LEFT operand's spill temp, typed from the operand)
 //                    + tryInsideAMintedOperandBlock (the try is a `var` init inside a lowering-minted operand block)
 //                    + tryInABranchOfATrySubjectedWhen (recognizing the outer block must not stop the walk inside it)
+//                    + tryInConstructionValueLists (#319 array/list/set/map/spread value-list coverage + order)
 //
 // Added here rather than migrated: nothingReturningCallInValuePosition (#197) — a `fun f(): Nothing` CALL in a
 // value position, the in-module twin of the cross-module round-trip case. It belongs to this battery because a
@@ -89,6 +90,16 @@ val excHoistLog = mutableListOf<String>()
 fun excHoistSide(): Int { excHoistLog.add("L"); return 4 }
 fun excHoistSum(): Int = excHoistSide() + try { "x".toInt() } catch (e: Exception) { 6 }        // catch arm
 fun excHoistConcat(): String = excHoistSide().toString() + try { "7".toInt() } catch (e: Exception) { 0 }  // try arm
+fun excHoistMarked(mark: String, value: Int): Int { excHoistLog.add(mark); return value }
+fun excHoistVararg(vararg values: Int): Int = values.sum()
+class ExcHoistHashKey(val value: Int) {
+    override fun hashCode(): Int { excHoistLog.add("hash$value"); return value }
+    override fun equals(other: Any?): Boolean = other is ExcHoistHashKey && value == other.value
+}
+fun excHoistMarkedKey(mark: String, value: Int): ExcHoistHashKey {
+    excHoistLog.add(mark)
+    return ExcHoistHashKey(value)
+}
 
 // Two operands, so the second is evaluated with the first already on the CLR evaluation stack — the position that
 // makes an inline protected region illegal.
@@ -299,5 +310,93 @@ class ExceptionTests {
             else -> 0
         }
         assertEquals(2, v)
+    }
+
+    // #319: ilemit has an array/list/set/map/spread accumulator (and for arrays an index) on the CLR stack before evaluating
+    // every construction element, including element 0. Each value-producing try therefore has to move ahead of the
+    // construction. Once one moves, every non-neutral value is materialized before the construction consumes any of
+    // them; otherwise HashSet/Dictionary hashing can overtake a later source argument. Map entries are one ordered
+    // key/value stream rather than opaque entry-schema objects.
+    @TestAttribute
+    fun tryInConstructionValueLists() {
+        excHoistLog.clear()
+        val ints = intArrayOf(
+            excHoistMarked("array-before", 1),
+            try { excHoistMarked("array-try", 2) } catch (e: Exception) { -1 },
+            excHoistMarked("array-after", 3),
+        )
+        val objects = arrayOf(try { "object" } catch (e: Exception) { "bad" })
+        val list = listOf(try { 4 } catch (e: Exception) { -1 }, 5)
+        val set = setOf(try { 6 } catch (e: Exception) { -1 }, 7)
+        val map = mapOf(
+            (try { "a" } catch (e: Exception) { "bad" }) to
+                (try { excHoistMarked("map-value", 8) } catch (e: Exception) { -1 }),
+            "b" to try { excHoistMarked("map-later", 9) } catch (e: Exception) { -1 },
+        )
+        val nested = arrayOf(
+            listOf(excHoistMarked("nested-before", 10)),
+            try { listOf(excHoistMarked("nested-try", 11)) }
+            catch (e: Exception) { listOf(-1) },
+        )
+        // The factory rewrite carries the source call's exact result face: `newList` alone cannot distinguish this
+        // MutableList from the read-only List above when the first construction has to be spilled.
+        val nestedMutable = arrayOf(
+            mutableListOf(16),
+            try { mutableListOf(17) } catch (e: Exception) { mutableListOf(-1) },
+        )
+        val spreadSource = intArrayOf(12, 13)
+        val spread = excHoistVararg(
+            excHoistMarked("spread-before", 14),
+            *spreadSource,
+            try { excHoistMarked("spread-try", 15) } catch (e: Exception) { -1 },
+        )
+
+        assertEquals(6, ints.sum())
+        assertEquals("object", objects[0])
+        assertEquals(9, list.sum())
+        assertEquals(13, set.sum())
+        assertEquals(8, map["a"])
+        assertEquals(9, map["b"])
+        assertEquals(10, nested[0][0])
+        assertEquals(11, nested[1][0])
+        nestedMutable[0].add(18)
+        assertEquals(2, nestedMutable[0].size)
+        assertEquals(17, nestedMutable[1][0])
+        assertEquals(54, spread)
+        assertEquals("array-before", excHoistLog[0])
+        assertEquals("array-try", excHoistLog[1])
+        assertEquals("array-after", excHoistLog[2])
+        assertEquals("map-value", excHoistLog[3])
+        assertEquals("map-later", excHoistLog[4])
+        assertEquals("nested-before", excHoistLog[5])
+        assertEquals("nested-try", excHoistLog[6])
+        assertEquals("spread-before", excHoistLog[7])
+        assertEquals("spread-try", excHoistLog[8])
+
+        // Factory arguments are all evaluated before the substituted HashSet/Dictionary consumes them. The first
+        // hash therefore cannot run before the later key-producing expression just because the first key held a try.
+        excHoistLog.clear()
+        val orderedSet = setOf(
+            try { excHoistMarkedKey("set-try", 20) }
+            catch (e: Exception) { ExcHoistHashKey(-1) },
+            excHoistMarkedKey("set-later", 21),
+        )
+        assertEquals(2, orderedSet.size)
+        assertEquals("set-try", excHoistLog[0])
+        assertEquals("set-later", excHoistLog[1])
+        assertEquals("hash20", excHoistLog[2])
+        assertEquals("hash21", excHoistLog[3])
+
+        excHoistLog.clear()
+        val orderedMap = mapOf(
+            (try { excHoistMarkedKey("map-key-try", 22) }
+            catch (e: Exception) { ExcHoistHashKey(-1) }) to 1,
+            excHoistMarkedKey("map-key-later", 23) to 2,
+        )
+        assertEquals(2, orderedMap.size)
+        assertEquals("map-key-try", excHoistLog[0])
+        assertEquals("map-key-later", excHoistLog[1])
+        assertEquals("hash22", excHoistLog[2])
+        assertEquals("hash23", excHoistLog[3])
     }
 }
