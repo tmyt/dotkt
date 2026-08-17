@@ -971,9 +971,6 @@ sealed partial class Emitter
 
         // Pass 6: bake types (base before derived). Enums were already baked up front.
         foreach (var ti in Ordered()) { if (!ti.IsEnum) { T($"pass6 createType: {ti.TB?.Name}"); ti.TB.CreateType(); } }
-        // The Unit-return delegate adapters forward to a void delegate type `ft` (a BCL Action or a canonical
-        // KAction), so bake them AFTER the canonical delegates whose signatures they may reference.
-        if (_unitAdapterTB != null && !_unitAdapterTB.IsCreated()) _unitAdapterTB.CreateType();
         // BCL Func/Action Invoke trampolines used when a TypeSpec contains a composite open type (Func<E[]>).
         if (_delegateInvokeAdapterTB != null && !_delegateInvokeAdapterTB.IsCreated()) _delegateInvokeAdapterTB.CreateType();
         // Safety net: any user type Ordered() somehow missed (so Save won't throw "not supported before the type is

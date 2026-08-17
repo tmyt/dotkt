@@ -1237,6 +1237,11 @@ sealed class Pipeline
             ClrMemberResolution.ResolveAttributeCtors(lowered, refs);
             ClrMemberResolution.ResolveWellKnown(lowered, refs);
             ClrMemberResolution.ResolveInterfaceSlots(lowered, loweredRoots.Select(file => file.Root), refs);
+            // Every delegate slot in this file now names its selected member, so each literal lambda filling one
+            // can be pointed at the delegate it physically constructs — and the void-to-value adapter that needs
+            // can be authored as ordinary CIR. Runs after the last resolution pass, because the rule compares the
+            // construction's FINAL function type with the slot's.
+            ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes);
             // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
             // whole family from the crossing refusal below without any gate noticing.

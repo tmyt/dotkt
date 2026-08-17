@@ -71,6 +71,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A generic method on a same-assembly constructed generic owner could borrow its signature from a sibling overload
+  (#400).** The call was initially linked by its complete owner/name/arity/parameter descriptor, but MethodSpec
+  construction then searched the open TypeBuilder again using only name and generic arity. `ilemit` now preserves the
+  exact open MethodDef when it anchors that selected declaration onto the constructed owner and uses only that
+  declaration for method/type-argument substitution. Fixtures cover both declaration orders for same-name,
+  same-arity generic methods whose open parameter signatures swap value and reference slots.
+
 - **Kotlin property accessors no longer collide with ordinary `get_<name>` / `set_<name>` functions on the CLR
   (#393).** bir2cir assigns every Kotlin accessor the dedicated `prop_get<name>` / `prop_set<name>` physical name in
   top-level, instance, companion, extension, and companion-extension placements. External CLR property interfaces and
@@ -136,6 +143,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   compiler-authored type does. The change also FIXES a shape the emitter could not reach: a class implementing an
   `Iterable`-derived interface declared in ANOTHER assembly, whose enumerable face the emitter's worklist never
   followed, failed to load with "Method 'GetEnumerator' … does not have an implementation".
+
+- **Which delegate a literal lambda constructs is decided in `bir2cir`, and the Unit/void adapter is ordinary CIR
+  (#400).** `ilemit` used to compare the reflected parameter type at each call site with the lambda's own delegate and
+  re-wrap the construction when they differed, and — when the slot's `Invoke` returned a value while the Kotlin lambda
+  was `Unit`-valued — to author the reconciling adapter itself: a synthesized
+  `DotKt.Runtime.CompilerServices.UnitDelegateAdapters` TypeDef, one `Unit$N` MethodDef per conversion, a rewritten
+  generic frame with cloned constraints, and a hand-built body. `bir2cir` now marks every literal construction with the
+  delegate its slot declares and, after the last resolution pass, makes the construction state what it physically
+  builds: the same delegate (nothing to state), a different bindable one (its `funcType`, `delegateCtorRef` and
+  `invokeRef` become the slot's), or — for the void-into-value mismatch — an ordinary `newClosure` over an adapter class
+  `bir2cir` authors, which holds the natural delegate and whose `invoke` calls it and returns the `Unit` singleton
+  through the same `staticField` node every Kotlin `object` instance is read with. The adapter is generic in the
+  delegate's PARAMETER TYPES rather than in the enclosing frame's type variables, so it declares no constraints at all
+  and none have to be reconstructed: a delegate family constrains none of its own parameters, so any type legal as
+  `Action<X>`'s argument is legal as the adapter's. The same rule now covers a literal lambda subscribed to a .NET
+  event, which reaches the accessor already being the event's delegate. The `unitInstanceRef` and
+  `targetDelegateCtorRef` CIR carriers are retired.
 
 - **The body of an un-lowered `suspend` declaration is authored by `bir2cir`, and the Kotlin `suspend` modifier no
   longer reaches CIR (#400).** `ilemit` used to synthesize a throwing body for any declaration that still carried

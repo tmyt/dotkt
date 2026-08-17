@@ -592,22 +592,22 @@ sealed partial class Emitter
             // the method args to the anchored method is the mechanical MethodSpec construction. Falling back to the
             // OPEN MethodBuilder loses `Base<X>` and creates an invalid MemberRef whenever X is an enclosing method/type
             // parameter ("containing type is not fully instantiated").
-            if (m is not MethodBuilder && m.DeclaringType is { IsGenericType: true } dt && !dt.IsGenericTypeDefinition
-                && dt.GetGenericTypeDefinition() is TypeBuilder openTb)
+            if (m is not MethodBuilder
+                && _anchoredMethodDefinitions.TryGetValue(m, out var openDefinition)
+                && openDefinition is MethodBuilder openMb
+                && openMb.DeclaringType is TypeBuilder openTb
+                && m.DeclaringType is Type constructedOwner)
             {
-                var nm = e.GetProperty("method").GetString();
-                // Detect a generic MethodBuilder via _methodTypeParams (IsGenericMethodDefinition/GetGenericArguments
-                // are unreliable on an un-baked MethodBuilder).
-                // #370-residual: local axis — find the MethodBuilder on the open type being emitted.
-                var openMb = _types.Values.FirstOrDefault(t => ReferenceEquals(t.TB, openTb))?.Methods.Values
-                    .OfType<MethodBuilder>().FirstOrDefault(b => b.Name == nm
-                        && _methodTypeParams.TryGetValue(b, out var g) && g.Count == targs.Length);
-                if (openMb != null && _methodTypeParams.TryGetValue(openMb, out var ogps))
+                // AnchorMethod recorded the exact open declaration selected from CIR's complete local signature.
+                // Keep using that MethodDef here: looking it up again by name + generic arity can select a sibling
+                // overload and substitute the wrong parameter/return types even though `m` itself is the right token.
+                if (_methodTypeParams.TryGetValue(openMb, out var ogps)
+                    && ogps.Count == targs.Length)
                 {
                     int k = 0;
                     foreach (var gp in ogps.Values) { if (k < targs.Length) sub[gp] = targs[k]; k++; }
                     var cpars = openTb.GetGenericArguments();
-                    var cargs = dt.GetGenericArguments();
+                    var cargs = constructedOwner.GetGenericArguments();
                     for (int i = 0; i < cpars.Length && i < cargs.Length; i++) sub[cpars[i]] = cargs[i];
                     retType = SubstituteTypeMap(openMb.ReturnType, sub);
                     paramTypes = _mparams.TryGetValue(openMb, out var ops)

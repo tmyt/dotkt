@@ -28,8 +28,8 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 # change. `declaringType` is the shape's discriminator (no other document shape has it), which is what
 # catches a parallel member-identity spelling invented under some other key.
 MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef",
-                    "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef", "unitInstanceRef",
-                    "combineRef", "removeRef", "compareExchangeRef", "hasValueRef", "valueRef", "invokeRef", "delegateCtorRef", "targetDelegateCtorRef",
+                    "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef",
+                    "combineRef", "removeRef", "compareExchangeRef", "hasValueRef", "valueRef", "invokeRef", "delegateCtorRef",
                     "fieldRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
@@ -49,7 +49,6 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "currentRef": {"method", "propertyAccessor"},
     "currentErasedRef": {"method", "propertyAccessor"},
     "moveNextRef": {"method"},
-    "unitInstanceRef": {"field"},
     "combineRef": {"method"},
     "removeRef": {"method"},
     "compareExchangeRef": {"method"},
@@ -57,7 +56,6 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "valueRef": {"method", "propertyAccessor"},
     "invokeRef": {"method"},
     "delegateCtorRef": {"ctor"},
-    "targetDelegateCtorRef": {"ctor"},
     "fieldRef": {"field"},
 }
 

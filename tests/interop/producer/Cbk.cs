@@ -35,3 +35,40 @@ namespace Cbk {
         public void Run(System.Action a) { a(); }
     }
 }
+
+// Void-to-value delegate adaptation shapes. Each of these declares an `Invoke` that RETURNS while the Kotlin
+// lambda filling it is Unit-valued, which is the mismatch bir2cir reconciles with an adapter (#400 §7): arity 0
+// and arity 2, a GENERIC OWNER whose parameter is constrained, plus the transpose — a value-returning lambda
+// meeting a `void` Invoke, where no value has to be produced and the construction is merely retargeted.
+namespace CbkUnit {
+    using System;
+    using Cbk;
+    public delegate object NullaryResult();
+    public delegate object BinaryResult<T>(T first, string second);
+    public delegate void IntSink(int value);
+    public sealed class ConstrainedHost<T> where T : IMarker {
+        public object Use(ConstrainedResult<T> transform, Constrained<T> value) => transform(value);
+    }
+    // A BYREF-LIKE Invoke parameter. `Action<Span<int>>` is a legal delegate because the family's parameter carries
+    // the `allows ref struct` anti-constraint, so anything standing for that parameter must admit it too.
+    public delegate object SpanResult(Span<int> value);
+    public static class UnitCallbacks {
+        public static object UseNullary(NullaryResult transform) => transform();
+        public static object UseBinary<T>(BinaryResult<T> transform, T first, string second)
+            => transform(first, second);
+        public static string UseSink(IntSink sink) { sink(7); return "sunk"; }
+        public static object UseSpan(SpanResult transform, int[] values) => transform(values.AsSpan());
+        public static int SpanTotal(Span<int> values) { var total = 0; foreach (var v in values) total += v; return total; }
+    }
+
+    // A delegate STORED rather than passed: a setter parameter and a public field are declared delegate slots too,
+    // and a literal lambda written into either must construct that delegate — including the adapted Unit form.
+    public sealed class DelegateStore {
+        public IntSink Sink { get; set; }
+        public NullaryResult Valued { get; set; }
+        public IntSink SinkField;
+        public string RunSink(int v) { Sink(v); return "sink"; }
+        public object RunValued() => Valued();
+        public string RunSinkField(int v) { SinkField(v); return "field"; }
+    }
+}

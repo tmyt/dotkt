@@ -213,6 +213,12 @@ sealed partial class Emitter
     readonly Dictionary<string, Type> _argTypes = new();
     readonly Dictionary<string, LocalBuilder> _locals = new();
     readonly Dictionary<MethodInfo, Type[]> _mparams = new();   // declared param types per method (for call-site boxing)
+    // Reflection.Emit represents a MethodDef anchored on a constructed TypeBuilder owner as a new MethodInfo whose
+    // public surface cannot recover the originating unbaked MethodBuilder. Preserve that one-to-one token-construction
+    // relationship when AnchorMethod creates it; generic MethodSpec emission must never rediscover the declaration by
+    // name/arity after the exact CIR signature has already selected it.
+    readonly Dictionary<MethodInfo, MethodInfo> _anchoredMethodDefinitions =
+        new(ReferenceEqualityComparer.Instance);
     // active try blocks: a `return` inside stores to the result local and leaves to the end label. `labels` = the
     // CFG-`label` ids declared physically inside this protected region, so a `goto` that exits it emits `leave` not `br`.
     readonly Stack<(LocalBuilder result, Label end, HashSet<int> labels)> _tryStack = new();

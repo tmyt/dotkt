@@ -450,29 +450,42 @@ sealed partial class Emitter
     }
 
     // `.NET event +=/-=` -> call the event's add/remove accessor with the handler bound as the event's OWN
-    // delegate type (e.g. EventHandler), not the Func/Action the lambda would otherwise produce. The lifted
-    // method's signature matches the delegate's Invoke (the reference KLIB typed the handler from the event's
-    // handler signature), so `ldftn`+`newobj <EventDelegate>(object, IntPtr)` is verifiable — exactly what
-    // `button.Click += (s,e)=>{}` lowers to in C#.
+    // delegate type (e.g. EventHandler).
     // W1-S3 (#46 / #121 / #113) CONSUME-ONLY event add/remove. bir2cir (ClrMemberResolution) resolved the EventInfo off
     // the ref.dll and stamped the add/remove accessor memberRef plus `dispatch`.
     // ilemit LINKS the exact accessor (LinkClrMethod — hard-fails a missing/ambiguous slot, so the old unchecked
     // `GetEvent(...).GetAddMethod()` NRE on a missing/value-type/constructed-generic event is gone) and consumes the
-    // carried dispatch. The handler delegate type flows from the resolved accessor's first param (== EventHandlerType).
+    // carried dispatch.
+    // The handler arrives in one of two STATED forms: `handlerExact` — a value that already IS the event's delegate,
+    // which includes a literal lambda bir2cir pointed at that delegate (ClrMemberResolution.DelegateSlots) — or a
+    // stored function value, re-wrapped below through the source delegate's own Invoke.
     Type EmitClrEvent(JsonElement e, bool add)
     {
         var type = ClrRef(e.GetProperty("type"));
         bool isStatic = e.GetProperty("static").GetBoolean();
         var accessor = LinkClrMethod(type, e.GetProperty("accessor").GetString(), e, instance: !isStatic);
-        var delType = ParametersOf(accessor)[0].ParameterType;   // == the event's EventHandlerType
         if (!isStatic) { if (IsValueType(type)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv")); }
         if (e.TryGetProperty("handlerExact", out var exact) && exact.GetBoolean())
             EmitExpr(e.GetProperty("handler"));
         else
-            EmitHandlerAsDelegate(e.GetProperty("handler"), delType, e);
+            EmitStoredHandlerRewrap(e, ParametersOf(accessor)[0].ParameterType);
         if (isStatic) EmitMethod(_il, OpCodes.Call, accessor);
         else EmitClrDispatch(accessor, RequireDispatch(e, type, add ? "clrEventAdd" : "clrEventRemove"), type);
         return Bcl("System.Void");
+    }
+
+    // A STORED handler value (a Func/Action local or field — the form the subscription spill produces) re-wrapped
+    // into the event's delegate: `new EventDelegate(value.Invoke)`. Two wrappers around the SAME stored value share
+    // target+method, so Delegate equality holds and `-=` removes the right handler. Both members are named by the
+    // node — `invokeRef` is the SOURCE delegate's Invoke, `delegateCtorRef` the event delegate's constructor; the
+    // event delegate TYPE is the resolved accessor's own parameter, read for the ctor encoding and nothing else.
+    void EmitStoredHandlerRewrap(JsonElement eventNode, Type eventDelegate)
+    {
+        EmitExpr(eventNode.GetProperty("handler"));      // stack: the stored delegate value
+        _il.Emit(OpCodes.Dup);
+        EmitMethod(_il, OpCodes.Ldvirtftn,
+            RequiredRef<MethodInfo>(eventNode, "invokeRef", "CLR event handler re-wrap"));
+        EmitDelegateCtor(_il, eventDelegate, eventNode);
     }
 
     // Resolve a newClosure node's ctor + invoke, INSTANTIATING the closure generic when it is a generic definition.
@@ -560,65 +573,5 @@ sealed partial class Emitter
         _il.MarkLabel(done);
     }
 
-    // Bind a lambda handler (newDelegate = non-capturing, newClosure = capturing) into a SPECIFIC delegate type.
-    // Mirrors the newDelegate/newClosure cases but uses `want` (the event's delegate type) for the ctor.
-    void EmitHandlerAsDelegate(JsonElement h, Type want, JsonElement? eventNode = null)
-    {
-        // The delegate's Invoke return type: when it is a real (non-void) type while the lambda's NATURAL delegate is
-        // void-returning (a Unit body maps to void), binding the void method-pointer into the ctor is not verifiable
-        // -> self-build the natural void delegate and wrap it in a Unit-return adapter. InvokeRetOf (not want.GetMethod/
-        // InvokeOf) so a TypeBuilder-arg `want` (`Func<Res,Unit>`) yields the CLOSED return type (`kotlin.Unit`) — a
-        // by-name lookup throws and InvokeOf's ReturnType comes back unsubstituted.
-        var invokeRet = InvokeRetOf(want);
-        var k = h.GetProperty("k").GetString();
-        if (invokeRet != Bcl("System.Void") && (k == "newDelegate" || k == "newClosure")
-            && FuncRetType(h.GetProperty("funcType")) == Bcl("System.Void"))
-        {
-            var ft = EmitExpr(h);                             // the lambda's natural void delegate, on the stack
-            EmitMethod(_il, OpCodes.Ldftn, UnitWrapAdapter(ft, invokeRet, FuncArgTypes(h.GetProperty("funcType")).ToArray(),
-                PrimaryFromRef(h, "unitInstanceRef") as FieldInfo,
-                RequiredRef<MethodInfo>(h, "invokeRef", "a void-to-Unit conversion")));
-            EmitDelegateCtor(_il, want, h, eventNode);
-            return;
-        }
-        switch (k)
-        {
-            case "newDelegate":
-                // Mirrors Emitter.Expressions: mandatory calleeOwner selects the one file class and sig selects the
-                // overload. Missing/misspelled ownership is malformed CIR, never a global name lookup (#204).
-                var dname = h.GetProperty("method").GetString();
-                var dsig = SigNodes(h);
-                var dmethod = PrimaryFromRef(h, "memberRef") as MethodInfo
-                    ?? FindCalleeOwnedStatic(h, "event newDelegate", dname, dsig, CalledMethodArity(h));
-                var dtarget = h.TryGetProperty("typeArgs", out var dta) && dta.GetArrayLength() > 0
-                    && dmethod.IsGenericMethodDefinition
-                    ? ConstructedMethod(dmethod, dta.EnumerateArray().Select(x => MapType(x)).ToArray())
-                    : dmethod;
-                _il.Emit(OpCodes.Ldnull);
-                EmitMethod(_il, OpCodes.Ldftn, dtarget);
-                EmitDelegateCtor(_il, want, h, eventNode);
-                break;
-            case "newClosure":
-                var (cctor, cinvoke) = ResolveClosure(h);
-                foreach (var c in h.GetProperty("captures").EnumerateArray()) EmitExpr(c);
-                EmitConstructor(_il, OpCodes.Newobj, cctor);
-                EmitMethod(_il, OpCodes.Ldftn, cinvoke);
-                EmitDelegateCtor(_il, want, h, eventNode);
-                break;
-            default:
-                // A stored handler value (a Func/Action local/field). Re-wrap it into the event's delegate
-                // type via its Invoke — `new EventDelegate(value.Invoke)`. Two wrappers around the SAME stored
-                // value share target+method, so Delegate equality holds and `-=` removes the right handler.
-                var src = EmitExpr(h);                       // stack: the stored delegate value
-                _il.Emit(OpCodes.Dup);
-                if (eventNode == null)
-                    throw new InvalidOperationException(
-                        "ilemit: a stored delegate re-wrap is missing its resolved Invoke reference");
-                EmitMethod(_il, OpCodes.Ldvirtftn,
-                    RequiredRef<MethodInfo>(eventNode.Value, "invokeRef", "CLR event handler re-wrap"));
-                EmitDelegateCtor(_il, want, eventNode.Value);
-                break;
-        }
-    }
 
 }

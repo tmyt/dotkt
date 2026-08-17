@@ -62,7 +62,12 @@ declare -A EXPECTED_DISCOVERED=(
 	# class whose enumerable face exists only in the producer's projected metadata.
 	["tests/roundtrip/consumer"]=76
 	["tests/roundtrip/bidirectional/consumer"]=8
-	["tests/interop/consumer"]=139
+	# +7 (#400): UnitDelegateAdapterTests. The void-to-value delegate adaptation had exactly three witnesses,
+	# all arity-1 non-capturing lambdas in a generic method; one per remaining axis (arity 0/2, a capturing
+	# target, a constrained generic owner, a byref-like parameter), the value-lambda-into-void-delegate
+	# transpose, and the non-argument slots — a delegate property setter and a public delegate field, which had
+	# no witness at all and which the retired emitter path refused outright.
+	["tests/interop/consumer"]=146
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a

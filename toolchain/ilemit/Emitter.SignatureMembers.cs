@@ -124,11 +124,15 @@ sealed partial class Emitter
             .Single(candidate => candidate.Module == field.Module && candidate.MetadataToken == field.MetadataToken);
     }
 
-    static MethodInfo AnchorMethod(Type type, MethodInfo method) =>
-        IsTargetSignatureInstantiation(type)
+    MethodInfo AnchorMethod(Type type, MethodInfo method)
+    {
+        var anchored = IsTargetSignatureInstantiation(type)
             ? new SignatureMethod(type, method)
             // #370-residual: Reflection.Emit's re-anchoring API: it takes the MemberInfo, not a name
             : TypeBuilder.GetMethod(type, method);
+        _anchoredMethodDefinitions[anchored] = method;
+        return anchored;
+    }
 
     static ConstructorInfo AnchorConstructor(Type type, ConstructorInfo constructor) =>
         IsTargetSignatureInstantiation(type)

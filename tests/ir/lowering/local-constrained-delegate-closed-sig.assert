@@ -1,5 +1,8 @@
-# The constrained call arrives with the constructed local interface's closed descriptor. Delegate-target stamping
-# must use the declaration's open parameter vector without replacing that call-site identity.
-+"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":[{"t":"fqn","name":"System.Int32"},{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"System.String"},"params":[{"t":"fqn","name":"System.Int32"}],"clr":"System.Func"}]
-+"targetDelegateCtorRef":{"kind":"ctor","assembly":"System.Runtime"
+# The constrained call arrives with the constructed local interface's closed descriptor. Binding the delegate
+# argument must read the DECLARATION's open parameter vector and substitute the call site's owner arguments into
+# it, without replacing that call-site identity.
++"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":[{"t":"fqn","name":"System.Int32"},{"t":"fn","suspend":false,"ret":{"t":"fqn","name":"System.Object"},"params":[{"t":"fqn","name":"System.Int32"}],"clr":"System.Func"}]
+# The lambda's natural delegate returns String while the declared slot returns Any, so the construction states the
+# SLOT's delegate — closed over the owner argument (Int32), never over the declaration's open `!0`.
++"k":"newDelegate","method":"lambda","calleeOwner":{"t":"fqn","name":"LocalConstrainedDelegateClosedSigProbeKt"},"sig":[{"t":"fqn","name":"System.Int32"}],"funcType":{"t":"fqn","name":"System.Func","args":[{"t":"fqn","name":"System.Int32"},{"t":"fqn","name":"System.Object"}]}
 -"iface":{"t":"fqn","name":"LocalClosedCallback","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Apply","sig":[{"t":"tv","scope":"type","i":0}
