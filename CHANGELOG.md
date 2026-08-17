@@ -5,6 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **Property references to `length` on .NET-mapped `String`, `StringBuilder`, and `CharSequence` owners now work
+  (#242).** `kotc` now projects them as ordinary Kotlin property references with an explicit callable-interface fact;
+  `bir2cir` materializes a CLR delegate when that value fills a function slot and resolves the accessor to its physical
+  CLR representation.
+
 ## 0.9.9 (2026-08-17)
 
 ### Added
