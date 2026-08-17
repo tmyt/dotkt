@@ -3039,6 +3039,20 @@ static partial class SuspendColdLowering
             // plain ordered walk.
             var order = EvalOrderOf(callNode).Value;
             var isInstance = order.HasReceiver;
+            // A same-assembly super-qualified suspend call already names its exact base declaration and non-virtual
+            // dispatch. The cold rewrite mints a fresh call node, so carry that frontend fact just as NetInteropBinding
+            // does for an ordinary call reshape. Otherwise the later inherited-owner binding treats the cold call as
+            // an ordinary receiver call and restores the declaration's virtual bit, redispatching into an override.
+            // UnsafeAccessorLowering may then move the call from the nested state machine into a private forwarder on
+            // the derived owner. Preserve the declaration's method-generic frame for that synthesis, but not memberSignature
+            // or memberReturnType: those describe the hot entry and omit the cold ABI's continuation slot.
+            void CarryLocalSuper(JsonObject target)
+            {
+                if (!isInstance || callNode["super"] is not JsonNode superNode) return;
+                target["super"] = superNode.DeepClone();
+                if (callNode["memberMethodTypeParams"] is JsonNode methodTypeParams)
+                    target["memberMethodTypeParams"] = methodTypeParams.DeepClone();
+            }
             var rw = order.Operands.Select(x => x == null ? null : Rewrite(x, outp)).ToList();
             var ri = order.ArgumentStart;
             var recvRw = isInstance ? rw[0] : null;
@@ -3121,6 +3135,7 @@ static partial class SuspendColdLowering
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
                 };
+                CarryLocalSuper(call);
             }
             else
             {

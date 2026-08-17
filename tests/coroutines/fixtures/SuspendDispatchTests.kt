@@ -9,6 +9,7 @@
 //   il-coldsubiface      -> coldSubIface_interfaceMemberViaSubtype   (R1: interface suspend member via subtype receiver)
 //   il-colddimgen        -> coldDimGen_genericInterfaceDefaultMethod (R1: a defaulted generic-interface suspend DIM)
 //   il-coldstaticmember  -> coldStaticMember_companionAndObjectMember(R1 M3: static cold-entry decl + object-member drive)
+//   #436                 -> suspendSuperCallIsNonVirtual              super suspend call keeps base cold-entry identity
 //
 // Top-level names are family-prefixed (`suspendDispatchAbstract`/`suspendDispatchBase`/`suspendDispatchSubtype`/`suspendDispatchDefaultInterface`/`suspendDispatchStaticMember`).
 import NUnit.Framework.TestAttribute
@@ -25,6 +26,23 @@ open class SuspendDispatchBaseReader(val seed: Int) {
 }
 class SuspendDispatchBaseFastReader(seed: Int) : SuspendDispatchBaseReader(seed)
 suspend fun suspendDispatchBaseDrive(r: SuspendDispatchBaseFastReader): Int = r.read()
+
+// A super-qualified suspend call must target the base cold entry non-virtually. The first shape is a control whose
+// accidental virtual dispatch still reaches the base; the override shape recurses unless owner + dispatch survive lowering.
+open class SuspendDispatchSuperBase {
+    protected open suspend fun token(value: String): String = value
+    protected open suspend fun <T> echo(value: T): T = value
+}
+class SuspendDispatchSuperPlain : SuspendDispatchSuperBase() {
+    suspend fun callBase(): String = "plain:" + super.token("base")
+}
+class SuspendDispatchSuperOverride : SuspendDispatchSuperBase() {
+    override protected suspend fun token(value: String): String = "override:" + super.token(value)
+    suspend fun callOverride(value: String): String = token(value)
+}
+class SuspendDispatchSuperGeneric : SuspendDispatchSuperBase() {
+    suspend fun callGeneric(): Int = super.echo(42)
+}
 
 // ---- il-coldsubiface: an interface suspend member called through a SUBTYPE static receiver -------------------
 interface SuspendDispatchSubtypeProducer { suspend fun produce(): Int }
@@ -90,6 +108,13 @@ class SuspendDispatchTests {
     @TestAttribute
     fun baseDeclaredNoOverride() {
         assertEquals(42, blockOn { suspendDispatchBaseDrive(SuspendDispatchBaseFastReader(41)) })   // 42
+    }
+
+    @TestAttribute
+    fun suspendSuperCallIsNonVirtual() {
+        assertEquals("plain:base", blockOn { SuspendDispatchSuperPlain().callBase() })
+        assertEquals("override:base", blockOn { SuspendDispatchSuperOverride().callOverride("base") })
+        assertEquals(42, blockOn { SuspendDispatchSuperGeneric().callGeneric() })
     }
 
     @TestAttribute
