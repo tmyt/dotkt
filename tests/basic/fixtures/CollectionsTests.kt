@@ -194,7 +194,8 @@ class CollectionsTests {
         assertEquals("null-1-s", arrayOf<Any?>(null, 1, "s").joinToString("-"))                         // generic array
         assertEquals("null, x, null", listOf<String?>(null, "x", null).joinToString())                  // list
         assertEquals("null, 2", listOf<Int?>(null, 2).joinToString())                                   // nullable VALUE element
-        // sequence receiver (via asSequence — `sequenceOf` itself is blocked on the unrelated #284 iteration crash)
+        // Sequence receiver via Iterable.asSequence; the formerly crashing array-backed surfaces are pinned by
+        // SequenceOperationTests.arrayBackedSequenceIteration (#284).
         assertEquals("null, y", listOf<String?>(null, "y").asSequence().joinToString())
         assertEquals("null, y", listOf<String?>(null, "y").asSequence().map { it }.joinToString())
         assertEquals("N, z", listOf<String?>(null, "z").joinToString { it ?: "N" })                     // transform wins

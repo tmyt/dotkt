@@ -32,5 +32,8 @@ The canonical repository entry point is `make verify-tests`, which packs the cur
 runner. `nuget.config` uses an isolated cache and the local `build/nuget-feed`, so a same-version repack cannot be
 masked by a previously extracted SDK package.
 
-`run-ilverify.sh` contains the machine-readable `ILVERIFY_XFAIL` baseline. Baselines are keyed to the narrowest
-emitted type or fixture method possible and require a tracking reason; a newly clean result must be pruned.
+`run-ilverify.sh` keeps real runtime-safe compiler defects in the machine-readable `ILVERIFY_XFAIL` baseline and
+intentional ECMA-335 unverifiability in `ILVERIFY_UNVERIFIABLE`. The latter accepts only ILVerify's
+`[Unverifiable]` finding kind, so its method keys cannot mask another verification error. Both baselines are keyed to
+the narrowest emitted type or fixture method possible, require a reason, and turn a newly clean result into a red
+dead-key verdict until it is pruned.
