@@ -71,6 +71,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A generic method on a same-assembly constructed generic owner could borrow its signature from a sibling overload
+  (#400).** The call was initially linked by its complete owner/name/arity/parameter descriptor, but MethodSpec
+  construction then searched the open TypeBuilder again using only name and generic arity. `ilemit` now preserves the
+  exact open MethodDef when it anchors that selected declaration onto the constructed owner and uses only that
+  declaration for method/type-argument substitution. Fixtures cover both declaration orders for same-name,
+  same-arity generic methods whose open parameter signatures swap value and reference slots.
+
 - **Kotlin property accessors no longer collide with ordinary `get_<name>` / `set_<name>` functions on the CLR
   (#393).** bir2cir assigns every Kotlin accessor the dedicated `prop_get<name>` / `prop_set<name>` physical name in
   top-level, instance, companion, extension, and companion-extension placements. External CLR property interfaces and
