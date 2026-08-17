@@ -12,6 +12,16 @@ package roundtrip.collslots
  *  `GetEnumerator` that nothing in its own module states. */
 interface Feed<T> : Iterable<T>
 
+/** Iterator providers that are not themselves enumerable. A consumer can combine either one with [Feed], making
+ *  the consumer class the first type that owes the CLR enumerable face. */
+open class ExternalIteratorProvider<T>(private val items: List<T>) {
+    open operator fun iterator(): Iterator<T> = items.iterator()
+}
+
+interface ExternalDefaultIterator {
+    operator fun iterator(): Iterator<Int> = listOf(4, 5, 6).iterator()
+}
+
 class TrackedBag<E> : MutableCollection<E> {
     private val backing = ArrayList<E>()
     var removeAllCalls: Int = 0

@@ -51,6 +51,60 @@ class RevBridgeOwnGetEnumerator(private val items: List<Int>) : Iterable<Int> {
     fun GetEnumerator(): Int = items.size
 }
 
+// The iterator implementation may come from a base that is not itself enumerable. The derived class is the first
+// type that owes the CLR enumerable face, so it must receive a bridge even though it declares no iterator MethodDef.
+open class RevBridgeIteratorProvider(protected val inheritedItems: List<String>) {
+    open operator fun iterator(): Iterator<String> = inheritedItems.iterator()
+}
+
+class RevBridgeInheritedIterator(items: List<String>) : RevBridgeIteratorProvider(items), Iterable<String>
+
+// The same obligation when the body comes from an interface default rather than a class base.
+interface RevBridgeIteratorDefault {
+    operator fun iterator(): Iterator<Int> = listOf(2, 4, 6).iterator()
+}
+
+class RevBridgeDefaultIterator : RevBridgeIteratorDefault, Iterable<Int>
+
+// Kotlin's covariant Iterator return permits a narrower element than the Iterable face. The bridge must preserve
+// the actual iterator element while presenting Current at the face's wider element type.
+open class RevBridgeElement(val value: Int)
+class RevBridgeNarrowElement(value: Int) : RevBridgeElement(value)
+
+class RevBridgeNarrowedElement : Iterable<RevBridgeElement> {
+    override fun iterator(): Iterator<RevBridgeNarrowElement> =
+        listOf(RevBridgeNarrowElement(3), RevBridgeNarrowElement(5), RevBridgeNarrowElement(7)).iterator()
+}
+
+// The provider return need not state Iterator<E> directly. Primitive iterators are non-generic subtypes whose E is
+// present only on their inherited Iterator face.
+class RevBridgePrimitiveIterator : Iterable<Int> {
+    override fun iterator(): IntIterator = object : IntIterator() {
+        private var next = 1
+        override fun hasNext(): Boolean = next <= 3
+        override fun nextInt(): Int = next++
+    }
+}
+
+// A user-defined non-generic cursor likewise carries E only on its inherited Iterator face.
+class RevBridgeStringCursor(private val values: List<String>) : Iterator<String> {
+    private var index: Int = 0
+    override fun hasNext(): Boolean = index < values.size
+    override fun next(): String = values[index++]
+}
+
+class RevBridgeCustomCursor : Iterable<String> {
+    override fun iterator(): RevBridgeStringCursor = RevBridgeStringCursor(listOf("a", "bb", "ccc"))
+}
+
+// A private base declaration is not inherited. It must not hide the selected public interface default from the
+// bridge provider search.
+open class RevBridgePrivateIteratorBase {
+    private operator fun iterator(): Iterator<Int> = listOf(99).iterator()
+}
+
+class RevBridgeDefaultOverPrivateBase : RevBridgePrivateIteratorBase(), RevBridgeIteratorDefault, Iterable<Int>
+
 class ReverseEnumeratorBridgeTests {
     // The generic face at a constructed instantiation, through Kotlin `for`-in and through compiled stdlib bodies
     // (which see the receiver as `IEnumerable<E>` and therefore go through `GetEnumerator`).
@@ -165,5 +219,50 @@ class ReverseEnumeratorBridgeTests {
         while (cursor.MoveNext()) viaRaw.add(cursor.Current as Int)
         assertEquals(viaGeneric, viaRaw.toList())
         assertTrue(viaGeneric.size == 2)
+    }
+
+    @TestAttribute
+    fun iteratorInheritedFromANonEnumerableBaseStillBridges() {
+        val values = RevBridgeInheritedIterator(listOf("a", "bb", "ccc"))
+        assertEquals("a|bb|ccc", values.joinToString("|"))
+        assertEquals(6, values.sumOf { it.length })
+    }
+
+    @TestAttribute
+    fun iteratorInheritedFromAnInterfaceDefaultStillBridges() {
+        val values = RevBridgeDefaultIterator()
+        assertEquals(listOf(2, 4, 6), values.toList())
+        assertEquals(12, values.sum())
+    }
+
+    @TestAttribute
+    fun narrowerIteratorElementIsAdaptedToTheEnumerableFace() {
+        val values: Iterable<RevBridgeElement> = RevBridgeNarrowedElement()
+        assertEquals("3,5,7", values.joinToString(",") { it.value.toString() })
+        val cursor = (values as Any as RevBridgeRawEnumerable).GetEnumerator()
+        var sum = 0
+        while (cursor.MoveNext()) sum += (cursor.Current as RevBridgeElement).value
+        assertEquals(15, sum)
+    }
+
+    @TestAttribute
+    fun primitiveIteratorSubtypeSuppliesItsInheritedElement() {
+        val values = RevBridgePrimitiveIterator()
+        assertEquals(listOf(1, 2, 3), values.toList())
+        assertEquals(6, values.sum())
+    }
+
+    @TestAttribute
+    fun customIteratorSubtypeSuppliesTheElementFromItsIteratorFace() {
+        val values = RevBridgeCustomCursor()
+        assertEquals("a|bb|ccc", values.joinToString("|"))
+        assertEquals(6, values.sumOf { it.length })
+    }
+
+    @TestAttribute
+    fun privateBaseMemberDoesNotSuppressTheInterfaceDefault() {
+        val values = RevBridgeDefaultOverPrivateBase()
+        assertEquals(listOf(2, 4, 6), values.toList())
+        assertEquals(12, values.sum())
     }
 }

@@ -22,6 +22,12 @@ import Cbk.Marker
 import CbkUnit.ConstrainedHost
 import CbkUnit.DelegateStore
 import CbkUnit.UnitCallbacks
+import CbkUnit.UnitTarget
+
+private class KotlinUnitTarget {
+    var marks: Int = 0
+    fun mark() { marks++ }
+}
 
 // Arity 0, CAPTURING: the natural `Action` is built from a closure instance, and the adapter holds that value.
 private fun nullaryCapturingUnitDelegate(log: StringBuilder): Any? =
@@ -71,6 +77,21 @@ private fun storedDelegateSlots(log: StringBuilder): String {
 }
 
 class UnitDelegateAdapterTests {
+    @TestAttribute
+    fun callableReferencesAlsoFillTheDeclaredDelegateSlot() {
+        val kotlin = KotlinUnitTarget()
+        assertEquals(Unit, UnitCallbacks.UseNullary(kotlin::mark))
+        assertEquals(1, kotlin.marks)
+
+        val clr = UnitTarget()
+        assertEquals(Unit, UnitCallbacks.UseNullary(clr::Mark))
+        assertEquals(1, clr.Marks)
+
+        UnitCallbacks.ResetStaticMarks()
+        assertEquals(Unit, UnitCallbacks.UseNullary(UnitCallbacks::MarkStatic))
+        assertEquals(1, UnitCallbacks.StaticMarks)
+    }
+
     @TestAttribute
     fun nullaryCapturingLambdaFillsAValueReturningDelegate() {
         val log = StringBuilder()

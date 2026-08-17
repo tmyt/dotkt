@@ -5,7 +5,7 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// THE DELEGATE A LITERAL LAMBDA PHYSICALLY CONSTRUCTS.
+// THE DELEGATE A LAMBDA OR CALLABLE REFERENCE PHYSICALLY CONSTRUCTS.
 //
 // A Kotlin lambda has a NATURAL delegate — the family `BirTypeLowering` picked for its function type
 // (`System.Action`/`System.Func`, or the wide `KAction`/`KFunc`). The slot it fills often declares a DIFFERENT
@@ -52,7 +52,7 @@ static partial class ClrMemberResolution
     const string DelegateSlotKey = "dotktDelegateSlot";
 
     /// <summary>
-    /// Mark every literal delegate construction among <paramref name="call"/>'s arguments with the delegate its
+    /// Mark every delegate construction among <paramref name="call"/>'s arguments with the delegate its
     /// parameter declares.
     /// </summary>
     static void StampDelegateArgumentTargets(JsonObject call, MethodInfo method, TypeNode[] ownerArgs,
@@ -108,7 +108,7 @@ static partial class ClrMemberResolution
     };
 
     /// <summary>
-    /// Record the delegate a literal construction's slot declares, when that slot is a delegate at all.
+    /// Record the delegate a construction's slot declares, when that slot is a delegate at all.
     /// </summary>
     /// <remarks>
     /// Only the slot is recorded, never the outcome: the construction's own `funcType` can still be rewritten by
@@ -120,7 +120,9 @@ static partial class ClrMemberResolution
     /// </remarks>
     internal static bool MarkDelegateSlot(JsonObject construction, TypeNode slotType)
     {
-        if ((construction["k"] as JsonValue)?.GetValue<string>() is not ("newDelegate" or "newClosure")) return false;
+        if ((construction["k"] as JsonValue)?.GetValue<string>() is not
+            ("newDelegate" or "newClosure" or "newBoundDelegate" or "newBoundClrDelegate" or "newClrStaticDelegate"))
+            return false;
         if (DelegateFqnOfSlot(slotType) is not TypeNode.Fqn slotDelegate) return construction.ContainsKey(DelegateSlotKey);
         construction[DelegateSlotKey] = TypeJson.Write(slotDelegate);
         return true;

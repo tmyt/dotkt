@@ -1126,45 +1126,6 @@ sealed partial class Emitter
         return false;
     }
 
-    // Is `t` a delegate type? A TypeBuilderInstantiation of a BAKED generic delegate (`Func<Res,int>`, Res a user
-    // TypeBuilder) reports `Bcl("System.Delegate").IsAssignableFrom` UNRELIABLY (its base chain is not resolvable pre-bake),
-    // so fall back to testing its baked generic DEFINITION (`System.Func`2`). A TypeBuilder-defined delegate (the
-    // stdlib's own canonical family, in the stdlib self-build) stays on the direct assignability check — its
-    // MulticastDelegate base is set at DefineType.
-    bool IsDelegateType(Type t)
-    {
-        if (Bcl("System.Delegate").IsAssignableFrom(t)) return true;
-        // Types loaded from the target reference universe are not necessarily reference-equal to the BCL cache's
-        // Delegate type.  Their metadata base chain is nevertheless authoritative; use it before the generic
-        // TypeBuilder fallback so custom delegates such as ThreadStart are rewrapped to the constructor's exact slot.
-        try
-        {
-            for (var current = t; current != null; current = current.BaseType)
-                if (current.FullName == "System.MulticastDelegate") return true;
-        }
-        catch { }
-        // Guard HasElementType/IsGenericParameter BEFORE probing generics: an array/byref/pointer (a Reflection.Emit
-        // SymbolType) or a generic-param `want` (a) is never a delegate and (b) throws NotSupportedException on
-        // GetGenericArguments (the base-Type default) — the same traversal quirk ContainsTypeBuilder guards. The old
-        // direct-assignability-first guard never hit this because it short-circuited on non-delegates.
-        if (t.HasElementType || t.IsGenericParameter) return false;
-        return IsGenericInst(t) && t.GetGenericTypeDefinition() is { } def && def is not TypeBuilder
-            && Bcl("System.Delegate").IsAssignableFrom(def);
-    }
-
-    // A subset of ContainsTypeBuilder: only an OPEN generic PARAMETER (`!T`), NOT a concrete TypeBuilder CLASS arg.
-    // The delegate-arg rewrap (EmitArg case 4) can build a target delegate whose type-arg is a user TypeBuilder class
-    // (`Func<Res,int>` — DelegateCtor/InvokeOf bridge it via TypeBuilder.GetX), but NOT one still mentioning an open
-    // generic param (no concrete ctor to bind); this predicate distinguishes the two so the guard rewraps the former.
-    static bool ContainsGenericParameter(Type t)
-    {
-        if (t.IsGenericParameter) return true;
-        if (t.HasElementType) return ContainsGenericParameter(t.GetElementType());
-        if (!t.IsGenericParameter && t.GetGenericArguments().Length > 0)
-            foreach (var a in t.GetGenericArguments()) if (ContainsGenericParameter(a)) return true;
-        return false;
-    }
-
     // ---- BCL interop (@Clr) via reflection ----
     // A shared compiler-synthetic type that, once verified cross-assembly, is emitted ONCE (public) in the rt stdlib
     // dll and REFERENCED by app assemblies instead of re-synthesized per-assembly (canonicalization), so a value
