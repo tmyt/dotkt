@@ -454,6 +454,13 @@ Same-emission-unit members are NOT memberRefs: they have no assembly identity ye
 built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature
 table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
 
+For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
+compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. `bir2cir` consumes
+the former to select one same-unit constructor, closes that declaration in the constructed owner's final physical
+frame, materializes any required representation conversion, writes the resulting use-site `argTypes`, and replaces
+the declaration fact with scalar `localCtorIndex`. Neither `memberSignature` nor a constructor candidate set reaches
+CIR.
+
 A carrier key holds ONE reference, never a list. A candidate set reaching a consumer is precisely the failure
 this shape removes: whoever received it would have to choose, and choosing is the producer's decision.
 
@@ -813,12 +820,11 @@ bare-FQN strings the wire format forbids):
 - Synthetic `<>dotkt_KProperty` interface refs (kotc `synthDelegate`/`kPropertyDefs`) — `str(iface)`/literal → `fqnJson`.
 - `newSuspendLambda`'s free-type-param list — a type-param NAME-declaration list, not a type-usage slot: renamed
   `typeArgs` → `typeParams` (the name-shorthand, consistent with the other lambda paths; kotc emit + bir2cir
-  `SuspendLambdaLowering` read). A DISTINCT, OPTIONAL `typeArgs` (a type-USAGE list) was RE-introduced (#75 Batch B,
-  2A) as the SM **construction channel**: `InlineSplice.MaterializeSuspendCarrier`, when it renumbers a materialized
-  suspend carrier's enclosing tvs to a dense SM param space, carries the ORIGINAL enclosing tvs here so
-  `SuspendLambdaLowering` instantiates `new smName<typeArgs…>(…)` instead of the positional
-  `smName<tv{type,0..N-1}>` fallback. Absent on kotc's own source-lambda emission (which keeps the positional
-  fallback, byte-identical). The optional `capValues` (per-capture construction-value overrides, positional with
+  `SuspendLambdaLowering` read). A DISTINCT `typeArgs` (a type-USAGE list) is the SM **construction channel** (#75
+  Batch B, 2A): each generic `newSuspendLambda` carries the ORIGINAL enclosing type for every dense SM parameter, so
+  `SuspendLambdaLowering` instantiates `new smName<typeArgs…>(…)` without interpreting a declaration position in the
+  enclosing generic frame. Omission on a generic node is malformed internal ABI; only a non-generic node may omit the
+  list. The optional `capValues` (per-capture construction-value overrides, positional with
   `captures`) carries an SM-vocabulary spill (`SuspendColdLowering` GAP 2) or an `__outer` rebound to the splice's
   receiver temp (InlineSplice 2B). `funcType` is the canonical Kotlin function type: an extension receiver appears
   only in `funcType.recv`, while `funcType.params` contains regular parameters. The node's physical `params` remains

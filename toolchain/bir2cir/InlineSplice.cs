@@ -332,18 +332,9 @@ static class InlineSplice
         // `cast to <value type>` here is a concretized generic -> rewrite it to `nullableValue` (ilemit Unbox_Any).
         NormalizeConcretizedCasts(pBody);
 
-        // (FINDING 2 — #75 holistic — a residual `tv{scope:type}` (a generic OWNER class's param) in a dispatch (member)
-        // inline. NO GUARD: the signal is not cleanly separable at this layer. The common SAME-CLASS splice — a generic
-        // class's own inline member called from its own methods (`ArrayDeque<E>.filterInPlace` into `retainAll`) — is
-        // SOUND (caller class IS owner class, so ilemit binds the payload's `tv{scope:type,i}` positionally to the caller's
-        // param[i] correctly) and stdlib-load-bearing, so a blanket residual-scope:type guard is a hard FP that breaks the
-        // stdlib; and even gated on cross-class it can mis-fire on a transient referenced-interface scope:type that a
-        // downstream pass resolves. The genuinely unsound case — a CROSS-class same-module generic-owner member inline
-        // (emittable: BirEmitterInline.inlineSpliceCallSameModule has no same-class restriction) — resolves SILENTLY in
-        // ilemit (Emitter.Types.ResolveTv binds positionally then falls back to `object`, never throws). CROSS-LAYER
-        // FOLLOW-UP (coordinator): kotc carries the dispatch receiver's instantiated type args on `recvs`; RewriteGeneric
-        // substitutes `tv{scope:type,i}` like SubstTv does scope:method — the correct fix, and it also types the dispatch
-        // temp precisely instead of the bare `Fqn(owner)`.)
+        // The dispatch receiver's instantiated owner arguments were applied above together with method arguments.
+        // Any residual owner-frame tv now belongs to an explicitly preserved nested declaration boundary; ilemit rejects
+        // an unbound one instead of interpreting it in whichever generic pool happens to be active.
 
         // STEP 3 — hygiene: fresh cfg ids + per-splice local prefix over the callee body.
         int n = Interlocked.Increment(ref _counter);
@@ -1382,9 +1373,9 @@ static class InlineSplice
     //  - the invoke BODY = the carrier statements + a value-position valueBlock flatten + a trailing `return <result>`
     //    (Unit -> a bare return), the SAME shape the newClosure arm builds; the SM lowering routes the returns.
     //  - typeParams = the DISTINCT enclosing tv keys the SM references — one placeholder name each. This is BYTE-faithful
-    //    to kotc's freeTypeParams (a subset in encounter order, body tvs LEFT at their enclosing indices): both kotc and
-    //    SuspendLambdaLowering resolve the open SM's tvs POSITIONALLY (ilemit ResolveTv is by index, name-agnostic), so
-    //    the placeholder names never matter. Target inline-splice cases have a non-generic caller -> typeParams = [].
+        //    to kotc's freeTypeParams (a subset in encounter order, body tvs LEFT at their enclosing indices). The
+        //    placeholder names never matter; the explicit construction `typeArgs` below bind the SM declaration frame to
+        //    the enclosing frame. Target inline-splice cases have a non-generic caller -> typeParams = [].
     static string MaterializeSuspendCarrier(JsonObject carrier, JsonObject ft, JsonArray lamParams, JsonArray lamBody, JsonNode lamResult, JsonArray stmts)
     {
         int n = Interlocked.Increment(ref _counter);
@@ -1483,7 +1474,7 @@ static class InlineSplice
         // `typeArgs` — the SAME mechanism the non-suspend newClosure arm already uses. A nested call's declaration-relative
         // `sig`/`paramSig` is a foreign frame and must remain byte-for-byte unchanged (#74).
         // This DISSOLVES the former single-scope-0..N-1-prefix limitation: SuspendLambdaLowering consumes `typeArgs`
-        // to instantiate `new smName<origTvs…>(…)` instead of the positional `smName<tv{type,0..N-1}>` fallback. A
+        // to instantiate `new smName<origTvs…>(…)`; there is no positional reconstruction fallback. A
         // member-sig tv (e.g. `FlowCollector<T>`'s `tv{type,0}` on an `emit` call) is NOT an SM dependency; the call's
         // constructed `ownerType`/argument/return types carry the caller-frame types ilemit needs. Names are cosmetic —
         // ilemit/SuspendLambdaLowering resolve the SM's own tvs POSITIONALLY (ResolveTv is by index).
@@ -1507,37 +1498,13 @@ static class InlineSplice
         // Its body indices are thereby left intact (no positional drift), and the outer SM still collects the enclosing
         // tvs it needs from the nested captures' types — so a non-identity outer remap is sound for the flow shapes.
         //
-        // Soundness is NOT unconditional, so replace the old blanket F3 refusal (Fable #75) with TWO narrow invariant
-        // guards. A kotc-emitted nested NSL (no explicit ctor `typeArgs`) is instantiated by SuspendLambdaLowering via the
-        // POSITIONAL fallback `nestedSM<tv{type,0..N-1}>` in THIS SM's frame, binding nested param i to this SM's param
-        // i = the i-th smallest key.
-        //   (i) BODY resolution: the nested body/typeParams (positional) get the right enclosing tv ONLY if `(method,
-        //       0..N-1)` are all present (SortedSet order then pins dense slots 0..N-1 to them). A gapped/non-prefix set
-        //       would bind a nested body tv to the wrong reified type -> refuse LOUD (MSC:nested-sm-nonprefix).
-        //   (ii) A BARE-tv capture (`{t:tv}` VERBATIM as the field type) that the outer remap SHIFTS would make the
-        //       nested SM's field/ctor-param type — resolved positionally against ITS own typeParams — a wrong reified
-        //       (possibly VALUE) type -> refuse LOUD (MSC:nested-sm-bare-tv-capture-shift). A shift buried inside a
-        //       NON-bare (composite) capture — `fn`/`fqn<…>`/`array`/`nullable` — is only ever fed to ilemit's
-        //       positional `ResolveTv`, whose out-of-range fallback is `object` (check-i pins slots 0..N-1 to (method,
-        //       0..N-1), so a shift necessarily lands >= N). So the nested field degrades to the monomorphic erasure
-        //       `Comp<…,object,…>`, NEVER a wrong in-range reified type: it is either uniformly `object` on BOTH sides
-        //       (a suspend-`fn` slot — BirTypeLowering erases `sfunc:`→object — so the construction and field agree,
-        //       ilverify-clean; the rc6 case, incl. the gapped `[(m,0),(m,1),(m,3)]` combineTransform carrier whose only
-        //       shift `(m,3)` rides inside a suspend-`fn`) OR a reference/value mismatch that ilverify REJECTS LOUD at
-        //       the nested `newobj` (a NEW-FAIL, never a silent miscompile). (Fable #75: a future reified-composite shift
-        //       thus redlines the ilverify lane — it must NOT be waived into the #12/#46 covariance-erasure XFAIL class
-        //       without the #74/#46 resolved-identity representation fix, which its value-binding variants also need.)
+        // A nested generic suspend lambda is another construction boundary and must carry its own enclosing-frame
+        // bindings. Missing `typeArgs` is malformed internal ABI; do not infer an identity mapping from positions.
         foreach (var nsm in FirstLevelNestedSuspendLambdas(invBody))
         {
-            if (nsm["typeArgs"] is JsonArray) continue;   // an InlineSplice-materialized nested NSL carries explicit ctorTypeArgs — always fine
             int nN = (nsm["typeParams"] as JsonArray)?.Count ?? 0;
-            for (int i = 0; i < nN; i++)
-                if (!keys.Contains(("method", i))) return MatNull("MSC:nested-sm-nonprefix");
-            if (nsm["captures"] is JsonArray ncaps)
-                foreach (var c in ncaps.OfType<JsonObject>())
-                    if (Str(c["type"]?["t"]) == "tv" && c["type"] is JsonObject ctv
-                        && remap.TryGetValue((Str(ctv["scope"]) ?? "method", Int(ctv["i"])), out var ni2) && ni2 != Int(ctv["i"]))
-                        return MatNull("MSC:nested-sm-bare-tv-capture-shift");
+            if (nN > 0 && nsm["typeArgs"] is not JsonArray)
+                return MatNull("MSC:nested-sm-missing-typeargs");
         }
         if (remap.Count > 0)
         {
@@ -1876,7 +1843,9 @@ static class InlineSplice
     // Collect the distinct CALLER-FRAME `{t:tv}` (scope, index) KEYS in the subtree. kotc numbers method type-params
     // independently of type (class) type-params, so scope is part of a tv's identity. A call's `sig`/`paramSig` is a
     // declaration-signature descriptor in the nested CALLEE'S frame, not a value/type in this caller's frame; it can
-    // never legitimately contribute a free tv to this synthesized closure (#74, same boundary as SubstTvIn).
+    // never legitimately contribute a free tv to this synthesized closure. `overrides` is the same declaration-owned
+    // vocabulary: its owner/slot types describe the callee's inherited identity, not a type consumed by the caller
+    // (#74, same boundary as SubstTvIn).
     static void CollectTvKeys(JsonNode node, SortedSet<(string scope, int i)> keys)
     {
         if (node is JsonObject o)
@@ -1888,7 +1857,7 @@ static class InlineSplice
             // `newSuspendLambda` is the SAME kind of tv scope boundary — shield its own frame, descend its outer refs.
             bool nestedSm = Str(o["k"]) == "newSuspendLambda";
             foreach (var kv in o)
-                if (kv.Value != null && kv.Key is not ("sig" or "paramSig") && kv.Key != "synthClass"
+                if (kv.Value != null && kv.Key is not ("sig" or "paramSig" or "overrides") && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     CollectTvKeys(kv.Value, keys);
         }
@@ -1896,8 +1865,9 @@ static class InlineSplice
     }
 
     // Renumber every CALLER-FRAME `{t:tv}` index in place via `remap` keyed by (scope, index). Scope is PRESERVED on the
-    // ref (ilemit's cross-pool positional ResolveTv resolves it against the closure class's type params by the renumbered
-    // index). Declaration-relative `sig`/`paramSig` entries stay in their callee's frame and are never rewritten (#74).
+    // ref. ClosureSynthesis subsequently rebinds those references to the generated class's exact `type#i` frame.
+    // Declaration-relative `sig`/`paramSig`/`overrides` entries stay in their callee's frame and are never rewritten
+    // (#74).
     static void RenumberTvs(JsonNode node, Dictionary<(string, int), int> remap)
     {
         if (node is JsonObject o)
@@ -1909,7 +1879,7 @@ static class InlineSplice
             // A nested `newSuspendLambda`'s own frame is shielded identically — only its outer-frame refs are renumbered.
             bool nestedSm = Str(o["k"]) == "newSuspendLambda";
             foreach (var kv in o)
-                if (kv.Value != null && kv.Key is not ("sig" or "paramSig") && kv.Key != "synthClass"
+                if (kv.Value != null && kv.Key is not ("sig" or "paramSig" or "overrides") && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     RenumberTvs(kv.Value, remap);
         }

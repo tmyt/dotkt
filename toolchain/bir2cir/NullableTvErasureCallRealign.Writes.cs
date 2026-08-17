@@ -14,8 +14,9 @@ using DotKt.Bir;
 //   arraySet               the flowed array's element type — and the `stelem` token is restamped with it
 //   return                 the enclosing method's own (already-erased) return type
 //   cond                   the join slot's `type`, against BOTH branch values
-//   call / ctor arguments  `Subst(Erase(declared param), owner args, method args)` for the VALUE conversion; the
-//                          `sig`/`argTypes` descriptor remains the OPEN declaration identity used for exact linking
+//   call / ctor arguments  `Subst(Erase(declared param), owner args, method args)` for the VALUE conversion. A call's
+//                          `sig` remains the OPEN declaration identity; a construction's `argTypes` is its USE-SITE
+//                          physical target vector and is rewritten to the same derived type.
 //
 // THE ONLY CASTABLE SEAM IS `object`. `box` carries a value or a `Nullable<V>` into `object` (an empty
 // `Nullable<V>` boxes to a genuine null), and `unbox.any`/`castclass` carries it back. A difference sitting INSIDE a
@@ -28,9 +29,9 @@ static partial class NullableTvErasureCallRealign
     //
     // With the callee's DECLARATION in hand the target is `Subst(Erase(p), ownerArgs, methodArgs)` — never
     // `Erase(Subst(...))`, which is the distinction the whole family turns on: substituting first destroys the `Tv`
-    // that tells `Erase` this position was erased at all. The signature DESCRIPTOR remains the callee's OPEN
-    // declaration identity. Only the value target is substituted; replacing `Array<!!0>` with `Array<object>` would
-    // make exact linking search for a declaration that does not exist.
+    // that tells `Erase` this position was erased at all. A method signature DESCRIPTOR remains the callee's OPEN
+    // declaration identity. A `new.argTypes` vector is different: it states the physical coercion target at this use
+    // site, so it follows the derived target while local constructor identity is linked independently.
     //
     // With no declaration — a callee whose owner names no indexed declaration, or an ambiguous overload set the
     // reference index refuses to guess at — the descriptor is the only statement of the slot there is, and it is
@@ -166,6 +167,14 @@ static partial class NullableTvErasureCallRealign
                      && Subst(slot, ownerArgs, methodArgs) is TypeNode closed
                      && (clrBound || NeedsObjectSeam(closed)))
                 target = closed;
+            // A construction descriptor moves here only for THIS pass's nullable/object-erasure seam.  Ordinary
+            // owner substitution is finalized later, after TypeOwnershipLowering has projected Kotlin inner
+            // applications from [own..., outer...] to CLR [outer..., own...].  Writing every substituted target here
+            // used that not-yet-projected order and swapped generic-inner constructor slots cross-module.
+            if (Str(call["k"]) == "new" && target != null && descriptor != null
+                && TypeJson.Read(descriptor[i]) is TypeNode authored
+                && IsObjectErasureOf(target, authored))
+                descriptor[i] = TypeJson.Write(target);
             if (target != null && args[i] is JsonObject arg
                 && CastForTarget(arg, argTypes[i], target, exactPropertyTarget) is JsonNode wrapped)
                 args[i] = wrapped;

@@ -158,6 +158,12 @@ sealed partial class Emitter
         DotKt.Bir.TypeNode[] sig, int methodArity)
     {
         if (sig == null || !_types.TryGetValue(open, out var ti)) return null;
+        // `sig` is first and foremost the selected MethodDef's declaration signature. Link that exact key before
+        // interpreting anything in the caller's generic frame: `C<T>.m(!0)` and `<U> caller(C<U>)` legitimately put
+        // callee `!0` beside caller `!!0`, and mapping the former through ResolveTv is cross-frame guessing.
+        if (ti.MethodsBySig.TryGetValue(DefinitionSigKey(name, methodArity, sig), out var exact)) return exact;
+        // Some hierarchy/representation lowerings carry the already-substituted descriptor instead. Only that form is
+        // expressed in the caller frame and needs mapping before comparing it with the declaration on this owner.
         var wanted = sig.Select(MapType).ToArray();
         var ownerArgs = constructed.GetGenericArguments();
         // #370-residual: local axis — lookup in the MethodBuilder table of the assembly being emitted.

@@ -62,8 +62,19 @@ static partial class ClrMemberResolution
             if (!defs.TryGetValue(owner.Name, out var target) || target["ctors"] is not JsonArray ctors) return;
             var sameArity = ctors.Select((n, i) => (ctor: n as JsonObject, index: i))
                 .Where(x => x.ctor?["params"] is JsonArray ps && ps.Count == args.Count).ToList();
-            var sig = call[signatureName] as JsonArray;
+            var useSiteSig = call[signatureName] as JsonArray;
+            // kotc carries the frontend-selected constructor's OPEN declaration signature independently of the
+            // substituted use-site argument vector.  This distinction is load-bearing when physical lowering changes
+            // a constructed owner's invariant storage face while the value at the call remains on its read-only head
+            // face.  Select from the declaration fact; `argTypes` is rewritten below to the selected physical target.
+            var declarationSig = call["memberSignature"] as JsonArray;
+            var sig = declarationSig ?? useSiteSig;
             var exact = new List<(JsonObject ctor, int index)>();
+            // `new.argTypes` is a use-site vector and therefore closes the constructor owner's type frame.
+            // `delegationSig` is authored on the delegating declaration but names the selected target's declaration
+            // frame; its `type#0` must remain target `type#0` even when a derived owner reaches that target as
+            // `Base<type#1>`.
+            var closeOwnerFrame = declarationSig == null && signatureName == "argTypes";
             if (sig != null && sig.Count == args.Count && sig.All(n => n != null))
             {
                 var wanted = sig.Select(TypeJson.Read).ToArray();
@@ -75,12 +86,40 @@ static partial class ClrMemberResolution
                     var matches = declared.Select((raw, i) =>
                     {
                         var wantedKey = SupertypeGraph.TypeKey(wanted[i]);
-                        if (SupertypeGraph.TypeKey(raw) == wantedKey) return true;
-                        return owner.Args is { Length: > 0 }
-                            && SupertypeGraph.TypeKey(SupertypeGraph.SubstOwnerTvs(raw, owner.Args)) == wantedKey;
+                        // A declaration fact normally stays in the target's own open frame.  A lifted/local target
+                        // can instead be serialized through the caller's lexical frame; in that case it is exactly
+                        // the target declaration closed by the constructed owner.  Accept those two equivalent
+                        // spellings, while a plain use-site argTypes lookup remains closed-only.
+                        if (declarationSig != null && SupertypeGraph.TypeKey(raw) == wantedKey) return true;
+                        if ((closeOwnerFrame || declarationSig != null) && owner.Args is { Length: > 0 })
+                            return SupertypeGraph.TypeKey(SupertypeGraph.SubstOwnerTvs(raw, owner.Args)) == wantedKey;
+                        return declarationSig == null && SupertypeGraph.TypeKey(raw) == wantedKey;
                     }).All(x => x);
-                    if (matches)
-                        exact.Add(candidate);
+                    if (matches) exact.Add(candidate);
+                }
+            }
+            // A lifted local class can re-home a lexical type parameter into a NEW owner slot.  kotc's open
+            // declaration vector still speaks the original lexical frame there, while the constructed-owner plus
+            // use-site vector states the same selection in its final physical frame.  If the open comparison names
+            // no declaration, normalize through that closed pair.  This remains exact equality and still rejects
+            // both zero and multiple matches; it is not assignability or overload scoring.
+            if (exact.Count == 0 && declarationSig != null && useSiteSig != null
+                && useSiteSig.Count == args.Count && useSiteSig.All(n => n != null))
+            {
+                var wanted = useSiteSig.Select(TypeJson.Read).ToArray();
+                foreach (var candidate in sameArity)
+                {
+                    var ps = (JsonArray)candidate.ctor["params"];
+                    var declared = ps.Select(p => p?["type"] is JsonNode pt ? TypeJson.Read(pt) : null).ToArray();
+                    if (declared.Any(t => t == null)) continue;
+                    var matches = declared.Select((raw, i) =>
+                    {
+                        var closed = owner.Args is { Length: > 0 }
+                            ? SupertypeGraph.SubstOwnerTvs(raw, owner.Args)
+                            : raw;
+                        return SupertypeGraph.TypeKey(closed) == SupertypeGraph.TypeKey(wanted[i]);
+                    }).All(x => x);
+                    if (matches) exact.Add(candidate);
                 }
             }
             var winner = exact.Count == 1 ? exact[0]
@@ -89,8 +128,29 @@ static partial class ClrMemberResolution
             var declaredParameters = ((JsonArray)winner.ctor["params"]).OfType<JsonObject>()
                 .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
             if (declaredParameters.Length == args.Count && declaredParameters.All(type => type != null))
+            {
+                var ownerArgs = owner.Args ?? Array.Empty<TypeNode>();
+                var targets = declaredParameters.Select(type => ownerArgs.Length == 0
+                    ? type
+                    : SupertypeGraph.SubstOwnerTvs(type, ownerArgs)).ToArray();
+                if (useSiteSig != null && useSiteSig.Count == args.Count)
+                    for (var i = 0; i < args.Count; i++)
+                    {
+                        var flowed = TypeJson.Read(useSiteSig[i]);
+                        if (flowed != null && CollectionViewCallCoercion.IsCollectionViewSeam(flowed, targets[i])
+                            && args[i] is JsonNode argument)
+                            args[i] = new JsonObject
+                            {
+                                ["k"] = "cast",
+                                ["type"] = TypeJson.Write(targets[i]),
+                                ["e"] = argument.DeepClone(),
+                            };
+                    }
+                call[signatureName] = new JsonArray(targets.Select(TypeJson.Write).ToArray());
                 StampDelegateArgumentTargets(call, declaredParameters,
-                    owner.Args ?? Array.Empty<TypeNode>(), Array.Empty<TypeNode>());
+                    ownerArgs, Array.Empty<TypeNode>());
+            }
+            call.Remove("memberSignature");
         }
 
         void WalkLocalNews(JsonNode node)
@@ -543,6 +603,7 @@ static partial class ClrMemberResolution
         // chokepoint can tell "no return" from "nobody stamped one".
         StampResolvedMemberReturn(node, typeof(void));
         node.Remove("argTypes");
+        node.Remove("memberSignature");
     }
 
     // Root-V lowers a readonly Kotlin collection nested in a constructed generic to its invariant CLR sibling.

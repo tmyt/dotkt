@@ -138,10 +138,15 @@ internal fun BirEmitter.memberVisibilityStamped(
 	}.orEmpty()
 	val declarationFact = when (target) {
 		is org.jetbrains.kotlin.ir.declarations.IrConstructor -> {
+			// Ordinary same-unit construction already carries the COMPLETE declaration vector, including synthetic
+			// enclosing/capture slots, from the IrConstructorCall arm below.  Do not overwrite it with the source-only
+			// regular vector when visibility stamping is also required.
+			if (s.contains("\"memberSignature\"")) "" else {
 			val signature = target.parameters
 				.filter { it.kind == org.jetbrains.kotlin.ir.declarations.IrParameterKind.Regular }
 				.joinToString(",") { birType(it.type).toJson() }
 			",\"memberSignature\":[${signature}]"
+			}
 		}
 		is org.jetbrains.kotlin.ir.declarations.IrFunction -> {
 			val signature = overloadSigField(target)
@@ -343,8 +348,10 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val outerType = if (klass?.isInner == true)
 				dispatchReceiver(node)?.let { birType(it.type).toJson() } else null
 			val externalArgs = (listOfNotNull(outerArg) + ctorArgs).joinToString(",")
+			val ctorSubst = callSiteSubstitutor(node, node.symbol.owner)
 			val externalTypes = (listOfNotNull(outerType) + node.symbol.owner.parameters
-				.filter { it.kind == IrParameterKind.Regular }.map { birType(it.type).toJson() }).joinToString(",")
+				.filter { it.kind == IrParameterKind.Regular }
+				.map { birType(ctorSubst?.substitute(it.type) ?: it.type).toJson() }).joinToString(",")
 			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs]}"""
 		}
 		else {
@@ -361,16 +368,22 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// this call site before publishing the selected signature: for `class L<U>(u: U); L(0)` the argument slot
 			// is `Int`, not whichever type variable happens to occupy index zero in the enclosing caller. This is the
 			// same callee-to-caller substitution used by default-argument rendering.
-			val localCtorSubst = if (klass?.parent !is IrFile && klass?.parent !is IrClass)
-				callSiteSubstitutor(node, node.symbol.owner) else null
+			val ctorSubst = callSiteSubstitutor(node, node.symbol.owner)
 			val regularTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
-				.map { birType(localCtorSubst?.substitute(it.type) ?: it.type).toJson() }
+				.map { birType(ctorSubst?.substitute(it.type) ?: it.type).toJson() }
 			val ctorArgTypes = (listOfNotNull(outerType) + capTypes + regularTypes).joinToString(",")
+			// Preserve the frontend-selected OPEN declaration independently from the substituted use-site vector.
+			// Include the same compiler-authored leading slots as args/argTypes; this is what lets bir2cir bind an inner
+			// or capturing constructor without reconstructing them, and lets Root-V later close `X` to the invariant
+			// physical owner argument even when the supplied value retains its read-only head view.
+			val regularMemberTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
+				.map { birType(it.type).toJson() }
+			val ctorMemberSignature = (listOfNotNull(outerType) + capTypes + regularMemberTypes).joinToString(",")
 			// `ownerSpec` names a lifted generic-capturing LOCAL CLASS as its CONSTRUCTED `L<T>` (own args from
 			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a
 			// `fun <T> f(){ class L{ val x:T=t }; L() }` instantiates `L<T>` at each `new` site. A non-generic local
 			// class / any other type keeps the plain identity.
-			"""{"k":"new","type":${(klass?.let { ownerSpec(it, node.type) } ?: OBJ).toJson()},"argTypes":[$ctorArgTypes],"args":[$args]}"""
+			"""{"k":"new","type":${(klass?.let { ownerSpec(it, node.type) } ?: OBJ).toJson()},"argTypes":[$ctorArgTypes],"args":[$args],"memberSignature":[$ctorMemberSignature]}"""
 		}
 		}
 	}

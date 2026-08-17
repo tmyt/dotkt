@@ -140,6 +140,7 @@ static class AliasHelperHoist
         TypeNode.Oblivious o => new TypeNode.Oblivious(RewriteType(o.Of, rewrite)),
         TypeNode.Array a => new TypeNode.Array(RewriteType(a.Elem, rewrite)),
         TypeNode.ByRef b => new TypeNode.ByRef(RewriteType(b.Of, rewrite)),
+        TypeNode.Ptr p => new TypeNode.Ptr(RewriteType(p.Of, rewrite)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RewriteType(fn.Ret, rewrite),
             fn.Params.Select(p => RewriteType(p, rewrite)).ToArray(),
             fn.Recv == null ? null : RewriteType(fn.Recv, rewrite), fn.Clr,
@@ -154,12 +155,13 @@ static class AliasHelperHoist
     {
         if (node is JsonObject obj)
         {
+            var kind = (obj["k"] as JsonValue)?.GetValue<string>();
             foreach (var key in obj.Select(kv => kv.Key).ToList())
             {
                 var value = obj[key];
                 if (value == null) continue;
                 if (key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
-                    or "delegationSig" or "argTypes")
+                    or "delegationSig" || (key == "argTypes" && kind != "new"))
                     continue;
                 if (TypeJson.IsType(value)) obj[key] = TypeJson.Write(rewrite(TypeJson.Read(value)));
                 else RewriteLexicalTypes(value, rewrite);

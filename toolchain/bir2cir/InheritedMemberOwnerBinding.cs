@@ -93,7 +93,8 @@ static class InheritedMemberOwnerBinding
     static void Bind(JsonObject call, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs)
     {
         var kind = Str(call["k"]);
-        if (kind is not ("callInstance" or "newBoundDelegate" or "newBoundClrDelegate")) return;
+        if (kind is not ("callInstance" or "newBoundDelegate" or "newBoundClrDelegate"
+            or "clrInstance" or "clrPropGet" or "clrPropSet" or "clrEventAdd" or "clrEventRemove")) return;
         // Some earlier bir2cir passes synthesize a call whose CLR declaration owner and dispatch have already been
         // selected. Rebinding such a call from its receiver hierarchy would undo that decision (in particular, an
         // exact covariant-interface bridge would call its own interface slot and recurse).
@@ -104,8 +105,41 @@ static class InheritedMemberOwnerBinding
         // Preserve that Kotlin semantic fact; bir2cir only needs hierarchy binding for ordinary receiver calls whose
         // BIR owner is the receiver type rather than the member's declaring type.
         if (Bool(call["super"])) return;
-        if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn owner
-            || (!types.ContainsKey(owner.Name) && !refs.TryReferenceTypeShape(owner.Name, out _, out _, out _, out _))) return;
+        var ownerSlot = kind switch
+        {
+            "clrInstance" or "clrPropGet" or "clrPropSet" or "clrEventAdd" or "clrEventRemove" => "type",
+            "newBoundClrDelegate" => "clrType",
+            _ => "ownerType",
+        };
+        if (TypeJson.Read(call[ownerSlot]) is not TypeNode.Fqn owner) return;
+        // FIR can state the member's OPEN declaration owner while the receiver already carries the constructed
+        // use-site type.  For example, `TargetList<String> : List<T>` may surface `Count` as owned by `List<type#0>`
+        // even in a non-generic caller.  That type variable belongs to the declaration hierarchy, not the caller's
+        // lexical frame.  Project the named declaration through the receiver's exact static hierarchy here, while
+        // both `sty` and the local declarations are still available.  A receiver may reach the same generic owner
+        // through more than one construction; only a unique constructed spec is authoritative, so ambiguity stays
+        // unresolved instead of being guessed from arguments or expression values.
+        if (TypeJson.Read(call["recv"]?["sty"]) is TypeNode.Fqn receiver && receiver.Name != owner.Name)
+        {
+            var projectedOwners = ReachableTypes(receiver, types, refs)
+                .Where(candidate => candidate.Type.Name == owner.Name)
+                .Select(candidate => candidate.Type)
+                .GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .ToList();
+            if (projectedOwners.Count == 1)
+            {
+                owner = projectedOwners[0];
+                call[ownerSlot] = TypeJson.Write(owner);
+                if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(owner);
+            }
+        }
+        // The CLR-shaped nodes have already crossed MemberCallSubstitution. Their declaration descriptor and member
+        // kind are resolved later by ClrMemberResolution; this pass owns only the constructed declaring owner.
+        if (kind is "newBoundClrDelegate" or "clrInstance" or "clrPropGet" or "clrPropSet"
+            or "clrEventAdd" or "clrEventRemove") return;
+        if (!types.ContainsKey(owner.Name)
+            && !refs.TryReferenceTypeShape(owner.Name, out _, out _, out _, out _)) return;
         if (Str(call["method"]) is not string method) return;
         var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(
             call, out var propertyName, out var propertyAccessor);

@@ -1735,10 +1735,12 @@ sealed partial class ReferenceMetadataIndex
     public bool TryStarProjectionMember(TypeNode.Fqn sourceOwner, string sourceMember, string accessorKind,
         int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
-        out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature)
+        out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature,
+        out TypeNode declarationResult)
     {
         erasedOwner = erasedMember = null;
         erasedSignature = null;
+        declarationResult = null;
         if (sourceOwner == null || sourceMember == null) return false;
         if (!TryExistentialPhysicalOwner(sourceOwner.Name, out var candidateOwner)
             || !TryMembersByBirOwner(candidateOwner, out var members)
@@ -1776,6 +1778,9 @@ sealed partial class ReferenceMetadataIndex
         erasedOwner = candidateOwner;
         erasedMember = candidates[0].Name;
         erasedSignature = candidates[0].ParamTypeNodes ?? Array.Empty<TypeNode>();
+        declarationResult = declarations[0].NullableGenericRet
+            ?? declarations[0].KotlinReturnType
+            ?? declarations[0].ReturnTypeNode;
         return true;
     }
 

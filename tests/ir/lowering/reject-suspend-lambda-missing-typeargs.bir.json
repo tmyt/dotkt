@@ -1,0 +1,31 @@
+{
+  "fileClass": "RejectSuspendLambdaMissingTypeArgsKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "make",
+      "static": true,
+      "typeParams": ["T"],
+      "params": [],
+      "ret": { "t": "fn", "suspend": true, "ret": { "t": "fqn", "name": "kotlin.Unit" }, "params": [] },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "newSuspendLambda",
+            "arity": 0,
+            "captures": [],
+            "params": [],
+            "suspendRet": { "t": "fqn", "name": "kotlin.Unit" },
+            "typeParams": ["T"],
+            "funcType": { "t": "fn", "suspend": true, "ret": { "t": "fqn", "name": "kotlin.Unit" }, "params": [] },
+            "body": []
+          }
+        }
+      ]
+    }
+  ]
+}

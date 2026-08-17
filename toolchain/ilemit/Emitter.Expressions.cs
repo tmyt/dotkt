@@ -169,9 +169,7 @@ sealed partial class Emitter
                     return ext;
                 }
                 var ctor = LinkLocalCtor(ti, e);
-                // Pass the constructed instantiation's generic args so a value ctor arg is targeted at its CONCRETE
-                // type (`Box<int>::.ctor(int)`), not boxed to the ResolveTv `object` fallback in a non-generic caller.
-                EmitNewArgs(e, nargs, constructed is { IsGenericType: true } ? constructed.GetGenericArguments() : null);
+                EmitNewArgs(e, nargs);
                 // Constructed user generic `Box<int>` -> resolve the ctor onto the instantiation (static helper).
                 EmitConstructor(_il, OpCodes.Newobj, constructed != null ? AnchorConstructor(constructed, ctor) : (ConstructorInfo)ctor);
                 return constructed ?? (Type)ti.TB;
