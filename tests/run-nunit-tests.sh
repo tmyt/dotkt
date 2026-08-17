@@ -62,7 +62,8 @@ declare -A EXPECTED_DISCOVERED=(
 	# value-element path that formerly crashed the process with AccessViolationException.
 	# +1 (#319): one ordered-construction test covers try-valued array/list/set/map/spread operands, exact collection
 	# result faces, nested constructions, and source evaluation before HashSet/Dictionary consumption.
-	["tests/basic"]=446
+	# +1 (#285): an inline-spliced try-expression body in string-concat operand 0 covers both success and catch paths.
+	["tests/basic"]=447
 	["tests/coroutines"]=158
 	# +4 (#400): the reverse enumerator bridge across the module boundary — the producer's GetEnumerator and its
 	# module-private adapter reached from this consumer through the ordinary CLR enumerable face, and a consumer

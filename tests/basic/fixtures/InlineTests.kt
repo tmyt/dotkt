@@ -26,6 +26,9 @@
 //   il-inlinereturnlocal    -> inlineReturnLocal         #31 lambda-LOCAL labeled return@label in expr position
 //   il-inlineretcoerce      -> inlineRetCoerce           inline-splice item 21: value-type-nullable smart-cast return
 //
+// Regression coverage added after the migration:
+//   #285                    -> inlineTryBodyInOperand     inline try-expression body spliced into concat operand 0
+//
 // Top-level names are unique within this single battery assembly (one project = one namespace). Collisions with
 // GenericsTests (`Box`) and within the family (`twice`, `runIt`, `pick`, `Box`) are renamed with a case suffix.
 import kotlin.time.Duration.Companion.seconds
@@ -47,6 +50,10 @@ inline fun runBlock(block: () -> Int): Int = block()
 fun computed(): Int = runBlock { 6 * 7 }
 inline fun repeat3(action: (Int) -> Unit) { action(0); action(1); action(2) }
 fun sum3(): Int { var total = 0; repeat3 { total = total + it }; return total }
+
+// #285: InlineSplice leaves the try body and lambda binding in one ordered value block; TryValueOperandHoist must
+// move its protected region ahead of the String.Concat operand accumulator.
+inline fun inlineTry285(block: () -> Int): Int = try { block() } catch (e: Exception) { -1 }
 
 // ---- il-xinline : crossinline lambda invoked from inside a nested (deferred) lambda --------------------------
 inline fun xTwice(crossinline block: () -> Unit) { val r = { block() }; r(); r() }
@@ -293,6 +300,14 @@ class InlineTests {
         assertEquals(40, twice(10) { it * 2 }) // f(f(10)) = 40
         assertEquals(3, clamp(5, 0, 3))        // 3
         assertEquals(0, clamp(-1, 0, 3))       // 0
+    }
+
+    @TestAttribute
+    fun inlineTryBodyInOperand() {
+        val success = inlineTry285 { 1 }.toString() + "/"
+        val failure = inlineTry285 { throw RuntimeException("boom") }.toString() + "/"
+        assertEquals("1/", success)
+        assertEquals("-1/", failure)
     }
 
     @TestAttribute
