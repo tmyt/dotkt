@@ -35,6 +35,8 @@ need_stdlib_rt
 need_dotnet_reference_sets
 
 dotnet build "$ROOT/toolchain/dll2klib/dll2klib.csproj" -c Release -o "$OUT/tools" -v:q --nologo
+dotnet build "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
+	-c Release -o "$OUT/tools/metadata-inspector" -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-e2e/reference/Probe.csproj" -c Release -v:q --nologo
 
 PROBE_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/ref/Probe.dll"
@@ -105,6 +107,10 @@ grep -q 'converting 2/2 reference(s)' <<<"$catalog_restore" \
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-csharp-extension-shape "$PROBE_KLIB" Probe Probe.WidgetExtensions Bump
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-csharp-extension-shape "$PROBE_KLIB" "" GlobalWidgetExtensions GlobalBump
 
 # The manifest uses an ordinary unique_name, while KlibMetadataProtoBuf.Header.module_name is a Kotlin Name and must
 # therefore use the special `<...>` spelling. A plain header name happens to deserialize as protobuf but is rejected
@@ -162,10 +168,10 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "132" ]] || die "generated program returned '$actual', expected '132'"
+[[ "$actual" == "149" ]] || die "generated program returned '$actual', expected '149'"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR static member"
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (132)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (149)"

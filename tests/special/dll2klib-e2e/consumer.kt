@@ -1,8 +1,11 @@
 package consumer
 
 import Probe.Widget
+import Probe.WidgetExtensions
 import Probe.IAdder
 import Probe.Bump
+import GlobalWidgetExtensions
+import GlobalBump
 import kotlin.clr.byref
 
 fun consume(): Int {
@@ -28,10 +31,13 @@ fun consume(): Int {
     var incremented = 10
     widget.Increment(byref(incremented))
     val shifted = widget + 4
+    val staticBump = WidgetExtensions.Bump(widget, 1)
+    val globalExtensionBump = widget.GlobalBump(1)
+    val globalStaticBump = GlobalWidgetExtensions.GlobalBump(widget, 1)
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
         widget.Value + widget.Inherited + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +
-        externalTransformed + externalGenericTransformed +
+        externalTransformed + externalGenericTransformed + staticBump + globalExtensionBump + globalStaticBump +
         (nullable?.length ?: 0) + required.length + changed + incremented + shifted.Add(0)
 }
 

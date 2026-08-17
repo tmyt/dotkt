@@ -13,6 +13,8 @@ const string Ns = "roundtrip.dispatchsurface.";
 const string CarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
 const string LateinitAttribute = "DotKt.Runtime.CompilerServices.KotlinLateinitAttribute";
 const string StaticCarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
+// Kotlin 2.4 metadata Flags.IS_STATIC_FUNCTION.
+const int IsStaticFunctionFlag = 1 << 18;
 // A hoisted companion carrier's reserved separator keeps compiler companion types disjoint from ordinary source
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
@@ -31,9 +33,20 @@ if (args.Length == 4 && args[0] == "--klib-class-properties")
     return;
 }
 
+if (args.Length == 5 && args[0] == "--klib-csharp-extension-shape")
+{
+    VerifyKlibCSharpExtensionShape(args[1], args[2], args[3], args[4]);
+    Console.WriteLine("KLIB C# extension/static surface: OK");
+    return;
+}
+
 if (args.Length != 7)
     throw new ArgumentException(
-        "usage: CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json> <consumer.dll>");
+        "usage:\n" +
+        "  CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json> <consumer.dll>\n" +
+        "  CompanionMetadataInspector --volatile-consumer <consumer.dll> <type> <method>...\n" +
+        "  CompanionMetadataInspector --klib-class-properties <file.klib> <class> <property[,property...]>\n" +
+        "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>");
 
 VerifyLayerBoundary(args[2], args[3]);
 VerifyOwnershipLayerBoundary(args[4], args[5]);
@@ -65,6 +78,57 @@ static void VerifyKlibClassProperties(string path, string className, IReadOnlyLi
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyKlibCSharpExtensionShape(
+    string path,
+    string packageName,
+    string className,
+    string functionName)
+{
+    using var archive = ZipFile.OpenRead(path);
+    var fragments = archive.Entries
+        .Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry =>
+        {
+            using var stream = entry.Open();
+            return PackageFragment.Parser.ParseFrom(stream);
+        })
+        .ToArray();
+    var matchingFragments = fragments.Where(candidate => candidate.FqName == packageName).ToArray();
+    Require(matchingFragments.Length == 1,
+        $"expected one package fragment '{(packageName.Length == 0 ? "<root>" : packageName)}', " +
+        $"found {matchingFragments.Length}; available packages: " +
+        $"[{string.Join(", ", fragments.Select(candidate => candidate.FqName.Length == 0 ? "<root>" : candidate.FqName).OrderBy(name => name, StringComparer.Ordinal))}]");
+    var fragment = matchingFragments[0];
+    var matchingClasses = fragment.Class
+        .Where(candidate => QualifiedName(fragment, candidate.FqName) == className)
+        .ToArray();
+    Require(matchingClasses.Length == 1,
+        $"expected one class '{className}' in package '{(packageName.Length == 0 ? "<root>" : packageName)}', " +
+        $"found {matchingClasses.Length}; available classes: " +
+        $"[{string.Join(", ", fragment.Class.Select(candidate => QualifiedName(fragment, candidate.FqName)).OrderBy(name => name, StringComparer.Ordinal))}]");
+    var declaration = matchingClasses[0];
+    // The fixture method is deliberately unique by source name. Both declarations were built with this fragment's
+    // one NameTable, so protobuf Type equality below compares the same classifier-id universe.
+    var members = declaration.Function.Where(candidate => String(fragment, candidate.Name) == functionName).ToArray();
+    var extensions = fragment.Package.Function.Where(candidate => String(fragment, candidate.Name) == functionName).ToArray();
+    Require(members.Length == 1 && extensions.Length == 1,
+        $"expected one static and one extension view of '{functionName}', found {members.Length}/{extensions.Length}");
+    var member = members[0];
+    var extension = extensions[0];
+
+    Require(member.ReceiverType is null && (member.Flags & IsStaticFunctionFlag) != 0,
+        $"{className}.{functionName} must be an ordinary static member, not an extension declaration");
+    Require(extension.ReceiverType is not null && (extension.Flags & IsStaticFunctionFlag) == 0,
+        $"{packageName}.{functionName} must be the one namespace-scoped extension declaration");
+    Require(member.ValueParameter.Count == extension.ValueParameter.Count + 1 &&
+            member.ValueParameter[0].Type.Equals(extension.ReceiverType) &&
+            member.ValueParameter.Skip(1).Select(parameter => parameter.Type)
+                .SequenceEqual(extension.ValueParameter.Select(parameter => parameter.Type)),
+        $"{className}.{functionName} static and extension views do not describe the same CLR signature");
+    Require(!fragments.Any(candidate => candidate.FqName == className),
+        $"synthetic container-named package '{className}' duplicates the extension declaration");
 }
 
 static void VerifyCovariantPropertyBridge(string producerPath)

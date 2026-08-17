@@ -2,7 +2,7 @@ import ExtensionAwaitable.Operation
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import dotkt.support.blockOn
-import ExtensionAwaitable.OperationExtensions.await
+import ExtensionAwaitable.await
 
 private suspend fun awaitExtensionOperation(value: Int, synchronous: Boolean): Int =
     Operation<Int>(value, synchronous).await() + 1
