@@ -40,6 +40,7 @@ VerifyOwnershipLayerBoundary(args[4], args[5]);
 VerifyDll(args[0]);
 VerifyOwnershipDll(args[0]);
 VerifyCovariantPropertyBridge(args[0]);
+VerifyReverseEnumeratorBridge(args[0]);
 VerifyUnsafeAccessorDll(args[6]);
 VerifyKlib(args[1]);
 Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
@@ -103,6 +104,99 @@ static void VerifyCovariantPropertyBridge(string producerPath)
             string.Join(", ", methodImplBodies.Select(handle =>
                 md.GetString(md.GetMethodDefinition(handle).Name))));
     }
+}
+
+// The reverse enumerator bridge (#139/#400) is a physical ABI bir2cir states in CIR, so its shape is a metadata
+// contract, not merely a behavioral one: a producer whose adapter went public, got duplicated, or lost a MethodImpl
+// row would still enumerate correctly from Kotlin while breaking what the assembly promises .NET consumers.
+static void VerifyReverseEnumeratorBridge(string producerPath)
+{
+    const string adapter = "dotkt$EnumeratorOverKotlinIterator`1";
+    const string enumerableT = "System.Collections.Generic.IEnumerable`1";
+    const string enumerable = "System.Collections.IEnumerable";
+    const string enumeratorT = "System.Collections.Generic.IEnumerator`1";
+    const string enumerator = "System.Collections.IEnumerator";
+    const string disposable = "System.IDisposable";
+    using var stream = File.OpenRead(producerPath);
+    using var pe = new PEReader(stream);
+    var md = pe.GetMetadataReader();
+
+    // ONE module-private adapter. Its CLR identity appears in no signature, so the assembly must not export it, and
+    // a second copy would mean the synthesis fired per file instead of per module.
+    var adapters = md.TypeDefinitions
+        .Where(handle => md.GetString(md.GetTypeDefinition(handle).Name) == adapter).ToArray();
+    Require(adapters.Length == 1,
+        $"expected exactly one '{adapter}' TypeDef in the producer assembly, found {adapters.Length}");
+    var adapterDefinition = md.GetTypeDefinition(adapters[0]);
+    Require((adapterDefinition.Attributes & TypeAttributes.VisibilityMask) == TypeAttributes.NotPublic,
+        $"'{adapter}' must be assembly-private; it is {adapterDefinition.Attributes}");
+    Require((adapterDefinition.Attributes & TypeAttributes.Sealed) != 0, $"'{adapter}' must be sealed");
+    Require(HasAttribute(md, adapters[0], "System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
+        $"'{adapter}' must carry [CompilerGenerated] so dll2klib excludes it by attribute, not by name");
+    Require(adapterDefinition.GetGenericParameters().Count == 1, $"'{adapter}' must have exactly one type parameter");
+    var adapterFaces = adapterDefinition.GetInterfaceImplementations()
+        .Select(handle => StripArities(TypeName(md, DeclarationOwner(md.GetInterfaceImplementation(handle).Interface))))
+        .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+    Require(adapterFaces.SequenceEqual(new[]
+        {
+            StripArities(enumeratorT), StripArities(disposable), enumerator,
+        }.OrderBy(name => name, StringComparer.Ordinal), StringComparer.Ordinal),
+        $"'{adapter}' interface set is [{string.Join(", ", adapterFaces)}]");
+    RequireMethodImpls(adapters[0], adapter, new[]
+    {
+        (enumerator, "MoveNext"), (enumeratorT, "get_Current"), (enumerator, "get_Current"),
+        (enumerator, "Reset"), (disposable, "Dispose"),
+    });
+
+    // The implementer's two halves. `TrackedBag` is the cross-module fixture; its `iterator()` is Kotlin's only
+    // iteration member, so both CLR enumerable slots exist solely because bir2cir stated them.
+    var bagHandle = md.TypeDefinitions.Single(handle =>
+        md.GetString(md.GetTypeDefinition(handle).Name) == "TrackedBag`1");
+    var bag = md.GetTypeDefinition(bagHandle);
+    foreach (var name in new[] { "GetEnumerator", "dotkt$NonGenericGetEnumerator" })
+        Require(bag.GetMethods().Any(handle => md.GetString(md.GetMethodDefinition(handle).Name) == name),
+            $"'TrackedBag`1' is missing the synthesized '{name}'");
+    RequireMethodImpls(bagHandle, "TrackedBag`1", new[]
+    {
+        (enumerableT, "GetEnumerator"), (enumerable, "GetEnumerator"),
+    });
+
+    void RequireMethodImpls(TypeDefinitionHandle handle, string owner, (string Owner, string Member)[] expected)
+    {
+        var rows = md.GetTypeDefinition(handle).GetMethodImplementations()
+            .Select(md.GetMethodImplementation)
+            .Select(row => row.MethodDeclaration.Kind == HandleKind.MemberReference
+                ? (Owner: StripArities(TypeName(md,
+                        DeclarationOwner(md.GetMemberReference((MemberReferenceHandle)row.MethodDeclaration).Parent))),
+                    Member: md.GetString(md.GetMemberReference((MemberReferenceHandle)row.MethodDeclaration).Name))
+                : (Owner: "", Member: ""))
+            .ToArray();
+        foreach (var (declaringOwner, member) in expected)
+            Require(rows.Any(row => row.Owner == StripArities(declaringOwner) && row.Member == member),
+                $"'{owner}' has no MethodImpl for {declaringOwner}::{member}; rows: " +
+                string.Join(", ", rows.Select(row => row.Owner + "::" + row.Member)));
+    }
+
+    // A constructed generic interface — as an InterfaceImpl face or as a MethodImpl declaration's parent — is a
+    // TypeSpec; the type it names is the TypeRef/TypeDef its signature blob opens with.
+    EntityHandle DeclarationOwner(EntityHandle parent) => parent.Kind == HandleKind.TypeSpecification
+        ? TypeSpecificationTarget(md, (TypeSpecificationHandle)parent)
+        : parent;
+}
+
+// The TypeRef/TypeDef a TypeSpec's signature is built over. Reads the generic-instantiation head directly rather
+// than decoding the whole signature: the assertion is about WHICH interface declares the slot, not its arguments.
+static EntityHandle TypeSpecificationTarget(MetadataReader md, TypeSpecificationHandle handle)
+{
+    var blob = md.GetBlobReader(md.GetTypeSpecification(handle).Signature);
+    while (blob.RemainingBytes > 0)
+    {
+        var code = blob.ReadCompressedInteger();
+        if (code == (int)SignatureTypeCode.GenericTypeInstance) continue;
+        if (code == 0x11 || code == 0x12) return blob.ReadTypeHandle();   // ELEMENT_TYPE_VALUETYPE / _CLASS
+        break;
+    }
+    return default;
 }
 
 static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)

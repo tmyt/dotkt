@@ -118,6 +118,49 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **The reverse enumerator bridge is ordinary CIR authored by `bir2cir` (#139/#400).** A Kotlin class implementing
+  `Iterable`/`Collection`/`List` lowers onto a BCL enumerable face that obliges `IEnumerator<E> GetEnumerator()`,
+  while the class has only Kotlin's `iterator(): Iterator<E>`. That whole ABI used to be synthesized inside `ilemit`
+  from `clrBridgeRole` semantic hints `bir2cir` stamped by Kotlin FQN (`kotlin.collections.Iterator`) and member name
+  (`hasNext`/`next`/`iterator`): the emitter minted the `dotkt$EnumeratorOverKotlinIterator<T>` adapter TypeDef with
+  its wrapped-iterator field, constructor, `MoveNext`, both `Current` slots, `Reset` and `Dispose`, decided which
+  classes qualified from a hardcoded BCL collection-interface set and a reflected hierarchy walk, and wired every
+  MethodImpl itself. `bir2cir` now authors all of it as ordinary declarations, bodies and exact `clrInterfaceImpls`
+  MethodImpl descriptors, so `ilemit` emits the graph one-to-one. The adapter — which Kotlin source cannot express,
+  because `IEnumerator<T>` and the non-generic `IEnumerator` declare two `Current` slots differing only in return
+  type — is now emitted once per module and is assembly-private: its CLR identity never appears in a signature, so a
+  module-private copy is indistinguishable from one shared out of the runtime stdlib, and the cross-assembly
+  `enumeratorAdapterCtorRef` carrier is retired with it. `clrBridgeRole` and `enumeratorAdapterCtorRef` are gone from
+  the BIR/CIR schema and its validator; `ilemit` loses `Emitter.ReverseBridge.cs`, the `EnumerableDerived` face
+  registry, the `TypeInfo.BridgeRoles` marker registry, the name-based `GetEnumerator` skip in its interface wiring,
+  and the eight fixed-member roles (`Enumerable.GetEnumerator`, `Enumerator.MoveNext/Current/Reset`,
+  `EnumeratorT.Current`, `EnumerableT.GetEnumerator`, `Disposable.Dispose`, `NotSupportedException.ctor0`) that had
+  no other consumer. The runtime standard library's emitted metadata is unchanged except that the synthesized
+  members no longer carry `final`/`hidebysig` — matching every other `bir2cir`-authored MethodImpl bridge — and the
+  metadata-only reference standard library, which states no BCL enumerable face and therefore owes no bridge, no
+  longer carries a dead copy of the adapter. In an application or user-library build the adapter is now an ordinary
+  CIR TypeDef when round-trip metadata is stamped, so it carries the same `[NullableContext]` carrier every other
+  compiler-authored type does. The change also FIXES a shape the emitter could not reach: a class implementing an
+  `Iterable`-derived interface declared in ANOTHER assembly, whose enumerable face the emitter's worklist never
+  followed, failed to load with "Method 'GetEnumerator' … does not have an implementation".
+
+- **Which delegate a literal lambda constructs is decided in `bir2cir`, and the Unit/void adapter is ordinary CIR
+  (#400).** `ilemit` used to compare the reflected parameter type at each call site with the lambda's own delegate and
+  re-wrap the construction when they differed, and — when the slot's `Invoke` returned a value while the Kotlin lambda
+  was `Unit`-valued — to author the reconciling adapter itself: a synthesized
+  `DotKt.Runtime.CompilerServices.UnitDelegateAdapters` TypeDef, one `Unit$N` MethodDef per conversion, a rewritten
+  generic frame with cloned constraints, and a hand-built body. `bir2cir` now marks every literal construction with the
+  delegate its slot declares and, after the last resolution pass, makes the construction state what it physically
+  builds: the same delegate (nothing to state), a different bindable one (its `funcType`, `delegateCtorRef` and
+  `invokeRef` become the slot's), or — for the void-into-value mismatch — an ordinary `newClosure` over an adapter class
+  `bir2cir` authors, which holds the natural delegate and whose `invoke` calls it and returns the `Unit` singleton
+  through the same `staticField` node every Kotlin `object` instance is read with. The adapter is generic in the
+  delegate's PARAMETER TYPES rather than in the enclosing frame's type variables, so it declares no constraints at all
+  and none have to be reconstructed: a delegate family constrains none of its own parameters, so any type legal as
+  `Action<X>`'s argument is legal as the adapter's. The same rule now covers a literal lambda subscribed to a .NET
+  event, which reaches the accessor already being the event's delegate. The `unitInstanceRef` and
+  `targetDelegateCtorRef` CIR carriers are retired.
+
 - **The body of an un-lowered `suspend` declaration is authored by `bir2cir`, and the Kotlin `suspend` modifier no
   longer reaches CIR (#400).** `ilemit` used to synthesize a throwing body for any declaration that still carried
   `mods.suspend` in a standard-library build, and to refuse one in an application build — Kotlin coroutine policy

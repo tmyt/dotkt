@@ -1138,11 +1138,6 @@ sealed class Pipeline
             // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
             // substituting method type args. ilemit then emits the stated cast instead of inferring a stack seam.
             if (!_options.RefBuild) CollectionViewCallCoercion.Apply(lowered);
-            // #139 — stamp the reverse-enumerator-bridge `clrBridgeRole` markers (kotlin.collections.Iterator's
-            // hasNext/next + every class `iterator()`) so ilemit drives its GetEnumerator adapter off a semantic marker,
-            // never the Kotlin FQN/member names. ALL builds; on the lowered tree (the Iterator FQN + type names survive
-            // lowering) so ref/rt/app mark the same nodes. Additive CIR hint — never a .NET attribute, emit is unchanged.
-            IteratorBridgeMarking.Apply(lowered);
             // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already
             // re-pointed the receiver `cast` at a non-generic BCL collection interface, but MemberCallSubstitution bound
             // Count to the GENERIC `IReadOnly*<object>.Count`, absent on a value-type-arg collection (`List<int>`)
@@ -1180,6 +1175,18 @@ sealed class Pipeline
             // else DefineMethodOverride mismatches the slot -> TypeLoadException. Value-type type-arg positions only.
             if (!_options.RefBuild) ValueTypeIfaceSlotBridge.Apply(lowered, refs);
         }
+
+        // THE REVERSE ENUMERATOR BRIDGE (#139/#400): a class whose supertype graph reaches a BCL enumerable face owes
+        // `IEnumerator<E> GetEnumerator()` and has only Kotlin's `iterator(): Iterator<E>`. Author the compiler-owned
+        // adapter TypeDef and both GetEnumerator halves — declarations, bodies and exact MethodImpl descriptors — so
+        // ilemit emits them one-to-one. Module-wide (the face can be inherited through a base declared in a sibling
+        // file) and after the loop above, whose last passes can still state such a face. Non-ref: the reference
+        // surface keeps the Kotlin collection faces, so nothing in it implements a BCL enumerable interface.
+        if (!_options.RefBuild
+            && ReverseEnumeratorBridgeSynthesis.ApplyAll(loweredRoots.Select(s => s.Root).ToList(), refs))
+            // The adapter is declared by THIS emission unit, later than the initial inventory, so record it before
+            // any member binding below can mistake a local construction for a reference to another assembly.
+            emittedLocalTypes.Add(ReverseEnumeratorBridgeSynthesis.AdapterName);
 
         // Late synthesis above authors ordinary calls as part of new bridge bodies. Bind those calls only after every
         // root has reached its final representation, then resolve local-owner calls inherited from external bases.
@@ -1230,6 +1237,11 @@ sealed class Pipeline
             ClrMemberResolution.ResolveAttributeCtors(lowered, refs);
             ClrMemberResolution.ResolveWellKnown(lowered, refs);
             ClrMemberResolution.ResolveInterfaceSlots(lowered, loweredRoots.Select(file => file.Root), refs);
+            // Every delegate slot in this file now names its selected member, so each literal lambda filling one
+            // can be pointed at the delegate it physically constructs — and the void-to-value adapter that needs
+            // can be authored as ordinary CIR. Runs after the last resolution pass, because the rule compares the
+            // construction's FINAL function type with the slot's.
+            ClrMemberResolution.MaterializeDelegateSlots(lowered, refs, emittedLocalTypes);
             // THE STAMPING CHOKEPOINT: every node resolved against a .NET member carries that member's declared
             // return. Two omissions of exactly that shape — a generic method and a public field — each removed a
             // whole family from the crossing refusal below without any gate noticing.

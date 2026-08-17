@@ -367,11 +367,9 @@ static partial class ClrMemberResolution
             case "clrEventRemove": ResolveEvent(node); break;
             case "spreadConcat": ResolveSpreadConcat(node); break;
             case "forEachInline": ResolveForEachInline(node); break;
-            case "newDelegate": case "newClosure":
-                ResolveUnitSingleton(node);
-                ResolveDelegateCtor(node, "funcType");
-                ResolveDelegateInvoke(node, "funcType");
-                break;
+            // A CONSTRUCTION names the constructor it runs, and nothing else: its value is called through the
+            // Invoke the CALL states, so no invoke identity belongs on the construction itself.
+            case "newDelegate": case "newClosure": ResolveDelegateCtor(node, "funcType"); break;
             case "clrEventAccessorImpl": ResolveEventCas(node); break;
             // A static field is the same member whether it is read or written, and whether it arrived through the
             // Kotlin or the @Clr spelling. Found by enumerating the emitter's node kinds against this dispatch
@@ -695,71 +693,6 @@ static partial class ClrMemberResolution
         if (instance)
             node["dispatch"] = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
     }
-
-    // A literal Kotlin lambda has a NATURAL Func/Action constructor, while an external parameter can require a
-    // different delegate (a custom delegate, or another generic construction of the same family). The call resolver
-    // already owns the selected declaration and its substitutions, so it names that TARGET constructor here. ilemit
-    // may choose between the two carried constructors based on the already-resolved parameter type, but never search.
-    static void StampDelegateArgumentTargets(JsonObject call, MethodInfo method, TypeNode[] ownerArgs,
-        string argumentKey = "args")
-    {
-        var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
-            ?? Array.Empty<TypeNode>();
-        if (methodArgs.Any(t => t == null)) return;
-        StampDelegateArgumentTargets(call, method.GetParameters(), ownerArgs, methodArgs, argumentKey);
-    }
-
-    static void StampDelegateArgumentTargets(JsonObject call, ParameterInfo[] parameters,
-        TypeNode[] ownerArgs, TypeNode[] methodArgs, string argumentKey = "args")
-        => StampDelegateArgumentTargets(call,
-            parameters.Select(parameter => RefTypeOf(parameter.ParameterType)).ToArray(), ownerArgs, methodArgs,
-            argumentKey);
-
-    static void StampDelegateArgumentTargets(JsonObject call, TypeNode[] parameters,
-        TypeNode[] ownerArgs, TypeNode[] methodArgs, string argumentKey = "args")
-    {
-        if (call[argumentKey] is not JsonArray args || parameters.Length != args.Count) return;
-        for (var i = 0; i < parameters.Length; i++)
-        {
-            if (args[i] is not JsonObject arg
-                || (arg["k"] as JsonValue)?.GetValue<string>() is not ("newDelegate" or "newClosure"))
-                continue;
-            var target = SupertypeGraph.SubstOwnerTvs(parameters[i], ownerArgs);
-            target = SubstituteMethodTypeArgs(target, methodArgs);
-            var delegateShape = target;
-            while (delegateShape is TypeNode.Nullable nullable) delegateShape = nullable.Of;
-            while (delegateShape is TypeNode.Oblivious oblivious) delegateShape = oblivious.Of;
-            var physical = BirTypeLowering.LowerType(delegateShape, refBuild: false, force: false, typeArg: false);
-            if (physical is TypeNode.Fn fn)
-                physical = BirTypeLowering.DelegateFqnOf(
-                    (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fn, refBuild: false, force: false));
-            if (physical is not TypeNode.Fqn targetDelegate
-                || ResolveOwnerType(targetDelegate) is not Type targetOpen
-                || !IsDelegate(targetOpen))
-                continue;
-            ResolveDelegateCtor(arg, delegateShape, "targetDelegateCtorRef");
-        }
-    }
-
-    static TypeNode SubstituteMethodTypeArgs(TypeNode type, TypeNode[] args) => type switch
-    {
-        TypeNode.Tv { Scope: "method" } tv when tv.I >= 0 && tv.I < args.Length => args[tv.I],
-        TypeNode.Fqn { Args: { } nested } f => new TypeNode.Fqn(f.Name,
-            nested.Select(a => SubstituteMethodTypeArgs(a, args)).ToArray()),
-        TypeNode.Nullable n => new TypeNode.Nullable(SubstituteMethodTypeArgs(n.Of, args)),
-        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstituteMethodTypeArgs(o.Of, args)),
-        TypeNode.Array a => new TypeNode.Array(SubstituteMethodTypeArgs(a.Elem, args), a.Rank, a.SzArray),
-        TypeNode.ByRef b => new TypeNode.ByRef(SubstituteMethodTypeArgs(b.Of, args)),
-        TypeNode.Ptr p => new TypeNode.Ptr(SubstituteMethodTypeArgs(p.Of, args)),
-        TypeNode.Mod m => new TypeNode.Mod(m.Req, SubstituteMethodTypeArgs(m.M, args),
-            SubstituteMethodTypeArgs(m.Of, args)),
-        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
-            SubstituteMethodTypeArgs(fn.Ret, args),
-            fn.Params.Select(p => SubstituteMethodTypeArgs(p, args)).ToArray(),
-            fn.Recv == null ? null : SubstituteMethodTypeArgs(fn.Recv, args), fn.Clr,
-            fn.Ctx?.Select(c => SubstituteMethodTypeArgs(c, args)).ToArray()),
-        _ => type,
-    };
 
     // THE DECLARED RETURN OF A GENERIC .NET METHOD. Everything else about these nodes was already resolved
     // upstream, so this establishes one fact and touches nothing: the member's own return type, open (a method

@@ -103,6 +103,13 @@ Notes:
   `func:`/`sfunc:` STRING-parsing scanners (kotc `synthLambda`; bir2cir `LowerFuncString`/`FuncRetEnd`/
   `SkipTypeToken`/`PrefixLength`/`FoldSFuncToFunc` + the `func:`/`sfunc:` branches of `LowerTypeString`;
   ilemit `FuncArity(string)` + `FuncArityOf`'s string path) are DELETED.
+  **A delegate CONSTRUCTION's `funcType` may also be a named `fqn`.** `newClosure`/`newDelegate` state the delegate
+  they PHYSICALLY build, and a literal lambda whose slot declares a different delegate (a custom .NET delegate, or a
+  construction of the same family whose return the slot widened) is pointed at that slot's delegate by
+  `bir2cir`'s `ClrMemberResolution.DelegateSlots`, which names it directly rather than as a Kotlin function type —
+  a custom delegate has no `fn` spelling at all. `delegateInvoke`, whose reader needs the parameter/return vector,
+  keeps the structured `fn`. A construction carries no `invokeRef`: it names the constructor it runs, and the
+  Invoke its value is called through is stated by the CALL.
 - **Nullability is TRI-STATE, named with the CLR/Roslyn vocabulary** (`NullableAttribute` 1/2/0 =
   not-annotated / annotated / **oblivious**). A reference type is one of three states, each a COHERENT node
   naming its own CLR state (the representation must NOT collapse oblivious to nullable — that breaks overload

@@ -191,10 +191,9 @@ sealed partial class Emitter
     {
         "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
         "Object.Equals", "Enum.GetValues", "Enum.Parse",
-        "Enumerable.GetEnumerator", "Enumerator.MoveNext", "Enumerator.Current", "Enumerator.Reset",
-        "Disposable.Dispose", "Array.IndexOf", "Comparable.CompareTo",
-        "Object.ctor", "NotSupportedException.ctor0",
-        "IndexOutOfRangeException.ctor", "EnumeratorT.Current", "EnumerableT.GetEnumerator",
+        "Array.IndexOf", "Comparable.CompareTo",
+        "Object.ctor",
+        "IndexOutOfRangeException.ctor",
         "ReadOnlyCollectionT.Count", "ReadOnlyListT.Item", "CollectionT.Count", "CollectionT.IsReadOnly",
         "CollectionT.Clear", "ListT.Item", "ListT.RemoveAt", "NullableT.ctor", "SpanT.ctorPointer",
     };

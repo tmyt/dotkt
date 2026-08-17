@@ -660,25 +660,9 @@ sealed partial class Emitter
     {
         // A by-ref parameter (`out`/`ref`, from the `byref(x)` marker) -> pass the lvalue's address.
         if (want.IsByRef) { EmitAddr(a); return; }
-        // (4) A LAMBDA passed to a .NET DELEGATE parameter -> build that SPECIFIC delegate (the FIR types the param
-        // as a Kotlin function type; the real delegate is `want`, resolved here from the target method's signature).
-        // Mirrors the event path; covers custom delegates (ApplicationInitializationCallback, ThreadStart) and BCL
-        // Func/Action alike. Scoped to literal lambdas (newDelegate/newClosure) so stored delegate/Func values keep
-        // their existing pass-through path.
-        // A TARGET mentioning the current method/type's generic parameter is still a complete constructed delegate
-        // at this call site when bir2cir carried `targetDelegateCtorRef` for the containing parameter. MemberRef
-        // decoding anchors that declaration onto the use-site instantiation. The carrier is also the discriminator:
-        // a natural open Func/Action has no target conversion to perform and must stay on the ordinary expression
-        // path, while an open custom target must not discard the exact ctor merely because it contains a scoped tv.
-        // (#220 removed the old assembly-local `KFunc`/`KAction` exemption: a wide delegate in a signature is now the
-        // stdlib's canonical baked type, identical on both sides, so there is nothing left to exempt.)
-        if (IsDelegateType(want) && want != Bcl("System.Delegate") && want != Bcl("System.MulticastDelegate")
-            && (!ContainsGenericParameter(want) || HasDistinctTargetDelegateCtor(a))
-            && a.TryGetProperty("k", out var dk) && (dk.GetString() == "newDelegate" || dk.GetString() == "newClosure"))
-        {
-            EmitHandlerAsDelegate(a, want);
-            return;
-        }
+        // A literal lambda filling a .NET delegate parameter needs NO decision here: bir2cir compared the
+        // construction's natural delegate with the parameter's and made the node state the delegate it builds
+        // (ClrMemberResolution.DelegateSlots), so the ordinary expression path emits exactly that construction.
         // `T`/null passed to a `T?` slot -> Nullable<T> wrap / default(Nullable<T>) (shared with EmitCond).
         var got = EmitNullableCoerced(a, want);
         if (got == null) return;
@@ -697,19 +681,6 @@ sealed partial class Emitter
         // any OTHER arg/slot mismatch still surfaces (pure CLR reconciliation of bir2cir's collapse — no Kotlin knowledge).
         else if (IsCollectionViewSeam(got, want))
             _il.Emit(OpCodes.Castclass, want);
-    }
-
-    bool HasDistinctTargetDelegateCtor(JsonElement node)
-    {
-        if (!node.TryGetProperty("delegateCtorRef", out var naturalElement)
-            || naturalElement.ValueKind != JsonValueKind.Object
-            || !node.TryGetProperty("targetDelegateCtorRef", out var targetElement)
-            || targetElement.ValueKind != JsonValueKind.Object)
-            return false;
-        var natural = DotKt.Bir.MemberRefNode.Read(naturalElement);
-        var target = DotKt.Bir.MemberRefNode.Read(targetElement);
-        return !string.Equals(natural.Assembly, target.Assembly, StringComparison.Ordinal)
-            || natural.DeclaringType != target.DeclaringType;
     }
 
     // True exactly for the sanctioned COLLAPSED-VARIANCE collection-interface seams (EITHER direction) with an
