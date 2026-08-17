@@ -219,6 +219,18 @@ CLR static members are emitted directly in the containing class with the
 standard Kotlin 2.4.0 `IS_STATIC_FUNCTION` or `IS_STATIC_PROPERTY` flag. They
 have no dispatch receiver.
 
+A conventional C# `[Extension]` MethodDef has two source meanings, but they are
+not projected as two Kotlin extensions. Its declaring-class view remains an
+ordinary static function whose leading receiver is a value parameter. A single
+top-level extension view is emitted in the CLR namespace package, with that
+leading parameter promoted to `receiver_type` and `ClrExternal` naming the
+physical static owner. `dll2klib` does not create a second package named after
+the static container: that would give the same CLR method both a class callable
+and a package callable under one qualified name, duplicating completion and
+overload surfaces. Thus Kotlin can use either `Extensions.method(value, ...)`
+or the namespace-imported `value.method(...)`, while each form has one metadata
+declaration.
+
 A real Kotlin companion is a different shape: it is a nested
 `Class.Kind.COMPANION_OBJECT`, is named by the containing class's
 `companion_object_name`, and its members have a companion-instance dispatch

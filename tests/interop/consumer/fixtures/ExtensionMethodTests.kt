@@ -4,17 +4,18 @@
 // compilation. Each C# runtime.cs was given its OWN namespace so the colliding simple names coexist.
 //
 //   c1net    <- il-c1net    façade-free .NET consumption: generic methods, params/vararg, .NET default args, op_*
-//                           operators, struct value-type instance methods, C#-origin extension methods (member-import)
+//                           operators, struct value-type instance methods, C#-origin extension/static dual surface
 //   csext    <- il-csext    #137: C#-origin `[Extension]` methods brought in AS top-level extensions via `import Ns.*`
 //   csextrecv<- il-csextrecv#144: same-name/same-arity `[Extension]`s on DIFFERENT receivers (class + primitive)
 //   genextval<- il-genextval#157: an inferred `Cell(40)` over a projected generic must construct `Cell<int32>`
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
-// il-c1net (`import Owner.member` form — the `using static` analog)
+// il-c1net (namespace extension import plus the ordinary static MethodDef view)
 import C1Net.Vec2
 import C1Net.Util
-import C1Net.Ext.tripled
-import C1Net.Ext.shout
+import C1Net.Ext
+import C1Net.tripled
+import C1Net.shout
 // il-csext / il-csextrecv / il-genextval (`import Ns.*` — the `using Ns;` analog)
 import Csext.*
 import Csextrecv.*
@@ -30,6 +31,7 @@ class ExtensionMethodTests {
         assertEquals(105, Util.AddDef(5, 100))     // 105
         assertEquals(52, (Vec2(1, 2) + Vec2(3, 4)).Mag2())  // (4,6)  -> 52  (operator +, struct instance method)
         assertEquals(21, 7.tripled())              // 21   (.NET extension method, Int receiver)
+        assertEquals(21, Ext.tripled(7))           // 21   (the same MethodDef as an ordinary CLR static)
         assertEquals(41, (Vec2(5, 7) - Vec2(1, 2)).Mag2())  // (4,5)  -> 41  (op_Subtraction)
         assertEquals(117, (Vec2(2, 3) * 3).Mag2()) // (6,9)  -> 117 (op_Multiply)
         assertEquals(20, (Vec2(8, 4) / 2).Mag2())  // (4,2)  -> 20  (op_Division)

@@ -178,6 +178,14 @@ for proj in "${PROJECTS[@]}"; do
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/dotkt-reference-klibs/InteropProducer.klib"
 		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
+			-- --klib-csharp-extension-shape "$interop_klib" C1Net C1Net.Ext tripled \
+			>"$ROOT/build/nunit-$name.extension-shape.log" 2>&1; then
+			echo "  C# extension projects as one namespace extension plus one ordinary CLR static"
+		else
+			echo "  C# EXTENSION KLIB SHAPE FAIL — see build/nunit-$name.extension-shape.log"
+			tail -25 "$ROOT/build/nunit-$name.extension-shape.log"; rc=1
+		fi
+		if dotnet run --project "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
 			-- --klib-class-properties "$interop_klib" "ExplicitMethodInterop.ExplicitOperations" "Name" \
 			>"$ROOT/build/nunit-$name.explicit-property.log" 2>&1; then
 			echo "  explicit-interface CLR Property/MethodImpl projects once under its simple Kotlin name"

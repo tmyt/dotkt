@@ -14,8 +14,8 @@ import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import NUnit.Framework.Legacy.ClassicAssert.IsNotNull as assertNotNull
 import System.Type
 import System.Reflection.FieldInfo
-import System.Reflection.RuntimeReflectionExtensions.GetRuntimeFields
-import System.Reflection.RuntimeReflectionExtensions.GetRuntimeProperties
+import System.Reflection.GetRuntimeFields
+import System.Reflection.GetRuntimeProperties
 import Newtonsoft.Json.JsonConvert
 
 class BfCarrier(var Name: String, var Age: Int) {

@@ -1590,46 +1590,6 @@ internal sealed class AssemblyScanner
                 fragment.Package.Property.Count != 0)
                 result.Add(new Fragment(package.Key, fragment));
         }
-        // C# permits importing an extension through its declaring static type
-        // (`import N.Extensions.member`). Kotlin metadata models extensions as
-        // top-level declarations, so publish a second, ordinary package
-        // fragment named after that container. The function's ClrExternal
-        // annotation still carries the one true physical owner.
-        foreach (var group in _md.TypeDefinitions
-            .Select(h => (Handle: h, Definition: _md.GetTypeDefinition(h)))
-            .Where(x => IsPublicTopLevel(x.Definition))
-            .Where(x => x.Definition.GetMethods().Any(h =>
-                _attrs.Has(h, "System.Runtime.CompilerServices.ExtensionAttribute", requireTrust: false)) ||
-                _csharp14Extensions.TryGetContainer(x.Handle, out _))
-            .GroupBy(x =>
-            {
-                var ns = _md.GetString(x.Definition.Namespace);
-                var simple = _arityNames.Simple(ns, _md.GetString(x.Definition.Name));
-                return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
-            }, StringComparer.Ordinal))
-        {
-            var names = new NameTable();
-            var package = new Package { PackageFqName = names.Package(group.Key) };
-            var fragment = new PackageFragment
-            {
-                Package = package,
-                IsEmpty = false,
-                FqName = group.Key,
-            };
-            var signatures = new SignatureDecoder(
-                _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
-                SemanticCompanionTypeNames(names));
-            foreach (var (handle, def) in group)
-            {
-                ReadCSharpExtensions(handle, def, package, names, signatures);
-                ReadCSharp14StaticExtensions(handle, package, names, signatures);
-            }
-            MarkLowPriorityDelegateOverloads(package.Function, names);
-            fragment.Strings = names.Strings;
-            fragment.QualifiedNames = names.QualifiedNames;
-            if (package.Function.Count != 0)
-                result.Add(new Fragment(group.Key, fragment));
-        }
         // The KLIB reader probes root_package while resolving ordinary source,
         // even when this assembly has no root-package declarations. A packed
         // KLIB cannot represent an empty directory unless an entry is written,
@@ -1954,7 +1914,11 @@ internal sealed class AssemblyScanner
                         declarationIdentity?.Parameters) },
                 };
                 PromoteContextParameters(method, function);
-                PromoteReceiver(methodHandle, method, function);
+                // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
+                // its declaring class, while ReadCSharpExtensions separately publishes the namespace-scoped Kotlin
+                // extension view. Do not turn this class member into a second extension declaration. DotKt member
+                // extensions use the compiler-owned __self parameter and are still restored here.
+                PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
                 AddMethodTypeParameters(method, function, names, signatures, context);
                 // A member's declaring-class path already carries its physical owner. Preserve only the exact
                 // frontend identity; ClrExternal is the top-level declaration transport.
@@ -4689,7 +4653,11 @@ internal sealed class AssemblyScanner
             payload.Name);
     }
 
-    private void PromoteReceiver(MethodDefinitionHandle handle, MethodDefinition method, Function function)
+    private void PromoteReceiver(
+        MethodDefinitionHandle handle,
+        MethodDefinition method,
+        Function function,
+        bool recognizeClrExtension = true)
     {
         if (function.ValueParameter.Count == 0) return;
         var firstParameter = method.GetParameters()
@@ -4698,8 +4666,10 @@ internal sealed class AssemblyScanner
             .OrderBy(x => x.Parameter.SequenceNumber)
             .FirstOrDefault(x => !_attrs.Has(x.Handle, MetadataAttributes.DotKtNs + "KotlinContextParameterAttribute"));
         var isReceiver =
-            _attrs.Has(handle, "System.Runtime.CompilerServices.ExtensionAttribute", requireTrust: false) ||
-            (!firstParameter.Handle.IsNil &&
+            (recognizeClrExtension &&
+                _attrs.Has(handle, "System.Runtime.CompilerServices.ExtensionAttribute", requireTrust: false)) ||
+            (_attrs.IsDotKtAssembly &&
+                !firstParameter.Handle.IsNil &&
                 !firstParameter.Parameter.Name.IsNil &&
                 _md.GetString(firstParameter.Parameter.Name) == "__self");
         if (!isReceiver) return;

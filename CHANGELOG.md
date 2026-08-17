@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **C# extension methods no longer appear twice in Kotlin completion.** `dll2klib` now projects the declaring-class
+  view as an ordinary static function and emits exactly one receiver-style extension in the CLR namespace package.
+  The former synthetic package named after the static extension container is gone; static calls and namespace-
+  imported extension calls still target the same CLR MethodDef.
+
 - **Property references to `length` on .NET-mapped `String`, `StringBuilder`, and `CharSequence` owners now work
   (#242).** `kotc` now projects them as ordinary Kotlin property references with an explicit callable-interface fact;
   `bir2cir` materializes a CLR delegate when that value fills a function slot and resolves the accessor to its physical

@@ -1331,7 +1331,12 @@ Application.Start(...)             // implicit companion access — the natural 
 ```
 
 They have no companion type or singleton value: `Application.Companion` is not synthesized. Instance members,
-constructors, properties, events, operators, and extension methods also resolve directly.
+constructors, properties, events, and operators also resolve directly. A conventional C# extension MethodDef has
+two non-duplicated Kotlin views: its declaring class exposes the ordinary static call
+`Extensions.method(value, ...)`, while its CLR namespace package exposes the receiver call `value.method(...)`.
+The extension is imported from the namespace, not from a synthetic package named after `Extensions`; this keeps the
+same physical method from appearing twice in completion under one qualified name. The rule is identical for the
+global CLR namespace, whose extension view belongs to Kotlin's root package.
 
 A Kotlin class that EXTENDS such a type does not re-declare its statics. The frontend materializes one on the
 subclass so that `Sub.Shared` resolves, but the CLR does not inherit statics into a derived TypeDef, so `Sub.Shared`
