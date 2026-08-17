@@ -118,6 +118,23 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Changed
 
+- **Which delegate a literal lambda constructs is decided in `bir2cir`, and the Unit/void adapter is ordinary CIR
+  (#400).** `ilemit` used to compare the reflected parameter type at each call site with the lambda's own delegate and
+  re-wrap the construction when they differed, and — when the slot's `Invoke` returned a value while the Kotlin lambda
+  was `Unit`-valued — to author the reconciling adapter itself: a synthesized
+  `DotKt.Runtime.CompilerServices.UnitDelegateAdapters` TypeDef, one `Unit$N` MethodDef per conversion, a rewritten
+  generic frame with cloned constraints, and a hand-built body. `bir2cir` now marks every literal construction with the
+  delegate its slot declares and, after the last resolution pass, makes the construction state what it physically
+  builds: the same delegate (nothing to state), a different bindable one (its `funcType`, `delegateCtorRef` and
+  `invokeRef` become the slot's), or — for the void-into-value mismatch — an ordinary `newClosure` over an adapter class
+  `bir2cir` authors, which holds the natural delegate and whose `invoke` calls it and returns the `Unit` singleton
+  through the same `staticField` node every Kotlin `object` instance is read with. The adapter is generic in the
+  delegate's PARAMETER TYPES rather than in the enclosing frame's type variables, so it declares no constraints at all
+  and none have to be reconstructed: a delegate family constrains none of its own parameters, so any type legal as
+  `Action<X>`'s argument is legal as the adapter's. The same rule now covers a literal lambda subscribed to a .NET
+  event, which reaches the accessor already being the event's delegate. The `unitInstanceRef` and
+  `targetDelegateCtorRef` CIR carriers are retired.
+
 - **The body of an un-lowered `suspend` declaration is authored by `bir2cir`, and the Kotlin `suspend` modifier no
   longer reaches CIR (#400).** `ilemit` used to synthesize a throwing body for any declaration that still carried
   `mods.suspend` in a standard-library build, and to refuse one in an application build — Kotlin coroutine policy

@@ -5,7 +5,7 @@
 # it — not because they are unimportant, but because the producer has been fixed so the shape they guard no longer
 # reaches them. A rule with no witness quietly stops being a rule; these documents are the witness.
 #
-# Seven rules are covered today.
+# Eight rules are covered today.
 #
 #   docs/bir-cir-spec.md §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`. bir2cir
 #   checks this on the fully-passed BIR, just before BirTypeLowering strips the stamp, so the emitted CIR corpus
@@ -40,6 +40,13 @@
 #   `reject-unlowered-suspend-declaration` is that refusal's witness; no Kotlin source produces the shape (the admit
 #   gate it trips is the retired kotc CPS path), which is why it has to be authored here.
 
+#   Layer ownership (the void-to-value delegate adaptation) — a Kotlin `Unit` lambda lowers to a void-returning
+#   delegate, and no method pointer is delegate-compatible with a slot whose `Invoke` returns. bir2cir authors the
+#   adapter that produces the value; `unit-delegate-adapter` pins its whole physical shape — the newClosure over it,
+#   the untouched natural construction as its capture, the adapter's constraint-free parameter-generic frame, and the
+#   complete `kotlin.Unit.INSTANCE` field identity in its body — because the emitted metadata looks the same whether
+#   CIR stated the adapter or an emitter synthesized one, which is exactly the confusion the rule ends.
+#
 #   bir-common/CollectionViewFaces.cs — a type naming a MUTABLE collection face also names its READ-ONLY sibling,
 #   because the CLR does not derive one from the other. The emitted metadata cannot witness the rule: it looks the
 #   same whether bir2cir stated the face or an emitter inferred it, which is exactly the confusion the rule ends.

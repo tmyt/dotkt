@@ -173,40 +173,14 @@ static partial class ClrMemberResolution
     }
 
     /// <summary>
-    /// The `Unit` singleton a void lambda needs when it fills a Unit-returning delegate slot.
-    /// </summary>
-    /// <remarks>
-    /// The emitter reconciles the two by wrapping the lambda in an adapter that calls it and returns
-    /// `Unit.INSTANCE`. That adapter is synthesized per arity and belongs to no node — but the FIELD does not
-    /// depend on the arity, or on anything else: it is one static field of one type. So it rides the node whose
-    /// conversion needs it, and the emitter stops naming a stdlib member by string.
-    ///
-    /// A build where `kotlin.Unit` is the type being emitted (the stdlib's own) has no reference to make, and
-    /// none is needed there — that is the local axis.
-    /// </remarks>
-    static void ResolveUnitSingleton(JsonObject node)
-    {
-        if (node.ContainsKey("unitInstanceRef")) return;
-        if (TypeJson.Read(node["funcType"]) is not TypeNode.Fn fn) return;
-        if (fn.Ret is not TypeNode.Fqn { Name: "void" or "System.Void" }) return;
-        var open = ResolveOwnerType(new TypeNode.Fqn(UnitFqn));
-        if (open == null) return;
-        var instance = open.GetField(UnitInstance, BindingFlags.Public | BindingFlags.Static);
-        if (instance == null) return;
-        node["unitInstanceRef"] = FieldRefJson(instance, open, Array.Empty<TypeNode>());
-    }
-
-    const string UnitFqn = "kotlin.Unit";
-    const string UnitInstance = "INSTANCE";
-
-    /// <summary>
     /// The static field a `staticField` node reads, named here rather than re-found by name downstream (#370).
     /// </summary>
     /// <remarks>
-    /// Every Kotlin `object` reaches its instance through this node, so no singleton is a special case — the
-    /// kotlin.Unit resolver above survives only because it fires on a closure's return slot, where there is no
-    /// `staticField` node to carry anything. An owner this compilation emits does not resolve and correctly
-    /// carries nothing: that is the local axis, which is #395's subject and not this one's.
+    /// Every Kotlin `object` reaches its instance through this node, so no singleton is a special case —
+    /// including the `kotlin.Unit` instance a void-to-value delegate adapter returns, which reaches this
+    /// resolver through the ordinary `staticField` node its authored body carries. An owner this compilation
+    /// emits does not resolve and correctly carries nothing: that is the local axis, which is #395's subject
+    /// and not this one's.
     /// </remarks>
     static void ResolveStaticField(JsonObject node)
     {
