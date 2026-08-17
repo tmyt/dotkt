@@ -1,0 +1,159 @@
+{
+  "fileClass": "NullableCharSequenceCollapseKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "literalNull",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": {
+        "t": "nullable",
+        "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "const",
+            "type": {
+              "t": "nullable",
+              "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+            },
+            "value": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "nullableSnapshot",
+      "static": true,
+      "vis": "public",
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "t": "nullable",
+            "of": { "t": "fqn", "name": "System.Text.StringBuilder" }
+          }
+        }
+      ],
+      "ret": {
+        "t": "nullable",
+        "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": { "k": "local", "name": "value" }
+        }
+      ]
+    },
+    {
+      "name": "nullableSink",
+      "static": true,
+      "vis": "public",
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "t": "nullable",
+            "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": []
+    },
+    {
+      "name": "nullableVar",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "var",
+          "name": "localCs",
+          "type": {
+            "t": "nullable",
+            "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+          },
+          "init": {
+            "k": "const",
+            "type": {
+              "t": "nullable",
+              "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+            },
+            "value": null
+          }
+        }
+      ]
+    },
+    {
+      "name": "nullableCall",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callStatic",
+            "method": "nullableSink",
+            "sig": [
+              {
+                "t": "nullable",
+                "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+              }
+            ],
+            "args": [
+              {
+                "k": "const",
+                "type": {
+                  "t": "nullable",
+                  "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+                },
+                "value": null
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "nullableCast",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": {
+        "t": "nullable",
+        "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cast",
+            "type": {
+              "t": "nullable",
+              "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+            },
+            "e": {
+              "k": "const",
+              "type": {
+                "t": "nullable",
+                "of": { "t": "fqn", "name": "dotkt$CharSequence" }
+              },
+              "value": null
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

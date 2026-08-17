@@ -1,0 +1,20 @@
+# #318 — pure-app CharSequence collapse is a physical representation change, not Kotlin's Any?.toString rule.
+# A nullable declaration becomes System.String, but a null value remains null. A nullable non-String CharSequence
+# snapshots only in the non-null arm, with its source evaluated once into an object temporary.
+
+# The literal-null return is not rewritten through LibraryKt.toString.
++"name":"literalNull","static":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.String"},"body":[{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":null}}]
+
+# A potentially-null StringBuilder is evaluated once, null-tested, and snapshot only in the else arm.
++"k":"valueBlock","stmts":[{"k":"var","name":"__cssnapshot$1","type":{"t":"fqn","name":"System.Object"},"init":{"k":"local","name":"value"}}]
++"k":"cond","type":{"t":"fqn","name":"System.String"},"cond":{"k":"objEq","lhs":{"k":"local","name":"__cssnapshot$1"},"rhs":{"k":"const","type":{"t":"fqn","name":"System.Object"},"value":null}},"then":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":null}
++"else":{"k":"callStatic","owner":{"t":"fqn","name":"kotlin.LibraryKt"},"method":"toString","sig":[{"t":"fqn","name":"object"}],"args":[{"k":"local","name":"__cssnapshot$1"}]
+
+# In particular, the original nullable value is not supplied directly to the null-stringifying helper.
+-"method":"toString","sig":[{"t":"fqn","name":"object"}],"args":[{"k":"local","name":"value"}]
+
+# The three other independently implemented boundaries also preserve null while lowering their physical slots.
++"name":"nullableSink","static":true,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.String"}
++"name":"nullableVar","static":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"void"},"body":[{"k":"var","name":"localCs","type":{"t":"fqn","name":"System.String"},"init":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":null}}]
++"name":"nullableCall","static":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"void"},"body":[{"k":"exprStmt","expr":{"k":"callStatic","method":"nullableSink","sig":[{"t":"fqn","name":"System.String"}],"args":[{"k":"const","type":{"t":"fqn","name":"System.String"},"value":null}]
++"name":"nullableCast","static":true,"vis":"public","params":[],"ret":{"t":"fqn","name":"System.String"},"body":[{"k":"return","value":{"k":"const","type":{"t":"fqn","name":"System.String"},"value":null}}]

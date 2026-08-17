@@ -342,7 +342,25 @@ case_exe() {
 </Project>
 EOF
 	cat > "$d/app.kt" <<'EOF'
-fun main() { println("packaged exe ok: " + (2 + 3)) }
+fun nullableCharSequence(): CharSequence? = null
+fun nullableBuilder(value: StringBuilder?): CharSequence? = value
+var producerCalls = 0
+fun nextBuilder(): StringBuilder? {
+    producerCalls += 1
+    return StringBuilder().append("once")
+}
+fun nullableFromCall(): CharSequence? = nextBuilder()
+fun main() {
+    val value: Any? = nullableCharSequence()
+    check(value == null)
+    check(nullableBuilder(null) == null)
+    val builder = StringBuilder()
+    builder.append("snapshot")
+    check(nullableBuilder(builder) == "snapshot")
+    check(nullableFromCall() == "once")
+    check(producerCalls == 1)
+    println("packaged exe ok: " + (2 + 3))
+}
 EOF
 	local expected="packaged exe ok: 5" actual rc=0
 	actual="$(run_project "$d" "$d/run.err")" || rc=$?

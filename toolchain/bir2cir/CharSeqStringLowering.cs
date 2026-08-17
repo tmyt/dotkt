@@ -76,13 +76,15 @@ static class CharSeqStringLowering
     static JsonNode LowerSlot(JsonNode n) => TypeJson.Read(n) is TypeNode t ? TypeJson.Write(LowerTokT(t)) : n;
 
     // Lexical name -> declared type (params + local vars, with CharSequence already mapped to kotlin.String), plus
-    // whether the enclosing method's return type was CharSequence. Copy-on-extend (mirrors StringCharSequenceBridge.Env).
+    // the enclosing method's original CharSequence return type. Keeping the wrapper is semantic: `CharSequence?`
+    // collapses to `String?`, and a null flowing across that boundary must remain null rather than becoming `"null"`.
+    // Copy-on-extend (mirrors StringCharSequenceBridge.Env).
     sealed class Env
     {
         public readonly Dictionary<string, TypeNode> Vars;
-        public readonly bool RetWasCharSeq;
-        public Env() { Vars = new(StringComparer.Ordinal); RetWasCharSeq = false; }
-        Env(Dictionary<string, TypeNode> vars, bool ret) { Vars = vars; RetWasCharSeq = ret; }
+        public readonly TypeNode RetCharSeq;
+        public Env() { Vars = new(StringComparer.Ordinal); RetCharSeq = null; }
+        Env(Dictionary<string, TypeNode> vars, TypeNode ret) { Vars = vars; RetCharSeq = ret; }
 
         public Env WithDecl(JsonObject decl)
         {
@@ -90,15 +92,15 @@ static class CharSeqStringLowering
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal);
             foreach (var p in ps)
                 if (p is JsonObject po && Str(po["name"]) is string pn && TypeJson.Read(po["type"]) is TypeNode pt)
-                    vars[pn] = IsCharSeqT(pt) ? StringTn : pt;
-            var ret = TypeJson.Read(decl["ret"]) is TypeNode rt ? IsCharSeqT(rt) : RetWasCharSeq;
+                    vars[pn] = IsCharSeqT(pt) ? LowerTokT(pt) : pt;
+            var ret = TypeJson.Read(decl["ret"]) is TypeNode rt ? (IsCharSeqT(rt) ? rt : null) : RetCharSeq;
             return new Env(vars, ret);
         }
 
         public Env WithVar(string name, TypeNode type)
         {
             var vars = new Dictionary<string, TypeNode>(Vars, StringComparer.Ordinal) { [name] = type };
-            return new Env(vars, RetWasCharSeq);
+            return new Env(vars, RetCharSeq);
         }
     }
 
@@ -242,7 +244,7 @@ static class CharSeqStringLowering
                 foreach (var s in sarr)
                     if (s is JsonObject so && Str(so["k"]) == "var" && Str(so["name"]) is string sn
                         && TypeJson.Read(so["type"]) is TypeNode st)
-                        resultEnv = resultEnv.WithVar(sn, IsCharSeqT(st) ? StringTn : st);
+                        resultEnv = resultEnv.WithVar(sn, IsCharSeqT(st) ? LowerTokT(st) : st);
             var copy = new JsonObject();
             foreach (var kv in obj)
                 copy[kv.Key] = kv.Value is JsonArray arr ? WalkArray(arr, childEnv)
@@ -265,7 +267,7 @@ static class CharSeqStringLowering
             copy.Add(walked);
             if (walked is JsonObject wo && Str(wo["k"]) == "var"
                 && Str(wo["name"]) is string vn && TypeJson.Read(wo["type"]) is TypeNode vt)
-                cur = cur.WithVar(vn, IsCharSeqT(vt) ? StringTn : vt);
+                cur = cur.WithVar(vn, IsCharSeqT(vt) ? LowerTokT(vt) : vt);
         }
         return copy;
     }
@@ -323,20 +325,22 @@ static class CharSeqStringLowering
             case "var":
                 if (IsCharSeqSlot(node["type"]))
                 {
+                    var nullableTarget = TypeJson.Read(node["type"]) is TypeNode.Nullable;
                     node["type"] = LowerSlot(node["type"]);
-                    if (node["init"] is JsonNode init && CoerceOrNull(init, env) is JsonNode w) node["init"] = w;
+                    if (node["init"] is JsonNode init && CoerceOrNull(init, env, nullableTarget) is JsonNode w) node["init"] = w;
                 }
                 return node;
             case "callStatic":
                 LowerLocalCall(node, env);
                 return node;
             case "return":
-                if (env.RetWasCharSeq && node["value"] is JsonNode rvv && CoerceOrNull(rvv, env) is JsonNode rw)
+                if (env.RetCharSeq is TypeNode ret && node["value"] is JsonNode rvv
+                    && CoerceOrNull(rvv, env, ret is TypeNode.Nullable) is JsonNode rw)
                     node["value"] = rw;
                 return node;
             case "cast":
-                if (IsCharSeqSlot(node["type"]) && node["e"] is JsonNode ce)
-                    return CoerceOrNull(ce, env) ?? ce.DeepClone();
+                if (TypeJson.Read(node["type"]) is TypeNode ct && IsCharSeqT(ct) && node["e"] is JsonNode ce)
+                    return CoerceOrNull(ce, env, ct is TypeNode.Nullable) ?? ce.DeepClone();
                 return node;
             default:
                 return node;
@@ -367,7 +371,8 @@ static class CharSeqStringLowering
             if (TypeJson.Read(sig[i]) is TypeNode tn && IsCharSeqT(tn))
             {
                 sig[i] = TypeJson.Write(LowerTokT(tn));
-                if (args != null && i < args.Count && args[i] is JsonNode a && CoerceOrNull(a, env) is JsonNode w)
+                if (args != null && i < args.Count && args[i] is JsonNode a
+                    && CoerceOrNull(a, env, tn is TypeNode.Nullable) is JsonNode w)
                     args[i] = w;
             }
         if (IsCharSeqSlot(node["dynRet"])) node["dynRet"] = LowerSlot(node["dynRet"]);
@@ -444,25 +449,89 @@ static class CharSeqStringLowering
 
     // A value flowing into a now-`string` slot: a provably-String value needs NO coercion (return null); anything else
     // (a StringBuilder, an Any) is snapshot via `.toString()` (the returned wrapper is a fresh, detached node). Callers
-    // assign the wrapper only when non-null, avoiding a JsonNode reparenting error.
+    // assign the wrapper only when non-null, avoiding a JsonNode reparenting error. A NULLABLE target is distinct:
+    // null is part of the declared value and must remain null, so an unknown value becomes
+    // `v == null ? (String?)null : v.toString()` rather than the null-safe extension's `"null"` result (#318).
     //
     // NULL-SAFE (bundle-6 BUG-3): a bare `objMethod ToString` (callvirt object::ToString) NREs when `value` is null —
     // Kotlin's `x.toString()` on a null yields "null". Route through the `Any?.toString()` stdlib extension
     // (`kotlin.LibraryKt.toString` == `this?.toString() ?: "null"`), which is null-safe AND preserves the virtual
     // dispatch for a StringBuilder/Any (its `this?.toString()` calls the member override). `value` here is always a
     // CharSequence/StringBuilder/Any REFERENCE (it flows into a string slot), so no value->object boxing is needed.
-    static JsonNode CoerceOrNull(JsonNode value, Env env)
+    static JsonNode CoerceOrNull(JsonNode value, Env env, bool nullableTarget)
     {
         if (IsStaticString(value, env)) return null;
-        return new JsonObject
+        if (nullableTarget)
         {
-            ["k"] = "callStatic",
-            ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"),
-            ["method"] = "toString",
-            ["sig"] = new JsonArray { TypeJson.Fqn("object") },
-            ["args"] = new JsonArray { value.DeepClone() },
+            if (IsNullConst(value))
+            {
+                var nullValue = value.DeepClone().AsObject();
+                nullValue["type"] = TypeJson.Write(new TypeNode.Nullable(StringTn));
+                return nullValue;
+            }
+            if (IsStaticNullableString(value, env)) return null;
+            return SnapshotNullable(value);
+        }
+        return Snapshot(value);
+    }
+
+    static JsonObject Snapshot(JsonNode value) => new()
+    {
+        ["k"] = "callStatic",
+        ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"),
+        ["method"] = "toString",
+        ["sig"] = new JsonArray { TypeJson.Fqn("object") },
+        ["args"] = new JsonArray { value.DeepClone() },
+    };
+
+    // Preserve nullable collapse while evaluating the source exactly once. The spill is physically `object`: before
+    // the snapshot an expression statically typed CharSequence? may actually be a CLR StringBuilder, so declaring the
+    // temporary as the collapsed String? would be false. Both possible values are references and the snapshot already
+    // consumes object, making object the truthful common physical slot.
+    static JsonNode SnapshotNullable(JsonNode value)
+    {
+        JsonNode read;
+        JsonNode temp = null;
+        if (ValueStability.IsReReadable(value)) read = value;
+        else
+        {
+            var name = "__cssnapshot$" + System.Threading.Interlocked.Increment(ref _nullableSnapshotTmp);
+            temp = new JsonObject
+            {
+                ["k"] = "var", ["name"] = name, ["type"] = TypeJson.Fqn("System.Object"), ["init"] = value.DeepClone(),
+            };
+            read = new JsonObject { ["k"] = "local", ["name"] = name };
+        }
+
+        var nullableString = TypeJson.Write(new TypeNode.Nullable(StringTn));
+        var core = new JsonObject
+        {
+            ["k"] = "cond",
+            ["type"] = nullableString.DeepClone(),
+            ["cond"] = new JsonObject
+            {
+                ["k"] = "objEq",
+                ["lhs"] = read.DeepClone(),
+                ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Object"), ["value"] = null },
+            },
+            ["then"] = new JsonObject { ["k"] = "const", ["type"] = nullableString.DeepClone(), ["value"] = null },
+            ["else"] = Snapshot(read),
+        };
+        return temp == null ? core : new JsonObject
+        {
+            ["k"] = "valueBlock", ["stmts"] = new JsonArray { temp }, ["result"] = core,
         };
     }
+
+    static int _nullableSnapshotTmp;
+
+    static bool IsNullConst(JsonNode n)
+        => n is JsonObject o && Str(o["k"]) == "const" && o["value"] is null;
+
+    static bool IsStaticNullableString(JsonNode n, Env env)
+        => n is JsonObject
+           && StaticType.Surface(n, BirScope.FromVars(env.Vars)) is TypeNode.Nullable nn
+           && IsStringTokT(nn.Of);
 
     // POSITIVE static-String detection (mirrors StringCharSequenceBridge.IsStaticString, extended with dynRet and the
     // already-rewritten clr* String result nodes).
