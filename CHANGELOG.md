@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.9 (2026-08-17)
+
 ### Added
 
 - **The Kotlin-only mutable-collection members have a physical CLR representation, and runtime-reflection dispatch is
@@ -69,6 +71,18 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
   See `docs/dotkt-semantics.md` §8c-bis.
 
+### Removed
+
+- **The runtime-reflection dispatch layer (#400).** Deleted with its last producer: the `clrDynInstance` CIR node kind
+  (and its entries in `scripts/verify-schema.py`), `bir2cir`'s interface-owner-miss catch that minted it, `ilemit`'s
+  `EmitDynamicCall`/`OwnerHasClrInterface` emitter, the `callInstance` `dyn:true` branch, and the catch-based
+  static-resolution fallback — an unresolvable member is now a hard error at the layer that dropped it. The
+  `Type.GetMethod` and `MethodInfo.Invoke` well-known roles are gone from all three lockstep tables. The
+  `@ClrIntrinsicAsDynamic` annotation is removed with its `ReferenceMetadataIndex` arm and its `AGENTS.md`
+  undefined-behavior entry: it had zero use sites and there was no producer anywhere of the `dyn:true` flag it was
+  meant to set, and an instrumented emitter run over the whole corpus recorded zero firings of it and of the catch
+  fallback.
+
 ### Fixed
 
 - **Array-backed sequences iterate safely again (#284).** `sequenceOf(vararg)` and `Array<T>.asSequence()` now reach
@@ -113,17 +127,84 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   emitting one produced a second, unrelated member — and, once it was correctly marked static, one that was
   simultaneously static and an override. The subclass now emits nothing for it and `Sub.Shared` is `Base.Shared`.
 
-### Removed
 
-- **The runtime-reflection dispatch layer (#400).** Deleted with its last producer: the `clrDynInstance` CIR node kind
-  (and its entries in `scripts/verify-schema.py`), `bir2cir`'s interface-owner-miss catch that minted it, `ilemit`'s
-  `EmitDynamicCall`/`OwnerHasClrInterface` emitter, the `callInstance` `dyn:true` branch, and the catch-based
-  static-resolution fallback — an unresolvable member is now a hard error at the layer that dropped it. The
-  `Type.GetMethod` and `MethodInfo.Invoke` well-known roles are gone from all three lockstep tables. The
-  `@ClrIntrinsicAsDynamic` annotation is removed with its `ReferenceMetadataIndex` arm and its `AGENTS.md`
-  undefined-behavior entry: it had zero use sites and there was no producer anywhere of the `dyn:true` flag it was
-  meant to set, and an instrumented emitter run over the whole corpus recorded zero firings of it and of the catch
-  fallback.
+- **Nested and local declarations now retain their Kotlin ownership through BIR and receive CLR nesting in bir2cir
+  (#225).** Local functions remain lexical BIR declarations linked by explicit IDs until bir2cir selects their
+  MethodDef owner; local, anonymous, closure, state-machine, and inner types carry an explicit semantic owner instead
+  of being inferred from generated names or bodies. CLR nested generic frames preserve enclosing constraints, private
+  access no longer requires blanket cross-class widening, and dll2klib reconstructs the nested Kotlin classifier tree
+  while hiding compiler-generated implementation methods and capture fields.
+
+- **Round-trip: companion objects now retain their Kotlin declaration across DLL/KLIB
+  re-consumption (#275).** `kotc` carries the source association/name, `bir2cir` materializes a trusted narrow
+  `[KotlinCompanion]` metadata record, and `dll2klib` writes the standard KLIB companion link from that record without
+  suffix or name inference. Every companion is emitted as a compiler-reserved ordinary nested CLR carrier with one
+  `$INSTANCE`, preserving singleton identity within each closed CLR owner, supertypes, instance members, custom names,
+  and use as a value or type.
+  Generic owners contribute separate unconstrained physical capture parameters; those parameters are hidden from the
+  semantic KLIB companion and unqualified Kotlin uses close them independently of the owner's source type arguments.
+  Consequently C# views different closed generic owners as different CLR static regions in this first nested-carrier
+  implementation; cross-instantiation singleton unification is deliberately deferred. Protected
+  companions retain protected Kotlin visibility while their generated carrier remains reachable from lifted callable-
+  reference and suspend helpers. Custom names remain distinct from ordinary nested classes. CLR static members use
+  the standard KLIB static flags directly and no longer manufacture a companion type/value. A basic CLR enum keeps
+  its enum representation and nested carrier; because CLR enums cannot own the
+  type initializer needed for a reference-valued outer field, only its C# source-name accessor remains deferred. The
+  round-trip gate independently inspects the semantic BIR, physical CIR/DLL carrier, generated KLIB
+  linkage, generic constraints, and runtime behavior.
+
+- **kotc: an OMITTED `vararg` argument is now the empty array it always denoted.** A vararg is omissible without
+  being optional — Kotlin forbids it a default expression — so every argument-vector builder read the empty slot as
+  an omitted DEFAULT it had nothing to fill from: the two that key on `defaultValue` dropped the slot outright and
+  emitted a call one argument shorter than the declaration it named, and the inline splice left a `null` in it.
+  `f()` on `fun f(vararg xs: Int)` was refused at CIL emission ("CIR argument count mismatch"), the inline splice
+  failed loud on the same slot ("missing (non-defaulted) arg"), and the shape reached ordinary .NET interop
+  through `params`: `Console.WriteLine("x")` selects `WriteLine(format, vararg arg)` because a non-null `String` is
+  strictly more specific than the `String?` of `WriteLine(value)`, so the canonical console call did not compile.
+  All three builders — same-module, reference-KLIB, and the inline splice — now fill the slot with `newArray` of
+  the vararg's element type, rendered in the callee's type frame so `f<String>()` fills `Array<String>`. (An
+  annotation's argument vector was never affected: the frontend materializes an explicit empty vararg there, so
+  `@A()` on `annotation class A(vararg val xs: String)` already emitted one.) Not a regression of a previously
+  working call: the plain-Kotlin arm was refused for as long as the builders have keyed omission on `defaultValue`,
+  and the retired facade injection did project a `params` parameter as a `vararg` too, so the .NET arm's candidate
+  set is not what changed. `docs/dotkt-semantics.md` §8g records the resolution and its formatting
+  consequence. The fill is also one VALUE of the call rather than an expression in a slot: it is an allocation, and
+  an allocation is observable through its identity, so where the call carries an evaluation plan it becomes a
+  binding like every other argument. Left raw it was re-rendered per reader — a later default naming the vararg
+  (`fun f(vararg xs: Int, y: IntArray = xs)`, and the same shape cross-module, where the `@KotlinDefault` carrier
+  clones the slot) received a second and a third empty array, so `y === xs` was false where Kotlin's
+  evaluate-each-argument-once rule makes it true. Nothing but identity could see it: two empty arrays agree on
+  size and content.
+
+- **dll2klib: a .NET value type no longer takes an NRT annotation, or the wrong byte position.** The
+  `NullableAttribute`/`NullableContextAttribute` walk treated every named type outside a hardcoded Kotlin-primitive
+  list as a reference position, so a struct or enum both consumed a byte the emitting compiler never wrote and
+  inherited the declaration's context annotation. `String.Compare(string?, string?, StringComparison)` carries
+  `[NullableContext(2)]`, so its enum parameter projected as `StringComparison?`; the descriptor the frontend then
+  resolved named a member that does not exist and bir2cir refused the call. The same misalignment shifted every
+  later byte in the slot, so a signature putting a bare enum or struct ahead of another node lost or moved its `?`:
+  `Dictionary<Grade, string?>`, which csc writes as `[Nullable(1,2)]`, projected as `Dictionary<Grade?, String>`.
+  (A bare *primitive* was already excluded by name, so `Dictionary<int, string?>` was never affected.) The walk now
+  asks the ECMA signature's own `ELEMENT_TYPE_VALUETYPE`/`ELEMENT_TYPE_CLASS` kind: a bare value type holds no byte,
+  a constructed generic value type holds one that is always `0`, `System.Nullable<T>` and byrefs are transparent,
+  and a value type is never annotated. `kotlin.Unit` now holds no byte on BOTH ends: the reader had always skipped it
+  (it is the name ECMA `void` decodes to, and nothing in a signature tells the two apart) while bir2cir's writer gave
+  it one, so `Pair<Unit, String?>` re-imported as `Pair<Unit!, String>` — the writer now skips it too, and
+  `docs/dotkt-semantics.md` § 9 states the deviation from what csc would flatten for the `Unit` class.
+  `bir2cir`'s `NullableFlags` writes the same flattening from the other side, so an oblivious wrapper now delegates
+  to the same walk instead of re-deciding it (`T!` over an array or a byref stopped descending into the node it
+  wrapped). Measured against csc, two positions the decoder collapses to `kotlin.Any?` still shift the bytes after
+  them — a native `nint`/`nuint`, which the emitting compiler gives no byte at all, and a function pointer, which it
+  flattens node by node; an ordinary pointer and a `where T : struct` parameter hold exactly the one byte the walk
+  consumes for them. All are named at the predicate. That writer states one precedence for a position reached
+  through both markers — oblivious wins, because `T!` is the un-annotated position — and its nullable arm was
+  deciding it a second time by dropping the oblivious marker as it delegated, writing `2` where the rule says `0`.
+  Both markers now travel together and the rule is resolved in one place. Unlike the byte-COUNT faults above this one
+  moves nothing: the reader's traversal comes from the signature, so a wrong byte value mis-annotates its own position
+  and only its own. The shape is not reachable from the FRONTEND (its only oblivious producer wraps a made-not-null
+  type) but a pass can build it, by substituting a nullable type argument under an `Oblivious(T)` an un-annotated .NET
+  generic member left behind; it does not occur anywhere in the current corpus, which is why the witness is
+  `tests/ir/lowering/oblivious-over-nullable-byte` — that lane exists for a rule the corpus does not instantiate.
 
 ### Changed
 
@@ -343,86 +424,6 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   source files and are assembled once instead of copying fixtures and rebuilding thirteen one-file projects; the
   Kotlin refusal verdicts remain isolated because a compiler error may stop before later sources reach their
   owning phase.
-
-### Fixed
-
-- **Nested and local declarations now retain their Kotlin ownership through BIR and receive CLR nesting in bir2cir
-  (#225).** Local functions remain lexical BIR declarations linked by explicit IDs until bir2cir selects their
-  MethodDef owner; local, anonymous, closure, state-machine, and inner types carry an explicit semantic owner instead
-  of being inferred from generated names or bodies. CLR nested generic frames preserve enclosing constraints, private
-  access no longer requires blanket cross-class widening, and dll2klib reconstructs the nested Kotlin classifier tree
-  while hiding compiler-generated implementation methods and capture fields.
-
-- **Round-trip: companion objects now retain their Kotlin declaration across DLL/KLIB
-  re-consumption (#275).** `kotc` carries the source association/name, `bir2cir` materializes a trusted narrow
-  `[KotlinCompanion]` metadata record, and `dll2klib` writes the standard KLIB companion link from that record without
-  suffix or name inference. Every companion is emitted as a compiler-reserved ordinary nested CLR carrier with one
-  `$INSTANCE`, preserving singleton identity within each closed CLR owner, supertypes, instance members, custom names,
-  and use as a value or type.
-  Generic owners contribute separate unconstrained physical capture parameters; those parameters are hidden from the
-  semantic KLIB companion and unqualified Kotlin uses close them independently of the owner's source type arguments.
-  Consequently C# views different closed generic owners as different CLR static regions in this first nested-carrier
-  implementation; cross-instantiation singleton unification is deliberately deferred. Protected
-  companions retain protected Kotlin visibility while their generated carrier remains reachable from lifted callable-
-  reference and suspend helpers. Custom names remain distinct from ordinary nested classes. CLR static members use
-  the standard KLIB static flags directly and no longer manufacture a companion type/value. A basic CLR enum keeps
-  its enum representation and nested carrier; because CLR enums cannot own the
-  type initializer needed for a reference-valued outer field, only its C# source-name accessor remains deferred. The
-  round-trip gate independently inspects the semantic BIR, physical CIR/DLL carrier, generated KLIB
-  linkage, generic constraints, and runtime behavior.
-
-- **kotc: an OMITTED `vararg` argument is now the empty array it always denoted.** A vararg is omissible without
-  being optional — Kotlin forbids it a default expression — so every argument-vector builder read the empty slot as
-  an omitted DEFAULT it had nothing to fill from: the two that key on `defaultValue` dropped the slot outright and
-  emitted a call one argument shorter than the declaration it named, and the inline splice left a `null` in it.
-  `f()` on `fun f(vararg xs: Int)` was refused at CIL emission ("CIR argument count mismatch"), the inline splice
-  failed loud on the same slot ("missing (non-defaulted) arg"), and the shape reached ordinary .NET interop
-  through `params`: `Console.WriteLine("x")` selects `WriteLine(format, vararg arg)` because a non-null `String` is
-  strictly more specific than the `String?` of `WriteLine(value)`, so the canonical console call did not compile.
-  All three builders — same-module, reference-KLIB, and the inline splice — now fill the slot with `newArray` of
-  the vararg's element type, rendered in the callee's type frame so `f<String>()` fills `Array<String>`. (An
-  annotation's argument vector was never affected: the frontend materializes an explicit empty vararg there, so
-  `@A()` on `annotation class A(vararg val xs: String)` already emitted one.) Not a regression of a previously
-  working call: the plain-Kotlin arm was refused for as long as the builders have keyed omission on `defaultValue`,
-  and the retired facade injection did project a `params` parameter as a `vararg` too, so the .NET arm's candidate
-  set is not what changed. `docs/dotkt-semantics.md` §8g records the resolution and its formatting
-  consequence. The fill is also one VALUE of the call rather than an expression in a slot: it is an allocation, and
-  an allocation is observable through its identity, so where the call carries an evaluation plan it becomes a
-  binding like every other argument. Left raw it was re-rendered per reader — a later default naming the vararg
-  (`fun f(vararg xs: Int, y: IntArray = xs)`, and the same shape cross-module, where the `@KotlinDefault` carrier
-  clones the slot) received a second and a third empty array, so `y === xs` was false where Kotlin's
-  evaluate-each-argument-once rule makes it true. Nothing but identity could see it: two empty arrays agree on
-  size and content.
-
-- **dll2klib: a .NET value type no longer takes an NRT annotation, or the wrong byte position.** The
-  `NullableAttribute`/`NullableContextAttribute` walk treated every named type outside a hardcoded Kotlin-primitive
-  list as a reference position, so a struct or enum both consumed a byte the emitting compiler never wrote and
-  inherited the declaration's context annotation. `String.Compare(string?, string?, StringComparison)` carries
-  `[NullableContext(2)]`, so its enum parameter projected as `StringComparison?`; the descriptor the frontend then
-  resolved named a member that does not exist and bir2cir refused the call. The same misalignment shifted every
-  later byte in the slot, so a signature putting a bare enum or struct ahead of another node lost or moved its `?`:
-  `Dictionary<Grade, string?>`, which csc writes as `[Nullable(1,2)]`, projected as `Dictionary<Grade?, String>`.
-  (A bare *primitive* was already excluded by name, so `Dictionary<int, string?>` was never affected.) The walk now
-  asks the ECMA signature's own `ELEMENT_TYPE_VALUETYPE`/`ELEMENT_TYPE_CLASS` kind: a bare value type holds no byte,
-  a constructed generic value type holds one that is always `0`, `System.Nullable<T>` and byrefs are transparent,
-  and a value type is never annotated. `kotlin.Unit` now holds no byte on BOTH ends: the reader had always skipped it
-  (it is the name ECMA `void` decodes to, and nothing in a signature tells the two apart) while bir2cir's writer gave
-  it one, so `Pair<Unit, String?>` re-imported as `Pair<Unit!, String>` — the writer now skips it too, and
-  `docs/dotkt-semantics.md` § 9 states the deviation from what csc would flatten for the `Unit` class.
-  `bir2cir`'s `NullableFlags` writes the same flattening from the other side, so an oblivious wrapper now delegates
-  to the same walk instead of re-deciding it (`T!` over an array or a byref stopped descending into the node it
-  wrapped). Measured against csc, two positions the decoder collapses to `kotlin.Any?` still shift the bytes after
-  them — a native `nint`/`nuint`, which the emitting compiler gives no byte at all, and a function pointer, which it
-  flattens node by node; an ordinary pointer and a `where T : struct` parameter hold exactly the one byte the walk
-  consumes for them. All are named at the predicate. That writer states one precedence for a position reached
-  through both markers — oblivious wins, because `T!` is the un-annotated position — and its nullable arm was
-  deciding it a second time by dropping the oblivious marker as it delegated, writing `2` where the rule says `0`.
-  Both markers now travel together and the rule is resolved in one place. Unlike the byte-COUNT faults above this one
-  moves nothing: the reader's traversal comes from the signature, so a wrong byte value mis-annotates its own position
-  and only its own. The shape is not reachable from the FRONTEND (its only oblivious producer wraps a made-not-null
-  type) but a pass can build it, by substituting a nullable type argument under an `Oblivious(T)` an un-annotated .NET
-  generic member left behind; it does not occur anywhere in the current corpus, which is why the witness is
-  `tests/ir/lowering/oblivious-over-nullable-byte` — that lane exists for a rule the corpus does not instantiate.
 
 ## 0.9.8 (2026-08-02)
 
