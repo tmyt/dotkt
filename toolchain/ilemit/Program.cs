@@ -257,14 +257,6 @@ sealed partial class Emitter
         _outDir = outDir; _asmName = asmName; _target = target;
         _targetFrameworkMoniker = string.IsNullOrWhiteSpace(targetFrameworkMoniker) ? null : targetFrameworkMoniker;
         _methodRetType = Bcl("System.Void");
-        EnumerableDerived = new HashSet<Type>
-        {
-            Bcl("System.Collections.Generic.IEnumerable`1"),
-            Bcl("System.Collections.Generic.IReadOnlyList`1"),
-            Bcl("System.Collections.Generic.IReadOnlyCollection`1"),
-            Bcl("System.Collections.Generic.IList`1"),
-            Bcl("System.Collections.Generic.ICollection`1"),
-        };
         _stdlibAssembly = mode != BuildStdlibMode.App;       // both the metadata and runtime twins are stdlib artifacts
         _stdlibRuntime = mode == BuildStdlibMode.Runtime;
     }

@@ -30,7 +30,7 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef",
                     "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef",
                     "combineRef", "removeRef", "compareExchangeRef", "hasValueRef", "valueRef", "invokeRef", "delegateCtorRef",
-                    "fieldRef", "enumeratorAdapterCtorRef"}
+                    "fieldRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -57,7 +57,6 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "invokeRef": {"method"},
     "delegateCtorRef": {"ctor"},
     "fieldRef": {"field"},
-    "enumeratorAdapterCtorRef": {"ctor"},
 }
 
 # A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such
@@ -91,18 +90,13 @@ WELL_KNOWN_TABLE = "wellKnownRefs"
 # identity: nothing resolves a member before bir2cir runs.
 INTERFACE_SLOTS = "interfaceSlotRefs"
 
-# The shipped enumerator adapter's constructor, named on the type whose reverse bridge wraps it. Per-site rather
-# than a fixed-table role: it is present exactly when the adapter is external to this compilation, so a stdlib
-# build — which emits the adapter and uses its own ConstructorBuilder — carries none.
-ENUMERATOR_ADAPTER_CTOR = "enumeratorAdapterCtorRef"
 WELL_KNOWN_ROLES = frozenset({
     "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
     "Object.Equals", "Enum.GetValues", "Enum.Parse",
-    "Enumerable.GetEnumerator", "Enumerator.MoveNext", "Enumerator.Current", "Enumerator.Reset",
-    "Disposable.Dispose", "Array.IndexOf", "Comparable.CompareTo",
-    "Object.ctor", "NotSupportedException.ctor0",
+    "Array.IndexOf", "Comparable.CompareTo",
+    "Object.ctor",
     "IndexOutOfRangeException.ctor",
-    "EnumeratorT.Current", "EnumerableT.GetEnumerator", "ReadOnlyCollectionT.Count",
+    "ReadOnlyCollectionT.Count",
     "ReadOnlyListT.Item", "CollectionT.Count", "CollectionT.IsReadOnly", "CollectionT.Clear",
     "ListT.Item", "ListT.RemoveAt", "NullableT.ctor", "SpanT.ctorPointer",
 })
@@ -183,11 +177,6 @@ STR_OK = {
     "accessor",                                  # W1-S3 (#46/#121): the ref.dll-resolved get_/set_/add_/remove_ accessor
                                                 # METHOD NAME ilemit links (clrPropGet/Set, clrEvent*, external field) — a
                                                 # bir2cir resolution decision, NOT a type slot (paired with `member`+`dispatch`)
-    "clrBridgeRole",                            # the reverse-enumerator-bridge role marker ("hasNext"/"next" on
-                                                # kotlin.collections.Iterator's members, "iterator" on a class iterator())
-                                                # bir2cir stamps so ilemit drives its GetEnumerator adapter off a semantic
-                                                # marker, never the Kotlin FQN/member names. A resolution HINT, NOT a type
-                                                # slot (never emitted as .NET metadata); ilemit reads it into TypeInfo.BridgeRoles
     "prop",                                     # callInstance/callStatic accessor KIND ("get"/"set"/"index-get"/"index-set")
                                                 # — a BIR-only frontend fact (A2 step 3/4); bir2cir consumes it into
                                                 # clrPropGet/clrPropSet (get/set) or the default-indexed-property accessor
@@ -759,17 +748,6 @@ class V:
                                         self.err(f, ref_where,
                                                  "interface slot declaringType must match its constructed owner")
                                 self.member_ref(f, ref_where, ref)
-            if ENUMERATOR_ADAPTER_CTOR in o:
-                ctor = o[ENUMERATOR_ADAPTER_CTOR]
-                where = f"{path}/{ENUMERATOR_ADAPTER_CTOR}"
-                if not f.endswith(".cir.json"):
-                    self.err(f, where, f"{ENUMERATOR_ADAPTER_CTOR} is a CIR fact: nothing resolves a member before bir2cir runs")
-                elif not isinstance(ctor, dict):
-                    self.err(f, where, f"{ENUMERATOR_ADAPTER_CTOR} must be one resolved member reference")
-                elif ctor.get("kind") != "ctor":
-                    self.err(f, where, f"{ENUMERATOR_ADAPTER_CTOR} must name a constructor")
-                else:
-                    self.member_ref(f, where, ctor)
             if WELL_KNOWN_TABLE in o:
                 table = o[WELL_KNOWN_TABLE]
                 if not f.endswith(".cir.json"):

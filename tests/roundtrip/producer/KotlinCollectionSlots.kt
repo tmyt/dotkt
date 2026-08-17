@@ -7,6 +7,11 @@
 // which tests for the interface at run time and reaches the override declared here.
 package roundtrip.collslots
 
+/** An `Iterable`-derived Kotlin interface an implementer in ANOTHER assembly can name (#400). Its CLR enumerable
+ *  face is reachable only through this assembly's projected metadata, so the consumer's implementer is owed a
+ *  `GetEnumerator` that nothing in its own module states. */
+interface Feed<T> : Iterable<T>
+
 class TrackedBag<E> : MutableCollection<E> {
     private val backing = ArrayList<E>()
     var removeAllCalls: Int = 0
