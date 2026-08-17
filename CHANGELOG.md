@@ -16,6 +16,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   slots whose CLR emitters already hold an accumulator, while preserving key/value and element evaluation order.
 - **An inline function with a value-producing `try` body now works in the first string-concatenation operand
   (#285).** The inline-spliced value block is normalized before `ilemit` pushes the concatenation accumulator.
+- **A same-module `super`-qualified suspend call now targets the base cold entry non-virtually (#436).** `bir2cir`
+  preserves the resolved base declaration and dispatch fact through cold lowering, preventing an override from
+  recursively redispatching into itself.
 
 ## 0.9.9 (2026-08-17)
 

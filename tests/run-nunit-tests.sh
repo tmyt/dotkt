@@ -64,7 +64,8 @@ declare -A EXPECTED_DISCOVERED=(
 	# result faces, nested constructions, and source evaluation before HashSet/Dictionary consumption.
 	# +1 (#285): an inline-spliced try-expression body in string-concat operand 0 covers both success and catch paths.
 	["tests/basic"]=447
-	["tests/coroutines"]=158
+	# +1 (#436): argument-bearing and generic suspend super calls preserve the base cold-entry owner and non-virtual dispatch.
+	["tests/coroutines"]=159
 	# +4 (#400): the reverse enumerator bridge across the module boundary — the producer's GetEnumerator and its
 	# module-private adapter reached from this consumer through the ordinary CLR enumerable face, and a consumer
 	# class whose enumerable face exists only in the producer's projected metadata. Two more prove that an iterator
@@ -161,6 +162,16 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  COMPANION METADATA NEGATIVE FAIL — see build/nunit-$name.metadata-negative.log"
 			tail -25 "$ROOT/build/nunit-$name.metadata-negative.log"; rc=1
+		fi
+	fi
+	if [[ "$proj" == "tests/coroutines" ]]; then
+		coroutine_cir="$dir/obj/dotkt-cir/SuspendDispatchTests.cir.json"
+		if python3 "$ROOT/tests/coroutines/assert-suspend-super-cir.py" "$coroutine_cir" \
+			>"$ROOT/build/nunit-$name.suspend-super-cir.log" 2>&1; then
+			echo "  suspend super-call cold-entry CIR dispatch OK"
+		else
+			echo "  SUSPEND SUPER CIR FAIL — see build/nunit-$name.suspend-super-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.suspend-super-cir.log"; rc=1
 		fi
 	fi
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
