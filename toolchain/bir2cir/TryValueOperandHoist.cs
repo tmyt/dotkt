@@ -53,6 +53,18 @@ static class TryValueOperandHoist
     // not about skipping an evaluation or about surviving a resume, and the three land differently per kind.
     static readonly HashSet<string> StackNeutralKinds = new(StringComparer.Ordinal) { "const", "local", "this" };
 
+    // Value-list keys whose elements ilemit evaluates while a construction receiver (and, for an array, its index)
+    // is already on the CLR stack. These are deliberately keyed by NODE KIND: arrays such as `sig`, `argTypes`,
+    // `typeArgs`, and declaration `params` are type/signature vocabulary, not ordered value operands. A try in even
+    // the FIRST listed element therefore starts non-empty and must move. `newMap.entries` is handled separately below
+    // because each entry contributes two ordered operands (`key`, then `value`).
+    static readonly Dictionary<string, string> ConstructionValueLists = new(StringComparer.Ordinal)
+    {
+        ["newArray"] = "elems",
+        ["newList"] = "elems",
+        ["newSet"] = "elems",
+    };
+
     static string K(JsonNode n) => (n as JsonObject)?["k"] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     // Post-order whole-tree walk: normalize INNER statement lists first (so a hoisted try-valueBlock's
@@ -177,7 +189,28 @@ static class TryValueOperandHoist
         }
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
-            HoistOrdered(parts.Count, i => parts[i], (i, v) => parts[i] = v, atEmpty, pre, scope);
+            // ilemit has already pushed the object[] accumulator and an element index before every part, including
+            // part 0. A protected region in any part therefore starts with a non-empty evaluation stack.
+            HoistOrdered(parts.Count, i => parts[i], (i, v) => parts[i] = v, atEmpty: false, pre, scope);
+            return o;
+        }
+        if (k != null && ConstructionValueLists.TryGetValue(k, out var valueListKey)
+            && o[valueListKey] is JsonArray values)
+        {
+            // ilemit has already pushed the new array/list/set (and an array index) before it evaluates an element.
+            // Consequently no element inherits the enclosing expression's empty-stack position, including element 0.
+            HoistOrdered(values.Count, i => values[i], (i, v) => values[i] = v,
+                atEmpty: false, pre, scope, spillAllAfterHoist: true);
+            return o;
+        }
+        if (k == "newMap" && o["entries"] is JsonArray entries)
+        {
+            HoistMapEntries(entries, pre, scope);
+            return o;
+        }
+        if (k == "spreadConcat" && o["parts"] is JsonArray spreadParts)
+        {
+            HoistSpreadParts(spreadParts, pre, scope);
             return o;
         }
         if (o["args"] is JsonArray || o["recv"] != null)
@@ -211,10 +244,43 @@ static class TryValueOperandHoist
         HoistOrdered(present.Length, i => o[present[i]], (i, v) => o[present[i]] = v, atEmpty, pre, scope);
     }
 
+    // Dictionary construction evaluates entry 0 key, entry 0 value, entry 1 key, entry 1 value, ... while the
+    // dictionary receiver is live on the stack. Flatten that exact stream so a try-valued key/value hoists and every
+    // side-effecting value before a later hoist spills in Kotlin order. Treating an entry object as one operand would
+    // lose the key-before-value boundary and would ask SpillType to type a schema container rather than an expression.
+    static void HoistMapEntries(JsonArray entries, List<JsonNode> pre, BirScope scope)
+    {
+        var slots = new List<(JsonObject Entry, string Key)>();
+        foreach (var entry in entries)
+            if (entry is JsonObject eo)
+            {
+                if (eo["key"] != null) slots.Add((eo, "key"));
+                if (eo["value"] != null) slots.Add((eo, "value"));
+            }
+        HoistOrdered(slots.Count,
+            i => slots[i].Entry[slots[i].Key],
+            (i, v) => slots[i].Entry[slots[i].Key] = v,
+            atEmpty: false, pre, scope, spillAllAfterHoist: true);
+    }
+
+    // A spread-concatenated vararg is accumulated through `List.Add`/`AddRange`: ilemit loads that accumulator before
+    // each part's expression. The value stream is `parts[i].e`; `spread` is only the already-decided Add/AddRange
+    // selector and is not an expression. As with the factory constructions above, all source arguments are evaluated
+    // before the call body consumes them, so a hoist materializes the whole non-neutral stream first.
+    static void HoistSpreadParts(JsonArray parts, List<JsonNode> pre, BirScope scope)
+    {
+        var slots = parts.OfType<JsonObject>().Where(p => p["e"] != null).ToList();
+        HoistOrdered(slots.Count,
+            i => slots[i]["e"],
+            (i, v) => slots[i]["e"] = v,
+            atEmpty: false, pre, scope, spillAllAfterHoist: true);
+    }
+
     // Core ordered-operand normalization. Evaluation is left-to-right: only the FIRST slot inherits the
     // enclosing empty-stack flag; every later slot begins with a non-empty stack. Any operand that
     // precedes a slot which hoists must itself be spilled (if side-effecting) so relative order holds.
-    static void HoistOrdered(int n, Func<int, JsonNode> get, Action<int, JsonNode> set, bool atEmpty, List<JsonNode> pre, BirScope scope)
+    static void HoistOrdered(int n, Func<int, JsonNode> get, Action<int, JsonNode> set, bool atEmpty,
+                             List<JsonNode> pre, BirScope scope, bool spillAllAfterHoist = false)
     {
         var lastHoist = -1;
         for (var i = 0; i < n; i++) if (WillHoist(get(i), i == 0 && atEmpty)) lastHoist = i;
@@ -223,7 +289,13 @@ static class TryValueOperandHoist
             var node = get(i);
             set(i, null);
             var resolved = HoistExpr(node, pre, i == 0 && atEmpty, scope);
-            if (i < lastHoist) resolved = SpillIfNeeded(resolved, pre, scope);
+            // Ordinary operators/calls only need the prefix: evaluation resumes in their slots after the hoisted
+            // block. A construction is different — its emitter consumes each value immediately through stelem/Add/
+            // set_Item, while the Kotlin factory/vararg call evaluated EVERY source argument before that body began.
+            // Once any protected region moves, materialize the whole non-neutral stream before construction so a
+            // suffix expression cannot slide behind an earlier element's user-observable hash/equality operation.
+            if (lastHoist >= 0 && (spillAllAfterHoist || i < lastHoist))
+                resolved = SpillIfNeeded(resolved, pre, scope);
             set(i, resolved);
         }
     }
@@ -270,7 +342,27 @@ static class TryValueOperandHoist
             return WillHoist(o["lhs"], atEmpty) || WillHoist(o["rhs"], false);
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
-            for (var i = 0; i < parts.Count; i++) if (WillHoist(parts[i], i == 0 && atEmpty)) return true;
+            foreach (var part in parts) if (WillHoist(part, atEmpty: false)) return true;
+            return false;
+        }
+        if (k != null && ConstructionValueLists.TryGetValue(k, out var valueListKey)
+            && o[valueListKey] is JsonArray values)
+        {
+            foreach (var value in values) if (WillHoist(value, atEmpty: false)) return true;
+            return false;
+        }
+        if (k == "newMap" && o["entries"] is JsonArray entries)
+        {
+            foreach (var entry in entries)
+                if (entry is JsonObject eo
+                    && (WillHoist(eo["key"], atEmpty: false) || WillHoist(eo["value"], atEmpty: false)))
+                    return true;
+            return false;
+        }
+        if (k == "spreadConcat" && o["parts"] is JsonArray spreadParts)
+        {
+            foreach (var part in spreadParts)
+                if (part is JsonObject po && WillHoist(po["e"], atEmpty: false)) return true;
             return false;
         }
         if (o["args"] is JsonArray || o["recv"] != null)

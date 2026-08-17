@@ -60,7 +60,9 @@ declare -A EXPECTED_DISCOVERED=(
 	# more cover primitive/generic iterator subtypes and a private base member beside a selected interface default.
 	# +1 (#284): sequenceOf(vararg) and Array.asSequence force Array<T>.iterator() through materialization, pinning the
 	# value-element path that formerly crashed the process with AccessViolationException.
-	["tests/basic"]=445
+	# +1 (#319): one ordered-construction test covers try-valued array/list/set/map/spread operands, exact collection
+	# result faces, nested constructions, and source evaluation before HashSet/Dictionary consumption.
+	["tests/basic"]=446
 	["tests/coroutines"]=158
 	# +4 (#400): the reverse enumerator bridge across the module boundary — the producer's GetEnumerator and its
 	# module-private adapter reached from this consumer through the ordinary CLR enumerable face, and a consumer

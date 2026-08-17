@@ -681,13 +681,19 @@ static class MemberCallSubstitution
                     else
                         return null;
                 }
-                return new JsonObject { ["k"] = "newMap", ["keyType"] = kt.DeepClone(), ["valType"] = vt.DeepClone(), ["entries"] = entries };
+                return CarryFactoryStaticType(node, new JsonObject
+                {
+                    ["k"] = "newMap", ["keyType"] = kt.DeepClone(), ["valType"] = vt.DeepClone(), ["entries"] = entries,
+                });
             }
             var elemT = TypeArgAt(typeArgs, 0);
             if (elemT == null) return null;                                     // can't reconstruct elem -> plain call
             var elems = new JsonArray();
             foreach (var el in FactoryElems(args, elemT)) elems.Add(el.DeepClone());
-            return new JsonObject { ["k"] = collKind == "set" ? "newSet" : "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems };
+            return CarryFactoryStaticType(node, new JsonObject
+            {
+                ["k"] = collKind == "set" ? "newSet" : "newList", ["elem"] = elemT.DeepClone(), ["elems"] = elems,
+            });
         }
 
         if (arrKind != null)
@@ -737,6 +743,16 @@ static class MemberCallSubstitution
             };
         }
         return null;
+    }
+
+    // A collection factory's source call already carries the frontend's exact instantiated result type — including
+    // the distinction between List/MutableList/ArrayList and Map/MutableMap/concrete map faces. Preserve that fact on
+    // the construction which replaces the call instead of asking an early structural consumer to guess the surface
+    // from `newList`/`newMap`. BirTypeLowering consumes and removes `sty` before CIR, like every other call rewrite.
+    static JsonObject CarryFactoryStaticType(JsonObject source, JsonObject construction)
+    {
+        if (source["sty"] is JsonNode sty) construction["sty"] = sty.DeepClone();
+        return construction;
     }
 
     // The physical element of an array whose Kotlin element type is `elem` (#86, owned by NullableGenericErasure): an
