@@ -591,6 +591,23 @@ sealed partial class Emitter
                     _il.MarkLabel(done);
                     return Bcl("System.Boolean");
                 }
+                if (e.TryGetProperty("nullWitness", out var witness))
+                {
+                    var notNull = _il.DefineLabel(); var done = _il.DefineLabel();
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Brtrue, notNull);
+                    _il.Emit(OpCodes.Pop);
+                    var witnessType = EmitExpr(witness);
+                    if (witnessType != Bcl("System.Boolean"))
+                        throw new InvalidOperationException("isInst nullWitness must be System.Boolean");
+                    _il.Emit(OpCodes.Br, done);
+                    _il.MarkLabel(notNull);
+                    _il.Emit(OpCodes.Isinst, MapType(e.GetProperty("type")));
+                    _il.Emit(OpCodes.Ldnull);
+                    _il.Emit(OpCodes.Cgt_Un);
+                    _il.MarkLabel(done);
+                    return Bcl("System.Boolean");
+                }
                 _il.Emit(OpCodes.Isinst, MapType(e.GetProperty("type")));
                 _il.Emit(OpCodes.Ldnull);
                 _il.Emit(OpCodes.Cgt_Un);

@@ -584,7 +584,7 @@ static class DeclarationIdentityBinding
             // Carry the semantic signature when CLR erasure collapsed declarations under one MethodDef owner, or when
             // the same collapse occurs only after dll2klib merges distinct file facades back into one Kotlin package.
             // Ordinary declarations retain the established specialized metadata paths for nesting/context/companions.
-            if (semanticCarrierIds.Contains(id))
+            if (semanticCarrierIds.Contains(id) || declaration[ReifiedNullabilityWitnessLowering.IndicesKey] != null)
                 declaration[SemanticSignatureKey] = semanticSignatures.TryGetValue(id, out var signature)
                     ? signature.DeepClone()
                     : throw new InvalidOperationException(

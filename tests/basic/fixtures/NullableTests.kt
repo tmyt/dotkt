@@ -34,6 +34,10 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 
 // ---- #86 : the same-compilation `T?` DECLARATION surface at a VALUE instantiation ------------------------------
 // A slot's physical type is a function of its DECLARED type, so each `T?` position has to hold a genuine null at a
@@ -259,16 +263,38 @@ fun <T> nullIsStringNonNullQ(t: T): Boolean = t is String
 var nullIsCalls = 0
 fun nullIsSrc(n: Int): Any? { nullIsCalls++; return if (n > 0) "hi" else null }
 
-// ---- #287 KNOWN-WRONG boundary : a NULLABLE REIFIED type ARGUMENT loses its `?` -------------------------------
-// `x is T?` above is a nullable type OPERAND, written in the source and visible to the lowering. `x is T` where the
-// INSTANTIATION is nullable is a different thing and is NOT fixed: DotKt emits a reified function as one real CLR
-// generic method (§2), so `matches<String?>` and `matches<String>` are the same `matches<string>` instantiation and
-// the body is a single `isinst !!T`. CLR type arguments carry no nullability, and a type argument can flow in
-// through another generic's parameter (`fun <reified U> f(x: Any?) = matches<U>(x)`), so the fact is genuinely
-// DYNAMIC — recovering it needs a nullability witness threaded through every reified generic call, an ABI change.
-// Pinned at today's values so the violation is visible rather than silently absent. See docs/dotkt-semantics.md §2.
+// A CLR generic argument does not distinguish String from String?. Reified Kotlin declarations therefore receive a
+// hidden Boolean witness, including when the type argument flows through another reified declaration.
 inline fun <reified T> nullReifiedIs(x: Any?): Boolean = x is T
 inline fun <reified U> nullReifiedForward(x: Any?): Boolean = nullReifiedIs<U>(x)
+inline fun <reified A, reified B> nullReifiedEither(x: Any?): Boolean = x is A || x is B
+inline fun <reified T> nullReifiedObject(x: Any?): Boolean = object {
+    fun matches(): Boolean = x is T
+}.matches()
+fun interface NullReifiedChecker { fun matches(x: Any?): Boolean }
+inline fun <reified T> nullReifiedSam(): NullReifiedChecker = NullReifiedChecker { it is T }
+inline fun <reified T> nullReifiedSuspend(x: Any?): suspend () -> Boolean = { x is T }
+inline fun <reified A, reified B> nullReifiedSecondClosure(x: Any?): Boolean = ({ x is B })()
+inline fun <reified A, reified B> nullReifiedSecondObject(x: Any?): Boolean = object {
+    fun matches(): Boolean = x is B
+}.matches()
+inline fun <reified A, reified B> nullReifiedSecondSam(): NullReifiedChecker =
+    NullReifiedChecker { it is B }
+inline fun <reified A, reified B> nullReifiedSecondSuspend(x: Any?): suspend () -> Boolean = { x is B }
+class NullReifiedCarrier<T>(val value: Any?)
+inline val <reified T> NullReifiedCarrier<T>.nullReifiedExtension: Boolean get() = value is T
+inline fun <reified T> nullReifiedEmptyArray(): Array<T> = arrayOf<T>()
+enum class NullReifiedEnum { A, B }
+inline fun <reified T : Enum<T>> nullReifiedEnumValues(): Array<T> = enumValues<T>()
+
+private fun nullRunImmediate(block: suspend () -> Boolean): Boolean {
+    var outcome: Result<Boolean>? = null
+    block.startCoroutine(object : Continuation<Boolean> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+        override fun resumeWith(result: Result<Boolean>) { outcome = result }
+    })
+    return outcome!!.getOrThrow()
+}
 
 // ---- il-null : elvis / safe-call / not-null ------------------------------------------------------------------
 fun nullUp(s: String?): String = s?.uppercase() ?: "none"
@@ -594,19 +620,31 @@ class NullableTests {
     @TestAttribute
     fun nullableReifiedTypeArgumentIsTest() {
         val n: Any? = nullcsPick(-1)
-        // KNOWN-WRONG: Kotlin says true — `null is String?` holds however the type reaches the is-test. The `?` is
-        // gone by the time the shared generic body runs, so the reified spelling answers false where the written-out
-        // `x is String?` (pinned above) answers true. The two disagree, deliberately and visibly.
-        assertFalse(nullReifiedIs<String?>(n))           // False  KNOWN-WRONG: Kotlin says true
-        assertFalse(nullReifiedIs<Int?>(n))              // False  KNOWN-WRONG: Kotlin says true
-        assertFalse(nullReifiedIs<Any?>(n))              // False  KNOWN-WRONG: Kotlin says true
-        assertFalse(nullReifiedForward<String?>(n))      // False  KNOWN-WRONG: through another generic's parameter
-        // Everything a reified is-test CAN answer without the `?` is unaffected.
+        assertTrue(nullReifiedIs<String?>(n))
+        assertTrue(nullReifiedIs<Int?>(n))
+        assertTrue(nullReifiedIs<Any?>(n))
+        assertTrue(nullReifiedForward<String?>(n))       // witness forwards through another reified parameter
+        assertTrue(nullReifiedEither<String, Int?>(n))   // each reified parameter owns its witness slot
+        assertFalse(nullReifiedEither<String, Int>(n))
         assertTrue(nullReifiedIs<String?>("a"))          // True   non-null member of a nullable instantiation
+        assertFalse(nullReifiedIs<String?>(5))           // False  underlying type still differs
+        assertTrue(nullReifiedIs<Any?>(5))
         assertTrue(nullReifiedIs<String>("a"))           // True
         assertFalse(nullReifiedIs<String>(n))            // False  correct: null is not a String
         assertTrue(nullReifiedIs<Int?>(5))               // True
         assertFalse(nullReifiedIs<Int>("a"))             // False
+        assertTrue(nullReifiedObject<String?>(n), "lifted object")
+        assertTrue(nullReifiedSam<Int?>().matches(n), "SAM shim")
+        assertTrue(nullRunImmediate(nullReifiedSuspend<Any?>(n)), "suspend state machine")
+        assertTrue(nullReifiedSecondClosure<String, Int?>(n), "dense closure witness map")
+        assertTrue(nullReifiedSecondObject<String, Int?>(n), "dense object witness map")
+        assertTrue(nullReifiedSecondSam<String, Int?>().matches(n), "dense SAM witness map")
+        assertTrue(nullRunImmediate(nullReifiedSecondSuspend<String, Int?>(n)), "dense suspend witness map")
+        assertTrue(NullReifiedCarrier<String?>(n).nullReifiedExtension, "generic property accessor")
+        assertEquals(0, nullReifiedEmptyArray<String?>().size)      // semantic array factory sees visible arity
+        assertEquals(2, nullReifiedEnumValues<NullReifiedEnum>().size) // enum intrinsic sees visible arity
+        val source = arrayListOf<Any?>("a", null, "bb")
+        assertEquals(listOf("a", null, "bb"), source.asSequence().filterIsInstance<String?>().toList())
     }
 
     @TestAttribute

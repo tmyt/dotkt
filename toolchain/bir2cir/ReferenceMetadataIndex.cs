@@ -127,6 +127,10 @@ sealed partial class ReferenceMetadataIndex
         byrefPositions = binding.ByrefPositions;
         return true;
     }
+    public int[] ReifiedTypeParameterIndices(string id) =>
+        id != null && _declarationById.TryGetValue(id, out var binding)
+            ? binding.ReifiedTypeParameterIndices
+            : null;
     public bool TryDeclarationFactory(
         string id,
         out string collectionKind,
@@ -626,7 +630,8 @@ sealed partial class ReferenceMetadataIndex
         && a.DeclarationPhysicalOwner == b.DeclarationPhysicalOwner
         && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
         && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint
-        && a.SequenceFilterNotNull == b.SequenceFilterNotNull;
+        && a.SequenceFilterNotNull == b.SequenceFilterNotNull
+        && Same(a.ReifiedTypeParameterIndices, b.ReifiedTypeParameterIndices);
 
     static bool Same<T>(T[] a, T[] b) where T : IEquatable<T> =>
         ReferenceEquals(a, b) || a != null && b != null && a.SequenceEqual(b);
@@ -3708,7 +3713,8 @@ sealed partial class ReferenceMetadataIndex
                         // argument/inline carrier. The consumer must retarget the generated UnsafeAccessor to the
                         // producer's allocated MethodDef without resolving again from its erased signature.
                         var declarationIdentity = dotKtAuthored
-                            ? KotlinDeclarationIdentityPayload(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
+                            ? KotlinDeclarationIdentityPayload(method.GetCustomAttributesData(), method.DeclaringType?.Assembly,
+                                method.GetGenericArguments().Length)
                             : null;
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
@@ -3795,7 +3801,8 @@ sealed partial class ReferenceMetadataIndex
                             arrayFactoryElementHint,
                             sequenceFilterNotNull,
                             countRange?.Start ?? -1,
-                            countRange?.End ?? -1));
+                            countRange?.End ?? -1,
+                            declarationIdentity?.ReifiedTypeParameterIndices));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -4862,21 +4869,33 @@ sealed partial class ReferenceMetadataIndex
     sealed record CompanionExtensionPayloadInfo(string ReceiverJson, string Name, string Kind);
     sealed record PropertyAccessorPayloadInfo(string Name, string Kind, string Association,
         string SourceAssociation);
-    sealed record DeclarationIdentityPayloadInfo(string Id, string Name);
+    sealed record DeclarationIdentityPayloadInfo(string Id, string Name, int[] ReifiedTypeParameterIndices);
 
     static DeclarationIdentityPayloadInfo KotlinDeclarationIdentityPayload(
-        IList<CustomAttributeData> attrs, Assembly declaringAssembly)
+        IList<CustomAttributeData> attrs, Assembly declaringAssembly, int methodGenericArity = int.MaxValue)
     {
         var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinDeclarationIdentityAttr) as JsonObject;
         if (payload == null) return null;
-        if (payload.Count is not (2 or 3) ||
+        if (payload.Count is < 2 or > 4 ||
             payload["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
             payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name)
-            || payload.Count == 3 && payload["signature"] is not JsonObject
+            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified"))
+            || payload["signature"] is JsonNode signature && signature is not JsonObject
+            || payload["reified"] is JsonNode reifiedNode && reifiedNode is not JsonArray
             || string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
             throw new InvalidDataException(
                 $"malformed [KotlinDeclarationIdentity] payload: {payload.ToJsonString()}");
-        return new DeclarationIdentityPayloadInfo(id, name);
+        var reified = payload["reified"] is JsonArray reifiedArray
+            ? reifiedArray.Select(node => node is JsonValue value && value.TryGetValue<int>(out var index) && index >= 0
+                ? index
+                : throw new InvalidDataException("malformed [KotlinDeclarationIdentity] reified index"))
+                .ToArray()
+            : Array.Empty<int>();
+        if (reified.Distinct().Count() != reified.Length)
+            throw new InvalidDataException("duplicate [KotlinDeclarationIdentity] reified index");
+        if (reified.Any(index => index >= methodGenericArity))
+            throw new InvalidDataException("[KotlinDeclarationIdentity] reified index exceeds method generic arity");
+        return new DeclarationIdentityPayloadInfo(id, name, reified);
     }
 
     static PropertyAccessorPayloadInfo KotlinPropertyAccessorPayload(
@@ -5717,7 +5736,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, bool SequenceFilterNotNull = false, int CountStart = -1, int CountEnd = -1);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, bool SequenceFilterNotNull = false, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);

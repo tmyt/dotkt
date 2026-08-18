@@ -1634,12 +1634,14 @@ internal fun BirEmitter.typeParamDeclarationsJson(tps: List<org.jetbrains.kotlin
 			org.jetbrains.kotlin.types.Variance.IN_VARIANCE -> "in"
 			else -> null
 		}
-		if (bounds.isEmpty() && variance == null) str(tp.name.asString())
+		val reified = tp.isReified
+		if (bounds.isEmpty() && variance == null && !reified) str(tp.name.asString())
 		else {
 			val parts = ArrayList<String>()
 			parts.add(""""name":${str(tp.name.asString())}""")
 			if (bounds.isNotEmpty()) parts.add(""""constraints":[${bounds.joinToString(",") { str(it) }}]""")
 			if (variance != null) parts.add(""""variance":${str(variance)}""")
+			if (reified) parts.add(""""reified":true""")
 			"{${parts.joinToString(",")}}"
 		}
 	}
