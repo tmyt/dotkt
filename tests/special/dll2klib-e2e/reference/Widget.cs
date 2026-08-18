@@ -11,12 +11,12 @@ public interface IAdder
 
 internal interface IHiddenControl
 {
-    int Read();
+    int HiddenDefault() => 101;
 }
 
 public interface IVisibleControl
 {
-    int Read();
+    int Read() => 23;
 }
 
 // C# permits a public class to implement a non-public interface and to close a public
@@ -28,7 +28,6 @@ public sealed class VisibilityProbe :
     IVisibleGeneric<string>,
     IVisibleEnvelope<IVisibleGeneric<HiddenContractArgument>>
 {
-    public int Read() => 23;
 }
 
 public class WidgetBase
