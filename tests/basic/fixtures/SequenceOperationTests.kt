@@ -116,6 +116,8 @@ class SequenceOperationTests {
         assertEquals(0, calls)
         assertEquals("1,2", ints.toList().joinToString(","))
         assertEquals(5, calls)
+        assertEquals("1,2", ints.toList().joinToString(","))
+        assertEquals(10, calls)
         assertEquals("a,bb", source.asSequence().filterIsInstance<String>().toList().joinToString(","))
     }
 

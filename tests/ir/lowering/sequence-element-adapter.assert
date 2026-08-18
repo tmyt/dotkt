@@ -1,4 +1,4 @@
 # bir2cir authors the concrete element face; the erased source cast must not survive into CIR.
-+"k":"new","type":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter\u00601","args":[{"t":"tv","scope":"method","i":0}]}
-+"memberRef":{"kind":"ctor","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter\u00601","args":[{"t":"tv","scope":"method","i":0}]},"name":".ctor","genericArity":0,"returnType":{"t":"fqn","name":"void"},"callingConvention":"instance","parameterTypes":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable\u00601","args":[{"t":"fqn","name":"System.Object"}]}]}
++"k":"new","type":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter","args":[{"t":"tv","scope":"method","i":0}]},"argTypes":[{"t":"fqn","name":"System.Collections.Generic.IEnumerable","args":[{"t":"fqn","name":"System.Object"}]}],"args":[{"k":"local","name":"source"}],"localCtorIndex":0
+-"memberRef":{"kind":"ctor","assembly":"DotKt.Stdlib","declaringType":{"t":"fqn","name":"kotlin.sequences.ClrSequenceElementAdapter\u00601"
 -"k":"cast"

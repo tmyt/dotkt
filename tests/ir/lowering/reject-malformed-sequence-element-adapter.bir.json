@@ -25,7 +25,28 @@
         "name": "kotlin.sequences.Sequence",
         "args": [{ "t": "tv", "scope": "method", "i": 0 }]
       },
-      "body": [{ "k": "return", "value": { "k": "local", "name": "source" } }],
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cast",
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.sequences.Sequence",
+              "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+            },
+            "e": {
+              "k": "local",
+              "name": "source",
+              "sty": {
+                "t": "fqn",
+                "name": "kotlin.sequences.Sequence",
+                "args": [{ "t": "fqn", "name": "kotlin.String" }]
+              }
+            }
+          }
+        }
+      ],
       "attrs": [
         {
           "attr": { "t": "fqn", "name": "kotlin.clr.ClrSequenceElementAdapter" },

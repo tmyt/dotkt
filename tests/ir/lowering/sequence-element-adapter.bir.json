@@ -2,7 +2,37 @@
   "fileClass": "SequenceElementAdapterProbeKt",
   "hasMain": false,
   "fields": [],
-  "types": [],
+  "types": [
+    {
+      "name": "kotlin.sequences.ClrSequenceElementAdapter",
+      "kind": "class",
+      "abstract": false,
+      "vis": "internal",
+      "typeParams": ["T"],
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [
+        {
+          "params": [
+            {
+              "name": "source",
+              "type": {
+                "t": "fqn",
+                "name": "kotlin.sequences.Sequence",
+                "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } }]
+              }
+            }
+          ],
+          "baseArgs": [],
+          "thisArgs": null,
+          "vis": "public",
+          "body": []
+        }
+      ],
+      "methods": []
+    }
+  ],
   "refTypes": [],
   "methods": [
     {

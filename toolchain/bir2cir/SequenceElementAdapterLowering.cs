@@ -45,22 +45,22 @@ static class SequenceElementAdapterLowering
             || Str(ret["k"]) != "return"
             || ret["value"] is not JsonObject { } cast
             || Str(cast["k"]) != "cast"
-            || cast["e"] == null
+            || cast["e"] is not JsonObject { } operand
+            || TypeJson.Read(operand["sty"]) is not TypeNode.Fqn
+                { Name: Sequence, Args: [TypeNode.Nullable { Of: TypeNode.Fqn { Name: "kotlin.Any", Args: null } }] }
             || TypeJson.Read(method["ret"]) is not TypeNode.Fqn
                 { Name: Sequence, Args: [TypeNode.Tv { Scope: "method", I: 0 }] }
             || TypeJson.Read(cast["type"]) is not TypeNode.Fqn
                 { Name: Sequence, Args: [TypeNode.Tv { Scope: "method", I: 0 }] })
             throw new InvalidOperationException("bir2cir: malformed @ClrSequenceElementAdapter declaration");
 
-        var anyNullable = new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any"));
-        var input = new TypeNode.Fqn(Sequence, new TypeNode[] { anyNullable });
         ret["value"] = new JsonObject
         {
             ["k"] = "new",
             ["type"] = TypeJson.Write(new TypeNode.Fqn(Adapter,
                 new TypeNode[] { new TypeNode.Tv("method", 0) })),
-            ["argTypes"] = new JsonArray { TypeJson.Write(input) },
-            ["args"] = new JsonArray { cast["e"]!.DeepClone() },
+            ["argTypes"] = new JsonArray { operand["sty"]!.DeepClone() },
+            ["args"] = new JsonArray { operand.DeepClone() },
         };
     }
 
