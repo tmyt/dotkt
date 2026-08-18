@@ -984,8 +984,18 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// A projected external type may have a Kotlin surface name distinct from its CLR metadata name (nested and
 		// arity-collision types). Preserve the constructed external identity exactly as the ordinary interop fact path
 		// does; a Kotlin/local dispatch owner remains semantic BIR vocabulary for bir2cir to represent physically.
-		val owner = if (isExternalNetType(ownerClass)) birType(recvExpr.type)
-			else ownerSpec(ownerClass, recvExpr.type)
+		val owner = if (!isExternalNetType(ownerClass)) ownerSpec(ownerClass, recvExpr.type) else {
+			val recvClass = recvExpr.type.classifierOrNull?.owner as? IrClass
+			when {
+				recvClass != null && isExternalNetType(recvClass) -> birType(recvExpr.type)
+				else -> (recvClass?.superTypes ?:
+					(recvExpr.type.classifierOrNull?.owner as? IrTypeParameter)?.superTypes)
+					?.firstOrNull { it.classifierOrNull?.owner == ownerClass }
+					?.let { birType(it) }
+					?: clrName(ownerClass)?.let { TypeNode.Fqn(it) }
+					?: ownerSpec(ownerClass, recvExpr.type)
+			}
+		}
 		val virtual = isVirtualInstanceCall(call, callee)
 		val args = (listOfNotNull(extensionReceiver(call)) + regularArgs(call))
 			.joinToString(",") { expr(it) }
