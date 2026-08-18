@@ -70,8 +70,36 @@ class SequenceOperationTests {
         assertTrue(bs.asSequence().single { it })                                 // true
         assertFalse(bs.asSequence().filter { !it }.first())                       // false
         assertEquals(2, bs.asSequence().filter { !it }.count())                   // 2
-        // `Sequence.mapNotNull` at a value element has a known bug. It remains issue-tracker state rather than a
-        // suite XFAIL; the eager `Iterable.mapNotNull` twin is green in CollectionOperationsTests.
+    }
+
+    @TestAttribute
+    fun mapNotNullAtValueElements() {
+        var calls = 0
+        val ints = sequenceOf(1, 2, 3, 4).mapNotNull {
+            calls = calls + 1
+            if (it % 2 == 1) it * 10 else null
+        }
+        assertEquals(0, calls)
+        assertEquals("10,30", ints.toList().joinToString(","))
+        assertEquals(4, calls)
+
+        val bools = sequenceOf(0, 1, 2).mapNotNull { if (it == 1) null else it == 2 }
+        assertEquals("False,True", bools.toList().joinToString(","))
+
+        val direct = sequenceOf(1, 2, 3).map { if (it == 2) null else it }.filterNotNull()
+        assertEquals("1,3", direct.toList().joinToString(","))
+
+        val stringSource = ArrayList<String>()
+        stringSource.add("a")
+        stringSource.add("bb")
+        stringSource.add("c")
+        val strings = stringSource.asSequence().mapNotNull { if (it.length == 1) it else null }
+        assertEquals("a,c", strings.toList().joinToString(","))
+
+        val indexed = sequenceOf(10, 20, 30).mapIndexedNotNull { index, value ->
+            if (index == 1) null else value + index
+        }
+        assertEquals("10,32", indexed.toList().joinToString(","))
     }
 
     // il-sort: sortedDescending / sortedBy / sortedByDescending -> LINQ ordering, materialized by joinToString.
