@@ -1,0 +1,98 @@
+{
+  "fileClass": "NewClrPrimitiveSpellingProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "scalar",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "System.Version" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "newClr",
+            "type": { "t": "fqn", "name": "System.Version" },
+            "argTypes": [ { "t": "fqn", "name": "string" } ],
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "string" }, "value": "1.0" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "nested",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": [
+        {
+          "k": "return",
+          "value": { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "ok" }
+        }
+      ],
+      "attrs": [
+        {
+          "attr": { "t": "fqn", "name": "kotlin.Deprecated" },
+          "argTypes": [
+            { "t": "fqn", "name": "kotlin.String" },
+            { "t": "fqn", "name": "kotlin.Any" }
+          ],
+          "args": [
+            { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "gone" },
+            {
+              "k": "new",
+              "type": { "t": "fqn", "name": "kotlin.ReplaceWith" },
+              "argTypes": [
+                { "t": "fqn", "name": "kotlin.String" },
+                { "t": "array", "elem": { "t": "fqn", "name": "kotlin.String" } }
+              ],
+              "args": [
+                { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "scalar()" },
+                { "k": "newArray", "elem": { "t": "fqn", "name": "kotlin.String" }, "elems": [] }
+              ],
+              "memberSignature": [
+                { "t": "fqn", "name": "kotlin.String" },
+                { "t": "array", "elem": { "t": "fqn", "name": "kotlin.String" } }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "genericOwner",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": {
+        "t": "fqn",
+        "name": "System.Tuple",
+        "args": [ { "t": "fqn", "name": "string" } ]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "newClr",
+            "type": {
+              "t": "fqn",
+              "name": "System.Tuple",
+              "args": [ { "t": "fqn", "name": "string" } ]
+            },
+            "argTypes": [ { "t": "fqn", "name": "string" } ],
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "string" }, "value": "value" }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
