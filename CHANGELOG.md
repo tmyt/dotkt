@@ -34,6 +34,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Lazy `Sequence.mapNotNull` now preserves value-element sequence identity (#349).** The CLR stdlib uses an explicit
   element-converting adapter for `Sequence<T?>.filterNotNull`, instead of unchecked-casting an object-elemented lazy
   wrapper to the reified `IEnumerable<T>` result.
+- **`Sequence.filterIsInstance<R>` now returns a genuine CLR sequence of `R` (#446).** Its reified Kotlin predicate
+  remains lazy, while bir2cir replaces the final erased-platform cast with a typed element-view adapter.
 
 ## 0.9.9 (2026-08-17)
 

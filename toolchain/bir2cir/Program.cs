@@ -127,6 +127,7 @@ sealed class Pipeline
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
+        if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var localSequenceFilterNotNullDeclarations =
             MemberCallSubstitution.CollectLocalSequenceFilterNotNullDeclarations(birRoots);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);

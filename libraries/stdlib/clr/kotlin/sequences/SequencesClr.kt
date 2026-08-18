@@ -60,3 +60,16 @@ private class ClrFilteringNotNullIterator<T : Any>(private val iterator: Iterato
         return nextState == 1
     }
 }
+
+// The producer has already retained only values satisfying `is T`; this adapter changes the physical sequence element
+// interface from object to T without re-running that predicate or eagerly materializing the sequence.
+internal class ClrSequenceElementAdapter<T>(private val sequence: Sequence<Any?>) : Sequence<T> {
+    override fun iterator(): Iterator<T> = ClrSequenceElementIterator(sequence.iterator())
+}
+
+private class ClrSequenceElementIterator<T>(private val iterator: Iterator<Any?>) : Iterator<T> {
+    @Suppress("UNCHECKED_CAST")
+    override fun next(): T = iterator.next() as T
+
+    override fun hasNext(): Boolean = iterator.hasNext()
+}
