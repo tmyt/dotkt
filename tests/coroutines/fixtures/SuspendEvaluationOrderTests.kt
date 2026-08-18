@@ -83,6 +83,55 @@ suspend fun suspendEvaluationUntypedOperandFieldBang(): String = suspendEvaluati
 suspend fun suspendEvaluationUntypedOperandElvis(): String = suspendEvaluationUntypedOperandHi(suspendEvaluationUntypedOperandSideVal() ?: 0, suspendEvaluationUntypedOperandSusp())
 suspend fun suspendEvaluationUntypedOperandSafeCall(b: SuspendEvaluationUntypedOperandBox?): String = suspendEvaluationUntypedOperandHq(b?.size(), suspendEvaluationUntypedOperandSusp())
 
+// ---- a companion/object singleton receiver evaluated before a suspending argument ------------------------
+// External companion values have already been replaced with their physical `$INSTANCE` field read when the
+// suspend operand planner binds the receiver. That compiler-authored read must carry the carrier's exact static
+// type: unlike a same-module field, its declaration is absent from the planner's field index. The local controls
+// separately pin the ordinary-object producer and every companion carrier representation: nested, generic-owner
+// hoisted, and value-class-owner.
+suspend fun suspendEvaluationCompanionOperandOne(): Int = 1
+suspend fun suspendEvaluationCompanionOperandText(): String = "a+b"
+
+object SuspendEvaluationCompanionOperandObject {
+    fun accept(value: Int): Int = value
+}
+
+class SuspendEvaluationCompanionOperandClass {
+    companion object {
+        fun accept(value: Int): Int = value
+    }
+}
+
+class SuspendEvaluationCompanionOperandGeneric<T> {
+    companion object {
+        fun accept(value: Int): Int = value
+    }
+}
+
+@JvmInline
+value class SuspendEvaluationCompanionOperandValue(val value: Int) {
+    companion object {
+        fun accept(value: Int): Int = value
+    }
+}
+
+suspend fun suspendEvaluationExternalResultCompanion(): Int =
+    Result.success(suspendEvaluationCompanionOperandOne()).getOrThrow()
+suspend fun suspendEvaluationExternalClassCompanion(): Boolean =
+    Regex.fromLiteral(suspendEvaluationCompanionOperandText()).matches("a+b")
+fun suspendEvaluationCompanionAccessorUse(companion: Any, value: Int): Int =
+    if (companion === Result.Companion) value else -1
+suspend fun suspendEvaluationExternalCompanionAccessor(): Int =
+    suspendEvaluationCompanionAccessorUse(Result.Companion, suspendEvaluationCompanionOperandOne())
+suspend fun suspendEvaluationLocalObjectCompanion(): Int =
+    SuspendEvaluationCompanionOperandObject.accept(suspendEvaluationCompanionOperandOne())
+suspend fun suspendEvaluationLocalClassCompanion(): Int =
+    SuspendEvaluationCompanionOperandClass.accept(suspendEvaluationCompanionOperandOne())
+suspend fun suspendEvaluationLocalHoistedCompanion(): Int =
+    SuspendEvaluationCompanionOperandGeneric.accept(suspendEvaluationCompanionOperandOne())
+suspend fun suspendEvaluationLocalValueClassCompanion(): Int =
+    SuspendEvaluationCompanionOperandValue.accept(suspendEvaluationCompanionOperandOne())
+
 class SuspendEvaluationOrderTests {
     @TestAttribute
     fun sideEffectBeforeSuspend() {
@@ -162,5 +211,16 @@ class SuspendEvaluationOrderTests {
         // A bare-local receiver, so the safe call is a RAW `cond` with no `type` stamp at all.
         assertEquals("7/2", blockOn { suspendEvaluationUntypedOperandSafeCall(SuspendEvaluationUntypedOperandBox("q")) })
         assertEquals("null/2", blockOn { suspendEvaluationUntypedOperandSafeCall(null) })
+    }
+
+    @TestAttribute
+    fun companionSingletonBeforeSuspension() {
+        assertEquals(1, blockOn { suspendEvaluationExternalResultCompanion() })
+        assertEquals(true, blockOn { suspendEvaluationExternalClassCompanion() })
+        assertEquals(1, blockOn { suspendEvaluationExternalCompanionAccessor() })
+        assertEquals(1, blockOn { suspendEvaluationLocalObjectCompanion() })
+        assertEquals(1, blockOn { suspendEvaluationLocalClassCompanion() })
+        assertEquals(1, blockOn { suspendEvaluationLocalHoistedCompanion() })
+        assertEquals(1, blockOn { suspendEvaluationLocalValueClassCompanion() })
     }
 }
