@@ -33,6 +33,13 @@ if (args.Length == 4 && args[0] == "--klib-class-properties")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--klib-package-properties")
+{
+    VerifyKlibPackageProperties(args[1], args[2], args[3].Split(',', StringSplitOptions.RemoveEmptyEntries));
+    Console.WriteLine("KLIB package property surface: OK");
+    return;
+}
+
 if (args.Length == 5 && args[0] == "--klib-csharp-extension-shape")
 {
     VerifyKlibCSharpExtensionShape(args[1], args[2], args[3], args[4]);
@@ -46,6 +53,7 @@ if (args.Length != 7)
         "  CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json> <consumer.dll>\n" +
         "  CompanionMetadataInspector --volatile-consumer <consumer.dll> <type> <method>...\n" +
         "  CompanionMetadataInspector --klib-class-properties <file.klib> <class> <property[,property...]>\n" +
+        "  CompanionMetadataInspector --klib-package-properties <file.klib> <package> <property[,property...]>\n" +
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>");
 
 VerifyLayerBoundary(args[2], args[3]);
@@ -78,6 +86,39 @@ static void VerifyKlibClassProperties(string path, string className, IReadOnlyLi
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyKlibPackageProperties(string path, string packageName, IReadOnlyList<string> expectedNames)
+{
+    using var archive = ZipFile.OpenRead(path);
+    var fragments = archive.Entries
+        .Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry =>
+        {
+            using var stream = entry.Open();
+            return PackageFragment.Parser.ParseFrom(stream);
+        })
+        .Where(fragment => fragment.FqName == packageName)
+        .ToArray();
+    if (fragments.Length != 1)
+        throw new InvalidDataException(
+            $"expected one package fragment '{packageName}', found {fragments.Length}");
+    var fragment = fragments[0];
+    var actual = fragment.Package.Property.Select(property => String(fragment, property.Name))
+        .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+    var expected = expectedNames.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+    if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
+        throw new InvalidDataException(
+            $"{packageName} property surface [{string.Join(", ", actual)}] != " +
+            $"[{string.Join(", ", expected)}]");
+    var functionCollisions = fragment.Package.Function
+        .Select(function => String(fragment, function.Name))
+        .Where(expectedNames.Contains)
+        .OrderBy(name => name, StringComparer.Ordinal)
+        .ToArray();
+    if (functionCollisions.Length != 0)
+        throw new InvalidDataException(
+            $"{packageName} properties also leaked as functions [{string.Join(", ", functionCollisions)}]");
 }
 
 static void VerifyKlibCSharpExtensionShape(
