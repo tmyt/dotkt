@@ -20,3 +20,43 @@ internal actual class ConstrainedOnceSequence<T> actual constructor(sequence: Se
         return sequence.iterator()
     }
 }
+
+// Sequence<T?> has the CLR element `object` when T may be a value type. FilteringSequence<T?> therefore implements
+// IEnumerable<object>, and an unchecked cast cannot make it implement the promised IEnumerable<T>. This named generic
+// adapter owns the representation change: its input stays object-elemented while its output interface is genuinely T.
+@PublishedApi
+internal class ClrFilteringNotNullSequence<T : Any>(private val sequence: Sequence<T?>) : Sequence<T> {
+    override fun iterator(): Iterator<T> = ClrFilteringNotNullIterator(sequence.iterator())
+}
+
+private class ClrFilteringNotNullIterator<T : Any>(private val iterator: Iterator<T?>) : Iterator<T> {
+    private var nextState = -1
+    private var nextItem: T? = null
+
+    private fun calcNext() {
+        while (iterator.hasNext()) {
+            val item = iterator.next()
+            if (item != null) {
+                nextItem = item
+                nextState = 1
+                return
+            }
+        }
+        nextState = 0
+    }
+
+    override fun next(): T {
+        if (nextState == -1) calcNext()
+        if (nextState == 0) throw NoSuchElementException()
+        val result = nextItem
+        nextItem = null
+        nextState = -1
+        @Suppress("UNCHECKED_CAST")
+        return result as T
+    }
+
+    override fun hasNext(): Boolean {
+        if (nextState == -1) calcNext()
+        return nextState == 1
+    }
+}

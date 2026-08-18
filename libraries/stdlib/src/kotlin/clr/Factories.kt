@@ -30,3 +30,11 @@ public annotation class ClrCollectionFactory(val kind: String)
 // `intArrayOf`/... primitive factories). Replaces kotc's retired ARRAY_FACTORY_NAMES recognition.
 @Target(AnnotationTarget.FUNCTION)
 public annotation class ClrArrayFactory(val kind: String)
+
+// Marks Sequence.filterNotNull's CLR representation. A `Sequence<T?>` has an object element when T may be a value
+// type, so its lazy wrapper cannot be unchecked-cast to the reified `Sequence<T>` / `IEnumerable<T>` result. bir2cir
+// consumes this trusted stdlib declaration fact and constructs the CLR-specific element-converting adapter.
+// Internal so this compiler binding cannot be named by user source.
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.BINARY)
+internal annotation class ClrSequenceFilterNotNull

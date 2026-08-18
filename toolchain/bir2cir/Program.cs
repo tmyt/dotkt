@@ -127,6 +127,8 @@ sealed class Pipeline
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
+        var localSequenceFilterNotNullDeclarations =
+            MemberCallSubstitution.CollectLocalSequenceFilterNotNullDeclarations(birRoots);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
@@ -687,7 +689,8 @@ sealed class Pipeline
             // receiver/signature overload set. Local identities remain untouched for the module-wide allocator below.
             DeclarationIdentityBinding.BindReferenced(hoisted, refs, localDeclarationIds, deferUnknown: true);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
-                localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations);
+                localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations,
+                localSequenceFilterNotNullDeclarations);
             // Cross-module half of UncheckedGenericCastReturnErasure.  MemberCallSubstitution has now attributed a
             // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
             // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.

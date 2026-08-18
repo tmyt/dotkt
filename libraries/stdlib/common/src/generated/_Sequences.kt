@@ -510,6 +510,7 @@ public fun <T> Sequence<T>.filterNot(predicate: (T) -> Boolean): Sequence<T> {
  * 
  * @sample samples.collections.Collections.Filtering.filterNotNull
  */
+@kotlin.clr.ClrSequenceFilterNotNull
 public fun <T : Any> Sequence<T?>.filterNotNull(): Sequence<T> {
     @Suppress("UNCHECKED_CAST")
     return filterNot { it == null } as Sequence<T>

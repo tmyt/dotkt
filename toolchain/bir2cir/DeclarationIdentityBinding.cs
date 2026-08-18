@@ -20,6 +20,7 @@ static class DeclarationIdentityBinding
     internal const string SemanticSignatureKey = "declarationSemanticSignature";
     internal const string ReferencedIntrinsicKey = "declarationReferencedIntrinsic";
     internal const string ReferencedFactoryKey = "declarationReferencedFactory";
+    internal const string ReferencedSequenceFilterNotNullKey = "declarationReferencedSequenceFilterNotNull";
     internal const string PhysicalOnlySuffix = "|clr-physical-only";
 
     internal static string PhysicalOnlyId(string declarationId, string role) =>
@@ -201,6 +202,13 @@ static class DeclarationIdentityBinding
                     obj[ReferencedFactoryKey] = true;
                     return;
                 }
+                if (refs.IsDeclarationSequenceFilterNotNull(id)
+                    && nodeKind == "callStatic"
+                    && (obj[ReferencedSequenceFilterNotNullKey] == null || deferUnknown))
+                {
+                    obj[ReferencedSequenceFilterNotNullKey] = true;
+                    return;
+                }
                 obj["method"] = physicalName;
                 if (Str(obj["k"]) == "callStatic")
                 {
@@ -213,6 +221,7 @@ static class DeclarationIdentityBinding
                 // semantic role would make a later property resolver attempt to associate that physical name again.
                 obj.Remove("prop");
                 obj.Remove(ReferencedFactoryKey);
+                obj.Remove(ReferencedSequenceFilterNotNullKey);
                 // The early, pre-representation bind must keep the authoritative identity. Suspend lowering derives
                 // the producer's independently allocated cold-entry identity (`id|cold`) from it; the ordinary late
                 // bind then replaces the provisional hot/cold spelling and consumes the fact. Removing it here made
@@ -247,7 +256,7 @@ static class DeclarationIdentityBinding
         foreach (var key in new[]
                  {
                      "owner", "ownerType", "calleeOwner", "sig", "prop", Key,
-                     ReferencedIntrinsicKey, ReferencedFactoryKey,
+                     ReferencedIntrinsicKey, ReferencedFactoryKey, ReferencedSequenceFilterNotNullKey,
                  })
             node.Remove(key);
     }

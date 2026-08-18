@@ -142,6 +142,8 @@ sealed partial class ReferenceMetadataIndex
         arrayElementHint = binding.ArrayFactoryElementHint;
         return collectionKind != null || arrayKind != null;
     }
+    public bool IsDeclarationSequenceFilterNotNull(string id) =>
+        id != null && _declarationById.TryGetValue(id, out var binding) && binding.SequenceFilterNotNull;
     // ownerFqn -> declared parameter count -> the ctor declarations of that arity (#86 D1). A list, because a
     // same-arity overload set must be REFUSED rather than resolved by arity alone.
     readonly Dictionary<string, Dictionary<int, List<CtorBinding>>> _ctorsByOwner = new(StringComparer.Ordinal);
@@ -623,7 +625,8 @@ sealed partial class ReferenceMetadataIndex
         && a.DeclarationSourceName == b.DeclarationSourceName
         && a.DeclarationPhysicalOwner == b.DeclarationPhysicalOwner
         && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
-        && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint;
+        && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint
+        && a.SequenceFilterNotNull == b.SequenceFilterNotNull;
 
     static bool Same<T>(T[] a, T[] b) where T : IEquatable<T> =>
         ReferenceEquals(a, b) || a != null && b != null && a.SequenceEqual(b);
@@ -3720,6 +3723,8 @@ sealed partial class ReferenceMetadataIndex
                         var arrayFactoryElementHint = arrayFactoryKind == null
                             ? null
                             : ArrayElemHint(method.ReturnType);
+                        var sequenceFilterNotNull = isFileClass && method.IsStatic
+                            && HasAttribute(method.GetCustomAttributesData(), "kotlin.clr.ClrSequenceFilterNotNull");
                         // @ClrConv (numeric primitive conversion): the call lowers to a CIL `conv` to the callee's OWN
                         // declared return type (toLong -> the emitted `kotlin.Long` type, ...). Read the marker + capture
                         // the return-type token here (the pre-lowering Kotlin FQN, from THIS reference/metadata dll), so
@@ -3788,6 +3793,7 @@ sealed partial class ReferenceMetadataIndex
                             collectionFactoryKind,
                             arrayFactoryKind,
                             arrayFactoryElementHint,
+                            sequenceFilterNotNull,
                             countRange?.Start ?? -1,
                             countRange?.End ?? -1));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
@@ -5711,7 +5717,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, bool SequenceFilterNotNull = false, int CountStart = -1, int CountEnd = -1);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);
