@@ -97,13 +97,15 @@ grep -q 'converting 2/2 reference(s)' <<<"$dependency_rebuild" \
 # timestamp. Every surviving KLIB must be regenerated so cached and newly projected declarations keep one naming
 # universe.
 printf '%s\n' "$PROBE_REF" > "$OUT/references.rsp"
-catalog_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q 'converting 1/1 reference(s)' <<<"$catalog_remove" \
-	|| die "reference-catalog removal did not invalidate the surviving Probe KLIB"
+if catalog_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp" 2>&1)"; then
+	die "dll2klib accepted Probe without its referenced Probe.Contracts assembly"
+fi
+grep -q "public-type catalog cannot resolve 'Probe.Contracts.IExternalDefaultSlot'" <<<"$catalog_remove" \
+	|| die "incomplete reference-catalog rejection did not identify the unresolved public supertype"
 printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
 catalog_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q 'converting 2/2 reference(s)' <<<"$catalog_restore" \
-	|| die "reference-catalog restoration did not invalidate the complete KLIB set"
+grep -q '2 KLIB(s) up to date' <<<"$catalog_restore" \
+	|| die "rejected incomplete reference catalog corrupted the complete KLIB cache"
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done
@@ -130,6 +132,18 @@ dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-properties "$PROBE_KLIB" Probe.DefaultEventCarrier Changed
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-functions "$PROBE_KLIB" Probe.DefaultEventCarrier ""
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.ExplicitEventCarrier Changed
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.ExternalExplicitEventCarrier Changed
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.PublicAndExplicitEventCarrier Changed
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-function-nullability "$PROBE_KLIB" Probe.ExplicitShapeCarrier Normalize true true
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.ExplicitShapeCarrier Text
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.ExplicitShapeCarrier Normalize,get
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-functions "$PROBE_KLIB" Probe.DefaultIndexerCarrier get,get
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
@@ -197,8 +211,8 @@ dotnet "$ILEMIT_DLL" "$OUT/default-il" DefaultInterfaceConsumer \
 write_runtimeconfig "$OUT/default-il" DefaultInterfaceConsumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/default-il/"
 default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
-[[ "$default_actual" == "133" ]] \
-	|| die "hidden default-interface program returned '$default_actual', expected '133'"
+[[ "$default_actual" == "224" ]] \
+	|| die "hidden default-interface program returned '$default_actual', expected '224'"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \

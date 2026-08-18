@@ -21,6 +21,11 @@ public interface IExternalDefaultSlot
     int Value();
 }
 
+public interface IExternalExplicitEventSlot
+{
+    event System.Action<int>? Changed;
+}
+
 internal interface IExternalHiddenDefaultProvider : IExternalDefaultSlot
 {
     int IExternalDefaultSlot.Value() => 31;

@@ -83,6 +83,14 @@ A primitive/String/null constant default is native .NET metadata — **C# caller
 free**. Non-constant defaults (and String defaults on interface-typed params) are carried as
 Kotlin metadata: Kotlin callers can omit the argument; C# callers must pass it explicitly.
 
+## Public CLR classes can hide implementation interfaces
+
+C# permits a public class to implement an `internal` interface and to satisfy a public interface member through a
+private explicit implementation. Kotlin consumers see only the accessible public supertypes, but inherited members
+remain concrete: subclassing such a .NET class does not create an “unimplemented abstract member” obligation. For an
+explicitly implemented event, subscribing through the projected class member reaches the original C# add/remove
+accessors and backing delegate; DotKt does not create a second event store.
+
 ## Context parameters are ordinary leading parameters on the CLR
 
 `context(s: Scale) fun scaled(a: Int)` emits `scaled(Scale, int)` — a context parameter is a plain

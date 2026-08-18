@@ -175,9 +175,11 @@ internal sealed class PublicTypeCatalog : IDisposable
     private PublicTypeSurface Resolve(MetadataReader reader, TypeReferenceHandle handle)
     {
         var entry = ResolveEntry(reader, handle);
-        return entry is not null
-            ? new PublicTypeSurface(entry.IsPublic, entry.IsInterface, [])
-            : default;
+        if (entry is null)
+            throw new InvalidDataException(
+                $"public-type catalog cannot resolve '{ReferenceName(reader, handle)}' from assembly " +
+                $"'{ReferenceAssemblyName(reader, handle) ?? "<unknown>"}'; pass the complete resolved reference set");
+        return new PublicTypeSurface(entry.IsPublic, entry.IsInterface, []);
     }
 
     private PublicTypeCatalogEntry? ResolveEntry(MetadataReader reader, TypeReferenceHandle handle)

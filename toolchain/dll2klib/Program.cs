@@ -2026,7 +2026,10 @@ internal sealed class AssemblyScanner
             var metadataPropertyName = _md.GetString(property.Name);
             var sourcePropertyName = KotlinPropertySourceName(property, accessors);
             var explicitInterfaceProperty = metadataPropertyName.Contains('.', StringComparison.Ordinal);
-            if (!IsPublicOrProtected(representative.Attributes) && !explicitInterfaceProperty) continue;
+            // A private explicit-interface Property row describes the MethodImpl BODY, not the public Kotlin
+            // declaration. Project it below from the authoritative interface Property/MethodSemantics row so NRT,
+            // defaults, parameter names and generic metadata cannot drift with the private implementation signature.
+            if (explicitInterfaceProperty || !IsPublicOrProtected(representative.Attributes)) continue;
             var context = new GenericContext(handle, accessors.Getter.IsNil ? accessors.Setter : accessors.Getter, typeParameterIds);
             var signature = property.DecodeSignature(signatures, context);
             var name = explicitInterfaceProperty
@@ -2072,11 +2075,7 @@ internal sealed class AssemblyScanner
         // abstract obligation. Reconstruct accessor pairs generically from
         // their declarations; the actual private body remains a bir2cir
         // binding concern.
-        var explicitAccessors = new Dictionary<string, (
-            string Name,
-            MethodDefinitionHandle Getter,
-            MethodDefinitionHandle Setter)>(StringComparer.Ordinal);
-        var explicitFunctions = new List<(string Name, MethodDefinitionHandle Body)>();
+        var explicitImplementations = new List<InheritedDefaultImplementation>();
         var interfaceKeys = def.GetInterfaceImplementations()
             .Select(h => _md.GetInterfaceImplementation(h).Interface)
             .Where(h => h.Kind != HandleKind.TypeDefinition
@@ -2101,6 +2100,51 @@ internal sealed class AssemblyScanner
             // Reconstructing either bridge here would duplicate the property and, for member extension/context
             // properties, discard its receiver/context prefix by manufacturing a receiverless declaration.
             if (KotlinPropertyAccessorCarrier(bodyHandle) is not null) continue;
+            if (TryResolvePublicInterfaceDeclaration(
+                    _md,
+                    implementation.MethodDeclaration,
+                    signatures,
+                    typeContext,
+                    sourceArguments: [],
+                    sourceArgumentSurface: default,
+                    names,
+                    signatures,
+                    out var declarationReader,
+                    out var declarationHandle,
+                    out var declarationArguments,
+                    out var declarationSignatures))
+            {
+                var declaration = declarationReader.GetMethodDefinition(declarationHandle);
+                var accessor = InheritedAccessor(declarationReader, declarationHandle);
+                // Operators and other special-name slots do not become ordinary Kotlin functions. Property/indexer
+                // and event accessors are carried by their authoritative MethodSemantics association instead.
+                if (accessor is null && (declaration.Attributes & MethodAttributes.SpecialName) != 0)
+                    continue;
+                var associationKey = accessor is null
+                    ? null
+                    : AssemblySimpleName(declarationReader) + ":" +
+                        accessor.Value.Association.Kind + ":" +
+                        MetadataTokens.GetRowNumber(accessor.Value.Association);
+                var sourceName = accessor is null
+                    ? KotlinSourceMethodName(bodyHandle) ??
+                        SimpleMethodName(declarationReader.GetString(declaration.Name))
+                    : SimpleMethodName(declarationReader.GetString(declaration.Name));
+                explicitImplementations.Add(new InheritedDefaultImplementation(
+                    declarationReader,
+                    declarationHandle,
+                    sourceName,
+                    declarationArguments,
+                    declarationSignatures,
+                    accessor?.Name,
+                    accessor?.Kind ?? 0,
+                    associationKey,
+                    AssemblySimpleName(declarationReader) + ":" +
+                        MetadataTokens.GetRowNumber(declarationHandle) + ":" +
+                        string.Join(",", declarationArguments.Select(TypeKey)),
+                    IsAbstract: false,
+                    Depth: 0));
+                continue;
+            }
             var declarationName = implementation.MethodDeclaration.Kind switch
             {
                 HandleKind.MemberReference => _md.GetString(
@@ -2110,180 +2154,18 @@ internal sealed class AssemblyScanner
                 _ => "",
             };
             declarationName = SimpleMethodName(declarationName);
-            var association = PropertyAccessorAssociation(bodyHandle)
-                ?? (implementation.MethodDeclaration.Kind == HandleKind.MethodDefinition
-                    ? PropertyAccessorAssociation((MethodDefinitionHandle)implementation.MethodDeclaration)
-                    : null);
-            var accessorKind = association?.Kind ?? 0;
-            if (accessorKind == 0)
-            {
-                var sourceFunctionName = KotlinSourceMethodName(bodyHandle) ?? declarationName;
-                if (sourceFunctionName.Length != 0 &&
-                    !declarationName.StartsWith("add_", StringComparison.Ordinal) &&
-                    !declarationName.StartsWith("remove_", StringComparison.Ordinal) &&
-                    !declarationName.StartsWith("op_", StringComparison.Ordinal))
-                    explicitFunctions.Add((sourceFunctionName, bodyHandle));
-                continue;
-            }
-            // A conventional C# explicit implementation associates its private body with a qualified Property name
-            // (`Namespace.IFoo.Value`). The ordinary Property-row path exposes the simple Kotlin-facing name; normalize
-            // the exact MethodSemantics association identically so the two projection paths deduplicate.
-            var propertyName = SimpleMethodName(association!.Value.Name);
-            if (propertyNames.Contains(propertyName)) continue;
-            var propertyHandle = PropertyAssociationHandle(bodyHandle);
-            var associationKey = propertyHandle.IsNil
-                ? propertyName
-                : "property:" + MetadataTokens.GetRowNumber(propertyHandle);
-            explicitAccessors.TryGetValue(associationKey, out var pair);
-            pair.Name = propertyName;
-            if (accessorKind == 1) pair.Getter = bodyHandle;
-            else pair.Setter = bodyHandle;
-            explicitAccessors[associationKey] = pair;
+            // The complete reference universe is required by worker mode. A direct public interface MethodImpl whose
+            // declaration cannot be resolved has no trustworthy Kotlin signature to surface; do not reconstruct it
+            // from the private body.
+            throw new InvalidDataException(
+                $"cannot resolve public interface declaration '{declarationName}' implemented by " +
+                $"'{MetadataTypeName(handle)}' from the dll2klib reference catalog");
         }
         var functionKeys = result.Function.Select(f => FunctionKey(f, names))
             .ToHashSet(StringComparer.Ordinal);
-        foreach (var (_, pair) in explicitAccessors)
-        {
-            var name = pair.Name;
-            var representativeHandle = !pair.Getter.IsNil ? pair.Getter : pair.Setter;
-            var representative = _md.GetMethodDefinition(representativeHandle);
-            var context = new GenericContext(handle, representativeHandle, typeParameterIds);
-            MethodSignature<KType>? getterSignature = pair.Getter.IsNil
-                ? null
-                : _md.GetMethodDefinition(pair.Getter).DecodeSignature(
-                    signatures, context with { Method = pair.Getter });
-            MethodSignature<KType>? setterSignature = pair.Setter.IsNil
-                ? null
-                : _md.GetMethodDefinition(pair.Setter).DecodeSignature(
-                    signatures, context with { Method = pair.Setter });
-            if (getterSignature?.ParameterTypes.Length > 0 ||
-                setterSignature?.ParameterTypes.Length > 1)
-            {
-                if (!pair.Getter.IsNil)
-                {
-                    var getter = _md.GetMethodDefinition(pair.Getter);
-                    var getterContext = context with { Method = pair.Getter };
-                    var function = new Function
-                    {
-                        Name = names.String("get"),
-                        Flags = Flags.Callable(MethodAttributes.Public, modality: 0, kotlinFlags: 2),
-                        ReturnType = ProjectReturn(
-                            pair.Getter,
-                            getter,
-                            getterSignature!.Value.ReturnType,
-                            names,
-                            signatures,
-                            getterContext),
-                        ValueParameter = {
-                            Parameters(
-                                pair.Getter,
-                                getter,
-                                getterSignature.Value.ParameterTypes,
-                                names,
-                                signatures,
-                                getterContext)
-                        },
-                    };
-                    if (functionKeys.Add(FunctionKey(function, names))) result.Function.Add(function);
-                }
-                if (!pair.Setter.IsNil)
-                {
-                    var setter = _md.GetMethodDefinition(pair.Setter);
-                    var setterContext = context with { Method = pair.Setter };
-                    var function = new Function
-                    {
-                        Name = names.String("set"),
-                        Flags = Flags.Callable(MethodAttributes.Public, modality: 0, kotlinFlags: 2),
-                        ReturnType = signatures.NamedType("kotlin.Unit"),
-                        ValueParameter = {
-                            Parameters(
-                                pair.Setter,
-                                setter,
-                                setterSignature!.Value.ParameterTypes,
-                                names,
-                                signatures,
-                                setterContext)
-                        },
-                    };
-                    if (functionKeys.Add(FunctionKey(function, names))) result.Function.Add(function);
-                }
-                continue;
-            }
-            KType type;
-            if (!pair.Getter.IsNil)
-            {
-                var getter = _md.GetMethodDefinition(pair.Getter);
-                var signature = getter.DecodeSignature(signatures, context with { Method = pair.Getter });
-                type = ProjectReturn(
-                    pair.Getter,
-                    getter,
-                    signature.ReturnType,
-                    names,
-                    signatures,
-                    context with { Method = pair.Getter });
-            }
-            else
-            {
-                var setter = _md.GetMethodDefinition(pair.Setter);
-                var signature = setter.DecodeSignature(signatures, context with { Method = pair.Setter });
-                type = ProjectType(
-                    PhysicalParameters(setter).Last().Handle,
-                    signature.ParameterTypes[^1],
-                    handle,
-                    names,
-                    signatures,
-                    context with { Method = pair.Setter });
-            }
-            result.Property.Add(new Property
-            {
-                Name = names.String(name),
-                ReturnType = type,
-                Flags = Flags.Property(MethodAttributes.Public, !pair.Setter.IsNil, isStatic: false),
-                SetterValueParameter = pair.Setter.IsNil
-                    ? null
-                    : new ValueParameter { Name = names.String("value"), Type = type.Clone() },
-            });
-            propertyNames.Add(name);
-        }
-
-        // A private CLR MethodImpl body satisfies the interface slot, but is
-        // intentionally absent from the ordinary public-method scan above.
-        // Surface a concrete Kotlin function under the interface declaration's
-        // name. Its physical binding remains in bir2cir, which can resolve the
-        // class call through the implemented interface slot.
-        foreach (var (name, bodyHandle) in explicitFunctions)
-        {
-            var body = _md.GetMethodDefinition(bodyHandle);
-            var context = new GenericContext(handle, bodyHandle, typeParameterIds);
-            var signature = body.DecodeSignature(signatures, context);
-            var function = new Function
-            {
-                Name = names.String(name),
-                Flags = Flags.Callable(MethodAttributes.Public, modality: 0),
-                ReturnType = ProjectReturn(
-                    bodyHandle,
-                    body,
-                    signature.ReturnType,
-                    names,
-                    signatures,
-                    context),
-                ValueParameter = {
-                    Parameters(
-                        bodyHandle,
-                        body,
-                        signature.ParameterTypes,
-                        names,
-                        signatures,
-                        context)
-                },
-            };
-            AddMethodTypeParameters(body, function, names, signatures, context);
-            if (functionKeys.Add(FunctionKey(function, names)))
-                result.Function.Add(function);
-        }
-
         var inheritedDefaults = InheritedHiddenInterfaceDefaults(def, names, signatures, typeContext).ToArray();
-        var inheritedAccessorGroups = inheritedDefaults
+        var surfacedImplementations = inheritedDefaults.Concat(explicitImplementations).ToArray();
+        var inheritedAccessorGroups = surfacedImplementations
             .Where(item => item.AccessorKind is 1 or 2)
             .GroupBy(item => item.AssociationKey!, StringComparer.Ordinal);
         foreach (var accessorGroup in inheritedAccessorGroups)
@@ -2366,14 +2248,31 @@ internal sealed class AssemblyScanner
             propertyNames.Add(propertyName);
         }
 
-        var inheritedEvents = inheritedDefaults
+        // A class can expose a public event and separately implement a same-named interface event explicitly. The
+        // public Event row is the class receiver's source-visible member; the explicit slot remains reachable through
+        // an interface cast. Do not manufacture a second same-named class property for that slot.
+        var declaredEvents = def.GetEvents()
+            .Select(eventHandle =>
+            {
+                var @event = _md.GetEventDefinition(eventHandle);
+                var accessors = @event.GetAccessors();
+                var accessorHandle = !accessors.Adder.IsNil ? accessors.Adder : accessors.Remover;
+                return (Event: @event, AccessorHandle: accessorHandle);
+            })
+            .Where(item => !item.AccessorHandle.IsNil &&
+                IsPublicOrProtected(_md.GetMethodDefinition(item.AccessorHandle).Attributes))
+            .ToArray();
+        var declaredEventNames = declaredEvents
+            .Select(item => _md.GetString(item.Event.Name))
+            .ToHashSet(StringComparer.Ordinal);
+        var inheritedEvents = surfacedImplementations
             .Where(item => item.AccessorKind is 3 or 4)
             .GroupBy(item => item.AssociationKey!, StringComparer.Ordinal);
         foreach (var eventGroup in inheritedEvents)
         {
             var inherited = eventGroup.First();
             var eventName = inherited.PropertyName!;
-            if (propertyNames.Contains(eventName)) continue;
+            if (propertyNames.Contains(eventName) || declaredEventNames.Contains(eventName)) continue;
             var reader = inherited.Reader;
             var declaration = reader.GetMethodDefinition(inherited.Declaration);
             var context = InheritedContext(reader, inherited.Declaration, declaration);
@@ -2402,7 +2301,7 @@ internal sealed class AssemblyScanner
             propertyNames.Add(eventName);
         }
 
-        foreach (var inherited in inheritedDefaults.Where(item => item.AccessorKind == 0))
+        foreach (var inherited in surfacedImplementations.Where(item => item.AccessorKind == 0))
         {
             var function = InheritedFunction(inherited, inherited.Name, kotlinFlags: 0, names: names);
             if (functionKeys.Add(FunctionKey(function, names)))
@@ -2465,14 +2364,9 @@ internal sealed class AssemblyScanner
             result.Property.Add(projected);
         }
 
-        foreach (var eventHandle in def.GetEvents())
+        foreach (var (ev, accessorHandle) in declaredEvents)
         {
-            var ev = _md.GetEventDefinition(eventHandle);
-            var accessors = ev.GetAccessors();
-            var accessorHandle = !accessors.Adder.IsNil ? accessors.Adder : accessors.Remover;
-            if (accessorHandle.IsNil) continue;
             var accessor = _md.GetMethodDefinition(accessorHandle);
-            if (!IsPublicOrProtected(accessor.Attributes)) continue;
             var handler = signatures.DecodeEntity(ev.Type, typeContext, platform: false);
             var eventType = signatures.NamedType("kotlin.clr.ClrEvent");
             eventType.Argument.Add(new KType.Types.Argument
@@ -2486,6 +2380,7 @@ internal sealed class AssemblyScanner
                 ReturnType = eventType,
                 Flags = Flags.Property(accessor.Attributes, canWrite: false, (accessor.Attributes & MethodAttributes.Static) != 0),
             });
+            propertyNames.Add(_md.GetString(ev.Name));
         }
         foreach (var pair in accessorPairs)
         {
@@ -2577,7 +2472,7 @@ internal sealed class AssemblyScanner
         {
             var reader = instance.Definition.Reader;
             var definition = reader.GetTypeDefinition(instance.Definition.Handle);
-            var instanceSignatures = Decoder(reader);
+            var instanceSignatures = DecoderFor(reader, names, signatures);
             var typeParameters = definition.GetGenericParameters()
                 .ToDictionary(h => h, h => reader.GetGenericParameter(h).Index);
             var hiddenContext = new GenericContext(instance.Definition.Handle, default, typeParameters);
@@ -2591,13 +2486,15 @@ internal sealed class AssemblyScanner
                 if (implementation.MethodBody.Kind != HandleKind.MethodDefinition)
                     continue;
                 var bodyHandle = (MethodDefinitionHandle)implementation.MethodBody;
-                if (!TryResolveDeclaration(
+                if (!TryResolvePublicInterfaceDeclaration(
                         reader,
                         implementation.MethodDeclaration,
                         instanceSignatures,
                         hiddenContext,
                         hiddenArguments,
                         instance.Surface.TypeArguments,
+                        names,
+                        signatures,
                         out var declarationReader,
                         out var declarationHandle,
                         out var declarationArguments,
@@ -2667,7 +2564,8 @@ internal sealed class AssemblyScanner
             {
                 var parentEntity = reader.GetInterfaceImplementation(parentHandle).Interface;
                 if (!_publicTypeCatalog.TryResolveDefinition(reader, parentEntity, out var parentDefinition)) continue;
-                var parentType = Decoder(reader).DecodeEntity(parentEntity, context, platform: false);
+                var parentType = DecoderFor(reader, names, signatures)
+                    .DecodeEntity(parentEntity, context, platform: false);
                 Visit(new LocalInterfaceInstance(
                     parentDefinition,
                     SubstituteTypeParameters(parentType, arguments),
@@ -2676,116 +2574,121 @@ internal sealed class AssemblyScanner
             }
         }
 
-        bool TryResolveDeclaration(
-            MetadataReader reader,
-            EntityHandle declarationEntity,
-            SignatureDecoder instanceSignatures,
-            GenericContext hiddenContext,
-            ImmutableArray<KType> hiddenArguments,
-            ImmutableArray<bool> hiddenArgumentSurface,
-            out MetadataReader declarationReader,
-            out MethodDefinitionHandle declarationHandle,
-            out ImmutableArray<KType> declarationArguments,
-            out SignatureDecoder declarationSignatures)
+    }
+
+    private bool TryResolvePublicInterfaceDeclaration(
+        MetadataReader reader,
+        EntityHandle declarationEntity,
+        SignatureDecoder sourceSignatures,
+        GenericContext sourceContext,
+        ImmutableArray<KType> sourceArguments,
+        ImmutableArray<bool> sourceArgumentSurface,
+        NameTable names,
+        SignatureDecoder currentSignatures,
+        out MetadataReader declarationReader,
+        out MethodDefinitionHandle declarationHandle,
+        out ImmutableArray<KType> declarationArguments,
+        out SignatureDecoder declarationSignatures)
+    {
+        declarationReader = null!;
+        declarationHandle = default;
+        declarationArguments = [];
+        declarationSignatures = null!;
+
+        EntityHandle owner;
+        string methodName;
+        MethodSignature<KType>? referenceSignature = null;
+        if (declarationEntity.Kind == HandleKind.MethodDefinition)
         {
-            declarationReader = null!;
-            declarationHandle = default;
-            declarationArguments = [];
-            declarationSignatures = null!;
+            var method = reader.GetMethodDefinition((MethodDefinitionHandle)declarationEntity);
+            owner = method.GetDeclaringType();
+            methodName = reader.GetString(method.Name);
+        }
+        else if (declarationEntity.Kind == HandleKind.MemberReference)
+        {
+            var member = reader.GetMemberReference((MemberReferenceHandle)declarationEntity);
+            if (member.GetKind() != MemberReferenceKind.Method) return false;
+            owner = member.Parent;
+            methodName = reader.GetString(member.Name);
+            referenceSignature = member.DecodeMethodSignature(sourceSignatures, sourceContext);
+        }
+        else
+        {
+            return false;
+        }
 
-            EntityHandle owner;
-            string methodName;
-            MethodSignature<KType>? referenceSignature = null;
-            if (declarationEntity.Kind == HandleKind.MethodDefinition)
-            {
-                var method = reader.GetMethodDefinition((MethodDefinitionHandle)declarationEntity);
-                owner = method.GetDeclaringType();
-                methodName = reader.GetString(method.Name);
-            }
-            else if (declarationEntity.Kind == HandleKind.MemberReference)
-            {
-                var member = reader.GetMemberReference((MemberReferenceHandle)declarationEntity);
-                if (member.GetKind() != MemberReferenceKind.Method) return false;
-                owner = member.Parent;
-                methodName = reader.GetString(member.Name);
-                referenceSignature = member.DecodeMethodSignature(instanceSignatures, hiddenContext);
-            }
-            else
-            {
-                return false;
-            }
+        if (owner.IsNil ||
+            owner.Kind is not (HandleKind.TypeDefinition or HandleKind.TypeReference or HandleKind.TypeSpecification) ||
+            !_publicTypeCatalog.TryResolveDefinition(reader, owner, out var resolvedOwner))
+            return false;
 
-            if (owner.IsNil ||
-                owner.Kind is not (HandleKind.TypeDefinition or HandleKind.TypeReference or HandleKind.TypeSpecification) ||
-                !_publicTypeCatalog.TryResolveDefinition(reader, owner, out var resolvedOwner))
-                return false;
+        var ownerSurface = _publicTypeCatalog.Surface(reader, owner, sourceArgumentSurface);
+        if (!ownerSurface.IsPublic || !ownerSurface.IsInterface) return false;
 
-            var ownerSurface = _publicTypeCatalog.Surface(reader, owner, hiddenArgumentSurface);
-            if (!ownerSurface.IsPublic || !ownerSurface.IsInterface) return false;
+        var ownerType = SubstituteTypeParameters(
+            sourceSignatures.DecodeEntity(owner, sourceContext, platform: false),
+            sourceArguments);
+        declarationArguments = ownerType.Argument
+            .Where(argument => argument.Type is not null)
+            .Select(argument => argument.Type!.Clone())
+            .ToImmutableArray();
+        var resolvedArguments = declarationArguments;
+        declarationReader = resolvedOwner.Reader;
+        declarationSignatures = DecoderFor(declarationReader, names, currentSignatures);
 
-            var ownerType = SubstituteTypeParameters(
-                instanceSignatures.DecodeEntity(owner, hiddenContext, platform: false),
-                hiddenArguments);
-            declarationArguments = ownerType.Argument
-                .Where(argument => argument.Type is not null)
-                .Select(argument => argument.Type!.Clone())
-                .ToImmutableArray();
-            var resolvedArguments = declarationArguments;
-            declarationReader = resolvedOwner.Reader;
-            declarationSignatures = Decoder(declarationReader);
-
-            if (declarationEntity.Kind == HandleKind.MethodDefinition &&
-                IsCurrentAssembly(reader) == IsCurrentAssembly(declarationReader) &&
-                reader.GetGuid(reader.GetModuleDefinition().Mvid) ==
-                    declarationReader.GetGuid(declarationReader.GetModuleDefinition().Mvid))
-            {
-                declarationHandle = (MethodDefinitionHandle)declarationEntity;
-                return true;
-            }
-
-            var candidates = new List<MethodDefinitionHandle>();
-            foreach (var candidateHandle in declarationReader.GetTypeDefinition(resolvedOwner.Handle).GetMethods())
-            {
-                var candidate = declarationReader.GetMethodDefinition(candidateHandle);
-                if (!StringComparer.Ordinal.Equals(declarationReader.GetString(candidate.Name), methodName))
-                    continue;
-                if (referenceSignature is not null &&
-                    candidate.GetGenericParameters().Count != referenceSignature.Value.GenericParameterCount)
-                    continue;
-                var candidateContext = InheritedContext(declarationReader, candidateHandle, candidate);
-                var candidateSignature = candidate.DecodeSignature(declarationSignatures, candidateContext);
-                if (referenceSignature is not null)
-                {
-                    // VAR positions in a MemberRef signature belong to its parent
-                    // interface, not to the hidden interface containing the MethodImpl.
-                    var expectedReturn = SubstituteTypeParameters(referenceSignature.Value.ReturnType, resolvedArguments);
-                    var expectedParameters = referenceSignature.Value.ParameterTypes
-                        .Select(type => SubstituteTypeParameters(type, resolvedArguments)).ToArray();
-                    var actualReturn = SubstituteTypeParameters(candidateSignature.ReturnType, resolvedArguments);
-                    var actualParameters = candidateSignature.ParameterTypes
-                        .Select(type => SubstituteTypeParameters(type, resolvedArguments)).ToArray();
-                    if (!actualReturn.Equals(expectedReturn) ||
-                        !actualParameters.SequenceEqual(expectedParameters))
-                        continue;
-                }
-                candidates.Add(candidateHandle);
-            }
-            if (candidates.Count != 1) return false;
-            declarationHandle = candidates[0];
+        if (declarationEntity.Kind == HandleKind.MethodDefinition &&
+            reader.GetGuid(reader.GetModuleDefinition().Mvid) ==
+                declarationReader.GetGuid(declarationReader.GetModuleDefinition().Mvid))
+        {
+            declarationHandle = (MethodDefinitionHandle)declarationEntity;
             return true;
         }
 
-        SignatureDecoder Decoder(MetadataReader reader) => IsCurrentAssembly(reader)
-            ? signatures
-            : new SignatureDecoder(
-                reader,
-                names,
-                new MetadataAttributes(reader),
-                ArityNames.Create(reader, Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES")),
-                _delegateCatalog,
-                _companionCatalog,
-                _innerCatalog);
+        var candidates = new List<MethodDefinitionHandle>();
+        foreach (var candidateHandle in declarationReader.GetTypeDefinition(resolvedOwner.Handle).GetMethods())
+        {
+            var candidate = declarationReader.GetMethodDefinition(candidateHandle);
+            if (!StringComparer.Ordinal.Equals(declarationReader.GetString(candidate.Name), methodName))
+                continue;
+            if (referenceSignature is not null &&
+                candidate.GetGenericParameters().Count != referenceSignature.Value.GenericParameterCount)
+                continue;
+            var candidateContext = InheritedContext(declarationReader, candidateHandle, candidate);
+            var candidateSignature = candidate.DecodeSignature(declarationSignatures, candidateContext);
+            if (referenceSignature is not null)
+            {
+                // VAR positions in a MemberRef signature belong to its parent
+                // interface, not to the type containing the MethodImpl.
+                var expectedReturn = SubstituteTypeParameters(referenceSignature.Value.ReturnType, resolvedArguments);
+                var expectedParameters = referenceSignature.Value.ParameterTypes
+                    .Select(type => SubstituteTypeParameters(type, resolvedArguments)).ToArray();
+                var actualReturn = SubstituteTypeParameters(candidateSignature.ReturnType, resolvedArguments);
+                var actualParameters = candidateSignature.ParameterTypes
+                    .Select(type => SubstituteTypeParameters(type, resolvedArguments)).ToArray();
+                if (!actualReturn.Equals(expectedReturn) ||
+                    !actualParameters.SequenceEqual(expectedParameters))
+                    continue;
+            }
+            candidates.Add(candidateHandle);
+        }
+        if (candidates.Count != 1) return false;
+        declarationHandle = candidates[0];
+        return true;
     }
+
+    private SignatureDecoder DecoderFor(
+        MetadataReader reader,
+        NameTable names,
+        SignatureDecoder currentSignatures) => IsCurrentAssembly(reader)
+        ? currentSignatures
+        : new SignatureDecoder(
+            reader,
+            names,
+            new MetadataAttributes(reader),
+            ArityNames.Create(reader, Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES")),
+            _delegateCatalog,
+            _companionCatalog,
+            _innerCatalog);
 
     private static GenericContext InheritedContext(
         MetadataReader reader,
@@ -2824,18 +2727,6 @@ internal sealed class AssemblyScanner
                 return (SimpleMethodName(reader.GetString(@event.Name)), 4, eventHandle);
         }
         return null;
-    }
-
-    private PropertyDefinitionHandle PropertyAssociationHandle(MethodDefinitionHandle methodHandle)
-    {
-        var owner = _md.GetMethodDefinition(methodHandle).GetDeclaringType();
-        foreach (var propertyHandle in _md.GetTypeDefinition(owner).GetProperties())
-        {
-            var accessors = _md.GetPropertyDefinition(propertyHandle).GetAccessors();
-            if (accessors.Getter == methodHandle || accessors.Setter == methodHandle)
-                return propertyHandle;
-        }
-        return default;
     }
 
     private KType ProjectInheritedReturn(

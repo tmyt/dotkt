@@ -111,6 +111,69 @@ public class DefaultEventCarrier : IHiddenDefaultEventProvider
 {
 }
 
+public interface IPublicExplicitEventSlot
+{
+    event System.Action<int>? Changed;
+}
+
+public class ExplicitEventCarrier : IPublicExplicitEventSlot
+{
+    private System.Action<int>? _changed;
+
+    event System.Action<int>? IPublicExplicitEventSlot.Changed
+    {
+        add => _changed += value;
+        remove => _changed -= value;
+    }
+
+    public void Raise(int value) => _changed?.Invoke(value);
+}
+
+public class ExternalExplicitEventCarrier : IExternalExplicitEventSlot
+{
+    private System.Action<int>? _changed;
+
+    event System.Action<int>? IExternalExplicitEventSlot.Changed
+    {
+        add => _changed += value;
+        remove => _changed -= value;
+    }
+
+    public void Raise(int value) => _changed?.Invoke(value);
+}
+
+public class PublicAndExplicitEventCarrier : IPublicExplicitEventSlot
+{
+    private System.Action<int>? _explicitChanged;
+
+    public event System.Action<int>? Changed;
+
+    event System.Action<int>? IPublicExplicitEventSlot.Changed
+    {
+        add => _explicitChanged += value;
+        remove => _explicitChanged -= value;
+    }
+
+    public void RaisePublic(int value) => Changed?.Invoke(value);
+    public void RaiseExplicit(int value) => _explicitChanged?.Invoke(value);
+}
+
+public interface IPublicExplicitShapeSlot
+{
+    string? Normalize(string? value = null);
+    string? Text { get; }
+    string? this[string? key] { get; }
+}
+
+public class ExplicitShapeCarrier : IPublicExplicitShapeSlot
+{
+#pragma warning disable CS8769, CS8767
+    string IPublicExplicitShapeSlot.Normalize(string value) => value;
+    string IPublicExplicitShapeSlot.Text => null!;
+    string IPublicExplicitShapeSlot.this[string key] => key;
+#pragma warning restore CS8769, CS8767
+}
+
 public class ProtectedInterfaceOwner
 {
     protected interface IState
@@ -133,6 +196,10 @@ internal interface IHiddenGenericDefaultProvider<T> : IPublicGenericDefaultSlot<
 }
 
 public class GenericDefaultCarrier : IHiddenGenericDefaultProvider<string>
+{
+}
+
+public class OpenGenericDefaultCarrier<T> : IHiddenGenericDefaultProvider<T>
 {
 }
 
