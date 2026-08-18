@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=451
 	["tests/coroutines"]=160
-	["tests/roundtrip/consumer"]=79
+	["tests/roundtrip/consumer"]=80
 	["tests/roundtrip/bidirectional/consumer"]=8
 	["tests/interop/consumer"]=148
 )
@@ -149,6 +149,16 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  GENERIC PROPERTY KLIB SHAPE FAIL — see build/nunit-$name.reified-property-surface.log"
 			tail -25 "$ROOT/build/nunit-$name.reified-property-surface.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-class-properties "$producer_klib" \
+			"roundtrip.memberextensionsurface.GenericMemberPropertyHost" \
+			"memberMatches,ordinaryMemberValue,ordinaryMemberCount" \
+			>"$ROOT/build/nunit-$name.member-extension-property-surface.log" 2>&1; then
+			echo "  generic member-extension accessors remain class properties after DLL-to-KLIB projection"
+		else
+			echo "  GENERIC MEMBER-EXTENSION PROPERTY KLIB SHAPE FAIL — see build/nunit-$name.member-extension-property-surface.log"
+			tail -25 "$ROOT/build/nunit-$name.member-extension-property-surface.log"; rc=1
 		fi
 		if bash "$ROOT/tests/roundtrip/run-companion-metadata-negative-tests.sh" \
 			>"$ROOT/build/nunit-$name.metadata-negative.log" 2>&1; then

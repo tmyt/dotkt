@@ -4,6 +4,22 @@ class ValueBox<T>(val value: T)
 class TextContext(val suffix: String)
 class NumberContext(val delta: Int)
 
+class GenericMemberPropertyCarrier<T>(var value: Any?)
+
+open class GenericMemberPropertyHost {
+    inline val <reified T> GenericMemberPropertyCarrier<T>.memberMatches: Boolean
+        get() = value is T
+
+    @Suppress("UNCHECKED_CAST")
+    var <T> GenericMemberPropertyCarrier<T>.ordinaryMemberValue: T?
+        get() = value as T?
+        set(value) { this.value = value }
+
+    var <T> GenericMemberPropertyCarrier<T>.ordinaryMemberCount: Int
+        get() = value as Int
+        set(value) { this.value = value }
+}
+
 var topLevelCustomGetter: Int = 10
     get() = field + 1
 
