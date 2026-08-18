@@ -1828,20 +1828,7 @@ internal sealed class AssemblyScanner
                 !IsSystemType(def.BaseType, "System", "ValueType") &&
                 !IsSystemType(def.BaseType, "System", "Attribute"))
                 result.Supertype.Add(signatures.DecodeEntity(def.BaseType, typeContext, platform: false));
-            var implementedInterfaces = def.GetInterfaceImplementations()
-                .Where(implHandle =>
-                {
-                    var entity = _md.GetInterfaceImplementation(implHandle).Interface;
-                    return (entity.Kind != HandleKind.TypeDefinition
-                            || !_existentialCarriers.Contains((TypeDefinitionHandle)entity))
-                        && _publicTypeCatalog.IsPublicInterface(_md, entity);
-                })
-                .Select(implHandle =>
-                {
-                    var impl = _md.GetInterfaceImplementation(implHandle);
-                    return signatures.DecodeEntity(impl.Interface, typeContext, platform: false);
-                })
-                .ToList();
+            var implementedInterfaces = ProjectedPublicInterfaces(def, names, signatures, typeContext).ToList();
             var genericInterfaceNames = implementedInterfaces
                 .Where(x => x.Argument.Count != 0 && x.HasClassName)
                 .Select(x => names.ClassName(x.ClassName)?.Split('.').Last())
@@ -2076,12 +2063,9 @@ internal sealed class AssemblyScanner
         // their declarations; the actual private body remains a bir2cir
         // binding concern.
         var explicitImplementations = new List<InheritedDefaultImplementation>();
-        var interfaceKeys = def.GetInterfaceImplementations()
-            .Select(h => _md.GetInterfaceImplementation(h).Interface)
-            .Where(h => h.Kind != HandleKind.TypeDefinition
-                || !_existentialCarriers.Contains((TypeDefinitionHandle)h))
-            .Where(h => _publicTypeCatalog.IsPublicInterface(_md, h))
-            .Select(h => TypeKey(signatures.DecodeEntity(h, typeContext, platform: false)))
+        var interfaceKeys = ProjectedPublicInterfaces(
+                def, names, signatures, typeContext, includePublicAncestors: true)
+            .Select(TypeKey)
             .ToHashSet(StringComparer.Ordinal);
         foreach (var implementationHandle in def.GetMethodImplementations())
         {
@@ -2094,6 +2078,7 @@ internal sealed class AssemblyScanner
                     typeContext))
                 continue;
             var bodyHandle = (MethodDefinitionHandle)implementation.MethodBody;
+            var body = _md.GetMethodDefinition(bodyHandle);
             // A trusted Kotlin accessor carrier says this MethodImpl body is a physical implementation of an
             // already-declared Kotlin property, not another declaration to surface. Public/protected accessor bodies
             // are projected through KotlinAccessorPairs; private compiler bridges forward to that same declaration.
@@ -2141,7 +2126,7 @@ internal sealed class AssemblyScanner
                     AssemblySimpleName(declarationReader) + ":" +
                         MetadataTokens.GetRowNumber(declarationHandle) + ":" +
                         string.Join(",", declarationArguments.Select(TypeKey)),
-                    IsAbstract: false,
+                    IsAbstract: (body.Attributes & MethodAttributes.Abstract) != 0,
                     Depth: 0));
                 continue;
             }
@@ -2236,15 +2221,29 @@ internal sealed class AssemblyScanner
                     setter.Declaration,
                     setter.Signatures);
             }
-            result.Property.Add(new Property
+            var propertyIsAbstract = pair.Getter?.IsAbstract == true || pair.Setter?.IsAbstract == true;
+            var projectedProperty = new Property
             {
                 Name = names.String(propertyName),
                 ReturnType = propertyType,
-                Flags = Flags.Property(MethodAttributes.Public, pair.Setter is not null, isStatic: false),
+                Flags = Flags.Property(
+                    MethodAttributes.Public | (propertyIsAbstract ? MethodAttributes.Abstract : 0),
+                    pair.Setter is not null,
+                    isStatic: false),
                 SetterValueParameter = pair.Setter is null
                     ? null
                     : new ValueParameter { Name = names.String("value"), Type = propertyType.Clone() },
-            });
+            };
+            if (propertyIsAbstract)
+            {
+                if (pair.Getter is { } inheritedGetter)
+                    projectedProperty.GetterFlags = Flags.Accessor(
+                        MethodAttributes.Public | (inheritedGetter.IsAbstract ? MethodAttributes.Abstract : 0));
+                if (pair.Setter is { } inheritedSetter)
+                    projectedProperty.SetterFlags = Flags.Accessor(
+                        MethodAttributes.Public | (inheritedSetter.IsAbstract ? MethodAttributes.Abstract : 0));
+            }
+            result.Property.Add(projectedProperty);
             propertyNames.Add(propertyName);
         }
 
@@ -2296,7 +2295,11 @@ internal sealed class AssemblyScanner
             {
                 Name = names.String(eventName),
                 ReturnType = eventType,
-                Flags = Flags.Property(MethodAttributes.Public, canWrite: false, isStatic: false),
+                Flags = Flags.Property(
+                    MethodAttributes.Public |
+                        (eventGroup.Any(item => item.IsAbstract) ? MethodAttributes.Abstract : 0),
+                    canWrite: false,
+                    isStatic: false),
             });
             propertyNames.Add(eventName);
         }
@@ -2437,6 +2440,83 @@ internal sealed class AssemblyScanner
             owner.Kind is not (HandleKind.TypeDefinition or HandleKind.TypeReference or HandleKind.TypeSpecification))
             return false;
         return interfaceKeys.Contains(TypeKey(signatures.DecodeEntity(owner, context, platform: false)));
+    }
+
+    // A metadata producer need not repeat the transitive InterfaceImpl closure on a class. If an inaccessible direct
+    // edge is omitted from Kotlin, walk through it and retain every reachable public interface with its constructed
+    // arguments substituted. Otherwise `C : hidden H`, `H : public I` loses the valid CLR `C <: I` relation merely
+    // because C# happens to emit a redundant C -> I row while another producer does not.
+    private IEnumerable<KType> ProjectedPublicInterfaces(
+        TypeDefinition definition,
+        NameTable names,
+        SignatureDecoder signatures,
+        GenericContext context,
+        bool includePublicAncestors = false)
+    {
+        var projected = new Dictionary<string, KType>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var implementationHandle in definition.GetInterfaceImplementations())
+        {
+            var entity = _md.GetInterfaceImplementation(implementationHandle).Interface;
+            if (IsCurrentExistentialCarrier(_md, entity)) continue;
+            Visit(
+                _md,
+                entity,
+                signatures.DecodeEntity(entity, context, platform: false),
+                _publicTypeCatalog.Surface(_md, entity));
+        }
+        return projected.Values;
+
+        void Visit(MetadataReader reader, EntityHandle entity, KType type, PublicTypeSurface surface)
+        {
+            if (!surface.IsInterface) return;
+            var typeKey = TypeKey(type);
+            if (surface.IsPublic)
+            {
+                projected.TryAdd(typeKey, type);
+                // Compiler-owned slot carriers are deliberately absent from Kotlin's supertype graph together with
+                // their physical inheritance. Ordinary public interfaces continue through the walk so metadata that
+                // omits redundant public ancestor rows still contributes the complete accessible CLR relation and
+                // MethodImpl declaration-key set.
+                if (signatures.IsCompilerOwnedSlotCarrier(type)) return;
+                // A public interface's own KLIB carries its public parent graph. Flattening that physical CLR closure
+                // onto every implementer can invent extra Kotlin obligations (for example the non-generic
+                // System.Collections.IEnumerable ancestor of Iterable<T>). Only MethodImpl declaration matching needs
+                // to inspect beyond the first public edge.
+                if (!includePublicAncestors) return;
+            }
+            if (!_publicTypeCatalog.TryResolveDefinition(reader, entity, out var resolved)) return;
+            var visitKey = AssemblySimpleName(resolved.Reader) + ":" +
+                MetadataTokens.GetRowNumber(resolved.Handle) + ":" + typeKey;
+            if (!visited.Add(visitKey)) return;
+
+            var inheritedDefinition = resolved.Reader.GetTypeDefinition(resolved.Handle);
+            var typeParameters = inheritedDefinition.GetGenericParameters()
+                .ToDictionary(handle => handle, handle => resolved.Reader.GetGenericParameter(handle).Index);
+            var inheritedContext = new GenericContext(resolved.Handle, default, typeParameters);
+            var arguments = type.Argument
+                .Where(argument => argument.Type is not null)
+                .Select(argument => argument.Type!.Clone())
+                .ToImmutableArray();
+            var inheritedSignatures = DecoderFor(resolved.Reader, names, signatures);
+            foreach (var parentHandle in inheritedDefinition.GetInterfaceImplementations())
+            {
+                var parent = resolved.Reader.GetInterfaceImplementation(parentHandle).Interface;
+                if (IsCurrentExistentialCarrier(resolved.Reader, parent)) continue;
+                var parentType = SubstituteTypeParameters(
+                    inheritedSignatures.DecodeEntity(parent, inheritedContext, platform: false),
+                    arguments);
+                Visit(
+                    resolved.Reader,
+                    parent,
+                    parentType,
+                    _publicTypeCatalog.Surface(resolved.Reader, parent, surface.TypeArguments));
+            }
+        }
+
+        bool IsCurrentExistentialCarrier(MetadataReader reader, EntityHandle entity) =>
+            IsCurrentAssembly(reader) && entity.Kind == HandleKind.TypeDefinition &&
+            _existentialCarriers.Contains((TypeDefinitionHandle)entity);
     }
 
     // A CLR class can inherit the implementation of a public interface slot from a
@@ -2810,7 +2890,10 @@ internal sealed class AssemblyScanner
         var function = new Function
         {
             Name = names.String(name),
-            Flags = Flags.Callable(MethodAttributes.Public, modality: 0, kotlinFlags),
+            Flags = Flags.Callable(
+                MethodAttributes.Public,
+                modality: inherited.IsAbstract ? 2 : 0,
+                kotlinFlags),
             ReturnType = ProjectInheritedReturn(
                 reader, declarationHandle, declaration, returnType, inherited.Signatures),
             ValueParameter = {

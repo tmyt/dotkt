@@ -55,6 +55,40 @@ internal interface IHiddenReabstractProvider : IHiddenDefaultProvider
     abstract void IPublicDefaultSlot.M();
 }
 
+public interface IPublicReabstractMethodBase
+{
+    int Required() => 89;
+}
+
+public interface IPublicReabstractMethod : IPublicReabstractMethodBase
+{
+    abstract int IPublicReabstractMethodBase.Required();
+}
+
+public interface IPublicReabstractPropertyBase
+{
+    int RequiredValue => 90;
+}
+
+public interface IPublicReabstractProperty : IPublicReabstractPropertyBase
+{
+    abstract int IPublicReabstractPropertyBase.RequiredValue { get; }
+}
+
+public interface IPublicReabstractEventBase
+{
+    event System.Action<int> RequiredChanged
+    {
+        add { }
+        remove { }
+    }
+}
+
+public interface IPublicReabstractEvent : IPublicReabstractEventBase
+{
+    abstract event System.Action<int> IPublicReabstractEventBase.RequiredChanged;
+}
+
 public interface IPublicNullabilityDefaultSlot
 {
     string? Normalize(string? value);

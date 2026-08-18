@@ -1,0 +1,11 @@
+package reabstractprobe
+
+import Probe.IPublicReabstractMethod
+import Probe.IPublicReabstractProperty
+import Probe.IPublicReabstractEvent
+
+class MissingReabstractMethod : IPublicReabstractMethod
+
+class MissingReabstractProperty : IPublicReabstractProperty
+
+class MissingReabstractEvent : IPublicReabstractEvent

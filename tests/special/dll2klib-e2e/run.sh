@@ -38,6 +38,8 @@ dotnet build "$ROOT/toolchain/dll2klib/dll2klib.csproj" -c Release -o "$OUT/tool
 dotnet build "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
 	-c Release -o "$OUT/tools/metadata-inspector" -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-e2e/reference/Probe.csproj" -c Release -v:q --nologo
+dotnet build "$ROOT/tests/special/dll2klib-e2e/transitive-reference/TransitiveReferenceGenerator.csproj" \
+	-c Release -o "$OUT/tools/transitive-reference" -v:q --nologo
 
 PROBE_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/ref/Probe.dll"
 PROBE_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.dll"
@@ -45,6 +47,15 @@ CONTRACTS_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/re
 CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.Contracts.dll"
 PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
+TRANSITIVE_REF="$OUT/TransitiveSlotProbe.dll"
+
+dotnet "$OUT/tools/transitive-reference/TransitiveReferenceGenerator.dll" "$TRANSITIVE_REF"
+printf '%s\n' "$TRANSITIVE_REF" > "$OUT/transitive-references.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/transitive-references.rsp"
+"$KOTC" "$ROOT/tests/special/dll2klib-e2e/transitive-interface-consumer.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$OUT/transitive-klib/TransitiveSlotProbe.klib" \
+	-d "$OUT/transitive-bir"
 
 # The two-path form is an internal worker protocol. Without the batch parent's complete resolved catalog it cannot
 # identify external delegate or Kotlin companion TypeRefs and must fail rather than silently project their physical
@@ -196,6 +207,18 @@ fi
 grep -q "unresolved reference.*Companion" "$no_companion_log" \
 	|| die "Widget.Companion was rejected for an unexpected reason"
 
+reabstract_log="$OUT/reabstract-interface.log"
+if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/reabstract-interface-consumer.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" \
+	-d "$OUT/reabstract-interface-bir" >"$reabstract_log" 2>&1; then
+	die "reabstracted interface slots unexpectedly appeared concrete"
+fi
+for member in MissingReabstractMethod MissingReabstractProperty MissingReabstractEvent; do
+	grep -q "class '$member'.*does not implement abstract member" "$reabstract_log" \
+		|| die "$member was rejected for an unexpected reason"
+done
+
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
 mkdir -p "$OUT/default-bir" "$OUT/default-cir" "$OUT/default-il"
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/default-interface-consumer.kt" \
@@ -211,8 +234,8 @@ dotnet "$ILEMIT_DLL" "$OUT/default-il" DefaultInterfaceConsumer \
 write_runtimeconfig "$OUT/default-il" DefaultInterfaceConsumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/default-il/"
 default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
-[[ "$default_actual" == "224" ]] \
-	|| die "hidden default-interface program returned '$default_actual', expected '224'"
+[[ "$default_actual" == "236" ]] \
+	|| die "hidden/default/reabstracted interface program returned '$default_actual', expected '236'"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
