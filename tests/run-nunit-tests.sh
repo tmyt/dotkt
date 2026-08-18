@@ -141,6 +141,15 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  COMPANION METADATA FAIL — see build/nunit-$name.metadata.log"
 			tail -25 "$ROOT/build/nunit-$name.metadata.log"; rc=1
 		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-package-properties "$producer_klib" "roundtrip.reifiednullability" \
+			"contextPropertyMatches,ordinaryPropertyValue,propertyMatches,reifiedPropertyValue,secondPropertyMatches" \
+			>"$ROOT/build/nunit-$name.reified-property-surface.log" 2>&1; then
+			echo "  generic accessors remain package properties after DLL-to-KLIB projection"
+		else
+			echo "  GENERIC PROPERTY KLIB SHAPE FAIL — see build/nunit-$name.reified-property-surface.log"
+			tail -25 "$ROOT/build/nunit-$name.reified-property-surface.log"; rc=1
+		fi
 		if bash "$ROOT/tests/roundtrip/run-companion-metadata-negative-tests.sh" \
 			>"$ROOT/build/nunit-$name.metadata-negative.log" 2>&1; then
 			echo "  malformed companion carriers rejected by dll2klib + bir2cir OK"
