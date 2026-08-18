@@ -125,7 +125,17 @@ dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-supertypes "$PROBE_KLIB" Probe.ExternalDefaultCarrier Probe.Contracts.IExternalDefaultSlot
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
-	--klib-class-function-nullability "$PROBE_KLIB" Probe.NullabilityDefaultCarrier Normalize true false
+	--klib-class-function-nullability "$PROBE_KLIB" Probe.NullabilityDefaultCarrier Normalize true true
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.DefaultEventCarrier Changed
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.DefaultEventCarrier ""
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.DefaultIndexerCarrier get,get
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.ExplicitIndexerCarrier get,get
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.ProtectedInterfaceOwner.Impl Probe.ProtectedInterfaceOwner.IState
 
 # The manifest uses an ordinary unique_name, while KlibMetadataProtoBuf.Header.module_name is a Kotlin Name and must
 # therefore use the special `<...>` spelling. A plain header name happens to deserialize as protobuf but is rejected
@@ -187,8 +197,8 @@ dotnet "$ILEMIT_DLL" "$OUT/default-il" DefaultInterfaceConsumer \
 write_runtimeconfig "$OUT/default-il" DefaultInterfaceConsumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/default-il/"
 default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
-[[ "$default_actual" == "111" ]] \
-	|| die "hidden default-interface program returned '$default_actual', expected '111'"
+[[ "$default_actual" == "133" ]] \
+	|| die "hidden default-interface program returned '$default_actual', expected '133'"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \

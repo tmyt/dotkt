@@ -57,18 +57,69 @@ internal interface IHiddenReabstractProvider : IHiddenDefaultProvider
 
 public interface IPublicNullabilityDefaultSlot
 {
-    string? Normalize(string value);
+    string? Normalize(string? value);
 }
 
 internal interface IHiddenNullabilityDefaultProvider : IPublicNullabilityDefaultSlot
 {
-#pragma warning disable CS8769
-    string IPublicNullabilityDefaultSlot.Normalize(string? value) => value ?? "";
-#pragma warning restore CS8769
+#pragma warning disable CS8769, CS8767
+    string IPublicNullabilityDefaultSlot.Normalize(string value) => value;
+#pragma warning restore CS8769, CS8767
 }
 
 public class NullabilityDefaultCarrier : IHiddenNullabilityDefaultProvider
 {
+}
+
+public interface IPublicDefaultIndexerSlot
+{
+    int this[int index] { get; }
+    int this[string key] { get; }
+}
+
+internal interface IHiddenDefaultIndexerProvider : IPublicDefaultIndexerSlot
+{
+    int IPublicDefaultIndexerSlot.this[int index] => index + 2;
+    int IPublicDefaultIndexerSlot.this[string key] => key.Length + 5;
+}
+
+public class DefaultIndexerCarrier : IHiddenDefaultIndexerProvider
+{
+}
+
+public class ExplicitIndexerCarrier : IPublicDefaultIndexerSlot
+{
+    int IPublicDefaultIndexerSlot.this[int index] => index + 1;
+    int IPublicDefaultIndexerSlot.this[string key] => key.Length + 4;
+}
+
+public interface IPublicDefaultEventSlot
+{
+    event System.Action Changed;
+}
+
+internal interface IHiddenDefaultEventProvider : IPublicDefaultEventSlot
+{
+    event System.Action IPublicDefaultEventSlot.Changed
+    {
+        add { }
+        remove { }
+    }
+}
+
+public class DefaultEventCarrier : IHiddenDefaultEventProvider
+{
+}
+
+public class ProtectedInterfaceOwner
+{
+    protected interface IState
+    {
+    }
+
+    public class Impl : IState
+    {
+    }
 }
 
 public interface IPublicGenericDefaultSlot<T>

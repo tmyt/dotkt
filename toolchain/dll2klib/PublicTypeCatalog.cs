@@ -327,7 +327,9 @@ internal sealed class PublicTypeCatalog : IDisposable
         var parent = definition.GetDeclaringType();
         return parent.IsNil
             ? visibility == TypeAttributes.Public
-            : visibility == TypeAttributes.NestedPublic && IsPublic(md, parent);
+            : visibility is TypeAttributes.NestedPublic or
+                TypeAttributes.NestedFamily or
+                TypeAttributes.NestedFamORAssem && IsPublic(md, parent);
     }
 
     private static string DefinitionName(MetadataReader md, TypeDefinitionHandle handle)

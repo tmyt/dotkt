@@ -1375,6 +1375,7 @@ internal sealed class AssemblyScanner
         SignatureDecoder Signatures,
         string? PropertyName,
         int AccessorKind,
+        string? AssociationKey,
         string SlotKey,
         bool IsAbstract,
         int Depth);
@@ -2071,8 +2072,10 @@ internal sealed class AssemblyScanner
         // abstract obligation. Reconstruct accessor pairs generically from
         // their declarations; the actual private body remains a bir2cir
         // binding concern.
-        var explicitAccessors = new Dictionary<string, (MethodDefinitionHandle Getter, MethodDefinitionHandle Setter)>(
-            StringComparer.Ordinal);
+        var explicitAccessors = new Dictionary<string, (
+            string Name,
+            MethodDefinitionHandle Getter,
+            MethodDefinitionHandle Setter)>(StringComparer.Ordinal);
         var explicitFunctions = new List<(string Name, MethodDefinitionHandle Body)>();
         var interfaceKeys = def.GetInterfaceImplementations()
             .Select(h => _md.GetInterfaceImplementation(h).Interface)
@@ -2127,16 +2130,85 @@ internal sealed class AssemblyScanner
             // the exact MethodSemantics association identically so the two projection paths deduplicate.
             var propertyName = SimpleMethodName(association!.Value.Name);
             if (propertyNames.Contains(propertyName)) continue;
-            explicitAccessors.TryGetValue(propertyName, out var pair);
+            var propertyHandle = PropertyAssociationHandle(bodyHandle);
+            var associationKey = propertyHandle.IsNil
+                ? propertyName
+                : "property:" + MetadataTokens.GetRowNumber(propertyHandle);
+            explicitAccessors.TryGetValue(associationKey, out var pair);
+            pair.Name = propertyName;
             if (accessorKind == 1) pair.Getter = bodyHandle;
             else pair.Setter = bodyHandle;
-            explicitAccessors[propertyName] = pair;
+            explicitAccessors[associationKey] = pair;
         }
-        foreach (var (name, pair) in explicitAccessors)
+        var functionKeys = result.Function.Select(f => FunctionKey(f, names))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var (_, pair) in explicitAccessors)
         {
+            var name = pair.Name;
             var representativeHandle = !pair.Getter.IsNil ? pair.Getter : pair.Setter;
             var representative = _md.GetMethodDefinition(representativeHandle);
             var context = new GenericContext(handle, representativeHandle, typeParameterIds);
+            MethodSignature<KType>? getterSignature = pair.Getter.IsNil
+                ? null
+                : _md.GetMethodDefinition(pair.Getter).DecodeSignature(
+                    signatures, context with { Method = pair.Getter });
+            MethodSignature<KType>? setterSignature = pair.Setter.IsNil
+                ? null
+                : _md.GetMethodDefinition(pair.Setter).DecodeSignature(
+                    signatures, context with { Method = pair.Setter });
+            if (getterSignature?.ParameterTypes.Length > 0 ||
+                setterSignature?.ParameterTypes.Length > 1)
+            {
+                if (!pair.Getter.IsNil)
+                {
+                    var getter = _md.GetMethodDefinition(pair.Getter);
+                    var getterContext = context with { Method = pair.Getter };
+                    var function = new Function
+                    {
+                        Name = names.String("get"),
+                        Flags = Flags.Callable(MethodAttributes.Public, modality: 0, kotlinFlags: 2),
+                        ReturnType = ProjectReturn(
+                            pair.Getter,
+                            getter,
+                            getterSignature!.Value.ReturnType,
+                            names,
+                            signatures,
+                            getterContext),
+                        ValueParameter = {
+                            Parameters(
+                                pair.Getter,
+                                getter,
+                                getterSignature.Value.ParameterTypes,
+                                names,
+                                signatures,
+                                getterContext)
+                        },
+                    };
+                    if (functionKeys.Add(FunctionKey(function, names))) result.Function.Add(function);
+                }
+                if (!pair.Setter.IsNil)
+                {
+                    var setter = _md.GetMethodDefinition(pair.Setter);
+                    var setterContext = context with { Method = pair.Setter };
+                    var function = new Function
+                    {
+                        Name = names.String("set"),
+                        Flags = Flags.Callable(MethodAttributes.Public, modality: 0, kotlinFlags: 2),
+                        ReturnType = signatures.NamedType("kotlin.Unit"),
+                        ValueParameter = {
+                            Parameters(
+                                pair.Setter,
+                                setter,
+                                setterSignature!.Value.ParameterTypes,
+                                names,
+                                signatures,
+                                setterContext)
+                        },
+                    };
+                    if (functionKeys.Add(FunctionKey(function, names))) result.Function.Add(function);
+                }
+                continue;
+            }
             KType type;
             if (!pair.Getter.IsNil)
             {
@@ -2179,8 +2251,6 @@ internal sealed class AssemblyScanner
         // Surface a concrete Kotlin function under the interface declaration's
         // name. Its physical binding remains in bir2cir, which can resolve the
         // class call through the implemented interface slot.
-        var functionKeys = result.Function.Select(f => FunctionKey(f, names))
-            .ToHashSet(StringComparer.Ordinal);
         foreach (var (name, bodyHandle) in explicitFunctions)
         {
             var body = _md.GetMethodDefinition(bodyHandle);
@@ -2213,20 +2283,50 @@ internal sealed class AssemblyScanner
         }
 
         var inheritedDefaults = InheritedHiddenInterfaceDefaults(def, names, signatures, typeContext).ToArray();
-        var inheritedAccessors = new Dictionary<string, (
-            InheritedDefaultImplementation? Getter,
-            InheritedDefaultImplementation? Setter)>(StringComparer.Ordinal);
-        foreach (var inherited in inheritedDefaults.Where(item => item.AccessorKind != 0))
+        var inheritedAccessorGroups = inheritedDefaults
+            .Where(item => item.AccessorKind is 1 or 2)
+            .GroupBy(item => item.AssociationKey!, StringComparer.Ordinal);
+        foreach (var accessorGroup in inheritedAccessorGroups)
         {
-            var propertyName = inherited.PropertyName!;
-            inheritedAccessors.TryGetValue(propertyName, out var pair);
-            if (inherited.AccessorKind == 1) pair.Getter = inherited;
-            else pair.Setter = inherited;
-            inheritedAccessors[propertyName] = pair;
-        }
-        foreach (var (propertyName, pair) in inheritedAccessors)
-        {
+            var propertyName = accessorGroup.First().PropertyName!;
+            var pair = (
+                Getter: accessorGroup.FirstOrDefault(item => item.AccessorKind == 1),
+                Setter: accessorGroup.FirstOrDefault(item => item.AccessorKind == 2));
             if (propertyNames.Contains(propertyName)) continue;
+            var getterParameterCount = pair.Getter is null
+                ? 0
+                : pair.Getter.Reader.GetMethodDefinition(pair.Getter.Declaration)
+                    .DecodeSignature(
+                        pair.Getter.Signatures,
+                        InheritedContext(
+                            pair.Getter.Reader,
+                            pair.Getter.Declaration,
+                            pair.Getter.Reader.GetMethodDefinition(pair.Getter.Declaration)))
+                    .ParameterTypes.Length;
+            var setterParameterCount = pair.Setter is null
+                ? 0
+                : pair.Setter.Reader.GetMethodDefinition(pair.Setter.Declaration)
+                    .DecodeSignature(
+                        pair.Setter.Signatures,
+                        InheritedContext(
+                            pair.Setter.Reader,
+                            pair.Setter.Declaration,
+                            pair.Setter.Reader.GetMethodDefinition(pair.Setter.Declaration)))
+                    .ParameterTypes.Length;
+            if (getterParameterCount > 0 || setterParameterCount > 1)
+            {
+                if (pair.Getter is { } indexerGetter)
+                {
+                    var function = InheritedFunction(indexerGetter, "get", kotlinFlags: 2, names: names);
+                    if (functionKeys.Add(FunctionKey(function, names))) result.Function.Add(function);
+                }
+                if (pair.Setter is { } indexerSetter)
+                {
+                    var function = InheritedFunction(indexerSetter, "set", kotlinFlags: 2, names: names);
+                    if (functionKeys.Add(FunctionKey(function, names))) result.Function.Add(function);
+                }
+                continue;
+            }
             KType propertyType;
             if (pair.Getter is { } getter)
             {
@@ -2266,40 +2366,45 @@ internal sealed class AssemblyScanner
             propertyNames.Add(propertyName);
         }
 
+        var inheritedEvents = inheritedDefaults
+            .Where(item => item.AccessorKind is 3 or 4)
+            .GroupBy(item => item.AssociationKey!, StringComparer.Ordinal);
+        foreach (var eventGroup in inheritedEvents)
+        {
+            var inherited = eventGroup.First();
+            var eventName = inherited.PropertyName!;
+            if (propertyNames.Contains(eventName)) continue;
+            var reader = inherited.Reader;
+            var declaration = reader.GetMethodDefinition(inherited.Declaration);
+            var context = InheritedContext(reader, inherited.Declaration, declaration);
+            var signature = declaration.DecodeSignature(inherited.Signatures, context);
+            if (signature.ParameterTypes.Length != 1) continue;
+            var parameterHandle = declaration.GetParameters().FirstOrDefault(handle =>
+                reader.GetParameter(handle).SequenceNumber == 1);
+            var handler = ProjectInheritedType(
+                reader,
+                parameterHandle,
+                SubstituteTypeParameters(signature.ParameterTypes[0], inherited.InterfaceArguments),
+                inherited.Declaration,
+                inherited.Signatures);
+            var eventType = inherited.Signatures.NamedType("kotlin.clr.ClrEvent");
+            eventType.Argument.Add(new KType.Types.Argument
+            {
+                Projection = KType.Types.Argument.Types.Projection.Inv,
+                Type = handler,
+            });
+            result.Property.Add(new Property
+            {
+                Name = names.String(eventName),
+                ReturnType = eventType,
+                Flags = Flags.Property(MethodAttributes.Public, canWrite: false, isStatic: false),
+            });
+            propertyNames.Add(eventName);
+        }
+
         foreach (var inherited in inheritedDefaults.Where(item => item.AccessorKind == 0))
         {
-            var reader = inherited.Reader;
-            var declarationHandle = inherited.Declaration;
-            var declaration = reader.GetMethodDefinition(declarationHandle);
-            var context = InheritedContext(reader, declarationHandle, declaration);
-            var signature = declaration.DecodeSignature(inherited.Signatures, context);
-            var returnType = SubstituteTypeParameters(signature.ReturnType, inherited.InterfaceArguments);
-            var parameterTypes = signature.ParameterTypes
-                .Select(type => SubstituteTypeParameters(type, inherited.InterfaceArguments))
-                .ToImmutableArray();
-            var function = new Function
-            {
-                Name = names.String(inherited.Name),
-                Flags = Flags.Callable(MethodAttributes.Public, modality: 0),
-                ReturnType = ProjectInheritedReturn(
-                    reader, declarationHandle, declaration, returnType, inherited.Signatures),
-                ValueParameter = {
-                    InheritedParameters(
-                        reader,
-                        declaration,
-                        parameterTypes,
-                        names,
-                        inherited.Signatures)
-                },
-            };
-            AddInheritedMethodTypeParameters(
-                reader,
-                declaration,
-                function,
-                names,
-                inherited.Signatures,
-                context,
-                inherited.InterfaceArguments);
+            var function = InheritedFunction(inherited, inherited.Name, kotlinFlags: 0, names: names);
             if (functionKeys.Add(FunctionKey(function, names)))
                 result.Function.Add(function);
         }
@@ -2499,7 +2604,16 @@ internal sealed class AssemblyScanner
                         out var declarationSignatures))
                     continue;
                 var declaration = declarationReader.GetMethodDefinition(declarationHandle);
-                var propertyAccessor = InheritedPropertyAccessor(declarationReader, declarationHandle);
+                var body = reader.GetMethodDefinition(bodyHandle);
+                if ((body.Attributes & MethodAttributes.Static) != 0 ||
+                    (declaration.Attributes & MethodAttributes.Static) != 0)
+                    continue;
+                var accessor = InheritedAccessor(declarationReader, declarationHandle);
+                // Operators and other CLR special-name members are not ordinary
+                // inheritable Kotlin functions. Properties and events are handled
+                // from their authoritative MethodSemantics association below.
+                if (accessor is null && (declaration.Attributes & MethodAttributes.SpecialName) != 0)
+                    continue;
                 var slotKey = AssemblySimpleName(declarationReader) + ":" +
                     MetadataTokens.GetRowNumber(declarationHandle) + ":" +
                     string.Join(",", declarationArguments.Select(TypeKey));
@@ -2509,10 +2623,15 @@ internal sealed class AssemblyScanner
                     SimpleMethodName(declarationReader.GetString(declaration.Name)),
                     declarationArguments,
                     declarationSignatures,
-                    propertyAccessor?.Name,
-                    propertyAccessor?.Kind ?? 0,
+                    accessor?.Name,
+                    accessor?.Kind ?? 0,
+                    accessor is null
+                        ? null
+                        : AssemblySimpleName(declarationReader) + ":" +
+                            accessor.Value.Association.Kind + ":" +
+                            MetadataTokens.GetRowNumber(accessor.Value.Association),
                     slotKey,
-                    (reader.GetMethodDefinition(bodyHandle).Attributes & MethodAttributes.Abstract) != 0,
+                    (body.Attributes & MethodAttributes.Abstract) != 0,
                     instance.Depth));
             }
         }
@@ -2681,7 +2800,7 @@ internal sealed class AssemblyScanner
                 .ToDictionary(handle => handle, handle => reader.GetGenericParameter(handle).Index));
     }
 
-    private static (string Name, int Kind)? InheritedPropertyAccessor(
+    private static (string Name, int Kind, EntityHandle Association)? InheritedAccessor(
         MetadataReader reader,
         MethodDefinitionHandle methodHandle)
     {
@@ -2691,11 +2810,32 @@ internal sealed class AssemblyScanner
             var property = reader.GetPropertyDefinition(propertyHandle);
             var accessors = property.GetAccessors();
             if (accessors.Getter == methodHandle)
-                return (SimpleMethodName(reader.GetString(property.Name)), 1);
+                return (SimpleMethodName(reader.GetString(property.Name)), 1, propertyHandle);
             if (accessors.Setter == methodHandle)
-                return (SimpleMethodName(reader.GetString(property.Name)), 2);
+                return (SimpleMethodName(reader.GetString(property.Name)), 2, propertyHandle);
+        }
+        foreach (var eventHandle in reader.GetTypeDefinition(owner).GetEvents())
+        {
+            var @event = reader.GetEventDefinition(eventHandle);
+            var accessors = @event.GetAccessors();
+            if (accessors.Adder == methodHandle)
+                return (SimpleMethodName(reader.GetString(@event.Name)), 3, eventHandle);
+            if (accessors.Remover == methodHandle)
+                return (SimpleMethodName(reader.GetString(@event.Name)), 4, eventHandle);
         }
         return null;
+    }
+
+    private PropertyDefinitionHandle PropertyAssociationHandle(MethodDefinitionHandle methodHandle)
+    {
+        var owner = _md.GetMethodDefinition(methodHandle).GetDeclaringType();
+        foreach (var propertyHandle in _md.GetTypeDefinition(owner).GetProperties())
+        {
+            var accessors = _md.GetPropertyDefinition(propertyHandle).GetAccessors();
+            if (accessors.Getter == methodHandle || accessors.Setter == methodHandle)
+                return propertyHandle;
+        }
+        return default;
     }
 
     private KType ProjectInheritedReturn(
@@ -2719,6 +2859,7 @@ internal sealed class AssemblyScanner
 
     private IEnumerable<ValueParameter> InheritedParameters(
         MetadataReader reader,
+        MethodDefinitionHandle methodHandle,
         MethodDefinition method,
         ImmutableArray<KType> types,
         NameTable names,
@@ -2736,14 +2877,14 @@ internal sealed class AssemblyScanner
                 {
                     Name = names.String($"arg{i}"),
                     Type = ProjectInheritedType(
-                        reader, default, types[i], method.GetDeclaringType(), signatures),
+                        reader, default, types[i], methodHandle, signatures),
                 };
                 continue;
             }
             var attrs = new MetadataAttributes(reader);
             var name = entry.Row.Name.IsNil ? $"arg{i}" : reader.GetString(entry.Row.Name);
             var type = ProjectInheritedType(
-                reader, entry.Handle, types[i], method.GetDeclaringType(), signatures);
+                reader, entry.Handle, types[i], methodHandle, signatures);
             var value = new ValueParameter
             {
                 Name = names.String(string.IsNullOrEmpty(name) ? $"arg{i}" : name),
@@ -2758,6 +2899,48 @@ internal sealed class AssemblyScanner
                 value.VarargElementType = element;
             yield return value;
         }
+    }
+
+    private Function InheritedFunction(
+        InheritedDefaultImplementation inherited,
+        string name,
+        int kotlinFlags,
+        NameTable names)
+    {
+        var reader = inherited.Reader;
+        var declarationHandle = inherited.Declaration;
+        var declaration = reader.GetMethodDefinition(declarationHandle);
+        var context = InheritedContext(reader, declarationHandle, declaration);
+        var signature = declaration.DecodeSignature(inherited.Signatures, context);
+        var returnType = SubstituteTypeParameters(signature.ReturnType, inherited.InterfaceArguments);
+        var parameterTypes = signature.ParameterTypes
+            .Select(type => SubstituteTypeParameters(type, inherited.InterfaceArguments))
+            .ToImmutableArray();
+        var function = new Function
+        {
+            Name = names.String(name),
+            Flags = Flags.Callable(MethodAttributes.Public, modality: 0, kotlinFlags),
+            ReturnType = ProjectInheritedReturn(
+                reader, declarationHandle, declaration, returnType, inherited.Signatures),
+            ValueParameter = {
+                InheritedParameters(
+                    reader,
+                    declarationHandle,
+                    declaration,
+                    parameterTypes,
+                    names,
+                    inherited.Signatures)
+            },
+        };
+        AddInheritedMethodTypeParameters(
+            reader,
+            declaration,
+            function,
+            names,
+            inherited.Signatures,
+            context,
+            inherited.InterfaceArguments);
+        return function;
     }
 
     private KType ProjectInheritedType(
