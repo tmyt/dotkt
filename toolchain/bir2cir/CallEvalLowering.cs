@@ -384,12 +384,15 @@ static class CallEvalLowering
             ["stable"] = ValueStability.IsReReadable(value),
         };
         var valueType = StaticTypeOf(value);
-        // A companion singleton read carries its produced type in ownerType: unlike an ordinary field expression it
-        // has no separate declaration-type stamp. PreserveUnreadValueBefore is precisely what can make that read a
-        // local, so recover the carrier type here instead of emitting an untyped discard local.
+        // A field's declaring type is not its value type. In particular, companion singleton loads are self-typed
+        // only because their producer defines them that way; require that producer to state the fact on the node
+        // instead of reconstructing it here from ownerType. Other historically untyped values retain their existing
+        // handling — this check is the field-specific ownership boundary exercised by the companion spill path.
         if (valueType == null && value is JsonObject { } valueObject
             && Str(valueObject["k"]) == "staticField")
-            valueType = TypeJson.Read(valueObject["ownerType"]);
+            throw new InvalidOperationException(
+                $"bir2cir: cannot type the static-field value whose evaluation must be preserved before {context}; "
+                + "its producer must carry the field's exact node-local result type.");
         if (valueType is TypeNode type)
             binding["type"] = TypeJson.Write(type);
         var (stmts, repl) = Materialise(

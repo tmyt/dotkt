@@ -218,10 +218,7 @@ static class CompanionRepresentationLowering
                     Str(obj["name"]) is string accessorName &&
                     refs.TryCompanionAccessor(accessorOwner, accessorName, out var accessorCarrier))
                 {
-                    obj.Clear();
-                    obj["k"] = "staticField";
-                    obj["ownerType"] = PhysicalType(new UseRepresentation(null, accessorCarrier));
-                    obj["name"] = "$INSTANCE";
+                    ReplaceWithSingletonLoad(obj, PhysicalType(new UseRepresentation(null, accessorCarrier)));
                     return;
                 }
                 // Physical carrier tokens restored by dll2klib use CIR's source-style spelling. Once the trusted
@@ -252,17 +249,11 @@ static class CompanionRepresentationLowering
                     obj["ownerType"] = PhysicalType(directRepresentation);
                     if (Str(obj["k"]) == "newBoundDelegate")
                         obj["calleeOwner"] = PhysicalType(directRepresentation);
-                    directReceiver.Clear();
-                    directReceiver["k"] = "staticField";
-                    directReceiver["ownerType"] = PhysicalType(directRepresentation);
-                    directReceiver["name"] = "$INSTANCE";
+                    ReplaceWithSingletonLoad(directReceiver, PhysicalType(directRepresentation));
                 }
                 if (ResolveUse(obj, [], refs, bindExternal: true) is { } representation)
                 {
-                    obj.Clear();
-                    obj["k"] = "staticField";
-                    obj["ownerType"] = PhysicalType(representation);
-                    obj["name"] = "$INSTANCE";
+                    ReplaceWithSingletonLoad(obj, PhysicalType(representation));
                     return;
                 }
                 foreach (var child in obj.ToArray())
@@ -357,11 +348,7 @@ static class CompanionRepresentationLowering
             ["readOnly"] = true,
             ["initOnly"] = true,
             ["vis"] = a.Visibility,
-            ["init"] = new JsonObject {
-                ["k"] = "staticField",
-                ["ownerType"] = PhysicalType(a),
-                ["name"] = "$INSTANCE",
-            },
+            ["init"] = SingletonLoad(PhysicalType(a)),
         });
         a.Owner["fields"] = ownerFields;
     }
@@ -426,10 +413,7 @@ static class CompanionRepresentationLowering
                 else if (kind == "companionValue" &&
                     Str((obj["companionType"] as JsonObject)?["name"]) == association.SemanticName)
                 {
-                    obj.Clear();
-                    obj["k"] = "staticField";
-                    obj["ownerType"] = physicalType;
-                    obj["name"] = "$INSTANCE";
+                    ReplaceWithSingletonLoad(obj, physicalType);
                 }
             }
             foreach (var child in obj.ToArray())
@@ -450,6 +434,21 @@ static class CompanionRepresentationLowering
         Str((o["companionType"] as JsonObject)?["name"]) == a.SemanticName;
     static bool IsCompanionMemberOwner(string owner, Association a) =>
         owner == a.SemanticName || owner == a.PhysicalName;
+
+    // A companion value is represented by its carrier's self-typed singleton field. The field owner and the value
+    // type happen to be equal for this compiler-authored field, but that is a fact of the companion representation,
+    // not a general rule for static fields. State it here at the producer so an early pass that materialises the
+    // value (notably suspend operand planning) never has to infer a field's value type from its declaring owner.
+    static JsonObject SingletonLoad(JsonObject physicalType) => new() {
+        ["k"] = "staticField",
+        ["ownerType"] = physicalType.DeepClone(),
+        ["name"] = "$INSTANCE",
+        ["sty"] = physicalType.DeepClone(),
+    };
+
+    static void ReplaceWithSingletonLoad(JsonObject target, JsonObject physicalType) =>
+        Replace(target, SingletonLoad(physicalType));
+
     static JsonObject Fqn(string name) => new() { ["t"] = "fqn", ["name"] = name };
     static string Required(JsonObject o, string key) => Str(o[key])
         ?? throw new InvalidOperationException($"malformed companion fact: '{key}' is required");
