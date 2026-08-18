@@ -45,6 +45,10 @@ fun <T> arrPresentCount(xs: Array<T?>): Int {
 
 fun <T> arrLengthOf(xs: Array<T>): Int = xs.size
 
+inline fun <reified T> arrBuild(size: Int, noinline init: (Int) -> T): Array<T> = Array(size) { init(it) }
+inline fun <reified T> arrBuildNullable(size: Int, noinline init: (Int) -> T?): Array<T?> =
+    Array(size) { init(it) }
+
 // #86 D2 — ONE type variable at two positions, the array one LAST. What flows into `xs` forces the callee to be
 // instantiated at `object`; `x` is a plain `T` slot of that same variable, and it is reconciled against whatever the
 // instantiation settles on. Deriving positions in argument order made the answer depend on that order — `x` was
@@ -65,6 +69,36 @@ enum class ArraySeason { SPRING, SUMMER, AUTUMN }
 fun <T : Enum<T>> arrayEnumName(value: T): String = value.name
 
 class ArrayTests {
+    @TestAttribute
+    fun genericArrayConstructorUsesReifiedElement() {
+        val stringBuilder: (Int, (Int) -> String) -> Array<String> = ::arrBuild
+        var stringCalls = 0
+        val strings = stringBuilder(3) {
+            stringCalls = stringCalls + 1
+            "s$it"
+        }
+        assertEquals(3, stringCalls)
+        assertEquals("[s0, s1, s2]", strings.toList().toString())
+
+        val intBuilder: (Int, (Int) -> Int) -> Array<Int> = ::arrBuild
+        var intCalls = 0
+        val ints = intBuilder(4) {
+            intCalls = intCalls + 1
+            it * 2
+        }
+        assertEquals(4, intCalls)
+        assertEquals("[0, 2, 4, 6]", ints.toList().toString())
+
+        val nullableIntBuilder: (Int, (Int) -> Int?) -> Array<Int?> = ::arrBuildNullable
+        var nullableIntCalls = 0
+        val nullableInts = nullableIntBuilder(3) {
+            nullableIntCalls = nullableIntCalls + 1
+            if (it == 1) null else it * 10
+        }
+        assertEquals(3, nullableIntCalls)
+        assertEquals("[0, null, 20]", nullableInts.toList().toString())
+    }
+
     @TestAttribute
     fun storedFunctionArrayInitializer() {
         val init: (Int) -> Int = { it * 3 }

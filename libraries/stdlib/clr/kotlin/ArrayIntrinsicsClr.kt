@@ -17,10 +17,9 @@ internal interface DotktType
 /**
  * Returns an empty array of the specified type [T].
  */
-// THE ALLOCATION OF A GENUINE `T[]` FOR A REIFIED ELEMENT. Two shapes that look like they would serve do not:
-//   * `arrayOfNulls<T>(n)` honestly returns `Array<T?>`, which is `object[]` (#86 D2) — not castable to `int32[]`; and
-//   * the Kotlin array constructor `Array<T>(n) { … }` is refused for a bare type parameter by kotc (its `Func<int,T>`
-//     init would be a TypeBuilderInstantiation), so it silently produces an empty array here.
+// THE ALLOCATION OF A GENUINE `T[]` FOR A REIFIED ELEMENT. The obvious `arrayOfNulls<T>(n)` does not serve: it
+// honestly returns `Array<T?>`, which is `object[]` (#86 D2) — not castable to `int32[]`. The Kotlin array constructor
+// needs an initializer delegate, while this factory needs a zero-filled array.
 // `T::class` IS the `System.Type` on the CLR, so `Array.CreateInstance(elementType, length)` builds the exact `T[]`,
 // zero-filled. Every reified `Array<T>` factory in the CLR stdlib allocates through this one helper.
 @PublishedApi
