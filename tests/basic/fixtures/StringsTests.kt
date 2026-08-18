@@ -44,6 +44,13 @@ import kotlin.reflect.KProperty1
 
 // ---- #287 : a null source for the append/insert contract (a call, so the null is not const-folded) ------------
 fun strNullSeq(): CharSequence? = null
+fun strNullString(): String? = null
+fun strNullAny(): Any? = null
+var strAppendRangeTrace = ""
+fun strAppendRangeReceiver(): Appendable { strAppendRangeTrace += "r"; return StringBuilder() }
+fun strAppendRangeValue(): CharSequence? { strAppendRangeTrace += "v"; return "abcd" }
+fun strAppendRangeStart(): Int { strAppendRangeTrace += "s"; return 1 }
+fun strAppendRangeEnd(): Int { strAppendRangeTrace += "e"; return 3 }
 
 // ---- il-charseq : user class : CharSequence ------------------------------------------------------------------
 class StrSeqS(val s: String) : CharSequence {
@@ -117,9 +124,41 @@ class StringsTests {
         val ap2: Appendable = StringBuilder()
         ap2.append(c, 0, 4)
         assertEquals("null", ap2.toString())                                       // the 3-arg overload
+        val ap3: Appendable = StringBuilder()
+        ap3.append(c, 1, 3)
+        assertEquals("ul", ap3.toString())                                         // exclusive end -> BCL count
+        assertEquals("ul", StringBuilder().append(c, 1, 3).toString())              // concrete wrapper path
+        assertEquals("bc", StringBuilder().append("abcd", 1, 3).toString())         // concrete non-null path
+        strAppendRangeTrace = ""
+        val ranged = strAppendRangeReceiver().append(
+            strAppendRangeValue(), strAppendRangeStart(), strAppendRangeEnd()).toString()
+        assertEquals("bc", ranged)
+        assertEquals("rvse", strAppendRangeTrace)                                  // each operand once, Kotlin order
         // the NON-null arguments are unchanged
         assertEquals("ab", StringBuilder().append("a").append("b").toString())
         assertEquals("aXb", StringBuilder("ab").insert(1, "X").toString())
+    }
+
+    // #317: frontend-selected nullable String/Any overloads must reach their Kotlin null wrappers. An intrinsic
+    // sibling with the same argument count must not capture these calls in bir2cir.
+    @TestAttribute
+    fun appendAndInsertNullableValuesRenderNullString() {
+        val s: String? = strNullString()
+        val a: Any? = strNullAny()
+        assertEquals("null", StringBuilder().append(s).toString())
+        assertEquals("null", StringBuilder().append(a).toString())
+        assertEquals("nullX", StringBuilder("X").insert(0, s).toString())
+        assertEquals("nullX", StringBuilder("X").insert(0, a).toString())
+
+        assertEquals("null!", StringBuilder().append(*arrayOf<String?>(s, "!")).toString())
+        assertEquals("null!", StringBuilder().append(*arrayOf<Any?>(a, "!")).toString())
+        assertEquals("null", StringBuilder().appendLine(s).toString().trim())
+        assertEquals("null", StringBuilder().appendLine(a).toString().trim())
+        assertEquals("nullnull", buildString { append(s); append(a) })
+
+        // Non-null values retain the selected overloads' ordinary behavior.
+        assertEquals("text42", StringBuilder().append("text").append(42 as Any).toString())
+        assertEquals("text42", StringBuilder().insert(0, "text").insert(4, 42 as Any).toString())
     }
 
     @TestAttribute

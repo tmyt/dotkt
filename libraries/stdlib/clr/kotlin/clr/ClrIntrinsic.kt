@@ -91,6 +91,14 @@ public annotation class ClrProperty(val access: Int, val name: String)
 @Target(AnnotationTarget.VALUE_PARAMETER)
 public annotation class ClrRefArgument
 
+// Marks an exclusive-end parameter of an @ClrIntrinsic binding whose CLR target takes a count in the same slot.
+// `startIndex` names the zero-based position in the Kotlin declaration's ordinary parameter list (the receiver is not
+// counted) whose value must be subtracted from this one. bir2cir preserves Kotlin's receiver/argument evaluation order
+// and evaluates both indices once while rewriting end -> end - start. Internal: this is compiler-provided stdlib
+// binding vocabulary, not a user-facing interop annotation.
+@Target(AnnotationTarget.VALUE_PARAMETER)
+internal annotation class ClrCountFromExclusiveEnd(val startIndex: Int)
+
 // Carries a parameter's DEFAULT-VALUE expression as embedded BIR so a CROSS-MODULE caller that OMITS the argument can
 // have it filled. The frontend KLIB drops a callee's default VALUES (hands them back as IrErrorExpression), and .NET
 // `[DefaultParameterValue]` metadata can only carry a CONSTANT of the parameter's own type — it cannot represent a

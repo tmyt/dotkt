@@ -786,16 +786,18 @@ attribute full name without those provenance markers is ignored. Consequences:
 `kotlin.text.Appendable` is a JVM-ism (`java.lang.Appendable`) with **no distinct .NET representation** —
 `StringBuilder` is the CLR's sole general appendable char sink. Mirroring the `CharSequence`→`string` collapse (§5b),
 DotKt aliases `Appendable` to `System.Text.StringBuilder` (`@ClrTypeAlias` + `@ClrIntrinsic("Append")` on
-`append(Char)`/`append(CharSequence?)`). Consequences:
+all three `append` members). The range overload additionally marks its exclusive-end parameter with
+`@ClrCountFromExclusiveEnd`, so `bir2cir` adapts that selected declaration to the BCL count slot. Consequences:
 
 - An `Appendable`-typed parameter / return / bound (`<A : Appendable>`) surfaces to C# as `StringBuilder` — this is
   what makes `joinTo(StringBuilder(), …)`-style stdlib generics verifiable on the CLR.
 - A **user class implementing `Appendable`** is therefore NOT supported (you cannot subclass the sealed-in-practice
   role); write to a `StringBuilder` instead. This is narrower than the JVM, and deliberate.
 - **A null `CharSequence?` argument still renders as the four characters `null`**, per the Kotlin contract, even
-  though .NET's `StringBuilder.Append`/`Insert` treat null as a no-op: the §5b collapse routes every `CharSequence`
-  argument through `Any?.toString()`, which answers `"null"`. This is what makes `joinToString` over a collection
-  containing nulls produce `null, null` — `appendElement` reaches the buffer through that overload.
+  though .NET's `StringBuilder.Append`/`Insert` treat null as a no-op. `Appendable` calls snapshot the argument through
+  the null-safe `Any?.toString()` bridge; concrete `StringBuilder` nullable `CharSequence`, `String`, and `Any`
+  overloads retain Kotlin wrapper bodies that substitute `"null"` before reaching the BCL. This is also inherited by
+  `appendLine`, vararg `append`, and `buildString`.
 
 ## 5e. Enum classes have two CLR shapes
 

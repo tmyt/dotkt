@@ -29,7 +29,7 @@ public actual class StringBuilder : Appendable, CharSequence {
     actual override fun append(value: Char): StringBuilder = TODO("clr binding should be implemented")
     actual override fun append(value: CharSequence?): StringBuilder = append((value ?: "null").toString())
     actual override fun append(value: CharSequence?, startIndex: Int, endIndex: Int): StringBuilder =
-        append((value ?: "null").subSequence(startIndex, endIndex).toString())
+        append((value?.toString() ?: "null").substring(startIndex, endIndex))
 
     public actual fun reverse(): StringBuilder {
         // Simple index swap; unlike Kotlin/JVM's reverse() this does not preserve surrogate-pair ordering.
@@ -44,8 +44,7 @@ public actual class StringBuilder : Appendable, CharSequence {
         }
         return this
     }
-    @kotlin.clr.ClrIntrinsic("Append")
-    public actual fun append(value: Any?): StringBuilder = TODO("clr binding should be implemented")
+    public actual fun append(value: Any?): StringBuilder = append(value?.toString() ?: "null")
 
     @SinceKotlin("1.3")
     @kotlin.clr.ClrIntrinsic("Append")
@@ -72,8 +71,10 @@ public actual class StringBuilder : Appendable, CharSequence {
     public actual fun append(value: CharArray): StringBuilder = TODO("clr binding should be implemented")
 
     @SinceKotlin("1.3")
+    public actual fun append(value: String?): StringBuilder = nativeAppendString(value ?: "null")
+
     @kotlin.clr.ClrIntrinsic("Append")
-    public actual fun append(value: String?): StringBuilder = TODO("clr binding should be implemented")
+    private fun nativeAppendString(value: String): StringBuilder = TODO("@Clr System.Text.StringBuilder.Append(string)")
 
     @SinceKotlin("1.3")
     @kotlin.clr.ClrProperty(kotlin.clr.READ, "Capacity")
@@ -132,12 +133,14 @@ public actual class StringBuilder : Appendable, CharSequence {
         insert(index, (value ?: "null").toString())
 
     @SinceKotlin("1.4")
-    @kotlin.clr.ClrIntrinsic("Insert")
-    public actual fun insert(index: Int, value: Any?): StringBuilder = TODO("clr binding should be implemented")
+    public actual fun insert(index: Int, value: Any?): StringBuilder = insert(index, value?.toString() ?: "null")
 
     @SinceKotlin("1.4")
+    public actual fun insert(index: Int, value: String?): StringBuilder = nativeInsertString(index, value ?: "null")
+
     @kotlin.clr.ClrIntrinsic("Insert")
-    public actual fun insert(index: Int, value: String?): StringBuilder = TODO("clr binding should be implemented")
+    private fun nativeInsertString(index: Int, value: String): StringBuilder =
+        TODO("@Clr System.Text.StringBuilder.Insert(int,string)")
 
     @SinceKotlin("1.4")
     @kotlin.clr.ClrProperty(kotlin.clr.WRITE, "Length")

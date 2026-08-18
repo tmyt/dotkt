@@ -50,37 +50,11 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	# +4 (#400): VarargSpreadConcatTests. A mixed vararg spread is the only source shape that builds through the
-	# spread accumulator, and the standard library writes none, so that construction had no gate coverage at all.
-	# One method per element shape its instantiation can take.
-	# +1 (#400): strict generic-frame ownership across synthetic methods, lifted closures, and local member linking.
-	# +14 (#400): ReverseEnumeratorBridgeTests. The GetEnumerator bridge is now ordinary CIR authored by bir2cir, and
-	# its two CLR faces (IEnumerable<E> and the non-generic IEnumerable) are separate slots no Kotlin declaration can
-	# fill; the non-generic one had no coverage at all. Two more pin the physical-name boundary: a same-named
-	# overload must not suppress the bridge, and the author's own nullary GetEnumerator must not either. The final
-	# three cover a non-enumerable base provider, an interface default provider, and a narrower iterator element. Three
-	# more cover primitive/generic iterator subtypes and a private base member beside a selected interface default.
-	# +1 (#284): sequenceOf(vararg) and Array.asSequence force Array<T>.iterator() through materialization, pinning the
-	# value-element path that formerly crashed the process with AccessViolationException.
-	# +1 (#319): one ordered-construction test covers try-valued array/list/set/map/spread operands, exact collection
-	# result faces, nested constructions, and source evaluation before HashSet/Dictionary consumption.
-	# +1 (#285): an inline-spliced try-expression body in string-concat operand 0 covers both success and catch paths.
-	["tests/basic"]=447
-	# +1 (#436): argument-bearing and generic suspend super calls preserve the base cold-entry owner and non-virtual dispatch.
+	["tests/basic"]=448
 	["tests/coroutines"]=159
-	# +4 (#400): the reverse enumerator bridge across the module boundary — the producer's GetEnumerator and its
-	# module-private adapter reached from this consumer through the ordinary CLR enumerable face, and a consumer
-	# class whose enumerable face exists only in the producer's projected metadata. Two more prove that an iterator
-	# body supplied by a referenced non-enumerable base or referenced interface default is found without local inference.
 	["tests/roundtrip/consumer"]=78
 	["tests/roundtrip/bidirectional/consumer"]=8
-	# +8 (#400): UnitDelegateAdapterTests. The void-to-value delegate adaptation had exactly three witnesses,
-	# all arity-1 non-capturing lambdas in a generic method; one per remaining axis (arity 0/2, a capturing
-	# target, a constrained generic owner, a byref-like parameter), the value-lambda-into-void-delegate
-	# transpose, and the non-argument slots — a delegate property setter and a public delegate field, which had
-	# no witness at all and which the retired emitter path refused outright. One more covers Kotlin-bound,
-	# CLR-bound, and CLR-static callable-reference constructions at the same declared custom-delegate slot.
-	["tests/interop/consumer"]=147
+	["tests/interop/consumer"]=148
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a

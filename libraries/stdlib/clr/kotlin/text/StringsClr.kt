@@ -96,10 +96,8 @@ public actual fun String.replace(oldValue: String, newValue: String, ignoreCase:
     val searchStep = oldValueLength.coerceAtLeast(1)
     val stringBuilder = StringBuilder()
     var i = 0
-    // Append via `substring` (end-exclusive String slice) + `append(String)`, NOT the 3-arg
-    // `append(CharSequence?, startIndex, endIndex)`: on the CLR the @ClrTypeAlias StringBuilder's 3-arg
-    // append overload mis-resolves to the BCL `Append(char[], startIndex, count)` (end != count). The
-    // substring form binds cleanly to the @ClrIntrinsic `Append(String?)` and is semantically identical.
+    // Append the end-exclusive String slice. Keeping the slice explicit here avoids introducing a second index/count
+    // adaptation into this replacement loop; the selected append(String) wrapper owns nullable-string semantics.
     do {
         stringBuilder.append(this.substring(i, occurrenceIndex)).append(newValue)
         i = occurrenceIndex + oldValueLength

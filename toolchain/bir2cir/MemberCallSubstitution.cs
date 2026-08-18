@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -515,9 +516,9 @@ static class MemberCallSubstitution
         };
     }
 
-    /// A `bindRef` left in the emitted node would reach ilemit as an unknown kind. It cannot happen for the plans
-    /// built above — a kept argument's read sits in the `newClr`'s own argument slot, which is eager, so `Materialise`
-    /// always resolves it — and that is exactly why this is an invariant assert rather than a diagnostic.
+    /// A `bindRef` left in an emitted node would reach ilemit as an unknown kind. Every plan authored in this pass puts
+    /// its readers on the lowered call's eager operand spine, so `Materialise` must resolve them. Keep one invariant
+    /// assertion shared by constructor-shape adapters and exact intrinsic argument adapters.
     static void AssertNoPlanVocabulary(JsonNode node)
     {
         switch (node)
@@ -525,7 +526,7 @@ static class MemberCallSubstitution
             case JsonObject o:
                 if ((o["k"] as JsonValue)?.GetValue<string>() == "bindRef")
                     throw new InvalidOperationException(
-                        "bir2cir: a mapped constructor argument's plan binding was not resolved into its slot — the "
+                        "bir2cir: a locally-authored call plan binding was not resolved into its slot — the "
                         + "read is not on the emitted node's eager operand spine, so CallEvalLowering.Materialise "
                         + "could not inline it. Whatever now wraps the kept arguments needs an arm in "
                         + "CallEvalLowering.EagerKinds.");
@@ -1208,14 +1209,21 @@ static class MemberCallSubstitution
             node.Remove("prop");
         }
 
+        // Every authored CLR member role is selected from the same frontend-resolved declaration identity. Property,
+        // conversion, intrinsic name, byref shape and argument adapters must never be assembled from same-arity
+        // siblings. A missing declaration vector is not exact and therefore states no binding.
+        var hasExactMemberBinding = refs.TryExactMemberClrBinding(
+            ownerFqn, member, companionMethodArity, companionSignature, out var exactMemberBinding);
+
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
         // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit `{k:conv, to:<callee return type>, e:<receiver>}`, the
         // SAME node kotc used to synthesize from the retired NUMBER_CONV name-heuristic. The `to` is the callee's own
         // declared return token (a pre-lowering Kotlin FQN, e.g. `kotlin.Long`); BirTypeLowering later lowers it to the
         // CLR primitive and ilemit selects conv.i4/conv.i8/conv.r8/char. A conversion is nullary (no args). Handled first
         // so it never falls through to Rule 2/3 (the conversion members are intrinsic-less, so IsRule3Member excludes them).
-        if (instance && args.Count == 0 && refs.TryMemberConv(ownerFqn, member, 0, out var convTo))
-            return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(convTo), ["e"] = node["recv"]?.DeepClone() };
+        if (instance && args.Count == 0 && hasExactMemberBinding && exactMemberBinding.Conv
+            && exactMemberBinding.ConvTo != null)
+            return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(exactMemberBinding.ConvTo), ["e"] = node["recv"]?.DeepClone() };
 
         // Rule 0 (inline-class ERASURE / unbox): the backing-field getter of an @JvmInline value class erased to its
         // primitive CLR form (`uint.get_data()`) is the unbox — the receiver value IS the field. Collapse it to a
@@ -1278,12 +1286,14 @@ static class MemberCallSubstitution
                     mappedCompanionRecv, prop, $"mapped companion property '{companionOwnerFqn}.{member}'");
             }
         }
-        // A standalone Kotlin function may intentionally carry @ClrProperty without being a property accessor. Only
-        // that no-semantic-identity case may use the legacy function-name index.
+        // A standalone Kotlin function may intentionally carry @ClrProperty without being a property accessor. Its
+        // complete declaration identity selects the binding just as it does for an intrinsic; name+arity is not an
+        // overload key.
         if (!hasSemanticProperty && (instance || staticPropMarker is "get" or "set") &&
-            refs.TryMemberProperty(ownerFqn, member, args.Count, out var pAccess, out var pName))
+            hasExactMemberBinding && exactMemberBinding.PropertyName != null)
         {
-            var prop = (JsonObject)ClrPropNode(node, clrOwner, pName, pAccess, member, args, staticPropMarker,
+            var prop = (JsonObject)ClrPropNode(node, clrOwner, exactMemberBinding.PropertyName,
+                exactMemberBinding.PropertyAccess, member, args, staticPropMarker,
                 forceStatic: mappedCompanionRecv != null);
             return CallEvalLowering.PreserveUnreadValueBefore(
                 mappedCompanionRecv, prop, $"mapped companion property '{companionOwnerFqn}.{member}'");
@@ -1350,17 +1360,21 @@ static class MemberCallSubstitution
         // Rule 2: the member carries @ClrIntrinsic -> a direct BCL call.
         if (mappedCompanionRecv != null && exactCompanionBinding.Intrinsic != null)
         {
-            var exactIntrinsicCall = Constrainify(ClrCallNode(node, clrOwner, exactCompanionBinding.Intrinsic,
-                member, args, instance: false, exactCompanionBinding.ByrefPositions), node, refs, ctx, ownerToken);
+            var exactIntrinsicCall = ExactIntrinsicCall(node, clrOwner, member, args, instance: false,
+                exactCompanionBinding, refs, ctx, ownerToken);
             return exactIntrinsicCall is JsonObject exactIntrinsicObject
                 ? CallEvalLowering.PreserveUnreadValueBefore(mappedCompanionRecv, exactIntrinsicObject,
                     $"mapped companion intrinsic '{companionOwnerFqn}.{member}'")
                 : exactIntrinsicCall;
         }
-        if (refs.TryMemberIntrinsic(ownerFqn, member, args.Count, out var intrinsic))
+        // The frontend has already selected one Kotlin overload. Consume that complete declaration identity here;
+        // name+argument-count is not an overload key and lets an intrinsic sibling capture a same-arity real body
+        // (for example StringBuilder.append(String?) capturing append(CharSequence?)). The exact binding also owns
+        // the byref vector, so the physical call cannot be assembled from facts belonging to two declarations.
+        if (hasExactMemberBinding && exactMemberBinding.Intrinsic != null)
         {
-            var intrinsicCall = Constrainify(ClrCallNode(node, clrOwner, intrinsic, member, args, instance,
-                refs.MemberByrefPositions(ownerFqn, member, args.Count)), node, refs, ctx, ownerToken);
+            var intrinsicCall = ExactIntrinsicCall(node, clrOwner, member, args, instance,
+                exactMemberBinding, refs, ctx, ownerToken);
             return intrinsicCall is JsonObject intrinsicObject
                 ? CallEvalLowering.PreserveUnreadValueBefore(mappedCompanionRecv, intrinsicObject,
                     $"mapped companion intrinsic '{companionOwnerFqn}.{member}'")
@@ -2098,9 +2112,10 @@ static class MemberCallSubstitution
         }
     }
 
-    static JsonNode ClrCallNode(JsonObject node, TypeNode clrOwner, string intrinsic, string member, JsonArray args, bool instance, int[] byrefPositions = null)
+    static JsonNode ClrCallNode(JsonObject node, TypeNode clrOwner, string intrinsic, string member, JsonArray args,
+        bool instance, int[] byrefPositions = null, JsonArray exactArgTypes = null)
     {
-        var argTypes = InferArgTypes(node, args);
+        var argTypes = exactArgTypes?.DeepClone() as JsonArray ?? InferArgTypes(node, args);
         WrapByref(argTypes, byrefPositions);
         var ret = RetToken(node);
 
@@ -2139,6 +2154,99 @@ static class MemberCallSubstitution
             call["typeArgs"] = callTypeArgs.DeepClone();
         CoerceCharSeqArgsToString(argTypes, call["args"] as JsonArray);
         return call;
+    }
+
+    // Build one exact member-intrinsic call, applying any argument-shape adapter owned by that SAME declaration.
+    // @ClrCountFromExclusiveEnd marks an end-index slot whose CLR target takes a count. Rewriting it to `end-start`
+    // gives `start` a second reader, so the original receiver/arguments are first represented as one ordered binding
+    // plan and materialised by the canonical call-evaluation logic. This preserves Kotlin order and single evaluation
+    // for arbitrary expressions; it is metadata-driven and does not recognize a library or member name.
+    static JsonNode ExactIntrinsicCall(JsonObject node, TypeNode clrOwner, string member, JsonArray args, bool instance,
+        ExactClrMemberBinding binding, ReferenceMetadataIndex refs, SubstCtx ctx, string ownerToken)
+    {
+        if (binding.CountStart < 0 && binding.CountEnd < 0)
+            return Constrainify(ClrCallNode(node, clrOwner, binding.Intrinsic, member, args, instance,
+                binding.ByrefPositions), node, refs, ctx, ownerToken);
+        if (binding.CountStart < 0 || binding.CountEnd <= binding.CountStart || binding.CountEnd >= args.Count)
+            throw new InvalidDataException(
+                $"invalid CLR count adapter on {ownerToken}.{member}: start={binding.CountStart}, "
+                + $"end={binding.CountEnd}, args={args.Count}");
+
+        var bindings = new JsonArray();
+        JsonObject Bind(JsonNode expression, JsonNode type, bool address = false)
+        {
+            var id = CallEvalLowering.FreshBindingId();
+            var item = new JsonObject
+            {
+                ["id"] = id,
+                ["expr"] = expression?.DeepClone(),
+                ["stable"] = ValueStability.IsReReadable(expression),
+            };
+            if (address) item["kind"] = "address";
+            if (type != null) item["type"] = type.DeepClone();
+            bindings.Add(item);
+            return new JsonObject { ["k"] = "bindRef", ["id"] = id };
+        }
+
+        JsonObject recvRef = null;
+        if (instance)
+            recvRef = Bind(node["recv"], TypeJson.Write(clrOwner));
+        // Normalize physical BCL-boundary arguments BEFORE they enter the evaluation plan. In particular, a semantic
+        // CharSequence argument is represented by a String snapshot at this boundary; materialising the semantic
+        // value first would create a dotkt$CharSequence temp even when the source local has already collapsed to
+        // System.String. The normalized argTypes travel into ClrCallNode so it does not reconstruct the old semantic
+        // vector and wrap the plan reader a second time.
+        var exactArgTypes = InferArgTypes(node, args);
+        var physicalArgs = args.DeepClone() as JsonArray ?? new JsonArray();
+        CoerceCharSeqArgsToString(exactArgTypes, physicalArgs);
+        var adaptedArgs = new JsonArray();
+        for (var i = 0; i < physicalArgs.Count; i++)
+        {
+            // The exact, boundary-normalized parameter vector is also the truthful type of a value materialised for
+            // that slot. It already accounts for representation changes such as CharSequence -> String; consulting
+            // the expression first can recover an older frontend `sty` and recreate the semantic type after the
+            // physical boundary has deliberately replaced it. Fall back to expression typing only if the exact
+            // vector is unavailable (defensive for malformed/incomplete BIR; exact metadata normally supplies it).
+            TypeNode actualType = null;
+            if (physicalArgs[i] is JsonObject expression)
+            {
+                if (Str(expression["k"]) == "local" && Str(expression["name"]) is string localName)
+                    ctx?.VarTypes.TryGetValue(localName, out actualType);
+                actualType ??= RecvStaticType(expression, ctx, allowExprShapes: true);
+            }
+            actualType ??= CallEvalLowering.StaticTypeOf(physicalArgs[i]);
+            var bindingType = i < exactArgTypes.Count
+                ? exactArgTypes[i]
+                : actualType is TypeNode type ? TypeJson.Write(type) : null;
+            adaptedArgs.Add(Bind(physicalArgs[i], bindingType, binding.ByrefPositions.Contains(i)));
+        }
+        adaptedArgs[binding.CountEnd] = new JsonObject
+        {
+            ["k"] = "binOp",
+            ["op"] = "-",
+            ["lhs"] = adaptedArgs[binding.CountEnd].DeepClone(),
+            ["rhs"] = adaptedArgs[binding.CountStart].DeepClone(),
+        };
+
+        var callSource = (JsonObject)node.DeepClone();
+        if (instance) callSource["recv"] = recvRef;
+        var lowered = Constrainify(
+            ClrCallNode(callSource, clrOwner, binding.Intrinsic, member, adaptedArgs, instance,
+                binding.ByrefPositions, exactArgTypes),
+            node, refs, ctx, ownerToken);
+        var (stmts, replacements) = CallEvalLowering.Materialise(
+            bindings, new List<JsonNode> { lowered }, $"@ClrCountFromExclusiveEnd call {ownerToken}.{member}");
+        var result = CallEvalLowering.Substitute(lowered, replacements);
+        AssertNoPlanVocabulary(result);
+        if (stmts.Count == 0) return result;
+        var block = new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = stmts,
+            ["result"] = result,
+        };
+        if (RetToken(node) is JsonNode ret) block["type"] = ret;
+        return block;
     }
 
     // A synthetic-CharSequence (`dotkt$CharSequence`) value flowing as an ARGUMENT into a substituted BCL call has NO
