@@ -741,6 +741,21 @@ internal fun TypeNode.containsStarProjection(): Boolean = when (this) {
 	is TypeNode.Tv -> false
 }
 
+private fun BirEmitter.projectedMemberExtensionPropertyAccess(call: IrCall):
+	kotc.frontend.ClrProjectedMemberExtensionProperties.AccessFact? {
+	val callee = call.symbol.owner
+	val property = callee.correspondingPropertySymbol?.owner ?: return null
+	if (callee.parameters.none { it.kind == IrParameterKind.ExtensionReceiver }) return null
+	val accessorKind = when (call.symbol) {
+		property.getter?.symbol -> "get"
+		property.setter?.symbol -> "set"
+		else -> return null
+	}
+	val access = kotc.frontend.ClrProjectedMemberExtensionProperties.accessAtUse(
+		sourcePathOf(call), call.startOffset, call.endOffset, accessorKind) ?: return null
+	return access.takeIf { property.name.asString() == it.sourceName }
+}
+
 internal fun BirEmitter.call(call: IrCall): String {
 	val rendered = callWithoutDeclarationIdentity(call)
 	// A dedicated semantic lowering may deliberately materialize a different physical declaration while retaining
@@ -749,6 +764,16 @@ internal fun BirEmitter.call(call: IrCall): String {
 	val consumedIdentityMarker = ",\"dotktFrontendDeclarationConsumed\":true"
 	if (rendered.endsWith("$consumedIdentityMarker}"))
 		return rendered.removeSuffix("$consumedIdentityMarker}") + "}"
+	// Kotlin 2.4 may turn a FIR-resolved DLL -> KLIB member-extension property access into a raw-accessor IrCall
+	// whose remaining property view lacks the projected property's identity annotation. The frontend capture is
+	// authoritative for this exact source use; callWithoutDeclarationIdentity has already restored its semantic
+	// property name and role. Attach the captured accessor identity instead of parsing the raw accessor spelling.
+	projectedMemberExtensionPropertyAccess(call)?.let { access ->
+		if (rendered.startsWith("{\"k\":\"callInstance\"") &&
+			topLevelJsonStringFieldEquals(rendered, "method", str(access.sourceName)) &&
+			topLevelJsonStringFieldEquals(rendered, "prop", str(access.accessorKind)))
+			return rendered.dropLast(1) + ""","declarationId":${str(access.declarationId)}}"""
+	}
 	// A fake-override view is not itself emitted. Carry the frontend-resolved real declaration's identity. A
 	// dll2klib-projected CLR static appears as a fake override on the semantic class, but its trusted identity
 	// annotation is the exact selected MethodDef and there need not be an overridden-symbol edge to resolve. Prefer
@@ -949,6 +974,26 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	val name = callee.name.asString()
 	val companionExtensionCallTag = companionReceiverCallTag(callee, call)
 	val declaringClass = callee.parent as? IrClass
+	// Kotlin 2.4 can replace the property association of a method-generic DLL -> KLIB member-extension access with
+	// a synthetic raw-accessor view that no longer carries the usable property identity. Consume the exact property/
+	// accessor fact captured from FIR before any IR-shape-dependent external-member path can return. Applying the
+	// same semantic projection to every captured access also keeps ordinary and synthetic IR views equivalent.
+	projectedMemberExtensionPropertyAccess(call)?.let { access ->
+		val recvExpr = dispatchReceiver(call) ?: return@let
+		val ownerClass = declaringClass ?: return@let
+		// A projected external type may have a Kotlin surface name distinct from its CLR metadata name (nested and
+		// arity-collision types). Preserve the constructed external identity exactly as the ordinary interop fact path
+		// does; a Kotlin/local dispatch owner remains semantic BIR vocabulary for bir2cir to represent physically.
+		val owner = if (isExternalNetType(ownerClass)) birType(recvExpr.type)
+			else ownerSpec(ownerClass, recvExpr.type)
+		val virtual = isVirtualInstanceCall(call, callee)
+		val args = (listOfNotNull(extensionReceiver(call)) + regularArgs(call))
+			.joinToString(",") { expr(it) }
+		val ta = typeArgsJson(call)
+		val ret = if (access.accessorKind == "get")
+			retHintStr(ta.isNotEmpty() || (owner as? TypeNode.Fqn)?.args != null, birType(call.type)) else ""
+		return """{"k":"callInstance","ownerType":${owner.toJson()},"virtual":$virtual,"recv":${expr(recvExpr)},"method":${str(access.sourceName)},"prop":${str(access.accessorKind)}${overloadSigField(callee)}$ta$ret,"args":[$args]${overridesJson(callee)}${superTag(call)}}"""
+	}
 	// A top-level fn has no declaringClass; fall back to the callee's OWN package so an external/user top-level
 	// operator (e.g. a restored `operator fun Vec.plus`) isn't mistaken for a kotlin builtin and lowered to a `bin`.
 	val isBuiltin = (declaringClass?.fqNameWhenAvailable?.asString() ?: callee.fqNameWhenAvailable?.asString())?.startsWith("kotlin") ?: true

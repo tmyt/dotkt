@@ -198,6 +198,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		// otherwise outlive the compilation inside a HOSTED kotc and a later run could read a stale entry.
 		kotc.frontend.ClrContextFnTypes.reset()
 		kotc.frontend.ClrCompanionExtensions.reset()
+		kotc.frontend.ClrProjectedMemberExtensionProperties.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			val firFiles = session.buildFirFromKtFiles(files)
@@ -209,6 +210,9 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 				// Capture the COMPANION-EXTENSION receiver types for the same reason: fir2ir drops a
 				// `companion fun C.foo()`'s receiver parameter outright. See [kotc.frontend.ClrCompanionExtensions].
 				kotc.frontend.ClrCompanionExtensions.capture(session, it.fir)
+				// A projected method-generic member-extension property may become a raw accessor in fir2ir. Preserve
+				// the FIR-resolved property/accessor identity for that exact use before the association is erased.
+				kotc.frontend.ClrProjectedMemberExtensionProperties.capture(session, it.fir)
 			}
 		}
 

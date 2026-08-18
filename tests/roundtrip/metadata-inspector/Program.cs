@@ -83,6 +83,14 @@ static void VerifyKlibClassProperties(string path, string className, IReadOnlyLi
         if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
             throw new InvalidDataException(
                 $"{className} property surface [{string.Join(", ", actual)}] != [{string.Join(", ", expected)}]");
+        var functionCollisions = declaration.Function
+            .Select(function => String(fragment, function.Name))
+            .Where(expectedNames.Contains)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        if (functionCollisions.Length != 0)
+            throw new InvalidDataException(
+                $"{className} properties also leaked as functions [{string.Join(", ", functionCollisions)}]");
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");

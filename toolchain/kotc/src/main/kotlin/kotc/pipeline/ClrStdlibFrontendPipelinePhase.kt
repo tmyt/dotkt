@@ -80,11 +80,13 @@ object ClrStdlibFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtif
 		// drops a `companion fun C.foo()`'s receiver parameter outright. See [ClrCompanionExtensions].
 		kotc.frontend.ClrContextFnTypes.reset()
 		kotc.frontend.ClrCompanionExtensions.reset()
+		kotc.frontend.ClrProjectedMemberExtensionProperties.reset()
 		val outputs = sessionsWithSources.map { (session, files) ->
 			installKotlinJvmDefaultImport(session)
 			resolveAndCheckFir(session, session.buildFirFromKtFiles(files), diagnosticsReporter).also {
 				kotc.frontend.ClrContextFnTypes.capture(it.fir)
 				kotc.frontend.ClrCompanionExtensions.capture(session, it.fir)
+				kotc.frontend.ClrProjectedMemberExtensionProperties.capture(session, it.fir)
 			}
 		}
 		outputs.runPlatformCheckers(diagnosticsReporter)
