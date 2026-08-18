@@ -300,19 +300,16 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	}
 	is IrConstructorCall -> {
 		val klass = node.symbol.owner.parent as? IrClass
-		// The GENERIC object array `Array<E>(size){init}` / `Array<E>(size)` -> a real BCL array (newarr + fill loop):
-		// the element is the CLR type of E (`Array<Any?>` -> object[]), so a concrete E works (a bare type-param E
-		// rides its `gp:E` form). Without this it fell through to a bogus `new kotlin.Array(...)` (wrong-sized array).
+		// The generic Kotlin array constructor `Array<E>(size) { init }` is semantic BIR array construction. Carry the
+		// frontend element type exactly as supplied, whether concrete or a scoped `tv`; bir2cir owns its physical CLR
+		// representation. Without this node, the call falls through to a bogus `new kotlin.Array(...)` construction.
 		// The SIGNED primitive array ctor (`IntArray(size){init}`) is NOT decomposed here: kotc emits the faithful
 		// `new kotlin.IntArray(size, init)` ctor call (the normal-new fall-through below) and bir2cir DERIVES the
 		// newArrayInit/newArraySized construction off the faithful `kotlin.IntArray` identity + its element.
 		val arrElem: TypeNode? =
 			if (klass?.fqNameWhenAvailable?.asString() == "kotlin.Array") {
 				val elemType = (((node.type as? IrSimpleType)?.arguments?.firstOrNull()) as? IrTypeProjection)?.type
-				// Only a CONCRETE element type routes to a real BCL newarr (`Array<Any?>` -> object[]). A bare TYPE-PARAM
-				// element (`Array<T>`) needs reified allocation; routing it here would newarr a `tv` AND make its init
-				// `Func<int,T>` a TypeBuilderInstantiation (ilemit GetMethod("Invoke") fails) -> leave it to the fall-through.
-				if (elemType != null && elemType.classifierOrNull !is org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) birType(elemType) else null
+				elemType?.let(::birType)
 			} else null
 		// The ctor's regular args, omitted defaults filled — the SAME single pass every call shape uses. Emitted ONCE
 		// (re-running it would duplicate any lift/lambda emission side effect), and BEFORE the enclosing-instance

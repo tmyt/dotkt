@@ -760,9 +760,9 @@ public actual fun CharArray.fill(element: Char, fromIndex: Int = 0, toIndex: Int
 // `plus` returns a NON-null `Array<T>`, a genuine `!T[]`, so it allocates the way `copyOfRange` does: from the
 // RECEIVER's own runtime array type, which preserves the exact element type at every instantiation. The
 // `arrayOfNulls<T>(n) … as Array<T>` shape these bodies used to carry cannot serve any more — `arrayOfNulls` honestly
-// returns `Array<T?>` = `object[]` (#86 D2) and `object[]` is not castable to `int32[]` — and the Kotlin array
-// constructor is refused for a bare type-parameter element (kotc leaves `Array<T>(n){…}` unlowered). The same
-// reasoning applies to every generic `plus` overload below.
+// returns `Array<T?>` = `object[]` (#86 D2) and `object[]` is not castable to `int32[]`. This non-reified body also
+// cannot use `Array<T>(n) { … }`: the frontend rejects `T` as a reified type argument. Allocating from the receiver's
+// runtime type preserves the exact element type. The same reasoning applies to every generic `plus` overload below.
 public actual operator fun <T> Array<T>.plus(element: T): Array<T> {
     @Suppress("UNCHECKED_CAST")
     val result = (this as Any).nativeGetType().nativeCreateArrayLike(this.size + 1) as Array<T>

@@ -14,8 +14,8 @@ package kotlin.collections
  * Returns the array if it's not `null`, or an empty array otherwise.
  * @sample samples.collections.Arrays.Usage.arrayOrEmpty
  */
-// A zero-length `T[]` IS an `Array<out T>`, and `dotktNewTypedArray` is the one allocation that produces a genuine one
-// for a reified element (see its declaration for why neither `arrayOfNulls<T>(0)` nor the array constructor can).
+// A zero-length `T[]` IS an `Array<out T>`, and `dotktNewTypedArray` produces a genuine zero-filled one for a reified
+// element without requiring an initializer. `arrayOfNulls<T>(0)` instead has the honest `Array<T?>` representation.
 // Written directly (not via emptyArray()) to avoid a nested cross-module inline hop.
 public actual inline fun <reified T> Array<out T>?.orEmpty(): Array<out T> =
     this ?: (dotktNewTypedArray(T::class as DotktType, 0) as Array<out T>)

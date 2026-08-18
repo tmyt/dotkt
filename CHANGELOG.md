@@ -28,6 +28,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `bir2cir` consumes the frontend-selected member's complete signature instead of conflating same-name, same-arity
   CLR bindings. `Appendable.append(value, startIndex, endIndex)` also translates Kotlin's exclusive end to the CLR
   count slot while preserving receiver and argument evaluation order.
+- **Generic `Array<T>(size) { init }` construction in valid reified bodies now preserves its element type (#353).**
+  `kotc` carries a scoped type variable into BIR array construction instead of falling through to a bogus empty
+  `kotlin.Array`; `bir2cir` then resolves the generic CLR allocation and initializer invocation normally.
 
 ## 0.9.9 (2026-08-17)
 

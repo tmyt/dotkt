@@ -1989,7 +1989,8 @@ What this is observable as, beyond the boxing already listed above:
   `elem[]`. Both inhabit the erased `object[]` the declaration states — the reference one by array covariance.
 - **The `arrayOfNulls<T>(n) … as Array<T>` idiom no longer works.** `arrayOfNulls` honestly returns `Array<T?>`, which
   is `object[]`, and `object[]` is not castable to `int32[]`. Allocate the real thing instead: the array constructor
-  `Array(n) { … }` for a concrete element, or `System.Array.CreateInstance(T::class, n)` for a reified one.
+  `Array(n) { … }` for a concrete or reified element when an initializer is available, or
+  `System.Array.CreateInstance(T::class, n)` when a zero-filled array is required.
 
 An array element is therefore not a special case but the most visible instance of the general rule, and a generic
 that carries an element from an array into a collection stays consistent: `fun f(xs: Array<Int?>): List<Int?> =
