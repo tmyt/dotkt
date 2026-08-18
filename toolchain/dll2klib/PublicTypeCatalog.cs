@@ -5,29 +5,40 @@ using System.Reflection.PortableExecutable;
 using System.Text.Json;
 
 internal sealed record PublicTypeCatalogEntry(
-    string AssemblyIdentity,
+    string AssemblyName,
     string MetadataName,
     bool IsPublic,
-    bool IsInterface);
+    bool IsInterface,
+    string AssemblyPath);
+
+internal sealed record ResolvedTypeDefinition(
+    MetadataReader Reader,
+    TypeDefinitionHandle Handle);
+
+internal readonly record struct PublicTypeSurface(
+    bool IsPublic,
+    bool IsInterface,
+    ImmutableArray<bool> TypeArguments);
 
 // InterfaceImpl rows may name a TypeRef, or a TypeSpec whose generic arguments name TypeRefs.
 // Resolve those references against the complete MSBuild reference universe before publishing a
 // Kotlin supertype: Kotlin has no surface spelling for a CLR interface edge containing an
 // inaccessible classifier.
-internal sealed class PublicTypeCatalog
+internal sealed class PublicTypeCatalog : IDisposable
 {
     private readonly Dictionary<string, PublicTypeCatalogEntry> _entries;
+    private readonly Dictionary<string, LoadedAssembly> _loaded = new(StringComparer.Ordinal);
 
     private PublicTypeCatalog(IEnumerable<PublicTypeCatalogEntry> entries)
     {
         _entries = new Dictionary<string, PublicTypeCatalogEntry>(StringComparer.Ordinal);
         foreach (var entry in entries)
         {
-            var key = Key(entry.AssemblyIdentity, entry.MetadataName);
+            var key = Key(entry.AssemblyName, entry.MetadataName);
             if (_entries.TryGetValue(key, out var existing) &&
                 (existing.IsPublic != entry.IsPublic || existing.IsInterface != entry.IsInterface))
                 throw new InvalidOperationException(
-                    $"type '{entry.MetadataName}' has conflicting shapes in assembly '{entry.AssemblyIdentity}'");
+                    $"type '{entry.MetadataName}' has conflicting shapes in assembly '{entry.AssemblyName}'");
             _entries[key] = entry;
         }
     }
@@ -37,7 +48,7 @@ internal sealed class PublicTypeCatalog
     public static PublicTypeCatalog Discover(IEnumerable<string> inputs)
     {
         var entries = new List<PublicTypeCatalogEntry>();
-        var forwarders = new List<(string ForwardingIdentity, string TargetIdentity, string MetadataName)>();
+        var forwarders = new List<(string ForwardingAssembly, string TargetAssembly, string MetadataName)>();
         foreach (var path in inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal))
         {
             using var file = File.OpenRead(path);
@@ -45,26 +56,29 @@ internal sealed class PublicTypeCatalog
             if (!pe.HasMetadata) continue;
             var md = pe.GetMetadataReader();
             if (!md.IsAssembly) continue;
-            var assemblyIdentity = AssemblyIdentity(md);
+            var assemblyName = AssemblyName(md);
             foreach (var handle in md.TypeDefinitions)
             {
                 var definition = md.GetTypeDefinition(handle);
                 entries.Add(new PublicTypeCatalogEntry(
-                    assemblyIdentity,
+                    assemblyName,
                     DefinitionName(md, handle),
                     IsPublic(md, handle),
-                    (definition.Attributes & TypeAttributes.Interface) != 0));
+                    (definition.Attributes & TypeAttributes.Interface) != 0,
+                    path));
             }
             foreach (var handle in md.ExportedTypes)
             {
                 var exported = md.GetExportedType(handle);
                 const TypeAttributes Forwarder = (TypeAttributes)0x00200000;
-                if ((exported.Attributes & Forwarder) == 0 ||
-                    (exported.Attributes & TypeAttributes.VisibilityMask) != TypeAttributes.Public)
+                // A type forwarder is exported by definition. Real facade rows carry tdForwarder
+                // without a TypeAttributes visibility bit (for example netstandard and mscorlib),
+                // so requiring Public here makes the entire forwarder graph unreachable.
+                if ((exported.Attributes & Forwarder) == 0)
                     continue;
-                var targetIdentity = ExportedAssemblyIdentity(md, handle);
-                if (targetIdentity is not null)
-                    forwarders.Add((assemblyIdentity, targetIdentity, ExportedName(md, handle)));
+                var targetAssembly = ExportedAssemblyName(md, handle);
+                if (targetAssembly is not null)
+                    forwarders.Add((assemblyName, targetAssembly, ExportedName(md, handle)));
             }
         }
 
@@ -76,12 +90,12 @@ internal sealed class PublicTypeCatalog
             var additions = new List<PublicTypeCatalogEntry>();
             foreach (var forwarder in forwarders)
                 foreach (var target in all._entries.Values.Where(entry =>
-                    StringComparer.Ordinal.Equals(entry.AssemblyIdentity, forwarder.TargetIdentity) &&
+                    StringComparer.Ordinal.Equals(entry.AssemblyName, forwarder.TargetAssembly) &&
                     (StringComparer.Ordinal.Equals(entry.MetadataName, forwarder.MetadataName) ||
                      entry.MetadataName.StartsWith(forwarder.MetadataName + "+", StringComparison.Ordinal))))
                 {
-                    var alias = target with { AssemblyIdentity = forwarder.ForwardingIdentity };
-                    if (!all._entries.ContainsKey(Key(alias.AssemblyIdentity, alias.MetadataName)))
+                    var alias = target with { AssemblyName = forwarder.ForwardingAssembly };
+                    if (!all._entries.ContainsKey(Key(alias.AssemblyName, alias.MetadataName)))
                     {
                         additions.Add(alias);
                         changed = true;
@@ -101,10 +115,19 @@ internal sealed class PublicTypeCatalog
     }
 
     public string Serialize() => JsonSerializer.Serialize(
-        _entries.Values.OrderBy(x => x.AssemblyIdentity, StringComparer.Ordinal)
+        _entries.Values.OrderBy(x => x.AssemblyName, StringComparer.Ordinal)
             .ThenBy(x => x.MetadataName, StringComparer.Ordinal).ToArray());
 
-    public bool IsPublicInterface(MetadataReader reader, EntityHandle handle)
+    public IReadOnlyList<string> DependenciesOf(string input) => _entries.Values
+        .Select(entry => entry.AssemblyPath)
+        .Where(path => !StringComparer.Ordinal.Equals(path, input))
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
+
+    public PublicTypeSurface Surface(
+        MetadataReader reader,
+        EntityHandle handle,
+        ImmutableArray<bool> genericTypeArguments = default)
     {
         var provider = new SurfaceProvider(this);
         var surface = handle.Kind switch
@@ -114,66 +137,187 @@ internal sealed class PublicTypeCatalog
             HandleKind.TypeReference => provider.GetTypeFromReference(
                 reader, (TypeReferenceHandle)handle, 0),
             HandleKind.TypeSpecification => reader.GetTypeSpecification((TypeSpecificationHandle)handle)
-                .DecodeSignature(provider, genericContext: null),
+                .DecodeSignature(provider, genericTypeArguments),
             _ => default,
         };
+        return surface;
+    }
+
+    public bool IsPublicInterface(MetadataReader reader, EntityHandle handle)
+    {
+        var surface = Surface(reader, handle);
         return surface.IsPublic && surface.IsInterface;
     }
 
-    private TypeSurface Resolve(MetadataReader reader, TypeReferenceHandle handle)
+    public bool TryResolveDefinition(
+        MetadataReader reader,
+        EntityHandle handle,
+        out ResolvedTypeDefinition resolved)
     {
-        var identity = ReferenceAssemblyIdentity(reader, handle);
-        return identity is not null &&
-            _entries.TryGetValue(Key(identity, ReferenceName(reader, handle)), out var entry)
-            ? new TypeSurface(entry.IsPublic, entry.IsInterface)
+        ResolvedTypeDefinition? value = handle.Kind switch
+        {
+            HandleKind.TypeDefinition => new(reader, (TypeDefinitionHandle)handle),
+            HandleKind.TypeReference => ResolveDefinition(reader, (TypeReferenceHandle)handle),
+            HandleKind.TypeSpecification => reader.GetTypeSpecification((TypeSpecificationHandle)handle)
+                .DecodeSignature(new DefinitionProvider(this), genericContext: null),
+            _ => null,
+        };
+        resolved = value!;
+        return value is not null;
+    }
+
+    public void Dispose()
+    {
+        foreach (var assembly in _loaded.Values) assembly.Dispose();
+        _loaded.Clear();
+    }
+
+    private PublicTypeSurface Resolve(MetadataReader reader, TypeReferenceHandle handle)
+    {
+        var entry = ResolveEntry(reader, handle);
+        return entry is not null
+            ? new PublicTypeSurface(entry.IsPublic, entry.IsInterface, [])
             : default;
     }
 
-    private readonly record struct TypeSurface(bool IsPublic, bool IsInterface);
+    private PublicTypeCatalogEntry? ResolveEntry(MetadataReader reader, TypeReferenceHandle handle)
+    {
+        var assemblyName = ReferenceAssemblyName(reader, handle);
+        return assemblyName is not null &&
+            _entries.TryGetValue(Key(assemblyName, ReferenceName(reader, handle)), out var entry)
+            ? entry
+            : null;
+    }
 
-    private sealed class SurfaceProvider : ISignatureTypeProvider<TypeSurface, object?>
+    private ResolvedTypeDefinition? ResolveDefinition(MetadataReader reader, TypeReferenceHandle handle)
+    {
+        var entry = ResolveEntry(reader, handle);
+        if (entry is null) return null;
+        if (!_loaded.TryGetValue(entry.AssemblyPath, out var assembly))
+        {
+            assembly = new LoadedAssembly(entry.AssemblyPath);
+            _loaded.Add(entry.AssemblyPath, assembly);
+        }
+        return assembly.Definitions.TryGetValue(entry.MetadataName, out var definition)
+            ? new ResolvedTypeDefinition(assembly.Reader, definition)
+            : null;
+    }
+
+    private sealed class SurfaceProvider : ISignatureTypeProvider<PublicTypeSurface, ImmutableArray<bool>>
     {
         private readonly PublicTypeCatalog _catalog;
 
         internal SurfaceProvider(PublicTypeCatalog catalog) => _catalog = catalog;
 
-        public TypeSurface GetArrayType(TypeSurface elementType, ArrayShape shape) =>
-            new(elementType.IsPublic, false);
-        public TypeSurface GetByReferenceType(TypeSurface elementType) => default;
-        public TypeSurface GetFunctionPointerType(MethodSignature<TypeSurface> signature) => default;
-        public TypeSurface GetGenericInstantiation(
-            TypeSurface genericType,
-            ImmutableArray<TypeSurface> typeArguments) =>
-            new(genericType.IsPublic && typeArguments.All(x => x.IsPublic), genericType.IsInterface);
-        public TypeSurface GetGenericMethodParameter(object? genericContext, int index) => new(true, false);
-        public TypeSurface GetGenericTypeParameter(object? genericContext, int index) => new(true, false);
-        public TypeSurface GetModifiedType(
-            TypeSurface modifier,
-            TypeSurface unmodifiedType,
+        public PublicTypeSurface GetArrayType(PublicTypeSurface elementType, ArrayShape shape) =>
+            new(elementType.IsPublic, false, []);
+        public PublicTypeSurface GetByReferenceType(PublicTypeSurface elementType) => default;
+        public PublicTypeSurface GetFunctionPointerType(MethodSignature<PublicTypeSurface> signature) => default;
+        public PublicTypeSurface GetGenericInstantiation(
+            PublicTypeSurface genericType,
+            ImmutableArray<PublicTypeSurface> typeArguments) =>
+            new(
+                genericType.IsPublic && typeArguments.All(x => x.IsPublic),
+                genericType.IsInterface,
+                typeArguments.Select(argument => argument.IsPublic).ToImmutableArray());
+        public PublicTypeSurface GetGenericMethodParameter(ImmutableArray<bool> genericContext, int index) =>
+            new(true, false, []);
+        public PublicTypeSurface GetGenericTypeParameter(ImmutableArray<bool> genericContext, int index) =>
+            new(genericContext.IsDefault || index >= genericContext.Length || genericContext[index], false, []);
+        public PublicTypeSurface GetModifiedType(
+            PublicTypeSurface modifier,
+            PublicTypeSurface unmodifiedType,
             bool isRequired) => unmodifiedType;
-        public TypeSurface GetPinnedType(TypeSurface elementType) => elementType;
-        public TypeSurface GetPointerType(TypeSurface elementType) => default;
-        public TypeSurface GetPrimitiveType(PrimitiveTypeCode typeCode) => new(true, false);
-        public TypeSurface GetSZArrayType(TypeSurface elementType) => new(elementType.IsPublic, false);
-        public TypeSurface GetTypeFromDefinition(
+        public PublicTypeSurface GetPinnedType(PublicTypeSurface elementType) => elementType;
+        public PublicTypeSurface GetPointerType(PublicTypeSurface elementType) => default;
+        public PublicTypeSurface GetPrimitiveType(PrimitiveTypeCode typeCode) => new(true, false, []);
+        public PublicTypeSurface GetSZArrayType(PublicTypeSurface elementType) =>
+            new(elementType.IsPublic, false, []);
+        public PublicTypeSurface GetTypeFromDefinition(
             MetadataReader reader,
             TypeDefinitionHandle handle,
             byte rawTypeKind)
         {
             var definition = reader.GetTypeDefinition(handle);
-            return new TypeSurface(
+            return new PublicTypeSurface(
                 IsPublic(reader, handle),
-                (definition.Attributes & TypeAttributes.Interface) != 0);
+                (definition.Attributes & TypeAttributes.Interface) != 0,
+                []);
         }
-        public TypeSurface GetTypeFromReference(
+        public PublicTypeSurface GetTypeFromReference(
             MetadataReader reader,
             TypeReferenceHandle handle,
             byte rawTypeKind) => _catalog.Resolve(reader, handle);
-        public TypeSurface GetTypeFromSpecification(
+        public PublicTypeSurface GetTypeFromSpecification(
+            MetadataReader reader,
+            ImmutableArray<bool> genericContext,
+            TypeSpecificationHandle handle,
+            byte rawTypeKind) => reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
+    }
+
+    private sealed class DefinitionProvider : ISignatureTypeProvider<ResolvedTypeDefinition?, object?>
+    {
+        private readonly PublicTypeCatalog _catalog;
+
+        internal DefinitionProvider(PublicTypeCatalog catalog) => _catalog = catalog;
+
+        public ResolvedTypeDefinition? GetArrayType(ResolvedTypeDefinition? elementType, ArrayShape shape) => null;
+        public ResolvedTypeDefinition? GetByReferenceType(ResolvedTypeDefinition? elementType) => null;
+        public ResolvedTypeDefinition? GetFunctionPointerType(MethodSignature<ResolvedTypeDefinition?> signature) => null;
+        public ResolvedTypeDefinition? GetGenericInstantiation(
+            ResolvedTypeDefinition? genericType,
+            ImmutableArray<ResolvedTypeDefinition?> typeArguments) => genericType;
+        public ResolvedTypeDefinition? GetGenericMethodParameter(object? genericContext, int index) => null;
+        public ResolvedTypeDefinition? GetGenericTypeParameter(object? genericContext, int index) => null;
+        public ResolvedTypeDefinition? GetModifiedType(
+            ResolvedTypeDefinition? modifier,
+            ResolvedTypeDefinition? unmodifiedType,
+            bool isRequired) => unmodifiedType;
+        public ResolvedTypeDefinition? GetPinnedType(ResolvedTypeDefinition? elementType) => elementType;
+        public ResolvedTypeDefinition? GetPointerType(ResolvedTypeDefinition? elementType) => null;
+        public ResolvedTypeDefinition? GetPrimitiveType(PrimitiveTypeCode typeCode) => null;
+        public ResolvedTypeDefinition? GetSZArrayType(ResolvedTypeDefinition? elementType) => null;
+        public ResolvedTypeDefinition? GetTypeFromDefinition(
+            MetadataReader reader,
+            TypeDefinitionHandle handle,
+            byte rawTypeKind) => new(reader, handle);
+        public ResolvedTypeDefinition? GetTypeFromReference(
+            MetadataReader reader,
+            TypeReferenceHandle handle,
+            byte rawTypeKind) => _catalog.ResolveDefinition(reader, handle);
+        public ResolvedTypeDefinition? GetTypeFromSpecification(
             MetadataReader reader,
             object? genericContext,
             TypeSpecificationHandle handle,
             byte rawTypeKind) => reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
+    }
+
+    private sealed class LoadedAssembly : IDisposable
+    {
+        private readonly FileStream _file;
+        private readonly PEReader _pe;
+
+        internal LoadedAssembly(string path)
+        {
+            _file = File.OpenRead(path);
+            _pe = new PEReader(_file, PEStreamOptions.PrefetchMetadata);
+            if (!_pe.HasMetadata)
+                throw new InvalidDataException($"not a managed PE: {path}");
+            Reader = _pe.GetMetadataReader();
+            Definitions = Reader.TypeDefinitions.ToDictionary(
+                handle => DefinitionName(Reader, handle),
+                handle => handle,
+                StringComparer.Ordinal);
+        }
+
+        internal MetadataReader Reader { get; }
+        internal IReadOnlyDictionary<string, TypeDefinitionHandle> Definitions { get; }
+
+        public void Dispose()
+        {
+            _pe.Dispose();
+            _file.Dispose();
+        }
     }
 
     private static bool IsPublic(MetadataReader md, TypeDefinitionHandle handle)
@@ -206,60 +350,23 @@ internal sealed class PublicTypeCatalog
         return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
     }
 
-    private static string AssemblyIdentity(MetadataReader md)
-    {
-        var assembly = md.GetAssemblyDefinition();
-        return AssemblyIdentity(
-            md.GetString(assembly.Name),
-            assembly.Version,
-            md.GetString(assembly.Culture),
-            md.GetBlobBytes(assembly.PublicKey),
-            publicKey: true);
-    }
+    private static string AssemblyName(MetadataReader md) =>
+        md.GetString(md.GetAssemblyDefinition().Name);
 
-    private static string? ReferenceAssemblyIdentity(MetadataReader md, TypeReferenceHandle handle)
+    private static string? ReferenceAssemblyName(MetadataReader md, TypeReferenceHandle handle)
     {
         var scope = md.GetTypeReference(handle).ResolutionScope;
         return scope.Kind switch
         {
-            HandleKind.AssemblyReference => AssemblyIdentity(md, (AssemblyReferenceHandle)scope),
-            HandleKind.TypeReference => ReferenceAssemblyIdentity(md, (TypeReferenceHandle)scope),
-            HandleKind.ModuleDefinition when md.IsAssembly => AssemblyIdentity(md),
+            HandleKind.AssemblyReference => AssemblyName(md, (AssemblyReferenceHandle)scope),
+            HandleKind.TypeReference => ReferenceAssemblyName(md, (TypeReferenceHandle)scope),
+            HandleKind.ModuleDefinition when md.IsAssembly => AssemblyName(md),
             _ => null,
         };
     }
 
-    private static string AssemblyIdentity(MetadataReader md, AssemblyReferenceHandle handle)
-    {
-        var assembly = md.GetAssemblyReference(handle);
-        return AssemblyIdentity(
-            md.GetString(assembly.Name),
-            assembly.Version,
-            md.GetString(assembly.Culture),
-            md.GetBlobBytes(assembly.PublicKeyOrToken),
-            publicKey: (assembly.Flags & AssemblyFlags.PublicKey) != 0);
-    }
-
-    private static string AssemblyIdentity(
-        string name,
-        Version version,
-        string culture,
-        byte[] key,
-        bool publicKey)
-    {
-        var assembly = new AssemblyName(name)
-        {
-            Version = version,
-            CultureName = string.IsNullOrEmpty(culture) ? null : culture,
-        };
-        if (key.Length != 0)
-        {
-            if (publicKey) assembly.SetPublicKey(key);
-            else assembly.SetPublicKeyToken(key);
-        }
-        return assembly.FullName
-            ?? throw new InvalidDataException($"could not form assembly identity for '{name}'");
-    }
+    private static string AssemblyName(MetadataReader md, AssemblyReferenceHandle handle) =>
+        md.GetString(md.GetAssemblyReference(handle).Name);
 
     private static string ExportedName(MetadataReader md, ExportedTypeHandle handle)
     {
@@ -271,17 +378,17 @@ internal sealed class PublicTypeCatalog
         return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
     }
 
-    private static string? ExportedAssemblyIdentity(MetadataReader md, ExportedTypeHandle handle)
+    private static string? ExportedAssemblyName(MetadataReader md, ExportedTypeHandle handle)
     {
         var implementation = md.GetExportedType(handle).Implementation;
         return implementation.Kind switch
         {
-            HandleKind.AssemblyReference => AssemblyIdentity(md, (AssemblyReferenceHandle)implementation),
-            HandleKind.ExportedType => ExportedAssemblyIdentity(md, (ExportedTypeHandle)implementation),
+            HandleKind.AssemblyReference => AssemblyName(md, (AssemblyReferenceHandle)implementation),
+            HandleKind.ExportedType => ExportedAssemblyName(md, (ExportedTypeHandle)implementation),
             _ => null,
         };
     }
 
-    private static string Key(string assemblyIdentity, string metadataName) =>
-        assemblyIdentity + "\0" + metadataName;
+    private static string Key(string assemblyName, string metadataName) =>
+        assemblyName + "\0" + metadataName;
 }

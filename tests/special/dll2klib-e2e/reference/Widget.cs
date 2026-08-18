@@ -19,6 +19,95 @@ public interface IVisibleControl
     int Read() => 23;
 }
 
+public interface IPublicDefaultSlot
+{
+    void M();
+}
+
+internal interface IHiddenDefaultProvider : IPublicDefaultSlot
+{
+    void IPublicDefaultSlot.M() { }
+}
+
+public class DefaultCarrier1 : IHiddenDefaultProvider
+{
+}
+
+public class DefaultCarrier2 : IPublicDefaultSlot, IHiddenDefaultProvider
+{
+}
+
+public interface IPublicConstructedDefaultProvider<T> : IPublicDefaultSlot
+{
+    void IPublicDefaultSlot.M() { }
+}
+
+internal sealed class HiddenDefaultArgument
+{
+}
+
+public class ConstructedDefaultCarrier : IPublicConstructedDefaultProvider<HiddenDefaultArgument>
+{
+}
+
+internal interface IHiddenReabstractProvider : IHiddenDefaultProvider
+{
+    abstract void IPublicDefaultSlot.M();
+}
+
+public interface IPublicNullabilityDefaultSlot
+{
+    string? Normalize(string value);
+}
+
+internal interface IHiddenNullabilityDefaultProvider : IPublicNullabilityDefaultSlot
+{
+#pragma warning disable CS8769
+    string IPublicNullabilityDefaultSlot.Normalize(string? value) => value ?? "";
+#pragma warning restore CS8769
+}
+
+public class NullabilityDefaultCarrier : IHiddenNullabilityDefaultProvider
+{
+}
+
+public interface IPublicGenericDefaultSlot<T>
+{
+    T Echo(T value);
+}
+
+internal interface IHiddenGenericDefaultProvider<T> : IPublicGenericDefaultSlot<T>
+{
+    T IPublicGenericDefaultSlot<T>.Echo(T value) => value;
+}
+
+public class GenericDefaultCarrier : IHiddenGenericDefaultProvider<string>
+{
+}
+
+public class ExternalDefaultCarrier : IExternalHiddenDefaultProvider
+{
+}
+
+public class ExplicitDefaultCarrier : IExternalDefaultSlot
+{
+    int IExternalDefaultSlot.Value() => 37;
+}
+
+public interface IPublicDefaultProperty
+{
+    int Number { get; }
+}
+
+internal interface IHiddenDefaultPropertyProvider : IPublicDefaultProperty
+{
+    int IPublicDefaultProperty.Number => 41;
+}
+
+public class DefaultPropertyCarrier : IHiddenDefaultPropertyProvider
+{
+}
+
 // C# permits a public class to implement a non-public interface and to close a public
 // generic interface over a non-public type. Neither edge is a valid public Kotlin
 // supertype, while the ordinary public edges beside them must remain visible.

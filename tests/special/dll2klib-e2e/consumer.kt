@@ -6,10 +6,28 @@ import Probe.IAdder
 import Probe.Bump
 import Probe.IVisibleControl
 import Probe.VisibilityProbe
+import Probe.DefaultCarrier1
+import Probe.DefaultCarrier2
+import Probe.IPublicDefaultSlot
+import Probe.GenericDefaultCarrier
+import Probe.ExternalDefaultCarrier
+import Probe.ExplicitDefaultCarrier
+import Probe.IPublicGenericDefaultSlot
 import Probe.Contracts.IVisibleGeneric
+import Probe.Contracts.IExternalDefaultSlot
 import GlobalWidgetExtensions
 import GlobalBump
 import kotlin.clr.byref
+
+class DefaultCarrierSubclass1 : DefaultCarrier1()
+
+class DefaultCarrierSubclass2 : DefaultCarrier2()
+
+class GenericDefaultCarrierSubclass : GenericDefaultCarrier()
+
+class ExternalDefaultCarrierSubclass : ExternalDefaultCarrier()
+
+class ExplicitDefaultCarrierSubclass : ExplicitDefaultCarrier()
 
 fun consume(): Int {
     val maybe: String? = "x"
@@ -40,6 +58,16 @@ fun consume(): Int {
     val visibility = VisibilityProbe()
     val visibleControl: IVisibleControl = visibility
     val visibleGeneric: IVisibleGeneric<String> = visibility
+    val defaultCarrier1: IPublicDefaultSlot = DefaultCarrierSubclass1()
+    val defaultCarrier2: IPublicDefaultSlot = DefaultCarrierSubclass2()
+    defaultCarrier1.M()
+    defaultCarrier2.M()
+    val genericDefaultCarrier: IPublicGenericDefaultSlot<String> = GenericDefaultCarrierSubclass()
+    genericDefaultCarrier.Echo("ok")
+    val externalDefaultCarrier: IExternalDefaultSlot = ExternalDefaultCarrierSubclass()
+    externalDefaultCarrier.Value()
+    val explicitDefaultCarrier: IExternalDefaultSlot = ExplicitDefaultCarrierSubclass()
+    explicitDefaultCarrier.Value()
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
         widget.Value + widget.Inherited + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +

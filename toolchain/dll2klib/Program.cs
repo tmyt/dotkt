@@ -152,6 +152,8 @@ internal static class Program
                 companionCatalog.DependenciesOf(x.Input).Any(path =>
                     outputTime < File.GetLastWriteTimeUtc(path)) ||
                 innerCatalog.DependenciesOf(x.Input).Any(path =>
+                    outputTime < File.GetLastWriteTimeUtc(path)) ||
+                publicTypeCatalog.DependenciesOf(x.Input).Any(path =>
                     outputTime < File.GetLastWriteTimeUtc(path));
         }).ToArray();
         if (stale.Length == 0)
@@ -284,7 +286,7 @@ internal static class Program
             Environment.GetEnvironmentVariable(CompanionCatalogEnvironment));
         var innerCatalog = InnerReferenceCatalog.Load(
             Environment.GetEnvironmentVariable(InnerCatalogEnvironment));
-        var publicTypeCatalog = PublicTypeCatalog.Load(
+        using var publicTypeCatalog = PublicTypeCatalog.Load(
             Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment));
         var fragments = new AssemblyScanner(
             pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog).Scan();
@@ -1359,6 +1361,24 @@ internal sealed class AssemblyScanner
         Constructor Declaration,
         ImmutableArray<string> PhysicalParameters);
 
+    private sealed record LocalInterfaceInstance(
+        ResolvedTypeDefinition Definition,
+        KType Type,
+        PublicTypeSurface Surface,
+        int Depth);
+
+    private sealed record InheritedDefaultImplementation(
+        MetadataReader Reader,
+        MethodDefinitionHandle Declaration,
+        string Name,
+        ImmutableArray<KType> InterfaceArguments,
+        SignatureDecoder Signatures,
+        string? PropertyName,
+        int AccessorKind,
+        string SlotKey,
+        bool IsAbstract,
+        int Depth);
+
     private readonly MetadataReader _md;
     private readonly MetadataAttributes _attrs;
     private readonly ArityNames _arityNames;
@@ -2192,6 +2212,98 @@ internal sealed class AssemblyScanner
                 result.Function.Add(function);
         }
 
+        var inheritedDefaults = InheritedHiddenInterfaceDefaults(def, names, signatures, typeContext).ToArray();
+        var inheritedAccessors = new Dictionary<string, (
+            InheritedDefaultImplementation? Getter,
+            InheritedDefaultImplementation? Setter)>(StringComparer.Ordinal);
+        foreach (var inherited in inheritedDefaults.Where(item => item.AccessorKind != 0))
+        {
+            var propertyName = inherited.PropertyName!;
+            inheritedAccessors.TryGetValue(propertyName, out var pair);
+            if (inherited.AccessorKind == 1) pair.Getter = inherited;
+            else pair.Setter = inherited;
+            inheritedAccessors[propertyName] = pair;
+        }
+        foreach (var (propertyName, pair) in inheritedAccessors)
+        {
+            if (propertyNames.Contains(propertyName)) continue;
+            KType propertyType;
+            if (pair.Getter is { } getter)
+            {
+                var method = getter.Reader.GetMethodDefinition(getter.Declaration);
+                var context = InheritedContext(getter.Reader, getter.Declaration, method);
+                var signature = method.DecodeSignature(getter.Signatures, context);
+                propertyType = ProjectInheritedReturn(
+                    getter.Reader,
+                    getter.Declaration,
+                    method,
+                    SubstituteTypeParameters(signature.ReturnType, getter.InterfaceArguments),
+                    getter.Signatures);
+            }
+            else
+            {
+                var setter = pair.Setter!;
+                var method = setter.Reader.GetMethodDefinition(setter.Declaration);
+                var context = InheritedContext(setter.Reader, setter.Declaration, method);
+                var signature = method.DecodeSignature(setter.Signatures, context);
+                propertyType = ProjectInheritedType(
+                    setter.Reader,
+                    method.GetParameters().FirstOrDefault(handle =>
+                        setter.Reader.GetParameter(handle).SequenceNumber == signature.ParameterTypes.Length),
+                    SubstituteTypeParameters(signature.ParameterTypes[^1], setter.InterfaceArguments),
+                    setter.Declaration,
+                    setter.Signatures);
+            }
+            result.Property.Add(new Property
+            {
+                Name = names.String(propertyName),
+                ReturnType = propertyType,
+                Flags = Flags.Property(MethodAttributes.Public, pair.Setter is not null, isStatic: false),
+                SetterValueParameter = pair.Setter is null
+                    ? null
+                    : new ValueParameter { Name = names.String("value"), Type = propertyType.Clone() },
+            });
+            propertyNames.Add(propertyName);
+        }
+
+        foreach (var inherited in inheritedDefaults.Where(item => item.AccessorKind == 0))
+        {
+            var reader = inherited.Reader;
+            var declarationHandle = inherited.Declaration;
+            var declaration = reader.GetMethodDefinition(declarationHandle);
+            var context = InheritedContext(reader, declarationHandle, declaration);
+            var signature = declaration.DecodeSignature(inherited.Signatures, context);
+            var returnType = SubstituteTypeParameters(signature.ReturnType, inherited.InterfaceArguments);
+            var parameterTypes = signature.ParameterTypes
+                .Select(type => SubstituteTypeParameters(type, inherited.InterfaceArguments))
+                .ToImmutableArray();
+            var function = new Function
+            {
+                Name = names.String(inherited.Name),
+                Flags = Flags.Callable(MethodAttributes.Public, modality: 0),
+                ReturnType = ProjectInheritedReturn(
+                    reader, declarationHandle, declaration, returnType, inherited.Signatures),
+                ValueParameter = {
+                    InheritedParameters(
+                        reader,
+                        declaration,
+                        parameterTypes,
+                        names,
+                        inherited.Signatures)
+                },
+            };
+            AddInheritedMethodTypeParameters(
+                reader,
+                declaration,
+                function,
+                names,
+                inherited.Signatures,
+                context,
+                inherited.InterfaceArguments);
+            if (functionKeys.Add(FunctionKey(function, names)))
+                result.Function.Add(function);
+        }
+
         foreach (var fieldHandle in def.GetFields())
         {
             // Suppress the exact ABI singleton slot validated from [KotlinCompanion], not a declaration selected by
@@ -2326,6 +2438,450 @@ internal sealed class AssemblyScanner
             return false;
         return interfaceKeys.Contains(TypeKey(signatures.DecodeEntity(owner, context, platform: false)));
     }
+
+    // A CLR class can inherit the implementation of a public interface slot from a
+    // non-public derived interface. Once that hidden edge is omitted from the Kotlin
+    // surface, the public slot still needs a concrete declaration on the class;
+    // otherwise every Kotlin subclass acquires a fictional abstract obligation.
+    // C# emits the MethodImpl on J rather than C. Track the constructed interface
+    // instances so J<T> : I<T> supplies the correctly substituted public I<T> slot.
+    private IEnumerable<InheritedDefaultImplementation> InheritedHiddenInterfaceDefaults(
+        TypeDefinition classDefinition,
+        NameTable names,
+        SignatureDecoder signatures,
+        GenericContext classContext)
+    {
+        var instances = new List<LocalInterfaceInstance>();
+        var visited = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var interfaceHandle in classDefinition.GetInterfaceImplementations())
+        {
+            var entity = _md.GetInterfaceImplementation(interfaceHandle).Interface;
+            var surface = _publicTypeCatalog.Surface(_md, entity);
+            if (surface.IsPublic && surface.IsInterface ||
+                !_publicTypeCatalog.TryResolveDefinition(_md, entity, out var definition))
+                continue;
+            Visit(new LocalInterfaceInstance(
+                definition,
+                signatures.DecodeEntity(entity, classContext, platform: false),
+                surface,
+                0));
+        }
+
+        var candidates = new List<InheritedDefaultImplementation>();
+        foreach (var instance in instances.Where(instance => !instance.Surface.IsPublic))
+        {
+            var reader = instance.Definition.Reader;
+            var definition = reader.GetTypeDefinition(instance.Definition.Handle);
+            var instanceSignatures = Decoder(reader);
+            var typeParameters = definition.GetGenericParameters()
+                .ToDictionary(h => h, h => reader.GetGenericParameter(h).Index);
+            var hiddenContext = new GenericContext(instance.Definition.Handle, default, typeParameters);
+            var hiddenArguments = instance.Type.Argument
+                .Where(argument => argument.Type is not null)
+                .Select(argument => argument.Type!.Clone())
+                .ToImmutableArray();
+            foreach (var implementationHandle in definition.GetMethodImplementations())
+            {
+                var implementation = reader.GetMethodImplementation(implementationHandle);
+                if (implementation.MethodBody.Kind != HandleKind.MethodDefinition)
+                    continue;
+                var bodyHandle = (MethodDefinitionHandle)implementation.MethodBody;
+                if (!TryResolveDeclaration(
+                        reader,
+                        implementation.MethodDeclaration,
+                        instanceSignatures,
+                        hiddenContext,
+                        hiddenArguments,
+                        instance.Surface.TypeArguments,
+                        out var declarationReader,
+                        out var declarationHandle,
+                        out var declarationArguments,
+                        out var declarationSignatures))
+                    continue;
+                var declaration = declarationReader.GetMethodDefinition(declarationHandle);
+                var propertyAccessor = InheritedPropertyAccessor(declarationReader, declarationHandle);
+                var slotKey = AssemblySimpleName(declarationReader) + ":" +
+                    MetadataTokens.GetRowNumber(declarationHandle) + ":" +
+                    string.Join(",", declarationArguments.Select(TypeKey));
+                candidates.Add(new InheritedDefaultImplementation(
+                    declarationReader,
+                    declarationHandle,
+                    SimpleMethodName(declarationReader.GetString(declaration.Name)),
+                    declarationArguments,
+                    declarationSignatures,
+                    propertyAccessor?.Name,
+                    propertyAccessor?.Kind ?? 0,
+                    slotKey,
+                    (reader.GetMethodDefinition(bodyHandle).Attributes & MethodAttributes.Abstract) != 0,
+                    instance.Depth));
+            }
+        }
+
+        foreach (var group in candidates.GroupBy(candidate => candidate.SlotKey, StringComparer.Ordinal))
+        {
+            var depth = group.Min(candidate => candidate.Depth);
+            var closest = group.Where(candidate => candidate.Depth == depth).ToArray();
+            // An abstract reimplementation is a new abstract declaration for the same
+            // CLR slot and suppresses every less-derived default body.
+            if (closest.Any(candidate => candidate.IsAbstract)) continue;
+            yield return closest[0];
+        }
+
+        void Visit(LocalInterfaceInstance instance)
+        {
+            var reader = instance.Definition.Reader;
+            var handle = instance.Definition.Handle;
+            var key = AssemblySimpleName(reader) + ":" + MetadataTokens.GetRowNumber(handle) + ":" +
+                TypeKey(instance.Type);
+            if (visited.TryGetValue(key, out var previousDepth) && previousDepth <= instance.Depth) return;
+            visited[key] = instance.Depth;
+            instances.Add(instance);
+            var definition = reader.GetTypeDefinition(handle);
+            var typeParameters = definition.GetGenericParameters()
+                .ToDictionary(h => h, h => reader.GetGenericParameter(h).Index);
+            var context = new GenericContext(handle, default, typeParameters);
+            var arguments = instance.Type.Argument
+                .Where(argument => argument.Type is not null)
+                .Select(argument => argument.Type!.Clone())
+                .ToImmutableArray();
+            foreach (var parentHandle in definition.GetInterfaceImplementations())
+            {
+                var parentEntity = reader.GetInterfaceImplementation(parentHandle).Interface;
+                if (!_publicTypeCatalog.TryResolveDefinition(reader, parentEntity, out var parentDefinition)) continue;
+                var parentType = Decoder(reader).DecodeEntity(parentEntity, context, platform: false);
+                Visit(new LocalInterfaceInstance(
+                    parentDefinition,
+                    SubstituteTypeParameters(parentType, arguments),
+                    _publicTypeCatalog.Surface(reader, parentEntity, instance.Surface.TypeArguments),
+                    instance.Depth + 1));
+            }
+        }
+
+        bool TryResolveDeclaration(
+            MetadataReader reader,
+            EntityHandle declarationEntity,
+            SignatureDecoder instanceSignatures,
+            GenericContext hiddenContext,
+            ImmutableArray<KType> hiddenArguments,
+            ImmutableArray<bool> hiddenArgumentSurface,
+            out MetadataReader declarationReader,
+            out MethodDefinitionHandle declarationHandle,
+            out ImmutableArray<KType> declarationArguments,
+            out SignatureDecoder declarationSignatures)
+        {
+            declarationReader = null!;
+            declarationHandle = default;
+            declarationArguments = [];
+            declarationSignatures = null!;
+
+            EntityHandle owner;
+            string methodName;
+            MethodSignature<KType>? referenceSignature = null;
+            if (declarationEntity.Kind == HandleKind.MethodDefinition)
+            {
+                var method = reader.GetMethodDefinition((MethodDefinitionHandle)declarationEntity);
+                owner = method.GetDeclaringType();
+                methodName = reader.GetString(method.Name);
+            }
+            else if (declarationEntity.Kind == HandleKind.MemberReference)
+            {
+                var member = reader.GetMemberReference((MemberReferenceHandle)declarationEntity);
+                if (member.GetKind() != MemberReferenceKind.Method) return false;
+                owner = member.Parent;
+                methodName = reader.GetString(member.Name);
+                referenceSignature = member.DecodeMethodSignature(instanceSignatures, hiddenContext);
+            }
+            else
+            {
+                return false;
+            }
+
+            if (owner.IsNil ||
+                owner.Kind is not (HandleKind.TypeDefinition or HandleKind.TypeReference or HandleKind.TypeSpecification) ||
+                !_publicTypeCatalog.TryResolveDefinition(reader, owner, out var resolvedOwner))
+                return false;
+
+            var ownerSurface = _publicTypeCatalog.Surface(reader, owner, hiddenArgumentSurface);
+            if (!ownerSurface.IsPublic || !ownerSurface.IsInterface) return false;
+
+            var ownerType = SubstituteTypeParameters(
+                instanceSignatures.DecodeEntity(owner, hiddenContext, platform: false),
+                hiddenArguments);
+            declarationArguments = ownerType.Argument
+                .Where(argument => argument.Type is not null)
+                .Select(argument => argument.Type!.Clone())
+                .ToImmutableArray();
+            var resolvedArguments = declarationArguments;
+            declarationReader = resolvedOwner.Reader;
+            declarationSignatures = Decoder(declarationReader);
+
+            if (declarationEntity.Kind == HandleKind.MethodDefinition &&
+                IsCurrentAssembly(reader) == IsCurrentAssembly(declarationReader) &&
+                reader.GetGuid(reader.GetModuleDefinition().Mvid) ==
+                    declarationReader.GetGuid(declarationReader.GetModuleDefinition().Mvid))
+            {
+                declarationHandle = (MethodDefinitionHandle)declarationEntity;
+                return true;
+            }
+
+            var candidates = new List<MethodDefinitionHandle>();
+            foreach (var candidateHandle in declarationReader.GetTypeDefinition(resolvedOwner.Handle).GetMethods())
+            {
+                var candidate = declarationReader.GetMethodDefinition(candidateHandle);
+                if (!StringComparer.Ordinal.Equals(declarationReader.GetString(candidate.Name), methodName))
+                    continue;
+                if (referenceSignature is not null &&
+                    candidate.GetGenericParameters().Count != referenceSignature.Value.GenericParameterCount)
+                    continue;
+                var candidateContext = InheritedContext(declarationReader, candidateHandle, candidate);
+                var candidateSignature = candidate.DecodeSignature(declarationSignatures, candidateContext);
+                if (referenceSignature is not null)
+                {
+                    // VAR positions in a MemberRef signature belong to its parent
+                    // interface, not to the hidden interface containing the MethodImpl.
+                    var expectedReturn = SubstituteTypeParameters(referenceSignature.Value.ReturnType, resolvedArguments);
+                    var expectedParameters = referenceSignature.Value.ParameterTypes
+                        .Select(type => SubstituteTypeParameters(type, resolvedArguments)).ToArray();
+                    var actualReturn = SubstituteTypeParameters(candidateSignature.ReturnType, resolvedArguments);
+                    var actualParameters = candidateSignature.ParameterTypes
+                        .Select(type => SubstituteTypeParameters(type, resolvedArguments)).ToArray();
+                    if (!actualReturn.Equals(expectedReturn) ||
+                        !actualParameters.SequenceEqual(expectedParameters))
+                        continue;
+                }
+                candidates.Add(candidateHandle);
+            }
+            if (candidates.Count != 1) return false;
+            declarationHandle = candidates[0];
+            return true;
+        }
+
+        SignatureDecoder Decoder(MetadataReader reader) => IsCurrentAssembly(reader)
+            ? signatures
+            : new SignatureDecoder(
+                reader,
+                names,
+                new MetadataAttributes(reader),
+                ArityNames.Create(reader, Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES")),
+                _delegateCatalog,
+                _companionCatalog,
+                _innerCatalog);
+    }
+
+    private static GenericContext InheritedContext(
+        MetadataReader reader,
+        MethodDefinitionHandle methodHandle,
+        MethodDefinition method)
+    {
+        var owner = method.GetDeclaringType();
+        return new GenericContext(
+            owner,
+            methodHandle,
+            reader.GetTypeDefinition(owner).GetGenericParameters()
+                .ToDictionary(handle => handle, handle => reader.GetGenericParameter(handle).Index));
+    }
+
+    private static (string Name, int Kind)? InheritedPropertyAccessor(
+        MetadataReader reader,
+        MethodDefinitionHandle methodHandle)
+    {
+        var owner = reader.GetMethodDefinition(methodHandle).GetDeclaringType();
+        foreach (var propertyHandle in reader.GetTypeDefinition(owner).GetProperties())
+        {
+            var property = reader.GetPropertyDefinition(propertyHandle);
+            var accessors = property.GetAccessors();
+            if (accessors.Getter == methodHandle)
+                return (SimpleMethodName(reader.GetString(property.Name)), 1);
+            if (accessors.Setter == methodHandle)
+                return (SimpleMethodName(reader.GetString(property.Name)), 2);
+        }
+        return null;
+    }
+
+    private KType ProjectInheritedReturn(
+        MetadataReader reader,
+        MethodDefinitionHandle methodHandle,
+        MethodDefinition method,
+        KType physical,
+        SignatureDecoder signatures)
+    {
+        var returnHandle = method.GetParameters()
+            .FirstOrDefault(handle => reader.GetParameter(handle).SequenceNumber == 0);
+        if (signatures.ByRefElement(physical) is { } element) physical = element;
+        return ProjectInheritedType(
+            reader,
+            returnHandle,
+            physical,
+            methodHandle,
+            signatures,
+            flowContract: true);
+    }
+
+    private IEnumerable<ValueParameter> InheritedParameters(
+        MetadataReader reader,
+        MethodDefinition method,
+        ImmutableArray<KType> types,
+        NameTable names,
+        SignatureDecoder signatures)
+    {
+        var rows = method.GetParameters()
+            .Select(handle => (Handle: handle, Row: reader.GetParameter(handle)))
+            .Where(parameter => parameter.Row.SequenceNumber > 0)
+            .ToDictionary(parameter => parameter.Row.SequenceNumber);
+        for (var i = 0; i < types.Length; i++)
+        {
+            if (!rows.TryGetValue(i + 1, out var entry))
+            {
+                yield return new ValueParameter
+                {
+                    Name = names.String($"arg{i}"),
+                    Type = ProjectInheritedType(
+                        reader, default, types[i], method.GetDeclaringType(), signatures),
+                };
+                continue;
+            }
+            var attrs = new MetadataAttributes(reader);
+            var name = entry.Row.Name.IsNil ? $"arg{i}" : reader.GetString(entry.Row.Name);
+            var type = ProjectInheritedType(
+                reader, entry.Handle, types[i], method.GetDeclaringType(), signatures);
+            var value = new ValueParameter
+            {
+                Name = names.String(string.IsNullOrEmpty(name) ? $"arg{i}" : name),
+                Type = type,
+                Flags = (entry.Row.Attributes & (ParameterAttributes.Optional | ParameterAttributes.HasDefault)) != 0 ||
+                    attrs.Has(entry.Handle, "kotlin.clr.KotlinDefault", requireTrust: false)
+                        ? 1 << 1
+                        : 0,
+            };
+            if (attrs.Has(entry.Handle, "System.ParamArrayAttribute", requireTrust: false) &&
+                signatures.ArrayElement(type) is { } element)
+                value.VarargElementType = element;
+            yield return value;
+        }
+    }
+
+    private KType ProjectInheritedType(
+        MetadataReader reader,
+        EntityHandle slot,
+        KType physical,
+        EntityHandle contextOwner,
+        SignatureDecoder signatures,
+        bool flowContract = false)
+    {
+        var attrs = new MetadataAttributes(reader);
+        TypeNode? exact = null;
+        string? carrierName = null;
+        foreach (var carrier in new[] {
+            "KotlinTypeAttribute",
+            "KotlinSuspendFunctionTypeAttribute",
+            "KotlinNullableGenericAttribute",
+            "KotlinCollectionIdentityAttribute",
+        })
+        {
+            exact = attrs.CarrierType(slot, MetadataAttributes.DotKtNs + carrier);
+            if (exact is not null)
+            {
+                carrierName = carrier;
+                break;
+            }
+        }
+        var result = exact is null
+            ? physical
+            : signatures.FromTypeNode(carrierName == "KotlinNullableGenericAttribute"
+                ? StripOuterNullability(exact, signatures)
+                : exact);
+        if (attrs.Has(slot, MetadataAttributes.DotKtNs + "KotlinExtensionFunctionTypeAttribute"))
+            result = signatures.AsExtensionFunction(result);
+        if (attrs.Int32(slot, MetadataAttributes.DotKtNs + "KotlinContextFunctionTypeAttribute") is int contextCount)
+            result = signatures.AsContextFunction(result, contextCount);
+        var bytes = attrs.Nullability(slot);
+        var contextByte = NullableContext(reader, attrs, contextOwner);
+        if (attrs.IsDotKtAssembly && contextByte == 0) contextByte = 1;
+        result = carrierName switch
+        {
+            "KotlinTypeAttribute" => result,
+            "KotlinSuspendFunctionTypeAttribute" or "KotlinNullableGenericAttribute"
+                => signatures.ApplyOuterNullability(result, bytes, contextByte),
+            _ => signatures.ApplyNullability(result, bytes, contextByte),
+        };
+        if (flowContract && attrs.Has(slot, MetadataAttributes.MaybeNull, requireTrust: false))
+            result = signatures.AsPlatform(result);
+        else if (flowContract && attrs.Has(slot, MetadataAttributes.NotNull, requireTrust: false))
+            result = signatures.AsNonNull(result);
+        return result;
+    }
+
+    private void AddInheritedMethodTypeParameters(
+        MetadataReader reader,
+        MethodDefinition method,
+        Function function,
+        NameTable names,
+        SignatureDecoder signatures,
+        GenericContext context,
+        ImmutableArray<KType> interfaceArguments)
+    {
+        foreach (var parameterHandle in method.GetGenericParameters())
+        {
+            var parameter = reader.GetGenericParameter(parameterHandle);
+            var projected = new TypeParameter
+            {
+                Id = 10000 + parameter.Index,
+                Name = names.String(reader.GetString(parameter.Name)),
+                Variance = TypeParameter.Types.Variance.Inv,
+            };
+            foreach (var constraintHandle in parameter.GetConstraints())
+            {
+                var constraint = reader.GetGenericParameterConstraint(constraintHandle);
+                projected.UpperBound.Add(SubstituteTypeParameters(
+                    signatures.DecodeEntity(constraint.Type, context, platform: false),
+                    interfaceArguments));
+            }
+            function.TypeParameter.Add(projected);
+        }
+    }
+
+    private bool IsCurrentAssembly(MetadataReader reader) =>
+        reader.GetGuid(reader.GetModuleDefinition().Mvid) == _md.GetGuid(_md.GetModuleDefinition().Mvid);
+
+    private static string AssemblySimpleName(MetadataReader reader) => reader.IsAssembly
+        ? reader.GetString(reader.GetAssemblyDefinition().Name)
+        : reader.GetGuid(reader.GetModuleDefinition().Mvid).ToString("N");
+
+    private static byte NullableContext(
+        MetadataReader reader,
+        MetadataAttributes attrs,
+        EntityHandle owner)
+    {
+        var current = owner;
+        while (!current.IsNil)
+        {
+            if (attrs.Byte(current, MetadataAttributes.NullableContext, requireTrust: false) is byte value)
+                return value;
+            current = current.Kind switch
+            {
+                HandleKind.MethodDefinition => reader.GetMethodDefinition(
+                    (MethodDefinitionHandle)current).GetDeclaringType(),
+                HandleKind.TypeDefinition => reader.GetTypeDefinition(
+                    (TypeDefinitionHandle)current).GetDeclaringType(),
+                _ => default,
+            };
+        }
+        return 0;
+    }
+
+    private static KType SubstituteTypeParameters(KType source, ImmutableArray<KType> arguments)
+    {
+        if (source.HasTypeParameter && source.TypeParameter >= 0 && source.TypeParameter < arguments.Length)
+            return arguments[source.TypeParameter].Clone();
+        var copy = source.Clone();
+        for (var i = 0; i < copy.Argument.Count; i++)
+            if (copy.Argument[i].Type is { } argument)
+                copy.Argument[i].Type = SubstituteTypeParameters(argument, arguments);
+        if (copy.FlexibleUpperBound is { } upper)
+            copy.FlexibleUpperBound = SubstituteTypeParameters(upper, arguments);
+        return copy;
+    }
+
 
     private void AddMethodTypeParameters(
         MethodDefinition method,

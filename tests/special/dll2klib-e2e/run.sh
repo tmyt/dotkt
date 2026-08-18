@@ -111,6 +111,21 @@ dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-csharp-extension-shape "$PROBE_KLIB" Probe Probe.WidgetExtensions Bump
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-csharp-extension-shape "$PROBE_KLIB" "" GlobalWidgetExtensions GlobalBump
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.VisibilityProbe \
+	Probe.Contracts.IVisibleGeneric,Probe.IVisibleControl
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.DefaultCarrier1 Probe.IPublicDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.DefaultCarrier2 Probe.IPublicDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.ConstructedDefaultCarrier Probe.IPublicDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.GenericDefaultCarrier Probe.IPublicGenericDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.ExternalDefaultCarrier Probe.Contracts.IExternalDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-function-nullability "$PROBE_KLIB" Probe.NullabilityDefaultCarrier Normalize true false
 
 # The manifest uses an ordinary unique_name, while KlibMetadataProtoBuf.Header.module_name is a Kotlin Name and must
 # therefore use the special `<...>` spelling. A plain header name happens to deserialize as protobuf but is rejected
@@ -158,6 +173,22 @@ grep -q "unresolved reference.*Companion" "$no_companion_log" \
 	|| die "Widget.Companion was rejected for an unexpected reason"
 
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
+mkdir -p "$OUT/default-bir" "$OUT/default-cir" "$OUT/default-il"
+"$KOTC" "$ROOT/tests/special/dll2klib-e2e/default-interface-consumer.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/default-bir"
+dotnet "$BIR2CIR_DLL" "$OUT/default-cir" --compile-refs "$compile_refs" \
+	"$OUT/default-bir/default-interface-consumer.bir.json"
+dotnet "$ILEMIT_DLL" "$OUT/default-il" DefaultInterfaceConsumer \
+	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
+	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
+	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
+	"$OUT/default-cir/default-interface-consumer.cir.json"
+write_runtimeconfig "$OUT/default-il" DefaultInterfaceConsumer
+cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/default-il/"
+default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
+[[ "$default_actual" == "111" ]] \
+	|| die "hidden default-interface program returned '$default_actual', expected '111'"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \

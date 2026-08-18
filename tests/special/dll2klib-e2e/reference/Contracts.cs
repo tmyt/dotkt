@@ -16,6 +16,16 @@ public interface IVisibleEnvelope<T>
 {
 }
 
+public interface IExternalDefaultSlot
+{
+    int Value();
+}
+
+internal interface IExternalHiddenDefaultProvider : IExternalDefaultSlot
+{
+    int IExternalDefaultSlot.Value() => 31;
+}
+
 internal sealed class HiddenContractArgument
 {
 }
