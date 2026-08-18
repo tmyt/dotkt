@@ -11,21 +11,22 @@ package kotlin.text
 // so the constraint `A : Appendable` becomes the satisfiable `A : System.Text.StringBuilder` and the type argument
 // StringBuilder (itself @ClrTypeAlias("System.Text.StringBuilder")) no longer violates it. `append(Char)`/
 // `append(CharSequence?)` carry @ClrIntrinsic("Append") so a call through a generic `A : Appendable` receiver routes to
-// System.Text.StringBuilder.Append (CharSequence lowers to string, matching Append(char)/Append(string?)).
+// System.Text.StringBuilder.Append (CharSequence lowers to string, matching Append(char)/Append(string?)). The range
+// overload carries the same binding plus @ClrCountFromExclusiveEnd on its end index, so bir2cir adapts Kotlin's
+// exclusive end to the BCL overload's count without re-evaluating either argument.
 //
-// The KDoc contract "if [value] is null, the four characters `null` are appended" survives that direct binding even
-// though .NET's Append(string) treats null as a NO-OP: the CharSequence->String collapse routes every argument of a
-// `CharSequence` PARAMETER through `Any?.toString()`, whose null answer is exactly "null". It is the parameter's
-// type that puts the conversion there, so the guarantee is structural and holds for any argument shape — including
-// the null element `appendElement` hands over on the joinTo/joinToString path.
+// The KDoc contract "if [value] is null, the four characters `null` are appended" is implemented at the physical BCL
+// boundary: CharSequence arguments are snapshotted through the null-safe Any?.toString() bridge before Append.
 @kotlin.clr.ClrTypeAlias("System.Text.StringBuilder")
 public actual interface Appendable {
     @kotlin.clr.ClrIntrinsic("Append")
     public actual fun append(value: Char): Appendable
     @kotlin.clr.ClrIntrinsic("Append")
     public actual fun append(value: CharSequence?): Appendable
-    // No @ClrIntrinsic: Kotlin's (value, startIndex, endIndex) has an EXCLUSIVE end index while .NET
-    // StringBuilder.Append(string, int, int) takes a COUNT — a direct bind would be wrong. Unused by the joinTo/
-    // joinToString path (appendElement only calls the 1-arg overloads); StringBuilder supplies its own bodied override.
-    public actual fun append(value: CharSequence?, startIndex: Int, endIndex: Int): Appendable
+    @kotlin.clr.ClrIntrinsic("Append")
+    public actual fun append(
+        value: CharSequence?,
+        startIndex: Int,
+        @kotlin.clr.ClrCountFromExclusiveEnd(startIndex = 1) endIndex: Int,
+    ): Appendable
 }

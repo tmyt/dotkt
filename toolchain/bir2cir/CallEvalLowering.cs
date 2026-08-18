@@ -571,11 +571,11 @@ static class CallEvalLowering
     ///
     /// Only kinds that can reach a plan are listed — what kotc emits, plus what the passes that author their own plans
     /// build them over. The collection-literal constructions (`newList`/`newSet`/`newMap`) and the .NET property
-    /// accesses (`clrPropGet`/`clrPropSet`) are NOT kotc vocabulary, so `Apply` never sees them; a later author can,
-    /// since `Materialise` is reachable from MemberCallSubstitution and from the suspend lowering. Both of those
-    /// supply their own reader node, and neither is one of those kinds today. An unlisted kind is the CONSERVATIVE
-    /// direction — the value is materialised into a local instead of being inlined — so a new one costs a local, never
-    /// a reordered evaluation, which is why the list is of eager kinds rather than of lazy ones.
+    /// accesses (`clrPropGet`/`clrPropSet`) are NOT kotc vocabulary, so `Apply` never sees them; later authors can,
+    /// since `Materialise` is reachable from MemberCallSubstitution and from the suspend lowering. The exact-intrinsic
+    /// count adapter authors an ordinary CLR call containing an eager `binOp`, both listed below. Other unlisted kinds
+    /// take the CONSERVATIVE direction — the value is materialised into a local instead of being inlined — so a new
+    /// one costs a local, never a reordered evaluation, which is why the list is eager rather than lazy.
     static readonly HashSet<string> EagerKinds = new(StringComparer.Ordinal)
     {
         "callStatic", "callInstance", "callInline", "objMethod", "delegateInvoke", "new", "newClr",

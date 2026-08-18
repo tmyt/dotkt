@@ -2042,10 +2042,14 @@ sealed partial class ReferenceMetadataIndex
     {
         binding = null;
         var matches = ExactBoundMembers(ownerFqn, memberName, methodArity, signature);
-        if (matches.Count != 1) return false;
+        if (matches.Count > 1)
+            throw new InvalidDataException(
+                $"ambiguous exact CLR member binding for {ownerFqn}.{memberName}`{methodArity} "
+                + $"with {signature?.Count ?? -1} parameter(s)");
+        if (matches.Count == 0) return false;
         var match = matches[0];
         binding = new ExactClrMemberBinding(match.Intrinsic, match.PropertyAccess, match.PropertyName,
-            match.Conv, match.ConvTo, match.ByrefPositions);
+            match.Conv, match.ConvTo, match.ByrefPositions, match.CountStart, match.CountEnd);
         return true;
     }
 
@@ -2076,31 +2080,9 @@ sealed partial class ReferenceMetadataIndex
             .Select((p, i) => DeclarationDescribesCall(p, signature[i])).All(x => x)).ToList();
     }
 
-    // The @ClrIntrinsic BCL member name for owner.member (overload-disambiguated by arg count when possible).
-    public bool TryMemberIntrinsic(string ownerFqn, string memberName, int argCount, out string intrinsic)
-    {
-        intrinsic = null;
-        if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
-        var cands = list.Where(m => m.Name == memberName && m.Intrinsic != null).ToList();
-        if (cands.Count == 0) return false;
-        var pick = cands.FirstOrDefault(m => m.ParamCount == argCount);
-        if (pick == null)
-        {
-            // Failure posture (LOUD): no exact-arity match. A single candidate is unambiguous; MULTIPLE candidates
-            // binding DIFFERENT BCL members are a genuine ambiguity — refuse rather than pick an arbitrary overload.
-            if (cands.Select(c => c.Intrinsic).Distinct(StringComparer.Ordinal).Count() > 1)
-                throw new InvalidOperationException(
-                    $"ambiguous @ClrIntrinsic overload for {ownerFqn}.{memberName} (argCount={argCount}): candidate arities " +
-                    $"[{string.Join(",", cands.Select(c => c.ParamCount))}] bind different BCL members — no exact-arity match");
-            pick = cands[0];
-        }
-        intrinsic = pick.Intrinsic;
-        return true;
-    }
-
-    // STRICT overload-exact @ClrIntrinsic lookup for the DECLARATION rename: the marker's arity is precise (Kotlin
-    // override resolution), so `add(element)` (arity 1, ->Add) must NOT fall through to `add(index,element)` (arity 2,
-    // ->Insert). Unlike TryMemberIntrinsic there is no `?? cands[0]` arity fallback — no exact-arity match = no rename.
+    // STRICT arity-exact @ClrIntrinsic lookup for the DECLARATION rename: the declaration being renamed already owns
+    // its parameter vector, so `add(element)` (arity 1, ->Add) must NOT fall through to `add(index,element)` (arity 2,
+    // ->Insert). There is no fallback — no exact-arity match means no rename.
     public bool TryMemberIntrinsicExact(string ownerFqn, string memberName, int argCount, out string intrinsic)
     {
         intrinsic = TryMembersByBirOwner(ownerFqn, out var list)
@@ -2265,27 +2247,6 @@ sealed partial class ReferenceMetadataIndex
     // (@ClrRefArgument). Empty when none — the substituted call then wraps no argTypes.
     public int[] TopLevelByrefPositions(string funName) =>
         _topLevelIntrinsicByref.TryGetValue(funName, out var pos) ? pos : Array.Empty<int>();
-
-    // The 0-based parameter positions a bound MEMBER (owner.member, overload-matched by arg count) takes BY REFERENCE
-    // (@ClrRefArgument). Empty when none.
-    public int[] MemberByrefPositions(string ownerFqn, string memberName, int argCount)
-    {
-        if (!TryMembersByBirOwner(ownerFqn, out var list)) return Array.Empty<int>();
-        var cands = list.Where(m => m.Name == memberName && m.ByrefPositions != null && m.ByrefPositions.Length > 0).ToList();
-        if (cands.Count == 0) return Array.Empty<int>();
-        var pick = cands.FirstOrDefault(m => m.ParamCount == argCount);
-        if (pick == null)
-        {
-            // Failure posture (LOUD): no exact-arity match. A single candidate is unambiguous; MULTIPLE candidates
-            // with DIFFERENT byref positions are a genuine ambiguity — refuse rather than pick an arbitrary overload.
-            if (cands.Select(c => string.Join(",", c.ByrefPositions)).Distinct(StringComparer.Ordinal).Count() > 1)
-                throw new InvalidOperationException(
-                    $"ambiguous @ClrRefArgument byref overload for {ownerFqn}.{memberName} (argCount={argCount}): candidate " +
-                    $"arities [{string.Join(",", cands.Select(c => c.ParamCount))}] disagree on byref positions — no exact-arity match");
-            pick = cands[0];
-        }
-        return pick.ByrefPositions;
-    }
 
     // A NON-intrinsic top-level fun (real Kotlin body) resolved to the file-class it lives in, so an APP's
     // `callStatic owner=null` gets an explicit owner ilemit reflects against the referenced runtime stdlib. When the
@@ -2485,9 +2446,11 @@ sealed partial class ReferenceMetadataIndex
         if (call is TypeNode.Nullable cNull)
         {
             // Nullability of a REFERENCE slot is not part of CLR identity, so a call stating T? still describes a
-            // declaration of T whatever kind T is. This used to unwrap only for an Fqn or a type variable, which
-            // left a nullable ARRAY — every `UIntArray?` receiver of a _UArraysKt extension — matching nothing.
-            if (declaration is not TypeNode.Nullable)
+            // declaration of T. A nullable VALUE slot is different: `Int?` is System.Nullable<Int32>, not Int32, and
+            // must not let an intrinsic `f(Int)` capture a frontend-selected real-body `f(Int?)`. Type variables keep
+            // the historical erasure seam (`T?` may be reflected as T), and arrays are reference types even when their
+            // element is a value type.
+            if (declaration is not TypeNode.Nullable && !ValueTokens.Contains(ParamKey(cNull.Of)))
                 return DeclarationDescribesCall(declaration, cNull.Of);
         }
         if (declaration is TypeNode.Fqn { Args: null } erased
@@ -3747,6 +3710,7 @@ sealed partial class ReferenceMetadataIndex
                         var intrinsic = ClrIntrinsicOf(method.GetCustomAttributesData());
                         var prop = ClrPropertyOf(method.GetCustomAttributesData());
                         var byrefPositions = ByrefPositionsOf(method);
+                        var countRange = CountRangeOf(method);
                         var collectionFactoryKind = isFileClass && method.IsStatic
                             ? AttrStringArg(method.GetCustomAttributesData(), "kotlin.clr.ClrCollectionFactory")
                             : null;
@@ -3823,7 +3787,9 @@ sealed partial class ReferenceMetadataIndex
                             declarationIdentity == null ? null : ExactPhysicalMetadataName(type),
                             collectionFactoryKind,
                             arrayFactoryKind,
-                            arrayFactoryElementHint));
+                            arrayFactoryElementHint,
+                            countRange?.Start ?? -1,
+                            countRange?.End ?? -1));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -5115,6 +5081,34 @@ sealed partial class ReferenceMetadataIndex
         return hits?.ToArray() ?? Array.Empty<int>();
     }
 
+    // One parameter of an @ClrIntrinsic declaration may state that its Kotlin exclusive-end value occupies a CLR
+    // count slot. The marker sits on the END parameter and names the START parameter. Keep the pair on the exact
+    // declaration binding; a name/arity side index would recreate the overload collapse this metadata is meant to
+    // avoid. Multiple markers or an invalid/non-earlier start are malformed compiler-provided stdlib metadata.
+    static (int Start, int End)? CountRangeOf(MethodBase method)
+    {
+        (int Start, int End)? result = null;
+        var ps = method.GetParameters();
+        for (var end = 0; end < ps.Length; end++)
+        {
+            var attr = ps[end].GetCustomAttributesData().FirstOrDefault(a =>
+                a.AttributeType.FullName == "kotlin.clr.ClrCountFromExclusiveEnd");
+            if (attr == null) continue;
+            if (result != null || ClrIntrinsicOf(method.GetCustomAttributesData()) == null
+                || attr.ConstructorArguments.Count != 1
+                || attr.ConstructorArguments[0].Value is not int start || start < 0 || start >= end
+                // The reference build preserves Kotlin primitive declaration types (`kotlin.Int`); runtime builds
+                // later lower those to System.Int32. Validate the shared semantic/physical primitive identity rather
+                // than requiring one build phase's spelling.
+                || ParamKey(TypeName(ps[start].ParameterType)) != "i32"
+                || ParamKey(TypeName(ps[end].ParameterType)) != "i32")
+                throw new InvalidDataException(
+                    $"invalid @ClrCountFromExclusiveEnd on {method.DeclaringType?.FullName}.{method.Name} parameter {end}");
+            result = (start, end);
+        }
+        return result;
+    }
+
     // @KotlinDefault(index, bir) on the method's parameters -> (argPosition -> default-expression BIR-json). Returns null
     // when no parameter carries it. `index` is the parameter's position in the emitted call (extension receiver first);
     // `bir` is the default expression as a raw BIR-json string (opaque here — spliced pre-lowering by DefaultArgSplice).
@@ -5717,7 +5711,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);
@@ -5731,7 +5725,7 @@ sealed record ReferencedPropertyMethodImpl(string SourceMember, TypeNode.Fqn Dec
 // The exact authored binding selected from a complete declaration identity. Carrying this value across the alias-
 // companion rewrite prevents a later name+arity lookup from silently selecting a different overload.
 sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string PropertyName,
-    bool Conv, string ConvTo, int[] ByrefPositions);
+    bool Conv, string ConvTo, int[] ByrefPositions, int CountStart, int CountEnd);
 
 // A referenced CONSTRUCTOR's declaration shape. A `new` is a call whose declaration is the owner's constructor, so the
 // nullable-generic realign types its arguments exactly as it types a method call's — and a ctor has no name of its own,

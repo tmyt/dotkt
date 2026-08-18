@@ -24,6 +24,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **A same-module `super`-qualified suspend call now targets the base cold entry non-virtually (#436).** `bir2cir`
   preserves the resolved base declaration and dispatch fact through cold lowering, preventing an override from
   recursively redispatching into itself.
+- **Nullable `StringBuilder.append`/`insert` overloads now preserve Kotlin's documented `"null"` rendering (#317).**
+  `bir2cir` consumes the frontend-selected member's complete signature instead of conflating same-name, same-arity
+  CLR bindings. `Appendable.append(value, startIndex, endIndex)` also translates Kotlin's exclusive end to the CLR
+  count slot while preserving receiver and argument evaluation order.
 
 ## 0.9.9 (2026-08-17)
 
