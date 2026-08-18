@@ -38,3 +38,10 @@ public annotation class ClrArrayFactory(val kind: String)
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.BINARY)
 internal annotation class ClrSequenceFilterNotNull
+
+// Marks an inline stdlib declaration whose body has already filtered a Sequence<Any?> to its reified result type,
+// but whose final unchecked Sequence<R> cast cannot change the CLR IEnumerable element interface. bir2cir replaces
+// that declaration-local cast with the typed sequence view; the original predicate remains ordinary Kotlin code.
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.BINARY)
+internal annotation class ClrSequenceElementAdapter

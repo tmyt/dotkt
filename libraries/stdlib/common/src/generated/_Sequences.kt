@@ -474,6 +474,7 @@ public inline fun <T, C : MutableCollection<in T>> Sequence<T>.filterIndexedTo(d
  * 
  * @sample samples.collections.Collections.Filtering.filterIsInstance
  */
+@kotlin.clr.ClrSequenceElementAdapter
 public inline fun <reified R> Sequence<*>.filterIsInstance(): Sequence<@kotlin.internal.NoInfer R> {
     @Suppress("UNCHECKED_CAST")
     return filter { it is R } as Sequence<R>

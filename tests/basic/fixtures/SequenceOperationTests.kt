@@ -102,6 +102,23 @@ class SequenceOperationTests {
         assertEquals("10,32", indexed.toList().joinToString(","))
     }
 
+    @TestAttribute
+    fun filterIsInstanceAtTypedElements() {
+        val source = ArrayList<Any?>()
+        source.add(1)
+        source.add("a")
+        source.add(null)
+        source.add(2)
+        source.add("bb")
+
+        var calls = 0
+        val ints = source.asSequence().map { calls = calls + 1; it }.filterIsInstance<Int>()
+        assertEquals(0, calls)
+        assertEquals("1,2", ints.toList().joinToString(","))
+        assertEquals(5, calls)
+        assertEquals("a,bb", source.asSequence().filterIsInstance<String>().toList().joinToString(","))
+    }
+
     // il-sort: sortedDescending / sortedBy / sortedByDescending -> LINQ ordering, materialized by joinToString.
     @TestAttribute
     fun linqOrder() {

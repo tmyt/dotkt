@@ -1,0 +1,59 @@
+{
+  "fileClass": "SequenceElementAdapterProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "adapt",
+      "static": true,
+      "vis": "public",
+      "typeParams": ["R"],
+      "params": [
+        {
+          "name": "source",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.sequences.Sequence",
+            "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.sequences.Sequence",
+        "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cast",
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.sequences.Sequence",
+              "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+            },
+            "e": {
+              "k": "local",
+              "name": "source",
+              "sty": {
+                "t": "fqn",
+                "name": "kotlin.sequences.Sequence",
+                "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } }]
+              }
+            }
+          }
+        }
+      ],
+      "attrs": [
+        {
+          "attr": { "t": "fqn", "name": "kotlin.clr.ClrSequenceElementAdapter" },
+          "argTypes": [],
+          "args": []
+        }
+      ]
+    }
+  ]
+}
