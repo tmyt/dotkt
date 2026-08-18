@@ -1294,6 +1294,12 @@ failing closed is the same shape Kotlin/JVM emits (`ACONST_NULL; ATHROW` after s
   `<ProjectReference>` without a repair stage.
 - Forward (`Kotlin → .NET`): `dll2klib` projects every resolved reference assembly to a metadata-only KLIB, so
   `import System.X` and C# `<ProjectReference>` declarations resolve through the ordinary frontend classpath.
+- A public CLR class can legally implement an `internal` or otherwise inaccessible interface. That interface edge is
+  omitted from the Kotlin supertype list, while every independently public interface edge remains visible. If the
+  hidden interface supplies a public slot through a default `MethodImpl`, or the class supplies it through a private
+  explicit `MethodImpl`, dll2klib surfaces the concrete class member from the authoritative public interface
+  declaration. Kotlin subclasses therefore do not inherit a fictional abstract obligation; private implementation
+  signatures and bodies do not become Kotlin API.
 
 ## 8b. Dual representation: `import System.Text.StringBuilder` vs `kotlin.text.StringBuilder` — two typed VIEWS of one CLR type
 
@@ -1543,7 +1549,9 @@ c.CollectionChanged.subscribe { sender, e -> println("scoped") }.use {
 - **Interface events** (`INotifyPropertyChanged.PropertyChanged`) surface as a `ClrEvent<T>` member and **consume**
   the same way on an interface-typed receiver (`n.PropertyChanged.subscribe(h)`). When a Kotlin class **subclasses** a .NET
   class that already implements the interface (`class MyApp : Avalonia.Application`), the inherited concrete
-  `ClrEvent<T>` fake-override satisfies the slot and is elided — nothing to declare.
+  `ClrEvent<T>` fake-override satisfies the slot and is elided — nothing to declare. This includes a C# explicit
+  implementation whose add/remove accessors are private: subscription binds to the interface accessor and hence the
+  class's existing `MethodImpl`/backing store; it never synthesizes a second Kotlin event store.
 - **Implementing and raising a CLR event from Kotlin** (MVVM / `INotifyPropertyChanged`): a Kotlin class that directly
   implements an event-bearing interface writes `override val E by clrEvent()` to synthesize the event (a backing
   delegate field + real `add_E`/`remove_E`/`raise_E` accessors); a `ClrEvent<T>` handle exposes `invoke(sender, args)`

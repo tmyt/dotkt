@@ -38,6 +38,8 @@ dotnet build "$ROOT/toolchain/dll2klib/dll2klib.csproj" -c Release -o "$OUT/tool
 dotnet build "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
 	-c Release -o "$OUT/tools/metadata-inspector" -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-e2e/reference/Probe.csproj" -c Release -v:q --nologo
+dotnet build "$ROOT/tests/special/dll2klib-e2e/transitive-reference/TransitiveReferenceGenerator.csproj" \
+	-c Release -o "$OUT/tools/transitive-reference" -v:q --nologo
 
 PROBE_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/ref/Probe.dll"
 PROBE_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.dll"
@@ -45,6 +47,15 @@ CONTRACTS_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/re
 CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.Contracts.dll"
 PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
+TRANSITIVE_REF="$OUT/TransitiveSlotProbe.dll"
+
+dotnet "$OUT/tools/transitive-reference/TransitiveReferenceGenerator.dll" "$TRANSITIVE_REF"
+printf '%s\n' "$TRANSITIVE_REF" > "$OUT/transitive-references.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/transitive-references.rsp"
+"$KOTC" "$ROOT/tests/special/dll2klib-e2e/transitive-interface-consumer.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$OUT/transitive-klib/TransitiveSlotProbe.klib" \
+	-d "$OUT/transitive-bir"
 
 # The two-path form is an internal worker protocol. Without the batch parent's complete resolved catalog it cannot
 # identify external delegate or Kotlin companion TypeRefs and must fail rather than silently project their physical
@@ -53,7 +64,7 @@ direct_out="$OUT/direct-Probe.klib"
 if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
 	die "standalone direct worker invocation unexpectedly succeeded without resolved reference catalogs"
 fi
-grep -q "direct worker mode requires the batch-provided resolved delegate, companion, and inner catalogs" <<<"$direct_error" \
+grep -q "direct worker mode requires the batch-provided resolved delegate, companion, inner, and public-type catalogs" <<<"$direct_error" \
 	|| die "standalone direct worker rejection did not explain the required batch reference set"
 [[ ! -e "$direct_out" ]] || die "rejected standalone direct worker invocation still wrote a KLIB"
 
@@ -97,13 +108,15 @@ grep -q 'converting 2/2 reference(s)' <<<"$dependency_rebuild" \
 # timestamp. Every surviving KLIB must be regenerated so cached and newly projected declarations keep one naming
 # universe.
 printf '%s\n' "$PROBE_REF" > "$OUT/references.rsp"
-catalog_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q 'converting 1/1 reference(s)' <<<"$catalog_remove" \
-	|| die "reference-catalog removal did not invalidate the surviving Probe KLIB"
+if catalog_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp" 2>&1)"; then
+	die "dll2klib accepted Probe without its referenced Probe.Contracts assembly"
+fi
+grep -q "public-type catalog cannot resolve 'Probe.Contracts.IExternalDefaultSlot'" <<<"$catalog_remove" \
+	|| die "incomplete reference-catalog rejection did not identify the unresolved public supertype"
 printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
 catalog_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q 'converting 2/2 reference(s)' <<<"$catalog_restore" \
-	|| die "reference-catalog restoration did not invalidate the complete KLIB set"
+grep -q '2 KLIB(s) up to date' <<<"$catalog_restore" \
+	|| die "rejected incomplete reference catalog corrupted the complete KLIB cache"
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
 done
@@ -111,6 +124,43 @@ dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-csharp-extension-shape "$PROBE_KLIB" Probe Probe.WidgetExtensions Bump
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-csharp-extension-shape "$PROBE_KLIB" "" GlobalWidgetExtensions GlobalBump
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.VisibilityProbe \
+	Probe.Contracts.IVisibleGeneric,Probe.IVisibleControl
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.DefaultCarrier1 Probe.IPublicDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.DefaultCarrier2 Probe.IPublicDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.ConstructedDefaultCarrier Probe.IPublicDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.GenericDefaultCarrier Probe.IPublicGenericDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.ExternalDefaultCarrier Probe.Contracts.IExternalDefaultSlot
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-function-nullability "$PROBE_KLIB" Probe.NullabilityDefaultCarrier Normalize true true
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.DefaultEventCarrier Changed
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.DefaultEventCarrier ""
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.ExplicitEventCarrier Changed
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.ExternalExplicitEventCarrier Changed
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.PublicAndExplicitEventCarrier Changed
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-function-nullability "$PROBE_KLIB" Probe.ExplicitShapeCarrier Normalize true true
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-properties "$PROBE_KLIB" Probe.ExplicitShapeCarrier Text
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.ExplicitShapeCarrier Normalize,get
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.DefaultIndexerCarrier get,get
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.ExplicitIndexerCarrier get,get
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-supertypes "$PROBE_KLIB" Probe.ProtectedInterfaceOwner.Impl Probe.ProtectedInterfaceOwner.IState
 
 # The manifest uses an ordinary unique_name, while KlibMetadataProtoBuf.Header.module_name is a Kotlin Name and must
 # therefore use the special `<...>` spelling. A plain header name happens to deserialize as protobuf but is rejected
@@ -157,7 +207,35 @@ fi
 grep -q "unresolved reference.*Companion" "$no_companion_log" \
 	|| die "Widget.Companion was rejected for an unexpected reason"
 
+reabstract_log="$OUT/reabstract-interface.log"
+if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/reabstract-interface-consumer.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" \
+	-d "$OUT/reabstract-interface-bir" >"$reabstract_log" 2>&1; then
+	die "reabstracted interface slots unexpectedly appeared concrete"
+fi
+for member in MissingReabstractMethod MissingReabstractProperty MissingReabstractEvent; do
+	grep -q "class '$member'.*does not implement abstract member" "$reabstract_log" \
+		|| die "$member was rejected for an unexpected reason"
+done
+
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
+mkdir -p "$OUT/default-bir" "$OUT/default-cir" "$OUT/default-il"
+"$KOTC" "$ROOT/tests/special/dll2klib-e2e/default-interface-consumer.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/default-bir"
+dotnet "$BIR2CIR_DLL" "$OUT/default-cir" --compile-refs "$compile_refs" \
+	"$OUT/default-bir/default-interface-consumer.bir.json"
+dotnet "$ILEMIT_DLL" "$OUT/default-il" DefaultInterfaceConsumer \
+	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
+	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
+	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
+	"$OUT/default-cir/default-interface-consumer.cir.json"
+write_runtimeconfig "$OUT/default-il" DefaultInterfaceConsumer
+cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/default-il/"
+default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
+[[ "$default_actual" == "236" ]] \
+	|| die "hidden/default/reabstracted interface program returned '$default_actual', expected '236'"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
@@ -168,10 +246,10 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "149" ]] || die "generated program returned '$actual', expected '149'"
+[[ "$actual" == "196" ]] || die "generated program returned '$actual', expected '196'"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR static member"
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (149)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (196)"

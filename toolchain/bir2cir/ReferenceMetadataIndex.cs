@@ -599,6 +599,81 @@ sealed partial class ReferenceMetadataIndex
 
     public Dictionary<int, string> KotlinDefaultsForDeclarationIdentity(string id) =>
         id != null ? _kotlinDefaultsByDeclarationId.GetValueOrDefault(id) : null;
+
+    // A dll2klib surface declaration can be inherited from a public interface even though the CLR class satisfies
+    // that slot only through a private explicit MethodImpl body. The call then names the CLASS (Kotlin's inherited
+    // member owner), while the authoritative optional/default metadata lives on the interface MethodDef that
+    // ClrMemberResolution will later select as the memberRef. Resolve that same fallback here, before CIR member
+    // resolution, so DefaultArgSplice can materialise the complete physical argument vector.
+    //
+    // An accessible class member wins exactly as it does in ClrMemberResolution.Candidates: interface declarations
+    // are consulted only when the class exposes no applicable public/protected member. Multiple applicable interface
+    // declarations must agree on their defaults; the BIR owner alone cannot distinguish disagreeing slots, so guessing
+    // one would attach source semantics from an arbitrary reflection order.
+    public Dictionary<int, string> KotlinDefaultsForImplementedInterface(
+        string owner, int ownerArity, string method, int paramCount, string sigKey)
+    {
+        if (owner == null || method == null || sigKey == null) return null;
+        var open = ResolveRefType(owner, ownerArity);
+        if (open == null) return null;
+
+        bool SignatureMatches(MethodInfo candidate)
+        {
+            if (candidate.Name != method || candidate.GetParameters().Length != paramCount) return false;
+            var candidateKey = SigKeyOf(candidate.GetParameters());
+            return candidateKey == sigKey || RelaxedSigKey(candidateKey) == RelaxedSigKey(sigKey);
+        }
+
+        const BindingFlags ownFlags = BindingFlags.Public | BindingFlags.NonPublic |
+                                      BindingFlags.Instance | BindingFlags.FlattenHierarchy;
+        MethodInfo[] own;
+        try
+        {
+            own = open.GetMethods(ownFlags)
+                .Where(candidate =>
+                    (candidate.IsPublic || candidate.IsFamily || candidate.IsFamilyOrAssembly) &&
+                    SignatureMatches(candidate))
+                .ToArray();
+        }
+        catch { return null; }
+        if (own.Length != 0) return null;
+
+        MethodInfo[] interfaces;
+        try
+        {
+            interfaces = open.GetInterfaces()
+                .SelectMany(iface => iface.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+                .Where(SignatureMatches)
+                .GroupBy(candidate => (candidate.Module, candidate.MetadataToken))
+                .Select(group => group.First())
+                .ToArray();
+        }
+        catch { return null; }
+        if (interfaces.Length == 0) return null;
+
+        Dictionary<int, string> selected = null;
+        foreach (var candidate in interfaces)
+        {
+            var defaults = CallableDefaultsOf(candidate);
+            if (selected == null)
+            {
+                selected = defaults;
+                continue;
+            }
+            if (defaults == null || !SameDefaults(selected, defaults))
+                throw new InvalidOperationException(
+                    $"bir2cir: cannot fill an omitted default argument of '{owner}.{method}' (arity {paramCount}) — " +
+                    "several implemented interface declarations match that class surface but their defaults disagree; " +
+                    "call through a specific interface or pass the argument explicitly");
+        }
+        if (selected != null && interfaces.Any(candidate => CallableDefaultsOf(candidate) == null))
+            throw new InvalidOperationException(
+                $"bir2cir: cannot fill an omitted default argument of '{owner}.{method}' (arity {paramCount}) — " +
+                "several implemented interface declarations match that class surface but do not all declare the " +
+                "same defaults; call through a specific interface or pass the argument explicitly");
+        return selected;
+    }
+
     // True when the name+arity cannot identify ONE set of defaults: a genuinely ownerless name carried by >1 owner that
     // disagree, or an OWNERFUL key two same-arity declarations (ctor overloads) carry with different defaults.
     public bool KotlinDefaultsAmbiguous(string owner, string method, int paramCount) =>

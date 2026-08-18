@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Public CLR classes no longer expose inaccessible interface supertypes or lose public default-interface slots
+  (#451).** `dll2klib` now evaluates constructed interface visibility against the selected reference universe,
+  retains resolvable public/protected edges, and projects public slots implemented through hidden interfaces as
+  concrete class members. Generic methods, properties, indexers, events, nullability metadata, cross-assembly
+  providers, type forwarders, and Kotlin subclasses use the authoritative public declaration shape.
+
 - **C# extension methods no longer appear twice in Kotlin completion.** `dll2klib` now projects the declaring-class
   view as an ordinary static function and emits exactly one receiver-style extension in the CLR namespace package.
   The former synthetic package named after the static extension container is gone; static calls and namespace-

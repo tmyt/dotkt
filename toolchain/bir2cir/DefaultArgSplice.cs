@@ -105,7 +105,8 @@ static class DefaultArgSplice
         if (node["args"] is not JsonArray args) return;
         var sig = node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray;
         if (sig == null || args.Count >= sig.Count) return;
-        var owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
+        var ownerNode = node["ownerType"] ?? node["calleeOwner"] ?? node["owner"];
+        var owner = TypeJson.OwnerName(ownerNode);
         var method = Str(node["method"]);
         if (owner == null || method == null) return;
         var sigKey = string.Join(",", sig.Select(t => ReferenceMetadataIndex.ParamKey(t)));
@@ -113,6 +114,8 @@ static class DefaultArgSplice
         var defaults = declarationId != null
             ? refs.KotlinDefaultsForDeclarationIdentity(declarationId)
             : refs.KotlinDefaultsFor(owner, method, sig.Count, sigKey);
+        defaults ??= refs.KotlinDefaultsForImplementedInterface(
+            owner, TypeArgsOf(ownerNode)?.Count ?? 0, method, sig.Count, sigKey);
         if (defaults == null) return;
 
         // Parse the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
@@ -221,6 +224,8 @@ static class DefaultArgSplice
         var defaults = declarationId != null
             ? refs.KotlinDefaultsForDeclarationIdentity(declarationId)
             : refs.KotlinDefaultsFor(owner, method, sigCount, sigKey);
+        defaults ??= refs.KotlinDefaultsForImplementedInterface(
+            owner, TypeArgsOf(node["ownerType"])?.Count ?? 0, method, sigCount, sigKey);
         if (defaults == null)
         {
             if (refs.KotlinDefaultsAmbiguous(owner, method, sigCount))

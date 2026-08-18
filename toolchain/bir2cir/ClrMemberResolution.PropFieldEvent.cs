@@ -221,12 +221,9 @@ static partial class ClrMemberResolution
         var isStatic = (node["static"] as JsonValue)?.GetValue<bool>() ?? false;
         var add = (node["k"] as JsonValue)?.GetValue<string>() == "clrEventAdd";
         var flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
-        var ev = FindEventMember(open, name, flags);
-        if (ev == null)
-            throw new InvalidOperationException($"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")} — #46 W1-S3)");
-        var acc = add ? ev.GetAddMethod() : ev.GetRemoveMethod();
+        var acc = FindEventAccessor(open, name, add, flags);
         if (acc == null)
-            throw new InvalidOperationException($"bir2cir: event '{name}' on '{open}' has no {(add ? "add" : "remove")} accessor (#46 W1-S3)");
+            throw new InvalidOperationException($"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")} — #46 W1-S3)");
         RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
         // A stored Kotlin function value is re-wrapped in the event's own delegate type.  The accessor declaration
         // fixes that target type; carry its constructor here so ilemit does not rediscover a member from the delegate
@@ -245,15 +242,40 @@ static partial class ClrMemberResolution
         if (!isStatic) node["dispatch"] = Dispatch(acc, open, superCall: false);
     }
 
-    // The EventInfo for `name`: own (incl. inherited class events), else base interfaces (interface GetEvent excludes
-    // base-interface events). null when absent.
-    static EventInfo FindEventMember(Type open, string name, BindingFlags flags)
+    // The authoritative add/remove accessor for `name`: own (including inherited class events), else the implemented
+    // or base interfaces. A class's private explicit MethodImpl body is intentionally not surfaced as an EventInfo,
+    // but its public interface declaration is the callable slot; resolving that declaration makes a subscription call
+    // the existing body instead of inventing a second event store. Reflection also excludes base-interface EventInfo
+    // rows, so class and interface owners share this fallback. Own declarations win; a surviving interface collision
+    // is a hard ambiguity, never a first-pick.
+    static MethodInfo FindEventAccessor(Type open, string name, bool add, BindingFlags flags)
     {
-        try { var ev = open.GetEvent(name, flags); if (ev != null) return ev; } catch { }
-        if (!open.IsInterface) return null;
-        foreach (var bi in SafeInterfaces(open))
-            try { var ev = bi.GetEvent(name, flags); if (ev != null) return ev; } catch { }
-        return null;
+        MethodInfo Accessor(Type type, bool declaredOnly)
+        {
+            try
+            {
+                var ev = type.GetEvent(name,
+                    declaredOnly ? flags | BindingFlags.DeclaredOnly : flags);
+                var method = add
+                    ? ev?.GetAddMethod(nonPublic: true)
+                    : ev?.GetRemoveMethod(nonPublic: true);
+                return method != null && IsPublicOrProtected(method) ? method : null;
+            }
+            catch { return null; }
+        }
+
+        var own = Accessor(open, declaredOnly: false);
+        if (own != null) return own;
+        if ((flags & BindingFlags.Instance) == 0) return null;
+        List<MethodInfo> hits;
+        try
+        {
+            hits = MostDerived(SafeInterfaces(open).Select(type => Accessor(type, declaredOnly: true))
+                .Where(method => method != null)
+                .GroupBy(method => (method.Module, method.MetadataToken)).Select(group => group.First()).ToList());
+        }
+        catch { return null; }
+        return hits.Count == 0 ? null : UniqueAccessor(hits, open, (add ? "add_" : "remove_") + name);
     }
 
     // ---- external field access (`field` / `setFieldExpr`) --------------------------------------

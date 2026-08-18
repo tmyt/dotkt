@@ -33,6 +33,28 @@ if (args.Length == 4 && args[0] == "--klib-class-properties")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--klib-class-functions")
+{
+    VerifyKlibClassFunctions(args[1], args[2], args[3].Split(',', StringSplitOptions.RemoveEmptyEntries));
+    Console.WriteLine("KLIB class function surface: OK");
+    return;
+}
+
+if (args.Length == 4 && args[0] == "--klib-class-supertypes")
+{
+    VerifyKlibClassSupertypes(args[1], args[2], args[3].Split(',', StringSplitOptions.RemoveEmptyEntries));
+    Console.WriteLine("KLIB class supertype surface: OK");
+    return;
+}
+
+if (args.Length == 6 && args[0] == "--klib-class-function-nullability")
+{
+    VerifyKlibClassFunctionNullability(
+        args[1], args[2], args[3], bool.Parse(args[4]), bool.Parse(args[5]));
+    Console.WriteLine("KLIB class function nullability: OK");
+    return;
+}
+
 if (args.Length == 4 && args[0] == "--klib-package-properties")
 {
     VerifyKlibPackageProperties(args[1], args[2], args[3].Split(',', StringSplitOptions.RemoveEmptyEntries));
@@ -53,6 +75,9 @@ if (args.Length != 7)
         "  CompanionMetadataInspector <producer.dll> <producer.klib> <companion.bir.json> <companion.cir.json> <ownership.bir.json> <ownership.cir.json> <consumer.dll>\n" +
         "  CompanionMetadataInspector --volatile-consumer <consumer.dll> <type> <method>...\n" +
         "  CompanionMetadataInspector --klib-class-properties <file.klib> <class> <property[,property...]>\n" +
+        "  CompanionMetadataInspector --klib-class-functions <file.klib> <class> <function[,function...]>\n" +
+        "  CompanionMetadataInspector --klib-class-supertypes <file.klib> <class> <supertype[,supertype...]>\n" +
+        "  CompanionMetadataInspector --klib-class-function-nullability <file.klib> <class> <function> <return-nullable> <parameter-nullable>\n" +
         "  CompanionMetadataInspector --klib-package-properties <file.klib> <package> <property[,property...]>\n" +
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>");
 
@@ -65,6 +90,63 @@ VerifyReverseEnumeratorBridge(args[0]);
 VerifyUnsafeAccessorDll(args[6]);
 VerifyKlib(args[1]);
 Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
+
+static void VerifyKlibClassSupertypes(string path, string className, IReadOnlyList<string> expectedNames)
+{
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var entry in archive.Entries.Where(entry =>
+                 entry.FullName.EndsWith(".knm", StringComparison.Ordinal)))
+    {
+        using var stream = entry.Open();
+        var fragment = PackageFragment.Parser.ParseFrom(stream);
+        var declaration = fragment.Class.SingleOrDefault(candidate =>
+            QualifiedName(fragment, candidate.FqName) == className);
+        if (declaration is null) continue;
+        var actual = declaration.Supertype
+            .Where(type => type.HasClassName)
+            .Select(type => QualifiedName(fragment, type.ClassName))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        var expected = expectedNames.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
+            throw new InvalidDataException(
+                $"{className} supertype surface [{string.Join(", ", actual)}] != [{string.Join(", ", expected)}]");
+        return;
+    }
+    throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyKlibClassFunctionNullability(
+    string path,
+    string className,
+    string functionName,
+    bool expectedReturnNullable,
+    bool expectedParameterNullable)
+{
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var entry in archive.Entries.Where(entry =>
+                 entry.FullName.EndsWith(".knm", StringComparison.Ordinal)))
+    {
+        using var stream = entry.Open();
+        var fragment = PackageFragment.Parser.ParseFrom(stream);
+        var declaration = fragment.Class.SingleOrDefault(candidate =>
+            QualifiedName(fragment, candidate.FqName) == className);
+        if (declaration is null) continue;
+        var functions = declaration.Function.Where(candidate =>
+            String(fragment, candidate.Name) == functionName).ToArray();
+        Require(functions.Length == 1,
+            $"expected one {className}.{functionName} function, found {functions.Length}");
+        var function = functions[0];
+        Require(function.ValueParameter.Count == 1,
+            $"{className}.{functionName} must have one parameter");
+        Require(function.ReturnType.Nullable == expectedReturnNullable &&
+                function.ValueParameter[0].Type.Nullable == expectedParameterNullable,
+            $"{className}.{functionName} nullability was return={function.ReturnType.Nullable}, " +
+            $"parameter={function.ValueParameter[0].Type.Nullable}");
+        return;
+    }
+    throw new InvalidDataException($"KLIB class '{className}' not found");
+}
 
 static void VerifyKlibClassProperties(string path, string className, IReadOnlyList<string> expectedNames)
 {
@@ -91,6 +173,28 @@ static void VerifyKlibClassProperties(string path, string className, IReadOnlyLi
         if (functionCollisions.Length != 0)
             throw new InvalidDataException(
                 $"{className} properties also leaked as functions [{string.Join(", ", functionCollisions)}]");
+        return;
+    }
+    throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyKlibClassFunctions(string path, string className, IReadOnlyList<string> expectedNames)
+{
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var entry in archive.Entries.Where(entry =>
+                 entry.FullName.EndsWith(".knm", StringComparison.Ordinal)))
+    {
+        using var stream = entry.Open();
+        var fragment = PackageFragment.Parser.ParseFrom(stream);
+        var declaration = fragment.Class.SingleOrDefault(candidate =>
+            QualifiedName(fragment, candidate.FqName) == className);
+        if (declaration is null) continue;
+        var actual = declaration.Function.Select(function => String(fragment, function.Name))
+            .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var expected = expectedNames.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
+            throw new InvalidDataException(
+                $"{className} function surface [{string.Join(", ", actual)}] != [{string.Join(", ", expected)}]");
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
