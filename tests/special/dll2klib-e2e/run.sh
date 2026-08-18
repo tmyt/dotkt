@@ -53,7 +53,7 @@ direct_out="$OUT/direct-Probe.klib"
 if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
 	die "standalone direct worker invocation unexpectedly succeeded without resolved reference catalogs"
 fi
-grep -q "direct worker mode requires the batch-provided resolved delegate, companion, and inner catalogs" <<<"$direct_error" \
+grep -q "direct worker mode requires the batch-provided resolved delegate, companion, inner, and public-type catalogs" <<<"$direct_error" \
 	|| die "standalone direct worker rejection did not explain the required batch reference set"
 [[ ! -e "$direct_out" ]] || die "rejected standalone direct worker invocation still wrote a KLIB"
 
@@ -168,10 +168,10 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "149" ]] || die "generated program returned '$actual', expected '149'"
+[[ "$actual" == "196" ]] || die "generated program returned '$actual', expected '196'"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR static member"
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (149)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (196)"

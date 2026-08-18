@@ -9,6 +9,28 @@ public interface IAdder
     int Add(int value);
 }
 
+internal interface IHiddenControl
+{
+    int Read();
+}
+
+public interface IVisibleControl
+{
+    int Read();
+}
+
+// C# permits a public class to implement a non-public interface and to close a public
+// generic interface over a non-public type. Neither edge is a valid public Kotlin
+// supertype, while the ordinary public edges beside them must remain visible.
+public sealed class VisibilityProbe :
+    IHiddenControl,
+    IVisibleControl,
+    IVisibleGeneric<string>,
+    IVisibleEnvelope<IVisibleGeneric<HiddenContractArgument>>
+{
+    public int Read() => 23;
+}
+
 public class WidgetBase
 {
     public int Inherited { get; set; } = 4;

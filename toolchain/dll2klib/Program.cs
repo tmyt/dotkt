@@ -18,6 +18,7 @@ internal static class Program
     private const string DelegateCatalogEnvironment = "DOTKT_DLL2KLIB_DELEGATE_CATALOG";
     private const string CompanionCatalogEnvironment = "DOTKT_DLL2KLIB_COMPANION_CATALOG";
     private const string InnerCatalogEnvironment = "DOTKT_DLL2KLIB_INNER_CATALOG";
+    private const string PublicTypeCatalogEnvironment = "DOTKT_DLL2KLIB_PUBLIC_TYPE_CATALOG";
 
     public static async Task<int> Main(string[] args)
     {
@@ -40,9 +41,10 @@ internal static class Program
                 // both catalogs on every worker below.
                 if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(DelegateCatalogEnvironment)) ||
                     string.IsNullOrEmpty(Environment.GetEnvironmentVariable(CompanionCatalogEnvironment)) ||
-                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable(InnerCatalogEnvironment)))
+                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable(InnerCatalogEnvironment)) ||
+                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment)))
                     throw new InvalidOperationException(
-                        "direct worker mode requires the batch-provided resolved delegate, companion, and inner catalogs; " +
+                        "direct worker mode requires the batch-provided resolved delegate, companion, inner, and public-type catalogs; " +
                         "use 'dll2klib --out <directory> @<references.rsp>' with the complete reference set");
                 Convert(input, Path.GetFullPath(args[1]));
                 return 0;
@@ -112,6 +114,8 @@ internal static class Program
         var companionCatalogJson = companionCatalog.Serialize();
         var innerCatalog = InnerReferenceCatalog.Discover(resolvedInputs);
         var innerCatalogJson = innerCatalog.Serialize();
+        var publicTypeCatalog = PublicTypeCatalog.Discover(resolvedInputs);
+        var publicTypeCatalogJson = publicTypeCatalog.Serialize();
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
             .ToArray();
@@ -124,11 +128,12 @@ internal static class Program
         var projectionCatalogPath = Path.Combine(outputDirectory, ".dll2klib-projection-catalog.json");
         var projectionCatalog = JsonSerializer.Serialize(new
         {
-            Version = 1,
+            Version = 2,
             ArityClashes = arityClashes,
             Delegates = JsonSerializer.Deserialize<JsonElement>(delegateCatalogJson),
             Companions = JsonSerializer.Deserialize<JsonElement>(companionCatalogJson),
             Inners = JsonSerializer.Deserialize<JsonElement>(innerCatalogJson),
+            PublicTypes = JsonSerializer.Deserialize<JsonElement>(publicTypeCatalogJson),
         });
         var projectionCatalogChanged =
             !File.Exists(projectionCatalogPath) ||
@@ -164,9 +169,13 @@ internal static class Program
         var innerCatalogPath = Path.Combine(
             outputDirectory,
             $".dll2klib-inners-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
+        var publicTypeCatalogPath = Path.Combine(
+            outputDirectory,
+            $".dll2klib-public-types-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
         File.WriteAllText(catalogPath, delegateCatalogJson);
         File.WriteAllText(companionCatalogPath, companionCatalogJson);
         File.WriteAllText(innerCatalogPath, innerCatalogJson);
+        File.WriteAllText(publicTypeCatalogPath, publicTypeCatalogJson);
         try
         {
             var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
@@ -192,6 +201,7 @@ internal static class Program
                     start.Environment[DelegateCatalogEnvironment] = catalogPath;
                     start.Environment[CompanionCatalogEnvironment] = companionCatalogPath;
                     start.Environment[InnerCatalogEnvironment] = innerCatalogPath;
+                    start.Environment[PublicTypeCatalogEnvironment] = publicTypeCatalogPath;
                     using var child = Process.Start(start)
                         ?? throw new InvalidOperationException($"failed to start worker for {item.Input}");
                     var stdout = child.StandardOutput.ReadToEndAsync();
@@ -219,6 +229,7 @@ internal static class Program
             if (File.Exists(catalogPath)) File.Delete(catalogPath);
             if (File.Exists(companionCatalogPath)) File.Delete(companionCatalogPath);
             if (File.Exists(innerCatalogPath)) File.Delete(innerCatalogPath);
+            if (File.Exists(publicTypeCatalogPath)) File.Delete(publicTypeCatalogPath);
         }
     }
 
@@ -273,7 +284,10 @@ internal static class Program
             Environment.GetEnvironmentVariable(CompanionCatalogEnvironment));
         var innerCatalog = InnerReferenceCatalog.Load(
             Environment.GetEnvironmentVariable(InnerCatalogEnvironment));
-        var fragments = new AssemblyScanner(pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog).Scan();
+        var publicTypeCatalog = PublicTypeCatalog.Load(
+            Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment));
+        var fragments = new AssemblyScanner(
+            pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog).Scan();
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         var temp = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -1351,6 +1365,7 @@ internal sealed class AssemblyScanner
     private readonly DelegateReferenceCatalog _delegateCatalog;
     private readonly CompanionReferenceCatalog _companionCatalog;
     private readonly InnerReferenceCatalog _innerCatalog;
+    private readonly PublicTypeCatalog _publicTypeCatalog;
     private readonly Dictionary<TypeDefinitionHandle, CompanionCarrier> _companionCarriers = new();
     private readonly HashSet<TypeDefinitionHandle> _physicalCompanionCarriers = new();
     private readonly HashSet<TypeDefinitionHandle> _existentialCarriers = new();
@@ -1369,7 +1384,8 @@ internal sealed class AssemblyScanner
         ArityNames arityNames,
         DelegateReferenceCatalog delegateCatalog,
         CompanionReferenceCatalog companionCatalog,
-        InnerReferenceCatalog innerCatalog)
+        InnerReferenceCatalog innerCatalog,
+        PublicTypeCatalog publicTypeCatalog)
     {
         _md = md;
         _attrs = new MetadataAttributes(md);
@@ -1399,6 +1415,7 @@ internal sealed class AssemblyScanner
         _delegateCatalog = delegateCatalog;
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
+        _publicTypeCatalog = publicTypeCatalog;
         _csharp14Extensions = CSharp14ExtensionCatalog.Discover(pe, md, _attrs);
         var physicalTypes = md.TypeDefinitions
             .Select(handle => (
@@ -1794,8 +1811,9 @@ internal sealed class AssemblyScanner
                 .Where(implHandle =>
                 {
                     var entity = _md.GetInterfaceImplementation(implHandle).Interface;
-                    return entity.Kind != HandleKind.TypeDefinition
-                        || !_existentialCarriers.Contains((TypeDefinitionHandle)entity);
+                    return (entity.Kind != HandleKind.TypeDefinition
+                            || !_existentialCarriers.Contains((TypeDefinitionHandle)entity))
+                        && _publicTypeCatalog.IsPublicInterface(_md, entity);
                 })
                 .Select(implHandle =>
                 {
@@ -2040,6 +2058,7 @@ internal sealed class AssemblyScanner
             .Select(h => _md.GetInterfaceImplementation(h).Interface)
             .Where(h => h.Kind != HandleKind.TypeDefinition
                 || !_existentialCarriers.Contains((TypeDefinitionHandle)h))
+            .Where(h => _publicTypeCatalog.IsPublicInterface(_md, h))
             .Select(h => TypeKey(signatures.DecodeEntity(h, typeContext, platform: false)))
             .ToHashSet(StringComparer.Ordinal);
         foreach (var implementationHandle in def.GetMethodImplementations())
