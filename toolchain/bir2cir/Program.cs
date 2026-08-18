@@ -127,6 +127,7 @@ sealed class Pipeline
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
+        var localReifiedDeclarations = ReifiedNullabilityWitnessLowering.Collect(birRoots);
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
         var localSequenceFilterNotNullDeclarations =
             MemberCallSubstitution.CollectLocalSequenceFilterNotNullDeclarations(birRoots);
@@ -422,6 +423,11 @@ sealed class Pipeline
             // (already-BCL names + already-stripped `anySlot` are no-ops), so a second whole-tree pass only fixes the
             // spliced-in nodes. (#75: splice-all made this live — e.g. `buildString{}` losing its `.toString()`.)
             ObjectSlotRename.Apply(bir.Root);
+            // REIFIED NULLABILITY ABI (#316): every raw inline/default payload is materialized now, while exact
+            // declaration identities and Kotlin type arguments are still present. Record each call's witness and
+            // capture lifted-frame witnesses before ClosureSynthesis/physical type lowering can erase those facts;
+            // ordinary call arguments remain source-visible until semantic intrinsic/factory recognition finishes.
+            ReifiedNullabilityWitnessLowering.Apply(bir.Root, localReifiedDeclarations, refs);
             ClosureSynthesis.Apply(bir.Root, refs);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
@@ -692,6 +698,11 @@ sealed class Pipeline
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
                 localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations,
                 localSequenceFilterNotNullDeclarations);
+            // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
+            // still authoritative. Materialize them only after semantic calls (enum/array/collection intrinsics) have
+            // either been replaced or deliberately retained, so a physical hidden ABI argument cannot interfere with
+            // recognition of the Kotlin-visible argument vector.
+            ReifiedNullabilityWitnessLowering.MaterializeCallWitnesses(substituted);
             // Cross-module half of UncheckedGenericCastReturnErasure.  MemberCallSubstitution has now attributed a
             // referenced top-level call to its real file-class owner; bind the trusted physical-Object/logical-T
             // metadata boundary to an explicit CIR return conversion before `sty` is consumed by type lowering.
@@ -1056,6 +1067,10 @@ sealed class Pipeline
             // The selected declaration then follows the ordinary nullable/alias/type transform into physical CIR.
             // App-only: stdlib metadata/runtime builds own their kotlin.* facades in this assembly.
             ClrMemberResolution.EnsurePlainCallDescriptors(substituted);
+            // Signature-shaping passes above operate on Kotlin-visible parameters and may rebuild `sig` from the
+            // semantic declaration carrier. Re-append the already-materialized hidden reified witnesses now, at the
+            // final physical-binding boundary, so exact reference resolution sees the actual MethodDef signature.
+            ReifiedNullabilityWitnessLowering.FinalizeCallSignatures(substituted);
             // Fail closed if a late materialization introduced an identity-bearing external call after the early
             // binding boundary; the same authoritative ID lookup applies and no erased overload search is permitted.
             DeclarationIdentityBinding.BindReferenced(substituted, refs, finalLocalDeclarationIds);
