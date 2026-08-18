@@ -1558,6 +1558,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 			val externalPropertyOwner = clrExternalOwner(p)
 			if (declaringClass == null) externalPropertyOwner?.let { fileClass ->
 				val companionTag = companionReceiverCallTag(p, call)
+				val ta = typeArgsJson(call)
 				// A projected companion extension has no runtime receiver. Keep its Kotlin source identity in BIR;
 				// bir2cir binds that identity to the trusted producer carrier's exact CLR member.
 				if (isCompanionExtensionCallee(p) || companionTag.isNotEmpty()) {
@@ -1582,7 +1583,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 					val argTypes = values.joinToString(",") { birType(it.type).toJson() }
 					val args = values.joinToString(",") { expr(it) }
 					val ret = if (setter) fqnJson("kotlin.Unit") else birType(callee.returnType).toJson()
-					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":${str(if (setter) "set" else "get")}${overloadSigField(callee)},"argTypes":[$argTypes],"ret":$ret,"args":[$args]$tag}"""
+					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":${str(if (setter) "set" else "get")}${overloadSigField(callee)}$ta,"argTypes":[$argTypes],"ret":$ret,"args":[$args]$tag}"""
 				}
 				// An accessor that takes ANY argument — an extension receiver, or a `context(...)` parameter — is a
 				// method on the file class, never a static field: route it to the accessor path
@@ -1599,11 +1600,11 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 					val customSet = !hasDefaultSetter(p)
 					if (callee === p.setter) {
 						return if (customSet)
-							"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)},"argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
+							"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"argTypes":[${birType(regularArgs(call).first().type).toJson()}],"ret":${fqnJson("kotlin.Unit")},"args":[${expr(regularArgs(call).first())}]}"""
 						else """{"k":"staticFieldSet","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())},"value":${expr(regularArgs(call).first())}}"""
 					}
 					return if (customGet)
-						"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)},"argTypes":[],"ret":${birType(callee.returnType).toJson()},"args":[]}"""
+						"""{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta,"argTypes":[],"ret":${birType(callee.returnType).toJson()},"args":[]}"""
 					else """{"k":"staticField","ownerType":${fqnJson(fileClass)},"name":${str(p.name.asString())}}"""
 				}
 				val recv = extensionReceiver(call)
@@ -1612,13 +1613,13 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 				// the accessor role; bir2cir finds no matching .NET property/field and applies the shared forward allocation.
 				if (callee === p.setter) {
 					val args = listOfNotNull(recv) + regularArgs(call)
-					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)},"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
+					return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"set"${overloadSigField(callee)}$ta,"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"ret":${fqnJson("kotlin.Unit")},"args":[${args.joinToString(",") { expr(it) }}]}"""
 				}
 				// The getter's args are the SAME projection every other call uses: `[__self?] + <positional args>` —
 				// the positional part is empty for a plain extension property and carries the `context(...)` arguments
 				// for a context property.
 				val getArgs = listOfNotNull(recv) + regularArgs(call)
-				return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)},"argTypes":[${getArgs.joinToString(",") { birType(it.type).toJson() }}],"ret":${birType(callee.returnType).toJson()},"args":[${getArgs.joinToString(",") { expr(it) }}]}"""
+				return """{"k":"callStatic","ownerType":${fqnJson(fileClass)},"method":${str(p.name.asString())},"prop":"get"${overloadSigField(callee)}$ta,"argTypes":[${getArgs.joinToString(",") { birType(it.type).toJson() }}],"ret":${birType(callee.returnType).toJson()},"args":[${getArgs.joinToString(",") { expr(it) }}]}"""
 			}
 		}
 

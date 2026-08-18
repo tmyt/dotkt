@@ -483,10 +483,14 @@ static class BirTypeLowering
         }),
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(
             f.Name, args.Select(CanonicalPhysicalSlotType).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(CanonicalPhysicalSlotType(a.Elem)),
+        TypeNode.Array a => new TypeNode.Array(
+            CanonicalPhysicalSlotType(a.Elem), a.Rank, a.SzArray),
         TypeNode.Nullable n => new TypeNode.Nullable(CanonicalPhysicalSlotType(n.Of)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(CanonicalPhysicalSlotType(o.Of)),
         TypeNode.ByRef b => new TypeNode.ByRef(CanonicalPhysicalSlotType(b.Of)),
+        TypeNode.Ptr p => new TypeNode.Ptr(CanonicalPhysicalSlotType(p.Of)),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req,
+            CanonicalPhysicalSlotType(m.M), CanonicalPhysicalSlotType(m.Of)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
             CanonicalPhysicalSlotType(fn.Ret),
             fn.Params.Select(CanonicalPhysicalSlotType).ToArray(),

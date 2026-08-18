@@ -28,6 +28,12 @@ fun declarationGrade(n: Int): String = when {   // subjectless `when`
     else -> "C"
 }
 
+fun declarationReplacement(): String = "new"
+
+// #452 compilation guard: ReplaceWith constructs a nested String[]-parameter value inside an attribute subtree.
+@Deprecated("gone", replaceWith = ReplaceWith("declarationReplacement()"))
+fun declarationDeprecated(): String = "old"
+
 // ---- m-a6 : companion object — const (inlined), non-const val (static field), factory method (static) ---------
 class DeclarationCircle(val r: Double) {
     companion object {
@@ -50,6 +56,7 @@ class DeclarationTests {
         assertEquals("B", declarationGrade(85))       // B    (subjectless when)
         assertEquals("A", declarationGrade(95))       // A
         assertEquals("C", declarationGrade(70))       // C
+        assertEquals("new", declarationReplacement())
     }
 
     @TestAttribute

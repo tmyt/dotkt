@@ -142,8 +142,12 @@ static partial class SuspendColdLowering
             call["recv"] = new JsonObject
             {
                 ["k"] = "staticField",
-                ["ownerType"] = carrierType,
+                ["ownerType"] = carrierType.DeepClone(),
                 ["name"] = "$INSTANCE",
+                // This pass owns the late companion-factory call shape, so state the singleton field's self-typed
+                // representation here just as the earlier companion-representation producer does. A consumer must
+                // never have to infer a static field's value type from its declaring owner.
+                ["sty"] = carrierType,
             };
         }
         else

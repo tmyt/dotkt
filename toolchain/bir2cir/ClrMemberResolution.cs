@@ -590,14 +590,22 @@ static partial class ClrMemberResolution
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
             throw new InvalidOperationException($"bir2cir: newClr owner '{ownerFqn.Name}' does not resolve to a .NET type (#46 memberRef carry)");
-        var argNodes = ReadArgTypes(node);
+        // A physical constructor descriptor may use CIR primitive shorthand or the equivalent BCL FQN, including
+        // below arrays and other constructed slots. Reflection exposes the BCL spelling, so compare in the one
+        // canonical physical vocabulary instead of making nested shorthand depend on which pass authored the node.
+        var argNodes = ReadArgTypes(node)
+            .Select(BirTypeLowering.CanonicalPhysicalSlotType)
+            .ToList();
+        var ownerArgs = ownerFqn.Args?
+            .Select(BirTypeLowering.CanonicalPhysicalSlotType)
+            .ToArray();
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == argNodes.Count).ToList();
-        var win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerFqn.Args,
+        var win = PickUnique(ctors, c => c.GetParameters(), argNodes, ownerArgs,
             $"newClr owner={TypeNode.ToJson(ownerFqn)} ({DescArgs(argNodes)})");
-        CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerFqn.Args);
-        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerFqn.Args);
-        StampDelegateArgumentTargets(node, win.GetParameters(), ownerFqn.Args ?? Array.Empty<TypeNode>(),
+        CoerceCtorCollectionViews(node, win.GetParameters(), argNodes, ownerArgs);
+        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
+        StampDelegateArgumentTargets(node, win.GetParameters(), ownerArgs ?? Array.Empty<TypeNode>(),
             Array.Empty<TypeNode>());
         // A constructor has no declared return; its result is the node's own `type`. Stamped as `void` so the
         // chokepoint can tell "no return" from "nobody stamped one".
@@ -1089,7 +1097,12 @@ static partial class ClrMemberResolution
     static Type AliasResolve(Type t)
     {
         if (t == null || t.IsGenericParameter) return t;
-        if (t.IsArray) { var e = AliasResolve(t.GetElementType()); return ReferenceEquals(e, t.GetElementType()) ? t : e.MakeArrayType(); }
+        if (t.IsArray)
+        {
+            var e = AliasResolve(t.GetElementType());
+            if (ReferenceEquals(e, t.GetElementType())) return t;
+            return t.IsSZArray ? e.MakeArrayType() : e.MakeArrayType(t.GetArrayRank());
+        }
         if (t.IsByRef) { var e = AliasResolve(t.GetElementType()); return ReferenceEquals(e, t.GetElementType()) ? t : e.MakeByRefType(); }
         if (t.IsGenericType && !t.IsGenericTypeDefinition)
         {
@@ -1139,7 +1152,11 @@ static partial class ClrMemberResolution
             case TypeNode.Oblivious o: return MapMlc(o.Of);
             case TypeNode.ByRef b: { var e = MapMlc(b.Of); return e?.MakeByRefType(); }
             case TypeNode.Ptr p: { var e = MapMlc(p.Of); return e?.MakePointerType(); }
-            case TypeNode.Array a: { var e = MapMlc(a.Elem); return e?.MakeArrayType(); }
+            case TypeNode.Array a:
+            {
+                var e = MapMlc(a.Elem);
+                return e == null ? null : a.SzArray ? e.MakeArrayType() : e.MakeArrayType(a.Rank);
+            }
             case TypeNode.Nullable n:
             {
                 var inner = MapMlc(n.Of);

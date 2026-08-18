@@ -1950,7 +1950,7 @@ internal sealed class AssemblyScanner
                         ? signatures.FromTypeNode(semanticReturn)
                         : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
                     ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
-                        declarationIdentity?.Parameters) },
+                        declarationIdentity?.Parameters, declarationIdentity?.ReifiedTypeParameterIndices.Count ?? 0) },
                 };
                 PromoteContextParameters(method, function);
                 // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
@@ -3874,7 +3874,7 @@ internal sealed class AssemblyScanner
                         entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
                 ValueParameter = {
                     Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context,
-                        declarationIdentity?.Parameters)
+                        declarationIdentity?.Parameters, declarationIdentity?.ReifiedTypeParameterIndices.Count ?? 0)
                 },
                 ReceiverType = CSharp14ExtensionReceiver(
                     entry.ReceiverMarker, entry.BlockArity, names, signatures,
@@ -4200,7 +4200,7 @@ internal sealed class AssemblyScanner
                     ? signatures.FromTypeNode(semanticReturn)
                     : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
                 ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
-                    declarationIdentity?.Parameters) },
+                    declarationIdentity?.Parameters, declarationIdentity?.ReifiedTypeParameterIndices.Count ?? 0) },
             };
             PromoteContextParameters(method, function);
             // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
@@ -4584,12 +4584,12 @@ internal sealed class AssemblyScanner
                 !IsPublicOrProtected(representative.Attributes) ||
                 requireStatic && (representative.Attributes & MethodAttributes.Static) == 0)
                 continue;
-            var physical = PhysicalParameters(representative);
-            // A setter-only Property row represents a semantic `var` whose getter is inherited.  The final physical
+            var physical = SemanticPhysicalParameters(representativeHandle, representative);
+            // A setter-only Property row represents a semantic `var` whose getter is inherited. The final semantic
             // parameter is the value slot and is not part of the Kotlin receiver/context prefix.
             var propertyPhysical = getterHandle.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
-            var hasReceiver = physical.Count > 0 && !physical[0].Row.Name.IsNil &&
-                _md.GetString(physical[0].Row.Name) == "__self";
+            var hasReceiver = propertyPhysical.Count > 0 && !propertyPhysical[0].Row.Name.IsNil &&
+                _md.GetString(propertyPhysical[0].Row.Name) == "__self";
             // A COMPANION EXTENSION property accessor carries its receiver in trusted metadata instead of a physical
             // `__self` slot (the frontend drops the parameter), so a receiverless zero-argument getter IS an accessor
             // here when the carrier says so. Without this the associated getter would surface as a plain function.
@@ -4623,12 +4623,16 @@ internal sealed class AssemblyScanner
                     var setterSignature = setter.DecodeSignature(
                     RawSignatureTypeProvider.Instance,
                     new GenericContext(owner, setterHandle, typeParameterIds));
-                    if (getterSignature!.Value.GenericParameterCount != setterSignature.GenericParameterCount ||
-                        setterSignature.ParameterTypes.Length != getterSignature.Value.ParameterTypes.Length + 1 ||
-                        !getterSignature.Value.ParameterTypes.SequenceEqual(
-                            setterSignature.ParameterTypes.Take(getterSignature.Value.ParameterTypes.Length),
+                    var getterParameterCount = SemanticParameterCount(
+                        getterHandle, getterSignature!.Value.ParameterTypes.Length);
+                    var setterParameterCount = SemanticParameterCount(
+                        setterHandle, setterSignature.ParameterTypes.Length);
+                    if (getterSignature.Value.GenericParameterCount != setterSignature.GenericParameterCount ||
+                        setterParameterCount != getterParameterCount + 1 ||
+                        !getterSignature.Value.ParameterTypes.Take(getterParameterCount).SequenceEqual(
+                            setterSignature.ParameterTypes.Take(getterParameterCount),
                             StringComparer.Ordinal) ||
-                        getterSignature.Value.ReturnType != setterSignature.ParameterTypes[^1])
+                        getterSignature.Value.ReturnType != setterSignature.ParameterTypes[setterParameterCount - 1])
                         setterHandle = default;
                 }
             }
@@ -4701,17 +4705,21 @@ internal sealed class AssemblyScanner
                 var setterSignature = setter.DecodeSignature(
                     RawSignatureTypeProvider.Instance,
                     new GenericContext(owner, pair.Setter, typeParameterIds));
+                var getterParameterCount = SemanticParameterCount(
+                    pair.Getter, getterSignature.ParameterTypes.Length);
+                var setterParameterCount = SemanticParameterCount(
+                    pair.Setter, setterSignature.ParameterTypes.Length);
                 if ((getter.Attributes & MethodAttributes.Static) != (setter.Attributes & MethodAttributes.Static)
                     || getterSignature.GenericParameterCount != setterSignature.GenericParameterCount
-                    || setterSignature.ParameterTypes.Length != getterSignature.ParameterTypes.Length + 1
-                    || !getterSignature.ParameterTypes.SequenceEqual(
-                        setterSignature.ParameterTypes.Take(getterSignature.ParameterTypes.Length),
+                    || setterParameterCount != getterParameterCount + 1
+                    || !getterSignature.ParameterTypes.Take(getterParameterCount).SequenceEqual(
+                        setterSignature.ParameterTypes.Take(getterParameterCount),
                         StringComparer.Ordinal)
-                    || getterSignature.ReturnType != setterSignature.ParameterTypes[^1])
+                    || getterSignature.ReturnType != setterSignature.ParameterTypes[setterParameterCount - 1])
                     throw new InvalidDataException(
                         "[KotlinPropertyAccessor] getter/setter signatures are incompatible");
             }
-            var physical = PhysicalParameters(representative);
+            var physical = SemanticPhysicalParameters(representativeHandle, representative);
             var propertyPhysical = pair.Getter.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
             var hasReceiver = propertyPhysical.Count > 0 && !propertyPhysical[0].Row.Name.IsNil &&
                 _md.GetString(propertyPhysical[0].Row.Name) == "__self";
@@ -4789,7 +4797,8 @@ internal sealed class AssemblyScanner
         string Id,
         string Name,
         IReadOnlyList<TypeNode>? Parameters,
-        TypeNode? ReturnType);
+        TypeNode? ReturnType,
+        IReadOnlySet<int> ReifiedTypeParameterIndices);
 
     private DeclarationIdentityCarrier? KotlinDeclarationIdentityCarrier(MethodDefinitionHandle methodHandle)
     {
@@ -4798,20 +4807,33 @@ internal sealed class AssemblyScanner
         if (document is null) return null;
         var root = document.RootElement;
         var propertyCount = root.ValueKind == JsonValueKind.Object ? root.EnumerateObject().Count() : 0;
-        if (propertyCount is not (2 or 3) ||
+        if (propertyCount is < 2 or > 4 ||
             !root.TryGetProperty("id", out var idNode) || idNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
-            propertyCount == 3 && (!root.TryGetProperty("signature", out var signatureNode) ||
-                signatureNode.ValueKind != JsonValueKind.Object))
+            root.EnumerateObject().Any(property => property.Name is not ("id" or "name" or "signature" or "reified")) ||
+            root.TryGetProperty("signature", out var signatureNode) && signatureNode.ValueKind != JsonValueKind.Object ||
+            root.TryGetProperty("reified", out var reifiedNode) && reifiedNode.ValueKind != JsonValueKind.Array)
             throw new InvalidDataException("malformed [KotlinDeclarationIdentity] payload");
         var id = idNode.GetString();
         var name = nameNode.GetString();
         if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
             throw new InvalidDataException("empty [KotlinDeclarationIdentity] payload");
-        if (propertyCount == 2)
-            return new DeclarationIdentityCarrier(id, name, null, null);
+        var reified = root.TryGetProperty("reified", out reifiedNode)
+            ? reifiedNode.EnumerateArray().Select(index => index.ValueKind == JsonValueKind.Number
+                && index.TryGetInt32(out var value) && value >= 0
+                ? value
+                : throw new InvalidDataException("malformed [KotlinDeclarationIdentity] reified index"))
+                .ToHashSet()
+            : new HashSet<int>();
+        if (reified.Any(index => index >= _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count))
+            throw new InvalidDataException("[KotlinDeclarationIdentity] reified index exceeds method generic arity");
         if (!root.TryGetProperty("signature", out signatureNode))
-            throw new InvalidDataException("missing [KotlinDeclarationIdentity] semantic signature");
+        {
+            if (reified.Count != 0)
+                throw new InvalidDataException(
+                    "[KotlinDeclarationIdentity] reified indices require a semantic signature");
+            return new DeclarationIdentityCarrier(id, name, null, null, reified);
+        }
         if (signatureNode.EnumerateObject().Count() != 2 ||
             !signatureNode.TryGetProperty("params", out var paramsNode) || paramsNode.ValueKind != JsonValueKind.Array ||
             !signatureNode.TryGetProperty("ret", out var retNode) || TypeNode.Read(retNode) is not { } returnType)
@@ -4819,7 +4841,7 @@ internal sealed class AssemblyScanner
         var parameters = paramsNode.EnumerateArray().Select(parameter =>
             TypeNode.Read(parameter) ?? throw new InvalidDataException(
                 "malformed [KotlinDeclarationIdentity] semantic parameter type")).ToArray();
-        return new DeclarationIdentityCarrier(id, name, parameters, returnType);
+        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified);
     }
 
     /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor
@@ -4844,20 +4866,16 @@ internal sealed class AssemblyScanner
         var representative = _md.GetMethodDefinition(representativeHandle);
         var declarationIdentity = KotlinDeclarationIdentityCarrier(representativeHandle);
         var semanticPropertyName = PropertyAccessorAssociation(representativeHandle)?.Name ?? propertyName;
-        var physical = PhysicalParameters(representative);
+        var physical = SemanticPhysicalParameters(representativeHandle, representative);
         var propertyPhysical = getterHandle.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
-        var hasReceiver = physical.Count > 0 && !physical[0].Row.Name.IsNil &&
-            _md.GetString(physical[0].Row.Name) == "__self";
+        var hasReceiver = propertyPhysical.Count > 0 && !propertyPhysical[0].Row.Name.IsNil &&
+            _md.GetString(propertyPhysical[0].Row.Name) == "__self";
         var context = new GenericContext(owner, representativeHandle, typeParameterIds);
         var propertySignature = propertyHandle.IsNil
             ? representative.DecodeSignature(signatures, context)
             : _md.GetPropertyDefinition(propertyHandle).DecodeSignature(signatures, context);
-        if (declarationIdentity?.Parameters is { } semanticParameters &&
-            semanticParameters.Count != representative.DecodeSignature(signatures, context).ParameterTypes.Length)
-            throw new InvalidDataException(
-                $"[KotlinDeclarationIdentity] signature parameter count does not match property accessor '{propertyName}'");
         var propertyTypeSignature = propertyHandle.IsNil && getterHandle.IsNil
-            ? propertySignature.ParameterTypes[^1]
+            ? propertySignature.ParameterTypes[physical.Count - 1]
             : propertySignature.ReturnType;
         var type = declarationIdentity is { ReturnType: { } semanticReturn } && !getterHandle.IsNil
             ? signatures.FromTypeNode(semanticReturn)
@@ -4935,6 +4953,25 @@ internal sealed class AssemblyScanner
             .Where(x => x.Row.SequenceNumber > 0)
             .OrderBy(x => x.Row.SequenceNumber)
             .ToList();
+
+    private List<(ParameterHandle Handle, Parameter Row)> SemanticPhysicalParameters(
+        MethodDefinitionHandle methodHandle,
+        MethodDefinition method)
+    {
+        var physical = PhysicalParameters(method);
+        return physical.Take(SemanticParameterCount(methodHandle, physical.Count)).ToList();
+    }
+
+    private int SemanticParameterCount(MethodDefinitionHandle methodHandle, int physicalCount)
+    {
+        var identity = KotlinDeclarationIdentityCarrier(methodHandle);
+        if (identity?.Parameters is not { } semanticParameters) return physicalCount;
+        if (semanticParameters.Count + identity.ReifiedTypeParameterIndices.Count != physicalCount)
+            throw new InvalidDataException(
+                $"[KotlinDeclarationIdentity] signature parameter count does not match " +
+                $"'{_md.GetString(_md.GetMethodDefinition(methodHandle).Name)}'");
+        return semanticParameters.Count;
+    }
 
     private static Annotation ClrExternalAnnotation(NameTable names, string owner)
     {
@@ -5440,14 +5477,16 @@ internal sealed class AssemblyScanner
         NameTable names,
         SignatureDecoder signatures,
         GenericContext context,
-        IReadOnlyList<TypeNode>? semanticTypes = null)
+        IReadOnlyList<TypeNode>? semanticTypes = null,
+        int hiddenTrailingParameters = 0)
     {
-        if (semanticTypes is not null && semanticTypes.Count != types.Length)
+        if (semanticTypes is not null && semanticTypes.Count + hiddenTrailingParameters != types.Length)
             throw new InvalidDataException(
                 $"[KotlinDeclarationIdentity] signature parameter count does not match '{_md.GetString(method.Name)}'");
         var rows = method.GetParameters().Select(h => (Handle: h, Row: _md.GetParameter(h)))
             .Where(p => p.Row.SequenceNumber > 0).ToDictionary(p => p.Row.SequenceNumber);
-        for (var i = 0; i < types.Length; i++)
+        var visibleCount = semanticTypes?.Count ?? types.Length;
+        for (var i = 0; i < visibleCount; i++)
         {
             if (!rows.TryGetValue(i + 1, out var entry))
             {

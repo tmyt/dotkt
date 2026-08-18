@@ -1,0 +1,29 @@
+{
+  "fileClass": "NewClrPrimitiveSpellingMismatchProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "mismatch",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "System.Version" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "newClr",
+            "type": { "t": "fqn", "name": "System.Version" },
+            "argTypes": [ { "t": "fqn", "name": "bool" } ],
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "bool" }, "value": true }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
