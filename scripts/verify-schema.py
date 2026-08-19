@@ -79,6 +79,13 @@ REQUIRED_OPERATION_REFS = {
     "clrStaticField": ("fieldRef",),
 }
 
+# Required fields whose role is owned by the node discriminator. In particular, `to` cannot be a global type key:
+# conv.to is a Type while for/forRange.to is an expression. Keep these checks kind-directed for the same reason.
+REQUIRED_NODE_FIELDS = {
+    "conv": ("e", "to"),
+    "new": ("type", "argTypes", "args"),
+}
+
 # The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
 #
 # The role set is FROZEN, for the reason every other key here is: a table that accepts any name accepts a typo,
@@ -777,6 +784,20 @@ class V:
                 self.kinds_seen.add(k)
                 if k not in KINDS:
                     self.err(f, path, f"unknown node kind k={k!r}")
+                for required in REQUIRED_NODE_FIELDS.get(k, ()):
+                    if required not in o:
+                        self.err(f, path, f"{k} is missing required field {required!r}")
+                if k == "conv" and "to" in o:
+                    target = o["to"]
+                    if not isinstance(target, dict) or not isinstance(target.get("t"), str):
+                        self.err(f, path + "/to", "conv.to must be a structured Type node")
+                if k == "new" and "argTypes" in o:
+                    arg_types = o["argTypes"]
+                    args = o.get("args")
+                    if not isinstance(arg_types, list):
+                        self.err(f, path + "/argTypes", "new.argTypes must be an array of structured Type nodes")
+                    elif isinstance(args, list) and len(arg_types) != len(args):
+                        self.err(f, path, "new.argTypes must contain one entry per new.args value")
                 if k == "newSuspendLambda":
                     # The physical SM parameter descriptors and the semantic Kotlin function type deliberately use
                     # different shapes: node.params is receiver-first (create arguments/field names), while

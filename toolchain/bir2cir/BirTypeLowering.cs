@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
@@ -54,7 +55,7 @@ static class BirTypeLowering
     // #55: the non-force `KotlinToClr` map was DELETED. It was pure redundancy — every entry (kotlin.Int -> "int",
     // kotlin.String -> "string", …) merely SHADOWED the primitive's own `@ClrTypeAlias("System.Int32"/"System.String"/…)`,
     // which bir2cir already scans from the ref.dll into the `_aliases` index. A primitive now lowers to its BCL alias
-    // (System.Int32/System.SByte/…) via `AliasBcl` in LowerType/LowerLeaf, exactly like every other @ClrTypeAlias type;
+    // (System.Int32/System.SByte/…) via `AliasBcl` in LowerType, exactly like every other @ClrTypeAlias type;
     // ilemit's MapType resolves `System.Int32` to `typeof(int)` identically to the old shorthand, and its three
     // name-keyed opcode switches (EmitConst/EmitConv/ConstArgValue) normalize the alias back to the shorthand alphabet.
     // Only `KotlinAllToClr` (below) survives, for the attribute-blob force path where no ref.dll is loaded.
@@ -123,7 +124,7 @@ static class BirTypeLowering
         "memberSignature",
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
-        "keyType", "valType", "iterType", "accessOwner", "elem", "to",
+        "keyType", "valType", "iterType", "accessOwner", "elem",
         "samType", "closureType",
         // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
         // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
@@ -624,6 +625,8 @@ static class BirTypeLowering
             // `IReadOnlyList<int>[]` — the element interfaces are unrelated; a concrete-element store into a readonly
             // element array works only by the runtime value implementing that element interface.)
             var nodeK = (obj["k"] as JsonValue)?.GetValue<string>();
+            if (nodeK == "new") ValidateCurrentNew(obj);
+            if (nodeK == "conv") ValidateCurrentConv(obj);
             var collCtor = nodeK is "newList" or "newSet" or "newMap";
             var copy = new JsonObject();
             foreach (var kv in obj)
@@ -664,6 +667,17 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
                 else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
+                // `to` is intentionally shared by two node kinds. Its role belongs to the parent discriminator:
+                // a conversion names a Type, while a range loop names an expression. Do not classify the value by
+                // shape, and do not let an unknown node kind acquire a meaning for this field accidentally.
+                else if (kv.Key == "to")
+                    copy[kv.Key] = nodeK switch
+                    {
+                        "conv" => LowerTypeObject(kv.Value, refBuild, here, typeArg: false),
+                        "for" or "forRange" => LowerNode(kv.Value, refBuild, here),
+                        _ => throw new InvalidDataException(
+                            $"{_file}: malformed current node: field `to` is not defined for k={nodeK ?? "<missing>"}"),
+                    };
                 else if (TypeKeys.Contains(kv.Key))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here);
                 else
@@ -772,15 +786,48 @@ static class BirTypeLowering
         slot is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s == "fqn"
         && o["name"] is JsonValue nv && nv.TryGetValue<string>(out var n) && n == "kotlin.Nothing";
 
+    // Current node-shape validation belongs at the complete type walk as the last common BIR path. Earlier binding
+    // stages validate the same facts before consuming them so malformed input cannot be repaired accidentally.
+    static void ValidateCurrentNew(JsonObject node)
+    {
+        if (node["args"] is not JsonArray args)
+            throw new InvalidDataException($"{_file}: malformed current `new` node: required `args` is absent or is not an array");
+        if (node["argTypes"] is not JsonArray argTypes)
+            throw new InvalidDataException($"{_file}: malformed current `new` node: required `argTypes` is absent or is not an array");
+        if (argTypes.Count != args.Count)
+            throw new InvalidDataException(
+                $"{_file}: malformed current `new` node: `argTypes` count {argTypes.Count} does not match `args` count {args.Count}");
+        for (var i = 0; i < argTypes.Count; i++)
+            if (!TypeJson.IsType(argTypes[i]))
+                throw new InvalidDataException(
+                    $"{_file}: malformed current `new` node: `argTypes[{i}]` is not a structured Type node");
+    }
+
+    static void ValidateCurrentConv(JsonObject node)
+    {
+        if (node["e"] == null)
+            throw new InvalidDataException($"{_file}: malformed current `conv` node: required `e` is absent");
+        if (!TypeJson.IsType(node["to"]))
+            throw new InvalidDataException($"{_file}: malformed current `conv` node: required `to` is not a structured Type node");
+    }
+
     // A `sig` value is a STRUCTURED array of parameter-type TypeNodes (#37 m3b) — the overload key ilemit matches
     // against a method def's lowered `params[].type`. Lower each element through the SAME structured type path the
     // def params use (LowerTypeObject), so the call-side sig and the def-side params stay in the SAME vocabulary
     // (identical SigTokenOf render), else overload resolution misses.
     static JsonNode LowerSigValue(JsonNode val, bool refBuild, bool force)
     {
+        if (val is not JsonArray values)
+            throw new InvalidDataException(
+                $"{_file}: malformed current signature: expected an array of structured Type nodes");
         var copy = new JsonArray();
-        foreach (var item in val.AsArray())
+        foreach (var item in values)
+        {
+            if (!TypeJson.IsType(item))
+                throw new InvalidDataException(
+                    $"{_file}: malformed current signature: every element must be a structured Type node");
             copy.Add(LowerTypeObject(item!, refBuild, force, typeArg: false));
+        }
         return copy;
     }
 
@@ -819,9 +866,9 @@ static class BirTypeLowering
         return TypeNode.Write(LowerType(type, refBuild, force, typeArg: false));
     }
 
-    // A usually type-bearing key's value is one Type node or an array containing Type nodes. A few keys are
-    // discriminated by their parent node (`to` is also a range endpoint; declaration `params` contain descriptors),
-    // so a non-Type object is an ordinary subtree and is walked structurally rather than interpreted as a type.
+    // A usually type-bearing key's value is one Type node or an array containing Type nodes. Declaration `params`
+    // contains descriptors rather than raw types, so a non-Type object is an ordinary subtree and is walked
+    // structurally rather than interpreted as a type.
     // `typeArg` = this value sits at generic-argument DEPTH (a call/ctor `typeArgs` list element, or a collection-
     // construction element/value key on newList/newSet/newMap), so its element HEADS collapse per the Root-V rule.
     // Default false: a `type`/`ret`/`argTypes`/`sig`/`base` head is depth-0 (keeps covariant); only its NESTED Args

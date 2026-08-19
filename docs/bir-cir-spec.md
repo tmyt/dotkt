@@ -7,9 +7,9 @@
 > codec-agnostic, single-source. **BIR contains NO stringly-typed compound tokens — types are nodes.**
 
 ## 0. Envelope & versioning
-- **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` =
-  `"bir-json/1"` today (future binary = `"bir-msgpack/1"`; schema bump = `"bir-json/2"`). `content` = the
-  codec-encoded body (today `UTF8(json)`).
+- **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
+  `codec/schema-version` identifier; only `"bir-json/1"` is defined today. `content` is the codec-encoded body
+  (today `UTF8(json)`). The dispatch shape leaves room for other codecs without reserving a particular identifier.
 - A single `BirCarrier.DecodeBody(version, byte[])` / `EncodeBody(version, node)`
   (`toolchain/bir-common/TypeNode.cs`) dispatches on `version`. An UNKNOWN version is REJECTED
   (loud `NotSupportedException`, never a silent mis-decode).
@@ -467,25 +467,12 @@ the operand: the schema requires the instruction and reference together, while t
 Each carrier is the sole external-member identity for its operation. Consumers read that current scalar reference
 directly and do not recognize earlier owner/name/signature layouts.
 
-### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
+### 2.2.1 Internal indexes do not define another type format
 The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/
-`funcType`/`base`/`interfaces`/`sig` slot is a structured `Type` node or an array of them. But TWO
-consumer-internal string forms are DELIBERATELY retained (rendering a structured `Type`→string for a
-narrow, entangled, low-payoff comparison); they are NOT drift and MUST NOT be "cleaned up" by re-stringing
-the format:
-
-1. **The owner-FQN island** — ilemit `ParseOwner`/`ParseOwnerSlot`/`TryMapEmittedType` key this
-   assembly's emitted types (`_types`) by their bare FQN **string** and split a constructed-generic
-   `Name[arg,…]` owner spec into (open name, args). `ParseOwnerSlot(JsonElement)` reads a structured `fqn`
-   owner node (`ParseOwnerT`) — the wire stays structured — but the internal `_types` lookup and the
-   `Name[…]` split remain string-keyed. This is a private in-assembly type-table index, not a serialization
-   token.
-2. **The sig-key reflection island** — ilemit `SigTokenOf`/`SigTokenMatches`/`SigTokenMatchesOpen`
-   (and bir2cir `ParamKey`) RENDER a structured `Type` (incl. `fn`→`func:`/`sfunc:`, `clr:`/`clrg:`/`array:`/
-   `nullable:`/`byRef:`/`gp:` prefixes) to a canonical **string token** SOLELY to compare a call/binding
-   signature against a **reflected `MethodInfo`** from a `--ref` .NET assembly (`FindReflectedMethodBySig`).
-   Reflection surfaces `System.Type`, not our nodes, so the comparison canonicalizes both sides. These tokens
-   remain private comparison keys: no BIR/CIR reader parses them back into a type.
+`funcType`/`base`/`interfaces`/`sig` slot is a structured `Type` node or an array of them. Consumer indexes preserve
+that structure: constructed owners are decomposed as `Fqn.Name` plus `Fqn.Args`, and bir2cir reflection keys use
+structural `TypeKey` / `SignatureKey` values. ilemit may render a `TypeNode` one-way into a private dictionary key,
+but no reader parses such a key back into a type and no owner name is scanned for embedded generic arguments.
 
 Also NOTE — the bare-FQN + CLR-shorthand string LEAF resolver inside ilemit
 (`MapType(string)`'s `_ =>` FQN/shorthand switch + `TryMapEmittedType`) is the primary resolver for every
@@ -525,8 +512,8 @@ Every identifier in the serialization vocabulary is **lowerCamelCase**, uniforml
   - **.NET attribute TYPE names** are UpperCamel — `KotlinInlineAttribute`, `KotlinSuspendFunctionTypeAttribute`,
     `KotlinDefaultAttribute` — because they are CLR types and MUST follow the CLR/BCL convention. Their
     *constructor-arg / field* names still follow the lowerCamel rule.
-  - **carrier version tags** are kebab-with-slash — `"bir-json/1"`, `"bir-msgpack/1"` — a codec+schema version
-    identifier, not a vocabulary identifier; the `/` separates codec from schema-major.
+  - **carrier version tags** use the `codec/schema-version` shape — currently `"bir-json/1"` — and are not vocabulary
+    identifiers; the `/` separates codec from schema-major.
 - **SCOPE — vocabulary, NOT payload data.** This policy governs the format's OWN identifiers (the
   meta-language: `k`/`t` tags, field names, `mods` keys, decl kinds). It does **NOT** govern the DATA those
   fields carry — the Kotlin/CLR **symbol names** in a `name` value (`{"t":"fqn","name":"…"}`), which follow
@@ -806,7 +793,8 @@ emitting method's body in the BIR/CIR — validated there by the document walk.
 
 **Residual string type slots structuralized to land the enforcer clean** (bir2cir/kotc were still injecting a few
 bare-FQN strings the wire format forbids):
-- `conv.to` (kotc `BirEmitter.kt` numeric-conversion path) — was `str(to)` (bare `"kotlin.Int"`) → `fqnJson(to)`.
+- `to` is deliberately shared: under `k:"conv"` it is a structured target type; under `k:"for"`/`k:"forRange"` it
+  is a range endpoint expression. The parent `k`, never the child's value shape or global key uniqueness, owns the role.
 - Synthetic `<>dotkt_KProperty` interface refs (kotc `synthDelegate`/`kPropertyDefs`) — `str(iface)`/literal → `fqnJson`.
 - `newSuspendLambda`'s free-type-param list — a type-param NAME-declaration list, not a type-usage slot: renamed
   `typeArgs` → `typeParams` (the name-shorthand, consistent with the other lambda paths; kotc emit + bir2cir

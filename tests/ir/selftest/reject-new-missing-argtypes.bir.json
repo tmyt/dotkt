@@ -2,13 +2,12 @@
   "methods": [{
     "name": "probe",
     "params": [],
-    "ret": { "t": "fqn", "name": "void" },
+    "ret": { "t": "fqn", "name": "kotlin.Unit" },
     "body": [{
       "k": "exprStmt",
       "expr": {
         "k": "new",
-        "type": { "t": "fqn", "name": "External.Widget" },
-        "argTypes": [],
+        "type": { "t": "fqn", "name": "Probe" },
         "args": []
       }
     }]

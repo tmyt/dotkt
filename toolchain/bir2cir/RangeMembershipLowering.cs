@@ -89,6 +89,9 @@ static class RangeMembershipLowering
         var readLo = Bind(lo, loType, "lo", site, stmts);
         var readHi = Bind(hi, hiType, "hi", site, stmts);
         var readX = Bind(x, xType, "in", site, stmts);
+        // The fast path needs a declaration-owned Type for every temporary it introduces. If the current input is
+        // incomplete, preserve the original contains call so the owning validation/resolution path reports it.
+        if (readLo == null || readHi == null || readX == null) return;
 
         var core = new JsonObject
         {
@@ -108,12 +111,13 @@ static class RangeMembershipLowering
 
     // One operand of the membership, rendered so the `cond` may read it: the operand itself when re-reading it is
     // order-immune, else a read of a fresh `__range<role>$N` temp appended to `stmts` (so it evaluates where Kotlin
-    // evaluates it). The current BIR shape carries the frontend-resolved type of every slot that may need a temp.
+    // evaluates it). Null iff a temporary is needed but the current structured slot type is absent or malformed.
     static JsonNode Bind(JsonNode value, JsonNode slotType, string role, int site, JsonArray stmts)
     {
         if (ValueStability.IsReReadable(value)) return value;
+        if (!TypeJson.IsType(slotType)) return null;
         var name = "__range" + role + "$" + site;
-        stmts.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = slotType!.DeepClone(), ["init"] = value.DeepClone() });
+        stmts.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = slotType.DeepClone(), ["init"] = value.DeepClone() });
         return new JsonObject { ["k"] = "local", ["name"] = name };
     }
 

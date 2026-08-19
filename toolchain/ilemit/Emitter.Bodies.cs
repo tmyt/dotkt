@@ -414,7 +414,8 @@ sealed partial class Emitter
     // value/generic-param arg flowing into an `object`/reference ctor param must be BOXED
     // (`Result<T>..ctor(object)` receiving a bare `!!T` was InvalidProgram at a value instantiation), exactly like
     // EmitArgsTyped does for method calls. bir2cir has already linked the declaration independently.
-    // A missing/arity-mismatched vector still has no coercion targets; a present vector must map completely.
+    // bir2cir and the schema gate require a complete, aligned vector. Keep the local length guard so an independently
+    // malformed CIR fails by emitting no guessed coercions rather than indexing an unrelated slot.
     void EmitNewArgs(JsonElement e, JsonElement nargs)
     {
         Type[] want = null;

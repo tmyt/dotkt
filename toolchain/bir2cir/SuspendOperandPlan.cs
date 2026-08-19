@@ -231,14 +231,14 @@ static partial class SuspendColdLowering
                     // distinguish two same-simple-name funs across packages.
                     var name = Str(o["method"]);
                     var owner = TypeJson.OwnerName(o["owner"]);
-                    var key = (owner == null ? "#" : BareOwner(owner) + "#") + name;
+                    var key = (owner == null ? "#" : owner + "#") + name;
                     if (_methodRets.TryGetValue(key, out var rt)) return rt;
                     if (_methodRets.TryGetValue("#" + name, out var rt2)) return rt2;
                     break;
                 }
                 case "callInstance":
                 {
-                    var ot = BareOwner(TypeJson.OwnerName(o["ownerType"]));
+                    var ot = TypeJson.OwnerName(o["ownerType"]);
                     if (ot != null && _methodRets.TryGetValue(ot + "#" + Str(o["method"]), out var rt)) return rt;
                     break;
                 }
@@ -247,7 +247,7 @@ static partial class SuspendColdLowering
                     // A raw field read carries no result type of its own; the DECLARED type is the answer.
                     // Owner-qualified first (`owner#name`), then top-level (`#name`).
                     var fname = Str(o["name"]);
-                    var fowner = BareOwner(TypeJson.OwnerName(o["ownerType"]));
+                    var fowner = TypeJson.OwnerName(o["ownerType"]);
                     if (fowner != null && _fieldTypes.TryGetValue(fowner + "#" + fname, out var fft)) return fft;
                     if (_fieldTypes.TryGetValue("#" + fname, out var fft2)) return fft2;
                     break;

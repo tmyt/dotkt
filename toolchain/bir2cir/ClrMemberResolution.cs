@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
@@ -63,6 +64,19 @@ static partial class ClrMemberResolution
             var sameArity = ctors.Select((n, i) => (ctor: n as JsonObject, index: i))
                 .Where(x => x.ctor?["params"] is JsonArray ps && ps.Count == args.Count).ToList();
             var useSiteSig = call[signatureName] as JsonArray;
+            if (signatureName == "argTypes")
+            {
+                if (useSiteSig == null)
+                    throw new InvalidDataException(
+                        $"bir2cir: malformed current `new` node for {context}: required `argTypes` is absent or is not an array");
+                if (useSiteSig.Count != args.Count)
+                    throw new InvalidDataException(
+                        $"bir2cir: malformed current `new` node for {context}: `argTypes` count {useSiteSig.Count} does not match `args` count {args.Count}");
+                for (var i = 0; i < useSiteSig.Count; i++)
+                    if (!TypeJson.IsType(useSiteSig[i]))
+                        throw new InvalidDataException(
+                            $"bir2cir: malformed current `new` node for {context}: `argTypes[{i}]` is not a structured Type node");
+            }
             // kotc carries the frontend-selected constructor's OPEN declaration signature independently of the
             // substituted use-site argument vector.  This distinction is load-bearing when physical lowering changes
             // a constructed owner's invariant storage face while the value at the call remains on its read-only head

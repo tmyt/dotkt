@@ -16,6 +16,7 @@
               "t": "fqn",
               "name": "System.Exception"
             },
+            "argTypes": [],
             "args": [],
             "member": "accessor"
           }

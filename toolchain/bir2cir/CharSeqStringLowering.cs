@@ -163,7 +163,7 @@ static class CharSeqStringLowering
 
     // A function type whose RETURN is a bare `dotkt$CharSequence`.
     static bool FuncTypeHasCharSeqRet(JsonNode ftNode) =>
-        TypeNode.Parse(ftNode.ToJsonString()) is TypeNode.Fn
+        TypeJson.Read(ftNode) is TypeNode.Fn
         {
             Ret: TypeNode.Fqn { Name: CharSeqSynthetic }
         };
@@ -172,7 +172,7 @@ static class CharSeqStringLowering
 
     // A function type any of whose PARAMS is CharSequence (the delegate-target exemption).
     static bool FuncTypeHasCharSeqParam(JsonNode ftNode) =>
-        TypeNode.Parse(ftNode.ToJsonString()) is TypeNode.Fn fn
+        TypeJson.Read(ftNode) is TypeNode.Fn fn
         && fn.DelegateParams.Any(IsCharSeqT);
 
     static JsonNode Walk(JsonNode node, Env env)

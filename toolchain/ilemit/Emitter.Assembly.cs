@@ -267,7 +267,7 @@ sealed partial class Emitter
             if (ti.BaseName != null)
             {
                 // A constructed base carries its actual type arguments in the structured Fqn. Resolve local
-                // TypeBuilders before the declared reference universe; no retired string prefix is interpreted.
+                // TypeBuilders before the declared reference universe; the structured Fqn is the only owner input.
                 var (bopen, bconstructed) = ParseOwnerT(ti.BaseFqn!);
                 if (bconstructed != null)
                 {
@@ -457,16 +457,15 @@ sealed partial class Emitter
                     if (!ifSeen.Add(spec)) continue;
                     // A canonicalized shared synthetic (`dotkt$CharSequence`) this app REFERENCES from the rt stdlib
                     // dll — NOT re-emitted here, so absent from `_types` — is an EXTERNAL interface: bind the class's
-                    // overrides to it by reflection, exactly like a `clr:` interface, so the interface slots are wired
+                    // overrides to it by reflection, so the interface slots are wired
                     // explicitly rather than relying on an implicit name/sig match a canonicalized supertype must not
                     // depend on. (Covers both a user `class S : CharSequence` and the synthesized `dotkt$StringCharSequence`.)
-                    // Checked on the RAW spec (a canonical synthetic interface spec is the bare name), so a `clr:`/`clrg:`
-                    // spec is NOT ParseOwner'd here — doing so eagerly mis-strips a `clrg:` self-ref interface (crash).
+                    // Checked on the structured Fqn's bare name so constructed arguments cannot affect this identity test.
                     bool externalSynthIface = ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(specName)
                         && !_types.ContainsKey(specName) && ResolvesExternally(specName);
                     // A REFERENCED interface (not emitted in THIS assembly — a .NET-mapped Continuation<int>, or an
                     // external canonical synthetic): bind each interface method to the class method of the same .NET name
-                    // by reflection. An EMITTED interface (in `_types`) falls to the ParseOwner path below.
+                    // by reflection. An EMITTED interface (in `_types`) follows the structured local-owner path below.
                     if (!_types.ContainsKey(specName) || externalSynthIface)
                     {
                         var itype = externalSynthIface ? ResolveType(specName) : MapType(specFqn);

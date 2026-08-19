@@ -334,35 +334,8 @@ sealed partial class Emitter
         return methodReturn;
     }
 
-    Type[] NativeParameterTypes(JsonElement member) =>
-        member.GetProperty("parameterTypes").EnumerateArray()
-            .Select(t => TryResolveNativeType(t.GetString()))
-            .ToArray();
-
-    Type TryResolveNativeType(string spec)
-    {
-        try { return NativeType(spec); }
-        catch { return null; }
-    }
-
     // A type slot for an IL-opcode context (newarr elem / conv / default).
     Type NativeType(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
-
-    Type NativeType(string spec)
-    {
-        if (spec == null) return Bcl("System.Object");
-        return spec switch
-        {
-            "void" or "int" or "long" or "double" or "float" or "bool" or "char" or "string" or
-            "uint" or "ulong" or "byte" or "ushort" or "short" or "sbyte" or "object" => MapType(spec),
-            _ => ClrRef(spec),
-        };
-    }
-
-    static string NativeOwnerSpec(JsonElement node, JsonElement member) =>
-        node.TryGetProperty("ownerType", out var ownerType) && ownerType.ValueKind != JsonValueKind.Null
-            ? SlotName(ownerType)
-            : SlotName(member.GetProperty("owner"));
 
     // MapType (structured-TypeNode resolution) that returns null instead of throwing.
     Type TryMapType(JsonElement e) { try { return MapType(e); } catch { return null; } }

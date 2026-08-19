@@ -107,8 +107,8 @@ static class IteratorConsumerNormalization
             // `kotlin.collections.MutableIterator<elem>` — hasNext/next are INHERITED from Iterator, so a
             // callInstance on MutableIterator resolves nowhere (reflection does not walk interface bases) ->
             // EntryPointNotFound. Every `for (x in aMutableList)` and `class C : MutableIterable` hits this.
-            // callInstance routes through ResolveMethod/ParseOwner (an EMITTED-type `_types` lookup that KeyNotFounds on
-            // a referenced generic); the CLR-bound member path is `clrInstance` (EmitClrCall), exactly how the substituted
+            // callInstance routes through the emitted-type lookup, which has no referenced generic owner; the CLR-bound
+            // member path is `clrInstance` (EmitClrCall), exactly how the substituted
             // IReadOnlyList's get_Item/get_Count resolve. next() returns the element, hasNext() Boolean; argTypes empty.
             // The element comes from the owner's own type arg.
             // `type`/`ret` stay in the source vocabulary — the later type-lowering pass lowers them.

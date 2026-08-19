@@ -134,10 +134,11 @@ sealed partial class ReferenceMetadataIndex
     // receiver block's constraints verbatim; the coarser nullability/star-projection indexes below are insufficient
     // for F-bounds and the CLR class/struct/new() flags.
     readonly Dictionary<string, string> _ownerTypeParamDeclarations = new(StringComparer.Ordinal);
-    // Per owner-FQN, the declared param type names of its (first/sole) constructor — used to adapt a static-String arg
+    // Per owner-FQN, the declared parameter types of its (first/sole) constructor — used to adapt a static-String arg
     // flowing into a CharSequence ctor param of a SPLICED anonymous stdlib object (`dotkt$obj*`, e.g. the anonymous
     // Grouping from `CharSequence.groupingBy` whose ctor captures the receiver as `kotlin.CharSequence`). The spliced
-    // `new dotkt$obj*(...)` node carries no argTypes, so the CharSequence-slot knowledge comes only from here.
+    // The referenced declaration remains the authority for whether a slot is CharSequence; `new.argTypes` is the
+    // substituted use-site vector and cannot replace that declaration fact.
     readonly Dictionary<string, TypeNode[]> _ownerCtorParams = new(StringComparer.Ordinal);
     // Per owner-FQN, the CLR generic-parameter CONSTRAINT class of each flattened type-param position:
     // "struct" (NotNullableValueTypeConstraint), "class" (ReferenceTypeConstraint), or "unconstrained". Drives the
@@ -1636,8 +1637,6 @@ sealed partial class ReferenceMetadataIndex
     }
     static bool IsStringType(TypeNode type) => type is TypeNode.Fqn f &&
         f.Name is "kotlin.String" or "System.String" or "string";
-    public string[] OwnerTypeParamNames(string ownerFqn) => _ownerTypeParams.GetValueOrDefault(ownerFqn);
-
     public JsonArray OwnerTypeParamDeclarations(string ownerFqn)
     {
         if (ownerFqn == null) return null;
@@ -2130,7 +2129,8 @@ sealed partial class ReferenceMetadataIndex
 
     // The @ClrConv numeric-conversion binding for owner.member: its conv TARGET (the callee's own return-type token, a
     // pre-lowering Kotlin FQN like `kotlin.Long`). Returns true when owner.member (arg count matched when possible) is a
-    // @ClrConv-marked conversion — MemberCallSubstitution then emits `{k:conv, to:<convTo>, e:<recv>}`. A conversion is
+    // @ClrConv-marked conversion — MemberCallSubstitution then emits
+    // `{k:conv, to:<convTo>, e:<recv>}`. A conversion is
     // nullary, so arg count is always 0; the arity match is kept for symmetry with the other member lookups.
     public bool TryMemberConv(string ownerFqn, string memberName, int argCount, out TypeNode convTo)
     {

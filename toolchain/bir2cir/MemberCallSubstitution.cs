@@ -594,17 +594,25 @@ static class MemberCallSubstitution
 
     // The second constructor argument is a Float for the JVM load-factor idiom.
     static bool IsFloatArg(JsonNode n) =>
-        TypeNode.Parse(n.ToJsonString()) is TypeNode.Fqn { Args: null, Name: "kotlin.Float" or "float" };
+        TypeJson.Read(n) is TypeNode.Fqn { Args: null, Name: "kotlin.Float" or "float" };
 
     // The current `new` shape states the exact constructor parameter vector in `argTypes`. Keep it as the newClr
     // overload key; deriving it from argument expressions would reconstruct a declaration fact the producer owns.
     static JsonArray CtorArgTypes(JsonObject node, JsonArray args)
     {
-        var declared = node["argTypes"]!.AsArray();
-        if (declared.Count != args.Count) throw new InvalidOperationException();
+        if (node["argTypes"] is not JsonArray declared)
+            throw new InvalidDataException("bir2cir: malformed current `new` node: required `argTypes` is absent or is not an array");
+        if (declared.Count != args.Count)
+            throw new InvalidDataException(
+                $"bir2cir: malformed current `new` node: `argTypes` count {declared.Count} does not match `args` count {args.Count}");
         var result = new JsonArray();
-        foreach (var a in declared)
-            result.Add(a!.DeepClone());
+        for (var i = 0; i < declared.Count; i++)
+        {
+            if (!TypeJson.IsType(declared[i]))
+                throw new InvalidDataException(
+                    $"bir2cir: malformed current `new` node: `argTypes[{i}]` is not a structured Type node");
+            result.Add(declared[i]!.DeepClone());
+        }
         return result;
     }
 
@@ -1301,9 +1309,10 @@ static class MemberCallSubstitution
             ownerFqn, member, companionMethodArity, companionSignature, out exactMemberBinding);
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
-        // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit `{k:conv, to:<callee return type>, e:<receiver>}`, the
-        // SAME node kotc used to synthesize from the retired NUMBER_CONV name-heuristic. The `to` is the callee's own
-        // declared return token (a pre-lowering Kotlin FQN, e.g. `kotlin.Long`); BirTypeLowering later lowers it to the
+        // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit
+        // `{k:conv, to:<callee return type>, e:<receiver>}`, the
+        // SAME node kotc used to synthesize from the retired NUMBER_CONV name-heuristic. `to` is the callee's
+        // own declared return type (a pre-lowering Kotlin FQN, e.g. `kotlin.Long`); BirTypeLowering later lowers it to the
         // CLR primitive and ilemit selects conv.i4/conv.i8/conv.r8/char. A conversion is nullary (no args). Handled first
         // so it never falls through to Rule 2/3 (the conversion members are intrinsic-less, so IsRule3Member excludes them).
         if (instance && args.Count == 0 && hasExactMemberBinding && exactMemberBinding.Conv
@@ -1618,8 +1627,8 @@ static class MemberCallSubstitution
         // GetEnumerator/...). The ref.dll member is kept under its Kotlin name (`get`/`compareTo`), so rules 2/3 miss by
         // name; but the emitted name is already the BCL member, which exists on the alias's BCL type. A BCL name is
         // PascalCase or a get_/set_ accessor (Kotlin members are lowercase camelCase) -> route to clrInstance/clrPropGet
-        // on the BCL type. This also rescues the call from the shorthand owner that plain `callInstance` resolution
-        // (ilemit ParseOwner / ResolveMethod) cannot handle.
+        // on the BCL type. This also rescues the call from the Kotlin owner that plain local `callInstance`
+        // resolution cannot handle.
         //
         // MAKE-IT-LOUD gate (H1): a lowercase-camelCase Kotlin member reaching here has no BCL equivalent by that name
         // AND no @ClrIntrinsic/@ClrProperty/rule-3 binding — a genuine routing MISS on either owner kind. It used to be
@@ -2082,8 +2091,8 @@ static class MemberCallSubstitution
         if (ownerFqn.Args != null || arity > 0)
         {
             // Pad a PARTIALLY-erased arg list to the alias's declared arity (a star-projection `Map<K, *>` reaches here
-            // as `kotlin.collections.Map<K>` — 1 of IDictionary's 2 args; ilemit's GenericType would fail to resolve
-            // `IDictionary`1`). The trailing/all erased args become `object`.
+            // as `kotlin.collections.Map<K>` — 1 of IDictionary's 2 args; the incomplete constructed CLR type would
+            // fail to resolve. The trailing/all erased args become `object`.
             var kept = (ownerFqn.Args ?? Array.Empty<TypeNode>()).Where(a => a != null).ToList();
             for (var i = kept.Count; i < arity; i++) kept.Add(ObjType);
             if (kept.Count > 0) return new TypeNode.Fqn(head, kept.ToArray());
@@ -2375,7 +2384,7 @@ static class MemberCallSubstitution
     // `dotkt$StringCharSequence` adapter deliberately does NOT match — its token has no `dotkt$CharSequence` substring.
     static bool IsSyntheticCharSeqToken(JsonNode slot)
     {
-        var name = (UnwrapNullableOblivious(TypeNode.Parse(slot.ToJsonString())) as TypeNode.Fqn)?.Name;
+        var name = (UnwrapNullableOblivious(TypeJson.Read(slot)) as TypeNode.Fqn)?.Name;
         return name != null && name.Contains("dotkt$CharSequence", StringComparison.Ordinal);
     }
 

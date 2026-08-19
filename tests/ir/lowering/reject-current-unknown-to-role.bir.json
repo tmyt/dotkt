@@ -1,0 +1,18 @@
+{
+  "fileClass": "RejectCurrentUnknownToRoleKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [{
+    "name": "probe",
+    "static": true,
+    "vis": "public",
+    "params": [],
+    "ret": { "t": "fqn", "name": "kotlin.Unit" },
+    "body": [{
+      "k": "unknownRangeLikeNode",
+      "to": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }
+    }]
+  }]
+}
