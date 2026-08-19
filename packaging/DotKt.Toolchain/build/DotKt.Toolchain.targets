@@ -1,7 +1,8 @@
 <!-- DotKt build pipeline (kt -> BIR -> CIL) — the SINGLE source of truth, shipped WITH the toolchain that it
      drives. NuGet auto-imports this (build/<PackageId>.targets) for any project referencing DotKt.Toolchain,
      so the DotKt.Sdk just references the toolchain and the pipeline comes along. The in-repo dev entry
-     (eng/KotlinClr.targets) imports it explicitly. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
+     (eng/KotlinClr.targets) imports it explicitly. The packaged SDK companion under buildMultiTargeting handles
+     cross-targeting outer builds. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
 <Project>
   <PropertyGroup>
     <!-- Incremental stamps for the back-half (#134). The BIR/CIR dirs are glob OUTPUTS (a variable file set), so
@@ -107,12 +108,18 @@
           Returns="@(DotKtResolvedKlibReference)">
     <ItemGroup>
       <DotKtResolvedKlibReference Remove="@(DotKtResolvedKlibReference)" />
-      <DotKtResolvedKlibReference Include="@(_DotKtKlibReference->'%(KlibPath)')">
+      <_DotKtResolvedKlibReferenceRelative Remove="@(_DotKtResolvedKlibReferenceRelative)" />
+      <_DotKtResolvedKlibReferenceRelative Include="@(_DotKtKlibReference->'%(KlibPath)')">
         <SourceAssembly>%(_DotKtKlibReference.FullPath)</SourceAssembly>
         <TargetFramework>$(TargetFramework)</TargetFramework>
         <RuntimeIdentifier>$(RuntimeIdentifier)</RuntimeIdentifier>
-      </DotKtResolvedKlibReference>
+      </_DotKtResolvedKlibReferenceRelative>
     </ItemGroup>
+    <!-- Public identities must not depend on the invoking process's working directory. This task preserves the
+         source/TFM/RID metadata attached above while canonicalizing each generated KLIB path. -->
+    <ConvertToAbsolutePath Paths="@(_DotKtResolvedKlibReferenceRelative)">
+      <Output TaskParameter="AbsolutePaths" ItemName="DotKtResolvedKlibReference" />
+    </ConvertToAbsolutePath>
   </Target>
 
   <!-- MPP (#119): opt-in multiplatform (common `expect` + CLR `actual`) for an ordinary user project.

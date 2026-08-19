@@ -28,7 +28,7 @@
        eng/KotlinClr.targets). Opt out of the stdlib with <KotlinClrStdlibRef>false</KotlinClrStdlibRef>. -->
   <ItemGroup>
     <PackageReference Include="DotKt.Toolchain" Version="$(DotKtVersion)" PrivateAssets="all"
-                      IncludeAssets="build;buildMultitargeting" />
+                      IncludeAssets="build" />
     <PackageReference Include="DotKt.Stdlib" Version="$(DotKtVersion)" Condition="'$(KotlinClrStdlibRef)' != 'false'" />
   </ItemGroup>
 

@@ -326,11 +326,14 @@ case_exe() {
                                Condition="'%(SourceAssembly)' == '' or !Exists('%(SourceAssembly)')" />
       <_WrongReferenceTfm Include="@(DotKtResolvedKlibReference)"
                           Condition="'%(TargetFramework)' != '\$(TargetFramework)'" />
+      <_RelativeReferenceKlib Include="@(DotKtResolvedKlibReference)"
+                              Condition="'%(Identity)' != '%(FullPath)'" />
     </ItemGroup>
     <Error Condition="'@(DotKtResolvedKlibReference)' == ''" Text="DotKtResolvedKlibReference was not published." />
     <Error Condition="'@(_MissingReferenceKlib)' != ''" Text="DotKtResolvedKlibReference contains missing files: @(_MissingReferenceKlib)" />
     <Error Condition="'@(_ReferenceWithoutSource)' != ''" Text="DotKtResolvedKlibReference lost SourceAssembly: @(_ReferenceWithoutSource)" />
     <Error Condition="'@(_WrongReferenceTfm)' != ''" Text="DotKtResolvedKlibReference has the wrong TargetFramework: @(_WrongReferenceTfm)" />
+    <Error Condition="'@(_RelativeReferenceKlib)' != ''" Text="DotKtResolvedKlibReference identity was not absolute: @(_RelativeReferenceKlib)" />
     <Error Condition="'\$(DotKtStdlib)' == '' or !Exists('\$(DotKtStdlib)')" Text="DotKtStdlib was not published as a dedicated property." />
     <Error Condition="'@(DotKtReferenceKlib)' != '' or '@(DotKtFrontendKlib)' != ''"
            Text="The removed synthetic frontend-input items were still published." />
@@ -373,31 +376,67 @@ EOF
 # ---------------------------------------------------------------------------------------------------------
 case_multitarget_klib_references() {
 	local d="$WS/multitarget-klib-references"; mkdir -p "$d"; cp "$NUGET_CONFIG" "$d/nuget.config"
+	mkdir -p "$d/ref-src" "$d/refs"
+	cat > "$d/ref-src/OuterOnlyReference.csproj" <<'EOF'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>OuterOnlyReference</AssemblyName>
+  </PropertyGroup>
+</Project>
+EOF
+	cat > "$d/ref-src/OuterOnlyReference.cs" <<'EOF'
+public sealed class OuterOnlyReferenceType { }
+EOF
+	if ! dotnet build "$d/ref-src/OuterOnlyReference.csproj" -c Release -o "$d/refs" -v q --nologo >"$d/ref-build.log" 2>&1; then
+		fail multi-target-klib-references "conditional reference build failed" "$(tail -30 "$d/ref-build.log")"; return
+	fi
 	cat > "$d/App.ktproj" <<EOF
 <Project Sdk="DotKt.Sdk/$VER">
   <PropertyGroup>
     <TargetFrameworks>net10.0;net10.0-windows</TargetFrameworks>
     <Nullable>disable</Nullable>
   </PropertyGroup>
-  <Target Name="AssertDotKtMultiTargetKlibReferences"
-          DependsOnTargets="DotKtResolveKlibReferences">
+  <!-- Deliberately give only one inner build a custom reference. This proves the outer target aggregates each
+       TFM's actual resolved universe instead of duplicating one synthetic set with different TFM metadata. -->
+  <ItemGroup Condition="'\$(TargetFramework)' == 'net10.0'">
+    <Reference Include="OuterOnlyReference">
+      <HintPath>$d/refs/OuterOnlyReference.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <Target Name="AssertDotKtMultiTargetKlibReferences">
+    <!-- Consume TargetOutputs directly so this probe pins the public outer target's Returns contract. -->
+    <CallTarget Targets="DotKtResolveKlibReferences">
+      <Output TaskParameter="TargetOutputs" ItemName="_ReturnedKlibReference" />
+    </CallTarget>
     <ItemGroup>
-      <_Net10Klib Include="@(DotKtResolvedKlibReference)" Condition="'%(TargetFramework)' == 'net10.0'" />
-      <_Net10WindowsKlib Include="@(DotKtResolvedKlibReference)" Condition="'%(TargetFramework)' == 'net10.0-windows'" />
-      <_MissingKlib Include="@(DotKtResolvedKlibReference)" Condition="!Exists('%(FullPath)')" />
-      <_MissingSourceAssembly Include="@(DotKtResolvedKlibReference)"
+      <_Net10Klib Include="@(_ReturnedKlibReference)" Condition="'%(TargetFramework)' == 'net10.0'" />
+      <_Net10WindowsKlib Include="@(_ReturnedKlibReference)" Condition="'%(TargetFramework)' == 'net10.0-windows'" />
+      <_Net10ConditionalReference Include="@(_ReturnedKlibReference)"
+                                  Condition="'%(TargetFramework)' == 'net10.0' and '%(Filename)' == 'OuterOnlyReference'" />
+      <_UnexpectedWindowsConditionalReference Include="@(_ReturnedKlibReference)"
+                                              Condition="'%(TargetFramework)' == 'net10.0-windows' and '%(Filename)' == 'OuterOnlyReference'" />
+      <_MissingKlib Include="@(_ReturnedKlibReference)" Condition="!Exists('%(FullPath)')" />
+      <_RelativeKlib Include="@(_ReturnedKlibReference)" Condition="'%(Identity)' != '%(FullPath)'" />
+      <_MissingSourceAssembly Include="@(_ReturnedKlibReference)"
                               Condition="'%(SourceAssembly)' == '' or !Exists('%(SourceAssembly)')" />
     </ItemGroup>
     <Error Condition="'@(_Net10Klib)' == ''" Text="No net10.0 KLIB references were returned." />
     <Error Condition="'@(_Net10WindowsKlib)' == ''" Text="No net10.0-windows KLIB references were returned." />
+    <Error Condition="'@(_Net10ConditionalReference)' == ''" Text="The net10.0-only reference was not returned for net10.0." />
+    <Error Condition="'@(_UnexpectedWindowsConditionalReference)' != ''" Text="The net10.0-only reference leaked into net10.0-windows." />
     <Error Condition="'@(_MissingKlib)' != ''" Text="Returned KLIB does not exist: @(_MissingKlib)" />
+    <Error Condition="'@(_RelativeKlib)' != ''" Text="Returned KLIB identity was not absolute: @(_RelativeKlib)" />
     <Error Condition="'@(_MissingSourceAssembly)' != ''" Text="Returned item lost SourceAssembly: @(_MissingSourceAssembly)" />
     <Error Condition="'\$(DotKtStdlib)' == '' or !Exists('\$(DotKtStdlib)')"
            Text="DotKtStdlib was not published to the outer build as a dedicated property." />
     <Error Condition="'@(DotKtReferenceKlib)' != '' or '@(DotKtFrontendKlib)' != ''"
            Text="The removed synthetic frontend-input items were still published." />
+    <Error Condition="'\$(DotKtStdlibRefAsm)' != ''"
+           Text="TFM-specific toolchain properties leaked into the outer build: DotKtStdlibRefAsm='\$(DotKtStdlibRefAsm)'." />
     <WriteLinesToFile File="$d/resolved.txt"
-                      Lines="@(DotKtResolvedKlibReference->'%(TargetFramework)|%(RuntimeIdentifier)|%(FullPath)|%(SourceAssembly)')"
+                      Lines="@(_ReturnedKlibReference->'%(TargetFramework)|%(RuntimeIdentifier)|%(FullPath)|%(SourceAssembly)')"
                       Overwrite="true" />
   </Target>
 </Project>
