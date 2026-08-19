@@ -214,6 +214,8 @@ wait "$cfg_release_pid" || cfg_release_rc=$?
 
 cfg_debug_root="$config/app/obj/Debug/net10.0"
 cfg_release_root="$config/app/obj/Release/net10.0"
+cfg_debug_asm="$config/app/bin/Debug/net10.0/app.dll"
+cfg_release_asm="$config/app/bin/Release/net10.0/app.dll"
 config_msg=""
 if (( cfg_debug_rc != 0 || cfg_release_rc != 0 )); then
 	config_msg="concurrent builds failed (Debug=$cfg_debug_rc, Release=$cfg_release_rc)"
@@ -237,6 +239,22 @@ if [[ -z "$config_msg" ]] && {
 }; then
 	config_msg="configuration-conditioned source/reference semantics crossed or disappeared"
 fi
+if [[ -z "$config_msg" ]]; then
+	cfg_debug_asm_strings="$(strings -a -el "$cfg_debug_asm")"
+	cfg_release_asm_strings="$(strings -a -el "$cfg_release_asm")"
+fi
+if [[ -z "$config_msg" ]] && {
+	! grep -q 'debug-config-marker' "$cfg_debug_root/cir/DebugConfig.cir.json" \
+		|| grep -q 'release-config-marker' "$cfg_debug_root/cir/DebugConfig.cir.json" \
+		|| ! grep -q 'release-config-marker' "$cfg_release_root/cir/ReleaseConfig.cir.json" \
+		|| grep -q 'debug-config-marker' "$cfg_release_root/cir/ReleaseConfig.cir.json" \
+		|| [[ "$cfg_debug_asm_strings" != *debug-config-marker* ]] \
+		|| [[ "$cfg_debug_asm_strings" == *release-config-marker* ]] \
+		|| [[ "$cfg_release_asm_strings" != *release-config-marker* ]] \
+		|| [[ "$cfg_release_asm_strings" == *debug-config-marker* ]];
+}; then
+	config_msg="configuration-conditioned CIR or emitted assemblies crossed or disappeared"
+fi
 if [[ -z "$config_msg" ]] && { [[ -e "$config/app/obj/dotkt-bir" ]] \
 	|| [[ -e "$config/app/obj/dotkt-cir" ]] || [[ -e "$config/app/obj/dotkt-reference-klibs" ]]; }; then
 	config_msg="legacy BaseIntermediateOutputPath-rooted compiler state was created"
@@ -250,12 +268,13 @@ if [[ -z "$config_msg" ]]; then
 	dotnet build "$config/app/app.ktproj" -c Release --no-restore -v n --nologo >"$config/release-noop.log" 2>&1 \
 		|| config_msg="Release no-op rebuild failed"
 fi
-if [[ -z "$config_msg" ]] && grep -Eq 'DotKt: (compiling|lowering|emitting)' \
+if [[ -z "$config_msg" ]] && grep -Eq 'DotKt: (projecting|compiling|lowering|emitting)' \
 	"$config/debug-noop.log" "$config/release-noop.log"; then
 	config_msg="a configuration-local no-op rebuild reran the compiler pipeline"
 fi
 
 if [[ -z "$config_msg" ]]; then
+	release_bir_stamp_before="$(stat -c '%Y' "$cfg_release_root/bir/.stamp")"
 	mv "$config/app/DebugConfig.kt" "$config/app/DebugRenamed.kt"
 	# `mv` preserves the old timestamp. Make the renamed source a real changed input, matching #50's deletion-safety
 	# contract: once a recompile is required, that configuration's BIR directory is rebuilt without stale files.
@@ -265,7 +284,8 @@ if [[ -z "$config_msg" ]]; then
 fi
 if [[ -z "$config_msg" ]] && { [[ -e "$cfg_debug_root/bir/DebugConfig.bir.json" ]] \
 	|| [[ ! -f "$cfg_debug_root/bir/DebugRenamed.bir.json" ]] \
-	|| ! grep -q 'release-config-marker' "$cfg_release_root/bir/ReleaseConfig.bir.json"; }; then
+	|| ! grep -q 'release-config-marker' "$cfg_release_root/bir/ReleaseConfig.bir.json" \
+	|| [[ "$(stat -c '%Y' "$cfg_release_root/bir/.stamp")" != "$release_bir_stamp_before" ]]; }; then
 	config_msg="Debug rename/deletion cleanup damaged Debug or Release BIR state"
 fi
 

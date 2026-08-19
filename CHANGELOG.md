@@ -2359,7 +2359,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   skips it.** `DotKtBir2Cir`/`DotKtIlEmit`/`DotKtRetarget` had no `Inputs`/`Outputs`, so every `dotnet build`
   re-lowered, re-emitted and re-retargeted, rewriting the output dll's timestamp and forcing every downstream C#
   `ProjectReference` to rebuild. Each target now keys `Inputs`/`Outputs` off a stable `.stamp` (the compile's
-  the BIR `.stamp` cascades through the CIR `.stamp` to the emitted dll and a retarget stamp), and the
+  BIR `.stamp` cascades through the CIR `.stamp` to the emitted dll and a retarget stamp), and the
   `_DotKtPlaceholder.cs` write became `WriteOnlyWhenDifferent` (it was bumping its mtime every build and forcing
   `CoreCompile` to recompile). A no-op build now converges.
 - **packaging ([tmyt/dotkt#135], area:packaging): the Windows compiler launcher is selected by OS.**

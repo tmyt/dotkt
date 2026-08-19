@@ -194,7 +194,8 @@
 
   <!-- Give csc a trivial valid assembly to produce; ilemit overwrites it. The user's entry (e.g. AppKt) doesn't
        exist in the placeholder, so point csc at the placeholder's Main for this throwaway compile. -->
-  <Target Name="DotKtIlPlaceholder" BeforeTargets="CoreCompile" DependsOnTargets="KotlinCompile">
+  <Target Name="DotKtIlPlaceholder" BeforeTargets="CoreCompile"
+          DependsOnTargets="DotKtInitializeIntermediatePaths;KotlinCompile">
     <PropertyGroup>
       <StartupObject Condition="'$(StartupObject)' != '' or '$(OutputType)' == 'Exe'">_DotKtPlaceholder</StartupObject>
     </PropertyGroup>
