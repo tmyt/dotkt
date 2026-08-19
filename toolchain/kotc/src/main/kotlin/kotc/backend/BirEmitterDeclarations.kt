@@ -439,13 +439,15 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// ilemit with "<Enum>.get_<prop> not found".
 	// Only REAL user properties: kotlin.Enum's `name`/`ordinal` ride along as body-less fake overrides and
 	// `entries` as an IrSyntheticBody getter (call sites route all three to __name/__ordinal/values());
-	// emitting their accessors would produce empty methods (ilverify ReturnMissing). Gate on an IrBlockBody
-	// getter/setter — exactly what accessorMethod can emit.
+	// emitting their accessors would produce empty methods (ilverify ReturnMissing). A source accessor is either a
+	// concrete IrBlockBody or an abstract body-less declaration; no other body shape belongs in this class.
 	// A `companion { }` property of an enum is a static of the enum class, not per-entry state: it keeps its own
 	// storage and accessors (below) and never reaches the entry constructor.
 	val userProps = ec.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride && !isKotlinStaticProperty(it) }
-	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
-	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
+	fun emitsAccessor(a: IrSimpleFunction?) = a != null &&
+		(a.body is IrBlockBody || (a.body == null && a.modality == Modality.ABSTRACT))
+	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !p.isLateinit && !isClrField(p)
+	fun emitsSet(p: IrProperty) = emitsAccessor(p.setter) && !p.isConst && !p.isLateinit && !isClrField(p)
 	val userFields = userProps.mapNotNull { p ->
 		val bf = p.backingField ?: return@mapNotNull null
 		val visJson = if (emitsGet(p)) ""","vis":"internal"""" else ""
@@ -466,12 +468,16 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		userParams.map { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }).joinToString(",")
 	val ctorBody = (listOf(setThis("__name", loc("__name")), setThis("__ordinal", loc("__ordinal"))) +
 		userParams.map { setThis(it.name.asString(), loc(it.name.asString())) }).joinToString(",")
-	// Per-entry bodies (`PLUS { override fun apply(…)=… }`): the base enum is abstract with abstract members, and
-	// each such entry is its own subclass overriding them. Detect them + the abstract members. (T A-109.)
+	// Per-entry bodies (`PLUS { override fun apply(…)=… }`) become subclasses, but their presence alone does not make
+	// the enum base abstract: a body-less sibling still constructs that base directly. Only an actual abstract member
+	// requires an abstract base; Kotlin then requires every entry to implement it. (T A-109, #279.)
 	val hasPerEntry = entries.any { it.correspondingClass != null }
 	val absMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
 		.filter { it.correspondingPropertySymbol == null && it.body == null && it.modality == Modality.ABSTRACT }
-	val baseAbstract = hasPerEntry || absMethods.isNotEmpty()
+	val hasAbstractAccessor = userProps.any { p ->
+		listOfNotNull(p.getter, p.setter).any { it.body == null && it.modality == Modality.ABSTRACT }
+	}
+	val baseAbstract = absMethods.isNotEmpty() || hasAbstractAccessor
 	// base ctor must be callable from the entry subclasses -> protected (was private for the flat form).
 	val ctor = """{"params":[$ctorParams],"baseArgs":null,"thisArgs":null,"vis":${str(if (hasPerEntry) "protected" else "private")},"body":[$ctorBody]}"""
 	// instance fields: metadata + user props.
@@ -566,12 +572,26 @@ internal fun BirEmitter.enumSuperArgs(cc: IrClass): Pair<List<String>, String?> 
 }
 
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
- *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries the overriding methods. */
+ *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries overriding members. */
 internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc: IrClass,
 		userArgs: List<String>, delegationBindings: String?, baseParamTypes: List<String>): String {
+	// The frontend's anonymous entry class has no stable source name. Pin every member-body owner reference to the
+	// explicit BIR subclass identity chosen above, just as lifted anonymous classes do before emitting their bodies.
+	anonNames[cc] = subName
 	val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
 		.filter { it.body != null && it.correspondingPropertySymbol == null }
-		.joinToString(",") { method(it, static = false, semanticOwnerOverride = subName) }
+		.map { method(it, static = false, semanticOwnerOverride = subName) }
+	val entryProps = cc.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
+	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
+	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
+	val accessors = entryProps.flatMap { p ->
+		listOfNotNull(
+			p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
+			p.setter?.takeIf { emitsSet(p) }?.let { accessorMethod(it, p.name.asString(), false) })
+	}
+	val properties = entryProps.filter { emitsGet(it) }.joinToString(",") { p ->
+		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}${overridesJson(p.getter!!)}}"""
+	}
 	val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
 	val delegationSig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) +
 		baseParamTypes).joinToString(",")
@@ -579,7 +599,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"delegationSig":[$delegationSig]$bindings,"vis":"public","body":[]}"""
 	// An enum-entry body is an anonymous subclass semantically owned by the enum declaration. Keep that fact explicit;
 	// bir2cir chooses its physical nesting just like it does for an object expression or local class.
-	return """{"name":${str(subName)},"kind":"class","generated":true,"abstract":false,"vis":"public","semanticOwner":${str(baseName)},"base":${fqnJson(baseName)},"interfaces":[],"fields":[],"ctors":[$subCtor],"methods":[$overrides]}"""
+	return """{"name":${str(subName)},"kind":"class","generated":true,"abstract":false,"vis":"public","semanticOwner":${str(baseName)},"base":${fqnJson(baseName)},"interfaces":[],"fields":[],"ctors":[$subCtor],"methods":[${(overrides + accessors).joinToString(",")}],"properties":[$properties]}"""
 }
 
 /** Nested non-inner user classes inside [c] (recursively); excludes companion/inner/anonymous/@Clr. */
@@ -934,10 +954,15 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 			val ctxFn = ctxFnTypeField(ctxFnCountFor(it))
 			"""{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}$ctxFn$ctxMod}"""
 		}).joinToString(",")
+	val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
 	// #6 non-null parameter PRECONDITIONS (a setter's `value` param) at entry + a getter's non-null return POSTCONDITION
-	// (a setter returns Unit -> naturally out of scope).
-	val bodyStmts = withReturnPostcondition(acc) { (acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
-	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
+	// (a setter returns Unit -> naturally out of scope). An abstract accessor declares only a slot: it has no entry at
+	// which a precondition can run, and its BIR body must remain empty all the way to ilemit.
+	val bodyStmts = if (isAbstract) "" else withReturnPostcondition(acc) {
+		(acc.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) }
+	}
+	val body = if (isAbstract) "" else
+		(preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
 	activeDelegatedAccessor = savedDelegatedAccessor
 	activeSemanticOwner = savedSemanticOwner
 	if (extRecv != null) selfSubst.remove(extRecv)
@@ -956,7 +981,6 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	val isOverrideClass = !isStatic && acc.overriddenSymbols.any { (it.owner.parent as? IrClass)?.kind.let { k -> k == ClassKind.CLASS || k == ClassKind.ENUM_CLASS } }
 	val virtual = !isStatic && (acc.modality == Modality.OPEN || acc.modality == Modality.ABSTRACT || acc.overriddenSymbols.isNotEmpty())
 	val vis = visOf(acc)
-	val isAbstract = acc.modality == Modality.ABSTRACT && acc.body == null
 	// Emit the PROPERTY's annotations (e.g. @ClrIntrinsic) onto its accessor method — the SAME unconditional
 	// pass-through method()/ifaceMethod already do for plain methods (kotc does not filter/select annotations;
 	// attrsJson doctrine). The @ClrIntrinsic is on the property (`@ClrIntrinsic("Length") val length`), so read it

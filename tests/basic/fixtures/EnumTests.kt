@@ -17,6 +17,7 @@
 //   m-a8          -> enumValuesValueOf            enum entries collection size (other enum API assertions are covered here/ctorAndMethod)
 //   il-enumrich   -> enumrich_ctorAndMethod      rich enum (ctor param + instance method) singleton lowering (mass/heavy/name/ordinal/valueOf/values/==)
 //   il-enumtostr  -> enumtostr_inheritedMembers  basic enum inherits ToString/Equals/GetHashCode from System.Enum (toString/println/concat/==/equals/compareTo); decl in sibling EnumCrossFileSupport.kt
+//   #279          -> mixedEntryBodies             rich enum mixing an entry subclass with a direct base instance
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and
 // `Enum`-prefixed so the two `enum class Color { RED, GREEN, BLUE }` (il-enum vs il-enumintr) don't clash.
@@ -39,6 +40,37 @@ enum class EnumOp(val sym: String) {
     MINUS("-") { override fun apply(a: Int, b: Int) = a - b },
     TIMES("*") { override fun apply(a: Int, b: Int) = a * b };
     abstract fun apply(a: Int, b: Int): Int
+}
+
+enum class EnumMixedEntryBody {
+    SPECIAL { override fun label() = "special" },
+    PLAIN;
+
+    open fun label(): String = "plain"
+}
+
+enum class EnumMixedEntryProperty {
+    SPECIAL { override val label: String get() = "special" },
+    PLAIN;
+
+    open val label: String get() = "plain"
+}
+
+enum class EnumAbstractEntryProperty {
+    A { override val label: String get() = "a" },
+    B { override val label: String get() = "b" };
+
+    abstract val label: String
+}
+
+enum class EnumAbstractEntryVar {
+    A {
+        override var label: String
+            get() = "a"
+            set(value) { value.length }
+    };
+
+    abstract var label: String
 }
 
 // ---- il-enumintr : basic enum + reified enumValues/enumValueOf intrinsics -------------------------------------
@@ -66,6 +98,23 @@ class EnumTests {
         assertEquals("+: 8|-: 4|*: 12", log.joinToString("|"))    // +: 8 / -: 4 / *: 12
         assertEquals("PLUS", EnumOp.PLUS.name)                    // PLUS
         assertEquals(9, EnumOp.valueOf("TIMES").apply(3, 3))      // 9
+    }
+
+    @TestAttribute
+    fun mixedEntryBodies() {
+        assertEquals("special", EnumMixedEntryBody.SPECIAL.label())
+        assertEquals("plain", EnumMixedEntryBody.PLAIN.label())
+        assertEquals("plain", EnumMixedEntryBody.valueOf("PLAIN").label())
+        assertEquals("SPECIAL|PLAIN", EnumMixedEntryBody.values().joinToString("|"))
+
+        assertEquals("special", EnumMixedEntryProperty.SPECIAL.label)
+        assertEquals("plain", EnumMixedEntryProperty.PLAIN.label)
+
+        assertEquals("a", EnumAbstractEntryProperty.A.label)
+        assertEquals("b", EnumAbstractEntryProperty.B.label)
+
+        EnumAbstractEntryVar.A.label = "ignored"
+        assertEquals("a", EnumAbstractEntryVar.A.label)
     }
 
     @TestAttribute

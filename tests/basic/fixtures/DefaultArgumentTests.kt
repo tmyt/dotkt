@@ -202,20 +202,15 @@ object DefaultArgDelCounter {
     var calls = 0
     fun next(): Int { calls++; return 4 }
 }
-// No entry bodies (the entry-field path) and ALL entry bodies (the per-entry subclass's base call) are separate enums:
-// an enum MIXING the two is unloadable for reasons unrelated to default arguments (it reproduces with none).
+// A mixed enum covers both declaration-shaped call sites in one type: R initializes the direct base entry field,
+// while X forwards its baked-in argument through the per-entry subclass's base call.
 enum class DefaultArgEnumOnce(val n: Int, val m: Int = n * 10) {
     R(DefaultArgEnumCounter.next()),
-    G(DefaultArgEnumCounter.next())
-}
-enum class DefaultArgEnumBodyOnce(val n: Int, val m: Int = n * 10) {
-    X(DefaultArgEnumBodyCounter.next()) { override fun tag(): String = "x" },
-    Y(DefaultArgEnumBodyCounter.next()) { override fun tag(): String = "y" };
+    X(DefaultArgEnumCounter.next()) { override fun tag(): String = "x" };
 
-    abstract fun tag(): String
+    open fun tag(): String = "r"
 }
 object DefaultArgEnumCounter { var calls = 0; fun next(): Int { calls++; return 4 } }
-object DefaultArgEnumBodyCounter { var calls = 0; fun next(): Int { calls++; return 4 } }
 // ORDER at a delegation, the shape a bare single-evaluation count cannot see: Kotlin evaluates the value the
 // `: this(…)` / `: super(…)` SUPPLIES before any of the target's defaults. A delegation's arguments ride the
 // constructor DECLARATION, so that order is carried by the plan's `preStmts` — emitted ahead of the delegating call —
@@ -694,14 +689,10 @@ class DefaultArgumentTests {
         // two entries, one `next()` each.
         assertEquals(4, DefaultArgEnumOnce.R.n)
         assertEquals(40, DefaultArgEnumOnce.R.m)                                // n * 10, filled at the entry
-        assertEquals(40, DefaultArgEnumOnce.G.m)
+        assertEquals("r", DefaultArgEnumOnce.R.tag())
+        assertEquals(40, DefaultArgEnumOnce.X.m)                                // filled at the per-entry body's base call
+        assertEquals("x", DefaultArgEnumOnce.X.tag())
         assertEquals(2, DefaultArgEnumCounter.calls)                            // 2 entries x once (was 2 x twice)
-
-        assertEquals(4, DefaultArgEnumBodyOnce.X.n)
-        assertEquals(40, DefaultArgEnumBodyOnce.X.m)                            // filled at the per-entry body's base call
-        assertEquals("x", DefaultArgEnumBodyOnce.X.tag())
-        assertEquals(40, DefaultArgEnumBodyOnce.Y.m)
-        assertEquals(2, DefaultArgEnumBodyCounter.calls)                        // 2 entries x once
 
         // ORDER at those same two call sites: the SUPPLIED value first, then the filled default.
         DefaultArgDelOrderLog.s = ""
