@@ -191,6 +191,13 @@ static void VerifyKlibClassFunctions(string path, string className, IReadOnlyLis
         if (declaration is null) continue;
         var actual = declaration.Function.Select(function => String(fragment, function.Name))
             .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var nonFinalStatics = declaration.Function
+            .Where(function => (function.Flags & IsStaticFunctionFlag) != 0 && (function.Flags & (3 << 4)) != 0)
+            .Select(function => String(fragment, function.Name))
+            .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        if (nonFinalStatics.Length != 0)
+            throw new InvalidDataException(
+                $"{className} static functions are not final [{string.Join(", ", nonFinalStatics)}]");
         var expected = expectedNames.OrderBy(name => name, StringComparer.Ordinal).ToArray();
         if (!actual.SequenceEqual(expected, StringComparer.Ordinal))
             throw new InvalidDataException(

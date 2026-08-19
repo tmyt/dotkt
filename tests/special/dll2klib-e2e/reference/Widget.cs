@@ -250,6 +250,12 @@ public class PublicAndExplicitMethodCarrier : IPublicAndExplicitMethodSlot
     int IPublicAndExplicitMethodSlot.Read() => 26;
 }
 
+public class StaticAndExplicitMethodCarrier : IPublicAndExplicitMethodSlot
+{
+    public static int Read() => 42;
+    int IPublicAndExplicitMethodSlot.Read() => 43;
+}
+
 public interface IReimplementedSlot
 {
     int M();

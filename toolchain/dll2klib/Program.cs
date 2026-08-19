@@ -2199,7 +2199,7 @@ internal sealed class AssemblyScanner
                     {
                         var shape = FunctionShapeKey(function, names);
                         foreach (var declared in result.Function.Where(candidate =>
-                            (candidate.Flags & (1 << 19)) == 0 && FunctionShapeKey(candidate, names) == shape))
+                            !Flags.IsStaticFunction(candidate.Flags) && FunctionShapeKey(candidate, names) == shape))
                             declared.Flags = Flags.AsOpen(declared.Flags);
                         result.Function.Add(function);
                     }
@@ -2213,7 +2213,7 @@ internal sealed class AssemblyScanner
                     {
                         var shape = FunctionShapeKey(function, names);
                         foreach (var declared in result.Function.Where(candidate =>
-                            (candidate.Flags & (1 << 19)) == 0 && FunctionShapeKey(candidate, names) == shape))
+                            !Flags.IsStaticFunction(candidate.Flags) && FunctionShapeKey(candidate, names) == shape))
                             declared.Flags = Flags.AsOpen(declared.Flags);
                         result.Function.Add(function);
                     }
@@ -2379,7 +2379,7 @@ internal sealed class AssemblyScanner
             {
                 var shape = FunctionShapeKey(function, names);
                 foreach (var declared in result.Function.Where(candidate =>
-                    (candidate.Flags & (1 << 19)) == 0 && FunctionShapeKey(candidate, names) == shape))
+                    !Flags.IsStaticFunction(candidate.Flags) && FunctionShapeKey(candidate, names) == shape))
                     declared.Flags = Flags.AsOpen(declared.Flags);
                 result.Function.Add(function);
             }
@@ -5824,6 +5824,8 @@ internal static class Flags
         (attrs & MethodAttributes.MemberAccessMask) == MethodAttributes.Public ? 6 : 4; // PUBLIC=3, PROTECTED=2
     public static int AsProtected(int flags) => (flags & ~0xE) | 4;
     public static int AsOpen(int flags) => (flags & ~(3 << 4)) | (1 << 4);
+
+    public static bool IsStaticFunction(int flags) => (flags & (1 << 18)) != 0;
     public static int Property(MethodAttributes attrs, bool canWrite, bool isStatic,
         int memberKind = DeclarationMember) =>
         Visibility(attrs) | (((attrs & MethodAttributes.Abstract) != 0 ? 2

@@ -156,6 +156,8 @@ dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-functions "$PROBE_KLIB" Probe.ExplicitShapeCarrier Normalize,get
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
+	--klib-class-functions "$PROBE_KLIB" Probe.StaticAndExplicitMethodCarrier Read,Read
+dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-functions "$PROBE_KLIB" Probe.DefaultIndexerCarrier get,get
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-functions "$PROBE_KLIB" Probe.ExplicitIndexerCarrier get,get

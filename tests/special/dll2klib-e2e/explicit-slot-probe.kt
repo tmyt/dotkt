@@ -31,6 +31,7 @@ import Probe.IRightExplicitIndexerSlot
 import Probe.IRightExplicitPropertySlot
 import Probe.ExplicitOverHiddenDefaultCarrier
 import Probe.PublicAndExplicitMethodCarrier
+import Probe.StaticAndExplicitMethodCarrier
 import Probe.PublicAndExplicitPropertyCarrier
 import Probe.PublicAndExplicitIndexerCarrier
 import Probe.PublicAndExplicitEventCarrier
@@ -153,6 +154,8 @@ fun main() {
     check(unlisted.M() == 9)
     check((unlisted as IReimplementedSlot).M() == 3)
     check((KotlinPublicMethodReimplementation() as IPublicAndExplicitMethodSlot).Read() == 33)
+    check(StaticAndExplicitMethodCarrier.Read() == 42)
+    check((StaticAndExplicitMethodCarrier() as IPublicAndExplicitMethodSlot).Read() == 43)
     val unlistedPublicMethod = KotlinUnlistedPublicMethod()
     check(unlistedPublicMethod.Read() == 38)
     check((unlistedPublicMethod as IPublicAndExplicitMethodSlot).Read() == 26)
