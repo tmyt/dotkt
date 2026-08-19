@@ -28,6 +28,17 @@ private class ComparisonNothing : Comparable<ComparisonNothing> {
         throw IllegalStateException("comparison does not return")
 }
 
+private fun <T : Comparable<T>> comparisonGenericCompare(left: T, right: T): Int = left.compareTo(right)
+
+private class ComparisonNothingOverload : Comparable<ComparisonNothingOverload> {
+    fun CompareTo(other: String): Nothing = throw IllegalStateException(other)
+    override fun compareTo(other: ComparisonNothingOverload): Int = 0
+}
+
+private class ComparisonAnyNullable : Comparable<Any?> {
+    override fun compareTo(other: Any?): Int = if (other == null) 1 else 0
+}
+
 // ---- il-comparator : user class implementing Kotlin's Comparator<T> -> CLR IComparer<T> -----------------------
 class ComparisonIntCmp : Comparator<Int> {
     override fun compare(a: Int, b: Int): Int = a - b
@@ -58,7 +69,14 @@ class ComparisonTests {
         assertEquals("comparison does not return",
             try { value.compareTo(value) } catch (e: IllegalStateException) { e.message })
         assertEquals("comparison does not return",
+            try { comparisonGenericCompare(value, value) } catch (e: IllegalStateException) { e.message })
+        assertEquals("comparison does not return",
             try { compareValues(value, value) } catch (e: IllegalStateException) { e.message })
+
+        val overloaded = ComparisonNothingOverload()
+        assertEquals(0, compareValues(overloaded, overloaded))
+        val anyNullable = ComparisonAnyNullable()
+        assertEquals(0, compareValues(anyNullable, anyNullable))
     }
 
     @TestAttribute

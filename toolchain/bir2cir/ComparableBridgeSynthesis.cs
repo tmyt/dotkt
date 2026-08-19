@@ -34,7 +34,11 @@ static class ComparableBridgeSynthesis
                 if (TypeJson.Read(i) is not TypeNode.Fqn f) continue;
                 if (f.Name == "System.IComparable" && f.Args == null) hasNonGeneric = true;
                 else if (f.Name is not ("kotlin.Comparable" or "System.IComparable")) continue;
-                else if (f.Args is { Length: 1 }) selfArg = f.Args[0];
+                else if (f.Args is { Length: 1 })
+                {
+                    if (BirTypeLowering.ComparableApplicationCollapses(f.Args[0])) hasNonGeneric = true;
+                    else selfArg = f.Args[0];
+                }
             }
             if (selfArg == null || hasNonGeneric) continue;   // 1-arg IComparable<X> only
             if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
@@ -46,24 +50,39 @@ static class ComparableBridgeSynthesis
             if (exists) continue;
             var owner = (to["name"] as JsonValue)?.GetValue<string>();
             if (string.IsNullOrEmpty(owner)) continue;
-            // Forward target: the generic-face method as DECLARED on this type (normally renamed `CompareTo` by
-            // DeclarationRename; tolerate an un-renamed `compareTo`). Virtual dispatch covers a base-declared slot.
-            var target = methods.OfType<JsonObject>().FirstOrDefault(m =>
+            // Forward only to the declaration the frontend identified as the Comparable slot implementation. Name
+            // and arity alone also match unrelated Kotlin overloads after DeclarationRename; copying such an overload's
+            // Nothing return stamp would turn a valid Int-returning bridge into invalid terminating IL.
+            var targets = methods.OfType<JsonObject>().Where(m =>
                 (m["name"] as JsonValue)?.GetValue<string>() is "CompareTo" or "compareTo"
-                && m["params"] is JsonArray ps1 && ps1.Count == 1);
-            var targetName = target != null ? (target["name"] as JsonValue)?.GetValue<string>() : "CompareTo";
+                && m["params"] is JsonArray ps1 && ps1.Count == 1
+                && m["overrides"] is JsonArray overrides
+                && overrides.OfType<JsonObject>().Any(o =>
+                    TypeJson.Read(o["owner"]) is TypeNode.Fqn ownerSpec
+                    && ownerSpec.Name is "kotlin.Comparable" or "System.IComparable"
+                    && ownerSpec.Args is { Length: 1 }
+                    && ownerSpec.Args[0].Equals(selfArg)
+                    && (o["member"] as JsonValue)?.GetValue<string>() is "compareTo" or "CompareTo"
+                    && (o["kind"] as JsonValue)?.GetValue<string>() == "method")).ToList();
+            if (targets.Count != 1 || targets[0]["params"] is not JsonArray targetParams
+                || targetParams[0] is not JsonObject targetParam
+                || TypeJson.Read(targetParam["type"]) is not TypeNode targetParamType)
+                continue;
+            var target = targets[0];
+            var targetName = (target["name"] as JsonValue)?.GetValue<string>();
             var forwardCall = new JsonObject
             {
                 ["k"] = "callInstance",
                 ["ownerType"] = TypeJson.Fqn(owner),
                 ["virtual"] = true,
+                ["clrOwnerResolved"] = true,
                 ["recv"] = new JsonObject { ["k"] = "this" },
                 ["method"] = targetName,
-                ["sig"] = new JsonArray { TypeJson.Write(selfArg) },
+                ["sig"] = new JsonArray { TypeJson.Write(targetParamType) },
                 ["args"] = new JsonArray(new JsonObject
                 {
                     ["k"] = "cast",
-                    ["type"] = TypeJson.Write(selfArg),
+                    ["type"] = TypeJson.Write(targetParamType),
                     ["e"] = new JsonObject { ["k"] = "local", ["name"] = "obj" },
                 }),
             };
