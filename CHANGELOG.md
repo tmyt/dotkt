@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Calls through a type-parameter receiver bounded by a referenced Kotlin interface now retain constrained dispatch
+  (#325).** Referenced methods and property accessors remain on the Kotlin call path until bir2cir can author
+  `constrained. !!T; callvirt` against the constructed interface, including members inherited from a generic parent.
+
 - **Constrained calls through nullable-value generic bounds now widen arguments to the bound's physical slot
   (#345).** Once bir2cir closes a type-parameter receiver's interface owner, it applies the same
   `Subst(Erase(declared slot), owner arguments)` rule as other nullable-generic calls. A value passed through a bound
