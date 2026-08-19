@@ -13,8 +13,11 @@ using DotKt.Bir;
 // a user Kotlin type that implements only the generic face hits `EntryPointNotFoundException` (SAM-shim
 // `a.compareTo(b)` inside the rt's `sortWith`) or `InvalidCastException` (`compareValues`) the moment a compiled
 // stdlib body sorts it. Mirror the BCL convention: for every emitted CLASS whose lowered interfaces include
-// `clrg:System.IComparable[X]`, add `clr:System.IComparable` + a `CompareTo(object)` bridge that casts the arg
-// to X and forwards to the generic CompareTo. Non-ref builds only (the ref surface stays pure Kotlin).
+// `kotlin.Comparable<X>` (or an explicitly projected `System.IComparable<X>`), add `System.IComparable` + a
+// `CompareTo(Any)` bridge that casts the arg to X and forwards to the generic CompareTo. This runs at the final
+// semantic boundary, before BirTypeLowering: a legal covariant override returning `Nothing` must retain that stamp
+// on the synthesized call so NothingValueTermination can terminate the physical Int32 slot instead of returning
+// Nothing's CLR object erasure into it (#321). Non-ref builds only (the ref surface stays pure Kotlin).
 static class ComparableBridgeSynthesis
 {
     public static void Apply(JsonNode root)
@@ -25,13 +28,13 @@ static class ComparableBridgeSynthesis
             if (t is not JsonObject to) continue;
             if ((to["kind"] as JsonValue)?.GetValue<string>() != "class") continue;   // interfaces carry no bodies
             if (to["interfaces"] is not JsonArray ifaces) continue;
-            // Post-lowering the interfaces are structured Fqn: `System.IComparable` (non-generic) / `System.IComparable<X>`.
             TypeNode selfArg = null; var hasNonGeneric = false;
             foreach (var i in ifaces)
             {
-                if (TypeJson.Read(i) is not TypeNode.Fqn f || f.Name != "System.IComparable") continue;
-                if (f.Args == null) hasNonGeneric = true;
-                else if (f.Args.Length == 1) selfArg = f.Args[0];
+                if (TypeJson.Read(i) is not TypeNode.Fqn f) continue;
+                if (f.Name == "System.IComparable" && f.Args == null) hasNonGeneric = true;
+                else if (f.Name is not ("kotlin.Comparable" or "System.IComparable")) continue;
+                else if (f.Args is { Length: 1 }) selfArg = f.Args[0];
             }
             if (selfArg == null || hasNonGeneric) continue;   // 1-arg IComparable<X> only
             if (to["methods"] is not JsonArray methods) { methods = new JsonArray(); to["methods"] = methods; }
@@ -49,6 +52,23 @@ static class ComparableBridgeSynthesis
                 (m["name"] as JsonValue)?.GetValue<string>() is "CompareTo" or "compareTo"
                 && m["params"] is JsonArray ps1 && ps1.Count == 1);
             var targetName = target != null ? (target["name"] as JsonValue)?.GetValue<string>() : "CompareTo";
+            var forwardCall = new JsonObject
+            {
+                ["k"] = "callInstance",
+                ["ownerType"] = TypeJson.Fqn(owner),
+                ["virtual"] = true,
+                ["recv"] = new JsonObject { ["k"] = "this" },
+                ["method"] = targetName,
+                ["sig"] = new JsonArray { TypeJson.Write(selfArg) },
+                ["args"] = new JsonArray(new JsonObject
+                {
+                    ["k"] = "cast",
+                    ["type"] = TypeJson.Write(selfArg),
+                    ["e"] = new JsonObject { ["k"] = "local", ["name"] = "obj" },
+                }),
+            };
+            if (target?["ret"] is JsonNode targetReturn)
+                forwardCall["sty"] = targetReturn.DeepClone();
             ifaces.Add(TypeJson.Fqn("System.IComparable"));
             methods.Add(new JsonObject
             {
@@ -59,29 +79,14 @@ static class ComparableBridgeSynthesis
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["vis"] = "public",
-                ["params"] = new JsonArray(new JsonObject { ["name"] = "obj", ["type"] = TypeJson.Fqn("object") }),
-                ["ret"] = TypeJson.Fqn("int"),
+                ["params"] = new JsonArray(new JsonObject { ["name"] = "obj", ["type"] = TypeJson.Fqn("kotlin.Any") }),
+                ["ret"] = TypeJson.Fqn("kotlin.Int"),
                 ["body"] = new JsonArray(new JsonObject
                 {
                     ["k"] = "return",
-                    ["value"] = new JsonObject
-                    {
-                        ["k"] = "callInstance",
-                        ["ownerType"] = TypeJson.Fqn(owner),
-                        ["virtual"] = true,
-                        ["recv"] = new JsonObject { ["k"] = "this" },
-                        ["method"] = targetName,
-                        ["sig"] = new JsonArray { TypeJson.Write(selfArg) },
-                        ["args"] = new JsonArray(new JsonObject
-                        {
-                            ["k"] = "cast",
-                            ["type"] = TypeJson.Write(selfArg),
-                            ["e"] = new JsonObject { ["k"] = "local", ["name"] = "obj" },
-                        }),
-                    },
+                    ["value"] = forwardCall,
                 }),
             });
         }
     }
 }
-

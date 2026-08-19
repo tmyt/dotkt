@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **A `Comparable` implementation whose `compareTo` returns `Nothing` now loads and terminates correctly (#321).**
+  bir2cir synthesizes the non-generic `IComparable.CompareTo(object)` bridge while the Kotlin return stamp is still
+  available, so the bridge terminates instead of returning `Nothing`'s CLR `object` erasure into an `Int32` slot.
+
 - **The public reference-KLIB MSBuild contract now works from multi-target outer builds (#469).**
   `DotKtResolveKlibReferences` dispatches reference resolution and projection to each TFM-specific inner build and
   returns the generated KLIBs as `@(DotKtResolvedKlibReference)`, with source-assembly and target metadata. The old

@@ -166,6 +166,13 @@ static class KotlinOverrideSlotBridge
             if (fit == null || fit.Contains(Fit.Foreign)) return;
             var retFit = Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
                 returnPosition: true);
+            // Kotlin Nothing is below every return type because the declaration never returns normally. For a local
+            // Kotlin interface CovariantInterfaceReturnBridge already sees that subtype relation; an imported CLR
+            // slot has no local declaration graph for that pass to inspect. Materialize the same exact-signature
+            // MethodImpl here, where referenced slot identity is authoritative. Its forwarding call retains the
+            // Nothing return stamp and the final NothingValueTermination sweep turns it into a terminator before
+            // physical type lowering (#321).
+            if (retFit == Fit.Foreign && referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
             if (retFit == Fit.Foreign)
             {
                 // A local covariant return is CovariantInterfaceReturnBridge's. A REFERENCED property interface has
