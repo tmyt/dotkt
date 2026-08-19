@@ -77,6 +77,9 @@ class ComparisonTests {
         assertEquals(0, compareValues(overloaded, overloaded))
         val anyNullable = ComparisonAnyNullable()
         assertEquals(0, compareValues(anyNullable, anyNullable))
+        val typedAnyNullable: Comparable<Any?> = anyNullable
+        assertEquals(0, typedAnyNullable.compareTo(anyNullable))
+        assertEquals(1, typedAnyNullable.compareTo(null))
     }
 
     @TestAttribute

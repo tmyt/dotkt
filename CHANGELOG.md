@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Calls through `Comparable<Int?>` and other object-erased `Comparable` receiver types now use the interface the
+  value actually implements (#346).** bir2cir applies the objectish `IComparable` collapse to CLR call owners that
+  were already projected to `System.IComparable`, so the receiver, call owner, and resolved member all consistently
+  target non-generic `IComparable.CompareTo(object)`.
+
 - **A `Comparable` implementation whose `compareTo` returns `Nothing` now loads and terminates correctly (#321).**
   bir2cir synthesizes the non-generic `IComparable.CompareTo(object)` bridge while the Kotlin return stamp is still
   available, so the bridge terminates instead of returning `Nothing`'s CLR `object` erasure into an `Int32` slot.
