@@ -451,11 +451,12 @@ built by this compilation) and stay on the internal linkage (`localCtorIndex`, t
 table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
 
 For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
-compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. `bir2cir` consumes
-the former to select one same-unit constructor, closes that declaration in the constructed owner's final physical
-frame, materializes any required representation conversion, writes the resulting use-site `argTypes`, and replaces
-the declaration fact with scalar `localCtorIndex`. Neither `memberSignature` nor a constructor candidate set reaches
-CIR.
+compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. For a same-unit
+constructor, `bir2cir` consumes the former to select one declaration, closes it in the constructed owner's final
+physical frame, materializes any required representation conversion, retains the resulting use-site `argTypes` for
+argument coercion, and replaces the declaration fact with scalar `localCtorIndex`. For an external constructor, the
+resolved `memberRef` carries the physical parameter vector and `argTypes` is consumed. Neither `memberSignature` nor
+a constructor candidate set reaches CIR.
 
 A carrier key holds ONE reference, never a list. A candidate set reaching a consumer is precisely the failure
 this shape removes: whoever received it would have to choose, and choosing is the producer's decision.

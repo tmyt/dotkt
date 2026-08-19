@@ -1,1 +1,1 @@
-new is missing required field 'argTypes'
+new.argTypes must be an array of structured Type nodes

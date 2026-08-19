@@ -83,7 +83,7 @@ REQUIRED_OPERATION_REFS = {
 # conv.to is a Type while for/forRange.to is an expression. Keep these checks kind-directed for the same reason.
 REQUIRED_NODE_FIELDS = {
     "conv": ("e", "to"),
-    "new": ("type", "argTypes", "args"),
+    "new": ("type", "args"),
 }
 
 # The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
@@ -791,13 +791,21 @@ class V:
                     target = o["to"]
                     if not isinstance(target, dict) or not isinstance(target.get("t"), str):
                         self.err(f, path + "/to", "conv.to must be a structured Type node")
-                if k == "new" and "argTypes" in o:
-                    arg_types = o["argTypes"]
+                if k == "new":
+                    # kotc BIR and same-unit CIR constructions retain the aligned use-site vector. External CIR
+                    # constructions consume it into memberRef.parameterTypes, so requiring argTypes there would
+                    # duplicate the resolved declaration identity ilemit is required to trust.
+                    needs_arg_types = f.endswith(".bir.json") or "memberRef" not in o
+                    arg_types = o.get("argTypes")
                     args = o.get("args")
-                    if not isinstance(arg_types, list):
+                    if needs_arg_types and not isinstance(arg_types, list):
                         self.err(f, path + "/argTypes", "new.argTypes must be an array of structured Type nodes")
-                    elif isinstance(args, list) and len(arg_types) != len(args):
+                    elif isinstance(arg_types, list) and isinstance(args, list) and len(arg_types) != len(args):
                         self.err(f, path, "new.argTypes must contain one entry per new.args value")
+                    if isinstance(arg_types, list):
+                        for i, arg_type in enumerate(arg_types):
+                            if not isinstance(arg_type, dict) or not isinstance(arg_type.get("t"), str):
+                                self.err(f, path + f"/argTypes[{i}]", "new.argTypes entries must be structured Type nodes")
                 if k == "newSuspendLambda":
                     # The physical SM parameter descriptors and the semantic Kotlin function type deliberately use
                     # different shapes: node.params is receiver-first (create arguments/field names), while
