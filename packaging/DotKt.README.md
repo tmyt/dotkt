@@ -36,12 +36,19 @@ guide live in the repository: <https://github.com/tmyt/dotkt>.
 
 ## MSBuild integration contract
 
-Editor and analysis integrations can depend on the public `DotKtPrepareFrontendInputs` target. Once it completes:
+Editor and analysis integrations can depend on the public `DotKtResolveKlibReferences` target. Once it completes:
 
-- `@(DotKtReferenceKlib)` contains every generated reference KLIB. Its item identity is the KLIB path and its
-  `SourceAssembly` metadata is the MSBuild-selected source DLL.
-- `@(DotKtFrontendKlib)` contains the complete Kotlin frontend classpath. `Role` is either `StandardLibrary` or
-  `Reference`.
+- `@(DotKtResolvedKlibReference)` contains every generated reference KLIB. Its item identity is the absolute KLIB path;
+  `SourceAssembly` is the MSBuild-selected source DLL, and `TargetFramework` / `RuntimeIdentifier` identify the
+  inner build that resolved it. `RuntimeIdentifier` is empty for framework-dependent builds.
+- On a project declaring `TargetFrameworks`, invoking the target without an explicit `TargetFramework` dispatches
+  to every inner build and returns their combined, TFM-specific items.
+- `$(DotKtStdlib)` is the evaluation-time path to DotKt's embedded frontend standard-library KLIB; the target does
+  not produce or mutate it.
 - `$(DotKtKotlinVersion)` identifies the embedded Kotlin toolchain.
+
+The item contains only the KLIB set projected from references selected by MSBuild for each TFM. It deliberately does
+not duplicate `$(DotKtStdlib)` inside the item or synthesize a second "complete frontend input set" contract. A
+consumer that needs kotc's complete frontend classpath composes `$(DotKtStdlib)` with the returned item set.
 
 Names beginning with `_DotKt` and the layout below `$(DotKtToolchainDir)` remain private implementation details.

@@ -1,11 +1,8 @@
 <Project>
+  <Import Project="$(MSBuildThisFileDirectory)../buildShared/DotKt.Toolchain.public.props" />
   <!-- The compiler toolchain binaries, at package-internal paths (no repo dependency). The compiler is JVM-based,
        so a JRE must be on PATH. -->
   <PropertyGroup>
-    <DotKtToolchainDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../tools/'))</DotKtToolchainDir>
-    <!-- Public toolchain identity for editor/build integrations. Keep this value aligned with
-         DotKt.Versions.props; scripts/pack-nuget.sh rejects a drift before packaging. -->
-    <DotKtKotlinVersion Condition="'$(DotKtKotlinVersion)' == ''">2.4.0</DotKtKotlinVersion>
     <!-- The Gradle `application` plugin installDist ships BOTH launchers side by side under kotc/bin/: the
          extension-less UNIX shell script `kotc` and the Windows batch `kotc.bat`. Select by OS so cmd.exe never
          has to lean on PATHEXT resolving a pathed extension-less command (fragile/shell-dependent — #135). $(OS) is
@@ -14,8 +11,6 @@
     <DotKtCompiler Condition="'$(DotKtCompiler)' == ''">$(DotKtToolchainDir)kotc/bin/kotc</DotKtCompiler>
     <!-- The launcher is stable across compiler rebuilds; the jar timestamp is the actual frontend tool fingerprint. -->
     <DotKtCompilerFingerprint Condition="'$(DotKtCompilerFingerprint)' == ''">$(DotKtToolchainDir)kotc/lib/kotc.jar</DotKtCompilerFingerprint>
-    <!-- kotc -classpath: the CLR FRONTEND stdlib KLIB built FROM our CLR stdlib sources for the common frontend. -->
-    <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(DotKtToolchainDir)kotlin-stdlib-clr-frontend.klib</DotKtStdlib>
     <DotKtBir2Cir Condition="'$(DotKtBir2Cir)' == ''">$(DotKtToolchainDir)bir2cir/bir2cir.dll</DotKtBir2Cir>
     <DotKtIlEmit Condition="'$(DotKtIlEmit)' == ''">$(DotKtToolchainDir)ilemit/ilemit.dll</DotKtIlEmit>
     <DotKtDll2Klib Condition="'$(DotKtDll2Klib)' == ''">$(DotKtToolchainDir)dll2klib/dll2klib.dll</DotKtDll2Klib>

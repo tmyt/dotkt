@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **The public reference-KLIB MSBuild contract now works from multi-target outer builds (#469).**
+  `DotKtResolveKlibReferences` dispatches reference resolution and projection to each TFM-specific inner build and
+  returns the generated KLIBs as `@(DotKtResolvedKlibReference)`, with source-assembly and target metadata. The old
+  synthetic frontend-input target/items were removed instead of retained as a second contract.
+
 - **MSBuild intermediates are isolated by configuration, target framework, and runtime identifier (#467).** BIR,
   CIR, projected reference KLIBs, response/options files, stamps, and the generated C# placeholder now live under
   `$(IntermediateOutputPath)`. Concurrent Debug/Release builds no longer delete or consume each other's compiler
