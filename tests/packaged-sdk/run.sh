@@ -448,8 +448,8 @@ EOF
 		fail multi-target-klib-references "outer target failed" "$(tail -40 "$d/resolve.log")"; return
 	fi
 	if [[ ! -s "$d/resolved.txt" ]] \
-		|| ! grep -q "^net10.0||$d/obj/Debug/net10.0/klib/" "$d/resolved.txt" \
-		|| ! grep -q "^net10.0-windows||$d/obj/Debug/net10.0-windows/klib/" "$d/resolved.txt"; then
+		|| ! grep -q "^net10\\.0||$d/obj/Debug/net10\\.0/klib/" "$d/resolved.txt" \
+		|| ! grep -q "^net10\\.0-windows||$d/obj/Debug/net10\\.0-windows/klib/" "$d/resolved.txt"; then
 		fail multi-target-klib-references "outer target did not preserve TFM-specific KLIB paths" "$(cat "$d/resolved.txt" 2>/dev/null)"; return
 	fi
 	pass multi-target-klib-references
