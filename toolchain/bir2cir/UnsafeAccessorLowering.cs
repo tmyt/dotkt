@@ -253,7 +253,7 @@ static class UnsafeAccessorLowering
                   "|declaration:" + targetDeclarationId;
         var definition = EnsureAccessor(caller, accessors, key, targetName, targetStatic ? 2 : 1,
             ownerNode, PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
-            methodTypeParams ?? target?["typeParams"] as JsonArray,
+            PhysicalMethodTypeParams(target, methodTypeParams),
             declaredAccessorReturn, signature, includeTarget: true,
             targetDeclarationId: targetDeclarationId);
 
@@ -456,7 +456,7 @@ static class UnsafeAccessorLowering
                   string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredReturnType);
         var definition = EnsureAccessor(caller, accessors, key, targetName, 1, access["ownerType"],
             PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
-            methodTypeParams ?? target?["typeParams"] as JsonArray, declaredReturnType,
+            PhysicalMethodTypeParams(target, methodTypeParams), declaredReturnType,
             signature, includeTarget: true,
             targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]));
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
@@ -509,6 +509,13 @@ static class UnsafeAccessorLowering
             foreach (var parameter in declared) physical.Add(parameter?.DeepClone());
         return physical;
     }
+
+    // As with an owner's frame above, a local target declaration has already passed through the representation
+    // lowerings that establish its emitted CLR contract. The BIR fact on the call is the earlier semantic frame and
+    // may therefore still spell a rewritten constraint (CharSequence is the concrete case). Match UnsafeAccessor to
+    // the physical target declaration; retain the carried frame only for an external target with no local declaration.
+    static JsonArray PhysicalMethodTypeParams(JsonObject target, JsonArray semantic)
+        => target?["typeParams"] as JsonArray ?? semantic;
 
     static JsonArray RenamedTypeParams(JsonArray source, string prefix)
     {

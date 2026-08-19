@@ -7,14 +7,15 @@ interface ReferencedReceiverRoot<X> {
     var slot: X
 }
 
-interface ReferencedReceiverLeaf<X> : ReferencedReceiverRoot<X> {
+interface ReferencedReceiverLeaf<X> : ReferencedReceiverRoot<String> {
     fun leaf(): Int
 }
 
 class ReferencedReceiverIntLeaf(initial: Int) : ReferencedReceiverLeaf<Int> {
-    private var current: Int = initial
-    override fun produce(): Int = current
-    override var slot: Int
+    private val seed: Int = initial
+    private var current: String = "slot:$initial"
+    override fun produce(): String = "produce:$seed"
+    override var slot: String
         get() = current
         set(value) { current = value }
     override fun leaf(): Int = 5

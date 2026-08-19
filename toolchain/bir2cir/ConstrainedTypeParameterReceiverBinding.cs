@@ -21,7 +21,7 @@ using DotKt.Bir;
 // interface has a non-type-variable surface type and is left alone.
 //
 // The owner the constrained call names must be the member's DECLARING type, constructed. Those are two separate
-// facts, and this pass therefore runs in TWO phases around InheritedMemberOwnerBinding:
+// facts, and ordinary method calls therefore run in TWO phases around InheritedMemberOwnerBinding:
 //
 //   CloseOpenOwners (BEFORE the inherited-owner walk) — kotc names the receiver's classifier and decides no CLR
 //     construction, so `fun <N : Node<N>> N.close()` arrives with the bare token `Node`. Close it from N's own
@@ -34,6 +34,9 @@ using DotKt.Bir;
 //     token. Naming the bound instead is a MemberRef on a type that does not declare the member: it survives
 //     locally only because the emitted type carries a fake override, and a referenced interface hierarchy —
 //     where reflection does not surface an inherited declaration — has nothing to bind to.
+// CLR property nodes have a third, narrow post-resolution phase: only ClrMemberResolution can distinguish a real
+// accessor from a public field. Resolved virtual accessors take the same constrained-call path; non-virtual class
+// accessors receive the explicit constraint conversion their exact MemberRef requires. Fields remain field operations.
 //
 // A locally declared NON-generic owner (`Tagged`) is closed already and needs neither phase. When no route
 // yields a closed owner the node is left untouched — this pass never guesses an instantiation, the same
@@ -60,6 +63,18 @@ static class ConstrainedTypeParameterReceiverBinding
         foreach (var root in rootList) BindFile(root, arity, close: false, isValue);
     }
 
+    // A CLR property cannot be classified as an accessor rather than a public field until ClrMemberResolution has
+    // inspected the referenced declaration. Run this narrow second half after that resolution: only a node already
+    // stamped `member:accessor` is a method call and therefore eligible for constrained dispatch. A field stays a
+    // clrPropGet/Set and retains its ldfld/stfld representation.
+    public static void ApplyResolvedProperties(IEnumerable<JsonNode> roots)
+    {
+        var rootList = roots.ToList();
+        var arity = CollectTypeArity(rootList);
+        foreach (var root in rootList)
+            BindFile(root, arity, close: false, isValue: null, resolvedPropertiesOnly: true);
+    }
+
     // name -> declared type-parameter count, for every type declared in this compilation. Only the ARITY is
     // needed: it says whether a bare owner token is already closed (0) or still has to be constructed.
     static Dictionary<string, int> CollectTypeArity(IEnumerable<JsonNode> roots)
@@ -80,50 +95,50 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close,
-        Func<string, bool> isValue = null)
+        Func<string, bool> isValue = null, bool resolvedPropertiesOnly = false)
     {
         if (root is not JsonObject file) return;
         var noTypeParams = new JsonArray();
         if (file["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, noTypeParams, arity, close, isValue);
-        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue);
+                BindMethod(method, noTypeParams, arity, close, isValue, resolvedPropertiesOnly);
+        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue, resolvedPropertiesOnly);
         if (file["types"] is JsonArray declared)
             foreach (var type in declared.OfType<JsonObject>())
-                BindType(type, arity, close, isValue);
+                BindType(type, arity, close, isValue, resolvedPropertiesOnly);
     }
 
     static void BindType(JsonObject type, Dictionary<string, int> arity, bool close,
-        Func<string, bool> isValue)
+        Func<string, bool> isValue, bool resolvedPropertiesOnly)
     {
         var typeParams = TypeParameterFrame.CloneDeclarations(type);
         if (type["ctors"] is JsonArray ctors)
             foreach (var ctor in ctors.OfType<JsonObject>())
-                BindMethod(ctor, typeParams, arity, close, isValue);
+                BindMethod(ctor, typeParams, arity, close, isValue, resolvedPropertiesOnly);
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, typeParams, arity, close, isValue);
+                BindMethod(method, typeParams, arity, close, isValue, resolvedPropertiesOnly);
         // A property ACCESSOR body is executable code like any other, and `class H<T : Tagged>(val item: T) { val v
         // get() = item.tag() }` reaches this pass only through here — BIR keeps accessors under `properties`, not
         // `methods`.
-        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue);
+        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue, resolvedPropertiesOnly);
         if (type["types"] is JsonArray nested)
             foreach (var child in nested.OfType<JsonObject>())
-                BindType(child, arity, close, isValue);
+                BindType(child, arity, close, isValue, resolvedPropertiesOnly);
     }
 
     static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        Func<string, bool> isValue)
+        Func<string, bool> isValue, bool resolvedPropertiesOnly)
     {
         if (properties == null) return;
         foreach (var property in properties.OfType<JsonObject>())
             foreach (var slot in new[] { "getter", "setter" })
                 if (property[slot] is JsonObject accessor)
-                    BindMethod(accessor, typeParams, arity, close, isValue);
+                    BindMethod(accessor, typeParams, arity, close, isValue, resolvedPropertiesOnly);
     }
 
     static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        Func<string, bool> isValue)
+        Func<string, bool> isValue, bool resolvedPropertiesOnly)
     {
         var methodParams = method["typeParams"] as JsonArray ?? new JsonArray();
         // The declaration's local/param type environment, for a receiver read that carries no frontend `sty`
@@ -171,9 +186,23 @@ static class ConstrainedTypeParameterReceiverBinding
             {
                 case JsonObject call:
                     var kind = Str(call["k"]);
+                    if (resolvedPropertiesOnly
+                        && (kind == "clrPropGet" || kind == "clrPropSet")
+                        && Str(call["member"]) == "accessor"
+                        && !(call["static"]?.GetValue<bool>() ?? false)
+                        && TypeJson.Read(call["type"]) is TypeNode.Fqn propertyOwner
+                        && call["recv"] is JsonObject propertyRecv
+                        && ReceiverTypeVariable(propertyRecv, scope, locals) is TypeNode.Tv propertyTv
+                        && ClosedOwner(propertyOwner, arity) is TypeNode.Fqn closedPropertyOwner)
+                    {
+                        if (Str(call["dispatch"]) == "callvirt")
+                            ConstrainResolvedProperty(call, kind == "clrPropSet", propertyTv, closedPropertyOwner);
+                        else
+                            CastResolvedPropertyReceiver(call, closedPropertyOwner);
+                    }
                     var genericClrCall = kind == "clrGenericInstance";
                     var ownerKey = genericClrCall ? "type" : "ownerType";
-                    if (kind is "callInstance" or "clrGenericInstance"
+                    if (!resolvedPropertiesOnly && (kind == "callInstance" || kind == "clrGenericInstance")
                         && TypeJson.Read(call[ownerKey]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
                         && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv)
@@ -227,6 +256,41 @@ static class ConstrainedTypeParameterReceiverBinding
         if (method["body"] is JsonNode methodBody) Bind(methodBody);
     }
 
+    static void ConstrainResolvedProperty(JsonObject node, bool write, TypeNode.Tv recvType, TypeNode.Fqn owner)
+    {
+        var args = new JsonArray();
+        var sig = new JsonArray();
+        if (write)
+        {
+            if (node["value"] is JsonNode value) args.Add(value.DeepClone());
+            if (node["memberRef"] is JsonObject memberRef
+                && memberRef["parameterTypes"] is JsonArray parameters && parameters.Count > 0)
+                sig.Add(parameters[^1]?.DeepClone());
+        }
+        node["k"] = "constrainedCall";
+        node["recvType"] = TypeJson.Write(recvType);
+        node["iface"] = TypeJson.Write(owner);
+        node["method"] = node["accessor"]?.DeepClone();
+        node["sig"] = sig;
+        node["args"] = args;
+        foreach (var key in new[] { "type", "name", "static", "member", "accessor", "dispatch", "super", "value", "sty" })
+            node.Remove(key);
+    }
+
+    // A non-virtual class accessor has no polymorphic slot for constrained. to select. The receiver's declaration is
+    // still !!T, which is not verifier-compatible with the exact class MemberRef, so materialize the ordinary
+    // constraint conversion and keep the already-resolved clrProp node/dispatch intact.
+    static void CastResolvedPropertyReceiver(JsonObject node, TypeNode.Fqn owner)
+    {
+        if (node["recv"] is not JsonNode recv) return;
+        node["recv"] = new JsonObject
+        {
+            ["k"] = "cast",
+            ["type"] = TypeJson.Write(owner),
+            ["e"] = recv.DeepClone(),
+        };
+    }
+
     // The constrained owner becomes physically closed only in phase 2. Before that point the nullable-generic write
     // axis sees the bare semantic owner and cannot derive the slot an argument fills. Once `iface` is known, apply the
     // ordinary use-site rule to its declaration signature: Subst(Erase(declared slot), owner args). Only the castable
@@ -259,11 +323,13 @@ static class ConstrainedTypeParameterReceiverBinding
     static TypeNode.Tv ReceiverTypeVariable(
         JsonObject recv, BirScope scope, Dictionary<string, TypeNode> locals)
     {
-        if (Peel(StaticType.Surface(recv, scope)) is not TypeNode.Tv tv) return null;
+        // For a local/parameter, its declaration is the authoritative physical stack type. A frontend `sty` may be
+        // the selected member owner's face (IPropertySlot/System.String) rather than the receiver slot itself after
+        // property substitution; using that refinement here hides the fact that the loaded value is still !!T.
         if (Str(recv["k"]) == "local" && Str(recv["name"]) is string name
-            && locals.TryGetValue(name, out var declared) && Peel(declared) is not TypeNode.Tv)
-            return null;
-        return tv;
+            && locals.TryGetValue(name, out var declared))
+            return Peel(declared) as TypeNode.Tv;
+        return Peel(StaticType.Surface(recv, scope)) as TypeNode.Tv;
     }
 
     static TypeNode Peel(TypeNode t) => t switch
