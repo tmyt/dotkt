@@ -76,7 +76,7 @@ For every input:
 ```text
 <reference-directory>/<AssemblyName>.dll
     ->
-$(BaseIntermediateOutputPath)/dotkt-reference-klibs/<AssemblyName>.klib
+$(IntermediateOutputPath)/klib/<AssemblyName>.klib
 ```
 
 The output is project-local. A shared cache is deliberately not used because
@@ -428,12 +428,12 @@ input file without causing timestamp churn on no-op builds.
 ```xml
 <Target Name="DotKtGenerateReferenceKlibs"
         DependsOnTargets="DotKtWriteReferenceKlibRsp"
-        Inputs="@(_DotKtKlibReference);$(DotKtDll2Klib);$(DotKtReferenceKlibRsp)"
+        Inputs="@(_DotKtKlibReference);$(DotKtDll2Klib);$(DotKtReferenceKlibResponseFile)"
         Outputs="@(_DotKtKlibReference->'%(KlibPath)')">
   <Exec Command="dotnet &quot;$(DotKtDll2Klib)&quot;
-                 --out &quot;$(DotKtReferenceKlibDir)&quot;
+                 --out &quot;$(DotKtReferenceKlibPath)&quot;
                  --jobs &quot;$(DotKtDll2KlibJobs)&quot;
-                 @&quot;$(DotKtReferenceKlibRsp)&quot;" />
+                 @&quot;$(DotKtReferenceKlibResponseFile)&quot;" />
 </Target>
 ```
 

@@ -17,7 +17,8 @@
 #
 # COVERAGE = the whole pipeline surface:
 #   - the CLR stdlib  build/clr-stdlib/{bir,cir}   (fresh after `make stdlib`) — 250 files, the bulk corpus;
-#   - every categorized test project tests/**/obj/dotkt-{bir,cir}/*.json (fresh after verify-tests) — exercises
+#   - every categorized test project tests/**/obj/<configuration>/<tfm>[/<rid>]/{bir,cir}/*.json (fresh after
+#     verify-tests) — exercises
 #     the language, CLR interop, coroutine-lowered, and cross-module kinds that the stdlib build does not;
 #   - legacy one-shot developer outputs build/{bir,cir}-*/*.json, when present.
 #
@@ -33,7 +34,7 @@ globs=()
 [ -d build/clr-stdlib/bir ] && globs+=("build/clr-stdlib/bir/*.bir.json")
 [ -d build/clr-stdlib/cir ] && globs+=("build/clr-stdlib/cir/*.cir.json")
 while IFS= read -r -d '' file; do globs+=("$file"); done < <(
-  find tests -type f \( -path '*/obj/dotkt-bir/*.bir.json' -o -path '*/obj/dotkt-cir/*.cir.json' \) -print0
+  find tests -type f \( -path '*/obj/*/bir/*.bir.json' -o -path '*/obj/*/cir/*.cir.json' \) -print0
 )
 for d in build/bir-*; do [ -d "$d" ] && globs+=("$d/*.bir.json"); done
 for d in build/cir-*; do [ -d "$d" ] && globs+=("$d/*.cir.json"); done

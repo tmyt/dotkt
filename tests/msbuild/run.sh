@@ -94,10 +94,10 @@ rm -rf "$main_fault"
 
 # #50: INCREMENTAL deletion-safety + staleness through MSBuild. A single dir is built TWICE with the SAME obj/ (no
 # clean) — the incremental path the shared targets guard. Between the builds a top-level `class Shape` is MOVED out of
-# its own Shape.kt into App.kt and Shape.kt is DELETED. Pre-#50 the BIR was globbed from $(DotKtOut), which was never
+# its own Shape.kt into App.kt and Shape.kt is DELETED. Pre-#50 the BIR was globbed from the BIR intermediate path, which was never
 # cleaned, so the deleted Shape.kt left a stale Shape.bir.json behind → Shape was emitted TWICE (App.cir.json's moved
 # copy + the orphan Shape.cir.json) → ilemit "type already defined" → the second build FAILED. The fix wipes
-# $(DotKtOut) on every recompile, so the stale artifact cannot survive. This case reproduces that exact failure and
+# the BIR path on every recompile, so the stale artifact cannot survive. This case reproduces that exact failure and
 # asserts BOTH builds run "12" (the deleted source is gone from the emitted dll). The dir is generated + removed here
 # (not a committed sample) because the assertion is a stateful two-build mutation, not a single `dotnet run`.
 incr="$WORK/incremental-delete"
@@ -126,6 +126,173 @@ if [[ $incr_rc1 -eq 0 && $incr_rc2 -eq 0 && "$incr1" == "12" && "$incr2" == "12"
 	printf -- '--- build1 (want 12) ---\n%s\n--- build2 incremental after delete (want 12) ---\n%s\n--- stderr build2 ---\n%s\n' "$incr1" "$incr2" "$(tail -20 "$incr/run2.err" 2>/dev/null)"; fail=1
 fi
 rm -rf "$incr"
+
+# #467: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
+# $(BaseIntermediateOutputPath). Build one project as Debug and Release CONCURRENTLY while each configuration selects
+# a different DLL with the SAME assembly identity and a different Kotlin source. Shared BIR/CIR/KLIB/rsp state can
+# therefore fail by deletion races, project the wrong reference surface, or silently reuse the other configuration's
+# stamps; distinct directory spelling alone is not enough to pass this case. Then prove independent no-op state,
+# Debug-only source rename/deletion safety, and configuration-scoped clean behavior.
+config="$WORK/config-isolation"
+rm -rf "$config"
+mkdir -p "$config/ref-src" "$config/refs/debug" "$config/refs/release" "$config/app"
+cat > "$config/ref-src/ConfigReference.csproj" <<'CSPROJ'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ConfigReference</AssemblyName>
+    <DefineConstants Condition="'$(ProbeDebug)' == 'true'">DEBUG_VARIANT</DefineConstants>
+  </PropertyGroup>
+</Project>
+CSPROJ
+cat > "$config/ref-src/ConfigApi.cs" <<'CSHARP'
+namespace ConfigReference;
+public static class ConfigApi
+{
+#if DEBUG_VARIANT
+    public static int DebugValue() => 101;
+#else
+    public static int ReleaseValue() => 202;
+#endif
+}
+CSHARP
+dotnet build "$config/ref-src/ConfigReference.csproj" -c Release -o "$config/refs/debug" \
+	-p:ProbeDebug=true -p:BaseIntermediateOutputPath="$config/refs/debug/obj/" -v q --nologo \
+	>"$config/ref-debug.log" 2>&1 \
+	|| die "config-isolation: Debug reference fixture failed to build — see build/tests-msbuild/config-isolation/ref-debug.log"
+dotnet build "$config/ref-src/ConfigReference.csproj" -c Release -o "$config/refs/release" \
+	-p:ProbeDebug=false -p:BaseIntermediateOutputPath="$config/refs/release/obj/" -v q --nologo \
+	>"$config/ref-release.log" 2>&1 \
+	|| die "config-isolation: Release reference fixture failed to build — see build/tests-msbuild/config-isolation/ref-release.log"
+
+cat > "$config/app/app.ktproj" <<KTPROJ
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="ConfigReference" Condition="'\$(Configuration)' == 'Debug'">
+      <HintPath>$config/refs/debug/ConfigReference.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="ConfigReference" Condition="'\$(Configuration)' == 'Release'">
+      <HintPath>$config/refs/release/ConfigReference.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+  <Import Project="$ROOT/eng/KotlinClr.targets" />
+  <ItemGroup Condition="'\$(Configuration)' == 'Debug'">
+    <KotlinCompile Remove="ReleaseConfig.kt" />
+  </ItemGroup>
+  <ItemGroup Condition="'\$(Configuration)' == 'Release'">
+    <KotlinCompile Remove="Debug*.kt" />
+  </ItemGroup>
+</Project>
+KTPROJ
+cat > "$config/app/DebugConfig.kt" <<'KOTLIN'
+import ConfigReference.ConfigApi
+fun selectedConfigValue(): Int = ConfigApi.DebugValue()
+fun selectedConfigMarker(): String = "debug-config-marker"
+KOTLIN
+cat > "$config/app/ReleaseConfig.kt" <<'KOTLIN'
+import ConfigReference.ConfigApi
+fun selectedConfigValue(): Int = ConfigApi.ReleaseValue()
+fun selectedConfigMarker(): String = "release-config-marker"
+KOTLIN
+
+dotnet restore "$config/app/app.ktproj" -v q --nologo >"$config/restore.log" 2>&1 \
+	|| die "config-isolation: app restore failed — see build/tests-msbuild/config-isolation/restore.log"
+cfg_debug_rc=0
+cfg_release_rc=0
+dotnet build "$config/app/app.ktproj" -c Debug --no-restore -v n --nologo >"$config/debug-build.log" 2>&1 &
+cfg_debug_pid=$!
+dotnet build "$config/app/app.ktproj" -c Release --no-restore -v n --nologo >"$config/release-build.log" 2>&1 &
+cfg_release_pid=$!
+wait "$cfg_debug_pid" || cfg_debug_rc=$?
+wait "$cfg_release_pid" || cfg_release_rc=$?
+
+cfg_debug_root="$config/app/obj/Debug/net10.0"
+cfg_release_root="$config/app/obj/Release/net10.0"
+config_msg=""
+if (( cfg_debug_rc != 0 || cfg_release_rc != 0 )); then
+	config_msg="concurrent builds failed (Debug=$cfg_debug_rc, Release=$cfg_release_rc)"
+fi
+for cfg_root in "$cfg_debug_root" "$cfg_release_root"; do
+	if [[ -z "$config_msg" ]] && {
+		[[ ! -f "$cfg_root/bir/.stamp" ]] || [[ ! -f "$cfg_root/cir/.stamp" ]] \
+			|| [[ ! -f "$cfg_root/klib/ConfigReference.klib" ]] \
+			|| [[ ! -f "$cfg_root/dotkt-reference-klibs.rsp" ]] \
+			|| [[ ! -f "$cfg_root/dotkt-compile-options.txt" ]] \
+			|| [[ ! -f "$cfg_root/bir/_DotKtPlaceholder.cs" ]];
+	}; then
+		config_msg="incomplete compiler state under ${cfg_root#"$ROOT/"}"
+	fi
+done
+if [[ -z "$config_msg" ]] && {
+	! grep -q 'DebugValue' "$cfg_debug_root/bir/DebugConfig.bir.json" \
+		|| ! grep -q 'debug-config-marker' "$cfg_debug_root/bir/DebugConfig.bir.json" \
+		|| ! grep -q 'ReleaseValue' "$cfg_release_root/bir/ReleaseConfig.bir.json" \
+		|| ! grep -q 'release-config-marker' "$cfg_release_root/bir/ReleaseConfig.bir.json";
+}; then
+	config_msg="configuration-conditioned source/reference semantics crossed or disappeared"
+fi
+if [[ -z "$config_msg" ]] && { [[ -e "$config/app/obj/dotkt-bir" ]] \
+	|| [[ -e "$config/app/obj/dotkt-cir" ]] || [[ -e "$config/app/obj/dotkt-reference-klibs" ]]; }; then
+	config_msg="legacy BaseIntermediateOutputPath-rooted compiler state was created"
+fi
+
+if [[ -z "$config_msg" ]]; then
+	dotnet build "$config/app/app.ktproj" -c Debug --no-restore -v n --nologo >"$config/debug-noop.log" 2>&1 \
+		|| config_msg="Debug no-op rebuild failed"
+fi
+if [[ -z "$config_msg" ]]; then
+	dotnet build "$config/app/app.ktproj" -c Release --no-restore -v n --nologo >"$config/release-noop.log" 2>&1 \
+		|| config_msg="Release no-op rebuild failed"
+fi
+if [[ -z "$config_msg" ]] && grep -Eq 'DotKt: (compiling|lowering|emitting)' \
+	"$config/debug-noop.log" "$config/release-noop.log"; then
+	config_msg="a configuration-local no-op rebuild reran the compiler pipeline"
+fi
+
+if [[ -z "$config_msg" ]]; then
+	mv "$config/app/DebugConfig.kt" "$config/app/DebugRenamed.kt"
+	# `mv` preserves the old timestamp. Make the renamed source a real changed input, matching #50's deletion-safety
+	# contract: once a recompile is required, that configuration's BIR directory is rebuilt without stale files.
+	printf '\n' >> "$config/app/DebugRenamed.kt"
+	dotnet build "$config/app/app.ktproj" -c Debug --no-restore -v n --nologo >"$config/debug-rename.log" 2>&1 \
+		|| config_msg="Debug rebuild after source rename failed"
+fi
+if [[ -z "$config_msg" ]] && { [[ -e "$cfg_debug_root/bir/DebugConfig.bir.json" ]] \
+	|| [[ ! -f "$cfg_debug_root/bir/DebugRenamed.bir.json" ]] \
+	|| ! grep -q 'release-config-marker' "$cfg_release_root/bir/ReleaseConfig.bir.json"; }; then
+	config_msg="Debug rename/deletion cleanup damaged Debug or Release BIR state"
+fi
+
+if [[ -z "$config_msg" ]]; then
+	dotnet clean "$config/app/app.ktproj" -c Debug -v q --nologo >"$config/debug-clean.log" 2>&1 \
+		|| config_msg="Debug clean failed"
+fi
+if [[ -z "$config_msg" ]] && { [[ -e "$cfg_debug_root/bir" ]] || [[ -e "$cfg_debug_root/cir" ]] \
+	|| [[ -e "$cfg_debug_root/klib" ]] || [[ -e "$cfg_debug_root/dotkt-reference-klibs.rsp" ]] \
+	|| [[ -e "$cfg_debug_root/dotkt-compile-options.txt" ]] \
+	|| [[ ! -f "$cfg_release_root/bir/ReleaseConfig.bir.json" ]] \
+	|| [[ ! -f "$cfg_release_root/cir/ReleaseConfig.cir.json" ]] \
+	|| [[ ! -f "$cfg_release_root/klib/ConfigReference.klib" ]]; }; then
+	config_msg="Debug clean removed the wrong configuration or left Debug compiler state behind"
+fi
+
+if [[ -z "$config_msg" ]]; then
+	echo "PASS  ktproj-config-intermediate-isolation (concurrent Debug/Release, conditioned refs, no-op, rename, clean)"
+else
+	echo "FAIL  ktproj-config-intermediate-isolation: $config_msg"
+	for config_log in debug-build release-build debug-noop release-noop debug-rename debug-clean; do
+		[[ -f "$config/$config_log.log" ]] || continue
+		printf -- '--- %s.log ---\n' "$config_log"
+		grep -E 'DotKt:|error |Exception' "$config/$config_log.log" | tail -8 || true
+	done
+	fail=1
+fi
 
 # #192: CROSS-TARGET reference-asset selection (target RID != host RID), end to end through MSBuild.
 # A RID-impl package ships ONE assembly identity as several physical files — a RID-neutral `lib/` placeholder plus
@@ -255,9 +422,14 @@ KOTLIN
 rid_rc=0
 dotnet build "$rid/app/app.ktproj" -r "$rid_target" -v n --nologo >"$rid/build.log" 2>&1 || rid_rc=$?
 rid_asm="$rid/app/bin/Debug/net10.0/$rid_target/app.dll"
+rid_intermediate="$rid/app/obj/Debug/net10.0/$rid_target"
 rid_msg=""
 if (( rid_rc != 0 )); then
 	rid_msg="the -r $rid_target build failed (exit $rid_rc)"
+elif [[ ! -f "$rid_intermediate/bir/.stamp" || ! -f "$rid_intermediate/cir/.stamp" \
+	|| ! -d "$rid_intermediate/klib" || ! -f "$rid_intermediate/dotkt-reference-klibs.rsp" \
+	|| ! -f "$rid_intermediate/dotkt-compile-options.txt" ]]; then
+	rid_msg="compiler intermediates are not rooted under the RID-specific IntermediateOutputPath"
 elif ! grep -qF "ilemit runtime: 'DotKt.Tests.Rid.Exact' has 2 RID builds; selected runtimes/$rid_target/lib asset for target $rid_target" "$rid/build.log"; then
 	# Also guards the fixture itself: a group that degenerated to one candidate would let the build pass vacuously.
 	rid_msg="ilemit did not report selecting the runtimes/$rid_target/lib asset of DotKt.Tests.Rid.Exact out of 2 candidates"

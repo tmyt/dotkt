@@ -4,18 +4,13 @@
      (eng/KotlinClr.targets) imports it explicitly. Tool paths come from DotKt.Toolchain.props ($(DotKt*)). -->
 <Project>
   <PropertyGroup>
-    <DotKtOut>$(BaseIntermediateOutputPath)dotkt-bir</DotKtOut>
-    <DotKtCirOut>$(BaseIntermediateOutputPath)dotkt-cir</DotKtCirOut>
     <!-- Incremental stamps for the back-half (#134). The BIR/CIR dirs are glob OUTPUTS (a variable file set), so
          each back-half target keys its Inputs/Outputs off a stable .stamp instead of the dir glob: KotlinCompile's
-         $(DotKtOut)/.stamp bumps ONLY on a real recompile, so the whole chain (bir2cir -> ilemit) cascades exactly
-         when the frontend produced new BIR and no-ops otherwise. -->
+         $(DotKtIntermediateBirPath)/.stamp bumps ONLY on a real recompile, so the whole chain (bir2cir -> ilemit)
+         cascades exactly when the frontend produced new BIR and no-ops otherwise. -->
     <DotKtDll2KlibJobs Condition="'$(DotKtDll2KlibJobs)' == ''">$([System.Environment]::ProcessorCount)</DotKtDll2KlibJobs>
-    <DotKtReferenceKlibDir>$(BaseIntermediateOutputPath)dotkt-reference-klibs</DotKtReferenceKlibDir>
-    <DotKtReferenceKlibRsp>$(BaseIntermediateOutputPath)dotkt-reference-klibs.rsp</DotKtReferenceKlibRsp>
     <!-- Non-file compile options (raw kotc flags + MPP config) hashed into a manifest file so a change to an OPTION
          (not a source) still flips a timestamp and retriggers the incremental KotlinCompile (#50). -->
-    <DotKtOptionsManifest>$(BaseIntermediateOutputPath)dotkt-compile-options.txt</DotKtOptionsManifest>
     <!-- ilemit emits real CIL (Reflection.Emit) and must load each referenced type's RUNTIME (implementation)
          assembly — it takes its refs from @(ReferenceCopyLocalPaths) (the runtime set), NOT @(ReferencePath) (which
          resolves to a package's ref/ reference assembly — method-body-less; deriving a class from one fails with
@@ -26,21 +21,41 @@
     <CopyLocalLockFileAssemblies Condition="'$(CopyLocalLockFileAssemblies)' == ''">true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
+  <!-- The in-repo developer entry imports this file before Microsoft.NET.Sdk's final targets assign
+       $(IntermediateOutputPath). Expanding it in the top-level PropertyGroup would therefore freeze these values as
+       project-root-relative `bir`/`cir`/`klib`. Initialize them in the target graph, after the SDK has established
+       the configuration/TFM/RID-specific path. The guards keep the properties valid extension points without
+       retaining the old BaseIntermediateOutputPath-rooted aliases. -->
+  <Target Name="DotKtInitializeIntermediatePaths">
+    <PropertyGroup>
+      <DotKtIntermediateBirPath
+          Condition="'$(DotKtIntermediateBirPath)' == ''">$(IntermediateOutputPath)bir</DotKtIntermediateBirPath>
+      <DotKtIntermediateCirPath
+          Condition="'$(DotKtIntermediateCirPath)' == ''">$(IntermediateOutputPath)cir</DotKtIntermediateCirPath>
+      <DotKtReferenceKlibPath
+          Condition="'$(DotKtReferenceKlibPath)' == ''">$(IntermediateOutputPath)klib</DotKtReferenceKlibPath>
+      <DotKtReferenceKlibResponseFile
+          Condition="'$(DotKtReferenceKlibResponseFile)' == ''">$(IntermediateOutputPath)dotkt-reference-klibs.rsp</DotKtReferenceKlibResponseFile>
+      <DotKtCompileOptionsManifest
+          Condition="'$(DotKtCompileOptionsManifest)' == ''">$(IntermediateOutputPath)dotkt-compile-options.txt</DotKtCompileOptionsManifest>
+    </PropertyGroup>
+  </Target>
+
   <!-- Resolve references ONCE.  MSBuild/RAR owns selection and conflict resolution; the DotKt tools consume these
        exact files and never reconstruct the graph by scanning neighbouring directories.  The runtime set is
        narrowed only to DLL-shaped assets to avoid passing pdb/json files; managed-vs-native is decided from the PE
        CLI header by the shared tool-side reference catalog. -->
-  <Target Name="DotKtResolveReferenceSets" DependsOnTargets="ResolveReferences">
+  <Target Name="DotKtResolveReferenceSets" DependsOnTargets="DotKtInitializeIntermediatePaths;ResolveReferences">
     <ItemGroup>
       <_DotKtCompileReference Include="@(ReferencePath)" />
       <_DotKtRuntimeReference Include="@(ReferenceCopyLocalPaths)" Condition="'%(Extension)' == '.dll'" />
       <_DotKtKlibReference Include="@(ReferencePathWithRefAssemblies)"
                            Condition="'%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
-        <KlibPath>$(DotKtReferenceKlibDir)/%(Filename).klib</KlibPath>
+        <KlibPath>$(DotKtReferenceKlibPath)/%(Filename).klib</KlibPath>
       </_DotKtKlibReference>
       <_DotKtKlibReference Include="@(_DotKtCompileReference)"
                            Condition="'@(ReferencePathWithRefAssemblies)' == '' and '%(Extension)' == '.dll' and '%(Filename)' != 'DotKt.Private.Stdlib' and '%(Filename)' != 'DotKt.Stdlib'">
-        <KlibPath>$(DotKtReferenceKlibDir)/%(Filename).klib</KlibPath>
+        <KlibPath>$(DotKtReferenceKlibPath)/%(Filename).klib</KlibPath>
       </_DotKtKlibReference>
       <!-- The stdlib twins are never projected (the frontend KLIB is authoritative), but dll2klib still needs their
            CLR TypeDefs in its resolved universe to decode any delegate TypeRef by assembly identity and Invoke shape. -->
@@ -65,8 +80,8 @@
        case which an Inputs/Outputs item transform cannot observe once the removed item has left the current set. -->
   <Target Name="DotKtWriteReferenceKlibRsp"
           DependsOnTargets="DotKtResolveReferenceSets">
-    <MakeDir Directories="$(DotKtReferenceKlibDir)" />
-    <WriteLinesToFile File="$(DotKtReferenceKlibRsp)"
+    <MakeDir Directories="$(DotKtReferenceKlibPath)" />
+    <WriteLinesToFile File="$(DotKtReferenceKlibResponseFile)"
                       Lines="$(_DotKtAllKlibReferences)"
                       Overwrite="true"
                       WriteOnlyWhenDifferent="true" />
@@ -77,10 +92,10 @@
        does not regenerate the whole set when this aggregate MSBuild target runs. No shared cache participates. -->
   <Target Name="DotKtGenerateReferenceKlibs"
           DependsOnTargets="DotKtWriteReferenceKlibRsp"
-          Inputs="@(_DotKtKlibReference);@(_DotKtDelegateCatalogReference);$(DotKtDll2Klib);$(DotKtReferenceKlibRsp)"
+          Inputs="@(_DotKtKlibReference);@(_DotKtDelegateCatalogReference);$(DotKtDll2Klib);$(DotKtReferenceKlibResponseFile)"
           Outputs="@(_DotKtKlibReference->'%(KlibPath)')">
     <Message Importance="high" Text="DotKt: projecting $(_DotKtAllKlibReferenceCount) reference assembly/assemblies -> KLIB (jobs=$(DotKtDll2KlibJobs))" />
-    <Exec Command="dotnet &quot;$(DotKtDll2Klib)&quot; --out &quot;$(DotKtReferenceKlibDir)&quot; --jobs &quot;$(DotKtDll2KlibJobs)&quot; @&quot;$(DotKtReferenceKlibRsp)&quot;" />
+    <Exec Command="dotnet &quot;$(DotKtDll2Klib)&quot; --out &quot;$(DotKtReferenceKlibPath)&quot; --jobs &quot;$(DotKtDll2KlibJobs)&quot; @&quot;$(DotKtReferenceKlibResponseFile)&quot;" />
   </Target>
 
   <!-- Public extension contract for analysis/editor integrations. Consumers depend on this target instead of
@@ -130,11 +145,13 @@
     <_DotKtStdlibInput Include="$(DotKtStdlib)" Condition="!Exists('$(DotKtStdlib)/default/manifest') and Exists('$(DotKtStdlib)')" />
   </ItemGroup>
 
-  <!-- Materialize the non-file compile options into $(DotKtOptionsManifest) BEFORE KotlinCompile's incremental check so
+  <!-- Materialize the non-file compile options into $(DotKtCompileOptionsManifest) BEFORE KotlinCompile's incremental check so
        the manifest is a valid Input there (#50). The MPP flags are computed here (not in the compile body) so both the
        manifest and the compile Exec see the same $(DotKtMppFlags). WriteOnlyWhenDifferent keeps the file's timestamp
        stable when the options are unchanged (no spurious recompile) and flips it the instant any option changes. -->
-  <Target Name="DotKtComputeCompileOptions" Condition="'@(KotlinCompile)' != ''">
+  <Target Name="DotKtComputeCompileOptions"
+          DependsOnTargets="DotKtInitializeIntermediatePaths"
+          Condition="'@(KotlinCompile)' != ''">
     <!-- MPP (#119): when common sources are present, mark them with -Xcommon-sources and enable the common→platform
          module split (-Xmulti-platform) + cross-module expect/actual (-Xexpect-actual-classes) — the exact
          invocation the MPP NUnit producer exercises. All sources still pass POSITIONALLY (in @(KotlinCompile));
@@ -142,7 +159,7 @@
     <PropertyGroup Condition="'@(DotKtCommon)' != ''">
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;@(DotKtCommon->'%(FullPath)', ',')&quot;</DotKtMppFlags>
     </PropertyGroup>
-    <WriteLinesToFile File="$(DotKtOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
+    <WriteLinesToFile File="$(DotKtCompileOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
                       Lines="$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)')" />
   </Target>
 
@@ -150,19 +167,19 @@
        Incremental inputs (#50): besides the .kt sources, a recompile must also retrigger when the COMPILER changes
        ($(DotKtCompilerFingerprint) mtime = version proxy), the frontend KLIB changes ($(DotKtStdlib)), any reference KLIB or
        resolved reference DLL changes (@(_DotKtCompileReference)/
-       @(_DotKtRuntimeReference)), or a non-file compile OPTION changes ($(DotKtOptionsManifest)). DotKtResolveReferenceSets
+       @(_DotKtRuntimeReference)), or a non-file compile OPTION changes ($(DotKtCompileOptionsManifest)). DotKtResolveReferenceSets
        is a direct dependency so the @(_DotKt*Reference) items exist when these Inputs are evaluated. -->
   <Target Name="KotlinCompile" BeforeTargets="CoreCompile"
           DependsOnTargets="DotKtGenerateReferenceKlibs;DotKtResolveReferenceSets;DotKtComputeCompileOptions"
-          Inputs="@(KotlinCompile);$(DotKtCompiler);$(DotKtCompilerFingerprint);@(_DotKtStdlibInput);@(_DotKtFrontendMetadataInput);$(DotKtOptionsManifest);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
-          Outputs="$(DotKtOut)/.stamp">
-    <!-- Deletion-safety (#50): the BIR is globbed from $(DotKtOut), which was never cleaned, so a deleted/renamed .kt
+          Inputs="@(KotlinCompile);$(DotKtCompiler);$(DotKtCompilerFingerprint);@(_DotKtStdlibInput);@(_DotKtFrontendMetadataInput);$(DotKtCompileOptionsManifest);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
+          Outputs="$(DotKtIntermediateBirPath)/.stamp">
+    <!-- Deletion-safety (#50): the BIR is globbed from $(DotKtIntermediateBirPath), which was never cleaned, so a deleted/renamed .kt
          left a stale *.bir.json behind → the deleted class/function survived into the emitted DLL. Wiping the dir on
          every (already-deemed-necessary) recompile guarantees a fresh BIR set with no orphan artifact. This body only
          runs when the Inputs/Outputs check above deems a rebuild needed; the .stamp is recreated at the end and the
          csc placeholder by DotKtIlPlaceholder afterward, so incremental is preserved. -->
-    <RemoveDir Directories="$(DotKtOut)" />
-    <MakeDir Directories="$(DotKtOut)" />
+    <RemoveDir Directories="$(DotKtIntermediateBirPath)" />
+    <MakeDir Directories="$(DotKtIntermediateBirPath)" />
     <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
     <!-- $(DotKtKotcOptions): extra raw kotc flags a project may pass through (e.g. compiling the stdlib ITSELF needs
          -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command.
@@ -171,8 +188,8 @@
       <_DotKtKlibPathSeparator>$([System.IO.Path]::PathSeparator)</_DotKtKlibPathSeparator>
       <_DotKtFrontendClasspath>$(DotKtStdlib)$(_DotKtKlibPathSeparator)@(_DotKtKlibReference->'%(KlibPath)', '$(_DotKtKlibPathSeparator)')</_DotKtFrontendClasspath>
     </PropertyGroup>
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(_DotKtFrontendClasspath)&quot; -d &quot;$(DotKtOut)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)" />
-    <Touch Files="$(DotKtOut)/.stamp" AlwaysCreate="true" />
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(_DotKtFrontendClasspath)&quot; -d &quot;$(DotKtIntermediateBirPath)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)" />
+    <Touch Files="$(DotKtIntermediateBirPath)/.stamp" AlwaysCreate="true" />
   </Target>
 
   <!-- Give csc a trivial valid assembly to produce; ilemit overwrites it. The user's entry (e.g. AppKt) doesn't
@@ -181,59 +198,63 @@
     <PropertyGroup>
       <StartupObject Condition="'$(StartupObject)' != '' or '$(OutputType)' == 'Exe'">_DotKtPlaceholder</StartupObject>
     </PropertyGroup>
-    <MakeDir Directories="$(DotKtOut)" />
+    <MakeDir Directories="$(DotKtIntermediateBirPath)" />
     <!-- WriteOnlyWhenDifferent (#134): the placeholder body is a CONSTANT, so keep its mtime stable across no-op
          builds — otherwise its bumped timestamp forces CoreCompile (csc) to recompile every single build, defeating
          the whole incremental chain. It flips only if the constant itself ever changes. -->
-    <WriteLinesToFile File="$(DotKtOut)/_DotKtPlaceholder.cs" Overwrite="true" WriteOnlyWhenDifferent="true"
+    <WriteLinesToFile File="$(DotKtIntermediateBirPath)/_DotKtPlaceholder.cs" Overwrite="true" WriteOnlyWhenDifferent="true"
                       Lines="public static class _DotKtPlaceholder { public static void Main(string[] a) { } }" />
     <ItemGroup>
-      <Compile Include="$(DotKtOut)/_DotKtPlaceholder.cs" />
+      <Compile Include="$(DotKtIntermediateBirPath)/_DotKtPlaceholder.cs" />
     </ItemGroup>
   </Target>
 
-  <PropertyGroup>
-    <!-- A normal build followed by PublishAot/PublishTrimmed must not reuse a lowering that never requested the
-         foreign-star reflection warning. Give reflection-restricted lowering its own incremental output stamp;
-         both modes still touch the ordinary stamp consumed by the downstream emitter. -->
-    <_DotKtReflectionRestrictedArg Condition="'$(PublishAot)' == 'true' or '$(PublishTrimmed)' == 'true'">--reflection-restricted</_DotKtReflectionRestrictedArg>
-    <_DotKtBir2CirModeStamp>$(DotKtCirOut)/.stamp</_DotKtBir2CirModeStamp>
-    <_DotKtBir2CirModeStamp Condition="'$(_DotKtReflectionRestrictedArg)' != ''">$(DotKtCirOut)/.stamp.reflection-restricted</_DotKtBir2CirModeStamp>
-  </PropertyGroup>
+  <Target Name="DotKtComputeBir2CirModeStamp" DependsOnTargets="DotKtInitializeIntermediatePaths">
+    <PropertyGroup>
+      <!-- A normal build followed by PublishAot/PublishTrimmed must not reuse a lowering that never requested the
+           foreign-star reflection warning. Give reflection-restricted lowering its own incremental output stamp;
+           both modes still touch the ordinary stamp consumed by the downstream emitter. -->
+      <_DotKtReflectionRestrictedArg Condition="'$(PublishAot)' == 'true' or '$(PublishTrimmed)' == 'true'">--reflection-restricted</_DotKtReflectionRestrictedArg>
+      <_DotKtBir2CirModeStamp>$(DotKtIntermediateCirPath)/.stamp</_DotKtBir2CirModeStamp>
+      <_DotKtBir2CirModeStamp Condition="'$(_DotKtReflectionRestrictedArg)' != ''">$(DotKtIntermediateCirPath)/.stamp.reflection-restricted</_DotKtBir2CirModeStamp>
+    </PropertyGroup>
+  </Target>
 
-  <!-- Incremental (#134): re-lower ONLY when the frontend recompiled ($(DotKtOut)/.stamp bumps) or the bir2cir tool
-       itself changed (version proxy). A reference-set change already retriggers KotlinCompile (its Inputs include the
-       resolved refs) and thus the .stamp, so the cascade covers it. Keyed off the .stamp — not the *.bir.json glob —
-       because target-body items don't exist when MSBuild evaluates the Inputs, and the .stamp is the compile's
-       single stable up-to-date marker. Reflection-restricted mode has a distinct output stamp so changing publish
-       mode cannot suppress DOTKTSTAR001 through an ordinary-build cache hit. -->
-  <Target Name="DotKtBir2Cir" BeforeTargets="DotKtIlEmit" DependsOnTargets="KotlinCompile;DotKtResolveReferenceSets"
-          Inputs="$(DotKtOut)/.stamp;$(DotKtBir2Cir)" Outputs="$(_DotKtBir2CirModeStamp)">
+  <!-- Incremental (#134): re-lower ONLY when the frontend recompiled
+       ($(DotKtIntermediateBirPath)/.stamp bumps) or the bir2cir tool itself changed (version proxy). A reference-set
+       change already retriggers KotlinCompile (its Inputs include the resolved refs) and thus the .stamp, so the
+       cascade covers it. Keyed off the .stamp — not the *.bir.json glob — because target-body items don't exist when
+       MSBuild evaluates the Inputs, and the .stamp is the compile's single stable up-to-date marker.
+       Reflection-restricted mode has a distinct output stamp so changing publish mode cannot suppress DOTKTSTAR001
+       through an ordinary-build cache hit. -->
+  <Target Name="DotKtBir2Cir" BeforeTargets="DotKtIlEmit"
+          DependsOnTargets="KotlinCompile;DotKtResolveReferenceSets;DotKtComputeBir2CirModeStamp"
+          Inputs="$(DotKtIntermediateBirPath)/.stamp;$(DotKtBir2Cir)" Outputs="$(_DotKtBir2CirModeStamp)">
     <ItemGroup>
-      <_DotKtBir Include="$(DotKtOut)/*.bir.json" />
+      <_DotKtBir Include="$(DotKtIntermediateBirPath)/*.bir.json" />
       <!-- Inputs only.  The exact compile-reference universe was materialized by DotKtResolveReferenceSets. -->
     </ItemGroup>
-    <RemoveDir Directories="$(DotKtCirOut)" />
-    <MakeDir Directories="$(DotKtCirOut)" />
+    <RemoveDir Directories="$(DotKtIntermediateCirPath)" />
+    <MakeDir Directories="$(DotKtIntermediateCirPath)" />
     <Message Importance="high" Text="DotKt: lowering BIR -> CIR" />
-    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtCirOut)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; $(_DotKtReflectionRestrictedArg) @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
-    <Touch Files="$(DotKtCirOut)/.stamp;$(_DotKtBir2CirModeStamp)" AlwaysCreate="true" />
+    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtIntermediateCirPath)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; $(_DotKtReflectionRestrictedArg) @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
+    <Touch Files="$(DotKtIntermediateCirPath)/.stamp;$(_DotKtBir2CirModeStamp)" AlwaysCreate="true" />
   </Target>
 
   <!-- After CoreCompile, overwrite csc's (placeholder) assembly with one emitted directly as CIL from CIR. The exact
        compile reference set owns external metadata identities; copy-local refs only disambiguate runtime twins and
        provide deployable implementations. -->
-  <!-- Incremental (#134): re-emit ONLY when the CIR changed ($(DotKtCirOut)/.stamp), the ilemit tool changed, or a
+  <!-- Incremental (#134): re-emit ONLY when the CIR changed ($(DotKtIntermediateCirPath)/.stamp), the ilemit tool changed, or a
        runtime reference dll changed (a cross-into dependency's new build). Output is the emitted assembly in obj/;
        on a no-op build CoreCompile leaves it untouched (the placeholder .cs is now WriteOnlyWhenDifferent) so it
        stays newer than the CIR stamp and ilemit skips — the emitted dll's timestamp no longer churns every build,
        so a downstream C# ProjectReference stops rebuilding. DotKtResolveReferenceSets is a dependency so the
        @(_DotKtRuntimeReference) items exist when these Inputs are evaluated. -->
   <Target Name="DotKtIlEmit" AfterTargets="CoreCompile" DependsOnTargets="DotKtBir2Cir;DotKtResolveReferenceSets"
-          Inputs="$(DotKtCirOut)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
+          Inputs="$(DotKtIntermediateCirPath)/.stamp;$(DotKtIlEmit);@(_DotKtCompileReference);@(_DotKtRuntimeReference)"
           Outputs="$(IntermediateOutputPath)$(TargetName)$(TargetExt)">
     <ItemGroup>
-      <_DotKtCir Include="$(DotKtCirOut)/*.cir.json" />
+      <_DotKtCir Include="$(DotKtIntermediateCirPath)/*.cir.json" />
       <!-- ilemit's runtime refs are the implementation assemblies from the copy-local set: the runtime stdlib
            (DotKt.Stdlib, real kotlin.* bodies — resolves kotlin.io.ConsoleKt.println etc.), plus every user
            PackageReference / ProjectReference / explicit <Reference> runtime dll a call may cross into. The
@@ -258,8 +279,8 @@
   </Target>
 
   <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
-  <Target Name="DotKtClean" BeforeTargets="CoreClean">
-    <RemoveDir Directories="$(DotKtOut);$(DotKtCirOut);$(DotKtReferenceKlibDir)" />
-    <Delete Files="$(DotKtReferenceKlibRsp);$(DotKtOptionsManifest)" />
+  <Target Name="DotKtClean" BeforeTargets="CoreClean" DependsOnTargets="DotKtInitializeIntermediatePaths">
+    <RemoveDir Directories="$(DotKtIntermediateBirPath);$(DotKtIntermediateCirPath);$(DotKtReferenceKlibPath)" />
+    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompileOptionsManifest)" />
   </Target>
 </Project>
