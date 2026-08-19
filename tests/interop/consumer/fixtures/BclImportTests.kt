@@ -24,6 +24,16 @@ import System.Math                         // ktproj-import — façade-free raw
 // il-dualrep : the stdlib (kotlin.text) view of the SAME CLR type, in the same program.
 fun bclImportUseKt(sb: kotlin.text.StringBuilder): String = sb.toString()
 
+// #345: a platform/flexible value is still a bare CLR value when passed through a nullable-generic bound. The
+// constrained owner closes to BclImportPlatformBoundSink<object>, so the use site must box this Oblivious(Int) source.
+private interface BclImportPlatformBoundSink<T> { fun accept(x: T): String }
+private class BclImportPlatformIntSink : BclImportPlatformBoundSink<Int?> {
+    override fun accept(x: Int?): String = "i:" + (x?.toString() ?: "none")
+}
+private fun <T : BclImportPlatformBoundSink<Int?>> bclImportUsePlatformBound(
+    sink: T, source: ThreadLocal<Int>
+): String = sink.accept(source.Value)
+
 class BclImportTests {
     // il-alias: `import System.Text.StringBuilder as SB` must inject the type AND bind the alias `SB`.
     @TestAttribute
@@ -73,6 +83,7 @@ class BclImportTests {
         val ti = ThreadLocal<Int>()
         val n: Int = ti.Value                          // value-type platform default -> 0
         assertEquals(0, n)                             // 0
+        assertEquals("i:0", bclImportUsePlatformBound(BclImportPlatformIntSink(), ti))
         assertFalse(ti.Value == null)                  // False — a bare value type, `== null` is statically false
         val e: Int = ti.Value ?: 99                    // elvis over a non-null bare value -> the value itself
         assertEquals(0, e)                             // 0
