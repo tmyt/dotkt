@@ -26,6 +26,12 @@ static class BirTypeLowering
     // as proof that a CLR generic TypeDef exists.
     internal static bool ErasesGenericApplicationToNonGenericClassifier(string fqn) => fqn == "kotlin.Enum";
 
+    // A caller authoring a CLR-bound generic owner before the argument-erasure and type-lowering boundary must retain
+    // the semantic head for applications whose physical classifier depends on those final arguments. Otherwise the
+    // later pass sees only an already-physical generic name and cannot apply this file's non-generic-head rule.
+    internal static bool GenericAliasHeadDependsOnLoweredArguments(string bcl) =>
+        bcl == "System.IComparable";
+
     // The `Span<T>` identity pair, in ONE place: kotc emits the faithful `kotlin.clr.Span` intrinsic name and this
     // pass owns the BCL substitution below. Passes that run BEFORE the lowering and must reason about the CLR type
     // (ReferenceMetadataIndex.IsByRefLikeFqn — `System.Span<T>` is a `ref struct`) canonicalize through these two
@@ -229,14 +235,12 @@ static class BirTypeLowering
         // BCL (StringBuilder/Regex/IComparable/…) -> the BCL FQN. Otherwise the name stands: user / stdlib /
         // in-assembly names are unchanged, trusted external DotKt identities become their physical metadata names.
         if (loweredArgs == null) return new TypeNode.Fqn(bcl ?? PhysicalName(kotlinFqn));
+        if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn), loweredArgs);
         // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant; no value
-        // type is IComparable<object>). A concrete arg keeps the generic form. Accept both the semantic alias and
-        // its already-physical head: representation passes may author a CLR call owner before this final lowering,
-        // and that owner must make the same collapse decision as an ordinary declaration/value slot.
-        if ((bcl ?? kotlinFqn) == "System.IComparable" && loweredArgs.Length == 1
+        // type is IComparable<object>). A concrete arg keeps the generic form.
+        if (bcl == "System.IComparable" && loweredArgs.Length == 1
             && ComparableApplicationCollapses(loweredArgs[0]))
             return new TypeNode.Fqn("System.IComparable");
-        if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn), loweredArgs);
         // ARG-POSITION VARIANCE COLLAPSE (Root V): in a storage slot a covariant readonly collection interface ->
         // its INVARIANT sibling, so a concrete invariant value inhabits the nested slot EXACTLY. The head keeps the
         // covariant alias; CollectionViewCallCoercion materializes any resulting call-site seam as a CIR cast.
@@ -912,8 +916,6 @@ static class BirTypeLowering
             // (the CLR `where T : Enum` idiom) or a real enum type argument violates the constraint (VerificationException).
             // Drop the self-referential type arg — System.Enum is non-generic.
             if (head == "kotlin.Enum") return "System.Enum";
-            if (head == "System.IComparable" && (args == "object" || args == "System.Object"))
-                return "System.IComparable";
             if (!head.StartsWith("clr", StringComparison.Ordinal) && AliasBcl(head) is string genericBcl)
             {
                 // `Comparable<*>` / `Comparable<Any?>` (the star / Any-projected comparable — kotc token
