@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **MSBuild intermediates are isolated by configuration, target framework, and runtime identifier (#467).** BIR,
+  CIR, projected reference KLIBs, response/options files, stamps, and the generated C# placeholder now live under
+  `$(IntermediateOutputPath)`. Concurrent Debug/Release builds no longer delete or consume each other's compiler
+  state, and cleaning one configuration leaves the others intact.
+
 - **CLR explicit interface implementations no longer become ordinary Kotlin class APIs (#463).** `dll2klib`
   represents method, property, indexer, and event satisfaction as hidden fake overrides, preserving colliding and
   constructed generic slots. A Kotlin subclass can re-list an interface and provide a new exact `MethodImpl`; a
@@ -2354,7 +2359,7 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   skips it.** `DotKtBir2Cir`/`DotKtIlEmit`/`DotKtRetarget` had no `Inputs`/`Outputs`, so every `dotnet build`
   re-lowered, re-emitted and re-retargeted, rewriting the output dll's timestamp and forcing every downstream C#
   `ProjectReference` to rebuild. Each target now keys `Inputs`/`Outputs` off a stable `.stamp` (the compile's
-  `$(DotKtOut)/.stamp` cascades through `$(DotKtCirOut)/.stamp` to the emitted dll and a retarget stamp), and the
+  BIR `.stamp` cascades through the CIR `.stamp` to the emitted dll and a retarget stamp), and the
   `_DotKtPlaceholder.cs` write became `WriteOnlyWhenDifferent` (it was bumping its mtime every build and forcing
   `CoreCompile` to recompile). A no-op build now converges.
 - **packaging ([tmyt/dotkt#135], area:packaging): the Windows compiler launcher is selected by OS.**

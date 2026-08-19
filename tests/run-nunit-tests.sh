@@ -127,11 +127,11 @@ for proj in "${PROJECTS[@]}"; do
 	# producer/consumer bug cannot make the behavioral test pass while either interchange boundary is malformed.
 	if [[ "$proj" == "tests/roundtrip/consumer" ]]; then
 		producer_dll="$ROOT/tests/roundtrip/producer/bin/$CONFIGURATION/net10.0/RoundtripProducer.dll"
-		producer_klib="$dir/obj/dotkt-reference-klibs/RoundtripProducer.klib"
-		producer_bir="$ROOT/tests/roundtrip/producer/obj/dotkt-bir/DispatchAndCompanion.bir.json"
-		producer_cir="$ROOT/tests/roundtrip/producer/obj/dotkt-cir/DispatchAndCompanion.cir.json"
-		ownership_bir="$ROOT/tests/roundtrip/producer/obj/dotkt-bir/NestedOwnership.bir.json"
-		ownership_cir="$ROOT/tests/roundtrip/producer/obj/dotkt-cir/NestedOwnership.cir.json"
+		producer_klib="$dir/obj/$CONFIGURATION/net10.0/klib/RoundtripProducer.klib"
+		producer_bir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/DispatchAndCompanion.bir.json"
+		producer_cir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/DispatchAndCompanion.cir.json"
+		ownership_bir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/NestedOwnership.bir.json"
+		ownership_cir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/NestedOwnership.cir.json"
 		consumer_dll="$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll"
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			"$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" "$ownership_bir" "$ownership_cir" "$consumer_dll" \
@@ -169,7 +169,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 	fi
 	if [[ "$proj" == "tests/coroutines" ]]; then
-		coroutine_cir="$dir/obj/dotkt-cir/SuspendDispatchTests.cir.json"
+		coroutine_cir="$dir/obj/$CONFIGURATION/net10.0/cir/SuspendDispatchTests.cir.json"
 		if python3 "$ROOT/tests/coroutines/assert-suspend-super-cir.py" "$coroutine_cir" \
 			>"$ROOT/build/nunit-$name.suspend-super-cir.log" 2>&1; then
 			echo "  suspend super-call cold-entry CIR dispatch OK"
@@ -180,7 +180,7 @@ for proj in "${PROJECTS[@]}"; do
 	fi
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
-		interop_klib="$dir/obj/dotkt-reference-klibs/InteropProducer.klib"
+		interop_klib="$dir/obj/$CONFIGURATION/net10.0/klib/InteropProducer.klib"
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--klib-csharp-extension-shape "$interop_klib" C1Net C1Net.Ext tripled \
 			>"$ROOT/build/nunit-$name.extension-shape.log" 2>&1; then
