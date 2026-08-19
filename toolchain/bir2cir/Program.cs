@@ -1261,6 +1261,10 @@ sealed class Pipeline
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, localBasicEnums, emittedLocalTypes);
+            // Property nodes reveal whether they denote an accessor or a public field only after CLR member
+            // resolution. Convert the accessor subset on type-variable receivers to constrained calls now, retaining
+            // the exact memberRef just resolved; fields keep their distinct load/store representation.
+            ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(new[] { lowered });
             // An applied attribute is a call into the assembly that declares it, so its constructor is resolved
             // like any other external member. After Apply, whose statics it shares.
             ClrMemberResolution.ResolveAttributeCtors(lowered, refs);

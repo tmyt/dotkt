@@ -347,9 +347,17 @@ static class CharSeqStringLowering
         }
     }
 
-    // Lower a declaration's own type tokens: params[].type, ret, and a bare `type` (a field). Never a call `sig`.
+    // Lower a declaration's own type tokens: generic constraints, params[].type, ret, and a bare `type` (a field).
+    // Never a call `sig`. A constraint is part of the emitted CLR declaration just as much as a parameter is: leaving
+    // `T : dotkt$CharSequence` behind while rewriting `t.length` to String.Length creates a method that accepts no
+    // String instantiation and whose body calls a String member on an unrelated !!T.
     static void LowerDeclTypes(JsonObject node)
     {
+        if (node["typeParams"] is JsonArray typeParams)
+            foreach (var typeParam in typeParams.OfType<JsonObject>())
+                if (typeParam["constraints"] is JsonArray constraints)
+                    for (var i = 0; i < constraints.Count; i++)
+                        if (IsCharSeqSlot(constraints[i])) constraints[i] = LowerSlot(constraints[i]);
         if (node["params"] is JsonArray ps)
             foreach (var p in ps)
                 if (p is JsonObject po && IsCharSeqSlot(po["type"])) po["type"] = LowerSlot(po["type"]);

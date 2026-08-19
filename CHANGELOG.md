@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **CLR properties accessed through a type-parameter receiver now emit verifier-valid dispatch (#325).** Interface
+  accessors use `constrained.` for both reads and writes, while non-virtual class accessors use the receiver's resolved
+  class constraint. Generic `CharSequence` constraints stay aligned when that app-level representation becomes
+  `System.String`, including compiler-generated private-access forwarders.
+
 - **Constrained calls through nullable-value generic bounds now widen arguments to the bound's physical slot
   (#345).** Once bir2cir closes a type-parameter receiver's interface owner, it applies the same
   `Subst(Erase(declared slot), owner arguments)` rule as other nullable-generic calls. A value passed through a bound
