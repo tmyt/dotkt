@@ -2188,8 +2188,8 @@ static class MemberCallSubstitution
     // A clrInstance / clrStatic node. A call carrying explicit Kotlin property identity emits clrPropGet/clrPropSet on
     // the resolved bare CLR Property name; otherwise this is a plain method call. A standalone function bound to a
     // property is routed explicitly by @ClrProperty (Rule 2p) before this node is built.
-    // Prefix `byref:` onto the argTypes at each @ClrRefArgument position (idempotent), so ilemit resolves the `ref`/`out`
-    // BCL overload and emits the address-load for that arg (the byref shape a `ref`/`out` parameter needs).
+    // Wrap argTypes at each @ClrRefArgument position in a structured ByRef node (idempotent), so ilemit resolves the
+    // `ref`/`out` BCL overload and emits the address-load for that arg.
     static void WrapByref(JsonArray argTypes, int[] byrefPositions)
     {
         if (byrefPositions == null) return;

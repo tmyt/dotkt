@@ -852,7 +852,7 @@ sealed partial class ReferenceMetadataIndex
     // (BirTypeLowering decomposes it to a real array only later), so without this collapse a primitive-array receiver
     // would key as "kotlin.IntArray" and never match the ref.dll's "[]" candidate — leaving `intArrayOf(..).toList()`
     // owner-null AND its return type unresolved (#153). generic `Array<T>` already reaches "[]" (its sig is a TypeNode.Array).
-    // (ParamKey's `array:i32` is a DIFFERENT canonicalization for @ClrIntrinsic sig matching — not conflated here.)
+    // (TypeKey's structured Array(Int32) identity is a different key space — not conflated here.)
     public static string RecvKeyOfFqn(string fqnName) =>
         BirTypeLowering.PrimArrayElem.ContainsKey(fqnName) ? "[]" : BareOwnerFqn(fqnName);
 
@@ -2144,7 +2144,7 @@ sealed partial class ReferenceMetadataIndex
     }
 
     // Whether this exact declaration overload carries any authored member-level CLR binding. This is intentionally
-    // stricter than the individual substitution lookups, whose single-candidate fallback supports legacy call sites:
+    // stricter than the coarser name/arity lookups used where current BIR does not carry a complete declaration vector:
     // deciding whether a nested companion call may cross onto its aliased semantic outer must never let a differently
     // shaped bound overload capture an intrinsic-less real carrier body of the same Kotlin name. Generic arity and the
     // complete declaration vector are both part of the identity; a same-name/same-arity sibling is not evidence.
@@ -2343,7 +2343,8 @@ sealed partial class ReferenceMetadataIndex
     public static TypeKey ParamKey(TypeNode t) => ParamKey(t, relaxed: false);
 
     // ParamKey off a structured JSON type slot.
-    public static TypeKey ParamKey(JsonNode typeSlot) => ParamKey(TypeNode.Parse(typeSlot.ToJsonString()));
+    public static TypeKey ParamKey(JsonNode typeSlot) =>
+        TypeJson.Read(typeSlot) is { } type ? ParamKey(type) : null;
 
     public static SignatureKey SignatureKeyOf(JsonArray signature, bool relaxed = false) =>
         new(signature.Select(type => ParamKey(TypeNode.Parse(type!.ToJsonString()), relaxed)));
@@ -2371,9 +2372,8 @@ sealed partial class ReferenceMetadataIndex
 
     // Overload-disambiguated variant: a top-level @ClrIntrinsic name that binds to DIFFERENT BCL statics per overload
     // — kotlin.math `sqrt`/`abs`/`pow`/... -> System.Math.* for Double/Int/Long but System.MathF.* for Float. Keyed by
-    // name|<ParamKey-joined signature> so a call resolves the EXACT intrinsic overload (and a non-intrinsic sibling
-    // overload, e.g. `Double.pow(Int)`, correctly MISSES here and falls through to its real Kotlin body). `sigKey` is
-    // the call's ParamKey-normalized signature. This is what lets the by-name-first-wins map stop shadowing MathF.
+    // name plus the structural signature key resolves the EXACT intrinsic overload (and a non-intrinsic sibling,
+    // e.g. `Double.pow(Int)`, correctly misses and falls through to its real Kotlin body).
     public bool TryTopLevelIntrinsicBySig(string funName, SignatureKey sigKey, out string fqStatic) =>
         _topLevelIntrinsicsBySig.TryGetValue((funName, sigKey), out fqStatic);
 
@@ -2645,7 +2645,7 @@ sealed partial class ReferenceMetadataIndex
         // unsigned specialized arrays AND the generic Array<T> all share "[]", so the plain recvKey loop below would pin
         // the FIRST array overload (the signed generic `toList<T>(T[])`) for EVERY array call, miscompiling an unsigned
         // `ubyteArrayOf(..).toList()` onto _ArraysKt's uninstantiated generic. The fine first-param ParamKey pins the
-        // exact file-class+overload (UByteArray -> "array:byte" -> UArraysKt). Only "[]" is lossy; a normal owner recvKey
+        // exact file-class+overload (UByteArray -> Array(UInt8) -> UArraysKt). Only "[]" is lossy; a normal owner recvKey
         // is already exact, so gate on it to leave every non-array resolution byte-identical. (#153)
         if (recvKey == "[]" && firstParamKey != null)
             foreach (var c in cands)
@@ -2701,9 +2701,9 @@ sealed partial class ReferenceMetadataIndex
     // The declared RETURN type of a bound member (owner.name, matched by arg count then by name), from the ref.dll —
     // used by StaticType (#59) to recover a call / field read whose BIR node carries NO `ret` (kotc emits `ret` only for
     // a GENERIC call). null when the owner/member is unknown or its return type was not structurable (a delegate/gp).
-    // `firstParamKey` (the call's first-arg ParamKey) disambiguates a same-name/same-arity overload set that a coarse
+    // `firstParamKey` (the call's structural first-argument key) disambiguates a same-name/same-arity overload set that a coarse
     // name+count match would resolve to the WRONG sibling: the primitive-array `IntArray.toList` (first param `int[]` ->
-    // "array:i32", returning `List<Int>`) vs the generic `Array<out T>.toList` (first param `Array<T>` -> "array:gp",
+    // Array(Int32), returning `List<Int>`) vs the generic `Array<out T>.toList` (first param Array(GenericParameter),
     // returning `List<Tv>`) — both in ArraysKt. Picking the generic sibling's `List<Tv>` leaves the element unbound and
     // erases it to `object`, so `println(intArrayOf(1,2).toList())` wrapped in clrCollToString<object> then rejects the
     // `IReadOnlyList<int32>` stack (#153). PREFER the first-param-key match; fall back to the coarse first-match when no
@@ -4025,7 +4025,7 @@ sealed partial class ReferenceMetadataIndex
                             var ps = method.GetParameters();
                             var rk = ps.Length >= 1 ? RecvKey(ps[0].ParameterType) : "";
                             // The FINE first-param key (ParamKey space): distinguishes the array overloads a coarse "[]"
-                            // recvKey collapses (IntArray->"array:i32", UByteArray->"array:byte", Array<T>->"array:gp") so
+                            // recvKey collapses arrays, so the structural key distinguishes IntArray, UByteArray, and Array<T>
                             // owner attribution pins the RIGHT file-class+overload (#153 unsigned-array miscompile).
                             var pk = ps.Length >= 1 ? ReceiverParamKey(ps[0].ParameterType) : null;
                             if (!metadata.TopLevelStatics.TryGetValue(method.Name, out var lst))
@@ -5240,7 +5240,7 @@ sealed partial class ReferenceMetadataIndex
 
     // The PARAMETER positions (0-based, over the method's declared params) marked @ClrRefArgument — a plain-typed
     // parameter the bound BCL member takes BY REFERENCE (`ref`/`out`). The substituted call wraps these argTypes
-    // positions `byref:` so ilemit resolves the ref/out overload + emits the address-load. Empty when none.
+    // positions in ByRef nodes so ilemit resolves the ref/out overload + emits the address-load. Empty when none.
     static int[] ByrefPositionsOf(MethodBase method)
     {
         var ps = method.GetParameters();
@@ -5380,22 +5380,19 @@ sealed partial class ReferenceMetadataIndex
         return DottedFqn(StripGenericArity(def.FullName ?? def.Name));
     }
 
-    // A method's full ParamKey-normalized signature ("f64", "f64,f64", "i32", ...), used to overload-disambiguate a
-    // top-level @ClrIntrinsic (sqrt(Double) vs sqrt(Float); pow(Double,Double) intrinsic vs pow(Double,Int) real-body).
-    // Runs each param's TypeName through ParamKey so the ref.dll declaration and the call's kotc `sig` agree.
+    // A method's structural comparison signature, used to overload-disambiguate a top-level @ClrIntrinsic
+    // (sqrt(Double) vs sqrt(Float); pow(Double,Double) intrinsic vs pow(Double,Int) real-body).
     static SignatureKey SigKeyOf(ParameterInfo[] ps, bool relaxed = false) =>
         new(ps.Select(p => ParamKey(p.ParameterType, relaxed)));
 
-    /// A signature key with every position [ParamKey] could not FOLD collapsed to `ref`. The two sides of a
+    /// A signature key with every nominal position that cannot be folded collapsed to [TypeKeyKind.Reference]. The two sides of a
     /// @KotlinDefault lookup describe the same parameter in DIFFERENT spaces — a call site carries kotc's pre-lowering
     /// Kotlin type (`kotlin.collections.List`), a reference assembly its lowered CLR form
-    /// (`System.Collections.Generic.IReadOnlyList`) — so only a token from [ParamKey]'s fold table is comparable, and
+    /// (`System.Collections.Generic.IReadOnlyList`) — so only a structurally folded kind is comparable, and
     /// anything else has to collapse. That still separates an overload differing in a folded position
     /// (`f(String, String)` from `f(String, List&lt;String&gt;)`), which is what the exact key cannot do here. Two
     /// overloads differing only between two DIFFERENT class types collapse together, are recorded as a conflict, and are
     /// refused rather than guessed.
-    // Every token [ParamKey] can produce for a type it FOLDED — i.e. one whose two spellings it made equal. A token
-    // outside this set is a class identity that only one of the two spaces spells that way.
     static bool IsValueKey(TypeKey key) => key.Kind is
         TypeKeyKind.Int8 or TypeKeyKind.Int16 or TypeKeyKind.Int32 or TypeKeyKind.Int64 or
         TypeKeyKind.Float32 or TypeKeyKind.Float64 or TypeKeyKind.Boolean or TypeKeyKind.Char or
@@ -5765,7 +5762,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<(string Name, ReferenceMetadataIndex.SignatureKey Signature), string> TopLevelIntrinsicsBySig = new();
     public readonly HashSet<string> AmbiguousTopLevelIntrinsics = new(StringComparer.Ordinal);
     // Top-level @ClrIntrinsic fun name -> the 0-based parameter positions its bound BCL static takes BY REFERENCE
-    // (@ClrRefArgument). The substituted clrStatic wraps these argTypes positions `byref:` (tryParseInt32's `out result`,
+    // (@ClrRefArgument). The substituted clrStatic wraps these argTypes positions in ByRef nodes (tryParseInt32's `out result`,
     // Interlocked's `ref location`, Math.DivRem's `out remainder`). Absent when the fun has no byref parameter.
     public readonly Dictionary<string, int[]> TopLevelIntrinsicByref = new(StringComparer.Ordinal);
     // Bare-@ClrIntrinsic extension fun, keyed "funName|recvKey" (recvKey = the receiver/first-param type) -> the BCL
