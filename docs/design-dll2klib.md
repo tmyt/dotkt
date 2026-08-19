@@ -76,7 +76,7 @@ For every input:
 ```text
 <reference-directory>/<AssemblyName>.dll
     ->
-$(IntermediateOutputPath)klib/<AssemblyName>.klib
+    $(IntermediateOutputPath)klib/<AssemblyName>.klib
 ```
 
 The output is project-local. A shared cache is deliberately not used because
