@@ -592,15 +592,12 @@ static class MemberCallSubstitution
         }
     }
 
-    // The newClr's ctor-overload key. kotc emits the ctor's DECLARED param types on the `new` node's `argTypes`, but they
-    // reference the class's OWN type parameters (`ArrayList<E>`'s copy ctor -> `Collection[gp:E]`). Substitute those with
-    // the instantiation's type args (`ArrayList[kotlin.Int]` => E:=kotlin.Int) so the lowered argType is a RESOLVABLE,
-    // precise overload key (`IReadOnlyCollection[int]`) — this disambiguates List's `IEnumerable<T>` ctor from its `int`
-    // capacity ctor (a bare `object`/unbound type arg matches neither, so ilemit mis-picked `List(int)` ->
-    // InvalidProgramException). The 2nd ctor arg is a Float (the JVM loadFactor idiom).
+    // The second constructor argument is a Float for the JVM load-factor idiom.
     static bool IsFloatArg(JsonNode n) =>
         TypeNode.Parse(n.ToJsonString()) is TypeNode.Fqn { Args: null, Name: "kotlin.Float" or "float" };
 
+    // The current `new` shape states the exact constructor parameter vector in `argTypes`. Keep it as the newClr
+    // overload key; deriving it from argument expressions would reconstruct a declaration fact the producer owns.
     static JsonArray CtorArgTypes(JsonObject node, JsonArray args)
     {
         var declared = node["argTypes"]!.AsArray();

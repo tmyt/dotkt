@@ -364,9 +364,6 @@ sealed partial class Emitter
             ? SlotName(ownerType)
             : SlotName(member.GetProperty("owner"));
 
-    // ClrRef (generic-aware type resolution) that returns null instead of throwing.
-    Type TryResolveClr(string spec) { try { return ClrRef(spec); } catch { return null; } }
-
     // MapType (structured-TypeNode resolution) that returns null instead of throwing.
     Type TryMapType(JsonElement e) { try { return MapType(e); } catch { return null; } }
 

@@ -89,9 +89,6 @@ static class RangeMembershipLowering
         var readLo = Bind(lo, loType, "lo", site, stmts);
         var readHi = Bind(hi, hiType, "hi", site, stmts);
         var readX = Bind(x, xType, "in", site, stmts);
-        // A needed slot type was absent — a mis-typed temp is invalid IL, so leave the real `contains` dispatch in
-        // place (it evaluates both bounds and the subject in the same order) rather than guess.
-        if (readLo == null || readHi == null || readX == null) return;
 
         var core = new JsonObject
         {
@@ -111,14 +108,12 @@ static class RangeMembershipLowering
 
     // One operand of the membership, rendered so the `cond` may read it: the operand itself when re-reading it is
     // order-immune, else a read of a fresh `__range<role>$N` temp appended to `stmts` (so it evaluates where Kotlin
-    // evaluates it). Null iff a temp is required and `slotType` — the frontend-resolved type of the slot the operand
-    // fills — is missing, which is the caller's signal to abandon the fast path.
+    // evaluates it). The current BIR shape carries the frontend-resolved type of every slot that may need a temp.
     static JsonNode Bind(JsonNode value, JsonNode slotType, string role, int site, JsonArray stmts)
     {
         if (ValueStability.IsReReadable(value)) return value;
-        TypeNode.Parse(slotType!.ToJsonString());
         var name = "__range" + role + "$" + site;
-        stmts.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = slotType.DeepClone(), ["init"] = value.DeepClone() });
+        stmts.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = slotType!.DeepClone(), ["init"] = value.DeepClone() });
         return new JsonObject { ["k"] = "local", ["name"] = name };
     }
 
