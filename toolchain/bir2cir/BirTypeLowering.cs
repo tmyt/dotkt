@@ -26,6 +26,12 @@ static class BirTypeLowering
     // as proof that a CLR generic TypeDef exists.
     internal static bool ErasesGenericApplicationToNonGenericClassifier(string fqn) => fqn == "kotlin.Enum";
 
+    // A caller authoring a CLR-bound generic owner before the argument-erasure and type-lowering boundary must retain
+    // the semantic head for applications whose physical classifier depends on those final arguments. Otherwise the
+    // later pass sees only an already-physical generic name and cannot apply this file's non-generic-head rule.
+    internal static bool GenericAliasHeadDependsOnLoweredArguments(string bcl) =>
+        bcl == "System.IComparable";
+
     // The `Span<T>` identity pair, in ONE place: kotc emits the faithful `kotlin.clr.Span` intrinsic name and this
     // pass owns the BCL substitution below. Passes that run BEFORE the lowering and must reason about the CLR type
     // (ReferenceMetadataIndex.IsByRefLikeFqn — `System.Span<T>` is a `ref struct`) canonicalize through these two

@@ -502,6 +502,17 @@ static partial class NullableTvErasureCallRealign
     // `Ref<Nullable<int32>>` are unrelated invariant reified generics — and is left to the read-side derivation.
     static JsonNode CastForTarget(JsonNode value, TypeNode src, TypeNode target,
         bool exactPropertyTarget = false)
+        => CastForTarget(value, src, target, exactPropertyTarget, _isValue);
+
+    // A late pass that first acquires its physical slot after the main nullable-generic walk may still use the exact
+    // same object-erasure seam. The caller supplies the pipeline's value-type oracle explicitly so this helper carries
+    // no ordering dependency on Apply's per-run state.
+    internal static JsonNode CastForErasedObjectSlot(
+        JsonNode value, TypeNode src, TypeNode target, Func<string, bool> isValue)
+        => CastForTarget(value, src, target, exactPropertyTarget: false, isValue);
+
+    static JsonNode CastForTarget(JsonNode value, TypeNode src, TypeNode target,
+        bool exactPropertyTarget, Func<string, bool> isValue)
     {
         if (value is not JsonObject vo || src == null || target == null || src.Equals(target)) return null;
         // A compiler-generated mutable-property-reference adapter can expose `value: kotlin.Any` even though its
@@ -511,7 +522,7 @@ static partial class NullableTvErasureCallRealign
         var srcObj = IsBareObject(src) || exactPropertyTarget && IsSemanticObject(src);
         var tgtObj = IsBareObject(target);
         if (srcObj == tgtObj) return null;                                   // neither side is the erased form
-        if (srcObj ? IsVoidish(target) : !NeedsObjectSeam(src)) return null;
+        if (srcObj ? IsVoidish(target) : !NeedsObjectSeam(src, isValue)) return null;
         // A node that never yields a value (a `throw` in value position, which is TERMINATED where it stands) has
         // nothing to convert, and wrapping it would state a stack value the emitter must then produce.
         if (Str(vo["k"]) is "throwExpr" or "throw") return null;
@@ -559,11 +570,14 @@ static partial class NullableTvErasureCallRealign
     // `Nullable<V>` does; a struct does — INCLUDING a constructed one, since `KeyValuePair<K,V>` needs the same `box`
     // its argument-less siblings do and the oracle strips generic arity to say so. A reference is already an `object`
     // and needs nothing.
-    static bool NeedsObjectSeam(TypeNode t) => t switch
+    static bool NeedsObjectSeam(TypeNode t) => NeedsObjectSeam(t, _isValue);
+
+    static bool NeedsObjectSeam(TypeNode t, Func<string, bool> isValue) => t switch
     {
         TypeNode.Tv => true,
-        TypeNode.Nullable n => NeedsObjectSeam(n.Of),
-        TypeNode.Fqn f => _isValue(f.Name),
+        TypeNode.Nullable n => NeedsObjectSeam(n.Of, isValue),
+        TypeNode.Oblivious o => NeedsObjectSeam(o.Of, isValue),
+        TypeNode.Fqn f => isValue(f.Name),
         _ => false,
     };
 }

@@ -250,6 +250,20 @@ class NgLocalSink : NgSlotSink<Int?> {
     override fun accept(x: Int?): String = x?.toString() ?: "none"
 }
 
+// ---- #345 : a constrained call closes its parameter slot over the receiver bound -----------------------------
+// The bound itself is object-erased at `Int?`, so the constrained call dispatches through `NgBoundSink<object>`.
+// Its value argument must therefore be boxed into that substituted physical slot. `Any?` is the reference control:
+// it reaches the same object slot but needs no value-type widening.
+interface NgBoundSink<T> { fun accept(x: T): String }
+class NgBoundIntSink : NgBoundSink<Int?> {
+    override fun accept(x: Int?): String = "i:" + (x?.toString() ?: "none")
+}
+class NgBoundAnySink : NgBoundSink<Any?> {
+    override fun accept(x: Any?): String = "a:" + (x?.toString() ?: "none")
+}
+fun <T : NgBoundSink<Int?>> ngUseNullableValueBound(t: T): String = t.accept(1)
+fun <T : NgBoundSink<Any?>> ngUseObjectBound(t: T): String = t.accept("x")
+
 // ---- #287 : `is` against a NULLABLE type operand ACCEPTS null -------------------------------------------------
 // `null is String?` / `null is Int?` are true in Kotlin, and the frontend RELIES on it: the else branch of
 // `when { x is T? -> … }` carries a smart-cast to a NON-null `x`, which is what makes `x.toString()` there resolve
@@ -582,10 +596,17 @@ class NullableTests {
     fun erasedSupertypeArgumentFromAnotherAssembly() {
         assertEquals(2, ngCmp(5).compareTo(3))              // 2    a REFERENCED generic supertype at Int?
         assertEquals(5, ngCmp(5).compareTo(null))           // 5    …and its null case
+        val comparable: Comparable<Int?> = ngCmp(5)
+        assertEquals(2, comparable.compareTo(3))
+        assertEquals(5, comparable.compareTo(null))
         assertEquals("7", NgLocalSink().accept(7))          // 7    the same-module control
         assertEquals("none", NgLocalSink().accept(null))    // none
-        // Dispatch through a `Comparable<Int?>`-typed reference is a separate tracked defect and is not part of
-        // this green regression contract.
+    }
+
+    @TestAttribute
+    fun constrainedCallUsesSubstitutedErasedParameterSlot() {
+        assertEquals("i:1", ngUseNullableValueBound(NgBoundIntSink()))
+        assertEquals("a:x", ngUseObjectBound(NgBoundAnySink()))
     }
 
     @TestAttribute

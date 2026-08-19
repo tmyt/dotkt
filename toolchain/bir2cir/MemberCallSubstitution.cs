@@ -2072,6 +2072,12 @@ static class MemberCallSubstitution
     static TypeNode ClrOwnerType(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn)
     {
         if (!refs.TryResolveClrOwner(ownerFqn.Name, out var bcl, out _)) return null;
+        // Some generic aliases select a non-generic physical classifier from their FINAL lowered arguments. Keep
+        // their semantic head until NullableGenericErasure and BirTypeLowering have made that decision; prematurely
+        // authoring the BCL head here loses the alias provenance and leaves a stale constructed CLR owner.
+        var head = BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(bcl)
+            ? ownerFqn.Name
+            : bcl;
         var arity = refs.OwnerArity(ownerFqn.Name);
         if (ownerFqn.Args != null || arity > 0)
         {
@@ -2080,9 +2086,9 @@ static class MemberCallSubstitution
             // `IDictionary`1`). The trailing/all erased args become `object`.
             var kept = (ownerFqn.Args ?? Array.Empty<TypeNode>()).Where(a => a != null).ToList();
             for (var i = kept.Count; i < arity; i++) kept.Add(ObjType);
-            if (kept.Count > 0) return new TypeNode.Fqn(bcl, kept.ToArray());
+            if (kept.Count > 0) return new TypeNode.Fqn(head, kept.ToArray());
         }
-        return new TypeNode.Fqn(bcl);
+        return new TypeNode.Fqn(head);
     }
 
     static JsonNode TopLevelExtensionInstance(JsonObject node, ReferenceMetadataIndex refs, string intrinsic, JsonArray args, List<TypeNode> sigParts, SubstCtx ctx)

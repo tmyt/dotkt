@@ -7,6 +7,21 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **CLR properties accessed through a type-parameter receiver now emit verifier-valid dispatch (#325).** Interface
+  accessors use `constrained.` for both reads and writes, while non-virtual class accessors use the receiver's resolved
+  class constraint. Generic `CharSequence` constraints stay aligned when that app-level representation becomes
+  `System.String`, including compiler-generated private-access forwarders.
+
+- **Constrained calls through nullable-value generic bounds now widen arguments to the bound's physical slot
+  (#345).** Once bir2cir closes a type-parameter receiver's interface owner, it applies the same
+  `Subst(Erase(declared slot), owner arguments)` rule as other nullable-generic calls. A value passed through a bound
+  such as `T : Sink<Int?>` is boxed for the erased `Sink<object>` slot, including across a projected reference KLIB.
+
+- **Calls through `Comparable<Int?>` and other object-erased `Comparable` receiver types now use the interface the
+  value actually implements (#346).** bir2cir keeps argument-dependent alias owners semantic until nullable-generic
+  erasure and final type lowering select their physical classifier, so the receiver, call owner, and resolved member
+  all consistently target non-generic `IComparable.CompareTo(object)`.
+
 - **A `Comparable` implementation whose `compareTo` returns `Nothing` now loads and terminates correctly (#321).**
   bir2cir synthesizes the non-generic `IComparable.CompareTo(object)` bridge while the Kotlin return stamp is still
   available, so the bridge terminates instead of returning `Nothing`'s CLR `object` erasure into an `Int32` slot.

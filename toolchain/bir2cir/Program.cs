@@ -953,7 +953,7 @@ sealed class Pipeline
         // receiver's bound instead would emit a MemberRef on a type that merely inherits the member, which binds
         // locally only through a fake override and has nothing to bind to across an assembly boundary.
         if (!_options.RefBuild)
-            ConstrainedTypeParameterReceiverBinding.ApplyAll(staged.Select(s => s.Root).ToList());
+            ConstrainedTypeParameterReceiverBinding.ApplyAll(staged.Select(s => s.Root).ToList(), isValueFqn);
 
         // dll2klib restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
         // its compiler-generated existential carrier. Re-apply that exact referenced ABI to call signatures and directly initialized locals before
@@ -1261,6 +1261,10 @@ sealed class Pipeline
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, localBasicEnums, emittedLocalTypes);
+            // Property nodes reveal whether they denote an accessor or a public field only after CLR member
+            // resolution. Convert the accessor subset on type-variable receivers to constrained calls now, retaining
+            // the exact memberRef just resolved; fields keep their distinct load/store representation.
+            ConstrainedTypeParameterReceiverBinding.ApplyResolvedProperties(new[] { lowered });
             // An applied attribute is a call into the assembly that declares it, so its constructor is resolved
             // like any other external member. After Apply, whose statics it shares.
             ClrMemberResolution.ResolveAttributeCtors(lowered, refs);
