@@ -97,14 +97,14 @@ fun main() {
     val explicitEvent = ExplicitEventK()
     val externalExplicitEvent = ExternalExplicitEventK()
     val publicAndExplicitEvent = PublicAndExplicitEventK()
-    val explicitShape: ExplicitShapeCarrier = ExplicitShapeK()
+    val explicitShape: IPublicExplicitShapeSlot = ExplicitShapeK()
     val openGeneric: IPublicGenericDefaultSlot<String> = OpenGenericK()
     val reabstractMethod: IPublicReabstractMethodBase = ReabstractMethodK()
     val reabstractProperty: IPublicReabstractPropertyBase = ReabstractPropertyK()
     val reabstractEvent = ReabstractEventK()
     var observed = 0
-    explicitEvent.Changed.subscribe { observed += it }
-    externalExplicitEvent.Changed.subscribe { observed += it }
+    (explicitEvent as IPublicExplicitEventSlot).Changed.subscribe { observed += it }
+    (externalExplicitEvent as IExternalExplicitEventSlot).Changed.subscribe { observed += it }
     (externalExplicitEvent as IExternalExplicitEventSlot).Changed.subscribe { observed += it * 10 }
     publicAndExplicitEvent.Changed.subscribe { observed += it }
     (publicAndExplicitEvent as IPublicExplicitEventSlot).Changed.subscribe { observed += it * 10 }
@@ -117,7 +117,7 @@ fun main() {
     val directNullable: String? = explicitShape.Normalize(null)
     val omittedNullable: String? = explicitShape.Normalize()
     val explicitText: String? = explicitShape.Text
-    val explicitIndex: String? = (explicitShape as IPublicExplicitShapeSlot)[null]
+    val explicitIndex: String? = explicitShape[null]
     println(generic.Echo("ok").length + openGeneric.Echo("ok").length - 2 +
         external.Value() + explicit.Value() + property.Number +
         (nullable?.length ?: 0) - 2 + indexer[3] + explicitIndexer[3] +

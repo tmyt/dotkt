@@ -148,7 +148,7 @@ dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-properties "$PROBE_KLIB" Probe.ExternalExplicitEventCarrier Changed
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
-	--klib-class-properties "$PROBE_KLIB" Probe.PublicAndExplicitEventCarrier Changed
+	--klib-class-properties "$PROBE_KLIB" Probe.PublicAndExplicitEventCarrier Changed,Changed
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-class-function-nullability "$PROBE_KLIB" Probe.ExplicitShapeCarrier Normalize true true
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
@@ -194,6 +194,24 @@ PY
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
 
+# A CLR explicit implementation satisfies an interface slot but is not an ordinary class API. Method/property/
+# indexer/event collisions therefore remain reachable only through the exact interface, while a derived Kotlin class
+# may re-list one interface and supply a new implementation without changing the mappings it merely inherits.
+explicit_direct_log="$OUT/explicit-slot-direct.log"
+if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/explicit-slot-direct-call.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" \
+	-d "$OUT/explicit-slot-direct-bir" >"$explicit_direct_log" 2>&1; then
+	die "explicit interface slots unexpectedly became ordinary class APIs"
+fi
+for member in Pick Number Updated; do
+	grep -q "unresolved reference.*$member" "$explicit_direct_log" \
+		|| die "explicit $member class API was rejected for an unexpected reason"
+done
+grep -q "explicit-slot-direct-call.kt:12:27: error: unresolved reference.*receiver type mismatch" \
+	"$explicit_direct_log" \
+	|| die "explicit indexer class API was rejected for an unexpected reason"
+
 # CLR statics are direct KLIB declarations. A plain CLR owner must not acquire a companion classifier/value merely
 # because it has static members; otherwise source can silently depend on projection scaffolding that does not exist in
 # CLR metadata. Keep this as a negative frontend probe alongside the positive Widget.Global / Widget.Twice uses above.
@@ -220,7 +238,8 @@ for member in MissingReabstractMethod MissingReabstractProperty MissingReabstrac
 done
 
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
-mkdir -p "$OUT/default-bir" "$OUT/default-cir" "$OUT/default-il"
+mkdir -p "$OUT/default-bir" "$OUT/default-cir" "$OUT/default-il" \
+	"$OUT/explicit-slot-bir" "$OUT/explicit-slot-cir" "$OUT/explicit-slot-il"
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/default-interface-consumer.kt" \
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/default-bir"
@@ -236,6 +255,22 @@ cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/default-il/"
 default_actual="$(dotnet "$OUT/default-il/DefaultInterfaceConsumer.dll")"
 [[ "$default_actual" == "236" ]] \
 	|| die "hidden/default/reabstracted interface program returned '$default_actual', expected '236'"
+"$KOTC" "$ROOT/tests/special/dll2klib-e2e/explicit-slot-probe.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/explicit-slot-bir"
+dotnet "$BIR2CIR_DLL" "$OUT/explicit-slot-cir" --compile-refs "$compile_refs" \
+	"$OUT/explicit-slot-bir/explicit-slot-probe.bir.json"
+dotnet "$ILEMIT_DLL" "$OUT/explicit-slot-il" ExplicitSlotProbe \
+	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
+	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
+	--target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" \
+	"$OUT/explicit-slot-cir/explicit-slot-probe.cir.json"
+write_runtimeconfig "$OUT/explicit-slot-il" ExplicitSlotProbe
+cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/explicit-slot-il/"
+explicit_slot_actual="$(dotnet "$OUT/explicit-slot-il/ExplicitSlotProbe.dll")"
+[[ "$explicit_slot_actual" == "463" ]] \
+	|| die "explicit interface slot program returned '$explicit_slot_actual', expected '463'"
+bash "$ROOT/tests/run-ilverify.sh" "$OUT/explicit-slot-il/ExplicitSlotProbe.dll"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \

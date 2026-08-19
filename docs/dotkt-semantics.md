@@ -1297,9 +1297,14 @@ failing closed is the same shape Kotlin/JVM emits (`ACONST_NULL; ATHROW` after s
 - A public CLR class can legally implement an `internal` or otherwise inaccessible interface. That interface edge is
   omitted from the Kotlin supertype list, while every independently public interface edge remains visible. If the
   hidden interface supplies a public slot through a default `MethodImpl`, or the class supplies it through a private
-  explicit `MethodImpl`, dll2klib surfaces the concrete class member from the authoritative public interface
-  declaration. Kotlin subclasses therefore do not inherit a fictional abstract obligation; private implementation
-  signatures and bodies do not become Kotlin API.
+  explicit `MethodImpl`, dll2klib records slot satisfaction as a hidden fake override derived from the authoritative
+  public interface declaration. Kotlin subclasses therefore do not inherit a fictional abstract obligation, while
+  private implementation signatures and bodies do not become ordinary class API. Colliding explicit method,
+  property, indexer, and event slots remain distinct through their interface-typed receivers. A derived Kotlin class
+  may replace one of those mappings only by explicitly re-listing that interface; merely declaring a same-named
+  member keeps the base class's `MethodImpl`. If the CLR base also has a final public member with the same source
+  signature, that member remains directly callable and is source-open only enough to express the separately owned
+  interface reimplementation; its non-virtual CLR slot is not rewritten into a physical base override.
 
 ## 8b. Dual representation: `import System.Text.StringBuilder` vs `kotlin.text.StringBuilder` — two typed VIEWS of one CLR type
 

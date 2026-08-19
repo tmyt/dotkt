@@ -1378,7 +1378,8 @@ internal sealed class AssemblyScanner
         string? AssociationKey,
         string SlotKey,
         bool IsAbstract,
-        int Depth);
+        int Depth,
+        bool IsExplicit);
 
     private readonly MetadataReader _md;
     private readonly MetadataAttributes _attrs;
@@ -2109,7 +2110,8 @@ internal sealed class AssemblyScanner
                     ? null
                     : AssemblySimpleName(declarationReader) + ":" +
                         accessor.Value.Association.Kind + ":" +
-                        MetadataTokens.GetRowNumber(accessor.Value.Association);
+                        MetadataTokens.GetRowNumber(accessor.Value.Association) + ":" +
+                        string.Join(",", declarationArguments.Select(TypeKey));
                 var sourceName = accessor is null
                     ? KotlinSourceMethodName(bodyHandle) ??
                         SimpleMethodName(declarationReader.GetString(declaration.Name))
@@ -2127,7 +2129,8 @@ internal sealed class AssemblyScanner
                         MetadataTokens.GetRowNumber(declarationHandle) + ":" +
                         string.Join(",", declarationArguments.Select(TypeKey)),
                     IsAbstract: (body.Attributes & MethodAttributes.Abstract) != 0,
-                    Depth: 0));
+                    Depth: 0,
+                    IsExplicit: !isInterface));
                 continue;
             }
             var declarationName = implementation.MethodDeclaration.Kind switch
@@ -2149,17 +2152,24 @@ internal sealed class AssemblyScanner
         var functionKeys = result.Function.Select(f => FunctionKey(f, names))
             .ToHashSet(StringComparer.Ordinal);
         var inheritedDefaults = InheritedHiddenInterfaceDefaults(def, names, signatures, typeContext).ToArray();
-        var surfacedImplementations = inheritedDefaults.Concat(explicitImplementations).ToArray();
+        // A class-level MethodImpl is the authoritative implementation of its exact interface slot. If the same slot
+        // is also reachable through an omitted non-public default provider, retain the class MethodImpl rather than
+        // whichever hierarchy walk happened to be enumerated first.
+        var surfacedImplementations = explicitImplementations.Concat(inheritedDefaults)
+            .GroupBy(item => item.SlotKey, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        var explicitEventShapes = new HashSet<string>(StringComparer.Ordinal);
         var inheritedAccessorGroups = surfacedImplementations
             .Where(item => item.AccessorKind is 1 or 2)
             .GroupBy(item => item.AssociationKey!, StringComparer.Ordinal);
         foreach (var accessorGroup in inheritedAccessorGroups)
         {
             var propertyName = accessorGroup.First().PropertyName!;
+            var groupIsExplicit = accessorGroup.Any(item => item.IsExplicit);
             var pair = (
                 Getter: accessorGroup.FirstOrDefault(item => item.AccessorKind == 1),
                 Setter: accessorGroup.FirstOrDefault(item => item.AccessorKind == 2));
-            if (propertyNames.Contains(propertyName)) continue;
             var getterParameterCount = pair.Getter is null
                 ? 0
                 : pair.Getter.Reader.GetMethodDefinition(pair.Getter.Declaration)
@@ -2185,12 +2195,30 @@ internal sealed class AssemblyScanner
                 if (pair.Getter is { } indexerGetter)
                 {
                     var function = InheritedFunction(indexerGetter, "get", kotlinFlags: 2, names: names);
-                    if (functionKeys.Add(FunctionKey(function, names))) result.Function.Add(function);
+                    if (indexerGetter.IsExplicit)
+                    {
+                        var shape = FunctionShapeKey(function, names);
+                        foreach (var declared in result.Function.Where(candidate =>
+                            (candidate.Flags & (1 << 19)) == 0 && FunctionShapeKey(candidate, names) == shape))
+                            declared.Flags = Flags.AsOpen(declared.Flags);
+                        result.Function.Add(function);
+                    }
+                    else if (functionKeys.Add(FunctionKey(function, names)))
+                        result.Function.Add(function);
                 }
                 if (pair.Setter is { } indexerSetter)
                 {
                     var function = InheritedFunction(indexerSetter, "set", kotlinFlags: 2, names: names);
-                    if (functionKeys.Add(FunctionKey(function, names))) result.Function.Add(function);
+                    if (indexerSetter.IsExplicit)
+                    {
+                        var shape = FunctionShapeKey(function, names);
+                        foreach (var declared in result.Function.Where(candidate =>
+                            (candidate.Flags & (1 << 19)) == 0 && FunctionShapeKey(candidate, names) == shape))
+                            declared.Flags = Flags.AsOpen(declared.Flags);
+                        result.Function.Add(function);
+                    }
+                    else if (functionKeys.Add(FunctionKey(function, names)))
+                        result.Function.Add(function);
                 }
                 continue;
             }
@@ -2221,19 +2249,42 @@ internal sealed class AssemblyScanner
                     setter.Declaration,
                     setter.Signatures);
             }
+            if (!groupIsExplicit && propertyNames.Contains(propertyName)) continue;
+            if (groupIsExplicit)
+            {
+                // Kotlin has no explicit-interface-implementation declaration syntax. When a CLR class owns both a
+                // final public member and a private MethodImpl for the same source signature, the ordinary member must
+                // participate in frontend override resolution so `class D : C(), I` can name I's reimplementation.
+                // This is only source-level openness: bir2cir reads the referenced MethodDef and keeps a non-virtual
+                // CLR base member as a new slot rather than inventing a physical override.
+                foreach (var declared in result.Property.Where(property =>
+                    names.StringValue(property.Name) == propertyName &&
+                    TypeKey(property.ReturnType) == TypeKey(propertyType) &&
+                    (property.SetterValueParameter is not null) == (pair.Setter is not null)))
+                    declared.Flags = Flags.AsOpen(declared.Flags);
+            }
             var propertyIsAbstract = pair.Getter?.IsAbstract == true || pair.Setter?.IsAbstract == true;
+            var propertyIsExplicit = pair.Getter?.IsExplicit == true || pair.Setter?.IsExplicit == true;
             var projectedProperty = new Property
             {
                 Name = names.String(propertyName),
                 ReturnType = propertyType,
                 Flags = Flags.Property(
-                    MethodAttributes.Public | (propertyIsAbstract ? MethodAttributes.Abstract : 0),
+                    MethodAttributes.Public |
+                        (propertyIsAbstract ? MethodAttributes.Abstract : 0) |
+                        (propertyIsExplicit && !propertyIsAbstract ? MethodAttributes.Virtual : 0),
                     pair.Setter is not null,
-                    isStatic: false),
+                    isStatic: false,
+                    memberKind: propertyIsExplicit ? Flags.FakeOverride : Flags.DeclarationMember),
                 SetterValueParameter = pair.Setter is null
                     ? null
                     : new ValueParameter { Name = names.String("value"), Type = propertyType.Clone() },
             };
+            if (propertyIsExplicit)
+            {
+                projectedProperty.PropertyAnnotation.Add(ExplicitSlotAnnotations(names));
+                projectedProperty.Flags |= 1;
+            }
             if (propertyIsAbstract)
             {
                 if (pair.Getter is { } inheritedGetter)
@@ -2271,7 +2322,9 @@ internal sealed class AssemblyScanner
         {
             var inherited = eventGroup.First();
             var eventName = inherited.PropertyName!;
-            if (propertyNames.Contains(eventName) || declaredEventNames.Contains(eventName)) continue;
+            var groupIsExplicit = eventGroup.Any(item => item.IsExplicit);
+            if (!groupIsExplicit && (propertyNames.Contains(eventName) || declaredEventNames.Contains(eventName)))
+                continue;
             var reader = inherited.Reader;
             var declaration = reader.GetMethodDefinition(inherited.Declaration);
             var context = InheritedContext(reader, inherited.Declaration, declaration);
@@ -2279,10 +2332,12 @@ internal sealed class AssemblyScanner
             if (signature.ParameterTypes.Length != 1) continue;
             var parameterHandle = declaration.GetParameters().FirstOrDefault(handle =>
                 reader.GetParameter(handle).SequenceNumber == 1);
+            var physicalHandler = SubstituteTypeParameters(
+                signature.ParameterTypes[0], inherited.InterfaceArguments);
             var handler = ProjectInheritedType(
                 reader,
                 parameterHandle,
-                SubstituteTypeParameters(signature.ParameterTypes[0], inherited.InterfaceArguments),
+                physicalHandler,
                 inherited.Declaration,
                 inherited.Signatures);
             var eventType = inherited.Signatures.NamedType("kotlin.clr.ClrEvent");
@@ -2291,23 +2346,44 @@ internal sealed class AssemblyScanner
                 Projection = KType.Types.Argument.Types.Projection.Inv,
                 Type = handler,
             });
-            result.Property.Add(new Property
+            var projectedEvent = new Property
             {
                 Name = names.String(eventName),
                 ReturnType = eventType,
                 Flags = Flags.Property(
                     MethodAttributes.Public |
-                        (eventGroup.Any(item => item.IsAbstract) ? MethodAttributes.Abstract : 0),
+                        (eventGroup.Any(item => item.IsAbstract) ? MethodAttributes.Abstract : 0) |
+                        (eventGroup.Any(item => item.IsExplicit && !item.IsAbstract)
+                            ? MethodAttributes.Virtual
+                            : 0),
                     canWrite: false,
-                    isStatic: false),
-            });
+                    isStatic: false,
+                    memberKind: eventGroup.Any(item => item.IsExplicit)
+                        ? Flags.FakeOverride
+                        : Flags.DeclarationMember),
+            };
+            if (eventGroup.Any(item => item.IsExplicit))
+            {
+                explicitEventShapes.Add(eventName + ":" + TypeKey(physicalHandler));
+                projectedEvent.PropertyAnnotation.Add(ExplicitSlotAnnotations(names));
+                projectedEvent.Flags |= 1;
+            }
+            result.Property.Add(projectedEvent);
             propertyNames.Add(eventName);
         }
 
         foreach (var inherited in surfacedImplementations.Where(item => item.AccessorKind == 0))
         {
             var function = InheritedFunction(inherited, inherited.Name, kotlinFlags: 0, names: names);
-            if (functionKeys.Add(FunctionKey(function, names)))
+            if (inherited.IsExplicit)
+            {
+                var shape = FunctionShapeKey(function, names);
+                foreach (var declared in result.Function.Where(candidate =>
+                    (candidate.Flags & (1 << 19)) == 0 && FunctionShapeKey(candidate, names) == shape))
+                    declared.Flags = Flags.AsOpen(declared.Flags);
+                result.Function.Add(function);
+            }
+            else if (functionKeys.Add(FunctionKey(function, names)))
                 result.Function.Add(function);
         }
 
@@ -2381,7 +2457,12 @@ internal sealed class AssemblyScanner
             {
                 Name = names.String(_md.GetString(ev.Name)),
                 ReturnType = eventType,
-                Flags = Flags.Property(accessor.Attributes, canWrite: false, (accessor.Attributes & MethodAttributes.Static) != 0),
+                Flags = Flags.Property(
+                    explicitEventShapes.Contains(_md.GetString(ev.Name) + ":" + TypeKey(handler))
+                        ? accessor.Attributes | MethodAttributes.Virtual
+                        : accessor.Attributes,
+                    canWrite: false,
+                    (accessor.Attributes & MethodAttributes.Static) != 0),
             });
             propertyNames.Add(_md.GetString(ev.Name));
         }
@@ -2423,6 +2504,11 @@ internal sealed class AssemblyScanner
     private static string FunctionKey(Function function, NameTable names) =>
         names.StringValue(function.Name) + "`" + function.TypeParameter.Count + "(" +
         string.Join(",", function.ValueParameter.Select(p => TypeKey(p.Type))) + ")";
+
+    private static string FunctionShapeKey(Function function, NameTable names) =>
+        FunctionKey(function, names) + ":" + TypeKey(function.ReturnType) + "<" +
+        string.Join(",", function.TypeParameter.Select(parameter =>
+            Convert.ToBase64String(parameter.ToByteArray()))) + ">";
 
     private bool IsImplementedInterfaceDeclaration(
         EntityHandle declaration,
@@ -2606,10 +2692,12 @@ internal sealed class AssemblyScanner
                         ? null
                         : AssemblySimpleName(declarationReader) + ":" +
                             accessor.Value.Association.Kind + ":" +
-                            MetadataTokens.GetRowNumber(accessor.Value.Association),
+                            MetadataTokens.GetRowNumber(accessor.Value.Association) + ":" +
+                            string.Join(",", declarationArguments.Select(TypeKey)),
                     slotKey,
                     (body.Attributes & MethodAttributes.Abstract) != 0,
-                    instance.Depth));
+                    instance.Depth,
+                    IsExplicit: false));
             }
         }
 
@@ -2892,8 +2980,9 @@ internal sealed class AssemblyScanner
             Name = names.String(name),
             Flags = Flags.Callable(
                 MethodAttributes.Public,
-                modality: inherited.IsAbstract ? 2 : 0,
-                kotlinFlags),
+                modality: inherited.IsAbstract ? 2 : inherited.IsExplicit ? 1 : 0,
+                kotlinFlags,
+                memberKind: inherited.IsExplicit ? Flags.FakeOverride : Flags.DeclarationMember),
             ReturnType = ProjectInheritedReturn(
                 reader, declarationHandle, declaration, returnType, inherited.Signatures),
             ValueParameter = {
@@ -2914,6 +3003,11 @@ internal sealed class AssemblyScanner
             inherited.Signatures,
             context,
             inherited.InterfaceArguments);
+        if (inherited.IsExplicit)
+        {
+            function.FunctionAnnotation.Add(ExplicitSlotAnnotations(names));
+            function.Flags |= 1;
+        }
         return function;
     }
 
@@ -5096,6 +5190,31 @@ internal sealed class AssemblyScanner
         return annotation;
     }
 
+    private static IEnumerable<Annotation> ExplicitSlotAnnotations(NameTable names)
+    {
+        var deprecated = new Annotation { Id = names.Class("kotlin.Deprecated") };
+        deprecated.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String("message"),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                StringValue = names.String("compiler-projected explicit interface slot"),
+            },
+        });
+        deprecated.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String("level"),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.Enum,
+                ClassId = names.Class("kotlin.DeprecationLevel"),
+                EnumValueId = names.String("HIDDEN"),
+            },
+        });
+        yield return deprecated;
+    }
+
     private static Annotation ClrFieldAnnotation(NameTable names) =>
         new() { Id = names.Class("kotlin.clr.ClrField") };
 
@@ -5681,14 +5800,19 @@ internal sealed class AssemblyScanner
 
 internal static class Flags
 {
+    public const int DeclarationMember = 0;
+    public const int FakeOverride = 1;
+
     // metadata.proto: hasAnnotations(1), visibility(3), modality(2), then class kind/member kind.
     public static int Declaration(int modality, int kind, bool isValue = false, bool isFun = false,
         bool hasEnumEntries = false, bool isInner = false) =>
         6 | (modality << 4) | (kind << 6)
         | (isInner ? 1 << 9 : 0) | (isValue ? 1 << 13 : 0) | (isFun ? 1 << 14 : 0)
         | (hasEnumEntries ? 1 << 15 : 0);
-    public static int Callable(MethodAttributes attrs, int modality, int kotlinFlags = 0, bool isInline = false) =>
+    public static int Callable(MethodAttributes attrs, int modality, int kotlinFlags = 0, bool isInline = false,
+        int memberKind = DeclarationMember) =>
         Visibility(attrs) | (modality << 4)
+        | (memberKind << 6)
         | ((kotlinFlags & 2) != 0 ? 1 << 8 : 0)
         | ((kotlinFlags & 1) != 0 ? 1 << 9 : 0)
         | (isInline ? 1 << 10 : 0)
@@ -5699,9 +5823,12 @@ internal static class Flags
     public static int Visibility(MethodAttributes attrs) =>
         (attrs & MethodAttributes.MemberAccessMask) == MethodAttributes.Public ? 6 : 4; // PUBLIC=3, PROTECTED=2
     public static int AsProtected(int flags) => (flags & ~0xE) | 4;
-    public static int Property(MethodAttributes attrs, bool canWrite, bool isStatic) =>
+    public static int AsOpen(int flags) => (flags & ~(3 << 4)) | (1 << 4);
+    public static int Property(MethodAttributes attrs, bool canWrite, bool isStatic,
+        int memberKind = DeclarationMember) =>
         Visibility(attrs) | (((attrs & MethodAttributes.Abstract) != 0 ? 2
             : (attrs & MethodAttributes.Virtual) != 0 && (attrs & MethodAttributes.Final) == 0 ? 1 : 0) << 4)
+        | (memberKind << 6)
         | (canWrite ? 1 << 8 : 0) | 1 << 9 | (canWrite ? 1 << 10 : 0)
         | (isStatic ? 1 << 19 : 0);
     public static int Property(FieldAttributes attrs, bool canWrite) =>

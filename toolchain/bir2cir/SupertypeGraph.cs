@@ -129,6 +129,41 @@ static class SupertypeGraph
         return false;
     }
 
+    // Constructed counterpart used when authorization depends on the exact direct-interface instance. A class may
+    // inherit `I<string>` through its base while directly re-listing only `I<int>`; matching names there would grant
+    // the new declaration a MethodImpl for the wrong constructed slot.
+    public static bool Reaches(TypeNode.Fqn from, TypeNode.Fqn owner,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+    {
+        var queue = new Queue<TypeNode.Fqn>();
+        queue.Enqueue(from);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var ownerKey = TypeKey(owner);
+        while (queue.Count > 0)
+        {
+            var spec = queue.Dequeue();
+            if (!seen.Add(TypeKey(spec))) continue;
+            if (TypeKey(spec) == ownerKey) return true;
+            if (defs.TryGetValue(spec.Name, out var def))
+            {
+                var args = EffectiveArgs(spec, def.Arity);
+                if (args == null) continue;
+                foreach (var parent in def.Interfaces)
+                    if (SubstOwnerTvs(parent, args) is TypeNode.Fqn constructed)
+                        queue.Enqueue(constructed);
+                if (def.Base != null && SubstOwnerTvs(def.Base, args) is TypeNode.Fqn baseType)
+                    queue.Enqueue(baseType);
+                continue;
+            }
+            if (refs == null) continue;
+            var refArgs = spec.Args ?? Array.Empty<TypeNode>();
+            foreach (var (parent, _) in refs.ReferencedSupertypes(spec.Name))
+                if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
+                    queue.Enqueue(constructed);
+        }
+        return false;
+    }
+
     public static TypeNode[] EffectiveArgs(TypeNode.Fqn spec, int arity)
     {
         if (arity == 0) return Array.Empty<TypeNode>();

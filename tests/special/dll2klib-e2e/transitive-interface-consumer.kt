@@ -16,6 +16,6 @@ class PublicDerivedK : PublicDerivedCarrier()
 fun consume(value: K): IPublic = value
 fun consumeGeneric(value: GenericK): IPublicGeneric<String> = value
 fun consumeExplicit(value: ExplicitK): IPublicExplicit = value
-fun callExplicit(value: ExplicitK): Int = value.ReadExplicit()
+fun callExplicit(value: ExplicitK): Int = (value as IPublicExplicit).ReadExplicit()
 fun consumePublicDerived(value: PublicDerivedK): IPublicExplicit = value
-fun callPublicDerived(value: PublicDerivedK): Int = value.ReadExplicit()
+fun callPublicDerived(value: PublicDerivedK): Int = (value as IPublicExplicit).ReadExplicit()

@@ -208,6 +208,245 @@ public class ExplicitShapeCarrier : IPublicExplicitShapeSlot
 #pragma warning restore CS8769, CS8767
 }
 
+public interface ILeftExplicitSlot
+{
+    int Pick();
+}
+
+public interface IRightExplicitSlot
+{
+    int Pick();
+}
+
+public class ExplicitCollisionCarrier : ILeftExplicitSlot, IRightExplicitSlot
+{
+    int ILeftExplicitSlot.Pick() => 1;
+    int IRightExplicitSlot.Pick() => 2;
+}
+
+public interface IConstructedExplicitSlot<T>
+{
+    T Read();
+    T Value { get; }
+}
+
+public class ConstructedExplicitCollisionCarrier :
+    IConstructedExplicitSlot<int>, IConstructedExplicitSlot<string>
+{
+    int IConstructedExplicitSlot<int>.Read() => 21;
+    string IConstructedExplicitSlot<string>.Read() => "twenty-two";
+    int IConstructedExplicitSlot<int>.Value => 23;
+    string IConstructedExplicitSlot<string>.Value => "twenty-four";
+}
+
+public interface IPublicAndExplicitMethodSlot
+{
+    int Read();
+}
+
+public class PublicAndExplicitMethodCarrier : IPublicAndExplicitMethodSlot
+{
+    public int Read() => 25;
+    int IPublicAndExplicitMethodSlot.Read() => 26;
+}
+
+public interface IReimplementedSlot
+{
+    int M();
+}
+
+public class ExplicitReimplementationBase : IReimplementedSlot
+{
+    int IReimplementedSlot.M() => 3;
+}
+
+public interface ILeftExplicitPropertySlot
+{
+    int Number { get; set; }
+}
+
+public interface IRightExplicitPropertySlot
+{
+    int Number { get; set; }
+}
+
+public class ExplicitPropertyCollisionCarrier : ILeftExplicitPropertySlot, IRightExplicitPropertySlot
+{
+    private int _leftNumber = 4;
+    private int _rightNumber = 5;
+
+    int ILeftExplicitPropertySlot.Number
+    {
+        get => _leftNumber;
+        set => _leftNumber = value;
+    }
+
+    int IRightExplicitPropertySlot.Number
+    {
+        get => _rightNumber;
+        set => _rightNumber = value;
+    }
+}
+
+public interface IReimplementedPropertySlot
+{
+    int Number { get; set; }
+}
+
+public class ExplicitPropertyReimplementationBase : IReimplementedPropertySlot
+{
+    private int _number = 6;
+
+    int IReimplementedPropertySlot.Number
+    {
+        get => _number;
+        set => _number = value;
+    }
+}
+
+public interface IPublicAndExplicitPropertySlot
+{
+    int Number { get; set; }
+}
+
+public class PublicAndExplicitPropertyCarrier : IPublicAndExplicitPropertySlot
+{
+    private int _explicitNumber = 27;
+    public int Number { get; set; } = 28;
+
+    int IPublicAndExplicitPropertySlot.Number
+    {
+        get => _explicitNumber;
+        set => _explicitNumber = value;
+    }
+}
+
+public interface ILeftExplicitIndexerSlot
+{
+    int this[int index] { get; set; }
+}
+
+public interface IRightExplicitIndexerSlot
+{
+    int this[int index] { get; set; }
+}
+
+public class ExplicitIndexerCollisionCarrier : ILeftExplicitIndexerSlot, IRightExplicitIndexerSlot
+{
+    private int _leftItem = 7;
+    private int _rightItem = 8;
+
+    int ILeftExplicitIndexerSlot.this[int index]
+    {
+        get => _leftItem + index;
+        set => _leftItem = value - index;
+    }
+
+    int IRightExplicitIndexerSlot.this[int index]
+    {
+        get => _rightItem + index;
+        set => _rightItem = value - index;
+    }
+}
+
+public interface IReimplementedIndexerSlot
+{
+    int this[int index] { get; set; }
+}
+
+public class ExplicitIndexerReimplementationBase : IReimplementedIndexerSlot
+{
+    private int _item = 9;
+
+    int IReimplementedIndexerSlot.this[int index]
+    {
+        get => _item + index;
+        set => _item = value - index;
+    }
+}
+
+public interface IPublicAndExplicitIndexerSlot
+{
+    int this[int index] { get; set; }
+}
+
+public class PublicAndExplicitIndexerCarrier : IPublicAndExplicitIndexerSlot
+{
+    private int _explicitItem = 29;
+    public int this[int index] { get => 30 + index; set { } }
+
+    int IPublicAndExplicitIndexerSlot.this[int index]
+    {
+        get => _explicitItem + index;
+        set => _explicitItem = value - index;
+    }
+}
+
+public interface ILeftExplicitEventSlot
+{
+    event System.Action<int>? Updated;
+}
+
+public interface IRightExplicitEventSlot
+{
+    event System.Action<int>? Updated;
+}
+
+public class ExplicitEventCollisionCarrier : ILeftExplicitEventSlot, IRightExplicitEventSlot
+{
+    private System.Action<int>? _left;
+    private System.Action<int>? _right;
+
+    event System.Action<int>? ILeftExplicitEventSlot.Updated
+    {
+        add => _left += value;
+        remove => _left -= value;
+    }
+
+    event System.Action<int>? IRightExplicitEventSlot.Updated
+    {
+        add => _right += value;
+        remove => _right -= value;
+    }
+
+    public void RaiseLeft(int value) => _left?.Invoke(value);
+    public void RaiseRight(int value) => _right?.Invoke(value);
+}
+
+public interface IReimplementedEventSlot
+{
+    event System.Action<int>? Updated;
+}
+
+public class ExplicitEventReimplementationBase : IReimplementedEventSlot
+{
+    private System.Action<int>? _updated;
+
+    event System.Action<int>? IReimplementedEventSlot.Updated
+    {
+        add => _updated += value;
+        remove => _updated -= value;
+    }
+
+    public void RaiseBase(int value) => _updated?.Invoke(value);
+}
+
+public interface IExplicitOverHiddenDefaultSlot
+{
+    int Resolve();
+}
+
+internal interface IHiddenExplicitDefaultProvider : IExplicitOverHiddenDefaultSlot
+{
+    int IExplicitOverHiddenDefaultSlot.Resolve() => 31;
+}
+
+public class ExplicitOverHiddenDefaultCarrier :
+    IHiddenExplicitDefaultProvider, IExplicitOverHiddenDefaultSlot
+{
+    int IExplicitOverHiddenDefaultSlot.Resolve() => 32;
+}
+
 public class ProtectedInterfaceOwner
 {
     protected interface IState
