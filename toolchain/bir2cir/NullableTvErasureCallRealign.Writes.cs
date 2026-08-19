@@ -576,6 +576,7 @@ static partial class NullableTvErasureCallRealign
     {
         TypeNode.Tv => true,
         TypeNode.Nullable n => NeedsObjectSeam(n.Of, isValue),
+        TypeNode.Oblivious o => NeedsObjectSeam(o.Of, isValue),
         TypeNode.Fqn f => isValue(f.Name),
         _ => false,
     };
