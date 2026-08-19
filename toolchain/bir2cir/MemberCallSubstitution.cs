@@ -959,7 +959,8 @@ static class MemberCallSubstitution
             // and never for a name that ALSO has a real-bodied (non-intrinsic) top-level overload: `sort`'s 8
             // primitive-array intrinsics all agree on "System.Array.Sort" (not "ambiguous"), yet the name fallback
             // captured the real-bodied `MutableList<T>.sort()` call inside the compiled `sorted()` body.
-            var sigKey0 = string.Join(",", sigParts0.Select(t => ReferenceMetadataIndex.ParamKey(t)));
+            var sigKey0 = new ReferenceMetadataIndex.SignatureKey(
+                sigParts0.Select(ReferenceMetadataIndex.ParamKey));
             if ((refs.TryTopLevelIntrinsicBySig(fn, sigKey0, out var fq)
                     || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && !refs.HasNonIntrinsicTopLevel(fn)
                         && refs.TryTopLevelIntrinsic(fn, out fq)))
@@ -984,7 +985,7 @@ static class MemberCallSubstitution
                 var recvKey = sigParts0.Count >= 1 ? RecvKeyOf(sigParts0[0]) : "";
                 // The FINE first-param key disambiguates the array overloads a coarse "[]" recvKey collapses (signed vs
                 // unsigned specialized arrays vs the generic Array<T>) so the owner pins the RIGHT file-class (#153).
-                var firstParamKey = sigParts0.Count >= 1 ? ReferenceMetadataIndex.ParamKey(sigParts0[0]) : null;
+                var firstParamKey = sigParts0.Count >= 1 ? ReferenceMetadataIndex.ReceiverParamKey(sigParts0[0]) : null;
                 if (refs.TryResolveTopLevelStatic(fn, recvKey, firstParamKey, out var fileClassOwner))
                 {
                     node["owner"] = TypeJson.Fqn(fileClassOwner);   // owner is a birType-emitted (structured Fqn) slot
@@ -1307,7 +1308,7 @@ static class MemberCallSubstitution
         // so it never falls through to Rule 2/3 (the conversion members are intrinsic-less, so IsRule3Member excludes them).
         if (instance && args.Count == 0 && hasExactMemberBinding && exactMemberBinding.Conv
             && exactMemberBinding.ConvTo != null)
-            return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(exactMemberBinding.ConvTo), ["e"] = node["recv"]?.DeepClone() };
+            return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Write(exactMemberBinding.ConvTo), ["e"] = node["recv"]?.DeepClone() };
 
         // Rule 0 (inline-class ERASURE / unbox): the backing-field getter of an @JvmInline value class erased to its
         // primitive CLR form (`uint.get_data()`) is the unbox — the receiver value IS the field. Collapse it to a

@@ -26,16 +26,16 @@
   (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`bir2cir` cross-module splice,
   `dll2klib` carrier decoding) all route through the one codec.
 - A decoded `[KotlinInline]` content is the current payload object
-  `{fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The carrier codec string (`bir-json/1`)
-  identifies its codec and schema. `body` is the raw BIR body.
+  `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The numeric `v` identifies the inline
+  payload contract independently of the carrier's `codec/schema-version` identifier (`bir-json/1`). `body` is the raw BIR body.
   `lifted` is the transitive closure of raw, compiler-generated file-class method declarations reached by
   `newDelegate` edges from `body`; every entry MUST carry `generated:true`, `static:true`, `params`, `ret`,
   and `body`. `fileClass` is the declaration identity those carried delegate edges originally target.
   At a cross-module splice, bir2cir re-hoists the complete `lifted` set into the consuming file class under
   fresh names and rewrites the delegate edges before normal lowering. Same-module splices use the original
   declarations. The payload is closed structurally from `generated:true`; generated-name spelling is not an
-  ownership signal. Readers consume this current shape directly; compiler artifacts with another shape are outside
-  the supported input set.
+  ownership signal. Readers consume the current `v:1` shape directly; compiler artifacts with another shape are outside
+  the supported input set, with no compatibility translation or dedicated rebuild guidance.
 
 ## 1. Type — the universal type representation (FULL structured, no exceptions)
 

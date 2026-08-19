@@ -1400,7 +1400,7 @@ sealed class Pipeline
                     // with a real polymorphic implementer, lowering its `subSequence(): CharSequence` override return to
                     // System.String (+ toString coercion) while it overrides a `dotkt$CharSequence` slot -> TypeLoad
                     // "signature of the body and declaration do not match" (il-charseq/charseqx).
-                    if (TypeJson.OwnerName(i)?.TrimStart('@') == "dotkt$CharSequence")
+                    if (TypeJson.OwnerName(i) == "dotkt$CharSequence")
                         return true;
         return false;
     }

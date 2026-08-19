@@ -248,6 +248,7 @@ static class InlineSplice
         // GUARD SCAN -> FAIL LOUD (#95/§4.5 splice-all): kotc emits a callInline for EVERY inline call with a lambda arg,
         // so this engine MUST splice it — there is no plain-call fallback and every un-handled shape is a hard build-break,
         // not a silently-degradable call. o is untouched until step 7, so a mid-stream FailLoud is sound.
+        if (Int(payload["v"]) != 1) { FailLoud(o, owner, name, pc, ga, "unsupported [KotlinInline] payload version"); return; }
         var pParams = payload["params"] as JsonArray ?? new JsonArray();
         var pBody = payload["body"] as JsonArray;
         if (pBody == null) { FailLoud(o, owner, name, pc, ga, "payload has no body"); return; }
@@ -255,7 +256,7 @@ static class InlineSplice
         if (typeArgs.Count < ga) { FailLoud(o, owner, name, pc, ga, "fewer typeArgs than generic arity"); return; }
         // §4.6 / #43: the payload is CLOSED over every compiler-generated file-class method its newDelegates reach.
         // Re-hoist those raw BIR declarations into the consumer and retarget each delegate before any materialization
-        // guard runs. `lifted`/`fileClass` are required parts of the current schema.
+        // guard runs. `lifted`/`fileClass` are required parts of the current v1 schema.
         if (!sameModule)
         {
             if (RehoistPayloadDelegates(payload, pBody) is string rehoistError)
@@ -2814,7 +2815,8 @@ static class InlineSplice
     // this handles transitively nested non-capturing lambdas without relying on any generated-name convention.
     static string RehoistPayloadDelegates(JsonObject payload, JsonArray body)
     {
-        var lifted = payload["lifted"]!.AsArray();
+        if (payload["lifted"] is not JsonArray lifted)
+            return "[KotlinInline] payload is missing its required lifted-method set";
         if (lifted.Count == 0)
         {
             LexicalDeclarationIds.Freshen(body);

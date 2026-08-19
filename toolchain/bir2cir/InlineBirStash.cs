@@ -6,7 +6,7 @@ using DotKt.Bir;
 
 // INLINE-BIR STASH (#71/#75 S1). Runs after module-wide companion representation selection but before the ordinary
 // per-file lowering passes. For each `mods.inline` method it deep-clones the representation-selected, otherwise raw BIR
-// facts {fqn,owner,recv,typeParams,params,ret,body,lifted} and stores them as ONE
+// facts {v,fqn,owner,recv,typeParams,params,ret,body,lifted} and stores them as ONE
 // OPAQUE STRING field `"inlineBir"` = base64(BirCarrier.EncodeBody(JsonV1, payload)). Encoding AT STASH TIME is load-
 // bearing: every downstream walker (BirTypeLowering, RefBodySquash, …) then sees an inert JsonValue string and cannot
 // descend into / rewrite the captured body. ilemit later stamps that string VERBATIM as the [KotlinInline] carrier
@@ -111,6 +111,7 @@ static class InlineBirStash
         // [KotlinInline] carrier to the cross-module reader.
         var payload = new JsonObject
         {
+            ["v"] = 1,
             ["fqn"] = owner + "." + name,
             ["owner"] = owner,
             ["fileClass"] = fileClass,

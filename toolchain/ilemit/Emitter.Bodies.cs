@@ -347,22 +347,6 @@ sealed partial class Emitter
     (string open, Type constructed) ParseOwnerSlot(JsonElement e) =>
         ParseOwnerT((DotKt.Bir.TypeNode.Fqn)DotKt.Bir.TypeNode.Read(e));
 
-    (string open, Type constructed) ParseOwner(string spec)
-    {
-        // A bare owner-FQN IDENTITY (the legacy `clr:`/`clrg:` markers are retired — #48); a `[...]` suffix carries the
-        // referenced-generic instantiation.
-        var br = spec.IndexOf('[');
-        if (br < 0) return (spec, null);
-        var open = spec.Substring(0, br);
-        var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapType).ToArray();
-        if (_types.TryGetValue(open, out var ti)) return (open, ConstructedType(ti.TB, args));
-        // Owner not emitted in THIS assembly -> a REFERENCED generic type (e.g. `kotlin.Result[int]` from
-        // DotKt.Stdlib.dll): construct it by reflection so ResolveMethod/ResolveField can reflect against the
-        // instantiation (its members carry substituted signatures).
-        var reflectedName = open.Contains('`') ? open : open + "`" + args.Length;
-        return (open, ConstructedType(ResolveType(reflectedName), args));
-    }
-
     // The constructed type's GetX helpers return members whose declared types are still the OPEN params (`!0`);
     // substitute a type-level param by position to its concrete arg so callers box value types correctly.
     // A value type OR a generic parameter must be boxed to become an `object` — a generic param's runtime type is

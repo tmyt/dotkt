@@ -514,12 +514,12 @@ static class StringCharSequenceBridge
     {
         if (_refs == null || node["args"] is not JsonArray args) return;
         if (TypeJson.Read(node["type"]) is not TypeNode.Fqn tf) return;
-        var ctorParams = _refs.OwnerCtorParamTypeNames(tf.Name);
+        var ctorParams = _refs.OwnerCtorParamTypes(tf.Name);
         // Require an EXACT arity match: a positional skew (a synthetic `__outer` present on one side only) would align the
         // CharSequence-slot check against the wrong argument and wrap a genuine value. Skip rather than risk it.
         if (ctorParams == null || ctorParams.Length != args.Count) return;
         for (var i = 0; i < args.Count; i++)
-            if ((IsCharSeqSlot(ctorParams[i]) || Bare(ctorParams[i]) == "kotlin.CharSequence")
+            if ((IsCharSeqT(ctorParams[i]) || IsSourceCharSeqT(ctorParams[i]))
                 && args[i] is JsonNode a && IsStaticString(a, env))
                 args[i] = WrapAdapter(a);
     }
@@ -586,6 +586,13 @@ static class StringCharSequenceBridge
         TypeNode.Fqn f => f.Name == CharSeq,
         TypeNode.Nullable n => IsCharSeqT(n.Of),
         TypeNode.Array a => IsCharSeqT(a.Elem),
+        _ => false,
+    };
+    static bool IsSourceCharSeqT(TypeNode t) => t switch
+    {
+        TypeNode.Fqn f => f.Name == "kotlin.CharSequence",
+        TypeNode.Nullable n => IsSourceCharSeqT(n.Of),
+        TypeNode.Array a => IsSourceCharSeqT(a.Elem),
         _ => false,
     };
     static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
@@ -677,16 +684,4 @@ static class StringCharSequenceBridge
         return IsStringTokT(t);
     }
 
-    static bool IsCharSeqSlot(string t) => Bare(t) == CharSeq;
-
-    // Strip a leading `nullable:` then `@` (the this-assembly-emitted marker) so `@dotkt$CharSequence` /
-    // `nullable:kotlin.String` compare by their bare identity.
-    static string Bare(string t)
-    {
-        if (t == null) return null;
-        t = t.Trim();
-        if (t.StartsWith("nullable:", StringComparison.Ordinal)) t = t["nullable:".Length..];
-        if (t.StartsWith("@", StringComparison.Ordinal)) t = t[1..];
-        return t;
-    }
 }

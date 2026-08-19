@@ -15,6 +15,56 @@ using DotKt.Toolchain;
 
 sealed partial class ReferenceMetadataIndex
 {
+    public enum TypeKeyKind
+    {
+        Named,
+        Reference,
+        GenericParameter,
+        Function,
+        Object,
+        String,
+        Void,
+        Int8,
+        Int16,
+        Int32,
+        Int64,
+        Float32,
+        Float64,
+        Boolean,
+        Char,
+        UInt8,
+        UInt16,
+        UInt32,
+        UInt64,
+        ByRef,
+        Array,
+        Nullable,
+    }
+
+    public sealed record TypeKey(TypeKeyKind Kind, string Name = null, TypeKey Element = null);
+
+    public sealed class SignatureKey : IEquatable<SignatureKey>
+    {
+        readonly TypeKey[] _parameters;
+
+        public SignatureKey(IEnumerable<TypeKey> parameters) => _parameters = parameters.ToArray();
+
+        public bool Equals(SignatureKey other) =>
+            other != null && _parameters.SequenceEqual(other._parameters);
+
+        public override bool Equals(object obj) => Equals(obj as SignatureKey);
+
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            foreach (var parameter in _parameters) hash.Add(parameter);
+            return hash.ToHashCode();
+        }
+    }
+
+    public readonly record struct DefaultKey(
+        string Owner, string Method, int ParamCount, SignatureKey Signature = null, bool Relaxed = false);
+
     sealed class MalformedTrustedCompanionException : Exception
     {
         public MalformedTrustedCompanionException(string message, Exception inner = null) : base(message, inner) { }
@@ -88,7 +138,7 @@ sealed partial class ReferenceMetadataIndex
     // flowing into a CharSequence ctor param of a SPLICED anonymous stdlib object (`dotkt$obj*`, e.g. the anonymous
     // Grouping from `CharSequence.groupingBy` whose ctor captures the receiver as `kotlin.CharSequence`). The spliced
     // `new dotkt$obj*(...)` node carries no argTypes, so the CharSequence-slot knowledge comes only from here.
-    readonly Dictionary<string, string[]> _ownerCtorParams = new(StringComparer.Ordinal);
+    readonly Dictionary<string, TypeNode[]> _ownerCtorParams = new(StringComparer.Ordinal);
     // Per owner-FQN, the CLR generic-parameter CONSTRAINT class of each flattened type-param position:
     // "struct" (NotNullableValueTypeConstraint), "class" (ReferenceTypeConstraint), or "unconstrained". Drives the
     // struct-ness ORACLE for a type variable (#37/#48 nullability fold): a struct-constrained `T?` is `Nullable<T>`,
@@ -205,16 +255,16 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, int> _innerCapturedCount = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _innerSemanticOwner = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _topLevelIntrinsics = new(StringComparer.Ordinal); // top-level fun name -> FQ static
-    readonly Dictionary<string, string> _topLevelIntrinsicsBySig = new(StringComparer.Ordinal); // "name|paramKeys" -> FQ static (overload-disambiguated)
+    readonly Dictionary<(string Name, SignatureKey Signature), string> _topLevelIntrinsicsBySig = new();
     readonly HashSet<string> _ambiguousTopLevelIntrinsics = new(StringComparer.Ordinal); // names whose overloads bind to DIFFERENT statics (Math vs MathF)
     readonly Dictionary<string, int[]> _topLevelIntrinsicByref = new(StringComparer.Ordinal); // top-level fun name -> byref param positions
-    readonly Dictionary<string, string> _extMemberIntrinsics = new(StringComparer.Ordinal); // "name|recvKey|paramCount" -> bare member
+    readonly Dictionary<(string Name, SignatureKey Signature), string> _extMemberIntrinsics = new();
     readonly Dictionary<string, (string Getter, string Conv)> _inlineBacking = new(StringComparer.Ordinal);
-    readonly Dictionary<string, List<(string Owner, string RecvKey, string ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal); // non-intrinsic top-level fun name -> [(file-class, coarse recvKey, fine first-param ParamKey)]
+    readonly Dictionary<string, List<(string Owner, string RecvKey, TypeKey ParamKey)>> _topLevelStatics = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _collectionFactories = new(StringComparer.Ordinal); // @ClrCollectionFactory fun name -> "list"/"set"/"map"
     readonly Dictionary<string, string> _arrayFactories = new(StringComparer.Ordinal);       // @ClrArrayFactory fun name -> "vararg"/"sized"
     readonly Dictionary<string, string> _arrayFactoryElemHints = new(StringComparer.Ordinal);// array factory name -> concrete elem FQN (empty-call fallback)
-    readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaults = new(StringComparer.Ordinal); // "owner|name|paramCount" -> (argPos -> default BIR)
+    readonly Dictionary<DefaultKey, Dictionary<int, string>> _kotlinDefaults = new();
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     // #146: OWNERLESS default-arg index "name|paramCount" -> defaults. DefaultArgSplice now runs at PHASE 1 (before
     // MemberCallSubstitution attributes the owner), so the omitted call is still `owner:null method:col2 sig:[…]`.
@@ -223,7 +273,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, Dictionary<int, string>> _kotlinDefaultsOwnerless = new(StringComparer.Ordinal);
     readonly HashSet<string> _kotlinDefaultsAmbiguous = new(StringComparer.Ordinal);
     // OWNERFUL keys two same-arity declarations carry with different defaults (see ReferenceAssemblyMetadata).
-    readonly HashSet<string> _kotlinDefaultsConflicted = new(StringComparer.Ordinal);
+    readonly HashSet<DefaultKey> _kotlinDefaultsConflicted = new();
     // [KotlinInline] raw-BIR payloads (#71/#75): "owner|name|pc|ga" -> the CANDIDATE decoded carrier JSONs (one per overload
     // sharing that key; the raw pre-lowering decl facts InlineBirStash stashed). Read cross-module by InlineSplice, which
     // picks the UNIQUE candidate matching the call's `paramSig` (§4.2), then splices its body at the call site (so it
@@ -451,20 +501,18 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TopLevelStatics)
             {
                 if (!_topLevelStatics.TryGetValue(kv.Key, out var lst))
-                    _topLevelStatics[kv.Key] = lst = new List<(string, string, string)>();
+                    _topLevelStatics[kv.Key] = lst = new List<(string, string, TypeKey)>();
                 lst.AddRange(kv.Value);
             }
             foreach (var key in asm.DotKt.KotlinDefaultsConflicted) _kotlinDefaultsConflicted.Add(key);
             foreach (var kv in asm.DotKt.KotlinDefaults)
             {
                 _kotlinDefaults.TryAdd(kv.Key, kv.Value);
-                // OWNERLESS fold "owner|name|pc" -> "name|pc" (#146). Method/owner names carry no '|', so the split is exact.
-                var parts = kv.Key.Split('|');
-                // Only the 3-part ARITY key folds: a signature-keyed entry is 4 parts, and a CONSTRUCTOR is never called
+                // Only an arity key folds: a signature-keyed entry does not, and a CONSTRUCTOR is never called
                 // ownerlessly (a `new` always names its type), so folding `.ctor|pc` would only make every type of the
                 // same ctor arity collide with every other.
-                if (parts.Length != 3 || parts[1] == CtorKeyName) continue;
-                var np = parts[1] + "|" + parts[2];
+                if (kv.Key.Signature != null || kv.Key.Method == CtorKeyName) continue;
+                var np = kv.Key.Method + "|" + kv.Key.ParamCount;
                 if (_kotlinDefaultsAmbiguous.Contains(np)) continue;
                 // The OWNERFUL key is already known to be carried by two declarations that disagree, so the ownerless
                 // fold of it cannot identify one either — mark it rather than folding the first-seen declaration in.
@@ -573,21 +621,23 @@ sealed partial class ReferenceMetadataIndex
     // dll2klib-projected calls already carry their exact file-facade `ownerType` in BIR, so use that structural identity
     // first. Truly ownerless Kotlin calls retain the conservative name+arity index; conflicting owners remain ambiguous
     // and are refused. Running this at phase 1 does not imply throwing away an owner kotc has already projected.
-    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount, string sigKey = null)
+    public Dictionary<int, string> KotlinDefaultsFor(string owner, string method, int paramCount,
+        SignatureKey sigKey = null, SignatureKey relaxedSigKey = null)
     {
         if (method == null) return null;
         if (owner != null)
         {
-            var key = owner + "|" + method + "|" + paramCount;
+            var key = new DefaultKey(owner, method, paramCount);
             // A call carries its callee's declared parameter vector (`sig`/`shapeTypes`, or a `new`'s `argTypes`), so try
             // the SIGNATURE key first — that is what tells same-arity overloads apart. Exact first, then with class
             // positions collapsed (the call's Kotlin spelling and the reference's CLR spelling only compare there), then
             // the arity key, which refuses when two declarations carry it with different defaults.
             if (sigKey != null)
             {
-                if (_kotlinDefaults.TryGetValue(key + "|" + sigKey, out var bySig)
-                    && !_kotlinDefaultsConflicted.Contains(key + "|" + sigKey)) return bySig;
-                var relaxed = key + "|~" + RelaxedSigKey(sigKey);
+                var exactKey = new DefaultKey(owner, method, paramCount, sigKey);
+                if (_kotlinDefaults.TryGetValue(exactKey, out var bySig)
+                    && !_kotlinDefaultsConflicted.Contains(exactKey)) return bySig;
+                var relaxed = new DefaultKey(owner, method, paramCount, relaxedSigKey, Relaxed: true);
                 if (_kotlinDefaults.TryGetValue(relaxed, out var byRelaxed) && !_kotlinDefaultsConflicted.Contains(relaxed))
                     return byRelaxed;
             }
@@ -611,7 +661,7 @@ sealed partial class ReferenceMetadataIndex
     // declarations must agree on their defaults; the BIR owner alone cannot distinguish disagreeing slots, so guessing
     // one would attach source semantics from an arbitrary reflection order.
     public Dictionary<int, string> KotlinDefaultsForImplementedInterface(
-        string owner, int ownerArity, string method, int paramCount, string sigKey)
+        string owner, int ownerArity, string method, int paramCount, SignatureKey sigKey, SignatureKey relaxedSigKey)
     {
         if (owner == null || method == null || sigKey == null) return null;
         var open = ResolveRefType(owner, ownerArity);
@@ -621,7 +671,7 @@ sealed partial class ReferenceMetadataIndex
         {
             if (candidate.Name != method || candidate.GetParameters().Length != paramCount) return false;
             var candidateKey = SigKeyOf(candidate.GetParameters());
-            return candidateKey == sigKey || RelaxedSigKey(candidateKey) == RelaxedSigKey(sigKey);
+            return candidateKey.Equals(sigKey) || SigKeyOf(candidate.GetParameters(), relaxed: true).Equals(relaxedSigKey);
         }
 
         const BindingFlags ownFlags = BindingFlags.Public | BindingFlags.NonPublic |
@@ -679,7 +729,7 @@ sealed partial class ReferenceMetadataIndex
     public bool KotlinDefaultsAmbiguous(string owner, string method, int paramCount) =>
         method != null && (owner == null
             ? _kotlinDefaultsAmbiguous.Contains(method + "|" + paramCount)
-            : _kotlinDefaultsConflicted.Contains(owner + "|" + method + "|" + paramCount));
+            : _kotlinDefaultsConflicted.Contains(new DefaultKey(owner, method, paramCount)));
 
     static bool SameDefaults(Dictionary<int, string> a, Dictionary<int, string> b)
     {
@@ -691,7 +741,7 @@ sealed partial class ReferenceMetadataIndex
     static bool SameDeclarationBinding(MemberBinding a, MemberBinding b) =>
         a.Owner == b.Owner && a.Name == b.Name && a.ParamCount == b.ParamCount
         && a.Intrinsic == b.Intrinsic && a.IsAbstract == b.IsAbstract && a.IsStatic == b.IsStatic
-        && Same(a.ParamTypes, b.ParamTypes) && a.PropertyAccess == b.PropertyAccess
+        && a.PropertyAccess == b.PropertyAccess
         && a.PropertyName == b.PropertyName && Same(a.ByrefPositions, b.ByrefPositions)
         && a.Suspend == b.Suspend && a.Conv == b.Conv && a.ConvTo == b.ConvTo
         && Same(a.ReturnType, b.ReturnType) && a.MethodArity == b.MethodArity
@@ -791,17 +841,9 @@ sealed partial class ReferenceMetadataIndex
 
     // ---- Call-substitution lookups (consumed by MemberCallSubstitution) ----
 
-    // A BIR owner token ("@kotlin.text.StringBuilder", "kotlin.collections.ArrayList[gp:E]", "clr:System.X") ->
-    // its bare Kotlin FQN ("kotlin.text.StringBuilder"). Strips decoration, the clr:/clrg: marker, and type args.
-    public static string BareOwnerFqn(string token)
-    {
-        var t = token.Trim().TrimStart('@');
-        foreach (var p in new[] { "clrg:", "clr:" })
-            if (t.StartsWith(p, StringComparison.Ordinal)) t = t[p.Length..];
-        var br = t.IndexOf('[');
-        if (br >= 0) t = t[..br];
-        return StripGenericArity(t);
-    }
+    // The open identity of a current structured Fqn's name. Generic arguments live in Fqn.Args; the name may carry
+    // CLR metadata arity punctuation, which is the only decoration normalized here.
+    public static string BareOwnerFqn(string fqnName) => StripGenericArity(fqnName.Trim());
 
     // The top-level-extension receiver KEY of a call's first-sig-arg Fqn — the call-site mirror of the ref-side
     // RecvKey(Type) (used to index/disambiguate TopLevelStatics by receiver type). A specialized primitive-array Fqn
@@ -813,16 +855,6 @@ sealed partial class ReferenceMetadataIndex
     // (ParamKey's `array:i32` is a DIFFERENT canonicalization for @ClrIntrinsic sig matching — not conflated here.)
     public static string RecvKeyOfFqn(string fqnName) =>
         BirTypeLowering.PrimArrayElem.ContainsKey(fqnName) ? "[]" : BareOwnerFqn(fqnName);
-
-    // Receiver-nullability normalization for a fine first-param key. A top-level extension's RECEIVER nullability is NOT
-    // part of the CLR static's identity, and the two key derivations disagree on it: the call side spells a nullable
-    // ARRAY/reference receiver as `nullable:array:byte` (from the birType `UByteArray?`), but the ref.dll reflection can
-    // never emit `nullable:` for a nullable reference-typed param (only Nullable<value> structs) -> the stored key is the
-    // bare `array:byte`. Strip a single leading `nullable:` on BOTH operands so a nullable-receiver `ubyteArrayOf(..)
-    // .contentToString()` still pins UArraysKt instead of falling to the buggy coarse "[]" first-match (#153). A
-    // value-type nullable receiver keys `nullable:i32` on BOTH sides, so stripping both stays a match.
-    static string NoRecvNull(string key) =>
-        key != null && key.StartsWith("nullable:", StringComparison.Ordinal) ? key["nullable:".Length..] : key;
 
     // Resolve a member-call/construction OWNER to its BCL type. True for a @ClrTypeAlias / class-@ClrIntrinsic owner
     // (or a foundational reference primitive). `kind` is the ref.dll type kind (class/struct/interface/enum).
@@ -1635,7 +1667,7 @@ sealed partial class ReferenceMetadataIndex
         _innerSemanticOwner.TryGetValue(StripGenericArity(DottedFqn(ownerFqn)), out semanticOwner);
     // The declared param type names of the owner's (sole/first) constructor, or null. Keyed by the arity-stripped
     // Kotlin FQN (`dotkt$obj90`, not `dotkt$obj90``1`), matching the CIR `new` node's bare type token.
-    public string[] OwnerCtorParamTypeNames(string ownerFqn)
+    public TypeNode[] OwnerCtorParamTypes(string ownerFqn)
     {
         if (string.IsNullOrEmpty(ownerFqn)) return null;
         return _ownerCtorParams.GetValueOrDefault(ownerFqn)
@@ -2100,7 +2132,7 @@ sealed partial class ReferenceMetadataIndex
     // pre-lowering Kotlin FQN like `kotlin.Long`). Returns true when owner.member (arg count matched when possible) is a
     // @ClrConv-marked conversion — MemberCallSubstitution then emits `{k:conv, to:<convTo>, e:<recv>}`. A conversion is
     // nullary, so arg count is always 0; the arity match is kept for symmetry with the other member lookups.
-    public bool TryMemberConv(string ownerFqn, string memberName, int argCount, out string convTo)
+    public bool TryMemberConv(string ownerFqn, string memberName, int argCount, out TypeNode convTo)
     {
         convTo = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
@@ -2223,90 +2255,114 @@ sealed partial class ReferenceMetadataIndex
     // FULL-SIGNATURE @ClrIntrinsic lookup for the member-STRIP: is owner.name(paramKeys) a bound stub? Matches the
     // @ClrIntrinsic member whose canonicalized param types equal the emitted method's — so `StringBuilder.append(Char)`
     // (@ClrIntrinsic, dropped) is distinguished from `append(CharSequence?)` (rule-3, kept), which share name+arity.
-    public bool IsBoundStub(string ownerFqn, string memberName, IReadOnlyList<string> birParamKeys)
+    public bool IsBoundStub(string ownerFqn, string memberName, IReadOnlyList<TypeKey> birParamKeys)
     {
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
-        return list.Any(m => m.Name == memberName && m.Intrinsic != null && m.ParamTypes != null
-            && m.ParamTypes.Length == birParamKeys.Count
-            && m.ParamTypes.Select(ParamKey).SequenceEqual(birParamKeys));
+        return list.Any(m => m.Name == memberName && m.Intrinsic != null && m.ParamTypeNodes != null
+            && m.ParamTypeNodes.Length == birParamKeys.Count
+            && m.ParamTypeNodes.Select(ParamKey).SequenceEqual(birParamKeys));
     }
 
-    // Canonicalize a type token (a kotc birType or a ref.dll reflected TypeName) to a comparable identity for signature
-    // matching: unwrap byref/array/nullable, drop the clr/@ marker + generic args, collapse a type param, fold primitives.
-    // Deliberately shallow (top-level identity) — enough to separate the real overloads without full structural matching.
-    public static string ParamKey(string t)
+    // Canonicalize one already-parsed Fqn identity. No string type grammar is recognized here: wrappers and generic
+    // arguments are represented by TypeNode/System.Type and dispatched structurally before this leaf is reached.
+    static TypeKey ParamKeyFqn(string t, bool relaxed = false)
     {
-        t = t.Trim();
-        if (t.EndsWith("?", StringComparison.Ordinal)) t = t[..^1];
-        foreach (var w in new[] { "byref:", "array:", "nullable:" })
-            if (t.StartsWith(w, StringComparison.Ordinal)) return w + ParamKey(t[w.Length..]);
-        foreach (var p in new[] { "clrg:", "clr:", "@" })
-            if (t.StartsWith(p, StringComparison.Ordinal)) { t = t[p.Length..]; break; }
-        // `sfunc:` (suspend fn TYPE) erases to `object`: a suspend-lambda VALUE is a SuspendLambda state-machine
-        // OBJECT (a Continuation-based object), NOT a Func delegate — so it keys as `obj`, matching an intrinsic's
-        // object-erased suspend param/receiver. A plain `func:` still keys as the delegate bucket.
-        if (t.StartsWith("sfunc:", StringComparison.Ordinal)) return "obj";
-        if (t.StartsWith("func:", StringComparison.Ordinal)) return "func";
-        var br = t.IndexOf('[');
-        if (br >= 0) t = t[..br];
-        if (t.StartsWith("gp:", StringComparison.Ordinal)) return "gp";
-        return t switch
+        var exact = t switch
         {
-            "kotlin.Byte" or "System.SByte" or "sbyte" => "i8",             // signed 8-bit; token "sbyte" IS kotlin.Byte (System.SByte)
-            "kotlin.Short" or "System.Int16" or "short" => "i16",
-            "kotlin.Int" or "System.Int32" or "int" => "i32",
-            "kotlin.Long" or "System.Int64" or "long" => "i64",
-            "kotlin.Float" or "System.Single" or "float" => "f32",
-            "kotlin.Double" or "System.Double" or "double" => "f64",
-            "kotlin.Boolean" or "System.Boolean" or "bool" => "bool",
-            "kotlin.Char" or "System.Char" or "char" => "char",
-            "kotlin.String" or "System.String" or "string" => "str",
-            "kotlin.Unit" or "System.Void" or "void" => "void",
-            "kotlin.Any" or "System.Object" or "object" => "obj",
+            "kotlin.Byte" or "System.SByte" or "sbyte" => new TypeKey(TypeKeyKind.Int8),
+            "kotlin.Short" or "System.Int16" or "short" => new TypeKey(TypeKeyKind.Int16),
+            "kotlin.Int" or "System.Int32" or "int" => new TypeKey(TypeKeyKind.Int32),
+            "kotlin.Long" or "System.Int64" or "long" => new TypeKey(TypeKeyKind.Int64),
+            "kotlin.Float" or "System.Single" or "float" => new TypeKey(TypeKeyKind.Float32),
+            "kotlin.Double" or "System.Double" or "double" => new TypeKey(TypeKeyKind.Float64),
+            "kotlin.Boolean" or "System.Boolean" or "bool" => new TypeKey(TypeKeyKind.Boolean),
+            "kotlin.Char" or "System.Char" or "char" => new TypeKey(TypeKeyKind.Char),
+            "kotlin.String" or "System.String" or "string" => new TypeKey(TypeKeyKind.String),
+            "kotlin.Unit" or "System.Void" or "void" => new TypeKey(TypeKeyKind.Void),
+            "kotlin.Any" or "System.Object" or "object" => new TypeKey(TypeKeyKind.Object),
             // Unsigned scalars, folded like every other primitive: the specialized ARRAYS were already folded below, but
             // the element types were not, so a `UInt` parameter keyed as `kotlin.UInt` from a pre-lowering call site and
             // as `uint` from a reference assembly — two spellings of one type that no signature compare could match.
-            "kotlin.UByte" or "System.Byte" or "byte" => "byte",
-            "kotlin.UShort" or "System.UInt16" or "ushort" => "ushort",
-            "kotlin.UInt" or "System.UInt32" or "uint" => "uint",
-            "kotlin.ULong" or "System.UInt64" or "ulong" => "ulong",
-            // Primitive-array class spellings (kotc lowers to `array:int`, but the ref.dll may reflect the kotlin.IntArray
+            "kotlin.UByte" or "System.Byte" or "byte" => new TypeKey(TypeKeyKind.UInt8),
+            "kotlin.UShort" or "System.UInt16" or "ushort" => new TypeKey(TypeKeyKind.UInt16),
+            "kotlin.UInt" or "System.UInt32" or "uint" => new TypeKey(TypeKeyKind.UInt32),
+            "kotlin.ULong" or "System.UInt64" or "ulong" => new TypeKey(TypeKeyKind.UInt64),
+            // Primitive-array class spellings (kotc lowers to a structured array node, but the ref.dll may reflect the kotlin.IntArray
             // class) -> the same array key so a top-level `sort(IntArray)`@ClrIntrinsic matches by signature.
-            "kotlin.IntArray" => "array:i32",
-            "kotlin.LongArray" => "array:i64",
-            "kotlin.ByteArray" => "array:i8",
-            "kotlin.ShortArray" => "array:i16",
-            "kotlin.FloatArray" => "array:f32",
-            "kotlin.DoubleArray" => "array:f64",
-            "kotlin.BooleanArray" => "array:bool",
-            "kotlin.CharArray" => "array:char",
+            "kotlin.IntArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.Int32)),
+            "kotlin.LongArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.Int64)),
+            "kotlin.ByteArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.Int8)),
+            "kotlin.ShortArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.Int16)),
+            "kotlin.FloatArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.Float32)),
+            "kotlin.DoubleArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.Float64)),
+            "kotlin.BooleanArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.Boolean)),
+            "kotlin.CharArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.Char)),
             // Unsigned specialized arrays (#53): native System.Byte[]/UInt16[]/UInt32[]/UInt64[]. Same array key as
             // their element token so an @ClrIntrinsic signature over the ref.dll spelling matches.
-            "kotlin.UByteArray" => "array:byte",
-            "kotlin.UShortArray" => "array:ushort",
-            "kotlin.UIntArray" => "array:uint",
-            "kotlin.ULongArray" => "array:ulong",
-            _ => StripGenericArity(t),
+            "kotlin.UByteArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.UInt8)),
+            "kotlin.UShortArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.UInt16)),
+            "kotlin.UIntArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.UInt32)),
+            "kotlin.ULongArray" => new TypeKey(TypeKeyKind.Array, Element: new(TypeKeyKind.UInt64)),
+            _ => new TypeKey(TypeKeyKind.Named, StripGenericArity(t)),
         };
+        return relaxed && exact.Kind == TypeKeyKind.Named ? new TypeKey(TypeKeyKind.Reference) : exact;
     }
 
-    // ParamKey over a structured Type node (a birType-emitted param slot) — walks the TypeNode natively, matching
-    // the string ParamKey's top-level-identity canonicalization exactly:
-    // byref/array/nullable unwrap-with-marker, a fn -> obj (suspend) / func, a type-var -> gp, an Fqn leaf folded via
-    // the shared primitive switch (delegating to ParamKey(f.Name) — a bare FQN the switch already handles).
-    public static string ParamKey(TypeNode t) => t switch
+    static TypeKey ParamKey(TypeNode t, bool relaxed) => t switch
     {
-        TypeNode.ByRef b => "byref:" + ParamKey(b.Of),
-        TypeNode.Array a => "array:" + ParamKey(a.Elem),
-        TypeNode.Nullable n => "nullable:" + ParamKey(n.Of),
-        TypeNode.Fn fn => fn.Suspend ? "obj" : "func",
-        TypeNode.Tv => "gp",
-        TypeNode.Fqn f => ParamKey(f.Name),
-        _ => "obj",
+        TypeNode.ByRef b => new TypeKey(TypeKeyKind.ByRef, Element: ParamKey(b.Of, relaxed)),
+        TypeNode.Array a => new TypeKey(TypeKeyKind.Array, Element: ParamKey(a.Elem, relaxed)),
+        TypeNode.Nullable n when relaxed && !IsValueKey(ParamKey(n.Of, false)) => ParamKey(n.Of, true),
+        TypeNode.Nullable n => new TypeKey(TypeKeyKind.Nullable, Element: ParamKey(n.Of, relaxed)),
+        TypeNode.Fn fn => new TypeKey(fn.Suspend ? TypeKeyKind.Object : TypeKeyKind.Function),
+        TypeNode.Tv => new TypeKey(TypeKeyKind.GenericParameter),
+        TypeNode.Fqn f => ParamKeyFqn(f.Name, relaxed),
+        _ => new TypeKey(TypeKeyKind.Object),
     };
 
+    static TypeKey ParamKey(Type type, bool relaxed)
+    {
+        if (type.IsByRef) return new TypeKey(TypeKeyKind.ByRef, Element: ParamKey(type.GetElementType()!, relaxed));
+        if (type.IsArray) return new TypeKey(TypeKeyKind.Array, Element: ParamKey(type.GetElementType()!, relaxed));
+        if (type.IsGenericParameter) return new TypeKey(TypeKeyKind.GenericParameter);
+        if (IsDelegate(type)) return new TypeKey(TypeKeyKind.Function);
+        if (type.IsConstructedGenericType)
+        {
+            var def = type.GetGenericTypeDefinition();
+            if (def == typeof(Nullable<>))
+            {
+                var inner = type.GetGenericArguments()[0];
+                if (relaxed && !IsValueKey(ParamKey(inner, false))) return ParamKey(inner, true);
+                return new TypeKey(TypeKeyKind.Nullable, Element: ParamKey(inner, relaxed));
+            }
+            return ParamKeyFqn(StripGenericArity(def.FullName ?? def.Name), relaxed);
+        }
+        return ParamKeyFqn(PrimitiveBirName(type) ?? StripGenericArity(type.FullName ?? type.Name), relaxed);
+    }
+
+    public static TypeKey ParamKey(TypeNode t) => ParamKey(t, relaxed: false);
+
     // ParamKey off a structured JSON type slot.
-    public static string ParamKey(JsonNode typeSlot) => ParamKey(TypeNode.Parse(typeSlot.ToJsonString()));
+    public static TypeKey ParamKey(JsonNode typeSlot) => ParamKey(TypeNode.Parse(typeSlot.ToJsonString()));
+
+    public static SignatureKey SignatureKeyOf(JsonArray signature, bool relaxed = false) =>
+        new(signature.Select(type => ParamKey(TypeNode.Parse(type!.ToJsonString()), relaxed)));
+
+    public static TypeKey ReceiverParamKey(JsonNode typeSlot)
+        => ReceiverParamKey(TypeNode.Parse(typeSlot.ToJsonString()));
+
+    public static TypeKey ReceiverParamKey(TypeNode type)
+    {
+        if (type is TypeNode.Nullable nullable) type = nullable.Of;
+        return ParamKey(type, relaxed: false);
+    }
+
+    static TypeKey ReceiverParamKey(Type type)
+    {
+        if (type.IsConstructedGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>))
+            type = type.GetGenericArguments()[0];
+        return ParamKey(type, relaxed: false);
+    }
 
     // A top-level fun (file-class static, called as `callStatic owner=null`) bound by @ClrIntrinsic to a
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").
@@ -2318,8 +2374,8 @@ sealed partial class ReferenceMetadataIndex
     // name|<ParamKey-joined signature> so a call resolves the EXACT intrinsic overload (and a non-intrinsic sibling
     // overload, e.g. `Double.pow(Int)`, correctly MISSES here and falls through to its real Kotlin body). `sigKey` is
     // the call's ParamKey-normalized signature. This is what lets the by-name-first-wins map stop shadowing MathF.
-    public bool TryTopLevelIntrinsicBySig(string funName, string sigKey, out string fqStatic) =>
-        _topLevelIntrinsicsBySig.TryGetValue(funName + "|" + sigKey, out fqStatic);
+    public bool TryTopLevelIntrinsicBySig(string funName, SignatureKey sigKey, out string fqStatic) =>
+        _topLevelIntrinsicsBySig.TryGetValue((funName, sigKey), out fqStatic);
 
     // Whether a top-level intrinsic NAME binds to more than one distinct BCL static across its overloads (sqrt/abs/
     // pow -> Math vs MathF). For such names the name-only fallback is UNSAFE (it would pick an arbitrary overload), so
@@ -2541,11 +2597,11 @@ sealed partial class ReferenceMetadataIndex
             // must not let an intrinsic `f(Int)` capture a frontend-selected real-body `f(Int?)`. Type variables keep
             // the historical erasure seam (`T?` may be reflected as T), and arrays are reference types even when their
             // element is a value type.
-            if (declaration is not TypeNode.Nullable && !ValueTokens.Contains(ParamKey(cNull.Of)))
+            if (declaration is not TypeNode.Nullable && !IsValueKey(ParamKey(cNull.Of)))
                 return DeclarationDescribesCall(declaration, cNull.Of);
         }
         if (declaration is TypeNode.Fqn { Args: null } erased
-            && ParamKey(erased) == "obj"
+            && ParamKey(erased).Kind == TypeKeyKind.Object
             && call is TypeNode.Nullable { Of: TypeNode.Tv })
             return true;
         // A Kotlin primitive-array CLASS and the CLR array it IS are one type under two spellings, and which one
@@ -2580,7 +2636,7 @@ sealed partial class ReferenceMetadataIndex
         return false;
     }
 
-    public bool TryResolveTopLevelStatic(string funName, string recvKey, string firstParamKey, out string owner)
+    public bool TryResolveTopLevelStatic(string funName, string recvKey, TypeKey firstParamKey, out string owner)
     {
         owner = null;
         if (!_topLevelStatics.TryGetValue(funName, out var cands) || cands.Count == 0) return false;
@@ -2593,7 +2649,7 @@ sealed partial class ReferenceMetadataIndex
         // is already exact, so gate on it to leave every non-array resolution byte-identical. (#153)
         if (recvKey == "[]" && firstParamKey != null)
             foreach (var c in cands)
-                if (NoRecvNull(c.ParamKey) == NoRecvNull(firstParamKey)) { owner = c.Owner; return true; }
+                if (c.ParamKey == firstParamKey) { owner = c.Owner; return true; }
         // The candidate RecvKey is the ref.dll's Kotlin receiver type (`kotlin.collections.List`); the call site's
         // recvKey may already be that type's @ClrTypeAlias CLR form (`System.Collections.Generic.IReadOnlyList`), when
         // kotc rendered the receiver local as its CLR alias (e.g. `val xs = listOf(...)` used only via an extension).
@@ -2652,12 +2708,12 @@ sealed partial class ReferenceMetadataIndex
     // erases it to `object`, so `println(intArrayOf(1,2).toList())` wrapped in clrCollToString<object> then rejects the
     // `IReadOnlyList<int32>` stack (#153). PREFER the first-param-key match; fall back to the coarse first-match when no
     // key is supplied or none matches (monotone — only previously-arbitrary picks change).
-    public TypeNode TryMemberReturn(string ownerFqn, string name, int argCount, string firstParamKey = null)
+    public TypeNode TryMemberReturn(string ownerFqn, string name, int argCount, TypeKey firstParamKey = null)
     {
         if (ownerFqn == null || !TryMembersByBirOwner(ownerFqn, out var list)) return null;
         if (firstParamKey != null
             && list.FirstOrDefault(b => b.Name == name && b.ParamCount == argCount && b.ReturnType != null
-                    && b.ParamTypes is { Length: > 0 } && NoRecvNull(ParamKey(b.ParamTypes[0])) == NoRecvNull(firstParamKey)) is { } keyed)
+                    && b.ParamTypeNodes is { Length: > 0 } && ReceiverParamKey(b.ParamTypeNodes[0]) == firstParamKey) is { } keyed)
             return keyed.ReturnType;
         return (list.FirstOrDefault(b => b.Name == name && b.ParamCount == argCount && b.ReturnType != null)
                 ?? list.FirstOrDefault(b => b.Name == name && b.ReturnType != null))?.ReturnType;
@@ -3064,7 +3120,7 @@ sealed partial class ReferenceMetadataIndex
     // The declared RETURN type of a top-level fun (a `callStatic owner=null`), resolved via its file-class owner then the
     // member's return type. `recvKey` = the call's first sig-param bare owner (disambiguates overloads across file-classes);
     // `argCount` = the sig's total param count (receiver + args), matching the ref.dll static's ParamCount. null if unresolved.
-    public TypeNode TryTopLevelReturn(string funName, string recvKey, int argCount, string firstParamKey = null) =>
+    public TypeNode TryTopLevelReturn(string funName, string recvKey, int argCount, TypeKey firstParamKey = null) =>
         TryResolveTopLevelStatic(funName, recvKey, firstParamKey, out var owner) ? TryMemberReturn(owner, funName, argCount, firstParamKey) : null;
 
     // A bare-@ClrIntrinsic extension fun resolved by name + the receiver-type key (the call's first-arg type) + the
@@ -3076,8 +3132,8 @@ sealed partial class ReferenceMetadataIndex
     // EXACT-signature @ClrIntrinsic ext-member lookup: `sigKey` is the call's full ParamKey signature (receiver-first),
     // so a same-name/same-arity NON-intrinsic overload (`substring(IntRange)` vs the bound `substring(Int)`) misses here
     // and falls through to its real Kotlin body — never captured by a lossy name+count key (the #46 same-name collapse).
-    public bool TryExtMemberIntrinsic(string funName, string sigKey, out string member) =>
-        _extMemberIntrinsics.TryGetValue(funName + "|" + sigKey, out member);
+    public bool TryExtMemberIntrinsic(string funName, SignatureKey sigKey, out string member) =>
+        _extMemberIntrinsics.TryGetValue((funName, sigKey), out member);
 
     // An @JvmInline value class's backing-field getter call (`x.get_data()`): the inline UNBOX. Returns the CLR conv
     // token for the field's declared type so the call collapses to `conv(recv)` (the erased primitive IS the value).
@@ -3722,7 +3778,7 @@ sealed partial class ReferenceMetadataIndex
                         var ctors = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                         if (ctors.Length == 1)
                         {
-                            var ctorParams = ctors[0].GetParameters().Select(p => TypeName(p.ParameterType)).ToArray();
+                            var ctorParams = ctors[0].GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray();
                             metadata.CtorParamTypes[ownerFqn] = ctorParams;
                             metadata.CtorParamTypes[DottedFqn(ownerFqn)] = ctorParams;
                             metadata.CtorParamTypes[ExactPhysicalMetadataName(type)] = ctorParams;
@@ -3826,7 +3882,7 @@ sealed partial class ReferenceMetadataIndex
                         // MemberCallSubstitution can emit `{k:conv, to:<convTo>, e:<recv>}` — the target BirTypeLowering
                         // then lowers to System.Int64/etc. and ilemit picks the conv opcode.
                         var isConv = HasAttribute(method.GetCustomAttributesData(), "kotlin.clr.ClrConv");
-                        var convTo = isConv ? TypeName(method.ReturnType) : null;
+                        var convTo = isConv ? DeclarationTypeNode(method.ReturnType) : null;
                         // Default argument VALUES remain authoritative in the selected reference DLL. KotlinDefault
                         // contributes its raw Kotlin-expression BIR; an ordinary ECMA-335 constant contributes a plain
                         // const expression. The reference KLIB carries only DECLARES_DEFAULT_VALUE for frontend
@@ -3851,7 +3907,6 @@ sealed partial class ReferenceMetadataIndex
                             intrinsic,
                             method.IsAbstract,
                             method.IsStatic,
-                            method.GetParameters().Select(p => TypeName(p.ParameterType)).ToArray(),
                             prop?.Access ?? 0,
                             prop?.Name,
                             byrefPositions,
@@ -3947,14 +4002,14 @@ sealed partial class ReferenceMetadataIndex
                                 // ALSO key by name|<full ParamKey signature> so a call resolves the EXACT overload
                                 // (sqrt(Double)->System.Math.Sqrt, sqrt(Float)->System.MathF.Sqrt) and a non-intrinsic
                                 // sibling (Double.pow(Int)) misses -> falls through to its real Kotlin body.
-                                metadata.TopLevelIntrinsicsBySig.TryAdd(method.Name + "|" + SigKeyOf(ps), intrinsic);
+                                metadata.TopLevelIntrinsicsBySig.TryAdd((method.Name, SigKeyOf(ps)), intrinsic);
                                 if (byrefPositions.Length > 0) metadata.TopLevelIntrinsicByref.TryAdd(method.Name, byrefPositions);
                             }
                             else if (ps.Length >= 1)
                                 // Key by name|<full ParamKey signature> (receiver-first, mirroring TopLevelIntrinsicsBySig)
                                 // so a call resolves the EXACT overload — `substring(Int)`@ClrIntrinsic does NOT capture a
                                 // same-count non-intrinsic sibling `substring(IntRange)` (which then falls to its Kotlin body).
-                                metadata.ExtMemberIntrinsics.TryAdd(method.Name + "|" + SigKeyOf(ps), intrinsic);
+                                metadata.ExtMemberIntrinsics.TryAdd((method.Name, SigKeyOf(ps)), intrinsic);
                         }
                         // A NON-intrinsic top-level fun (a real Kotlin body in a file-class) -> index it by name so an APP
                         // build can attribute a referenced `callStatic owner=null` to this file-class (disambiguated by the
@@ -3972,9 +4027,9 @@ sealed partial class ReferenceMetadataIndex
                             // The FINE first-param key (ParamKey space): distinguishes the array overloads a coarse "[]"
                             // recvKey collapses (IntArray->"array:i32", UByteArray->"array:byte", Array<T>->"array:gp") so
                             // owner attribution pins the RIGHT file-class+overload (#153 unsigned-array miscompile).
-                            var pk = ps.Length >= 1 ? ParamKey(TypeName(ps[0].ParameterType)) : "";
+                            var pk = ps.Length >= 1 ? ReceiverParamKey(ps[0].ParameterType) : null;
                             if (!metadata.TopLevelStatics.TryGetValue(method.Name, out var lst))
-                                metadata.TopLevelStatics[method.Name] = lst = new List<(string, string, string)>();
+                                metadata.TopLevelStatics[method.Name] = lst = new List<(string, string, TypeKey)>();
                             lst.Add((ownerFqn, rk, pk));
                         }
                         // Collection/array FACTORY markers on a [KotlinFileClass] static (listOf/setOf/mapOf/arrayOf/…):
@@ -5159,7 +5214,8 @@ sealed partial class ReferenceMetadataIndex
             if (retType != null && retType.IsArray)
             {
                 var el = retType.GetElementType();
-                if (el != null && !el.IsGenericParameter) return TypeName(el);
+                if (el != null && !el.IsGenericParameter && TypeNodeOf(el) is TypeNode.Fqn { Args: null } f)
+                    return f.Name;
             }
         }
         catch { }
@@ -5214,8 +5270,8 @@ sealed partial class ReferenceMetadataIndex
                 // The reference build preserves Kotlin primitive declaration types (`kotlin.Int`); runtime builds
                 // later lower those to System.Int32. Validate the shared semantic/physical primitive identity rather
                 // than requiring one build phase's spelling.
-                || ParamKey(TypeName(ps[start].ParameterType)) != "i32"
-                || ParamKey(TypeName(ps[end].ParameterType)) != "i32")
+                || ParamKey(ps[start].ParameterType, relaxed: false).Kind != TypeKeyKind.Int32
+                || ParamKey(ps[end].ParameterType, relaxed: false).Kind != TypeKeyKind.Int32)
                 throw new InvalidDataException(
                     $"invalid @ClrCountFromExclusiveEnd on {method.DeclaringType?.FullName}.{method.Name} parameter {end}");
             result = (start, end);
@@ -5327,7 +5383,8 @@ sealed partial class ReferenceMetadataIndex
     // A method's full ParamKey-normalized signature ("f64", "f64,f64", "i32", ...), used to overload-disambiguate a
     // top-level @ClrIntrinsic (sqrt(Double) vs sqrt(Float); pow(Double,Double) intrinsic vs pow(Double,Int) real-body).
     // Runs each param's TypeName through ParamKey so the ref.dll declaration and the call's kotc `sig` agree.
-    static string SigKeyOf(ParameterInfo[] ps) => string.Join(",", ps.Select(p => ParamKey(TypeName(p.ParameterType))));
+    static SignatureKey SigKeyOf(ParameterInfo[] ps, bool relaxed = false) =>
+        new(ps.Select(p => ParamKey(p.ParameterType, relaxed)));
 
     /// A signature key with every position [ParamKey] could not FOLD collapsed to `ref`. The two sides of a
     /// @KotlinDefault lookup describe the same parameter in DIFFERENT spaces — a call site carries kotc's pre-lowering
@@ -5337,31 +5394,12 @@ sealed partial class ReferenceMetadataIndex
     /// (`f(String, String)` from `f(String, List&lt;String&gt;)`), which is what the exact key cannot do here. Two
     /// overloads differing only between two DIFFERENT class types collapse together, are recorded as a conflict, and are
     /// refused rather than guessed.
-    public static string RelaxedSigKey(string sigKey) =>
-        string.Join(",", sigKey.Split(',').Select(RelaxToken));
-
-    static string RelaxToken(string token)
-    {
-        foreach (var w in new[] { "byref:", "array:" })
-            if (token.StartsWith(w, StringComparison.Ordinal)) return w + RelaxToken(token[w.Length..]);
-        // NULLABILITY is asymmetric across the two spaces for a REFERENCE type: Kotlin's `String?` is a call-side
-        // `nullable:str` but lowers to a plain `System.String` (its nullability rides [Nullable]), so the reference side
-        // reads `str`. A nullable VALUE type is `System.Nullable<T>` on both sides and keeps the wrapper.
-        if (token.StartsWith("nullable:", StringComparison.Ordinal))
-        {
-            var inner = RelaxToken(token["nullable:".Length..]);
-            return ValueTokens.Contains(inner) ? "nullable:" + inner : inner;
-        }
-        // An ALLOW-LIST, not "is it dotted": a namespace-less emitted type (`dotkt$CharSequence`) is dotless yet still a
-        // class, and its call-side spelling (`kotlin.CharSequence`) differs — collapsing both is what keeps them equal.
-        return FoldedTokens.Contains(token) ? token : "ref";
-    }
-
     // Every token [ParamKey] can produce for a type it FOLDED — i.e. one whose two spellings it made equal. A token
     // outside this set is a class identity that only one of the two spaces spells that way.
-    static readonly HashSet<string> ValueTokens = new(StringComparer.Ordinal)
-        { "i8", "i16", "i32", "i64", "f32", "f64", "bool", "char", "void", "byte", "ushort", "uint", "ulong" };
-    static readonly HashSet<string> FoldedTokens = new(ValueTokens, StringComparer.Ordinal) { "str", "obj", "func", "gp" };
+    static bool IsValueKey(TypeKey key) => key.Kind is
+        TypeKeyKind.Int8 or TypeKeyKind.Int16 or TypeKeyKind.Int32 or TypeKeyKind.Int64 or
+        TypeKeyKind.Float32 or TypeKeyKind.Float64 or TypeKeyKind.Boolean or TypeKeyKind.Char or
+        TypeKeyKind.UInt8 or TypeKeyKind.UInt16 or TypeKeyKind.UInt32 or TypeKeyKind.UInt64;
 
     /// Record one declaration's @KotlinDefault carriers under BOTH keys the splice can look up: `owner|name|arity|sigKey`
     /// (the exact overload — a call site reproduces that signature from its own declared parameter vector) and
@@ -5371,13 +5409,13 @@ sealed partial class ReferenceMetadataIndex
     static void AddKotlinDefaults(ReferenceDotKtMetadata metadata, string ownerFqn, string name, ParameterInfo[] ps,
         Dictionary<int, string> defaults)
     {
-        var arityKey = ownerFqn + "|" + name + "|" + ps.Length;
+        var arityKey = new DefaultKey(ownerFqn, name, ps.Length);
         var sig = SigKeyOf(ps);
         // The callee's DECLARED parameter types, for a call site that carries none of its own — a constructor
         // DELEGATION rides the ctor declaration, so `baseArgs` is a bare array with no signature vector. The splice
         // needs them to type the temp it binds each spliced value to.
-        Put(arityKey + "|" + sig, defaults);                        // the exact signature
-        Put(arityKey + "|~" + RelaxedSigKey(sig), defaults);        // class positions collapsed, for cross-space compare
+        Put(new DefaultKey(ownerFqn, name, ps.Length, sig), defaults);
+        Put(new DefaultKey(ownerFqn, name, ps.Length, SigKeyOf(ps, relaxed: true), Relaxed: true), defaults);
         if (metadata.KotlinDefaults.TryGetValue(arityKey, out var prior))
         {
             if (!SameDefaults(prior, defaults)) metadata.KotlinDefaultsConflicted.Add(arityKey);
@@ -5385,7 +5423,7 @@ sealed partial class ReferenceMetadataIndex
         }
         metadata.KotlinDefaults[arityKey] = defaults;
 
-        void Put(string key, Dictionary<int, string> d)
+        void Put(DefaultKey key, Dictionary<int, string> d)
         {
             // Two declarations landing on the SAME signature key can only be told apart by a finer key, so this one
             // refuses too rather than serving the last writer.
@@ -5433,32 +5471,6 @@ sealed partial class ReferenceMetadataIndex
         if (attr == null || attr.ConstructorArguments.Count == 0 || attr.ConstructorArguments[0].Value == null)
             return null;
         return Convert.ToInt32(attr.ConstructorArguments[0].Value, CultureInfo.InvariantCulture);
-    }
-
-    static string TypeName(Type type)
-    {
-        if (type.IsByRef)
-            return "byref:" + TypeName(type.GetElementType()!);
-        if (type.IsArray)
-            return "array:" + TypeName(type.GetElementType()!);
-        if (type.IsGenericParameter)
-            return "gp:" + type.Name;
-        if (IsDelegate(type))
-            return DelegateTypeName(type);
-        if (type.IsConstructedGenericType)
-        {
-            var def = type.GetGenericTypeDefinition();
-            var args = type.GetGenericArguments().Select(TypeName).ToList();
-            if (def == typeof(Nullable<>))
-                return "nullable:" + args[0];
-            if (IsFunc(def))
-                return "func:" + args[^1] + ":" + string.Join(",", args.Take(args.Count - 1));
-            if (IsAction(def))
-                return "func:void:" + string.Join(",", args);
-            return "clrg:" + StripGenericArity(def.FullName ?? def.Name) + "[" + string.Join(",", args) + "]";
-        }
-
-        return PrimitiveBirName(type) ?? StripGenericArity(type.FullName ?? type.Name);
     }
 
     // A STRUCTURED TypeNode from a reflected ref.dll type — the pure-Kotlin identity kotc would have emitted (the ref
@@ -5547,13 +5559,6 @@ sealed partial class ReferenceMetadataIndex
             if (cur.FullName == "System.MulticastDelegate")
                 return true;
         return false;
-    }
-
-    static string DelegateTypeName(Type type)
-    {
-        var invoke = type.GetMethod("Invoke");
-        if (invoke == null) return PrimitiveBirName(type) ?? StripGenericArity(type.FullName ?? type.Name);
-        return "func:" + TypeName(invoke.ReturnType) + ":" + string.Join(",", invoke.GetParameters().Select(p => TypeName(p.ParameterType)));
     }
 
     static string PrimitiveBirName(Type type)
@@ -5735,7 +5740,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string> TypeParamDeclarations = new(StringComparer.Ordinal); // ownerFqn -> exact descriptor array JSON
-    public readonly Dictionary<string, string[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> (first) ctor param type names
+    public readonly Dictionary<string, TypeNode[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> sole ctor parameter types
     public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
     public readonly Dictionary<string, TypeNode[]> TypeParamBounds = new(StringComparer.Ordinal); // DOTTED ownerFqn -> per-param declared bound TypeNode (null when unconstrained/objectish)
     public readonly HashSet<string> HelperTypes = new(StringComparer.Ordinal);            // emitted "dotkt$ClrH_*" rule-3 helpers
@@ -5757,7 +5762,7 @@ sealed class ReferenceDotKtMetadata
     // Top-level fun name -> its @ClrIntrinsic fully-qualified static target ("System.Diagnostics.Stopwatch.GetTimestamp").
     // A top-level fun is a static method of a [KotlinFileClass] type; its call site is `callStatic owner=null`.
     public readonly Dictionary<string, string> TopLevelIntrinsics = new(StringComparer.Ordinal);
-    public readonly Dictionary<string, string> TopLevelIntrinsicsBySig = new(StringComparer.Ordinal);
+    public readonly Dictionary<(string Name, ReferenceMetadataIndex.SignatureKey Signature), string> TopLevelIntrinsicsBySig = new();
     public readonly HashSet<string> AmbiguousTopLevelIntrinsics = new(StringComparer.Ordinal);
     // Top-level @ClrIntrinsic fun name -> the 0-based parameter positions its bound BCL static takes BY REFERENCE
     // (@ClrRefArgument). The substituted clrStatic wraps these argTypes positions `byref:` (tryParseInt32's `out result`,
@@ -5765,7 +5770,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, int[]> TopLevelIntrinsicByref = new(StringComparer.Ordinal);
     // Bare-@ClrIntrinsic extension fun, keyed "funName|recvKey" (recvKey = the receiver/first-param type) -> the BCL
     // member name. Receiver-keyed because the bare name collides across receivers (set->set_Item vs set->set_Chars).
-    public readonly Dictionary<string, string> ExtMemberIntrinsics = new(StringComparer.Ordinal);
+    public readonly Dictionary<(string Name, ReferenceMetadataIndex.SignatureKey Signature), string> ExtMemberIntrinsics = new();
     // @JvmInline value-class owner FQN -> (its single backing-field getter "get_data", the field's CLR conv token).
     // The class is ERASED to its primitive CLR form, so `get_data()` is the inline unbox: it collapses to the receiver
     // value conv'd to the field's declared type (a `conv`, never a `ldfld data` — the erased primitive has no field).
@@ -5775,7 +5780,7 @@ sealed class ReferenceDotKtMetadata
     // class it actually lives in (getOrElse -> kotlin.collections._CollectionsKt), disambiguated by the call's receiver
     // type when the name is defined across multiple file-classes (CollectionsKt vs ArraysKt vs MapsKt). NOT consulted in
     // a stdlib self-build (the fun is local there; owner=null + FindStatic finds the sibling).
-    public readonly Dictionary<string, List<(string Owner, string RecvKey, string ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, List<(string Owner, string RecvKey, ReferenceMetadataIndex.TypeKey ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
     // Collection/array FACTORY top-level funs, keyed by fun NAME -> the factory kind. A @kotlin.clr.ClrCollectionFactory
     // ("list"/"set"/"map") or @kotlin.clr.ClrArrayFactory ("vararg"/"sized") marker on a [KotlinFileClass] static.
     // MemberCallSubstitution reads these on a `callStatic owner=null` (listOf/setOf/mapOf/arrayOf/intArrayOf/arrayOfNulls
@@ -5788,12 +5793,12 @@ sealed class ReferenceDotKtMetadata
     // omitted argument. Keyed "ownerFqn|methodName|paramCount" -> (argPosition -> BIR-json string). The DefaultArgSplice
     // pass reads this to fill trailing omitted args BEFORE the CharSequence bridge + type lowering (so a String default
     // is coerced exactly like an explicit arg). Rides the ref.dll only (param attrs stripped in the rt build).
-    public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaults = new(StringComparer.Ordinal);
+    public readonly Dictionary<ReferenceMetadataIndex.DefaultKey, Dictionary<int, string>> KotlinDefaults = new();
     public readonly Dictionary<string, Dictionary<int, string>> KotlinDefaultsByDeclarationId = new(StringComparer.Ordinal);
     // Keys of [KotlinDefaults] that TWO declarations of the same owner+name+arity carry with DIFFERENT defaults — the key
     // cannot tell them apart, so the splice must refuse instead of filling whichever was enumerated last. Populated for
     // both METHODS and CONSTRUCTORS (same-arity overloads are common; #235).
-    public readonly HashSet<string> KotlinDefaultsConflicted = new(StringComparer.Ordinal);
+    public readonly HashSet<ReferenceMetadataIndex.DefaultKey> KotlinDefaultsConflicted = new();
 }
 
 // A single ref.dll member's call-substitution shape. Owner is the Kotlin FQN ("kotlin.String"); Intrinsic is the
@@ -5825,7 +5830,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, string[] ParamTypes = null, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, string ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, bool SequenceFilterNotNull = false, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, bool SequenceFilterNotNull = false, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);
@@ -5839,7 +5844,7 @@ sealed record ReferencedPropertyMethodImpl(string SourceMember, TypeNode.Fqn Dec
 // The exact authored binding selected from a complete declaration identity. Carrying this value across the alias-
 // companion rewrite prevents a later name+arity lookup from silently selecting a different overload.
 sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string PropertyName,
-    bool Conv, string ConvTo, int[] ByrefPositions, int CountStart, int CountEnd);
+    bool Conv, TypeNode ConvTo, int[] ByrefPositions, int CountStart, int CountEnd);
 
 // A referenced CONSTRUCTOR's declaration shape. A `new` is a call whose declaration is the owner's constructor, so the
 // nullable-generic realign types its arguments exactly as it types a method call's — and a ctor has no name of its own,

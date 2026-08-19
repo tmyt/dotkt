@@ -148,9 +148,10 @@ sealed record CallSite(
 
     static IReadOnlyList<string> ArgumentTypes(JsonObject node)
     {
-        // `sig` is a STRUCTURED TypeNode array (#37 m3b) — render each param's canonical ParamKey for the diagnostic.
+        // `sig` is a structured TypeNode array. Preserve that representation in the diagnostic instead of inventing a
+        // second string type grammar for display.
         if (node["sig"] is JsonArray sig && sig.Count > 0)
-            return sig.Select(el => ReferenceMetadataIndex.ParamKey(el)).ToList();
+            return sig.Select(el => el?.ToJsonString() ?? "null").ToList();
 
         if (node["args"] is not JsonArray args) return Array.Empty<string>();
 
@@ -169,4 +170,3 @@ sealed record CallSite(
             ?? "";
     }
 }
-

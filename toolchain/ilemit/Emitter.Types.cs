@@ -39,10 +39,6 @@ sealed partial class Emitter
         _ => t,
     };
 
-    // BIR `clrg:<openName>[<arg1>,<arg2>,...]` -> a constructed generic .NET type. Args split at bracket-depth 0
-    // so nested generics (List[ValueTuple[int,string]]) parse correctly.
-    // Resolve a .NET type reference that may be a plain name (ResolveType), a generic `clrg:Open[args]`,
-    // or a func/closed encoding (MapType). Used by newClr/clrPropGet so they accept generic types (System.Lazy<T>).
     // A clr* owner/type slot is a structured Type node authored by bir2cir.
     Type ClrRef(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
 
@@ -56,38 +52,11 @@ sealed partial class Emitter
     static readonly HashSet<string> PrimShorthand = new(StringComparer.Ordinal)
     { "void", "object", "string", "int", "long", "short", "sbyte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "byte" };
 
-    // Generic arguments must already be physical value types in CIR. `System.Void` is not a legal CLR generic
-    // argument; converting it to object here would reconstruct the Kotlin Unit/Nothing representation.
-    Type MapArg(string t) => RequireGenericArgument(MapType(t), t);
-
     Type RequireGenericArgument(Type type, object source)
     {
         if (type == Bcl("System.Void"))
             throw new NotSupportedException($"invalid CIR generic argument `System.Void` from {source}");
         return type;
-    }
-
-    Type GenericType(string spec)
-    {
-        var br = spec.IndexOf('[');
-        var open = spec.Substring(0, br);
-        var inner = spec.Substring(br + 1, spec.Length - br - 2);
-        var args = SplitTopLevel(inner).Select(MapArg).ToArray();
-        var openGen = ResolveType(open + "`" + args.Length);
-        return ConstructedType(openGen, args);
-    }
-
-    static List<string> SplitTopLevel(string s)
-    {
-        var res = new List<string>(); int depth = 0, start = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            if (s[i] == '[') depth++;
-            else if (s[i] == ']') depth--;
-            else if (s[i] == ',' && depth == 0) { res.Add(s.Substring(start, i - start)); start = i + 1; }
-        }
-        if (s.Length > 0) res.Add(s.Substring(start));
-        return res;
     }
 
     Type MapType(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
@@ -204,30 +173,21 @@ sealed partial class Emitter
             "short" => Bcl("System.Int16"), "sbyte" => Bcl("System.SByte"),
             // A bare FQN identity (kotc's pure-FQN output — NO `@`/`clr:` marker): an in-assembly emitted type wins;
             // every other identity must resolve exactly from the declared reference universe.
-            // A bare constructed-generic `Name[args]` whose open name isn't emitted here (e.g. the `ownerType` of a
-            // referenced `kotlin.Result[int]` member call) resolves as a referenced generic (GenericType arity-suffixes).
             // A dot-LESS name not emitted in THIS assembly but present in a REFERENCED (--ref, LoadFrom'd) assembly is a
             // real external type — a `dotkt$*` canonical synthetic (`dotkt$CharSequence`) OR a root-package library
             // class (`Vec`/`Lib`/`Pt`, no namespace). Resolve it by reflection, don't fall to object. Before the TYPE flip
             // these rode the `@dotkt$X`/`@Name` emitted-type-hint branch; kotc/bir2cir now emit the bare FQN, so a
             // dot-less name that ResolvesExternally must route to ResolveType here (mirrors the externalSynthIface path).
-            _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t) : ResolveType(t)),
+            _ => TryMapEmittedType(t) ?? ResolveType(t),
         };
     }
 
     // Resolve a bare type spec (no `@`/`clr:`/shorthand prefix) against THIS assembly's emitted types (`_types`).
-    // Handles the plain `Name` and the constructed-generic `Name[arg,...]` forms (the `_types` key is the open name
-    // WITHOUT arity, so the `[...]` suffix is stripped to look it up). Returns null when the name is not emitted here
-    // (the caller then falls back to reflection over referenced assemblies).
+    // Returns null when the name is not emitted here (the caller then falls back to reflection over referenced assemblies).
     Type TryMapEmittedType(string spec)
     {
         if (spec == null) return null;
-        var br = spec.IndexOf('[');
-        if (br < 0) return _types.TryGetValue(spec, out var ti) ? ti.AsType : null;
-        var open = spec.Substring(0, br);
-        if (!_types.TryGetValue(open, out var oti)) return null;
-        var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapArg).ToArray();
-        return ConstructedType(oti.AsType, args);
+        return _types.TryGetValue(spec, out var ti) ? ti.AsType : null;
     }
 
 }
