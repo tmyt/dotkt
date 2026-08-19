@@ -84,6 +84,126 @@
           "args": []
         }
       ]
+    },
+    {
+      "name": "adaptNullable",
+      "static": true,
+      "vis": "public",
+      "typeParams": ["T"],
+      "params": [
+        {
+          "name": "sourceNullable",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.sequences.Sequence",
+            "args": [{ "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.sequences.Sequence",
+        "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "valueBlock",
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.sequences.Sequence",
+              "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+            },
+            "stmts": [
+              {
+                "k": "var",
+                "name": "filtered",
+                "type": {
+                  "t": "fqn",
+                  "name": "kotlin.sequences.Sequence",
+                  "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+                },
+                "init": {
+                  "k": "cast",
+                  "type": {
+                    "t": "fqn",
+                    "name": "kotlin.sequences.Sequence",
+                    "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+                  },
+                  "e": {
+                    "k": "local",
+                    "name": "sourceNullable",
+                    "sty": {
+                      "t": "fqn",
+                      "name": "kotlin.sequences.Sequence",
+                      "args": [{ "t": "nullable", "of": { "t": "tv", "scope": "method", "i": 0 } }]
+                    }
+                  }
+                }
+              }
+            ],
+            "result": { "k": "local", "name": "filtered" }
+          }
+        }
+      ],
+      "attrs": [
+        {
+          "attr": { "t": "fqn", "name": "kotlin.clr.ClrSequenceElementAdapter" },
+          "argTypes": [],
+          "args": []
+        }
+      ]
+    },
+    {
+      "name": "adaptConcreteNullableValue",
+      "static": true,
+      "vis": "public",
+      "typeParams": ["T"],
+      "params": [
+        {
+          "name": "sourceConcrete",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.sequences.Sequence",
+            "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.sequences.Sequence",
+        "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cast",
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.sequences.Sequence",
+              "args": [{ "t": "tv", "scope": "method", "i": 0 }]
+            },
+            "e": {
+              "k": "local",
+              "name": "sourceConcrete",
+              "sty": {
+                "t": "fqn",
+                "name": "kotlin.sequences.Sequence",
+                "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }]
+              }
+            }
+          }
+        }
+      ],
+      "attrs": [
+        {
+          "attr": { "t": "fqn", "name": "kotlin.clr.ClrSequenceElementAdapter" },
+          "argTypes": [],
+          "args": []
+        }
+      ]
     }
   ]
 }

@@ -77,11 +77,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Generic `Array<T>(size) { init }` construction in valid reified bodies now preserves its element type (#353).**
   `kotc` carries a scoped type variable into BIR array construction instead of falling through to a bogus empty
   `kotlin.Array`; `bir2cir` then resolves the generic CLR allocation and initializer invocation normally.
-- **Lazy `Sequence.mapNotNull` now preserves value-element sequence identity (#349).** The CLR stdlib uses an explicit
-  element-converting adapter for `Sequence<T?>.filterNotNull`, instead of unchecked-casting an object-elemented lazy
-  wrapper to the reified `IEnumerable<T>` result.
-- **`Sequence.filterIsInstance<R>` now returns a genuine CLR sequence of `R` (#446).** Its reified Kotlin predicate
-  remains lazy, while bir2cir replaces the final erased-platform cast with a typed element-view adapter.
+- **Lazy `Sequence.mapNotNull`/`filterNotNull` and `Sequence.filterIsInstance<R>` preserve their result element
+  identity (#349, #446, #449).** Their Kotlin declaration bodies retain the lazy null/type predicates, while one
+  annotation-driven bir2cir rule replaces only the final erased-platform cast with a typed element-view adapter.
 
 ## 0.9.9 (2026-08-17)
 

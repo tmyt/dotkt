@@ -31,11 +31,6 @@ static class MemberCallSubstitution
     static IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> _localPropertyAccessors
         = new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
     static IReadOnlySet<string> _localPropertyOwners = new HashSet<string>(StringComparer.Ordinal);
-    // Exact declaration identities carrying the stdlib's local sequence-filter representation marker. The runtime
-    // stdlib build cannot discover its own declarations through ReferenceMetadataIndex, so it supplies the same fact
-    // directly from BIR. Calls are still selected by declaration identity, never by the source function name.
-    static IReadOnlySet<string> _localSequenceFilterNotNullDeclarations
-        = new HashSet<string>(StringComparer.Ordinal);
     // #76: the four unsigned specialized array value classes -> their SIGNED backing-array element FQN. kotc emits
     // `kotlin.U*Array` as a faithful array identity (like signed IntArray) and STOPS emitting/decomposing the value
     // class; bir2cir OWNS both the native representation (via PrimArrayElem -> the UNSIGNED native array byte[]/uint[]/
@@ -111,8 +106,7 @@ static class MemberCallSubstitution
 
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, Func<string, bool> isValue,
-        IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> localPropertyAccessors,
-        IReadOnlySet<string> localSequenceFilterNotNullDeclarations)
+        IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> localPropertyAccessors)
     {
         _localTopLevelFns = localTopLevelFns;
         _attributeTopLevelOwner = attributeTopLevelOwner;
@@ -121,29 +115,8 @@ static class MemberCallSubstitution
             ?? new Dictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>();
         _localPropertyOwners = _localPropertyAccessors.Keys.Select(key => key.Owner)
             .ToHashSet(StringComparer.Ordinal);
-        _localSequenceFilterNotNullDeclarations = localSequenceFilterNotNullDeclarations
-            ?? new HashSet<string>(StringComparer.Ordinal);
         _typesWithConcreteIterator = CollectConcreteIteratorTypes(root);
         return Rewrite(root, refs, new SubstCtx());
-    }
-
-    public static IReadOnlySet<string> CollectLocalSequenceFilterNotNullDeclarations(IEnumerable<JsonNode> roots)
-    {
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        void WalkOwner(JsonObject owner)
-        {
-            if (owner["methods"] is JsonArray methods)
-                foreach (var method in methods.OfType<JsonObject>())
-                    if (Str(method[DeclarationIdentityBinding.Key]) is string id
-                        && method["attrs"] is JsonArray attrs
-                        && attrs.OfType<JsonObject>().Any(attr =>
-                            TypeJson.OwnerName(attr["attr"]) == "kotlin.clr.ClrSequenceFilterNotNull"))
-                        result.Add(id);
-            if (owner["types"] is JsonArray types)
-                foreach (var type in types.OfType<JsonObject>()) WalkOwner(type);
-        }
-        foreach (var root in roots.OfType<JsonObject>()) WalkOwner(root);
-        return result;
     }
 
     public static IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>>
@@ -742,28 +715,6 @@ static class MemberCallSubstitution
         return construction;
     }
 
-    // Sequence.filterNotNull carries an exact stdlib binding fact. Its source Sequence<T?> is object-elemented when T
-    // may be a value type, so materialize the CLR-specific adapter whose declared output is genuinely Sequence<T>.
-    // The marker, not the function name, selects this representation.
-    static JsonObject SequenceFilterNotNullAdapter(JsonObject node)
-    {
-        var args = node["args"] as JsonArray;
-        var sig = node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray;
-        var typeArgs = node["typeArgs"] as JsonArray;
-        if (args == null || args.Count != 1 || sig == null || sig.Count != 1
-            || typeArgs == null || typeArgs.Count != 1 || TypeJson.Read(typeArgs[0]) is not TypeNode elem)
-            throw new InvalidOperationException("bir2cir: malformed @ClrSequenceFilterNotNull call");
-        return CarryFactoryStaticType(node, new JsonObject
-        {
-            ["k"] = "new",
-            ["type"] = TypeJson.Write(new TypeNode.Fqn(
-                "kotlin.sequences.ClrFilteringNotNullSequence",
-                new TypeNode[] { elem })),
-            ["argTypes"] = new JsonArray { sig[0]!.DeepClone() },
-            ["args"] = new JsonArray { args[0]!.DeepClone() },
-        });
-    }
-
     // The physical element of an array whose Kotlin element type is `elem` (#86, owned by NullableGenericErasure): an
     // array element is a reified ARGUMENT. The factories above build arrays AFTER the declaration-axis erasure has
     // run, so they apply the rule themselves rather than inheriting it from a sweep that has already gone by.
@@ -861,13 +812,6 @@ static class MemberCallSubstitution
             // properties bind through their exact metadata association; local properties retain the semantic role until
             // the common forward allocator runs.
             var topLevelPropertyAccess = Str(node["prop"]);
-            var exactReferencedSequenceFilter =
-                (node[DeclarationIdentityBinding.ReferencedSequenceFilterNotNullKey] as JsonValue)?
-                    .TryGetValue<bool>(out var referencedSequenceFilter) == true && referencedSequenceFilter;
-            var exactLocalSequenceFilter = Str(node[DeclarationIdentityBinding.Key]) is string localSequenceFilterId
-                && _localSequenceFilterNotNullDeclarations.Contains(localSequenceFilterId);
-            if (exactReferencedSequenceFilter || exactLocalSequenceFilter)
-                return SequenceFilterNotNullAdapter(node);
             // Collection/array FACTORY (`listOf`/`setOf`/`mapOf`/`arrayOf`/`intArrayOf`/`arrayOfNulls`): a
             // @ClrCollectionFactory/@ClrArrayFactory marker on the ref.dll top-level fun -> re-emit the
             // newList/newSet/newMap/newArray/newArraySized CONSTRUCTION node (the recognition kotc used to do via its

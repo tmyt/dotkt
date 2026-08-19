@@ -86,8 +86,16 @@ class SequenceOperationTests {
         val bools = sequenceOf(0, 1, 2).mapNotNull { if (it == 1) null else it == 2 }
         assertEquals("False,True", bools.toList().joinToString(","))
 
-        val direct = sequenceOf(1, 2, 3).map { if (it == 2) null else it }.filterNotNull()
+        var directCalls = 0
+        val direct = sequenceOf(1, 2, 3).map {
+            directCalls = directCalls + 1
+            if (it == 2) null else it
+        }.filterNotNull()
+        assertEquals(0, directCalls)
         assertEquals("1,3", direct.toList().joinToString(","))
+        assertEquals(3, directCalls)
+        assertEquals("1,3", direct.toList().joinToString(","))
+        assertEquals(6, directCalls)
 
         val stringSource = ArrayList<String>()
         stringSource.add("a")
