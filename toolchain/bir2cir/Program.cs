@@ -128,9 +128,14 @@ sealed class Pipeline
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
         var localReifiedDeclarations = ReifiedNullabilityWitnessLowering.Collect(birRoots);
-        if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots);
-        var localSequenceFilterNotNullDeclarations =
-            MemberCallSubstitution.CollectLocalSequenceFilterNotNullDeclarations(birRoots);
+        // The combined value-type oracle covers referenced/foundational values plus local structs/enums across every
+        // input file. The Sequence element-view boundary asks the nullable-generic rule whether its source element will
+        // be object-reified, so it shares this oracle instead of restating today's two stdlib source spellings. The
+        // declaration/use-axis nullable-generic passes below retain the same oracle.
+        var localValueTypeFqns = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var b in birFiles) CollectLocalValueTypes(b.Root, localValueTypeFqns);
+        Func<string, bool> isValueFqn = name => refs.IsValueTypeFqn(name) || localValueTypeFqns.Contains(name);
+        if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots, isValueFqn);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block
         // statics are one declaration independent of the owner's T, so materialize their non-generic carrier before
@@ -211,15 +216,6 @@ sealed class Pipeline
                                 if (iface is JsonNode inode && TypeJson.Read(inode) is TypeNode.Fqn iff) sup.Add(iff.Name);
                         typeSupers[tn] = sup;
                     }
-        // The LOCAL VALUE-type FQNs declared in this compilation (kotc emits `kind:"enum"` for a real CLR enum,
-        // `kind:"struct"` for a value type). These are value types not present on the ref.dll, so the struct-ness
-        // ORACLE must know them — a nullable local enum `E?` is `Nullable<E>`, not a bare reference. Collected across
-        // ALL input files (a cross-file `E?` in file B references an enum declared in file A).
-        var localValueTypeFqns = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var b in birFiles)
-            CollectLocalValueTypes(b.Root, localValueTypeFqns);
-        // The combined value-type oracle: ref.dll struct/enum + foundational primitives, OR a local enum/struct.
-        Func<string, bool> isValueFqn = name => refs.IsValueTypeFqn(name) || localValueTypeFqns.Contains(name);
         // Attribute referenced top-level stdlib funs to their file-class owner only in an APP build: a stdlib self-
         // build (`--build-stdlib=metadata|runtime`) defines them locally, so owner=null is correct there. The reference
         // build never runs MemberCallSubstitution at all (see the RefBuild gate below).
@@ -696,8 +692,7 @@ sealed class Pipeline
             // receiver/signature overload set. Local identities remain untouched for the module-wide allocator below.
             DeclarationIdentityBinding.BindReferenced(hoisted, refs, localDeclarationIds, deferUnknown: true);
             var substituted = _options.RefBuild ? hoisted : MemberCallSubstitution.Apply(hoisted, refs,
-                localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations,
-                localSequenceFilterNotNullDeclarations);
+                localTopLevelFns, attributeTopLevelOwner, isValueFqn, localPropertyDeclarations);
             // Reified-nullability witnesses were prepared while declaration identities and Kotlin type arguments were
             // still authoritative. Materialize them only after semantic calls (enum/array/collection intrinsics) have
             // either been replaced or deliberately retained, so a physical hidden ABI argument cannot interfere with

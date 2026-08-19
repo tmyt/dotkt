@@ -31,15 +31,7 @@ public annotation class ClrCollectionFactory(val kind: String)
 @Target(AnnotationTarget.FUNCTION)
 public annotation class ClrArrayFactory(val kind: String)
 
-// Marks Sequence.filterNotNull's CLR representation. A `Sequence<T?>` has an object element when T may be a value
-// type, so its lazy wrapper cannot be unchecked-cast to the reified `Sequence<T>` / `IEnumerable<T>` result. bir2cir
-// consumes this trusted stdlib declaration fact and constructs the CLR-specific element-converting adapter.
-// Internal so this compiler binding cannot be named by user source.
-@Target(AnnotationTarget.FUNCTION)
-@Retention(AnnotationRetention.BINARY)
-internal annotation class ClrSequenceFilterNotNull
-
-// Marks an inline stdlib declaration whose body has already filtered a Sequence<Any?> to its reified result type,
+// Marks a stdlib declaration whose body has already filtered an object-elemented Sequence to its generic result type,
 // but whose final unchecked Sequence<R> cast cannot change the CLR IEnumerable element interface. bir2cir replaces
 // that declaration-local cast with the typed sequence view; the original predicate remains ordinary Kotlin code.
 @Target(AnnotationTarget.FUNCTION)
