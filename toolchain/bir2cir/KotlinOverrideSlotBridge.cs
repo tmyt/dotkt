@@ -132,18 +132,22 @@ static class KotlinOverrideSlotBridge
         // return) and the class declaration that claims to fill it, decide per position whether the declaration is
         // already the slot, is one `object` seam away from it (bridge), or has to adopt it (rewrite).
         void Fill(TypeNode.Fqn semanticSpec, TypeNode.Fqn descriptorSpec,
-            bool supIsInterface, bool referencedSlot,
+            bool supIsInterface, bool referencedSlot, bool interfaceSlotHasDefault,
             string identityName, string descriptorMember, string propertyAccessor,
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null)
         {
-            // A class may see an interface only through its base class. That inherited edge does not authorize the
-            // derived class to replace the base class's InterfaceImpl/MethodImpl mapping; CLR reimplementation
-            // requires the interface to be listed again on the derived class. Make that ownership decision before
-            // rewriting a declaration or synthesizing a signature bridge. `semanticSpec` deliberately remains in
-            // Kotlin vocabulary: `descriptorSpec` may already be the physical owner of @ClrTypeAlias.
+            // An abstract interface slot reached only through a base class already has that base's mapping. A derived
+            // declaration does not acquire a fresh MethodImpl unless the source class re-lists the interface; this is
+            // what keeps an inherited CLR explicit implementation intact. A DEFAULT interface slot is different:
+            // Kotlin lets a grandchild override the DIM without re-listing the interface, and CLR needs an exact
+            // per-type MethodImpl for that override. `semanticSpec` deliberately remains in Kotlin vocabulary:
+            // `descriptorSpec` may already be the physical owner of @ClrTypeAlias.
             var reimplementsInterface = supIsInterface && cls.Kind == "class"
                 && ReachesFromDeclaredInterface(cls, semanticSpec, defs, refs);
-            if (supIsInterface && cls.Kind == "class" && !reimplementsInterface)
+            var overridesInheritedDefault = supIsInterface && cls.Kind == "class"
+                && !reimplementsInterface && interfaceSlotHasDefault;
+            if (supIsInterface && cls.Kind == "class"
+                && !reimplementsInterface && !overridesInheritedDefault)
                 return;
 
             var declParams = impl["params"] as JsonArray;
@@ -197,7 +201,7 @@ static class KotlinOverrideSlotBridge
             var needsSignatureBridge = fit.Contains(Fit.Bridge) || retFit == Fit.Bridge;
             var needsExplicitPropertySlot = supIsInterface && propertyAccessor != null
                 && descriptorMember != Str(impl["name"])
-                && (cls.Kind != "class" || reimplementsInterface);
+                && (cls.Kind != "class" || reimplementsInterface || overridesInheritedDefault);
             // A concrete method declared on a derived CLR interface is a fresh NewSlot even when its name and
             // signature equal the base declaration. The frontend override marker says which Kotlin declaration it
             // overrides; realize that decision here as an exact private/final MethodImpl bridge. Leaving it to ilemit
@@ -205,7 +209,8 @@ static class KotlinOverrideSlotBridge
             var needsExactInterfaceSlot = supIsInterface &&
                 (cls.Kind == "interface" && !Bool(impl["abstract"])
                     || cls.Kind == "class" && reimplementsInterface
-                        && descriptorMember != Str(impl["name"]));
+                        && descriptorMember != Str(impl["name"])
+                    || cls.Kind == "class" && overridesInheritedDefault);
             var needsExplicitSlot = needsExplicitPropertySlot || needsExactInterfaceSlot;
             var constructedSlotTypeParams = SubstituteOwnerTypeParameterConstraints(
                 slotTypeParams, semanticSpec.Args ?? Array.Empty<TypeNode>());
@@ -318,8 +323,8 @@ static class KotlinOverrideSlotBridge
                 // constructed base rather than the interface), and the emitter resolves that base externally.
                 FillFromReference(cls, defs, spec, supIsInterface, methods, ownArgs, isValue, refs,
                     (owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
-                            slotTypeParams) =>
-                        Fill(spec, owner, isInterface, referenced, identity, member, accessor,
+                            slotTypeParams, slotHasDefault) =>
+                        Fill(spec, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
                             parameters, ret, implementation, slotTypeParams));
                 continue;
             }
@@ -373,7 +378,10 @@ static class KotlinOverrideSlotBridge
                     descriptorMember = externalAccessor;
                     descriptorOwner = new TypeNode.Fqn(physicalOwner, spec.Args);
                 }
-                Fill(spec, descriptorOwner, supIsInterface, false, semanticName, descriptorMember, accessorKind,
+                var slotHasDefault = supIsInterface && !Bool(slot["abstract"])
+                    && slot["body"] is JsonArray;
+                Fill(spec, descriptorOwner, supIsInterface, false, slotHasDefault,
+                    semanticName, descriptorMember, accessorKind,
                     slotParams, slotRet, impl, slot["typeParams"] as JsonArray);
             }
         }
@@ -909,7 +917,7 @@ static class KotlinOverrideSlotBridge
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
         bool supIsInterface, JsonArray methods, TypeNode[] ownArgs, Func<string, bool> isValue,
         ReferenceMetadataIndex refs,
-        Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray> fill)
+        Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool> fill)
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
@@ -998,8 +1006,11 @@ static class KotlinOverrideSlotBridge
                 // pre-rename identity it handed off instead of reflecting meaning back out of that physical spelling.
                 // This identity also becomes the round-trip carrier on an exact interface MethodImpl bridge.
                 var sourceIdentity = Str(impl[DeclarationRename.SourceMemberKey]) ?? ownName;
+                var slotHasDefault = supIsInterface && refs.IsPublicConcreteInstanceMethod(
+                    descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
                 fill(descriptorOwner, supIsInterface, true, accessorKind != null ? member : sourceIdentity,
-                    descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams);
+                    descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
+                    slotHasDefault);
                 break;
             }
         }
