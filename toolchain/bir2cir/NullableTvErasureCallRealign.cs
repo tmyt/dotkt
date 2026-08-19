@@ -837,6 +837,12 @@ static partial class NullableTvErasureCallRealign
         }
     }
 
+    // Late call-shape consumers use the same declaration-to-use formula as this pass without duplicating its
+    // substitution grammar. In particular, constrained dispatch learns its constructed owner only after Apply.
+    internal static TypeNode EraseAndSubstituteOwnerSlot(
+        TypeNode declared, TypeNode[] ownerArgs, Func<string, bool> isValue)
+        => Subst(NullableGenericErasure.EraseNullableTv(declared, isValue), ownerArgs, null);
+
     // Whether `candidate` is `expected` with one or more sub-positions collapsed to the erased `object` — i.e.
     // `candidate` == `expected` except that where `expected` has a non-`object` type, `candidate` may have
     // `object`. True for `object` vs anything (a leaf erasure), and structurally through Fqn args / array elem /

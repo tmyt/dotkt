@@ -53,11 +53,11 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     // PHASE 2 — author the constrained dispatch over the now-declaring, now-constructed owner.
-    public static void ApplyAll(IEnumerable<JsonNode> roots)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue)
     {
         var rootList = roots.ToList();
         var arity = CollectTypeArity(rootList);
-        foreach (var root in rootList) BindFile(root, arity, close: false);
+        foreach (var root in rootList) BindFile(root, arity, close: false, isValue);
     }
 
     // name -> declared type-parameter count, for every type declared in this compilation. Only the ARITY is
@@ -79,47 +79,51 @@ static class ConstrainedTypeParameterReceiverBinding
         return result;
     }
 
-    static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close)
+    static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close,
+        Func<string, bool> isValue = null)
     {
         if (root is not JsonObject file) return;
         var noTypeParams = new JsonArray();
         if (file["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, noTypeParams, arity, close);
-        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close);
+                BindMethod(method, noTypeParams, arity, close, isValue);
+        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue);
         if (file["types"] is JsonArray declared)
             foreach (var type in declared.OfType<JsonObject>())
-                BindType(type, arity, close);
+                BindType(type, arity, close, isValue);
     }
 
-    static void BindType(JsonObject type, Dictionary<string, int> arity, bool close)
+    static void BindType(JsonObject type, Dictionary<string, int> arity, bool close,
+        Func<string, bool> isValue)
     {
         var typeParams = TypeParameterFrame.CloneDeclarations(type);
         if (type["ctors"] is JsonArray ctors)
             foreach (var ctor in ctors.OfType<JsonObject>())
-                BindMethod(ctor, typeParams, arity, close);
+                BindMethod(ctor, typeParams, arity, close, isValue);
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, typeParams, arity, close);
+                BindMethod(method, typeParams, arity, close, isValue);
         // A property ACCESSOR body is executable code like any other, and `class H<T : Tagged>(val item: T) { val v
         // get() = item.tag() }` reaches this pass only through here — BIR keeps accessors under `properties`, not
         // `methods`.
-        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close);
+        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue);
         if (type["types"] is JsonArray nested)
             foreach (var child in nested.OfType<JsonObject>())
-                BindType(child, arity, close);
+                BindType(child, arity, close, isValue);
     }
 
-    static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close)
+    static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close,
+        Func<string, bool> isValue)
     {
         if (properties == null) return;
         foreach (var property in properties.OfType<JsonObject>())
             foreach (var slot in new[] { "getter", "setter" })
                 if (property[slot] is JsonObject accessor)
-                    BindMethod(accessor, typeParams, arity, close);
+                    BindMethod(accessor, typeParams, arity, close, isValue);
     }
 
-    static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close)
+    static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close,
+        Func<string, bool> isValue)
     {
         var methodParams = method["typeParams"] as JsonArray ?? new JsonArray();
         // The declaration's local/param type environment, for a receiver read that carries no frontend `sty`
@@ -203,6 +207,7 @@ static class ConstrainedTypeParameterReceiverBinding
                             call["k"] = "constrainedCall";
                             call["recvType"] = TypeJson.Write(tv);
                             call["iface"] = TypeJson.Write(iface);
+                            AlignArguments(call, iface, scope, isValue);
                             if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
                                 call["ret"] = dynRet.DeepClone();
                             call.Remove(ownerKey);
@@ -220,6 +225,26 @@ static class ConstrainedTypeParameterReceiverBinding
             }
         }
         if (method["body"] is JsonNode methodBody) Bind(methodBody);
+    }
+
+    // The constrained owner becomes physically closed only in phase 2. Before that point the nullable-generic write
+    // axis sees the bare semantic owner and cannot derive the slot an argument fills. Once `iface` is known, apply the
+    // ordinary use-site rule to its declaration signature: Subst(Erase(declared slot), owner args). Only the castable
+    // object-erasure seam is materialized; differences inside a constructed generic remain outside this conversion.
+    static void AlignArguments(JsonObject call, TypeNode.Fqn iface, BirScope scope, Func<string, bool> isValue)
+    {
+        if (isValue == null || iface.Args == null || call["sig"] is not JsonArray sig
+            || call["args"] is not JsonArray args || sig.Count != args.Count)
+            return;
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (args[i] is not JsonObject arg || TypeJson.Read(sig[i]) is not TypeNode declared) continue;
+            if (NullableTvErasureCallRealign.EraseAndSubstituteOwnerSlot(declared, iface.Args, isValue)
+                is not TypeNode target) continue;
+            var source = StaticType.Surface(arg, scope);
+            if (NullableTvErasureCallRealign.CastForErasedObjectSlot(arg, source, target, isValue) is JsonNode wrapped)
+                args[i] = wrapped;
+        }
     }
 
     // The receiver's own static type when it is a bare type VARIABLE. The platform-type and value-nullable wrappers

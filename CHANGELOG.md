@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Constrained calls through nullable-value generic bounds now widen arguments to the bound's physical slot
+  (#345).** Once bir2cir closes a type-parameter receiver's interface owner, it applies the same
+  `Subst(Erase(declared slot), owner arguments)` rule as other nullable-generic calls. A value passed through a bound
+  such as `T : Sink<Int?>` is boxed for the erased `Sink<object>` slot, including across a projected reference KLIB.
+
 - **Calls through `Comparable<Int?>` and other object-erased `Comparable` receiver types now use the interface the
   value actually implements (#346).** bir2cir keeps argument-dependent alias owners semantic until nullable-generic
   erasure and final type lowering select their physical classifier, so the receiver, call owner, and resolved member
