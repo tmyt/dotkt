@@ -98,27 +98,20 @@
     <Exec Command="dotnet &quot;$(DotKtDll2Klib)&quot; --out &quot;$(DotKtReferenceKlibPath)&quot; --jobs &quot;$(DotKtDll2KlibJobs)&quot; @&quot;$(DotKtReferenceKlibResponseFile)&quot;" />
   </Target>
 
-  <!-- Public extension contract for analysis/editor integrations. Consumers depend on this target instead of
-       reaching into _DotKtKlibReference or reconstructing toolchain paths. Every item exists when the target
-       completes. DotKtReferenceKlib's identity is the generated KLIB; SourceAssembly names the MSBuild-selected
-       reference DLL it was projected from. DotKtFrontendKlib is the exact frontend classpath, with Role separating
-       the CLR reference projections from the Kotlin stdlib KLIB. These are outputs, not an input-injection surface. -->
-  <Target Name="DotKtPrepareFrontendInputs"
-          DependsOnTargets="DotKtGenerateReferenceKlibs">
+  <!-- Public extension contract for analysis/editor integrations in a single-TFM/inner build. The companion
+       buildMultiTargeting target dispatches this same target to every inner build and aggregates its returned items.
+       Each item is a generated reference KLIB, not a synthetic "complete frontend input set": the embedded frontend
+       stdlib remains available separately as $(DotKtStdlib). These are outputs, not an input-injection surface. -->
+  <Target Name="DotKtResolveKlibReferences"
+          DependsOnTargets="DotKtGenerateReferenceKlibs"
+          Returns="@(DotKtResolvedKlibReference)">
     <ItemGroup>
-      <DotKtReferenceKlib Remove="@(DotKtReferenceKlib)" />
-      <DotKtFrontendKlib Remove="@(DotKtFrontendKlib)" />
-      <DotKtReferenceKlib Include="@(_DotKtKlibReference->'%(KlibPath)')">
+      <DotKtResolvedKlibReference Remove="@(DotKtResolvedKlibReference)" />
+      <DotKtResolvedKlibReference Include="@(_DotKtKlibReference->'%(KlibPath)')">
         <SourceAssembly>%(_DotKtKlibReference.FullPath)</SourceAssembly>
-        <Role>Reference</Role>
-      </DotKtReferenceKlib>
-      <DotKtFrontendKlib Include="$(DotKtStdlib)">
-        <Role>StandardLibrary</Role>
-      </DotKtFrontendKlib>
-      <DotKtFrontendKlib Include="@(DotKtReferenceKlib)">
-        <SourceAssembly>%(DotKtReferenceKlib.SourceAssembly)</SourceAssembly>
-        <Role>Reference</Role>
-      </DotKtFrontendKlib>
+        <TargetFramework>$(TargetFramework)</TargetFramework>
+        <RuntimeIdentifier>$(RuntimeIdentifier)</RuntimeIdentifier>
+      </DotKtResolvedKlibReference>
     </ItemGroup>
   </Target>
 

@@ -4,9 +4,11 @@
 # from real .nupkgs in a NuGet feed. `tests/msbuild/run.sh` uses the IN-REPO dev entry (eng/KotlinClr.targets,
 # hard-coded tool paths) and never restores a nupkg, so packaging-only bugs slip past it — 0.9.5 shipped
 # broken twice for exactly this reason (#131 stale SDK version, #132 a Library's non-copy-local reference
-# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives SEVEN isolated
+# never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives EIGHT isolated
 # scenarios through `dotnet build`/`dotnet run` from that feed only:
 #   exe      — a plain `Sdk="DotKt.Sdk"` Exe: build + RUN, assert stdout.
+#   multi-target-klib-references — direct outer-build invocation of the public KLIB-reference target: dispatch
+#              across both TFMs and preserve each generated KLIB's source/TFM ownership metadata.
 #   library  — a `Library` that PackageReferences a SECOND DotKt library (packed as its own nupkg) and calls
 #              into it. A package runtime dll is NOT copy-local for OutputType=Library, so under the old
 #              copy-local-glob targets that reference never reached ilemit -> the emit FAILED (#132-general).
@@ -38,7 +40,7 @@ source "$ROOT/scripts/lib.sh"
 
 usage() { cat <<EOF
 usage: $SCRIPT_NAME
-Packs the 5 nupkgs to build/nuget-feed and drives 7 packaged SDK/template scenarios from that feed only.
+Packs the 5 nupkgs to build/nuget-feed and drives 8 packaged SDK/template scenarios from that feed only.
 Green (exit 0) = no fail name outside XFAIL_PKG and no stale entry inside it.
 EOF
 }
@@ -313,30 +315,25 @@ case_exe() {
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
   </PropertyGroup>
-  <!-- Public toolchain-extension contract: depending on this target must produce the exact frontend input set
-       without reading private _DotKt* items or reconstructing package-internal paths. -->
-  <Target Name="AssertDotKtFrontendInputs"
+  <!-- Public toolchain-extension contract: the target returns only KLIBs projected from this TFM's resolved
+       references. The embedded frontend stdlib remains available through its dedicated property. -->
+  <Target Name="AssertDotKtKlibReferences"
           BeforeTargets="KotlinCompile"
-          DependsOnTargets="DotKtPrepareFrontendInputs">
+          DependsOnTargets="DotKtResolveKlibReferences">
     <ItemGroup>
-      <_MissingReferenceKlib Include="@(DotKtReferenceKlib)" Condition="!Exists('%(FullPath)')" />
-      <_ReferenceWithoutSource Include="@(DotKtReferenceKlib)"
+      <_MissingReferenceKlib Include="@(DotKtResolvedKlibReference)" Condition="!Exists('%(FullPath)')" />
+      <_ReferenceWithoutSource Include="@(DotKtResolvedKlibReference)"
                                Condition="'%(SourceAssembly)' == '' or !Exists('%(SourceAssembly)')" />
-      <_FrontendStdlib Include="@(DotKtFrontendKlib)" Condition="'%(Role)' == 'StandardLibrary'" />
-      <_FrontendReference Include="@(DotKtFrontendKlib)" Condition="'%(Role)' == 'Reference'" />
+      <_WrongReferenceTfm Include="@(DotKtResolvedKlibReference)"
+                          Condition="'%(TargetFramework)' != '\$(TargetFramework)'" />
     </ItemGroup>
-    <PropertyGroup>
-      <_ReferenceKlibCount>@(DotKtReferenceKlib->Count())</_ReferenceKlibCount>
-      <_FrontendReferenceCount>@(_FrontendReference->Count())</_FrontendReferenceCount>
-      <_FrontendStdlibCount>@(_FrontendStdlib->Count())</_FrontendStdlibCount>
-    </PropertyGroup>
-    <Error Condition="'@(DotKtReferenceKlib)' == ''" Text="DotKtReferenceKlib was not published." />
-    <Error Condition="'@(_MissingReferenceKlib)' != ''" Text="DotKtReferenceKlib contains missing files: @(_MissingReferenceKlib)" />
-    <Error Condition="'@(_ReferenceWithoutSource)' != ''" Text="DotKtReferenceKlib lost SourceAssembly: @(_ReferenceWithoutSource)" />
-    <Error Condition="'@(_FrontendStdlib)' == ''" Text="DotKtFrontendKlib has no StandardLibrary item." />
-    <Error Condition="'@(_FrontendReference)' == ''" Text="DotKtFrontendKlib has no Reference items." />
-    <Error Condition="'\$(_FrontendReferenceCount)' != '\$(_ReferenceKlibCount)'" Text="DotKtFrontendKlib Reference count drifted from DotKtReferenceKlib." />
-    <Error Condition="'\$(_FrontendStdlibCount)' != '1'" Text="DotKtFrontendKlib must contain exactly one StandardLibrary item." />
+    <Error Condition="'@(DotKtResolvedKlibReference)' == ''" Text="DotKtResolvedKlibReference was not published." />
+    <Error Condition="'@(_MissingReferenceKlib)' != ''" Text="DotKtResolvedKlibReference contains missing files: @(_MissingReferenceKlib)" />
+    <Error Condition="'@(_ReferenceWithoutSource)' != ''" Text="DotKtResolvedKlibReference lost SourceAssembly: @(_ReferenceWithoutSource)" />
+    <Error Condition="'@(_WrongReferenceTfm)' != ''" Text="DotKtResolvedKlibReference has the wrong TargetFramework: @(_WrongReferenceTfm)" />
+    <Error Condition="'\$(DotKtStdlib)' == '' or !Exists('\$(DotKtStdlib)')" Text="DotKtStdlib was not published as a dedicated property." />
+    <Error Condition="'@(DotKtReferenceKlib)' != '' or '@(DotKtFrontendKlib)' != ''"
+           Text="The removed synthetic frontend-input items were still published." />
     <Error Condition="'\$(DotKtKotlinVersion)' != '$KOTLIN_VER'" Text="DotKtKotlinVersion was '\$(DotKtKotlinVersion)', expected '$KOTLIN_VER'." />
   </Target>
 </Project>
@@ -367,6 +364,54 @@ EOF
 	if (( rc != 0 )); then fail exe "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
 	elif [[ "$actual" == "$expected" ]]; then pass exe
 	else fail exe "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
+}
+
+# ---------------------------------------------------------------------------------------------------------
+# Case: multi-target-klib-references — invoke the public target on the CROSS-TARGETING outer build. The
+# buildMultiTargeting package asset must dispatch to every inner TFM and aggregate only the generated KLIBs,
+# preserving the TFM and source-assembly metadata that lets an LSP keep the reference universes separate.
+# ---------------------------------------------------------------------------------------------------------
+case_multitarget_klib_references() {
+	local d="$WS/multitarget-klib-references"; mkdir -p "$d"; cp "$NUGET_CONFIG" "$d/nuget.config"
+	cat > "$d/App.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup>
+    <TargetFrameworks>net10.0;net10.0-windows</TargetFrameworks>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+  <Target Name="AssertDotKtMultiTargetKlibReferences"
+          DependsOnTargets="DotKtResolveKlibReferences">
+    <ItemGroup>
+      <_Net10Klib Include="@(DotKtResolvedKlibReference)" Condition="'%(TargetFramework)' == 'net10.0'" />
+      <_Net10WindowsKlib Include="@(DotKtResolvedKlibReference)" Condition="'%(TargetFramework)' == 'net10.0-windows'" />
+      <_MissingKlib Include="@(DotKtResolvedKlibReference)" Condition="!Exists('%(FullPath)')" />
+      <_MissingSourceAssembly Include="@(DotKtResolvedKlibReference)"
+                              Condition="'%(SourceAssembly)' == '' or !Exists('%(SourceAssembly)')" />
+    </ItemGroup>
+    <Error Condition="'@(_Net10Klib)' == ''" Text="No net10.0 KLIB references were returned." />
+    <Error Condition="'@(_Net10WindowsKlib)' == ''" Text="No net10.0-windows KLIB references were returned." />
+    <Error Condition="'@(_MissingKlib)' != ''" Text="Returned KLIB does not exist: @(_MissingKlib)" />
+    <Error Condition="'@(_MissingSourceAssembly)' != ''" Text="Returned item lost SourceAssembly: @(_MissingSourceAssembly)" />
+    <Error Condition="'@(DotKtReferenceKlib)' != '' or '@(DotKtFrontendKlib)' != ''"
+           Text="The removed synthetic frontend-input items were still published." />
+    <WriteLinesToFile File="$d/resolved.txt"
+                      Lines="@(DotKtResolvedKlibReference->'%(TargetFramework)|%(RuntimeIdentifier)|%(FullPath)|%(SourceAssembly)')"
+                      Overwrite="true" />
+  </Target>
+</Project>
+EOF
+	if ! dotnet restore "$d/App.ktproj" --configfile "$d/nuget.config" -v q --nologo >"$d/restore.log" 2>&1; then
+		fail multi-target-klib-references "restore failed" "$(tail -30 "$d/restore.log")"; return
+	fi
+	if ! dotnet msbuild "$d/App.ktproj" -t:AssertDotKtMultiTargetKlibReferences -v q --nologo >"$d/resolve.log" 2>&1; then
+		fail multi-target-klib-references "outer target failed" "$(tail -40 "$d/resolve.log")"; return
+	fi
+	if [[ ! -s "$d/resolved.txt" ]] \
+		|| ! grep -q "^net10.0||$d/obj/Debug/net10.0/klib/" "$d/resolved.txt" \
+		|| ! grep -q "^net10.0-windows||$d/obj/Debug/net10.0-windows/klib/" "$d/resolved.txt"; then
+		fail multi-target-klib-references "outer target did not preserve TFM-specific KLIB paths" "$(cat "$d/resolved.txt" 2>/dev/null)"; return
+	fi
+	pass multi-target-klib-references
 }
 
 # ---------------------------------------------------------------------------------------------------------
@@ -923,6 +968,7 @@ EOF
 selftest
 
 case_exe
+case_multitarget_klib_references
 case_library
 case_csharp_consumer
 case_coroutine_cross_module

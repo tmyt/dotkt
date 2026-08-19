@@ -27,7 +27,8 @@
        equivalent of the in-repo dev entry's <Reference Private=true> to build/clr-stdlib-rt/dll/DotKt.Stdlib.dll,
        eng/KotlinClr.targets). Opt out of the stdlib with <KotlinClrStdlibRef>false</KotlinClrStdlibRef>. -->
   <ItemGroup>
-    <PackageReference Include="DotKt.Toolchain" Version="$(DotKtVersion)" PrivateAssets="all" IncludeAssets="build" />
+    <PackageReference Include="DotKt.Toolchain" Version="$(DotKtVersion)" PrivateAssets="all"
+                      IncludeAssets="build;buildMultitargeting" />
     <PackageReference Include="DotKt.Stdlib" Version="$(DotKtVersion)" Condition="'$(KotlinClrStdlibRef)' != 'false'" />
   </ItemGroup>
 
