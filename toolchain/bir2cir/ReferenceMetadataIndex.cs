@@ -3771,11 +3771,11 @@ sealed partial class ReferenceMetadataIndex
                     // MethodSemantics is an association table. Index it once per Type instead of rescanning every
                     // PropertyInfo for every MethodInfo below. A malformed/ambiguous method associated with more than
                     // one property states no source identity; never select whichever reflection happens to return first.
-                    var propertyAccessors = new Dictionary<int, (string Name, string Kind)?>();
-                    void IndexPropertyAccessor(MethodInfo accessor, string propertyName, string kind)
+                    var propertyAccessors = new Dictionary<int, (string Name, string Kind, bool IsIndexer)?>();
+                    void IndexPropertyAccessor(MethodInfo accessor, string propertyName, string kind, bool isIndexer)
                     {
                         if (accessor == null) return;
-                        var association = (propertyName, kind);
+                        var association = (propertyName, kind, isIndexer);
                         if (propertyAccessors.TryGetValue(accessor.MetadataToken, out var existing)
                             && existing != association)
                             propertyAccessors[accessor.MetadataToken] = null;
@@ -3784,8 +3784,9 @@ sealed partial class ReferenceMetadataIndex
                     }
                     foreach (var property in type.GetProperties(declaredMemberFlags))
                     {
-                        IndexPropertyAccessor(property.GetGetMethod(true), property.Name, "get");
-                        IndexPropertyAccessor(property.GetSetMethod(true), property.Name, "set");
+                        var isIndexer = property.GetIndexParameters().Length > 0;
+                        IndexPropertyAccessor(property.GetGetMethod(true), property.Name, "get", isIndexer);
+                        IndexPropertyAccessor(property.GetSetMethod(true), property.Name, "set", isIndexer);
                     }
 
                     foreach (var method in type.GetMethods(declaredMemberFlags))
@@ -3798,6 +3799,11 @@ sealed partial class ReferenceMetadataIndex
                             !HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)
                             ? KotlinSourceMethodName(method.GetCustomAttributesData(), method.DeclaringType?.Assembly)
                             : null;
+                        // dll2klib projects a parameterized CLR Property as Kotlin operator `get`/`set` functions.
+                        // Preserve that source identity while retaining the associated MethodDef's exact physical name
+                        // (`get_Item`, a custom indexer accessor, etc.) for MethodImpl allocation.
+                        if (sourceMethodName == null && carriedProperty is null && owningProperty?.IsIndexer == true)
+                            sourceMethodName = owningProperty.Value.Kind;
                         // Declaration identity is also required for a non-public target embedded in a public default
                         // argument/inline carrier. The consumer must retarget the generated UnsafeAccessor to the
                         // producer's allocated MethodDef without resolving again from its erased signature.

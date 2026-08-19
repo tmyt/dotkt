@@ -131,10 +131,25 @@ static class KotlinOverrideSlotBridge
         // The shared tail of both arms: given a SLOT (its constructed owner, its name, its erased parameter vector and
         // return) and the class declaration that claims to fill it, decide per position whether the declaration is
         // already the slot, is one `object` seam away from it (bridge), or has to adopt it (rewrite).
-        void Fill(TypeNode.Fqn spec, bool supIsInterface, bool referencedSlot,
+        void Fill(TypeNode.Fqn semanticSpec, TypeNode.Fqn descriptorSpec,
+            bool supIsInterface, bool referencedSlot, bool interfaceSlotHasDefault,
             string identityName, string descriptorMember, string propertyAccessor,
             TypeNode[] slotParams, TypeNode slotRet, JsonObject impl, JsonArray slotTypeParams = null)
         {
+            // An abstract interface slot reached only through a base class already has that base's mapping. A derived
+            // declaration does not acquire a fresh MethodImpl unless the source class re-lists the interface; this is
+            // what keeps an inherited CLR explicit implementation intact. A DEFAULT interface slot is different:
+            // Kotlin lets a grandchild override the DIM without re-listing the interface, and CLR needs an exact
+            // per-type MethodImpl for that override. `semanticSpec` deliberately remains in Kotlin vocabulary:
+            // `descriptorSpec` may already be the physical owner of @ClrTypeAlias.
+            var reimplementsInterface = supIsInterface && cls.Kind == "class"
+                && ReachesFromDeclaredInterface(cls, semanticSpec, defs, refs);
+            var overridesInheritedDefault = supIsInterface && cls.Kind == "class"
+                && !reimplementsInterface && interfaceSlotHasDefault;
+            if (supIsInterface && cls.Kind == "class"
+                && !reimplementsInterface && !overridesInheritedDefault)
+                return;
+
             var declParams = impl["params"] as JsonArray;
             var declRet = TypeJson.Read(impl["ret"]);
             if (declParams == null || declRet == null || declParams.Count != slotParams.Length) return;
@@ -185,15 +200,20 @@ static class KotlinOverrideSlotBridge
             // unaffected and may independently fill a same-named slot on another interface.
             var needsSignatureBridge = fit.Contains(Fit.Bridge) || retFit == Fit.Bridge;
             var needsExplicitPropertySlot = supIsInterface && propertyAccessor != null
-                && descriptorMember != Str(impl["name"]);
+                && descriptorMember != Str(impl["name"])
+                && (cls.Kind != "class" || reimplementsInterface || overridesInheritedDefault);
             // A concrete method declared on a derived CLR interface is a fresh NewSlot even when its name and
             // signature equal the base declaration. The frontend override marker says which Kotlin declaration it
             // overrides; realize that decision here as an exact private/final MethodImpl bridge. Leaving it to ilemit
             // would force the emitter to rediscover override meaning from names, bodies, and hierarchy order.
-            var needsExactInterfaceSlot = supIsInterface && cls.Kind == "interface" && !Bool(impl["abstract"]);
+            var needsExactInterfaceSlot = supIsInterface &&
+                (cls.Kind == "interface" && !Bool(impl["abstract"])
+                    || cls.Kind == "class" && reimplementsInterface
+                        && descriptorMember != Str(impl["name"])
+                    || cls.Kind == "class" && overridesInheritedDefault);
             var needsExplicitSlot = needsExplicitPropertySlot || needsExactInterfaceSlot;
             var constructedSlotTypeParams = SubstituteOwnerTypeParameterConstraints(
-                slotTypeParams, spec.Args ?? Array.Empty<TypeNode>());
+                slotTypeParams, semanticSpec.Args ?? Array.Empty<TypeNode>());
             // The declaration-move half still sees the original Kotlin supertype graph. Star-projection erasure may
             // add a synthesized existential view while retaining the class's direct interface edge before the bridge
             // half runs. Both are real CLR obligations and therefore need independently resolved MethodImpl facts.
@@ -206,7 +226,7 @@ static class KotlinOverrideSlotBridge
                 {
                     impl["virtual"] = true;
                     AddImplDescriptor(impl, "clrInterfaceImpls",
-                        ImplDescriptor(spec, descriptorMember,
+                        ImplDescriptor(descriptorSpec, descriptorMember,
                             (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet,
                             constructedSlotTypeParams));
                 }
@@ -218,7 +238,7 @@ static class KotlinOverrideSlotBridge
             {
                 impl["virtual"] = true;
                 AddImplDescriptor(impl, "clrInterfaceImpls",
-                    ImplDescriptor(spec, descriptorMember,
+                    ImplDescriptor(descriptorSpec, descriptorMember,
                         (impl["typeParams"] as JsonArray)?.Count ?? 0, slotParams, slotRet,
                         constructedSlotTypeParams));
                 return;
@@ -258,7 +278,7 @@ static class KotlinOverrideSlotBridge
             // Classes may validly map one body to several independent interface slots, so isolate only this explicit-
             // interface-implementation shape by the complete declaration owner/member identity.
             if (cls.Kind == "interface")
-                key += "[slot:" + SupertypeGraph.TypeKey(spec) + "::" + descriptorMember + "]";
+                key += "[slot:" + SupertypeGraph.TypeKey(descriptorSpec) + "::" + descriptorMember + "]";
             if (!bridges.TryGetValue(key, out var bridge))
             {
                 var bridgeOrdinal = ordinal++;
@@ -291,7 +311,7 @@ static class KotlinOverrideSlotBridge
             // interface, a base-class slot a MethodImpl against the constructed base. ilemit consumes the
             // resolved descriptor and resolves nothing itself.
             AddImplDescriptor(bridge, supIsInterface ? "clrInterfaceImpls" : "clrBaseImpls",
-                ImplDescriptor(spec, descriptorMember, arity, slotParams, slotRet,
+                ImplDescriptor(descriptorSpec, descriptorMember, arity, slotParams, slotRet,
                     constructedSlotTypeParams));
         }
 
@@ -303,8 +323,8 @@ static class KotlinOverrideSlotBridge
                 // constructed base rather than the interface), and the emitter resolves that base externally.
                 FillFromReference(cls, defs, spec, supIsInterface, methods, ownArgs, isValue, refs,
                     (owner, isInterface, referenced, identity, member, accessor, parameters, ret, implementation,
-                            slotTypeParams) =>
-                        Fill(owner, isInterface, referenced, identity, member, accessor,
+                            slotTypeParams, slotHasDefault) =>
+                        Fill(spec, owner, isInterface, referenced, slotHasDefault, identity, member, accessor,
                             parameters, ret, implementation, slotTypeParams));
                 continue;
             }
@@ -358,7 +378,10 @@ static class KotlinOverrideSlotBridge
                     descriptorMember = externalAccessor;
                     descriptorOwner = new TypeNode.Fqn(physicalOwner, spec.Args);
                 }
-                Fill(descriptorOwner, supIsInterface, false, semanticName, descriptorMember, accessorKind,
+                var slotHasDefault = supIsInterface && !Bool(slot["abstract"])
+                    && slot["body"] is JsonArray;
+                Fill(spec, descriptorOwner, supIsInterface, false, slotHasDefault,
+                    semanticName, descriptorMember, accessorKind,
                     slotParams, slotRet, impl, slot["typeParams"] as JsonArray);
             }
         }
@@ -894,7 +917,7 @@ static class KotlinOverrideSlotBridge
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
         bool supIsInterface, JsonArray methods, TypeNode[] ownArgs, Func<string, bool> isValue,
         ReferenceMetadataIndex refs,
-        Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray> fill)
+        Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool> fill)
     {
         if (refs == null) return;
         var supArgs = spec.Args ?? Array.Empty<TypeNode>();
@@ -983,8 +1006,11 @@ static class KotlinOverrideSlotBridge
                 // pre-rename identity it handed off instead of reflecting meaning back out of that physical spelling.
                 // This identity also becomes the round-trip carrier on an exact interface MethodImpl bridge.
                 var sourceIdentity = Str(impl[DeclarationRename.SourceMemberKey]) ?? ownName;
+                var slotHasDefault = supIsInterface && refs.IsPublicConcreteInstanceMethod(
+                    descriptorOwner.Name, descriptorMember, methodArity, slotParams, slotRet);
                 fill(descriptorOwner, supIsInterface, true, accessorKind != null ? member : sourceIdentity,
-                    descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams);
+                    descriptorMember, accessorKind, slotParams, slotRet, impl, selectedSlotTypeParams,
+                    slotHasDefault);
                 break;
             }
         }
@@ -1175,6 +1201,15 @@ static class KotlinOverrideSlotBridge
             foreach (var i in d.Interfaces) queue.Enqueue(i.Name);
             if (d.Base != null) queue.Enqueue(d.Base.Name);
         }
+        return false;
+    }
+
+    static bool ReachesFromDeclaredInterface(Def cls, TypeNode.Fqn slotOwner,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+    {
+        foreach (var direct in cls.Interfaces)
+            if (SupertypeGraph.Reaches(direct, slotOwner, defs, refs))
+                return true;
         return false;
     }
 

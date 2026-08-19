@@ -466,21 +466,10 @@ sealed partial class Emitter
                                 if (directive.TryGetProperty("owner", out var ownerNode)
                                     && ReadFqn(ownerNode) is DotKt.Bir.TypeNode.Fqn owner)
                                     ifWork.Enqueue(owner);
-                // Interfaces inherited through the EMITTED base-class chain, type args substituted into THIS class's frame
-                // (a generic base `Shape<T> : I<T>` under `Square : Shape<int>` yields `I<int>`).
-                // `chainArgs` are the current base's actual type args expressed in THIS class's frame; each descent re-
-                // anchors the next base's args (stated in the current base's frame) back through `chainArgs`.
-                var chainName = ti.BaseName;
-                var chainArgs = ti.BaseFqn?.Args;
-                while (chainName != null && _types.TryGetValue(BareTypeKey(chainName), out var bti) && !bti.IsInterface)
-                {
-                    if (bti.Def.ValueKind == JsonValueKind.Object && bti.Def.TryGetProperty("interfaces", out var bifs))
-                        foreach (var bi in bifs.EnumerateArray())
-                            if (ReadFqn(bi) is DotKt.Bir.TypeNode.Fqn bbi && SubstTv(bbi, chainArgs) is DotKt.Bir.TypeNode.Fqn bbiF)
-                                ifWork.Enqueue(bbiF);
-                    chainArgs = bti.BaseFqn?.Args?.Select(a => SubstTv(a, chainArgs)).ToArray();
-                    chainName = bti.BaseName;
-                }
+                // A base class already owns the CLR interface mapping it inherited or authored. Walking its interface
+                // list here would make a derived class acquire a fresh MethodImpl merely because it has a same-named
+                // member, which is not CLR reimplementation semantics. Only this class's declared interface edges and
+                // bir2cir-authored exact descriptors enter the worklist; a legitimate re-list is present in `ifs`.
                 while (ifWork.Count > 0)
                 {
                     var specFqn = ifWork.Dequeue();

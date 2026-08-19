@@ -7,6 +7,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **CLR explicit interface implementations no longer become ordinary Kotlin class APIs (#463).** `dll2klib`
+  represents method, property, indexer, and event satisfaction as hidden fake overrides, preserving colliding and
+  constructed generic slots. A Kotlin subclass can re-list an interface and provide a new exact `MethodImpl`; a
+  same-named declaration on a subclass that does not re-list it leaves the base mapping unchanged. Classes that also
+  expose a final public member of the same shape remain callable and can still reimplement the distinct interface
+  slot.
+
 - **`EventSubscription.close()` and other inherited CLR-interface calls now bind their exact physical slot (#462).**
   `bir2cir` closes the frontend-selected interface owner in the receiver's generic type frame, preserves Kotlin-only
   collection call semantics, and emits a complete CLR member identity for both referenced and locally derived classes.

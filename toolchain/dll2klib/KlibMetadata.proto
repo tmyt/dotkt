@@ -56,6 +56,8 @@ message Annotation {
       optional float float_value = 3;
       optional double double_value = 4;
       optional int32 string_value = 5;
+      optional int32 class_id = 6;
+      optional int32 enum_value_id = 7;
     }
     required int32 name_id = 1;
     required Value value = 2;
