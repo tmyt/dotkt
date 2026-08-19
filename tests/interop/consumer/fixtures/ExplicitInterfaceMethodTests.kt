@@ -1,6 +1,8 @@
 import ExplicitMethodInterop.ExplicitOperations
 import ExplicitMethodInterop.InheritedExplicitOperation
 import ExplicitMethodInterop.IOperations
+import ExplicitMethodInterop.IBaseOperation
+import ExplicitMethodInterop.ITransformer
 import ExplicitMethodInterop.StringTransformer
 import ExplicitMethodInterop.IPropertySlot
 import ExplicitMethodInterop.IFunctionSlot
@@ -127,8 +129,8 @@ private class InheritedExternalPropertySlot : IDerivedPropertySlot {
 
 class ExplicitInterfaceMethodTests {
     @TestAttribute
-    fun concreteClassSurfaceUsesExplicitInterfaceSlots() {
-        val operations = ExplicitOperations()
+    fun explicitInterfaceSlotsUseInterfaceSurface() {
+        val operations: IOperations = ExplicitOperations()
         assertEquals(12, operations.Compute(2))
         assertEquals("value!", operations.Compute("value"))
         assertEquals("generic", operations.Echo("generic"))
@@ -138,17 +140,16 @@ class ExplicitInterfaceMethodTests {
     @TestAttribute
     fun derivedClassHasNoFictionalAbstractObligation() {
         val operations = DerivedExplicitOperations()
-        assertEquals(15, operations.Compute(5))
-        assertEquals("derived", operations.Echo("derived"))
-
         val throughInterface: IOperations = operations
+        assertEquals(15, throughInterface.Compute(5))
+        assertEquals("derived", throughInterface.Echo("derived"))
         assertEquals("slot!", throughInterface.Compute("slot"))
     }
 
     @TestAttribute
     fun inheritedAndConstructedInterfaceSlotsAreSurfaced() {
-        assertEquals(23, InheritedExplicitOperation().BaseCompute(3))
-        assertEquals("generic?", StringTransformer().Transform("generic"))
+        assertEquals(23, (InheritedExplicitOperation() as IBaseOperation).BaseCompute(3))
+        assertEquals("generic?", (StringTransformer() as ITransformer<String>).Transform("generic"))
     }
 
     @TestAttribute
