@@ -36,7 +36,6 @@ static class MemberCallSubstitution
     // directly from BIR. Calls are still selected by declaration identity, never by the source function name.
     static IReadOnlySet<string> _localSequenceFilterNotNullDeclarations
         = new HashSet<string>(StringComparer.Ordinal);
-
     // #76: the four unsigned specialized array value classes -> their SIGNED backing-array element FQN. kotc emits
     // `kotlin.U*Array` as a faithful array identity (like signed IntArray) and STOPS emitting/decomposing the value
     // class; bir2cir OWNS both the native representation (via PrimArrayElem -> the UNSIGNED native array byte[]/uint[]/
@@ -1108,6 +1107,7 @@ static class MemberCallSubstitution
         var companionHasClrBinding = refs.TryExactMemberClrBinding(
             companionOwnerFqn, companionMember, companionMethodArity, companionSignature,
             out var exactCompanionBinding);
+        ExactClrMemberBinding inheritedExactMemberBinding = null;
         JsonNode mappedCompanionRecv = null;
         if (instance && companionHasClrBinding &&
             refs.TryCompanionSemanticOwner(companionCarrierToken, out var companionSemanticOwner) &&
@@ -1131,6 +1131,81 @@ static class MemberCallSubstitution
                 ["type"] = TypeJson.Write(new TypeNode.Array(new TypeNode.Fqn(storageSignedElem))),
                 ["e"] = node["recv"]?.DeepClone(),
             };
+
+        // Rule 2-inherited (interface implementation call): a non-@ClrTypeAlias class can implement a member whose
+        // physical slot is owned by a CLR-bound Kotlin interface. The reference assembly deliberately keeps the
+        // class's pure-Kotlin declaration name (`EventSubscription.close`), while the runtime implementation has the
+        // interface slot name (`Dispose`). DeclarationRename has already consumed the frontend's override closure and
+        // renamed this call, but its direct semantic owner still cannot pass the CLR-owner gate below. Re-anchor the
+        // call to the exact constructed interface declaration from that same closure and restore its Kotlin member
+        // identity; the ordinary alias rules then choose the physical representation. This is important for more than
+        // the simple 1:1 intrinsic path: collection members such as MutableCollection.add have Kotlin semantics that
+        // require the existing dispatcher rules instead of a direct BCL call.
+        //
+        // The override owners and signature are expressed in the direct Kotlin owner's type-parameter frame. Close
+        // both from that owner's use-site instantiation before consulting an interface declaration: copying an open
+        // `MutableList<type#0>` into a non-generic caller would give the type variable a new and invalid meaning.
+        // Only an exact declaration signature in the correct caller frame is authority. Multiple Kotlin interface
+        // faces may intentionally share one source/physical binding (List.get and MutableList.get both become
+        // get_Item); coalesce that representation and keep the first closed owner in the frontend closure. Distinct
+        // bindings are refused rather than selected by override-list order. A direct CLR-bound owner remains authoritative.
+        if (instance && node["super"] == null && !refs.TryResolveClrOwner(ownerToken, out _, out _)
+            && node["overrides"] is JsonArray inheritedOverrides
+            && !KotlinPropertyAccessors.TryCallIdentity(node, out _, out _))
+        {
+            var renamedMember = Str(node["method"]);
+            var directOwnerArgs = ownerFqnNode.Args ?? Array.Empty<TypeNode>();
+            var inheritedSignature = companionSignature?
+                .Select(type => SupertypeGraph.SubstOwnerTvs(type, directOwnerArgs)).ToArray();
+            var inherited = new List<(TypeNode.Fqn Owner, string Member, ExactClrMemberBinding Binding)>();
+            foreach (var candidate in inheritedOverrides.OfType<JsonObject>())
+            {
+                if (Str(candidate["kind"]) != "method"
+                    || TypeJson.Read(candidate["owner"]) is not TypeNode.Fqn candidateOwner
+                    || Str(candidate["member"]) is not string candidateMember
+                    || (candidate["arity"] as JsonValue)?.GetValue<int>() != companionArgs.Count)
+                    continue;
+                var constructedOwner = candidateOwner.Args is null
+                    ? candidateOwner
+                    : new TypeNode.Fqn(candidateOwner.Name, candidateOwner.Args
+                        .Select(type => SupertypeGraph.SubstOwnerTvs(type, directOwnerArgs)).ToArray());
+                if (!refs.TryResolveClrOwner(constructedOwner.Name, out _, out var candidateOwnerKind)
+                    || candidateOwnerKind != "interface"
+                    || refs.OwnerArity(constructedOwner.Name) != (constructedOwner.Args?.Length ?? 0)
+                    || !refs.TryExactMemberClrBinding(
+                        ReferenceMetadataIndex.BareOwnerFqn(constructedOwner.Name), candidateMember,
+                        companionMethodArity, inheritedSignature,
+                        constructedOwner.Args ?? Array.Empty<TypeNode>(), out var candidateBinding)
+                    || candidateBinding.Intrinsic == null
+                    || candidateBinding.Intrinsic != renamedMember)
+                    continue;
+                inherited.Add((constructedOwner, candidateMember, candidateBinding));
+            }
+            var distinctInherited = inherited.GroupBy(candidate => string.Join("\u001f",
+                    candidate.Member, candidate.Binding.Intrinsic,
+                    candidate.Binding.CountStart, candidate.Binding.CountEnd,
+                    string.Join(",", candidate.Binding.ByrefPositions ?? Array.Empty<int>())),
+                    StringComparer.Ordinal)
+                .Select(group => group.First()).ToList();
+            if (distinctInherited.Count > 1)
+                throw new InvalidOperationException(
+                    $"bir2cir: inherited CLR interface call '{ownerToken}.{renamedMember}' has "
+                    + $"{distinctInherited.Count} distinct exact slot bindings: "
+                    + string.Join(", ", distinctInherited.Select(candidate =>
+                        $"{SupertypeGraph.TypeKey(candidate.Owner)}.{candidate.Member}->{candidate.Binding.Intrinsic}")));
+            if (distinctInherited.Count == 1)
+            {
+                var inheritedSlot = distinctInherited[0];
+                ownerFqnNode = inheritedSlot.Owner;
+                ownerToken = inheritedSlot.Owner.Name;
+                memberOwnerToken = ownerToken;
+                node["method"] = inheritedSlot.Member;
+                inheritedExactMemberBinding = inheritedSlot.Binding;
+                companionSignature = inheritedSignature;
+                if (inheritedSignature != null)
+                    node["sig"] = new JsonArray(inheritedSignature.Select(TypeJson.Write).ToArray());
+            }
+        }
 
         // A declaration in this compilation owns this semantic accessor. Bind the physical name allocated from that
         // declaration before an external ancestor property is considered. Ambiguous same-identity declarations were
@@ -1268,8 +1343,9 @@ static class MemberCallSubstitution
         // Every authored CLR member role is selected from the same frontend-resolved declaration identity. Property,
         // conversion, intrinsic name, byref shape and argument adapters must never be assembled from same-arity
         // siblings. A missing declaration vector is not exact and therefore states no binding.
-        var hasExactMemberBinding = refs.TryExactMemberClrBinding(
-            ownerFqn, member, companionMethodArity, companionSignature, out var exactMemberBinding);
+        var exactMemberBinding = inheritedExactMemberBinding;
+        var hasExactMemberBinding = exactMemberBinding != null || refs.TryExactMemberClrBinding(
+            ownerFqn, member, companionMethodArity, companionSignature, out exactMemberBinding);
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
         // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit `{k:conv, to:<callee return type>, e:<receiver>}`, the

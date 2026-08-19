@@ -48,6 +48,8 @@ fun consume(): Int {
     val subscription = widget.Changed.subscribe { changed = it; it }
     widget.Raise(5)
     subscription.close()
+    subscription.close()
+    widget.Raise(99)
     val adder: IAdder = widget
     var incremented = 10
     widget.Increment(byref(incremented))

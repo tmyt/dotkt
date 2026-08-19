@@ -247,6 +247,7 @@ cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
 [[ "$actual" == "196" ]] || die "generated program returned '$actual', expected '196'"
+bash "$ROOT/tests/run-ilverify.sh" "$OUT/il/Consumer.dll"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \

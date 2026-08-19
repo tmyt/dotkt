@@ -1,0 +1,242 @@
+{
+  "fileClass": "InheritedClrInterfaceCallProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [
+    {
+      "name": "Issue462LocalBag",
+      "kind": "class",
+      "abstract": true,
+      "vis": "public",
+      "base": {
+        "t": "fqn",
+        "name": "kotlin.collections.AbstractMutableCollection",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [],
+      "properties": []
+    }
+  ],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "closeSubscription",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "vis": "public",
+      "params": [
+        {
+          "name": "subscription",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.clr.EventSubscription",
+            "args": [
+              {
+                "t": "fn",
+                "suspend": false,
+                "ret": { "t": "fqn", "name": "kotlin.Int" },
+                "params": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            ]
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": {
+              "t": "fqn",
+              "name": "kotlin.clr.EventSubscription",
+              "args": [
+                {
+                  "t": "fn",
+                  "suspend": false,
+                  "ret": { "t": "fqn", "name": "kotlin.Int" },
+                  "params": [{ "t": "fqn", "name": "kotlin.Int" }]
+                }
+              ]
+            },
+            "virtual": true,
+            "recv": { "k": "local", "name": "subscription" },
+            "method": "close",
+            "sig": [],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [],
+            "overrides": [
+              {
+                "owner": { "t": "fqn", "name": "kotlin.AutoCloseable" },
+                "member": "close",
+                "kind": "method",
+                "arity": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "mutateDeque",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "vis": "public",
+      "params": [
+        {
+          "name": "values",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.ArrayDeque",
+            "args": [{ "t": "fqn", "name": "kotlin.String" }]
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Boolean" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": {
+              "t": "fqn",
+              "name": "kotlin.collections.ArrayDeque",
+              "args": [{ "t": "fqn", "name": "kotlin.String" }]
+            },
+            "virtual": true,
+            "recv": { "k": "local", "name": "values" },
+            "method": "add",
+            "sig": [
+              { "t": "fqn", "name": "kotlin.Int" },
+              { "t": "tv", "scope": "type", "i": 0 }
+            ],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 0 },
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "x" }
+            ],
+            "overrides": [
+              {
+                "owner": {
+                  "t": "fqn",
+                  "name": "kotlin.collections.AbstractMutableList",
+                  "args": [{ "t": "tv", "scope": "type", "i": 0 }]
+                },
+                "member": "add",
+                "kind": "method",
+                "arity": 2
+              },
+              {
+                "owner": {
+                  "t": "fqn",
+                  "name": "kotlin.collections.MutableList",
+                  "args": [{ "t": "tv", "scope": "type", "i": 0 }]
+                },
+                "member": "add",
+                "kind": "method",
+                "arity": 2
+              }
+            ]
+          }
+        },
+        {
+          "k": "return",
+          "value": {
+            "k": "callInstance",
+            "ownerType": {
+              "t": "fqn",
+              "name": "kotlin.collections.ArrayDeque",
+              "args": [{ "t": "fqn", "name": "kotlin.String" }]
+            },
+            "virtual": true,
+            "recv": { "k": "local", "name": "values" },
+            "method": "add",
+            "sig": [{ "t": "tv", "scope": "type", "i": 0 }],
+            "ret": { "t": "fqn", "name": "kotlin.Boolean" },
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "y" }
+            ],
+            "overrides": [
+              {
+                "owner": {
+                  "t": "fqn",
+                  "name": "kotlin.collections.AbstractMutableList",
+                  "args": [{ "t": "tv", "scope": "type", "i": 0 }]
+                },
+                "member": "add",
+                "kind": "method",
+                "arity": 1
+              },
+              {
+                "owner": {
+                  "t": "fqn",
+                  "name": "kotlin.collections.MutableList",
+                  "args": [{ "t": "tv", "scope": "type", "i": 0 }]
+                },
+                "member": "add",
+                "kind": "method",
+                "arity": 1
+              },
+              {
+                "owner": {
+                  "t": "fqn",
+                  "name": "kotlin.collections.MutableCollection",
+                  "args": [{ "t": "tv", "scope": "type", "i": 0 }]
+                },
+                "member": "add",
+                "kind": "method",
+                "arity": 1
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "clearLocalBag",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "vis": "public",
+      "params": [
+        {
+          "name": "target",
+          "type": { "t": "fqn", "name": "Issue462LocalBag" }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "Issue462LocalBag" },
+            "virtual": true,
+            "recv": { "k": "local", "name": "target" },
+            "method": "clear",
+            "sig": [],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [],
+            "overrides": [
+              {
+                "owner": {
+                  "t": "fqn",
+                  "name": "kotlin.collections.MutableCollection",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                },
+                "member": "clear",
+                "kind": "method",
+                "arity": 0
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
