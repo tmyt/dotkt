@@ -97,13 +97,7 @@ public static class IrSanity
         if (!type.TryGetProperty("interfaces", out var ifaces) || ifaces.ValueKind != JsonValueKind.Array) return;
         var stated = new List<TypeNode.Fqn>();
         foreach (var i in ifaces.EnumerateArray())
-            // Read exactly as tolerantly as the emitter does (ilemit's ReadFqn): an interface entry may be a legacy
-            // STRING for a canonical synthetic, and TypeNode.Read throws on anything that is not a `{t:…}` object.
-            // Throwing here would leave the emitter's boundary reporting a raw FormatException rather than a sanity
-            // diagnostic, and would make a check whose policy is never to false-positive the loudest thing in the
-            // file. Every tolerated shape is arg-less, so it obliges no sibling either way.
-            if (i.ValueKind == JsonValueKind.Object && i.TryGetProperty("t", out var disc)
-                && disc.ValueKind == JsonValueKind.String && TypeNode.Read(i) is TypeNode.Fqn f)
+            if (TypeNode.Read(i) is TypeNode.Fqn f)
                 stated.Add(f);
         foreach (var face in stated)
         {

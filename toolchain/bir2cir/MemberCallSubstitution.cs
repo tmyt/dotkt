@@ -470,7 +470,7 @@ static class MemberCallSubstitution
             node["argTypes"] = new JsonArray { dat[0].DeepClone() };
         }
 
-        var newClrArgTypes = CtorArgTypes(node, args, refs, ownerFqn.Name);
+        var newClrArgTypes = CtorArgTypes(node, args);
         var newClrArgs = (JsonArray)args.DeepClone();
         // M10 coercion applies ONLY to an @ClrTypeAlias owner (the alias route). A BCL type can never declare a
         // `kotlin.CharSequence`/`dotkt$CharSequence` ctor param, and a REFERENCED KOTLIN library class reached through
@@ -596,64 +596,19 @@ static class MemberCallSubstitution
     // reference the class's OWN type parameters (`ArrayList<E>`'s copy ctor -> `Collection[gp:E]`). Substitute those with
     // the instantiation's type args (`ArrayList[kotlin.Int]` => E:=kotlin.Int) so the lowered argType is a RESOLVABLE,
     // precise overload key (`IReadOnlyCollection[int]`) — this disambiguates List's `IEnumerable<T>` ctor from its `int`
-    // capacity ctor (a bare `object`/unbound-`gp:E` argType matches neither, so ilemit mis-picked `List(int)` ->
-    // InvalidProgramException). Falls back to InferArgTypes when the node has no declared argTypes (older shape).
-    // The 2nd ctor arg is a Float (the JVM loadFactor idiom) — read the structured argType (with a legacy-string fallback).
-    static bool IsFloatArg(JsonNode n)
-    {
-        if (TypeJson.Read(n) is TypeNode.Fqn { Args: null } f) return f.Name is "kotlin.Float" or "float";
-        if (n is JsonValue v && v.TryGetValue<string>(out var s)) return s is "kotlin.Float" or "float";
-        return false;
-    }
+    // capacity ctor (a bare `object`/unbound type arg matches neither, so ilemit mis-picked `List(int)` ->
+    // InvalidProgramException). The 2nd ctor arg is a Float (the JVM loadFactor idiom).
+    static bool IsFloatArg(JsonNode n) =>
+        TypeNode.Parse(n.ToJsonString()) is TypeNode.Fqn { Args: null, Name: "kotlin.Float" or "float" };
 
-    static JsonArray CtorArgTypes(JsonObject node, JsonArray args, ReferenceMetadataIndex refs, string ownerToken)
+    static JsonArray CtorArgTypes(JsonObject node, JsonArray args)
     {
-        if (node["argTypes"] is not JsonArray declared || declared.Count != args.Count)
-            return InferArgTypes(node, args);
-        var map = ClassTypeParamMap(refs, ownerToken);
+        var declared = node["argTypes"]!.AsArray();
+        if (declared.Count != args.Count) throw new InvalidOperationException();
         var result = new JsonArray();
         foreach (var a in declared)
-        {
-            var s = (a as JsonValue)?.GetValue<string>();
-            result.Add(s == null ? a?.DeepClone() : SubstituteGenericParams(s, map));
-        }
+            result.Add(a!.DeepClone());
         return result;
-    }
-
-    // Positional map from a generic owner token's class type-param NAMES (from the ref.dll) to its instantiation args:
-    // `kotlin.collections.ArrayList[kotlin.Int]` + names [E] => { "E" -> "kotlin.Int" }. Empty when the owner is
-    // non-generic, unbound, or the ref.dll has no param names for it.
-    static Dictionary<string, string> ClassTypeParamMap(ReferenceMetadataIndex refs, string ownerToken)
-    {
-        var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        var br = ownerToken.IndexOf('[');
-        if (br < 0 || !ownerToken.EndsWith("]", StringComparison.Ordinal)) return map;
-        var names = refs.OwnerTypeParamNames(ReferenceMetadataIndex.BareOwnerFqn(ownerToken));
-        if (names == null || names.Length == 0) return map;
-        var targs = SplitTopLevel(ownerToken[(br + 1)..^1]).ToList();
-        for (var i = 0; i < names.Length && i < targs.Count; i++) map[names[i]] = targs[i];
-        return map;
-    }
-
-    // Replace each `gp:<name>` type token (a class type parameter) with its instantiation type, leaving unrelated
-    // generic params (a METHOD's own gp:T/gp:R, absent from the class map) untouched. Word-boundary-safe: a gp name is
-    // an identifier terminated by `[`, `]`, `,`, or end.
-    static string SubstituteGenericParams(string type, Dictionary<string, string> map)
-    {
-        if (map.Count == 0 || !type.Contains("gp:", StringComparison.Ordinal)) return type;
-        var sb = new System.Text.StringBuilder(type.Length);
-        for (var i = 0; i < type.Length;)
-        {
-            if (i + 3 <= type.Length && type[i] == 'g' && type[i + 1] == 'p' && type[i + 2] == ':')
-            {
-                var j = i + 3;
-                while (j < type.Length && (char.IsLetterOrDigit(type[j]) || type[j] == '_')) j++;
-                var name = type[(i + 3)..j];
-                if (map.TryGetValue(name, out var repl)) { sb.Append(repl); i = j; continue; }
-            }
-            sb.Append(type[i]); i++;
-        }
-        return sb.ToString();
     }
 
     // A `callStatic owner=null` to a @ClrCollectionFactory/@ClrArrayFactory top-level fun -> its construction node, or
@@ -2409,18 +2364,14 @@ static class MemberCallSubstitution
             }
     }
 
-    // True iff an argType slot (a legacy sig STRING or a structured Fqn) denotes kotc's synthetic monomorphic
+    // True iff an argType slot denotes kotc's synthetic monomorphic
     // `dotkt$CharSequence` interface (tolerating a `nullable`/`oblivious` decoration — a `CharSequence?`/`CharSequence!`
     // param, e.g. `StringBuilder.append(CharSequence?, start, end)`, must ALSO snapshot to String at the BCL boundary,
     // else the arg reaches a BCL call whose overloads are (Char[]|String|StringBuilder)-typed and none binds it). The
     // `dotkt$StringCharSequence` adapter deliberately does NOT match — its token has no `dotkt$CharSequence` substring.
     static bool IsSyntheticCharSeqToken(JsonNode slot)
     {
-        var name = slot switch
-        {
-            JsonValue v when v.TryGetValue<string>(out var s) => s,
-            _ => (UnwrapNullableOblivious(TypeJson.Read(slot)) as TypeNode.Fqn)?.Name,
-        };
+        var name = (UnwrapNullableOblivious(TypeNode.Parse(slot.ToJsonString())) as TypeNode.Fqn)?.Name;
         return name != null && name.Contains("dotkt$CharSequence", StringComparison.Ordinal);
     }
 
@@ -2556,19 +2507,4 @@ static class MemberCallSubstitution
         return TypeJson.Fqn("object");
     }
 
-    static IReadOnlyList<string> SplitTopLevel(string value)
-    {
-        if (value.Length == 0) return Array.Empty<string>();
-        var result = new List<string>();
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
-        }
-        result.Add(value[start..].Trim());
-        return result;
-    }
 }

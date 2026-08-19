@@ -2290,8 +2290,8 @@ sealed partial class ReferenceMetadataIndex
         };
     }
 
-    // ParamKey over a STRUCTURED Type node (a birType-emitted param slot) — walks the TypeNode natively (never
-    // re-renders a legacy token), matching the string ParamKey's top-level-identity canonicalization exactly:
+    // ParamKey over a structured Type node (a birType-emitted param slot) — walks the TypeNode natively, matching
+    // the string ParamKey's top-level-identity canonicalization exactly:
     // byref/array/nullable unwrap-with-marker, a fn -> obj (suspend) / func, a type-var -> gp, an Fqn leaf folded via
     // the shared primitive switch (delegating to ParamKey(f.Name) — a bare FQN the switch already handles).
     public static string ParamKey(TypeNode t) => t switch
@@ -2305,14 +2305,8 @@ sealed partial class ReferenceMetadataIndex
         _ => "obj",
     };
 
-    // ParamKey off a JSON type slot: a structured `{t:…}` node walks natively; a legacy string slot (sig-side token)
-    // keeps the string path.
-    public static string ParamKey(JsonNode typeSlot)
-    {
-        if (TypeJson.Read(typeSlot) is TypeNode tn) return ParamKey(tn);
-        if (typeSlot is JsonValue v && v.TryGetValue<string>(out var s)) return ParamKey(s);
-        return ParamKey("");
-    }
+    // ParamKey off a structured JSON type slot.
+    public static string ParamKey(JsonNode typeSlot) => ParamKey(TypeNode.Parse(typeSlot.ToJsonString()));
 
     // A top-level fun (file-class static, called as `callStatic owner=null`) bound by @ClrIntrinsic to a
     // fully-qualified BCL static (e.g. clrTimestamp -> "System.Diagnostics.Stopwatch.GetTimestamp").

@@ -344,7 +344,7 @@ static class DefaultArgSplice
             // A constructor delegation has no dispatch/extension receiver. For an inner target its hidden leading
             // argument is the enclosing instance and is already part of this positional vector.
             Fill(args, slotBinding, args.Count, defaults, owner + " constructor", refs, hoist,
-                localOwner, TypeJson.Fqn(selfName), null, TypeArgsOf(type["base"]), null, null,
+                localOwner, JsonValue.Create(selfName), null, TypeArgsOf(type["base"]), null, null,
                 args.Count > 0 ? args[0] : null);
         }
     }
@@ -361,7 +361,7 @@ static class DefaultArgSplice
     {
         var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
         if (parsed == null) return null;
-        if (TypeJson.OwnerName(semanticOwner) is not string owner)
+        if (Str(semanticOwner) is not string owner)
             throw new InvalidOperationException(
                 $"default argument splice for {method} has no authored semantic use-site owner");
         RehomeSynthClasses(parsed, owner, Interlocked.Increment(ref _counter));

@@ -280,7 +280,7 @@ Because inlining is over raw BIR, the
 cross-module fix is **lighter than JVM's `@Metadata`** (no frontend IR deserializer):
 
 1. **emit** — `bir2cir` freezes the raw inline payload
-   `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}` before lowering; `ilemit` stamps those
+   `{fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}` before lowering; `ilemit` stamps those
    bytes verbatim as `[KotlinInline("bir-json/1", content)]`. `lifted` closes the body transitively over every
    `generated:true` file-class method reached by a `newDelegate`.
 2. **project** — `dll2klib` preserves the inline modifier in KLIB metadata; the body stays in the assembly

@@ -23,12 +23,6 @@
                 "t": "fqn",
                 "name": "object"
               }
-            ],
-            "memberSig": [
-              {
-                "t": "fqn",
-                "name": "System.Collections.IEnumerable"
-              }
             ]
           }
         }

@@ -116,9 +116,7 @@ static class RangeMembershipLowering
     static JsonNode Bind(JsonNode value, JsonNode slotType, string role, int site, JsonArray stmts)
     {
         if (ValueStability.IsReReadable(value)) return value;
-        // A `var`'s `type` must be a STRUCTURED Type node (#37 types-are-nodes). An owner/sig slot may still hold a
-        // legacy type STRING, which would be an invalid declaration — treat that as "no slot type" and bail.
-        if (!TypeJson.IsType(slotType)) return null;
+        TypeNode.Parse(slotType!.ToJsonString());
         var name = "__range" + role + "$" + site;
         stmts.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = slotType.DeepClone(), ["init"] = value.DeepClone() });
         return new JsonObject { ["k"] = "local", ["name"] = name };

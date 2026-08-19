@@ -50,8 +50,8 @@ static class DeclarationRename
                         // a CLR-bound NON-interface owner whose member is rule-3. (An INTERFACE owner is excluded —
                         // the ref.dll mis-reports its abstract members as non-abstract, so IsRule3Member false-positives
                         // there; and a REAL non-alias class like ArrayDeque.size -> the emitted Count slot still renames.)
-                        // ownerType is a STRUCTURED `{t:fqn,name:…}` node after the m1 TYPE FLIP (was a legacy string) —
-                        // read it via OwnerName so `ot` is non-null; a stale `as JsonValue` read left it null, so the
+                        // ownerType is a structured `{t:fqn,name:…}` node. Read it via OwnerName so `ot` is non-null;
+                        // reading it as JsonValue left it null, so the
                         // rule-3 guard below never fired and String.compareTo was WRONGLY renamed to the culture-sensitive
                         // System.String.CompareTo slot (il-cmpord: ordinal comparison must win).
                         var ot = TypeJson.OwnerName(obj["ownerType"]);

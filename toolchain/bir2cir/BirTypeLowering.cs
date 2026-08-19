@@ -40,7 +40,7 @@ static class BirTypeLowering
     // resolution marker — so EVERY @Clr-bound foundational type lowers HERE, uniformly, exactly like the signed/
     // bool/char primitives: kotlin.String -> string, kotlin.Any -> object, and the unsigned set (note
     // kotlin.UByte is an UNSIGNED byte = System.Byte, token "byte", NOT the signed "sbyte"). The whole set is
-    // mode-gated by refBuild (LowerTypeString below): the reference surface keeps kotlin.* verbatim, every other
+    // mode-gated by refBuild: the reference surface keeps kotlin.* verbatim, every other
     // build lowers. kotlin.Unit is the ONE token NOT here: it is position-dependent (return -> void via the
     // ReturnKeys path; a Unit VALUE keeps the emitted Unit type — you cannot have a `void` field), handled
     // separately. KotlinAllToClr (the attribute-blob force map) additionally carries kotlin.Unit -> void and is
@@ -117,7 +117,7 @@ static class BirTypeLowering
         "memberSignature",
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
-        "keyType", "valType", "iterType", "accessOwner", "elem", "to", "owner",
+        "keyType", "valType", "iterType", "accessOwner", "elem", "to",
         "samType", "closureType",
         // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
         // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
@@ -150,8 +150,6 @@ static class BirTypeLowering
     {
         "ret", "dynRet", "suspendRet",
     };
-
-    static readonly string[] ModifierPrefixes = { "byref:", "array:", "nullable:" };
 
     // The ref.dll @ClrTypeAlias index (Kotlin FQN -> BCL), set per top-level Lower() call. Consulted for EVERY CLR-bound
     // type token — the foundational primitives (kotlin.Int -> System.Int32, kotlin.String -> System.String, …) AND the
@@ -298,10 +296,8 @@ static class BirTypeLowering
     };
 
     // === STRUCTURED TypeNode lowering (#37 m1) =================================================
-    // The freeze put every kotc type field as a structured `{t:…}` Type node (DotKt.Bir.TypeNode). The
-    // string helpers below (LowerTypeString/…) survive ONLY for the still-string legacy fields (`sig`
-    // comma-list, a literal `accessOwner`/clr* owner FQN); every OBJECT-valued type slot flows through
-    // LowerType(TypeNode). Output vocabulary mirrors the old strings exactly, wrapped in TypeNode:
+    // Every kotc type field is a structured `{t:…}` Type node (DotKt.Bir.TypeNode) and flows through
+    // LowerType(TypeNode). Output vocabulary is likewise structured:
     //   primitive -> Fqn("System.Int32"/…) (its @ClrTypeAlias BCL form, #55; ilemit's opcode switches normalize it back),
     //   Unit-in-return / const|try Unit value -> Fqn("void"), a suspend fn VALUE slot -> Fqn("object"),
     //   @ClrTypeAlias owner -> Fqn(bcl[,args]) (no clr:/clrg: marker — ilemit derives from the name),
@@ -572,8 +568,7 @@ static class BirTypeLowering
         return TypeNode.Write(LowerType(tn, refBuild, force, typeArg));
     }
 
-    // True iff a JSON value is a structured Type node (has a `t` discriminator) rather than a legacy type STRING
-    // or a k-tagged sub-node.
+    // True iff a JSON value is a structured Type node (has a `t` discriminator) rather than a k-tagged sub-node.
     static bool IsTypeObject(JsonNode n) =>
         n is JsonObject o && o["t"] is JsonValue tv && tv.TryGetValue<string>(out var s) && s != null;
 
@@ -649,7 +644,7 @@ static class BirTypeLowering
                     copy[kv.Key] = LowerReturnValued(kv.Value, refBuild, here);   // Unit-in-return -> void (uniform)
                 else if (kv.Key == "funcType")
                     copy[kv.Key] = LowerFuncTypeValued(kv.Value, refBuild, here);  // delegate slot -> keep sfunc as func:
-                else if (kv.Key == "ownerType" || kv.Key == "owner")
+                else if ((kv.Key == "ownerType" || kv.Key == "owner") && IsTypeObject(kv.Value))
                     copy[kv.Key] = LowerOwnerValued(kv.Value, refBuild, here);   // primitive-array owner stays kotlin.IntArray
                 else if (kv.Key == "typeArgs" || (collCtor && kv.Key is "elem" or "keyType" or "valType"))
                     copy[kv.Key] = LowerTypeValued(kv.Value, refBuild, here, typeArg: true);   // Root V: depth>=1 positions collapse
@@ -658,12 +653,12 @@ static class BirTypeLowering
                 else
                     copy[kv.Key] = LowerNode(kv.Value, refBuild, here);
             }
-            // H2 — SUSPEND FUNCTION-TYPE POSITION metadata. LowerTypeString erases an `sfunc:` token (a `suspend (…)->T`
-            // type) to `object` at a param/field/property `type` or a method `ret` (a suspend-lambda VALUE is a
+            // H2 — SUSPEND FUNCTION-TYPE POSITION metadata. LowerType erases a suspend Fn node to `object` at a
+            // param/field/property `type` or a method `ret` (a suspend-lambda VALUE is a
             // Continuation-based state-machine object, not a Func delegate). That fold destroys the suspend ORIGIN and
             // its arg/return SHAPE in the CLR signature, so a re-consuming DotKt assembly can no longer tell
-            // `fun run(block: suspend () -> T)` from a plain function-typed one. Record the RAW pre-erasure `sfunc:`
-            // token alongside — mirroring the `nullable`/`retNullable` positional-fact model — so ilemit can stamp
+            // `fun run(block: suspend () -> T)` from a plain function-typed one. Record the raw pre-erasure Fn node
+            // alongside so ilemit can stamp
             // [KotlinSuspendFunctionType(raw)] and dll2klib restore the suspend function type on re-consumption. This
             // carries the SHAPE STRING (not a bare flag): the erased CLR type is `object`, from which the arg/return
             // types are otherwise unrecoverable. Additive — ilemit reads it only on param/return/field/property builders;
@@ -703,7 +698,7 @@ static class BirTypeLowering
             // `type` — instead of naming the CLR `void` shorthand. bir2cir DERIVES `void` HERE, node-kind-scoped, so
             // ONLY these two value-slot positions fold. A Unit as a genuine VALUE elsewhere (a `var`/field/param type, a
             // generic TYPE-ARG like `Continuation[kotlin.Unit]`) stays `kotlin.Unit` — a `void` field/param/arg is
-            // invalid metadata. (Return slots fold via the ReturnKeys/LowerReturnSlot path; this covers the rest.)
+            // invalid metadata. (Return slots fold via the ReturnKeys path; this covers the rest.)
             if (copy["k"] is JsonValue kv2 && kv2.TryGetValue<string>(out var kind2) && (kind2 == "const" || kind2 == "try")
                 && copy["type"] is JsonObject tobj && tobj["t"] is JsonValue tvt && tvt.TryGetValue<string>(out var tvts)
                 && tvts == "fqn" && tobj["name"] is JsonValue tnm && tnm.TryGetValue<string>(out var tnms) && tnms == "kotlin.Unit")
@@ -767,55 +762,33 @@ static class BirTypeLowering
     // (identical SigTokenOf render), else overload resolution misses.
     static JsonNode LowerSigValue(JsonNode val, bool refBuild, bool force)
     {
-        if (val is JsonArray arr)
-        {
-            var copy = new JsonArray();
-            foreach (var item in arr)
-                copy.Add(item == null ? null : IsTypeObject(item) ? LowerTypeObject(item, refBuild, force, typeArg: false) : LowerNode(item, refBuild, force));
-            return copy;
-        }
-        return LowerNode(val, refBuild, force);
+        var copy = new JsonArray();
+        foreach (var item in val.AsArray())
+            copy.Add(LowerTypeObject(item!, refBuild, force, typeArg: false));
+        return copy;
     }
 
-    // The `funcType` key names the DELEGATE type constructed by a newClosure/newDelegate/delegateInvoke. A suspend-fn
-    // delegate (`sfunc:`) here is a genuine CLR delegate — the pre-P3 sequence/iterator closure path (`iterator {}`
-    // yields a `newClosure` whose funcType is `sfunc:void:SequenceScope[..]`) — NOT an object-erased SM value slot.
-    // So fold `sfunc:`->`func:` for THIS key only (delegate shape preserved), then lower normally; every OTHER type
+    // The `funcType` key names the DELEGATE type constructed by a newClosure/newDelegate/delegateInvoke. A suspend Fn
+    // here is a genuine CLR delegate — the pre-P3 sequence/iterator closure path — NOT an object-erased SM value slot.
+    // Fold suspend->false for THIS key only (delegate shape preserved), then lower normally; every OTHER type
     // slot (param/field/return/receiver) erases `sfunc:`->`object`. The APP suspend-lambda SM path never reaches
     // here: its `newSuspendLambda` is replaced by a `new <SM>` node (SuspendLambdaLowering) before type lowering.
     static JsonNode LowerFuncTypeValued(JsonNode val, bool refBuild, bool force)
     {
-        if (IsTypeObject(val))
-        {
-            var tn = TypeNode.Parse(val.ToJsonString());
-            // A suspend fn in a funcType slot is a genuine delegate here (the sequence/iterator closure path) — keep
-            // the shape, folding suspend->false; a plain fn likewise. Any non-fn type lowers normally.
-            return TypeNode.Write(tn is TypeNode.Fn fn ? LowerFnDelegate(fn, refBuild, force) : LowerType(tn, refBuild, force, false));
-        }
-        // funcType is ALWAYS a structured `fn` node (kotc emits `TypeNode.Fn`, #37 #49) — the string `func:`/`sfunc:`
-        // funcType form is retired. A non-object slot can only be a rare bare-FQN synthetic; lower it structurally.
-        return LowerTypeValued(val, refBuild, force);
+        var tn = TypeNode.Parse(val.ToJsonString());
+        return TypeNode.Write(tn is TypeNode.Fn fn
+            ? LowerFnDelegate(fn, refBuild, force)
+            : LowerType(tn, refBuild, force, false));
     }
 
-    // A return-slot value: a bare top-level `kotlin.Unit` -> `void` (UNIFORM, both modes); otherwise the normal type
-    // lowering (so a return like clrg:List[kotlin.Int] still lowers its inner Int).
+    // A return-slot value: a bare top-level `kotlin.Unit` -> `void` (UNIFORM, both modes); otherwise normal lowering.
     static JsonNode LowerReturnValued(JsonNode val, bool refBuild, bool force)
     {
-        if (IsTypeObject(val))
-        {
-            var tn = TypeNode.Parse(val.ToJsonString());
-            // A Unit RETURN is the CLR `void` convention (uniform across ref AND substitute/app).
-            if (tn is TypeNode.Fqn f && f.Args == null && f.Name == "kotlin.Unit")
-                return TypeNode.Write(VoidType);
-            return TypeNode.Write(LowerType(tn, refBuild, force, typeArg: false));
-        }
-        if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
-            return JsonValue.Create(LowerReturnSlot(s, refBuild, force));
-        return LowerTypeValued(val, refBuild, force);
+        var tn = TypeNode.Parse(val.ToJsonString());
+        if (tn is TypeNode.Fqn f && f.Args == null && f.Name == "kotlin.Unit")
+            return TypeNode.Write(VoidType);
+        return TypeNode.Write(LowerType(tn, refBuild, force, typeArg: false));
     }
-
-    static string LowerReturnSlot(string s, bool refBuild, bool force) =>
-        s == "kotlin.Unit" ? "void" : LowerTypeString(s, refBuild, force);
 
     // An OWNER slot (`ownerType`/`owner`) value. A primitive-array owner (`intArray.iterator()`) stays the bare
     // `kotlin.IntArray` FQN — ilemit's ParseOwnerSlot resolves that identity to the CLR array type directly (it
@@ -824,14 +797,15 @@ static class BirTypeLowering
     // normally. Mirrors the pre-#73-2b-A behavior, where kotc emitted the un-lowered `kotlin.IntArray` owner.
     static JsonNode LowerOwnerValued(JsonNode val, bool refBuild, bool force)
     {
-        if (IsTypeObject(val) && TypeNode.Parse(val.ToJsonString()) is TypeNode.Fqn f
-            && f.Args == null && PrimArrayElem.ContainsKey(f.Name))
+        var type = TypeNode.Parse(val.ToJsonString());
+        if (type is TypeNode.Fqn f && f.Args == null && PrimArrayElem.ContainsKey(f.Name))
             return TypeNode.Write(f);   // keep kotlin.IntArray verbatim for ilemit's array-owner resolution
-        return LowerTypeValued(val, refBuild, force);
+        return TypeNode.Write(LowerType(type, refBuild, force, typeArg: false));
     }
 
-    // A type-bearing key's value: a scalar type string, an array of type strings (interfaces/argTypes/constraints/
-    // typeArgs), or — for a few node shapes — a nested object, which is recursed structurally.
+    // A usually type-bearing key's value is one Type node or an array containing Type nodes. A few keys are
+    // discriminated by their parent node (`to` is also a range endpoint; declaration `params` contain descriptors),
+    // so a non-Type object is an ordinary subtree and is walked structurally rather than interpreted as a type.
     // `typeArg` = this value sits at generic-argument DEPTH (a call/ctor `typeArgs` list element, or a collection-
     // construction element/value key on newList/newSet/newMap), so its element HEADS collapse per the Root-V rule.
     // Default false: a `type`/`ret`/`argTypes`/`sig`/`base` head is depth-0 (keeps covariant); only its NESTED Args
@@ -841,120 +815,16 @@ static class BirTypeLowering
         if (IsTypeObject(val))
             return LowerTypeObject(val, refBuild, force, typeArg);
 
-        if (val is JsonValue scalar && scalar.TryGetValue<string>(out var s))
-            return JsonValue.Create(LowerTypeString(s, refBuild, force));
-
         if (val is JsonArray arr)
         {
             var copy = new JsonArray();
             foreach (var item in arr)
-            {
-                if (item != null && IsTypeObject(item))
-                    copy.Add(LowerTypeObject(item, refBuild, force, typeArg));
-                else if (item is JsonValue iv && iv.TryGetValue<string>(out var its))
-                    copy.Add(JsonValue.Create(LowerTypeString(its, refBuild, force)));
-                else
-                    copy.Add(item == null ? null : LowerNode(item, refBuild, force));
-            }
+                copy.Add(item == null ? null : IsTypeObject(item)
+                    ? LowerTypeObject(item, refBuild, force, typeArg)
+                    : LowerNode(item, refBuild, force));
             return copy;
         }
-
         return LowerNode(val, refBuild, force);
     }
 
-    // Lower a STILL-STRING type slot (a synthetic interface name like `dotkt$CharSequence`, a StringCharSequenceBridge
-    // adapter's `kotlin.String` slot): rewrite a bare @ClrTypeAlias kotlin.* type to its BARE BCL FQN (numeric/bool/char
-    // + String/Any + the unsigned set + non-generic BCL) and recurse nested `[...]` args. Output carries NO legacy
-    // string-token grammar (`clr:`/`clrg:`/`@`) — every type is a bare FQN / CLR shorthand ilemit resolves by name (#48);
-    // a user/stdlib FQN (kotlin.collections.List) and the position-dependent kotlin.Unit value pass through unchanged.
-    public static string LowerTypeString(string raw, bool refBuild, bool force = false)
-    {
-        // Function types are structured `fn` nodes now (#37 #49): the `func:`/`sfunc:` STRING type token is retired,
-        // so this string resolver never receives one. It survives only for the bare-FQN + CLR-shorthand LEAF slots
-        // that kotc/bir2cir still emit as strings (synthetic interface names like `dotkt$CharSequence`, the synthesized
-        // StringCharSequenceBridge adapter's `kotlin.String` slots) — resolved by the kotlin.* map / LowerLeaf below.
-        var t = raw.Trim();
-        // The reference build keeps kotlin.* primitives verbatim (general path); the attribute force path lowers
-        // unconditionally. A token without "kotlin." carries nothing to rewrite.
-        if ((!force && refBuild) || !raw.Contains("kotlin.", StringComparison.Ordinal)) return raw;
-
-        if (t.Length == 0) return raw;
-
-        foreach (var p in ModifierPrefixes)
-            if (t.StartsWith(p, StringComparison.Ordinal))
-                return p + LowerTypeString(t[p.Length..], refBuild, force);
-
-        var br = t.IndexOf('[');
-        if (br >= 0 && t.EndsWith("]", StringComparison.Ordinal))
-        {
-            var head = t[..br];
-            var inner = t[(br + 1)..^1];
-            var args = string.Join(",", SplitTopLevel(inner).Select(a => LowerTypeString(a, refBuild, force)));
-            // A @ClrTypeAlias GENERIC type used as a type constructor (supertype/interface/type-arg/field), e.g.
-            // kotlin.collections.Collection[E] -> System.Collections.Generic.IReadOnlyCollection[E]. ilemit builds the
-            // generic by arg count. The foundational primitives never appear as a generic head, so the primitive-alias
-            // path need not gate here. No `@`-decorated head reaches this string path (#48: type-args are structured nodes).
-            // `kotlin.Enum<E>` -> the NON-generic `System.Enum` (C2): a Kotlin `enum class` is emitted as a real CLR
-            // `System.Enum`-backed enum (ilemit `DefineEnum`), which does NOT extend the stdlib's generic `kotlin.Enum<E>`
-            // class. So a `fun <T : Enum<T>> …` self-referential bound (`kotlin.Enum[gp:T]`) must lower to `System.Enum`
-            // (the CLR `where T : Enum` idiom) or a real enum type argument violates the constraint (VerificationException).
-            // Drop the self-referential type arg — System.Enum is non-generic.
-            if (head == "kotlin.Enum") return "System.Enum";
-            if (!head.StartsWith("clr", StringComparison.Ordinal) && AliasBcl(head) is string genericBcl)
-            {
-                // `Comparable<*>` / `Comparable<Any?>` (the star / Any-projected comparable — kotc token
-                // `kotlin.Comparable[object]`) -> the NON-generic `System.IComparable`, NOT `IComparable<object>` (C2).
-                // `System.IComparable<in T>` is contravariant, so no VALUE type is `IComparable<object>` (a boxed Int is
-                // `IComparable<int>` / non-generic `IComparable` only). The `compareBy`/`compareValuesBy` selector
-                // `(T) -> Comparable<*>?` and its boxed selector value must ride the non-generic dispatch spine
-                // (clrRawCompareTo's `as IComparable`); a reified `IComparable<object>` castclass fails on every primitive.
-                // A CONCRETE arg (`Comparable<C>` / `Comparable<gp:T>`) keeps the generic form (`sorted`'s element cast).
-                // The star/Any arg arrives as the shorthand "object" (a kotc-emitted CLR token) or, now that the
-                // primitive alias path lowers a bare kotlin.Any leaf, as the bare "System.Object" (#55) — accept both.
-                if (genericBcl == "System.IComparable" && (args == "object" || args == "System.Object")) return "System.IComparable";
-                return genericBcl + "[" + args + "]";
-            }
-            return head + "[" + args + "]";
-        }
-
-        return LowerLeaf(t, force);
-    }
-
-    static string LowerLeaf(string t, bool force)
-    {
-        // A bare kotlin.* foundational leaf (numeric/bool/char + String/Any + the unsigned set) lowers to its BARE BCL
-        // FQN via the active map; all other leaves (CLR shorthand, the position-dependent kotlin.Unit value, user/stdlib
-        // FQNs like kotlin.collections.List) pass through. No legacy `clrg:`/`@` grammar is recognized/emitted (#48) —
-        // type-args travel as structured `{t:fqn}` nodes, so the `@`-decorated dual-representation STRING form is gone.
-        // The attribute-blob force path keeps the hardcoded KotlinAllToClr map (no ref.dll in the ref build). #55: the
-        // non-force `KotlinToClr` shadow was deleted, so a bare primitive falls to AliasBcl (its ref.dll @ClrTypeAlias).
-        if (force && KotlinAllToClr.TryGetValue(t, out var clr)) return clr;
-        // A @ClrTypeAlias type used bare — a foundational primitive (kotlin.Int -> System.Int32) OR a non-generic
-        // BCL (StringBuilder/Regex/Match/IComparable/TextWriter/...) -> the BARE <bcl> FQN (no legacy `clr:` prefix —
-        // ilemit derives resolution from the name; #48), read from the ref.dll alias index.
-        if (AliasBcl(t) is string bcl) return bcl;
-        return t;
-    }
-
-    static IReadOnlyList<string> SplitTopLevel(string value)
-    {
-        if (value.Length == 0) return Array.Empty<string>();
-
-        var result = new List<string>();
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ',' && depth == 0)
-            {
-                result.Add(value[start..i].Trim());
-                start = i + 1;
-            }
-        }
-
-        result.Add(value[start..].Trim());
-        return result;
-    }
 }

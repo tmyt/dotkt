@@ -888,14 +888,8 @@ static partial class ClrMemberResolution
         return RefDef(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
     }
 
-    // The owner type slot as a TypeNode: a structured `{t:…}` node, OR a LEGACY bare-STRING owner (kotc emits some clr*
-    // owners — a `__mref` forwarder's `str(clrOwner)`, a referenced file class, the await marker — as a plain string).
-    static TypeNode ReadOwnerNode(JsonNode typeSlot)
-    {
-        if (TypeJson.Read(typeSlot) is TypeNode t) return t;
-        if (typeSlot is JsonValue v && v.TryGetValue<string>(out var s) && s != null) return new TypeNode.Fqn(s);
-        return null;
-    }
+    // The structured TypeNode carried by an owner slot.
+    static TypeNode ReadOwnerNode(JsonNode typeSlot) => TypeJson.Read(typeSlot);
 
     static List<TypeNode> ReadArgTypes(JsonObject node) =>
         (node["argTypes"] as JsonArray)?.Where(x => x != null).Select(TypeJson.Read).ToList() ?? new List<TypeNode>();

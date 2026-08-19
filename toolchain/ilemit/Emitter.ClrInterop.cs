@@ -322,14 +322,13 @@ sealed partial class Emitter
         if ((methodReturn.IsGenericParameter || methodReturn.ContainsGenericParameters)
             && e.TryGetProperty("ret", out var rh))
         {
-            // Post type-flip the `ret` hint is a STRUCTURED TypeNode (`{"t":"tv","scope":"method",...}`); the legacy
-            // form was a bare string. A method-scope Tv return (`IReadOnlyList<T>::get_Item` on the non-generic
+            // The `ret` hint is a structured TypeNode. A method-scope Tv return
+            // (`IReadOnlyList<T>::get_Item` on the non-generic
             // `_CollectionsKt.firstOrNull<T>`) reflects as the OPEN interface param `!0` (type-scope, position 0) —
             // a standalone `!0` token in a non-generic method body is INVALID metadata (`box !0` -> BadImageFormat at
             // JIT). MapType resolves the structured Tv against `_curMethodParams` to the method's own `!!T`, so the
-            // caller boxes/consumes the correct method-scope token. (String hint keeps the legacy ClrRef path.)
-            Type hinted = rh.ValueKind == JsonValueKind.String ? TryResolveClr(rh.GetString())
-                        : rh.ValueKind == JsonValueKind.Object ? TryMapType(rh) : null;
+            // caller boxes/consumes the correct method-scope token.
+            Type hinted = TryMapType(rh);
             if (hinted != null) return hinted;
         }
         return methodReturn;
@@ -346,11 +345,8 @@ sealed partial class Emitter
         catch { return null; }
     }
 
-    // A type slot for an IL-opcode context (newarr elem / conv / default): a structured node resolves via MapType, a
-    // bare type-IDENTITY string (a CLR-shorthand primitive, or a bare FQN) via the identity path below (the legacy
-    // grammar prefixes are retired, #48).
-    Type NativeType(JsonElement e) =>
-        e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e)) : NativeType(e.GetString());
+    // A type slot for an IL-opcode context (newarr elem / conv / default).
+    Type NativeType(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
 
     Type NativeType(string spec)
     {

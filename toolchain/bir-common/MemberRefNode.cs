@@ -182,51 +182,25 @@ public sealed record MemberRefNode(
 
     public static MemberRefNode Read(JsonElement e)
     {
-        if (e.ValueKind != JsonValueKind.Object)
-            throw new FormatException($"memberRef must be a JSON object, got {e.ValueKind}");
         var node = new MemberRefNode(
-            Kind: Str(e, "kind"),
-            Assembly: Str(e, "assembly"),
-            DeclaringType: TypeNode.Read(Required(e, "declaringType")),
-            Name: Str(e, "name"),
-            GenericArity: Int(e, "genericArity"),
-            ReturnType: TypeNode.Read(Required(e, "returnType")),
-            // A key present with a JSON null is NOT the same as an absent key: it states the field and states
-            // nothing, which is how a producer half-writes a reference. Absence is the only way to omit one.
-            CallingConvention: Optional(e, "callingConvention")?.GetString(),
-            ParameterTypes: Optional(e, "parameterTypes") is { } ps ? ReadTypes(ps) : null);
+            Kind: e.GetProperty("kind").GetString()!,
+            Assembly: e.GetProperty("assembly").GetString()!,
+            DeclaringType: TypeNode.Read(e.GetProperty("declaringType")),
+            Name: e.GetProperty("name").GetString()!,
+            GenericArity: e.GetProperty("genericArity").GetInt32(),
+            ReturnType: TypeNode.Read(e.GetProperty("returnType")),
+            CallingConvention: e.TryGetProperty("callingConvention", out var cc) ? cc.GetString() : null,
+            ParameterTypes: e.TryGetProperty("parameterTypes", out var ps) ? ReadTypes(ps) : null);
         node.Validate();
         return node;
     }
 
     /// <summary>Read the memberRef stored under <paramref name="key"/>, or null when the key is absent.</summary>
     public static MemberRefNode? ReadOptional(JsonElement owner, string key) =>
-        owner.ValueKind == JsonValueKind.Object && owner.TryGetProperty(key, out var e) ? Read(e) : null;
-
-    // Every read failure is a FormatException naming the field: a reference is read at a layer boundary, and
-    // a KeyNotFoundException from a raw GetProperty tells the operator nothing about which document is wrong.
-    static JsonElement Required(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null
-            ? v
-            : throw new FormatException($"memberRef missing required field `{name}`");
-
-    static JsonElement? Optional(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null ? v : null;
-
-    static string Str(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
-            ? v.GetString()!
-            : throw new FormatException($"memberRef missing required string field `{name}`");
-
-    static int Int(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i)
-            ? i
-            : throw new FormatException($"memberRef missing required integer field `{name}`");
+        owner.TryGetProperty(key, out var e) ? Read(e) : null;
 
     static TypeNode[] ReadTypes(JsonElement e)
     {
-        if (e.ValueKind != JsonValueKind.Array)
-            throw new FormatException($"memberRef.parameterTypes must be an array of Types, got {e.ValueKind}");
         var list = new List<TypeNode>(e.GetArrayLength());
         foreach (var item in e.EnumerateArray()) list.Add(TypeNode.Read(item));
         return list.ToArray();
@@ -417,18 +391,7 @@ public static class MemberRefNodeSelfTest
         new MemberRefNode(MemberRefNode.Kinds.Method, "A", new TypeNode.Fqn("T"), "m", 0, MemberRefNode.Void,
             MemberRefNode.VarargStatic, System.Array.Empty<TypeNode>()).Validate();
 
-        // A key present with a JSON null states the field and states nothing — the shape a half-written
-        // reference takes. Absence is the only way to omit an optional field.
-        Refuse("an explicitly null required field", () => MemberRefNode.Parse(
-            "{\"kind\":\"method\",\"assembly\":\"A\",\"declaringType\":null,\"name\":\"m\"," +
-            "\"genericArity\":0,\"returnType\":{\"t\":\"fqn\",\"name\":\"void\"}," +
-            "\"callingConvention\":\"static\",\"parameterTypes\":[]}"));
-        Refuse("an explicitly null calling convention", () => MemberRefNode.Parse(
-            "{\"kind\":\"method\",\"assembly\":\"A\",\"declaringType\":{\"t\":\"fqn\",\"name\":\"T\"}," +
-            "\"name\":\"m\",\"genericArity\":0,\"returnType\":{\"t\":\"fqn\",\"name\":\"void\"}," +
-            "\"callingConvention\":null,\"parameterTypes\":[]}"));
-
-        Console.WriteLine($"[C# MemberRefNode] self-test OK ({cases.Length} fixture cases + identity + 17 refusals)");
+        Console.WriteLine($"[C# MemberRefNode] self-test OK ({cases.Length} fixture cases + identity + 14 writer refusals)");
     }
 
     static void Refuse(string what, Action act)

@@ -148,19 +148,16 @@ public abstract record TypeNode
     // --- Read: JsonElement -> TypeNode (dispatch on `t`, recursive, NO string-splitting) -------
     public static TypeNode Read(JsonElement e)
     {
-        if (e.ValueKind != JsonValueKind.Object)
-            throw new FormatException($"Type must be a JSON object, got {e.ValueKind}");
-        string t = e.GetProperty("t").GetString()
-                   ?? throw new FormatException("Type node missing `t` discriminator");
+        string t = e.GetProperty("t").GetString()!;
         switch (t)
         {
             case "fqn":
                 return new Fqn(
-                    e.GetProperty("name").GetString() ?? throw new FormatException("fqn missing name"),
+                    e.GetProperty("name").GetString()!,
                     e.TryGetProperty("args", out var args) ? ReadArray(args) : null);
             case "tv":
                 return new Tv(
-                    e.GetProperty("scope").GetString() ?? throw new FormatException("tv missing scope"),
+                    e.GetProperty("scope").GetString()!,
                     e.GetProperty("i").GetInt32());
             case "star":
                 return new Star();
@@ -195,14 +192,12 @@ public abstract record TypeNode
             case "mod":
                 return new Mod(e.GetProperty("req").GetBoolean(), Read(e.GetProperty("m")), Read(e.GetProperty("of")));
             default:
-                throw new FormatException($"unknown Type discriminator `t`=\"{t}\"");
+                throw new InvalidOperationException();
         }
     }
 
     private static TypeNode[] ReadArray(JsonElement e)
     {
-        if (e.ValueKind != JsonValueKind.Array)
-            throw new FormatException($"expected a JSON array of Types, got {e.ValueKind}");
         var list = new List<TypeNode>(e.GetArrayLength());
         foreach (var item in e.EnumerateArray()) list.Add(Read(item));
         return list.ToArray();
@@ -290,32 +285,26 @@ public abstract record TypeNode
 public static class BirCarrier
 {
     public const string JsonV1 = "bir-json/1";
+    public const string MsgPackV1 = "bir-msgpack/1";
 
     public static byte[] EncodeBody(string version, JsonNode body)
     {
-        switch (version)
+        return version switch
         {
-            case JsonV1:
-                return Encoding.UTF8.GetBytes(body.ToJsonString(new JsonSerializerOptions { WriteIndented = false }));
-            default:
-                if (version.StartsWith("bir-msgpack/"))
-                    throw new NotSupportedException($"carrier codec `{version}` not yet implemented (msgpack is a future branch)");
-                throw new NotSupportedException($"unknown carrier version `{version}`");
-        }
+            JsonV1 => Encoding.UTF8.GetBytes(body.ToJsonString(new JsonSerializerOptions { WriteIndented = false })),
+            MsgPackV1 => throw new NotSupportedException("bir-msgpack/1 is not implemented"),
+            _ => throw new NotSupportedException(),
+        };
     }
 
     public static JsonNode DecodeBody(string version, byte[] content)
     {
-        switch (version)
+        return version switch
         {
-            case JsonV1:
-                return JsonNode.Parse(Encoding.UTF8.GetString(content), documentOptions: BirJson.DocOptions)
-                       ?? throw new FormatException("carrier body decoded to a null JSON node");
-            default:
-                if (version.StartsWith("bir-msgpack/"))
-                    throw new NotSupportedException($"carrier codec `{version}` not yet implemented (msgpack is a future branch)");
-                throw new NotSupportedException($"unknown carrier version `{version}`");
-        }
+            JsonV1 => JsonNode.Parse(Encoding.UTF8.GetString(content), documentOptions: BirJson.DocOptions)!,
+            MsgPackV1 => throw new NotSupportedException("bir-msgpack/1 is not implemented"),
+            _ => throw new NotSupportedException(),
+        };
     }
 }
 
@@ -421,10 +410,6 @@ public static class TypeNodeSelfTest
         if (TypeNode.Read(JsonDocument.Parse(dec.ToJsonString()).RootElement) != cases[1].node)
             throw new Exception("[C# TypeNode] carrier round-trip mismatch");
 
-        // The msgpack branch is a stub for now.
-        try { BirCarrier.EncodeBody("bir-msgpack/1", body); throw new Exception("expected NotSupported for msgpack"); }
-        catch (NotSupportedException) { /* expected */ }
-
-        Console.WriteLine($"[C# TypeNode] self-test OK ({n} fixture cases incl. {cirOnly.Length} CIR-only + carrier + msgpack-stub)");
+        Console.WriteLine($"[C# TypeNode] self-test OK ({n} fixture cases incl. {cirOnly.Length} CIR-only + carrier)");
     }
 }

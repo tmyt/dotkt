@@ -18,12 +18,11 @@ sealed partial class Emitter
             ? Type.MakeGenericSignatureType(definition, arguments)
             : definition.MakeGenericType(arguments);
 
-    // The bare NAME a type slot carries (a bir2cir CLR shorthand `int`/`void`/… Fqn, or a legacy string token), for a
-    // name-keyed opcode switch (const/conv). null for a non-Fqn structured node.
+    // The bare NAME a type slot carries, for a name-keyed opcode switch (const/conv).
     static string SlotName(JsonElement e) =>
-        e.ValueKind == JsonValueKind.String ? e.GetString()
-        : e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f ? f.Name
-        : null;
+        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f
+            ? f.Name
+            : null;
 
     // A primitive type slot may now arrive as the @ClrTypeAlias BCL name ("System.Int32") rather than the CLR
     // shorthand ("int"): bir2cir routes primitives through the ref.dll alias index (the redundant hardcoded
@@ -44,10 +43,8 @@ sealed partial class Emitter
     // so nested generics (List[ValueTuple[int,string]]) parse correctly.
     // Resolve a .NET type reference that may be a plain name (ResolveType), a generic `clrg:Open[args]`,
     // or a func/closed encoding (MapType). Used by newClr/clrPropGet so they accept generic types (System.Lazy<T>).
-    // A clr* owner/type slot: a structured node (bir2cir MemberCallSubstitution) walks TypeNode; a bare-FQN owner-island
-    // IDENTITY string (an owner FQN, an `attrExternal` attribute type, a synthesized argType shorthand) resolves below.
-    Type ClrRef(JsonElement e) =>
-        e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e)) : ClrRef(e.GetString());
+    // A clr* owner/type slot is a structured Type node authored by bir2cir.
+    Type ClrRef(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
 
     // A bare type-IDENTITY string (no legacy grammar prefix — those are retired, #48): a CLR-shorthand primitive routes
     // through MapType (which owns the shorthand switch — `argTypes` may synthesize e.g. "string" so the ctor-overload
@@ -93,11 +90,7 @@ sealed partial class Emitter
         return res;
     }
 
-    // Final CIR type slots are structured Type nodes. Bare strings remain valid only in explicitly identity-shaped
-    // fields consumed through ClrRef(string), never as a substitute for a missing/malformed value type.
-    Type MapType(JsonElement e) => e.ValueKind == JsonValueKind.Object
-        ? MapType(DotKt.Bir.TypeNode.Read(e))
-        : throw new NotSupportedException($"invalid CIR type slot: expected Type object, got {e.ValueKind}");
+    Type MapType(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
 
     Type MapType(DotKt.Bir.TypeNode t) => t switch
     {
@@ -194,9 +187,8 @@ sealed partial class Emitter
     }
 
     // A type NAME slot that is NOT a structured node — a bare FQN / CLR-shorthand IDENTITY (an owner-FQN island, a
-    // primitive shorthand). The legacy string-token GRAMMAR (`clr:`/`clrg:`/`array:`/`nullable:`/`func:`/`byref:`/`gp:`/`@`)
-    // is retired (#48): every value type travels as a structured `{t:…}` node (MapType(TypeNode)); this string resolver
-    // handles ONLY the bare-identity slots. `dotkt$stackptr` is the one synthetic pseudo-type kept — a canonical
+    // primitive shorthand). Every value type travels as a structured `{t:…}` node (MapType(TypeNode)); this string
+    // resolver handles ONLY the bare-identity slots. `dotkt$stackptr` is the one synthetic pseudo-type kept — a canonical
     // compiler-internal identity in the `dotkt$` synthetic namespace (#48), NOT a Kotlin/CLR type.
     Type MapType(string t)
     {

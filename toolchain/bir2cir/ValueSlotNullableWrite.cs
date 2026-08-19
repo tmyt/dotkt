@@ -107,7 +107,6 @@ static class ValueSlotNullableWrite
     static TypeNode.Fqn UnwrapOwnerFqn(JsonNode ownerJson)
     {
         if (ownerJson == null) return null;
-        if (ownerJson is JsonValue sv && sv.TryGetValue<string>(out var s) && s != null) return new TypeNode.Fqn(s);
         var t = TypeJson.Read(ownerJson);
         while (true)
             switch (t)

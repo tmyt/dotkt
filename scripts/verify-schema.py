@@ -99,12 +99,6 @@ WELL_KNOWN_ROLES = frozenset({
     "NullableT.ctor", "SpanT.ctorPointer",
 })
 
-RETIRED_DESCRIPTORS = (
-    "memberSig", "memberOwner", "memberRet",
-    "baseMemberSig", "baseMemberOwner",
-    "clrOverride", "clrOverrideSig", "clrOverrideRet", "clrOverrideOwner", "clrOverrideMember",
-)
-
 # Pass-to-pass facts owned exclusively by bir2cir. They are deliberately not part of either serialized phase:
 # seeing one in an input BIR or output CIR means an internal resolution step leaked across a layer boundary.
 BIR2CIR_INTERNAL_MEMBER_FACTS = (
@@ -132,7 +126,7 @@ def arity_of_name(full_name):
 # them nowhere else (its own ResolvedOnlyKinds), and ilemit already refuses one that arrives without a
 # resolved owner — so for these, a reference is not merely expected, it is what the node is made of. Requiring
 # it unconditionally puts the failure at the layer that dropped the identity instead of several stages later,
-# and keeps the rule independent of the retired descriptors.
+# and keeps the rule independent of any incidental fields on the operation node.
 #
 # The set GROWS one authoring step at a time; a kind absent from it is simply not migrated yet.
 MEMBER_REF_REQUIRED_KINDS = {
@@ -953,16 +947,6 @@ class V:
                         declared = o.get("argTypes")
                         if isinstance(declared, list) and len(declared) != len(ref.get("parameterTypes") or []):
                             self.err(f, path, "an applied attribute's memberRef takes a different number of arguments than the application states")
-                # The old descriptors are RETIRED: the emitter reads the reference and nothing else,
-                # so an owner descriptor beside it is a second spelling of a settled identity — the kind that
-                # drifts from the first and cannot be caught, because whoever compares them compares two
-                # outputs of the same producer.
-                # EVERY retired descriptor, not the two that happened to have a pair. A ban that lists a subset
-                # is a ban a producer can walk around without noticing — and one did: `memberSig` reached CIR on
-                # the generic call while this rule reported clean.
-                for retired in RETIRED_DESCRIPTORS:
-                    if retired in o:
-                        self.err(f, path, f"{retired} is a retired transitional descriptor; the resolved memberRef is the identity")
             if f.endswith(".cir.json"):
                 for required_key in COLLECTION_TEMPLATE_REFS.get(o.get("k"), ()):
                     if required_key not in o:

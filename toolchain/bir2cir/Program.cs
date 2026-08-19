@@ -1395,9 +1395,9 @@ sealed class Pipeline
         foreach (var t in types)
             if (t is JsonObject to && to["interfaces"] is JsonArray ifaces)
                 foreach (var i in ifaces)
-                    // interfaces are STRUCTURED `{t:fqn,name:…}` nodes after the m1 TYPE FLIP (was a legacy string);
-                    // read via OwnerName so a user `class S : CharSequence` is still detected. A stale `as JsonValue`
-                    // read missed it -> hasUserCharSeqImpl wrongly false -> CharSeqStringLowering ran on an assembly
+                    // interfaces are structured `{t:fqn,name:…}` nodes. Read via OwnerName so a user
+                    // `class S : CharSequence` is detected. Reading it as JsonValue left hasUserCharSeqImpl false, so
+                    // CharSeqStringLowering ran on an assembly
                     // with a real polymorphic implementer, lowering its `subSequence(): CharSequence` override return to
                     // System.String (+ toString coercion) while it overrides a `dotkt$CharSequence` slot -> TypeLoad
                     // "signature of the body and declaration do not match" (il-charseq/charseqx).

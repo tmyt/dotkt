@@ -339,18 +339,13 @@ sealed partial class Emitter
         catch (NotSupportedException) { return null; }
     }
 
-    // Read an interface/base entry as a Fqn: a structured node, or a legacy STRING (a canonical synthetic like
-    // `dotkt$CharSequence`, or a clr:/@-prefixed spec) wrapped as a bare Fqn (whose name routes through the string
-    // resolvers). null for a non-Fqn structured node.
+    // Read an interface/base entry as its structured Fqn.
     static DotKt.Bir.TypeNode.Fqn ReadFqn(JsonElement e) =>
-        e.ValueKind == JsonValueKind.String ? new DotKt.Bir.TypeNode.Fqn(e.GetString())
-        : e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f ? f
-        : null;
+        DotKt.Bir.TypeNode.Read(e) as DotKt.Bir.TypeNode.Fqn;
 
-    // An owner slot (structured Fqn or legacy string) -> (open name, constructed type).
+    // An owner slot -> (open name, constructed type).
     (string open, Type constructed) ParseOwnerSlot(JsonElement e) =>
-        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f
-            ? ParseOwnerT(f) : ParseOwner(e.GetString());
+        ParseOwnerT((DotKt.Bir.TypeNode.Fqn)DotKt.Bir.TypeNode.Read(e));
 
     (string open, Type constructed) ParseOwner(string spec)
     {

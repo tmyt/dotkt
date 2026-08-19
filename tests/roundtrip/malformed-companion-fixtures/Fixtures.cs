@@ -115,20 +115,6 @@ namespace Fixture
         public FileFacade() { }
 #endif
     }
-#elif LEGACY_STRING_COMPANION_EXTENSION
-    public sealed class Owner;
-
-    [DotKt.Runtime.CompilerServices.KotlinFileClass]
-    public sealed class FileFacade
-    {
-        [DotKt.Runtime.CompilerServices.KotlinCompanionExtension("bir-json/1", new byte[] {
-            123,34,114,101,99,101,105,118,101,114,34,58,34,70,105,120,
-            116,117,114,101,46,79,119,110,101,114,34,44,34,110,97,109,
-            101,34,58,34,98,97,100,34,44,34,107,105,110,100,34,58,34,
-            102,117,110,99,116,105,111,110,34,125
-        })]
-        public static int Bad() => 1;
-    }
 #elif PARAMETERIZED_COMPANION_EXTENSION
     public sealed class Owner;
 
