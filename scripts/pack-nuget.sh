@@ -46,7 +46,7 @@ for sp in packaging/DotKt.Sdk/Sdk/Sdk.props packaging/DotKt.Sdk.Mpp/Sdk/Sdk.prop
 done
 # The shipped Toolchain.props is copied verbatim, so its public Kotlin-version property cannot consume the
 # pack project's DotKt.Versions.props. Guard the duplicated literal exactly like the SDK's embedded package version.
-TC_PROPS="packaging/DotKt.Toolchain/build/DotKt.Toolchain.props"
+TC_PROPS="packaging/DotKt.Toolchain/buildShared/DotKt.Toolchain.public.props"
 tc_kotlin_ver="$(grep -oE '<DotKtKotlinVersion Condition[^>]*>[^<]+' "$ROOT/$TC_PROPS" | sed 's/.*>//')"
 [[ "$tc_kotlin_ver" == "$KOTLINVER" ]] \
 	|| die "$TC_PROPS DotKtKotlinVersion default ($tc_kotlin_ver) != shared Kotlin version ($KOTLINVER) — bump both together"

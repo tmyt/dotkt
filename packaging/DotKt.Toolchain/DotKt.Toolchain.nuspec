@@ -17,5 +17,8 @@
     <file src="tools/**" target="tools" />
     <file src="build/DotKt.Toolchain.props" target="build/DotKt.Toolchain.props" />
     <file src="build/DotKt.Toolchain.targets" target="build/DotKt.Toolchain.targets" />
+    <file src="buildShared/DotKt.Toolchain.public.props" target="buildShared/DotKt.Toolchain.public.props" />
+    <file src="buildMultiTargeting/DotKt.Toolchain.props" target="buildMultiTargeting/DotKt.Toolchain.props" />
+    <file src="buildMultiTargeting/DotKt.Toolchain.targets" target="buildMultiTargeting/DotKt.Toolchain.targets" />
   </files>
 </package>

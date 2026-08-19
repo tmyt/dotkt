@@ -1,0 +1,17 @@
+<!-- Cross-targeting half of the public reference-KLIB resolution contract. Reference selection and projection
+     belong to TFM-specific inner builds: the outer build only dispatches and aggregates the returned public items. -->
+<Project>
+  <Target Name="DotKtResolveKlibReferences"
+          DependsOnTargets="_ComputeTargetFrameworkItems"
+          Returns="@(DotKtResolvedKlibReference)">
+    <ItemGroup>
+      <DotKtResolvedKlibReference Remove="@(DotKtResolvedKlibReference)" />
+    </ItemGroup>
+    <MSBuild Projects="@(_InnerBuildProjects)"
+             Condition="'@(_InnerBuildProjects)' != ''"
+             Targets="DotKtResolveKlibReferences"
+             BuildInParallel="$(BuildInParallel)">
+      <Output ItemName="DotKtResolvedKlibReference" TaskParameter="TargetOutputs" />
+    </MSBuild>
+  </Target>
+</Project>
