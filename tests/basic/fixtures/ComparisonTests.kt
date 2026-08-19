@@ -52,6 +52,8 @@ class ComparisonTests {
         assertTrue(c > b)                                       // c>b
         assertTrue(a <= a)                                      // a<=a
         assertEquals(-3, a.compareTo(b))                        // -3
+        val typed: Comparable<ComparisonVer> = a
+        assertEquals(-3, typed.compareTo(b))
         val sorted = listOf(c, a, b).sorted()                   // sorted() uses compareTo
         assertEquals("1.2,1.5,2.0", sorted.joinToString(","))   // 1.2,1.5,2.0
 
@@ -75,8 +77,15 @@ class ComparisonTests {
 
         val overloaded = ComparisonNothingOverload()
         assertEquals(0, compareValues(overloaded, overloaded))
+    }
+
+    @TestAttribute
+    fun objectErasedComparableTypedDispatchUsesNonGenericFace() {
         val anyNullable = ComparisonAnyNullable()
         assertEquals(0, compareValues(anyNullable, anyNullable))
+        val typedAnyNullable: Comparable<Any?> = anyNullable
+        assertEquals(0, typedAnyNullable.compareTo(anyNullable))
+        assertEquals(1, typedAnyNullable.compareTo(null))
     }
 
     @TestAttribute

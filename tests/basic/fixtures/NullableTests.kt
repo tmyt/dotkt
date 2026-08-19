@@ -582,10 +582,11 @@ class NullableTests {
     fun erasedSupertypeArgumentFromAnotherAssembly() {
         assertEquals(2, ngCmp(5).compareTo(3))              // 2    a REFERENCED generic supertype at Int?
         assertEquals(5, ngCmp(5).compareTo(null))           // 5    …and its null case
+        val comparable: Comparable<Int?> = ngCmp(5)
+        assertEquals(2, comparable.compareTo(3))
+        assertEquals(5, comparable.compareTo(null))
         assertEquals("7", NgLocalSink().accept(7))          // 7    the same-module control
         assertEquals("none", NgLocalSink().accept(null))    // none
-        // Dispatch through a `Comparable<Int?>`-typed reference is a separate tracked defect and is not part of
-        // this green regression contract.
     }
 
     @TestAttribute
