@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **`EventSubscription.close()` and other inherited CLR-interface calls now bind their exact physical slot (#462).**
+  `bir2cir` closes the frontend-selected interface owner in the receiver's generic type frame, preserves Kotlin-only
+  collection call semantics, and emits a complete CLR member identity for both referenced and locally derived classes.
+
 - **Public CLR classes no longer expose inaccessible interface supertypes or lose public default-interface slots
   (#451).** `dll2klib` now evaluates constructed interface visibility against the selected reference universe,
   retains resolvable public/protected edges, and projects public slots implemented through hidden interfaces as

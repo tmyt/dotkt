@@ -1,0 +1,17 @@
+# The class reference surface keeps close(), but its runtime implementation satisfies IDisposable.Dispose.
+# bir2cir must bind the exact inherited interface slot and hand ilemit a resolved memberRef.
++"type":{"t":"fqn","name":"System.IDisposable"},"method":"Dispose"
++"declaringType":{"t":"fqn","name":"System.IDisposable"},"name":"Dispose"
+
+# A generic override owner and its signature are in ArrayDeque's frame. Both must close to String before routing.
++"type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.String"}]},"method":"Insert"
++"declaringType":{"t":"fqn","name":"System.Collections.Generic.IList\u00601","args":[{"t":"fqn","name":"System.String"}]},"name":"Insert"
+
+# The MutableList/MutableCollection faces coalesce to one binding, then retain Kotlin add's Boolean semantics.
++"owner":{"t":"fqn","name":"kotlin.collections.ClrCollectionDefaultsKt"},"method":"clrCollAdd"
++"typeArgs":[{"t":"fqn","name":"System.String"}]
+
+# A local subclass with no declaration of its own still needs the inherited external interface slot.
++"type":{"t":"fqn","name":"System.Collections.Generic.ICollection","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Clear"
++"declaringType":{"t":"fqn","name":"System.Collections.Generic.ICollection\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"name":"Clear"
+-"k":"callInstance"

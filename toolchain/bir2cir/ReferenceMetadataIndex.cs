@@ -2122,9 +2122,18 @@ sealed partial class ReferenceMetadataIndex
 
     internal bool TryExactMemberClrBinding(string ownerFqn, string memberName, int methodArity,
         IReadOnlyList<TypeNode> signature, out ExactClrMemberBinding binding)
+        => TryExactMemberClrBinding(ownerFqn, memberName, methodArity, signature, null, out binding);
+
+    // The inherited-call route closes a referenced interface declaration at its exact use-site owner. Its authored
+    // parameter vector is still owner-relative in metadata, so substitute that same constructed owner before
+    // comparing it with the already-closed call signature. Ordinary direct-owner callers retain the raw overload
+    // above; they already express both vectors in one declaration frame.
+    internal bool TryExactMemberClrBinding(string ownerFqn, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> signature, IReadOnlyList<TypeNode> ownerTypeArguments,
+        out ExactClrMemberBinding binding)
     {
         binding = null;
-        var matches = ExactBoundMembers(ownerFqn, memberName, methodArity, signature);
+        var matches = ExactBoundMembers(ownerFqn, memberName, methodArity, signature, ownerTypeArguments);
         if (matches.Count > 1)
             throw new InvalidDataException(
                 $"ambiguous exact CLR member binding for {ownerFqn}.{memberName}`{methodArity} "
@@ -2150,16 +2159,21 @@ sealed partial class ReferenceMetadataIndex
     }
 
     List<MemberBinding> ExactBoundMembers(string ownerFqn, string memberName, int methodArity,
-        IReadOnlyList<TypeNode> signature)
+        IReadOnlyList<TypeNode> signature, IReadOnlyList<TypeNode> ownerTypeArguments = null)
     {
         if (memberName == null || signature == null || !TryMembersByBirOwner(ownerFqn, out var list))
             return new List<MemberBinding>();
         var candidates = list.Where(m => m.Name == memberName && m.MethodArity == methodArity
             && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
             && (m.Intrinsic != null || m.PropertyName != null || m.Conv)).ToList();
-        var exact = candidates.Where(m => m.ParamTypeNodes.SequenceEqual(signature)).ToList();
+        var ownerArgs = ownerTypeArguments?.ToArray();
+        TypeNode[] Parameters(MemberBinding member) => ownerTypeArguments == null
+            ? member.ParamTypeNodes
+            : member.ParamTypeNodes.Select(type =>
+                SupertypeGraph.SubstOwnerTvs(type, ownerArgs)).ToArray();
+        var exact = candidates.Where(m => Parameters(m).SequenceEqual(signature)).ToList();
         if (exact.Count > 0) return exact;
-        return candidates.Where(m => m.ParamTypeNodes
+        return candidates.Where(m => Parameters(m)
             .Select((p, i) => DeclarationDescribesCall(p, signature[i])).All(x => x)).ToList();
     }
 
