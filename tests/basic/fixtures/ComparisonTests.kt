@@ -20,6 +20,25 @@ class ComparisonVer(val major: Int, val minor: Int) : Comparable<ComparisonVer> 
     override fun toString(): String = "" + major + "." + minor
 }
 
+// Kotlin permits Nothing as a covariant override result for Comparable.compareTo. The physical generic and
+// non-generic IComparable slots still return Int32; both forwarding paths must terminate instead of returning the
+// CLR object erasure of Nothing into that slot (#321).
+private class ComparisonNothing : Comparable<ComparisonNothing> {
+    override fun compareTo(other: ComparisonNothing): Nothing =
+        throw IllegalStateException("comparison does not return")
+}
+
+private fun <T : Comparable<T>> comparisonGenericCompare(left: T, right: T): Int = left.compareTo(right)
+
+private class ComparisonNothingOverload : Comparable<ComparisonNothingOverload> {
+    fun CompareTo(other: String): Nothing = throw IllegalStateException(other)
+    override fun compareTo(other: ComparisonNothingOverload): Int = 0
+}
+
+private class ComparisonAnyNullable : Comparable<Any?> {
+    override fun compareTo(other: Any?): Int = if (other == null) 1 else 0
+}
+
 // ---- il-comparator : user class implementing Kotlin's Comparator<T> -> CLR IComparer<T> -----------------------
 class ComparisonIntCmp : Comparator<Int> {
     override fun compare(a: Int, b: Int): Int = a - b
@@ -42,6 +61,22 @@ class ComparisonTests {
         val crossFileHigh = CrossFileComparableDerived(7)
         assertEquals(-5, crossFileLow.compareTo(crossFileHigh))
         assertTrue(compareValues(crossFileLow, crossFileHigh) < 0)
+    }
+
+    @TestAttribute
+    fun nothingReturningComparableLoadsAndTerminatesBothSlots() {
+        val value = ComparisonNothing()
+        assertEquals("comparison does not return",
+            try { value.compareTo(value) } catch (e: IllegalStateException) { e.message })
+        assertEquals("comparison does not return",
+            try { comparisonGenericCompare(value, value) } catch (e: IllegalStateException) { e.message })
+        assertEquals("comparison does not return",
+            try { compareValues(value, value) } catch (e: IllegalStateException) { e.message })
+
+        val overloaded = ComparisonNothingOverload()
+        assertEquals(0, compareValues(overloaded, overloaded))
+        val anyNullable = ComparisonAnyNullable()
+        assertEquals(0, compareValues(anyNullable, anyNullable))
     }
 
     @TestAttribute

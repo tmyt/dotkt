@@ -875,8 +875,15 @@ sealed class Pipeline
         FBoundStarProjectionErasure.RewriteLateTypes(
             staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
 
-        // The late bridge above can synthesize a fresh forwarding call returning `kotlin.Nothing`, after the second
-        // sweep has run. The pass is idempotent; cover exactly that new body before type lowering erases the fact.
+        // Non-generic `System.IComparable` bridge. Synthesize it at this final Kotlin-vocabulary boundary so its
+        // forwarding call carries the target declaration's semantic return stamp. In particular, a legal
+        // `compareTo(...): Nothing` must terminate the bridge's physical Int32 slot rather than return the later CLR
+        // object erasure. The same Nothing sweep already required by the late override bridge consumes both shapes.
+        if (!_options.RefBuild)
+            foreach (var stagedFile in staged) ComparableBridgeSynthesis.Apply(stagedFile.Root);
+
+        // The late bridges above can synthesize fresh forwarding calls returning `kotlin.Nothing`, after the second
+        // sweep has run. The pass is idempotent; cover exactly those new bodies before type lowering erases the fact.
         foreach (var stagedFile in staged) NothingValueTermination.Apply(stagedFile.Root);
 
         // Materialize every remaining Kotlin lexical owner as explicit CLR TypeDef nesting only after all source,
@@ -1174,14 +1181,6 @@ sealed class Pipeline
             // -> EntryPointNotFound. Re-point such Count reads at the VARIANCE-IMMUNE non-generic
             // `System.Collections.ICollection.Count`. App build only; runs AFTER MemberCallSubstitution so Count is bound.
             if (attributeTopLevelOwner) StarProjectionCountLowering.Apply(lowered);
-            // Non-generic `System.IComparable` bridge (non-ref builds): a Kotlin `class C : Comparable<C>` lowers to
-            // `C : System.IComparable<C>` ONLY, but the CLR dispatch spine for natural ordering goes through the
-            // NON-generic `System.IComparable` (compareValues' `as IComparable` + ilemit's constrained-compareTo
-            // value-type-safe fallback — boxed primitives implement IComparable but not a reified IComparable<object>).
-            // Every comparable BCL type (Int32/String/DateTime) implements BOTH; a user Kotlin type must too, or a
-            // stdlib body sorting it hits EntryPointNotFound/InvalidCast on `IComparable.CompareTo(object)`. Add the
-            // missing interface + a `CompareTo(object)` bridge that casts and forwards to the generic CompareTo.
-            if (!_options.RefBuild) ComparableBridgeSynthesis.Apply(lowered);
             // BCL-only collection slots (non-ref builds): a CONCRETE Kotlin class implementing @ClrTypeAlias'd
             // `MutableCollection`/`MutableList` (ICollection<E>/IList<E>) is missing the BCL members Kotlin's collection
             // interfaces lack — `Contains`/`CopyTo`/`get_IsReadOnly` (ICollection) and `IndexOf` (IList) — so the concrete
