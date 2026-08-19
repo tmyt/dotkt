@@ -232,7 +232,8 @@ static class BirTypeLowering
         if (bcl == null) return new TypeNode.Fqn(PhysicalName(kotlinFqn), loweredArgs);
         // `Comparable<*>` / `Comparable<Any?>` -> the NON-generic `System.IComparable` (contravariant; no value
         // type is IComparable<object>). A concrete arg keeps the generic form.
-        if (bcl == "System.IComparable" && loweredArgs.Length == 1 && IsObjectish(loweredArgs[0]))
+        if (bcl == "System.IComparable" && loweredArgs.Length == 1
+            && ComparableApplicationCollapses(loweredArgs[0]))
             return new TypeNode.Fqn("System.IComparable");
         // ARG-POSITION VARIANCE COLLAPSE (Root V): in a storage slot a covariant readonly collection interface ->
         // its INVARIANT sibling, so a concrete invariant value inhabits the nested slot EXACTLY. The head keeps the
@@ -309,9 +310,18 @@ static class BirTypeLowering
     static readonly TypeNode VoidType = new TypeNode.Fqn("void");
     static readonly TypeNode ObjectType = new TypeNode.Fqn("object");
 
-    static bool IsObjectish(TypeNode t) =>
-        t is TypeNode.Fqn f && f.Args == null &&
-        (f.Name == "object" || f.Name == "System.Object" || f.Name == "kotlin.Any" || f.Name == "kotlin.Nothing");
+    // The one representation decision shared by full type lowering and the semantic-boundary Comparable bridge pass.
+    // Reference-nullability/oblivious wrappers are annotations that disappear before the physical generic head is
+    // chosen, so Comparable<Any?> and Comparable<Any!> occupy the non-generic IComparable face just like
+    // Comparable<object>. A nullable value or ordinary reference classifier does not collapse.
+    internal static bool ComparableApplicationCollapses(TypeNode t) => t switch
+    {
+        TypeNode.Nullable n => ComparableApplicationCollapses(n.Of),
+        TypeNode.Oblivious o => ComparableApplicationCollapses(o.Of),
+        TypeNode.Fqn f when f.Args == null =>
+            f.Name is "object" or "System.Object" or "kotlin.Any" or "kotlin.Nothing",
+        _ => false,
+    };
 
     static string PhysicalName(string semanticName) =>
         _localTypeNames.Contains(semanticName) ? semanticName
