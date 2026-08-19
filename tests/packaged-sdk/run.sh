@@ -392,6 +392,8 @@ case_multitarget_klib_references() {
     <Error Condition="'@(_Net10WindowsKlib)' == ''" Text="No net10.0-windows KLIB references were returned." />
     <Error Condition="'@(_MissingKlib)' != ''" Text="Returned KLIB does not exist: @(_MissingKlib)" />
     <Error Condition="'@(_MissingSourceAssembly)' != ''" Text="Returned item lost SourceAssembly: @(_MissingSourceAssembly)" />
+    <Error Condition="'\$(DotKtStdlib)' == '' or !Exists('\$(DotKtStdlib)')"
+           Text="DotKtStdlib was not published to the outer build as a dedicated property." />
     <Error Condition="'@(DotKtReferenceKlib)' != '' or '@(DotKtFrontendKlib)' != ''"
            Text="The removed synthetic frontend-input items were still published." />
     <WriteLinesToFile File="$d/resolved.txt"

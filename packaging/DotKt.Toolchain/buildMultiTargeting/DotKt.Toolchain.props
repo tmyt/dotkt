@@ -1,0 +1,5 @@
+<!-- Toolchain identity and the embedded frontend-stdlib KLIB are configuration-independent package facts. Make
+     those public properties available to cross-targeting outer builds as well as TFM-specific inner builds. -->
+<Project>
+  <Import Project="$(MSBuildThisFileDirectory)../build/DotKt.Toolchain.props" />
+</Project>
