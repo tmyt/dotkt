@@ -10,9 +10,9 @@
 //
 // DELIBERATELY CONSERVATIVE: every check is calibrated to NEVER false-positive on a valid input — the verify-il gate
 // + the stdlib rt build (250+ files) are the calibration corpus. An ambiguous shape is left UNCHECKED rather than
-// risk a false reject. Two invariants were DROPPED for exactly that reason:
-//   - call/`new` args-vs-argTypes arity: a caller may legitimately omit trailing DEFAULT args (args < argTypes),
-//     and EmitNewArgs already tolerates the mismatch, so an equality check would false-reject valid CIR.
+// risk a false reject. Call arity is checked only where a resolved physical target exists. A current `new` node is
+// different: bir2cir must materialize every default before CIR and the node carries one use-site `argTypes` entry per
+// physical argument; the schema/lowering gates enforce that current contract.
 //
 // The check set (all provably ilemit-equivalent — each mirrors a place ilemit already throws / miscompiles):
 //   1. LOCAL RESOLUTION — every `local`/`setLocal`/`byref{Load,Store}` names a var/param declared in the same scope.
@@ -97,13 +97,7 @@ public static class IrSanity
         if (!type.TryGetProperty("interfaces", out var ifaces) || ifaces.ValueKind != JsonValueKind.Array) return;
         var stated = new List<TypeNode.Fqn>();
         foreach (var i in ifaces.EnumerateArray())
-            // Read exactly as tolerantly as the emitter does (ilemit's ReadFqn): an interface entry may be a legacy
-            // STRING for a canonical synthetic, and TypeNode.Read throws on anything that is not a `{t:…}` object.
-            // Throwing here would leave the emitter's boundary reporting a raw FormatException rather than a sanity
-            // diagnostic, and would make a check whose policy is never to false-positive the loudest thing in the
-            // file. Every tolerated shape is arg-less, so it obliges no sibling either way.
-            if (i.ValueKind == JsonValueKind.Object && i.TryGetProperty("t", out var disc)
-                && disc.ValueKind == JsonValueKind.String && TypeNode.Read(i) is TypeNode.Fqn f)
+            if (TypeNode.Read(i) is TypeNode.Fqn f)
                 stated.Add(f);
         foreach (var face in stated)
         {

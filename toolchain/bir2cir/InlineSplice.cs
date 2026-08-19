@@ -248,7 +248,7 @@ static class InlineSplice
         // GUARD SCAN -> FAIL LOUD (#95/§4.5 splice-all): kotc emits a callInline for EVERY inline call with a lambda arg,
         // so this engine MUST splice it — there is no plain-call fallback and every un-handled shape is a hard build-break,
         // not a silently-degradable call. o is untouched until step 7, so a mid-stream FailLoud is sound.
-        if (Int(payload["v"]) != 1) { FailLoud(o, owner, name, pc, ga, "stale [KotlinInline] payload (pre-raw-BIR)"); return; }
+        if (Int(payload["v"]) != 1) { FailLoud(o, owner, name, pc, ga, "unsupported [KotlinInline] payload version"); return; }
         var pParams = payload["params"] as JsonArray ?? new JsonArray();
         var pBody = payload["body"] as JsonArray;
         if (pBody == null) { FailLoud(o, owner, name, pc, ga, "payload has no body"); return; }
@@ -256,8 +256,7 @@ static class InlineSplice
         if (typeArgs.Count < ga) { FailLoud(o, owner, name, pc, ga, "fewer typeArgs than generic arity"); return; }
         // §4.6 / #43: the payload is CLOSED over every compiler-generated file-class method its newDelegates reach.
         // Re-hoist those raw BIR declarations into the consumer and retarget each delegate before any materialization
-        // guard runs. `lifted`/`fileClass` are required parts of the current v1 schema; old payloads are intentionally
-        // not supported and fail loud with a rebuild diagnostic rather than adding a second compatibility path.
+        // guard runs. `lifted`/`fileClass` are required parts of the current v1 schema.
         if (!sameModule)
         {
             if (RehoistPayloadDelegates(payload, pBody) is string rehoistError)
@@ -803,7 +802,7 @@ static class InlineSplice
     //     inline forward resolves owner-less by name via the stash).
     //   - `callStatic`, owner present — an owner-FUL static call (a companion/object/enum member flattened to a static,
     //     whose `owner` is a STRUCTURED Fqn): resolve via the OWNER-FUL ResolveInlinePayload (NOT the kotlin.*-gated
-    //     ResolveOwnerless), keep the owner. `TypeJson.OwnerName` reads the Fqn (or a legacy string) uniformly.
+    //     ResolveOwnerless), keep the owner. `TypeJson.OwnerName` reads the Fqn.
     //   - `callInstance`             — a MEMBER inline fn: owner = the receiver's type name; carry the node's dispatch
     //     receiver (`recv`) as `recvs.dispatch` so RewriteGeneric §4.3 rebinds the payload's `{k:this}` (rides F1). A
     //     member-EXTENSION (#23) payload is left untouched (see the dispatch-drop guard below).
@@ -833,9 +832,9 @@ static class InlineSplice
             payload = mp;
             ownerOut = Str(payload["owner"]) ?? ownerName;
         }
-        // An owner-FUL callStatic carries its owner as a STRUCTURED Fqn (companion/object/enum member flattened to a
-        // static; `TypeJson.OwnerName` reads both an Fqn object AND a legacy string, and yields null for the genuinely
-        // owner-LESS kotlin.* scope-fn shape (`"owner":null`)). Keying on `Str(o["owner"])` alone would miss the Fqn
+        // An owner-FUL callStatic carries its owner as a structured Fqn (companion/object/enum member flattened to a
+        // static; `TypeJson.OwnerName` yields null for the genuinely owner-LESS kotlin.* scope-fn shape
+        // (`"owner":null`)). Keying on `Str(o["owner"])` alone would miss the Fqn
         // object -> mis-route a companion/object call into the owner-less kotlin.*-only resolver (a wrong-owner splice
         // by name coincidence). So: owner-ful iff OwnerName is non-null.
         else if (TypeJson.OwnerName(o["owner"]) is string owner)   // owner-FUL callStatic
@@ -2817,7 +2816,7 @@ static class InlineSplice
     static string RehoistPayloadDelegates(JsonObject payload, JsonArray body)
     {
         if (payload["lifted"] is not JsonArray lifted)
-            return "[KotlinInline] payload has no closed lifted-method set; rebuild the referenced library with the current SDK";
+            return "[KotlinInline] payload is missing its required lifted-method set";
         if (lifted.Count == 0)
         {
             LexicalDeclarationIds.Freshen(body);

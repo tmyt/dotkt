@@ -1205,8 +1205,7 @@ static class FBoundStarProjectionErasure
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
     static string Str(JsonNode n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
     static bool IsSuspend(JsonObject method) => method["mods"] is JsonObject mods && Bool(mods["suspend"]);
-    // Older/common BIR omits `vis` for Kotlin's default public visibility; explicit non-public declarations carry a
-    // value (`internal`, `private`, ...).  Treat omission exactly as the emitter does, rather than dropping public slots.
+    // Current BIR omits `vis` for Kotlin's default public visibility; explicit non-public declarations carry a value.
     static bool IsPublic(JsonObject method) => Str(method["vis"]) is null or "public";
     static bool IsPrivate(JsonObject method) => Str(method["vis"]) == "private";
 }

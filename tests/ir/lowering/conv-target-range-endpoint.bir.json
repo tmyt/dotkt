@@ -1,0 +1,44 @@
+{
+  "fileClass": "ConvTargetRangeEndpointProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "convert",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Int" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "conv",
+            "to": { "t": "fqn", "name": "kotlin.Int" },
+            "e": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Long" }, "value": 1 }
+          }
+        }
+      ]
+    },
+    {
+      "name": "range",
+      "static": true,
+      "vis": "public",
+      "params": [],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "for",
+          "var": "i",
+          "from": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 0 },
+          "to": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 3 },
+          "cmp": "<=",
+          "step": 1,
+          "body": []
+        }
+      ]
+    }
+  ]
+}

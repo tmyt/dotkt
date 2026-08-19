@@ -58,7 +58,8 @@ static class CharCodeInvokeLowering
         return null;
     }
 
-    // `callStatic owner:null method:code prop:get sig:[kotlin.Char] args:[<char>]` -> `{k:conv, to:kotlin.Int, e:<char>}`.
+    // `callStatic owner:null method:code prop:get sig:[kotlin.Char] args:[<char>]`
+    // -> `{k:conv, to:kotlin.Int, e:<char>}`.
     static JsonNode LowerCharCode(JsonObject o, ReferenceMetadataIndex refs)
     {
         // Only a TOP-LEVEL call (`owner:null`, no `ownerType`); a member/.NET call carries `ownerType`.

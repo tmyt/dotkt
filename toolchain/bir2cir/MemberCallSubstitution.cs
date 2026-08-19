@@ -470,7 +470,7 @@ static class MemberCallSubstitution
             node["argTypes"] = new JsonArray { dat[0].DeepClone() };
         }
 
-        var newClrArgTypes = CtorArgTypes(node, args, refs, ownerFqn.Name);
+        var newClrArgTypes = CtorArgTypes(node, args);
         var newClrArgs = (JsonArray)args.DeepClone();
         // M10 coercion applies ONLY to an @ClrTypeAlias owner (the alias route). A BCL type can never declare a
         // `kotlin.CharSequence`/`dotkt$CharSequence` ctor param, and a REFERENCED KOTLIN library class reached through
@@ -592,68 +592,28 @@ static class MemberCallSubstitution
         }
     }
 
-    // The newClr's ctor-overload key. kotc emits the ctor's DECLARED param types on the `new` node's `argTypes`, but they
-    // reference the class's OWN type parameters (`ArrayList<E>`'s copy ctor -> `Collection[gp:E]`). Substitute those with
-    // the instantiation's type args (`ArrayList[kotlin.Int]` => E:=kotlin.Int) so the lowered argType is a RESOLVABLE,
-    // precise overload key (`IReadOnlyCollection[int]`) — this disambiguates List's `IEnumerable<T>` ctor from its `int`
-    // capacity ctor (a bare `object`/unbound-`gp:E` argType matches neither, so ilemit mis-picked `List(int)` ->
-    // InvalidProgramException). Falls back to InferArgTypes when the node has no declared argTypes (older shape).
-    // The 2nd ctor arg is a Float (the JVM loadFactor idiom) — read the structured argType (with a legacy-string fallback).
-    static bool IsFloatArg(JsonNode n)
-    {
-        if (TypeJson.Read(n) is TypeNode.Fqn { Args: null } f) return f.Name is "kotlin.Float" or "float";
-        if (n is JsonValue v && v.TryGetValue<string>(out var s)) return s is "kotlin.Float" or "float";
-        return false;
-    }
+    // The second constructor argument is a Float for the JVM load-factor idiom.
+    static bool IsFloatArg(JsonNode n) =>
+        TypeJson.Read(n) is TypeNode.Fqn { Args: null, Name: "kotlin.Float" or "float" };
 
-    static JsonArray CtorArgTypes(JsonObject node, JsonArray args, ReferenceMetadataIndex refs, string ownerToken)
+    // The current `new` shape states the exact constructor parameter vector in `argTypes`. Keep it as the newClr
+    // overload key; deriving it from argument expressions would reconstruct a declaration fact the producer owns.
+    static JsonArray CtorArgTypes(JsonObject node, JsonArray args)
     {
-        if (node["argTypes"] is not JsonArray declared || declared.Count != args.Count)
-            return InferArgTypes(node, args);
-        var map = ClassTypeParamMap(refs, ownerToken);
+        if (node["argTypes"] is not JsonArray declared)
+            throw new InvalidDataException("bir2cir: malformed current `new` node: required `argTypes` is absent or is not an array");
+        if (declared.Count != args.Count)
+            throw new InvalidDataException(
+                $"bir2cir: malformed current `new` node: `argTypes` count {declared.Count} does not match `args` count {args.Count}");
         var result = new JsonArray();
-        foreach (var a in declared)
+        for (var i = 0; i < declared.Count; i++)
         {
-            var s = (a as JsonValue)?.GetValue<string>();
-            result.Add(s == null ? a?.DeepClone() : SubstituteGenericParams(s, map));
+            if (!TypeJson.IsType(declared[i]))
+                throw new InvalidDataException(
+                    $"bir2cir: malformed current `new` node: `argTypes[{i}]` is not a structured Type node");
+            result.Add(declared[i]!.DeepClone());
         }
         return result;
-    }
-
-    // Positional map from a generic owner token's class type-param NAMES (from the ref.dll) to its instantiation args:
-    // `kotlin.collections.ArrayList[kotlin.Int]` + names [E] => { "E" -> "kotlin.Int" }. Empty when the owner is
-    // non-generic, unbound, or the ref.dll has no param names for it.
-    static Dictionary<string, string> ClassTypeParamMap(ReferenceMetadataIndex refs, string ownerToken)
-    {
-        var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        var br = ownerToken.IndexOf('[');
-        if (br < 0 || !ownerToken.EndsWith("]", StringComparison.Ordinal)) return map;
-        var names = refs.OwnerTypeParamNames(ReferenceMetadataIndex.BareOwnerFqn(ownerToken));
-        if (names == null || names.Length == 0) return map;
-        var targs = SplitTopLevel(ownerToken[(br + 1)..^1]).ToList();
-        for (var i = 0; i < names.Length && i < targs.Count; i++) map[names[i]] = targs[i];
-        return map;
-    }
-
-    // Replace each `gp:<name>` type token (a class type parameter) with its instantiation type, leaving unrelated
-    // generic params (a METHOD's own gp:T/gp:R, absent from the class map) untouched. Word-boundary-safe: a gp name is
-    // an identifier terminated by `[`, `]`, `,`, or end.
-    static string SubstituteGenericParams(string type, Dictionary<string, string> map)
-    {
-        if (map.Count == 0 || !type.Contains("gp:", StringComparison.Ordinal)) return type;
-        var sb = new System.Text.StringBuilder(type.Length);
-        for (var i = 0; i < type.Length;)
-        {
-            if (i + 3 <= type.Length && type[i] == 'g' && type[i + 1] == 'p' && type[i + 2] == ':')
-            {
-                var j = i + 3;
-                while (j < type.Length && (char.IsLetterOrDigit(type[j]) || type[j] == '_')) j++;
-                var name = type[(i + 3)..j];
-                if (map.TryGetValue(name, out var repl)) { sb.Append(repl); i = j; continue; }
-            }
-            sb.Append(type[i]); i++;
-        }
-        return sb.ToString();
     }
 
     // A `callStatic owner=null` to a @ClrCollectionFactory/@ClrArrayFactory top-level fun -> its construction node, or
@@ -1007,7 +967,8 @@ static class MemberCallSubstitution
             // and never for a name that ALSO has a real-bodied (non-intrinsic) top-level overload: `sort`'s 8
             // primitive-array intrinsics all agree on "System.Array.Sort" (not "ambiguous"), yet the name fallback
             // captured the real-bodied `MutableList<T>.sort()` call inside the compiled `sorted()` body.
-            var sigKey0 = string.Join(",", sigParts0.Select(t => ReferenceMetadataIndex.ParamKey(t)));
+            var sigKey0 = new ReferenceMetadataIndex.SignatureKey(
+                sigParts0.Select(ReferenceMetadataIndex.ParamKey));
             if ((refs.TryTopLevelIntrinsicBySig(fn, sigKey0, out var fq)
                     || (!refs.IsAmbiguousTopLevelIntrinsic(fn) && !refs.HasNonIntrinsicTopLevel(fn)
                         && refs.TryTopLevelIntrinsic(fn, out fq)))
@@ -1032,7 +993,7 @@ static class MemberCallSubstitution
                 var recvKey = sigParts0.Count >= 1 ? RecvKeyOf(sigParts0[0]) : "";
                 // The FINE first-param key disambiguates the array overloads a coarse "[]" recvKey collapses (signed vs
                 // unsigned specialized arrays vs the generic Array<T>) so the owner pins the RIGHT file-class (#153).
-                var firstParamKey = sigParts0.Count >= 1 ? ReferenceMetadataIndex.ParamKey(sigParts0[0]) : null;
+                var firstParamKey = sigParts0.Count >= 1 ? ReferenceMetadataIndex.ReceiverParamKey(sigParts0[0]) : null;
                 if (refs.TryResolveTopLevelStatic(fn, recvKey, firstParamKey, out var fileClassOwner))
                 {
                     node["owner"] = TypeJson.Fqn(fileClassOwner);   // owner is a birType-emitted (structured Fqn) slot
@@ -1348,14 +1309,15 @@ static class MemberCallSubstitution
             ownerFqn, member, companionMethodArity, companionSignature, out exactMemberBinding);
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
-        // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit `{k:conv, to:<callee return type>, e:<receiver>}`, the
-        // SAME node kotc used to synthesize from the retired NUMBER_CONV name-heuristic. The `to` is the callee's own
-        // declared return token (a pre-lowering Kotlin FQN, e.g. `kotlin.Long`); BirTypeLowering later lowers it to the
+        // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit
+        // `{k:conv, to:<callee return type>, e:<receiver>}`, the
+        // SAME node kotc used to synthesize from the retired NUMBER_CONV name-heuristic. `to` is the callee's
+        // own declared return type (a pre-lowering Kotlin FQN, e.g. `kotlin.Long`); BirTypeLowering later lowers it to the
         // CLR primitive and ilemit selects conv.i4/conv.i8/conv.r8/char. A conversion is nullary (no args). Handled first
         // so it never falls through to Rule 2/3 (the conversion members are intrinsic-less, so IsRule3Member excludes them).
         if (instance && args.Count == 0 && hasExactMemberBinding && exactMemberBinding.Conv
             && exactMemberBinding.ConvTo != null)
-            return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Fqn(exactMemberBinding.ConvTo), ["e"] = node["recv"]?.DeepClone() };
+            return new JsonObject { ["k"] = "conv", ["to"] = TypeJson.Write(exactMemberBinding.ConvTo), ["e"] = node["recv"]?.DeepClone() };
 
         // Rule 0 (inline-class ERASURE / unbox): the backing-field getter of an @JvmInline value class erased to its
         // primitive CLR form (`uint.get_data()`) is the unbox — the receiver value IS the field. Collapse it to a
@@ -1665,8 +1627,8 @@ static class MemberCallSubstitution
         // GetEnumerator/...). The ref.dll member is kept under its Kotlin name (`get`/`compareTo`), so rules 2/3 miss by
         // name; but the emitted name is already the BCL member, which exists on the alias's BCL type. A BCL name is
         // PascalCase or a get_/set_ accessor (Kotlin members are lowercase camelCase) -> route to clrInstance/clrPropGet
-        // on the BCL type. This also rescues the call from the shorthand owner that plain `callInstance` resolution
-        // (ilemit ParseOwner / ResolveMethod) cannot handle.
+        // on the BCL type. This also rescues the call from the Kotlin owner that plain local `callInstance`
+        // resolution cannot handle.
         //
         // MAKE-IT-LOUD gate (H1): a lowercase-camelCase Kotlin member reaching here has no BCL equivalent by that name
         // AND no @ClrIntrinsic/@ClrProperty/rule-3 binding — a genuine routing MISS on either owner kind. It used to be
@@ -2129,8 +2091,8 @@ static class MemberCallSubstitution
         if (ownerFqn.Args != null || arity > 0)
         {
             // Pad a PARTIALLY-erased arg list to the alias's declared arity (a star-projection `Map<K, *>` reaches here
-            // as `kotlin.collections.Map<K>` — 1 of IDictionary's 2 args; ilemit's GenericType would fail to resolve
-            // `IDictionary`1`). The trailing/all erased args become `object`.
+            // as `kotlin.collections.Map<K>` — 1 of IDictionary's 2 args; the incomplete constructed CLR type would
+            // fail to resolve. The trailing/all erased args become `object`.
             var kept = (ownerFqn.Args ?? Array.Empty<TypeNode>()).Where(a => a != null).ToList();
             for (var i = kept.Count; i < arity; i++) kept.Add(ObjType);
             if (kept.Count > 0) return new TypeNode.Fqn(head, kept.ToArray());
@@ -2235,8 +2197,8 @@ static class MemberCallSubstitution
     // A clrInstance / clrStatic node. A call carrying explicit Kotlin property identity emits clrPropGet/clrPropSet on
     // the resolved bare CLR Property name; otherwise this is a plain method call. A standalone function bound to a
     // property is routed explicitly by @ClrProperty (Rule 2p) before this node is built.
-    // Prefix `byref:` onto the argTypes at each @ClrRefArgument position (idempotent), so ilemit resolves the `ref`/`out`
-    // BCL overload and emits the address-load for that arg (the byref shape a `ref`/`out` parameter needs).
+    // Wrap argTypes at each @ClrRefArgument position in a structured ByRef node (idempotent), so ilemit resolves the
+    // `ref`/`out` BCL overload and emits the address-load for that arg.
     static void WrapByref(JsonArray argTypes, int[] byrefPositions)
     {
         if (byrefPositions == null) return;
@@ -2415,18 +2377,14 @@ static class MemberCallSubstitution
             }
     }
 
-    // True iff an argType slot (a legacy sig STRING or a structured Fqn) denotes kotc's synthetic monomorphic
+    // True iff an argType slot denotes kotc's synthetic monomorphic
     // `dotkt$CharSequence` interface (tolerating a `nullable`/`oblivious` decoration — a `CharSequence?`/`CharSequence!`
     // param, e.g. `StringBuilder.append(CharSequence?, start, end)`, must ALSO snapshot to String at the BCL boundary,
     // else the arg reaches a BCL call whose overloads are (Char[]|String|StringBuilder)-typed and none binds it). The
     // `dotkt$StringCharSequence` adapter deliberately does NOT match — its token has no `dotkt$CharSequence` substring.
     static bool IsSyntheticCharSeqToken(JsonNode slot)
     {
-        var name = slot switch
-        {
-            JsonValue v when v.TryGetValue<string>(out var s) => s,
-            _ => (UnwrapNullableOblivious(TypeJson.Read(slot)) as TypeNode.Fqn)?.Name,
-        };
+        var name = (UnwrapNullableOblivious(TypeJson.Read(slot)) as TypeNode.Fqn)?.Name;
         return name != null && name.Contains("dotkt$CharSequence", StringComparison.Ordinal);
     }
 
@@ -2562,19 +2520,4 @@ static class MemberCallSubstitution
         return TypeJson.Fqn("object");
     }
 
-    static IReadOnlyList<string> SplitTopLevel(string value)
-    {
-        if (value.Length == 0) return Array.Empty<string>();
-        var result = new List<string>();
-        var depth = 0;
-        var start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            if (value[i] == '[') depth++;
-            else if (value[i] == ']') depth--;
-            else if (value[i] == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
-        }
-        result.Add(value[start..].Trim());
-        return result;
-    }
 }

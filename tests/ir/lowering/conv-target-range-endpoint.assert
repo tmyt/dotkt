@@ -1,0 +1,5 @@
+# A conversion target and a range endpoint have distinct field roles. The target is lowered as a Type node.
++"k":"conv","to":{"t":"fqn","name":"System.Int32"}
+
+# The range endpoint remains an expression subtree; it is not classified as a type from the value's shape.
++"k":"for","var":"i","from":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":0},"to":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":3}

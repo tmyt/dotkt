@@ -997,15 +997,6 @@ static partial class SuspendColdLowering
         }
     }
 
-    // Strip a generic instantiation suffix from an owner token so a call site's instantiated ownerType
-    // (`Box[kotlin.Int]`) matches the registry's bare class key (`Box`) / a ref.dll owner FQN.
-    static string BareOwner(string s)
-    {
-        if (s == null) return null;
-        var i = s.IndexOf('[');
-        return i >= 0 ? s.Substring(0, i) : s;
-    }
-
     static bool HasSuspension(JsonNode node)
     {
         switch (node)
@@ -3083,7 +3074,7 @@ static partial class SuspendColdLowering
                 // #100 emit-time resolution failure this guard replaces). The CLR await bridge marker + suspendCoroutine
                 // intrinsics are intercepted upstream in Rewrite and a suspend functional VALUE is diverted at the top
                 // of ColdCall, so a flag-absent owner HERE is a genuine named cross-assembly suspend callee.
-                var refOwner = BareOwner(TypeJson.OwnerName(callNode["type"]));
+                var refOwner = TypeJson.OwnerName(callNode["type"]);
                 var calleeName = Str(callNode["method"]);
                 if (refOwner != null && calleeName != null && !_refs.HasSuspendMemberInHierarchy(refOwner, calleeName))
                     throw new NotSupportedException(

@@ -1,0 +1,33 @@
+{
+  "fileClass": "RejectCurrentNewMissingArgTypesKt",
+  "hasMain": false,
+  "fields": [],
+  "refTypes": [],
+  "methods": [{
+    "name": "probe",
+    "static": true,
+    "vis": "public",
+    "params": [],
+    "ret": { "t": "fqn", "name": "kotlin.Unit" },
+    "body": [{
+      "k": "exprStmt",
+      "expr": {
+        "k": "new",
+        "type": { "t": "fqn", "name": "Probe" },
+        "memberSignature": [],
+        "args": []
+      }
+    }]
+  }],
+  "types": [{
+    "name": "Probe",
+    "kind": "class",
+    "base": null,
+    "interfaces": [],
+    "fields": [],
+    "ctors": [{ "params": [], "baseArgs": null, "body": [] }],
+    "methods": [],
+    "properties": [],
+    "attrs": []
+  }]
+}

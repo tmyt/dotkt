@@ -109,13 +109,14 @@ static class DefaultArgSplice
         var owner = TypeJson.OwnerName(ownerNode);
         var method = Str(node["method"]);
         if (owner == null || method == null) return;
-        var sigKey = string.Join(",", sig.Select(t => ReferenceMetadataIndex.ParamKey(t)));
+        var sigKey = ReferenceMetadataIndex.SignatureKeyOf(sig);
+        var relaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(sig, relaxed: true);
         var declarationId = Str(node[DeclarationIdentityBinding.Key]);
         var defaults = declarationId != null
             ? refs.KotlinDefaultsForDeclarationIdentity(declarationId)
-            : refs.KotlinDefaultsFor(owner, method, sig.Count, sigKey);
+            : refs.KotlinDefaultsFor(owner, method, sig.Count, sigKey, relaxedSigKey);
         defaults ??= refs.KotlinDefaultsForImplementedInterface(
-            owner, TypeArgsOf(ownerNode)?.Count ?? 0, method, sig.Count, sigKey);
+            owner, TypeArgsOf(ownerNode)?.Count ?? 0, method, sig.Count, sigKey, relaxedSigKey);
         if (defaults == null) return;
 
         // Parse the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
@@ -179,7 +180,8 @@ static class DefaultArgSplice
             if (IsPlaceholder(slotBinding[j]?["expr"])) hasPlaceholder = true;
         }
         if (!hasPlaceholder) return;
-        string method, owner, sigKey = null;
+        string method, owner;
+        ReferenceMetadataIndex.SignatureKey sigKey = null, relaxedSigKey = null;
         int sigCount;
         if (isNew)
         {
@@ -195,7 +197,8 @@ static class DefaultArgSplice
             sigCount = ctorParamTypes.Count;
             // `argTypes` IS the resolved ctor's declared parameter vector, in the same ParamKey space the reference scan
             // keys by — so same-arity ctor overloads resolve to the RIGHT one instead of being refused as ambiguous.
-            sigKey = string.Join(",", ctorParamTypes.Select(t => ReferenceMetadataIndex.ParamKey(t)));
+            sigKey = ReferenceMetadataIndex.SignatureKeyOf(ctorParamTypes);
+            relaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(ctorParamTypes, relaxed: true);
             if (args.Count != sigCount)
                 throw new InvalidOperationException(
                     $"bir2cir: cannot fill an omitted default argument of '{owner}''s constructor — the call emits " +
@@ -213,7 +216,8 @@ static class DefaultArgSplice
             // `sig`/`shapeTypes` IS the callee's declared parameter vector, so it identifies the exact OVERLOAD — two
             // same-arity declarations of one name (an extension `String.tagged(t = this)` beside a
             // `tagged(name, items = emptyList())`) carry different defaults and must not be told apart by arity alone.
-            sigKey = string.Join(",", sig.Select(t => ReferenceMetadataIndex.ParamKey(t)));
+            sigKey = ReferenceMetadataIndex.SignatureKeyOf(sig);
+            relaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(sig, relaxed: true);
             method = Str(node["method"]);
             if (method == null) return;
             owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
@@ -223,9 +227,9 @@ static class DefaultArgSplice
         var declarationId = !isNew ? Str(node[DeclarationIdentityBinding.Key]) : null;
         var defaults = declarationId != null
             ? refs.KotlinDefaultsForDeclarationIdentity(declarationId)
-            : refs.KotlinDefaultsFor(owner, method, sigCount, sigKey);
+            : refs.KotlinDefaultsFor(owner, method, sigCount, sigKey, relaxedSigKey);
         defaults ??= refs.KotlinDefaultsForImplementedInterface(
-            owner, TypeArgsOf(node["ownerType"])?.Count ?? 0, method, sigCount, sigKey);
+            owner, TypeArgsOf(node["ownerType"])?.Count ?? 0, method, sigCount, sigKey, relaxedSigKey);
         if (defaults == null)
         {
             if (refs.KotlinDefaultsAmbiguous(owner, method, sigCount))
@@ -344,7 +348,7 @@ static class DefaultArgSplice
             // A constructor delegation has no dispatch/extension receiver. For an inner target its hidden leading
             // argument is the enclosing instance and is already part of this positional vector.
             Fill(args, slotBinding, args.Count, defaults, owner + " constructor", refs, hoist,
-                localOwner, TypeJson.Fqn(selfName), null, TypeArgsOf(type["base"]), null, null,
+                localOwner, JsonValue.Create(selfName), null, TypeArgsOf(type["base"]), null, null,
                 args.Count > 0 ? args[0] : null);
         }
     }
@@ -361,7 +365,7 @@ static class DefaultArgSplice
     {
         var parsed = MaterializeDefault(bir, hoist, refs, method, slot, localOwner);
         if (parsed == null) return null;
-        if (TypeJson.OwnerName(semanticOwner) is not string owner)
+        if (Str(semanticOwner) is not string owner)
             throw new InvalidOperationException(
                 $"default argument splice for {method} has no authored semantic use-site owner");
         RehomeSynthClasses(parsed, owner, Interlocked.Increment(ref _counter));

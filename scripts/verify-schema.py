@@ -79,6 +79,13 @@ REQUIRED_OPERATION_REFS = {
     "clrStaticField": ("fieldRef",),
 }
 
+# Required fields whose role is owned by the node discriminator. In particular, `to` cannot be a global type key:
+# conv.to is a Type while for/forRange.to is an expression. Keep these checks kind-directed for the same reason.
+REQUIRED_NODE_FIELDS = {
+    "conv": ("e", "to"),
+    "new": ("type", "args"),
+}
+
 # The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
 #
 # The role set is FROZEN, for the reason every other key here is: a table that accepts any name accepts a typo,
@@ -98,12 +105,6 @@ WELL_KNOWN_ROLES = frozenset({
     "IndexOutOfRangeException.ctor",
     "NullableT.ctor", "SpanT.ctorPointer",
 })
-
-RETIRED_DESCRIPTORS = (
-    "memberSig", "memberOwner", "memberRet",
-    "baseMemberSig", "baseMemberOwner",
-    "clrOverride", "clrOverrideSig", "clrOverrideRet", "clrOverrideOwner", "clrOverrideMember",
-)
 
 # Pass-to-pass facts owned exclusively by bir2cir. They are deliberately not part of either serialized phase:
 # seeing one in an input BIR or output CIR means an internal resolution step leaked across a layer boundary.
@@ -132,7 +133,7 @@ def arity_of_name(full_name):
 # them nowhere else (its own ResolvedOnlyKinds), and ilemit already refuses one that arrives without a
 # resolved owner — so for these, a reference is not merely expected, it is what the node is made of. Requiring
 # it unconditionally puts the failure at the layer that dropped the identity instead of several stages later,
-# and keeps the rule independent of the retired descriptors.
+# and keeps the rule independent of any incidental fields on the operation node.
 #
 # The set GROWS one authoring step at a time; a kind absent from it is simply not migrated yet.
 MEMBER_REF_REQUIRED_KINDS = {
@@ -783,6 +784,28 @@ class V:
                 self.kinds_seen.add(k)
                 if k not in KINDS:
                     self.err(f, path, f"unknown node kind k={k!r}")
+                for required in REQUIRED_NODE_FIELDS.get(k, ()):
+                    if required not in o:
+                        self.err(f, path, f"{k} is missing required field {required!r}")
+                if k == "conv" and "to" in o:
+                    target = o["to"]
+                    if not isinstance(target, dict) or not isinstance(target.get("t"), str):
+                        self.err(f, path + "/to", "conv.to must be a structured Type node")
+                if k == "new":
+                    # kotc BIR and same-unit CIR constructions retain the aligned use-site vector. External CIR
+                    # constructions consume it into memberRef.parameterTypes, so requiring argTypes there would
+                    # duplicate the resolved declaration identity ilemit is required to trust.
+                    needs_arg_types = f.endswith(".bir.json") or "memberRef" not in o
+                    arg_types = o.get("argTypes")
+                    args = o.get("args")
+                    if needs_arg_types and not isinstance(arg_types, list):
+                        self.err(f, path + "/argTypes", "new.argTypes must be an array of structured Type nodes")
+                    elif isinstance(arg_types, list) and isinstance(args, list) and len(arg_types) != len(args):
+                        self.err(f, path, "new.argTypes must contain one entry per new.args value")
+                    if isinstance(arg_types, list):
+                        for i, arg_type in enumerate(arg_types):
+                            if not isinstance(arg_type, dict) or not isinstance(arg_type.get("t"), str):
+                                self.err(f, path + f"/argTypes[{i}]", "new.argTypes entries must be structured Type nodes")
                 if k == "newSuspendLambda":
                     # The physical SM parameter descriptors and the semantic Kotlin function type deliberately use
                     # different shapes: node.params is receiver-first (create arguments/field names), while
@@ -953,16 +976,6 @@ class V:
                         declared = o.get("argTypes")
                         if isinstance(declared, list) and len(declared) != len(ref.get("parameterTypes") or []):
                             self.err(f, path, "an applied attribute's memberRef takes a different number of arguments than the application states")
-                # The old descriptors are RETIRED: the emitter reads the reference and nothing else,
-                # so an owner descriptor beside it is a second spelling of a settled identity — the kind that
-                # drifts from the first and cannot be caught, because whoever compares them compares two
-                # outputs of the same producer.
-                # EVERY retired descriptor, not the two that happened to have a pair. A ban that lists a subset
-                # is a ban a producer can walk around without noticing — and one did: `memberSig` reached CIR on
-                # the generic call while this rule reported clean.
-                for retired in RETIRED_DESCRIPTORS:
-                    if retired in o:
-                        self.err(f, path, f"{retired} is a retired transitional descriptor; the resolved memberRef is the identity")
             if f.endswith(".cir.json"):
                 for required_key in COLLECTION_TEMPLATE_REFS.get(o.get("k"), ()):
                     if required_key not in o:

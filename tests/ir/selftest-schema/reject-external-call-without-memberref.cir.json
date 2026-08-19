@@ -17,17 +17,7 @@
               "name": "System.Math"
             },
             "method": "Abs",
-            "args": [],
-            "memberSig": [
-              {
-                "t": "fqn",
-                "name": "System.Int32"
-              }
-            ],
-            "memberOwner": {
-              "t": "fqn",
-              "name": "System.Math"
-            }
+            "args": []
           }
         }
       ]

@@ -203,8 +203,8 @@ public sealed record MemberRefNode(
     public static MemberRefNode? ReadOptional(JsonElement owner, string key) =>
         owner.ValueKind == JsonValueKind.Object && owner.TryGetProperty(key, out var e) ? Read(e) : null;
 
-    // Every read failure is a FormatException naming the field: a reference is read at a layer boundary, and
-    // a KeyNotFoundException from a raw GetProperty tells the operator nothing about which document is wrong.
+    // These validate the current memberRef object itself. They do not recognize or translate any retired
+    // owner/signature layout; a malformed current scalar reference fails at its reader boundary.
     static JsonElement Required(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind != JsonValueKind.Null
             ? v
@@ -417,8 +417,7 @@ public static class MemberRefNodeSelfTest
         new MemberRefNode(MemberRefNode.Kinds.Method, "A", new TypeNode.Fqn("T"), "m", 0, MemberRefNode.Void,
             MemberRefNode.VarargStatic, System.Array.Empty<TypeNode>()).Validate();
 
-        // A key present with a JSON null states the field and states nothing — the shape a half-written
-        // reference takes. Absence is the only way to omit an optional field.
+        // Explicit null is a malformed current memberRef, not an omitted optional field.
         Refuse("an explicitly null required field", () => MemberRefNode.Parse(
             "{\"kind\":\"method\",\"assembly\":\"A\",\"declaringType\":null,\"name\":\"m\"," +
             "\"genericArity\":0,\"returnType\":{\"t\":\"fqn\",\"name\":\"void\"}," +

@@ -168,11 +168,6 @@ MALFORMED_PRIVATE_EXTENSION="$WORK/MalformedPrivateCompanionExtension/bin/Malfor
 run_rejected dll2klib "$MALFORMED_PRIVATE_EXTENSION" 'malformed.*KotlinCompanionExtension.*payload'
 run_rejected bir2cir "$MALFORMED_PRIVATE_EXTENSION" 'malformed.*KotlinCompanionExtension.*payload'
 
-build_fixture LegacyStringCompanionExtension LEGACY_STRING_COMPANION_EXTENSION
-LEGACY_STRING_EXTENSION="$WORK/LegacyStringCompanionExtension/bin/LegacyStringCompanionExtension.dll"
-run_rejected dll2klib "$LEGACY_STRING_EXTENSION" 'Type must be a JSON object'
-run_rejected bir2cir "$LEGACY_STRING_EXTENSION" 'companion-extension receiver is not a bare classifier type'
-
 build_fixture ParameterizedCompanionExtension PARAMETERIZED_COMPANION_EXTENSION
 PARAMETERIZED_EXTENSION="$WORK/ParameterizedCompanionExtension/bin/ParameterizedCompanionExtension.dll"
 run_rejected dll2klib "$PARAMETERIZED_EXTENSION" 'malformed.*KotlinCompanionExtension.*payload'

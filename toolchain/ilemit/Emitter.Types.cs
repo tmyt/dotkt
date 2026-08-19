@@ -18,12 +18,11 @@ sealed partial class Emitter
             ? Type.MakeGenericSignatureType(definition, arguments)
             : definition.MakeGenericType(arguments);
 
-    // The bare NAME a type slot carries (a bir2cir CLR shorthand `int`/`void`/… Fqn, or a legacy string token), for a
-    // name-keyed opcode switch (const/conv). null for a non-Fqn structured node.
+    // The bare NAME a type slot carries, for a name-keyed opcode switch (const/conv).
     static string SlotName(JsonElement e) =>
-        e.ValueKind == JsonValueKind.String ? e.GetString()
-        : e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f ? f.Name
-        : null;
+        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f
+            ? f.Name
+            : null;
 
     // A primitive type slot may now arrive as the @ClrTypeAlias BCL name ("System.Int32") rather than the CLR
     // shorthand ("int"): bir2cir routes primitives through the ref.dll alias index (the redundant hardcoded
@@ -40,14 +39,8 @@ sealed partial class Emitter
         _ => t,
     };
 
-    // BIR `clrg:<openName>[<arg1>,<arg2>,...]` -> a constructed generic .NET type. Args split at bracket-depth 0
-    // so nested generics (List[ValueTuple[int,string]]) parse correctly.
-    // Resolve a .NET type reference that may be a plain name (ResolveType), a generic `clrg:Open[args]`,
-    // or a func/closed encoding (MapType). Used by newClr/clrPropGet so they accept generic types (System.Lazy<T>).
-    // A clr* owner/type slot: a structured node (bir2cir MemberCallSubstitution) walks TypeNode; a bare-FQN owner-island
-    // IDENTITY string (an owner FQN, an `attrExternal` attribute type, a synthesized argType shorthand) resolves below.
-    Type ClrRef(JsonElement e) =>
-        e.ValueKind == JsonValueKind.Object ? MapType(DotKt.Bir.TypeNode.Read(e)) : ClrRef(e.GetString());
+    // A clr* owner/type slot is a structured Type node authored by bir2cir.
+    Type ClrRef(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
 
     // A bare type-IDENTITY string (no legacy grammar prefix — those are retired, #48): a CLR-shorthand primitive routes
     // through MapType (which owns the shorthand switch — `argTypes` may synthesize e.g. "string" so the ctor-overload
@@ -59,10 +52,6 @@ sealed partial class Emitter
     static readonly HashSet<string> PrimShorthand = new(StringComparer.Ordinal)
     { "void", "object", "string", "int", "long", "short", "sbyte", "double", "float", "bool", "char", "uint", "ulong", "ushort", "byte" };
 
-    // Generic arguments must already be physical value types in CIR. `System.Void` is not a legal CLR generic
-    // argument; converting it to object here would reconstruct the Kotlin Unit/Nothing representation.
-    Type MapArg(string t) => RequireGenericArgument(MapType(t), t);
-
     Type RequireGenericArgument(Type type, object source)
     {
         if (type == Bcl("System.Void"))
@@ -70,34 +59,7 @@ sealed partial class Emitter
         return type;
     }
 
-    Type GenericType(string spec)
-    {
-        var br = spec.IndexOf('[');
-        var open = spec.Substring(0, br);
-        var inner = spec.Substring(br + 1, spec.Length - br - 2);
-        var args = SplitTopLevel(inner).Select(MapArg).ToArray();
-        var openGen = ResolveType(open + "`" + args.Length);
-        return ConstructedType(openGen, args);
-    }
-
-    static List<string> SplitTopLevel(string s)
-    {
-        var res = new List<string>(); int depth = 0, start = 0;
-        for (int i = 0; i < s.Length; i++)
-        {
-            if (s[i] == '[') depth++;
-            else if (s[i] == ']') depth--;
-            else if (s[i] == ',' && depth == 0) { res.Add(s.Substring(start, i - start)); start = i + 1; }
-        }
-        if (s.Length > 0) res.Add(s.Substring(start));
-        return res;
-    }
-
-    // Final CIR type slots are structured Type nodes. Bare strings remain valid only in explicitly identity-shaped
-    // fields consumed through ClrRef(string), never as a substitute for a missing/malformed value type.
-    Type MapType(JsonElement e) => e.ValueKind == JsonValueKind.Object
-        ? MapType(DotKt.Bir.TypeNode.Read(e))
-        : throw new NotSupportedException($"invalid CIR type slot: expected Type object, got {e.ValueKind}");
+    Type MapType(JsonElement e) => MapType(DotKt.Bir.TypeNode.Read(e));
 
     Type MapType(DotKt.Bir.TypeNode t) => t switch
     {
@@ -194,9 +156,8 @@ sealed partial class Emitter
     }
 
     // A type NAME slot that is NOT a structured node — a bare FQN / CLR-shorthand IDENTITY (an owner-FQN island, a
-    // primitive shorthand). The legacy string-token GRAMMAR (`clr:`/`clrg:`/`array:`/`nullable:`/`func:`/`byref:`/`gp:`/`@`)
-    // is retired (#48): every value type travels as a structured `{t:…}` node (MapType(TypeNode)); this string resolver
-    // handles ONLY the bare-identity slots. `dotkt$stackptr` is the one synthetic pseudo-type kept — a canonical
+    // primitive shorthand). Every value type travels as a structured `{t:…}` node (MapType(TypeNode)); this string
+    // resolver handles ONLY the bare-identity slots. `dotkt$stackptr` is the one synthetic pseudo-type kept — a canonical
     // compiler-internal identity in the `dotkt$` synthetic namespace (#48), NOT a Kotlin/CLR type.
     Type MapType(string t)
     {
@@ -212,30 +173,21 @@ sealed partial class Emitter
             "short" => Bcl("System.Int16"), "sbyte" => Bcl("System.SByte"),
             // A bare FQN identity (kotc's pure-FQN output — NO `@`/`clr:` marker): an in-assembly emitted type wins;
             // every other identity must resolve exactly from the declared reference universe.
-            // A bare constructed-generic `Name[args]` whose open name isn't emitted here (e.g. the `ownerType` of a
-            // referenced `kotlin.Result[int]` member call) resolves as a referenced generic (GenericType arity-suffixes).
             // A dot-LESS name not emitted in THIS assembly but present in a REFERENCED (--ref, LoadFrom'd) assembly is a
             // real external type — a `dotkt$*` canonical synthetic (`dotkt$CharSequence`) OR a root-package library
             // class (`Vec`/`Lib`/`Pt`, no namespace). Resolve it by reflection, don't fall to object. Before the TYPE flip
             // these rode the `@dotkt$X`/`@Name` emitted-type-hint branch; kotc/bir2cir now emit the bare FQN, so a
             // dot-less name that ResolvesExternally must route to ResolveType here (mirrors the externalSynthIface path).
-            _ => TryMapEmittedType(t) ?? ((t != null && t.Contains('[')) ? GenericType(t) : ResolveType(t)),
+            _ => TryMapEmittedType(t) ?? ResolveType(t),
         };
     }
 
     // Resolve a bare type spec (no `@`/`clr:`/shorthand prefix) against THIS assembly's emitted types (`_types`).
-    // Handles the plain `Name` and the constructed-generic `Name[arg,...]` forms (the `_types` key is the open name
-    // WITHOUT arity, so the `[...]` suffix is stripped to look it up). Returns null when the name is not emitted here
-    // (the caller then falls back to reflection over referenced assemblies).
+    // Returns null when the name is not emitted here (the caller then falls back to reflection over referenced assemblies).
     Type TryMapEmittedType(string spec)
     {
         if (spec == null) return null;
-        var br = spec.IndexOf('[');
-        if (br < 0) return _types.TryGetValue(spec, out var ti) ? ti.AsType : null;
-        var open = spec.Substring(0, br);
-        if (!_types.TryGetValue(open, out var oti)) return null;
-        var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapArg).ToArray();
-        return ConstructedType(oti.AsType, args);
+        return _types.TryGetValue(spec, out var ti) ? ti.AsType : null;
     }
 
 }

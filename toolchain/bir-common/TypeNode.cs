@@ -284,8 +284,8 @@ public abstract record TypeNode
 }
 
 /// <summary>
-/// The carrier codec (spec §0). <c>version</c> selects codec+schema: <c>"bir-json/1"</c> = UTF8(JSON) today;
-/// a future <c>"bir-msgpack/1"</c> branch is a NotSupported stub. A single Encode/Decode pair dispatches.
+/// The carrier codec (spec §0). <c>version</c> is a <c>codec/schema-version</c> identifier;
+/// <c>"bir-json/1"</c> selects UTF8(JSON) today. A single Encode/Decode pair owns dispatch.
 /// </summary>
 public static class BirCarrier
 {
@@ -293,29 +293,21 @@ public static class BirCarrier
 
     public static byte[] EncodeBody(string version, JsonNode body)
     {
-        switch (version)
+        return version switch
         {
-            case JsonV1:
-                return Encoding.UTF8.GetBytes(body.ToJsonString(new JsonSerializerOptions { WriteIndented = false }));
-            default:
-                if (version.StartsWith("bir-msgpack/"))
-                    throw new NotSupportedException($"carrier codec `{version}` not yet implemented (msgpack is a future branch)");
-                throw new NotSupportedException($"unknown carrier version `{version}`");
-        }
+            JsonV1 => Encoding.UTF8.GetBytes(body.ToJsonString(new JsonSerializerOptions { WriteIndented = false })),
+            _ => throw new NotSupportedException($"unknown carrier version `{version}`"),
+        };
     }
 
     public static JsonNode DecodeBody(string version, byte[] content)
     {
-        switch (version)
+        return version switch
         {
-            case JsonV1:
-                return JsonNode.Parse(Encoding.UTF8.GetString(content), documentOptions: BirJson.DocOptions)
-                       ?? throw new FormatException("carrier body decoded to a null JSON node");
-            default:
-                if (version.StartsWith("bir-msgpack/"))
-                    throw new NotSupportedException($"carrier codec `{version}` not yet implemented (msgpack is a future branch)");
-                throw new NotSupportedException($"unknown carrier version `{version}`");
-        }
+            JsonV1 => JsonNode.Parse(Encoding.UTF8.GetString(content), documentOptions: BirJson.DocOptions)
+                      ?? throw new FormatException("carrier body decoded to a null JSON node"),
+            _ => throw new NotSupportedException($"unknown carrier version `{version}`"),
+        };
     }
 }
 
@@ -421,10 +413,6 @@ public static class TypeNodeSelfTest
         if (TypeNode.Read(JsonDocument.Parse(dec.ToJsonString()).RootElement) != cases[1].node)
             throw new Exception("[C# TypeNode] carrier round-trip mismatch");
 
-        // The msgpack branch is a stub for now.
-        try { BirCarrier.EncodeBody("bir-msgpack/1", body); throw new Exception("expected NotSupported for msgpack"); }
-        catch (NotSupportedException) { /* expected */ }
-
-        Console.WriteLine($"[C# TypeNode] self-test OK ({n} fixture cases incl. {cirOnly.Length} CIR-only + carrier + msgpack-stub)");
+        Console.WriteLine($"[C# TypeNode] self-test OK ({n} fixture cases incl. {cirOnly.Length} CIR-only + carrier)");
     }
 }

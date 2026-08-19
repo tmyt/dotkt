@@ -45,6 +45,9 @@ static class MemberStrip
             if ((mo["name"] as JsonValue)?.GetValue<string>() is not string name) continue;
             var keys = (mo["params"] as JsonArray ?? new JsonArray())
                 .Select(p => ReferenceMetadataIndex.ParamKey((p as JsonObject)?["type"])).ToList();
+            // MemberStrip is not the declaration-shape validator. Leave an incomplete current parameter untouched so
+            // the owning lowering can report the missing required type with its declaration context.
+            if (keys.Any(key => key == null)) continue;
             // An alias-class member that overrides a @ClrIntrinsic ancestor is normally a bound stub (its call
             // substitutes to the BCL), so it is dropped. But a GENUINE rule-3 member — concrete + intrinsic-less in
             // the ref.dll (String.compareTo's ordinal body overriding the culture-sensitive Comparable.compareTo@ClrIntrinsic)

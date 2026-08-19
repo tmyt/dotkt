@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json.Nodes;
@@ -63,6 +64,19 @@ static partial class ClrMemberResolution
             var sameArity = ctors.Select((n, i) => (ctor: n as JsonObject, index: i))
                 .Where(x => x.ctor?["params"] is JsonArray ps && ps.Count == args.Count).ToList();
             var useSiteSig = call[signatureName] as JsonArray;
+            if (signatureName == "argTypes")
+            {
+                if (useSiteSig == null)
+                    throw new InvalidDataException(
+                        $"bir2cir: malformed current `new` node for {context}: required `argTypes` is absent or is not an array");
+                if (useSiteSig.Count != args.Count)
+                    throw new InvalidDataException(
+                        $"bir2cir: malformed current `new` node for {context}: `argTypes` count {useSiteSig.Count} does not match `args` count {args.Count}");
+                for (var i = 0; i < useSiteSig.Count; i++)
+                    if (!TypeJson.IsType(useSiteSig[i]))
+                        throw new InvalidDataException(
+                            $"bir2cir: malformed current `new` node for {context}: `argTypes[{i}]` is not a structured Type node");
+            }
             // kotc carries the frontend-selected constructor's OPEN declaration signature independently of the
             // substituted use-site argument vector.  This distinction is load-bearing when physical lowering changes
             // a constructed owner's invariant storage face while the value at the call remains on its read-only head
@@ -888,14 +902,8 @@ static partial class ClrMemberResolution
         return RefDef(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
     }
 
-    // The owner type slot as a TypeNode: a structured `{t:…}` node, OR a LEGACY bare-STRING owner (kotc emits some clr*
-    // owners — a `__mref` forwarder's `str(clrOwner)`, a referenced file class, the await marker — as a plain string).
-    static TypeNode ReadOwnerNode(JsonNode typeSlot)
-    {
-        if (TypeJson.Read(typeSlot) is TypeNode t) return t;
-        if (typeSlot is JsonValue v && v.TryGetValue<string>(out var s) && s != null) return new TypeNode.Fqn(s);
-        return null;
-    }
+    // The structured TypeNode carried by an owner slot.
+    static TypeNode ReadOwnerNode(JsonNode typeSlot) => TypeJson.Read(typeSlot);
 
     static List<TypeNode> ReadArgTypes(JsonObject node) =>
         (node["argTypes"] as JsonArray)?.Where(x => x != null).Select(TypeJson.Read).ToList() ?? new List<TypeNode>();

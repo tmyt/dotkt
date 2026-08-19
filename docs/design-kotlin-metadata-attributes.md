@@ -27,7 +27,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | C# 14 companion extension property with Kotlin-only storage semantics (`const` / `lateinit`) | standard extension Property graph plus private file-facade storage | the receiver/name/accessors are recoverable, but a CLR Property row cannot identify the storage owner/field whose `Literal` / `[KotlinLateinit]` fact belongs to it | `[KotlinPropertyStorage(version, bytes)]` on the implementation getter carrying only `{owner,field}`; receiver/name/kind are not duplicated |
 | field-backed `lateinit var` | ordinary mutable field plus checked Kotlin reads | no; CLR metadata has no `lateinit` modifier | `[KotlinLateinit]` on the backing field; `dll2klib` restores `IS_LATEINIT` and sets the declaration-owned `@ClrField` flag used by Kotlin 2.4 static-property fake overrides |
 | companion-block statics on generic `G<T>` | members of one compiler-generated, public, non-generic CLR carrier | CLR statics on `G<T>` would be duplicated per closed type and a bare generic owner is not a legal MemberRef parent | `[KotlinStaticCarrier(version, bytes)]` on the carrier names semantic `G`; `dll2klib` merges its declarations back into `G` |
-| inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline(body)]` |
+| inline function body needed for cross-module lambda/non-local-return splicing | ordinary method | no | `[KotlinInline("bir-json/1", content)]` |
 | `@ClrTypeAlias` constructor whose Kotlin delegation ends at a different physical signature | the selected physical CLR constructor | no; the alias TypeDef/body is absent from the runtime twin | `[KotlinConstructorAdapter(version, bytes)]` on the reference constructor, carrying the declaration parameter vector, terminal arguments, and terminal signature |
 | Kotlin `val` backed by a **`@ClrField` public field** | public field | no; a plain public field looks writable | `[KotlinReadOnly]` — survives **only** for the `@ClrField` plain-field case; a normal `val` is now a get-only CLR property, recoverable from plain metadata (see [design-clr-property-model.md](design-clr-property-model.md)) |
 | reference-type nullability (`String?`) | .NET nullable reference metadata | yes for NRT-aware tools; must be emitted | `[Nullable]` / `[NullableContext]` |
@@ -47,8 +47,8 @@ Full-name equality is not enough to identify these internal carriers: an ordinar
 lookalike. DotKt therefore stamps `[assembly: AssemblyMetadata("DotKt.Compiler", "metadata-v1")]` and stamps each
 embedded carrier definition with `[CompilerGenerated]`. `dll2klib` accepts Kotlin metadata only when both signals are
 present. An unmarked `DotKt.Runtime.CompilerServices.Kotlin*Attribute` is treated as an ordinary third-party attribute
-and cannot enable Kotlin-only reverse mappings. Outputs from compilers predating this provenance contract must be
-rebuilt; there is deliberately no namespace-only compatibility fallback because it recreates the false-positive
+and cannot enable Kotlin-only reverse mappings. Artifacts without the current provenance contract are outside the
+supported input set; there is no namespace-only compatibility fallback because it would recreate false-positive
 classification.
 
 ## Pipeline
@@ -60,7 +60,7 @@ classification.
                compiler-generated embedded carrier definitions,
                [KotlinFunction(flags)] / [KotlinFileClass] / [KotlinCompanionExtension(receiver,name,kind)] /
                [KotlinExtensionCore(wrapper-to-core)] /
-               [KotlinInline(body)] / [KotlinConstructorAdapter(delegation)] / [KotlinReadOnly] / [KotlinLateinit] /
+               [KotlinInline("bir-json/1", content)] / [KotlinConstructorAdapter(delegation)] / [KotlinReadOnly] / [KotlinLateinit] /
                [KotlinPropertyStorage] / [KotlinStaticCarrier] /
                .NET NRT [Nullable*]
   project: dll2klib verifies assembly + carrier provenance, then writes standard KLIB metadata

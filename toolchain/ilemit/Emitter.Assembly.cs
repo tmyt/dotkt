@@ -218,10 +218,10 @@ sealed partial class Emitter
                         TB = tb,
                         Def = t,
                         IsInterface = isIface,
-                        BaseFqn = t.TryGetProperty("base", out var b) && b.ValueKind == JsonValueKind.Object
-                            && DotKt.Bir.TypeNode.Read(b) is DotKt.Bir.TypeNode.Fqn bf ? bf : null,
-                        BaseName = t.TryGetProperty("base", out var b2)
-                            ? (b2.ValueKind == JsonValueKind.String ? b2.GetString() : SlotName(b2)) : null,
+                        BaseFqn = t.TryGetProperty("base", out var b) && b.ValueKind != JsonValueKind.Null
+                            ? ReadFqn(b) ?? throw new FormatException("CIR base must be an fqn Type node") : null,
+                        BaseName = t.TryGetProperty("base", out var b2) && b2.ValueKind != JsonValueKind.Null
+                            ? SlotName(b2) : null,
                     };
                     // A physical nested capture is deliberately distinct from this type's own declared parameters.
                     // A declaration-form capturedTypeParams entry preserves the outer Kotlin constraints; a bare
@@ -266,51 +266,30 @@ sealed partial class Emitter
                 ApplyConstraints(tps2, ti.TypeParams, ti.IsInterface || ti.IsDelegate, ti.Def);
             if (ti.BaseName != null)
             {
-                // A `.NET` base (`clr:System.Exception` / `clrg:...[..]`) is resolved by reflection; a Kotlin-user
-                // base is another TypeBuilder in `_types`.
-                if (ti.BaseName.StartsWith("clr:") || ti.BaseName.StartsWith("clrg:"))
+                // A constructed base carries its actual type arguments in the structured Fqn. Resolve local
+                // TypeBuilders before the declared reference universe; the structured Fqn is the only owner input.
+                var (bopen, bconstructed) = ParseOwnerT(ti.BaseFqn!);
+                if (bconstructed != null)
                 {
-                    ti.ClrBase = MapType(ti.BaseName);
-                    ti.TB.SetParent(ParentType(ti.ClrBase));
+                    ti.TB.SetParent(ParentType(bconstructed));
+                    // An external referenced generic base (open name not emitted here) is a REFERENCED .NET base —
+                    // record it as ClrBase so the base-ctor emission calls its ctor, not object's.
+                    if (!_types.ContainsKey(bopen)) ti.ClrBase = bconstructed;
                 }
-                else
+                else if (_types.TryGetValue(bopen, out var baseTi))
                 {
-                    // A constructed user base (`AbstractList[tv E]` / `AbstractCoroutineContextKey[..concrete..]`) carries its
-                    // ACTUAL resolved type args in the CIR — the emitting layer (kotc `ownerSpec`) always supplies them, so
-                    // ilemit INSTANTIATES it via ParseOwner (`MakeGenericType` on the carried args) and does NOT re-derive
-                    // them. The BIR keeps the bare open name in `BaseName` so FindMethod still walks the base chain by bare
-                    // name for inherited members (e.g. AbstractIterator.setNext).
-                    var (bopen, bconstructed) = ti.BaseFqn != null ? ParseOwnerT(ti.BaseFqn) : ParseOwner(ti.BaseName);
-                    if (bconstructed != null)
-                    {
-                        ti.TB.SetParent(ParentType(bconstructed));
-                        // An external referenced generic base (open name not emitted here) is a REFERENCED .NET base —
-                        // record it as ClrBase so the base-ctor emission calls its ctor, not object's.
-                        if (!_types.ContainsKey(bopen)) ti.ClrBase = bconstructed;
-                    }
-                    else if (_types.TryGetValue(bopen, out var baseTi))
-                    {
-                        var baseTb = baseTi.TB;
-                        var bArity = baseTb.IsGenericTypeDefinition ? baseTb.GetGenericArguments().Length : 0;
-                        // A generic base MUST arrive with its type args carried (bconstructed != null above). If it reaches
-                        // here arg-less with arity>0, the emitting layer (bir2cir/kotc) dropped them — ilemit does NOT infer
-                        // base args from the subclass's own params (that positional inference silently mis-constructed a base
-                        // whose args differ from the subclass's tv, e.g. AbstractCoroutineContextKey). Fail loud so the
-                        // missed producer is diagnosable, not silently mis-built into an open-generic parent (invalid: the
-                        // CLR rejects an un-instantiated generic definition as a parent at type-load — TypeLoadException).
-                        if (bArity > 0)
-                            throw new InvalidOperationException(
-                                $"generic base '{bopen}' (arity {bArity}) emitted without type args on '{ti.TB.Name}' — " +
-                                "the emitting layer dropped them; ilemit does not infer base args");
-                        ti.TB.SetParent(baseTb);
-                    }
-                    // A bare external .NET base (kotc's pure-FQN output for a non-`clr:`-marked .NET supertype, e.g.
-                    // `System.Exception` via dll2klib `import`): not in `_types`, so resolve it by reflection. Record it
-                    // as ClrBase — WITHOUT this the base-ctor emission has no external base and falls to `object::.ctor`,
-                    // producing a `class : System.Object` (not the declared base) and an unchained base ctor (ilverify
-                    // CallCtor/ThisUninitReturn). Pre-flip the `clr:`-marked base set ClrBase at the branch above.
-                    else ti.TB.SetParent(ti.ClrBase = ResolveType(bopen));
+                    var baseTb = baseTi.TB;
+                    var bArity = baseTb.IsGenericTypeDefinition ? baseTb.GetGenericArguments().Length : 0;
+                    // A generic base MUST arrive with its type args carried. If it reaches here arg-less with arity>0,
+                    // the emitting layer dropped them; ilemit must not infer them from the subclass frame.
+                    if (bArity > 0)
+                        throw new InvalidOperationException(
+                            $"generic base '{bopen}' (arity {bArity}) emitted without type args on '{ti.TB.Name}' — " +
+                            "the emitting layer dropped them; ilemit does not infer base args");
+                    ti.TB.SetParent(baseTb);
                 }
+                // A bare external .NET base is not in `_types`; resolve it from the declared reference universe.
+                else ti.TB.SetParent(ti.ClrBase = ResolveType(bopen));
             }
             if (!ti.IsFileClass && ti.Def.TryGetProperty("interfaces", out var ifs))
             {
@@ -478,16 +457,15 @@ sealed partial class Emitter
                     if (!ifSeen.Add(spec)) continue;
                     // A canonicalized shared synthetic (`dotkt$CharSequence`) this app REFERENCES from the rt stdlib
                     // dll — NOT re-emitted here, so absent from `_types` — is an EXTERNAL interface: bind the class's
-                    // overrides to it by reflection, exactly like a `clr:` interface, so the interface slots are wired
+                    // overrides to it by reflection, so the interface slots are wired
                     // explicitly rather than relying on an implicit name/sig match a canonicalized supertype must not
                     // depend on. (Covers both a user `class S : CharSequence` and the synthesized `dotkt$StringCharSequence`.)
-                    // Checked on the RAW spec (a canonical synthetic interface spec is the bare name), so a `clr:`/`clrg:`
-                    // spec is NOT ParseOwner'd here — doing so eagerly mis-strips a `clrg:` self-ref interface (crash).
+                    // Checked on the structured Fqn's bare name so constructed arguments cannot affect this identity test.
                     bool externalSynthIface = ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(specName)
                         && !_types.ContainsKey(specName) && ResolvesExternally(specName);
                     // A REFERENCED interface (not emitted in THIS assembly — a .NET-mapped Continuation<int>, or an
                     // external canonical synthetic): bind each interface method to the class method of the same .NET name
-                    // by reflection. An EMITTED interface (in `_types`) falls to the ParseOwner path below.
+                    // by reflection. An EMITTED interface (in `_types`) follows the structured local-owner path below.
                     if (!_types.ContainsKey(specName) || externalSynthIface)
                     {
                         var itype = externalSynthIface ? ResolveType(specName) : MapType(specFqn);
@@ -1323,7 +1301,7 @@ sealed partial class Emitter
     // variance here creates unloadable metadata, while invariant metadata is always sound.
     int GenericArgVariance(string name, int arity, int index)
     {
-        if (_types.TryGetValue(BareTypeKey(name), out var ti)
+        if (_types.TryGetValue(name, out var ti)
             && ti.Def.TryGetProperty("typeParams", out var localTps)
             && index < localTps.GetArrayLength())
         {
@@ -1409,10 +1387,6 @@ sealed partial class Emitter
             }
         }
     }
-
-    // The OPEN type name of an owner spec, WITHOUT resolving its generic args. The type-ordering pass runs with no
-    // type-param scope, so a `Foo[gp:E]` base/interface would crash MapType("gp:E"); ordering only needs the open dep.
-    static string OwnerOpen(string spec) { var br = spec.IndexOf('['); return br < 0 ? spec : spec.Substring(0, br); }
 
     int _covarBridge = 0;
 

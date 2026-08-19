@@ -339,34 +339,13 @@ sealed partial class Emitter
         catch (NotSupportedException) { return null; }
     }
 
-    // Read an interface/base entry as a Fqn: a structured node, or a legacy STRING (a canonical synthetic like
-    // `dotkt$CharSequence`, or a clr:/@-prefixed spec) wrapped as a bare Fqn (whose name routes through the string
-    // resolvers). null for a non-Fqn structured node.
+    // Read an interface/base entry as its structured Fqn.
     static DotKt.Bir.TypeNode.Fqn ReadFqn(JsonElement e) =>
-        e.ValueKind == JsonValueKind.String ? new DotKt.Bir.TypeNode.Fqn(e.GetString())
-        : e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f ? f
-        : null;
+        DotKt.Bir.TypeNode.Read(e) as DotKt.Bir.TypeNode.Fqn;
 
-    // An owner slot (structured Fqn or legacy string) -> (open name, constructed type).
+    // An owner slot -> (open name, constructed type).
     (string open, Type constructed) ParseOwnerSlot(JsonElement e) =>
-        e.ValueKind == JsonValueKind.Object && DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fqn f
-            ? ParseOwnerT(f) : ParseOwner(e.GetString());
-
-    (string open, Type constructed) ParseOwner(string spec)
-    {
-        // A bare owner-FQN IDENTITY (the legacy `clr:`/`clrg:` markers are retired — #48); a `[...]` suffix carries the
-        // referenced-generic instantiation.
-        var br = spec.IndexOf('[');
-        if (br < 0) return (spec, null);
-        var open = spec.Substring(0, br);
-        var args = SplitTopLevel(spec.Substring(br + 1, spec.Length - br - 2)).Select(MapType).ToArray();
-        if (_types.TryGetValue(open, out var ti)) return (open, ConstructedType(ti.TB, args));
-        // Owner not emitted in THIS assembly -> a REFERENCED generic type (e.g. `kotlin.Result[int]` from
-        // DotKt.Stdlib.dll): construct it by reflection so ResolveMethod/ResolveField can reflect against the
-        // instantiation (its members carry substituted signatures).
-        var reflectedName = open.Contains('`') ? open : open + "`" + args.Length;
-        return (open, ConstructedType(ResolveType(reflectedName), args));
-    }
+        ParseOwnerT((DotKt.Bir.TypeNode.Fqn)DotKt.Bir.TypeNode.Read(e));
 
     // The constructed type's GetX helpers return members whose declared types are still the OPEN params (`!0`);
     // substitute a type-level param by position to its concrete arg so callers box value types correctly.
@@ -435,7 +414,8 @@ sealed partial class Emitter
     // value/generic-param arg flowing into an `object`/reference ctor param must be BOXED
     // (`Result<T>..ctor(object)` receiving a bare `!!T` was InvalidProgram at a value instantiation), exactly like
     // EmitArgsTyped does for method calls. bir2cir has already linked the declaration independently.
-    // A missing/arity-mismatched vector still has no coercion targets; a present vector must map completely.
+    // bir2cir and the schema gate require a complete, aligned vector. Keep the local length guard so an independently
+    // malformed CIR fails by emitting no guessed coercions rather than indexing an unrelated slot.
     void EmitNewArgs(JsonElement e, JsonElement nargs)
     {
         Type[] want = null;

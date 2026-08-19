@@ -81,7 +81,7 @@ static class NullableGenericOverloadCollision
                 // #395 gives distinct frontend declarations an explicit identity. DeclarationIdentityBinding runs
                 // module-wide after every file has completed type lowering and allocates two different MethodDef
                 // names from these keys, so this pair no longer shares a physical slot. Keep the refusal only for
-                // malformed/legacy BIR that omitted the authoritative identity; no structural fallback is invented.
+                // malformed current BIR that omitted the authoritative identity; no structural fallback is invented.
                 var priorId = Str(prior[DeclarationIdentityBinding.Key]);
                 var currentId = Str(mo[DeclarationIdentityBinding.Key]);
                 if (!string.IsNullOrEmpty(priorId) && !string.IsNullOrEmpty(currentId)

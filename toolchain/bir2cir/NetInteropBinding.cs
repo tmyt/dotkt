@@ -644,15 +644,10 @@ static class NetInteropBinding
     };
 
     // Peel Nullable/Oblivious/ByRef wrappers off an owner type slot to reach the underlying .NET Fqn (name + type-args),
-    // so a `List<Item>?`/`T!`/byref receiver resolves its open .NET definition. Also accepts a LEGACY STRING owner token
-    // (kotc emits some owners — a referenced file class `LibKt`, the await marker `kotlin.clr.CoroutinesKt` — as a bare
-    // string, not a structured `{t:fqn}` node); it carries no structured args (a method-generic's args live in
-    // `typeArgs`). null when there is no Fqn underneath.
+    // so a `List<Item>?`/`T!`/byref receiver resolves its open .NET definition.
     static TypeNode.Fqn UnwrapFqn(JsonNode ownerJson)
     {
-        if (ownerJson is JsonValue sv && sv.TryGetValue<string>(out var s) && s != null)
-            return new TypeNode.Fqn(s);
-        var t = TypeJson.Read(ownerJson);
+        var t = TypeNode.Parse(ownerJson.ToJsonString());
         while (true)
             switch (t)
             {

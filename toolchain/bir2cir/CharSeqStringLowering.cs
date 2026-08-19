@@ -31,32 +31,6 @@ static class CharSeqStringLowering
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
-    // Strip a leading `nullable:`/`array:` modifier then a `@` (this-assembly-emitted) marker, so `@dotkt$CharSequence`
-    // / `nullable:dotkt$CharSequence` compare by bare identity.
-    static string Bare(string t)
-    {
-        if (t == null) return null;
-        t = t.Trim();
-        foreach (var p in new[] { "nullable:", "array:" })
-            if (t.StartsWith(p, StringComparison.Ordinal)) t = t[p.Length..];
-        if (t.StartsWith("@", StringComparison.Ordinal)) t = t[1..];
-        return t;
-    }
-
-    static bool IsCharSeq(string t) => Bare(t) == CharSeq;
-    static bool IsStringTok(string t) => Bare(t) is string b && StringTokens.Contains(b);
-
-    // Replace a CharSequence type token with `kotlin.String` (BirTypeLowering renders it as `string`), preserving a
-    // leading `nullable:`/`array:` modifier; drops the `@` (String is foundational, not this-assembly-emitted).
-    static string LowerTok(string t)
-    {
-        if (t == null) return null;
-        foreach (var p in new[] { "nullable:", "array:" })
-            if (t.StartsWith(p, StringComparison.Ordinal)) return p + LowerTok(t[p.Length..]);
-        return "kotlin.String";
-    }
-
-    // --- structured Type versions (for the object-valued type slots; the string ones above stay for the m3 sig) ---
     static readonly TypeNode StringTn = new TypeNode.Fqn("kotlin.String");
     static bool IsCharSeqT(TypeNode t) => t switch
     {
@@ -187,45 +161,19 @@ static class CharSeqStringLowering
         return new CharSeqRetLambdas(statics, closures);
     }
 
-    // A function type whose RETURN is a bare `dotkt$CharSequence`. Structured Fn (newDelegate) or the legacy
-    // `func:<ret>:<args>` string (newClosure) — the leading segment is the return.
-    static bool FuncTypeHasCharSeqRet(JsonNode ftNode)
-    {
-        if (TypeJson.Read(ftNode) is TypeNode.Fn fn) return fn.Ret is TypeNode.Fqn { Name: CharSeqSynthetic };
-        if (Str(ftNode) is not string ft || !ft.StartsWith("func:", StringComparison.Ordinal)) return false;
-        var rest = ft["func:".Length..];
-        var ci = TopLevelColon(rest);
-        var retSeg = ci < 0 ? rest : rest[..ci];
-        return retSeg == CharSeqSynthetic;
-    }
+    // A function type whose RETURN is a bare `dotkt$CharSequence`.
+    static bool FuncTypeHasCharSeqRet(JsonNode ftNode) =>
+        TypeJson.Read(ftNode) is TypeNode.Fn
+        {
+            Ret: TypeNode.Fqn { Name: CharSeqSynthetic }
+        };
 
     const string CharSeqSynthetic = "dotkt$CharSequence";
 
-    // A function type any of whose PARAMS is CharSequence (the delegate-target exemption). funcType is a structured Fn
-    // (newDelegate) or, on a newClosure, a legacy `func:<ret>:<args>` string.
-    static bool FuncTypeHasCharSeqParam(JsonNode ftNode)
-    {
-        if (TypeJson.Read(ftNode) is TypeNode.Fn fn) return fn.DelegateParams.Any(IsCharSeqT);   // incl. a `CharSequence.() -> X` receiver (#145)
-        if (Str(ftNode) is not string ft || !ft.StartsWith("func:", StringComparison.Ordinal)) return false;
-        var rest = ft["func:".Length..];
-        var ci = TopLevelColon(rest);
-        if (ci < 0) return false;
-        return SplitTopLevel(rest[(ci + 1)..]).Any(IsCharSeq);
-    }
-
-    // Index of the first `:` not nested inside `[`/`<`/`(` brackets, or -1.
-    static int TopLevelColon(string s)
-    {
-        int depth = 0;
-        for (var i = 0; i < s.Length; i++)
-        {
-            var c = s[i];
-            if (c is '[' or '<' or '(') depth++;
-            else if (c is ']' or '>' or ')') depth--;
-            else if (c == ':' && depth == 0) return i;
-        }
-        return -1;
-    }
+    // A function type any of whose PARAMS is CharSequence (the delegate-target exemption).
+    static bool FuncTypeHasCharSeqParam(JsonNode ftNode) =>
+        TypeJson.Read(ftNode) is TypeNode.Fn fn
+        && fn.DelegateParams.Any(IsCharSeqT);
 
     static JsonNode Walk(JsonNode node, Env env)
     {
@@ -560,19 +508,4 @@ static class CharSeqStringLowering
 
     static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
 
-    static IReadOnlyList<string> SplitTopLevel(string value)
-    {
-        if (value.Length == 0) return Array.Empty<string>();
-        var result = new List<string>();
-        int depth = 0, start = 0;
-        for (var i = 0; i < value.Length; i++)
-        {
-            var c = value[i];
-            if (c is '[' or '<' or '(') depth++;
-            else if (c is ']' or '>' or ')') depth--;
-            else if (c == ',' && depth == 0) { result.Add(value[start..i].Trim()); start = i + 1; }
-        }
-        result.Add(value[start..].Trim());
-        return result;
-    }
 }

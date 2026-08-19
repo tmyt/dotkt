@@ -10,9 +10,6 @@ using System.Text.Json;
 sealed partial class Emitter
 {
     // Resolve a field for emit; out-param gives the substituted (concrete) field type for boxing decisions.
-    FieldInfo ResolveField(string spec, string name, out Type fieldType)
-        => ResolveField(ParseOwner(spec), name, out fieldType);
-
     // Structured owner overload (keeps the constructed-generic instantiation — see ResolveMethod's overload note).
     FieldInfo ResolveField((string open, Type constructed) owner, string name, out Type fieldType)
     {
@@ -83,9 +80,6 @@ sealed partial class Emitter
         t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
 
     // Resolve a method for emit; out-param gives the substituted (concrete) return type for boxing decisions.
-    MethodInfo ResolveMethod(string spec, string name, out Type retType, DotKt.Bir.TypeNode[] sig = null, int methodArity = 0)
-        => ResolveMethod(ParseOwner(spec), name, out retType, sig, methodArity);
-
     // Structured owner overload: a constructed-generic owner slot (`kotlin.Pair[int,int]`) arriving as a native
     // TypeNode.Fqn must keep its ARGS — `SlotName` collapses the Fqn to its open name, which would resolve the member
     // on the OPEN generic def (`kotlin.Pair`2::get_first`), an invalid cross-assembly memberref -> runtime
@@ -687,18 +681,9 @@ sealed partial class Emitter
                     }
             return ext == null ? null : FindReflectedField(ext, name);
         }
-        for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
+        for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
             if (ti.Fields.TryGetValue(name, out var f)) return f;
         throw new NotSupportedException($"field {typeName}.{name} not found");
-    }
-
-    // A `base` token's `_types` key: bases are normally stored OPEN (bare name), but an INNER generic class's base
-    // carries its instantiation args (`AbstractList$IteratorImpl[gp:E]`, the nested-generic encoding) — strip them
-    // for the emitted-type lookup (the constructed form is only needed at SetParent).
-    static string BareTypeKey(string n)
-    {
-        var b = n.IndexOf('[');
-        return b < 0 ? n : n[..b];
     }
 
     // Complete CLR method identity for the `MethodsBySig` dictionary: NAME + METHOD generic arity + parameter vector
@@ -861,7 +846,7 @@ sealed partial class Emitter
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
         // external .NET base, e.g. an emitted class extending a BCL type), fall through to a reflected lookup on the
         // resolved base type so inherited .NET members are still found.
-        for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(BareTypeKey(ti.BaseName)) ? _types[BareTypeKey(ti.BaseName)] : null)
+        for (var ti = _types[typeName]; ti != null; ti = ti.BaseName != null && _types.ContainsKey(ti.BaseName) ? _types[ti.BaseName] : null)
         {
             if (sig != null && ti.MethodsBySig.TryGetValue(
                     DefinitionSigKey(name, methodArity, sig), out var exact)) return exact;
@@ -892,9 +877,8 @@ sealed partial class Emitter
                                 return AnchorMethod(refIf, om);
                         }
                     }
-            // Base is an EXTERNAL (non-emitted) type -> inherited member must come from reflection on it. `ti.ClrBase`
-            // is set when the base parsed to a `clr:`/`clrg:` type; otherwise resolve the base name on demand.
-            if (ti.BaseName != null && !_types.ContainsKey(BareTypeKey(ti.BaseName)))
+            // Base is an EXTERNAL (non-emitted) type -> inherited member must come from reflection on it.
+            if (ti.BaseName != null && !_types.ContainsKey(ti.BaseName))
             {
                 Type extBase = ti.ClrBase;
                 if (extBase == null) { try { extBase = ClrRef(ti.BaseName); } catch (NotSupportedException) { } }

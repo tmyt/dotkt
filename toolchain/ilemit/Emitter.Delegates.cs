@@ -179,7 +179,7 @@ sealed partial class Emitter
 
     // The delegate's RETURN / PARAMETER .NET types from a structured `funcType` (a Fn node) — carried by the BIR, so we
     // never reflect the Invoke of a TypeBuilder-baked delegate (unreliable on an un-baked generic instantiation). The
-    // funcType slot is ALWAYS a structured Fn node (#37/#49; the legacy `func:` string form is retired — #48).
+    // funcType is always a structured Fn node (#37/#49).
     Type FuncRetType(JsonElement e) =>
         DotKt.Bir.TypeNode.Read(e) is DotKt.Bir.TypeNode.Fn fn
             ? MapType(fn.Ret) : throw new NotSupportedException("funcType is not a structured fn node");

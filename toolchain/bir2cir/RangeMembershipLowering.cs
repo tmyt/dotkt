@@ -89,8 +89,8 @@ static class RangeMembershipLowering
         var readLo = Bind(lo, loType, "lo", site, stmts);
         var readHi = Bind(hi, hiType, "hi", site, stmts);
         var readX = Bind(x, xType, "in", site, stmts);
-        // A needed slot type was absent — a mis-typed temp is invalid IL, so leave the real `contains` dispatch in
-        // place (it evaluates both bounds and the subject in the same order) rather than guess.
+        // The fast path needs a declaration-owned Type for every temporary it introduces. If the current input is
+        // incomplete, preserve the original contains call so the owning validation/resolution path reports it.
         if (readLo == null || readHi == null || readX == null) return;
 
         var core = new JsonObject
@@ -111,13 +111,10 @@ static class RangeMembershipLowering
 
     // One operand of the membership, rendered so the `cond` may read it: the operand itself when re-reading it is
     // order-immune, else a read of a fresh `__range<role>$N` temp appended to `stmts` (so it evaluates where Kotlin
-    // evaluates it). Null iff a temp is required and `slotType` — the frontend-resolved type of the slot the operand
-    // fills — is missing, which is the caller's signal to abandon the fast path.
+    // evaluates it). Null iff a temporary is needed but the current structured slot type is absent or malformed.
     static JsonNode Bind(JsonNode value, JsonNode slotType, string role, int site, JsonArray stmts)
     {
         if (ValueStability.IsReReadable(value)) return value;
-        // A `var`'s `type` must be a STRUCTURED Type node (#37 types-are-nodes). An owner/sig slot may still hold a
-        // legacy type STRING, which would be an invalid declaration — treat that as "no slot type" and bail.
         if (!TypeJson.IsType(slotType)) return null;
         var name = "__range" + role + "$" + site;
         stmts.Add(new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = slotType.DeepClone(), ["init"] = value.DeepClone() });

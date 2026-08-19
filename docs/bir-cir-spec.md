@@ -7,9 +7,9 @@
 > codec-agnostic, single-source. **BIR contains NO stringly-typed compound tokens — types are nodes.**
 
 ## 0. Envelope & versioning
-- **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` =
-  `"bir-json/1"` today (future binary = `"bir-msgpack/1"`; schema bump = `"bir-json/2"`). `content` = the
-  codec-encoded body (today `UTF8(json)`).
+- **STATUS (#37 m6): LANDED.** The carrier attributes stamp `(string version, byte[] content)`. `version` is a
+  `codec/schema-version` identifier; only `"bir-json/1"` is defined today. `content` is the codec-encoded body
+  (today `UTF8(json)`). The dispatch shape leaves room for other codecs without reserving a particular identifier.
 - A single `BirCarrier.DecodeBody(version, byte[])` / `EncodeBody(version, node)`
   (`toolchain/bir-common/TypeNode.cs`) dispatches on `version`. An UNKNOWN version is REJECTED
   (loud `NotSupportedException`, never a silent mis-decode).
@@ -26,17 +26,16 @@
   (`ilemit` `ApplyKotlinInline` / `ApplySuspendFnType`) and consumers (`bir2cir` cross-module splice,
   `dll2klib` carrier decoding) all route through the one codec.
 - A decoded `[KotlinInline]` content is the current payload object
-  `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The numeric `v` identifies the
-  payload shape and is independent of the carrier codec string (`bir-json/1`). `body` is the raw BIR body.
+  `{v:1,fqn,owner,fileClass,recv,static,typeParams,params,ret,body,lifted}`. The numeric `v` identifies the inline
+  payload contract independently of the carrier's `codec/schema-version` identifier (`bir-json/1`). `body` is the raw BIR body.
   `lifted` is the transitive closure of raw, compiler-generated file-class method declarations reached by
   `newDelegate` edges from `body`; every entry MUST carry `generated:true`, `static:true`, `params`, `ret`,
   and `body`. `fileClass` is the declaration identity those carried delegate edges originally target.
   At a cross-module splice, bir2cir re-hoists the complete `lifted` set into the consuming file class under
   fresh names and rewrites the delegate edges before normal lowering. Same-module splices use the original
   declarations. The payload is closed structurally from `generated:true`; generated-name spelling is not an
-  ownership signal. Payload v1 is a pre-1.0 compiler contract: the current shape replaces older v1 shapes;
-  readers reject incomplete payloads and require the referenced library to be rebuilt. There is no legacy-v1
-  compatibility path.
+  ownership signal. Readers consume the current `v:1` shape directly; compiler artifacts with another shape are outside
+  the supported input set, with no compatibility translation or dedicated rebuild guidance.
 
 ## 1. Type — the universal type representation (FULL structured, no exceptions)
 
@@ -100,9 +99,7 @@ Notes:
   node via `LowerFnDelegate` (suspend→delegate shape kept for the sequence/iterator closure path; a suspend
   `fn` in a plain type slot still erases to `object`), and ilemit realizes the CIR-selected delegate from the `fn` node
   (`MapType(Fn)`→`FuncType(Fn)`, `FuncArityOf`/`FuncRetType`/`FuncArgTypes` read the node). The dead
-  `func:`/`sfunc:` STRING-parsing scanners (kotc `synthLambda`; bir2cir `LowerFuncString`/`FuncRetEnd`/
-  `SkipTypeToken`/`PrefixLength`/`FoldSFuncToFunc` + the `func:`/`sfunc:` branches of `LowerTypeString`;
-  ilemit `FuncArity(string)` + `FuncArityOf`'s string path) are DELETED.
+  `func:`/`sfunc:` STRING-parsing scanners are deleted from the serialized-type paths.
   **A delegate CONSTRUCTION's `funcType` may also be a named `fqn`.** `newClosure`/`newDelegate` state the delegate
   they PHYSICALLY build, and a literal lambda whose slot declares a different delegate (a custom .NET delegate, or a
   construction of the same family whose return the slot widened) is pointed at that slot's delegate by
@@ -195,8 +192,7 @@ temporary `companionCaptureOwner`/`externalCompanionOwner` strings are declarati
 suspend captures, not Type slots, and must be consumed before CIR. The schema gate enforces those phase boundaries:
 `companionValue`, `kotlinCompanion`, and both capture-owner keys are forbidden in CIR; `newClrStaticDelegate` and
 `capturedTypeParams` are forbidden in BIR. A CIR `newClrStaticDelegate` must already carry the resolved
-`memberRef` of the method it binds — the transitional `memberSig`/`memberOwner` descriptors it used to carry
-are retired (#370), and the validator now refuses them.
+`memberRef` of the method it binds.
 
 Kotlin property accessors follow the same phase ownership (#397). In BIR, each accessor declaration carries the
 source `propertyName`, an explicit `propertyAccessor` role (`get` or `set`), and a file-local `propertyAssociation`;
@@ -455,11 +451,12 @@ built by this compilation) and stay on the internal linkage (`localCtorIndex`, t
 table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
 
 For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
-compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. `bir2cir` consumes
-the former to select one same-unit constructor, closes that declaration in the constructed owner's final physical
-frame, materializes any required representation conversion, writes the resulting use-site `argTypes`, and replaces
-the declaration fact with scalar `localCtorIndex`. Neither `memberSignature` nor a constructor candidate set reaches
-CIR.
+compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. For a same-unit
+constructor, `bir2cir` consumes the former to select one declaration, closes it in the constructed owner's final
+physical frame, materializes any required representation conversion, retains the resulting use-site `argTypes` for
+argument coercion, and replaces the declaration fact with scalar `localCtorIndex`. For an external constructor, the
+resolved `memberRef` carries the physical parameter vector and `argTypes` is consumed. Neither `memberSignature` nor
+a constructor candidate set reaches CIR.
 
 A carrier key holds ONE reference, never a list. A candidate set reaching a consumer is precisely the failure
 this shape removes: whoever received it would have to choose, and choosing is the producer's decision.
@@ -468,39 +465,20 @@ The carriers are `memberRef` on a node, and on a DECLARATION `baseCtorRef` (a co
 external base) and `clrOverrideRef` (the external base virtual a method overrides — the MethodImpl target).
 An external-base override also carries `requiresClrOverride:true`, a durable emission instruction independent of
 the operand: the schema requires the instruction and reference together, while the member identity remains scalar.
-Each carrier is the sole external-member identity for its operation. The retired flat owner/name/signature families
-are forbidden in CIR; reintroducing one would create a second authority and force a consumer to reconcile it with
-the scalar reference.
+Each carrier is the sole external-member identity for its operation. Consumers read that current scalar reference
+directly and do not recognize earlier owner/name/signature layouts.
 
-### 2.2.1 The TWO intentional string islands (documented KEEP — not producer-zero)
+### 2.2.1 Internal indexes do not define another type format
 The BIR/CIR **wire format** carries no stringly-typed compound type token (§1): every `type`/`ret`/`elem`/
-`funcType`/`base`/`interfaces`/`sig` slot is a structured `Type` node or an array of them. But TWO
-consumer-internal string forms are DELIBERATELY retained (rendering a structured `Type`→string for a
-narrow, entangled, low-payoff comparison); they are NOT drift and MUST NOT be "cleaned up" by re-stringing
-the format:
+`funcType`/`base`/`interfaces`/`sig` slot is a structured `Type` node or an array of them. Consumer indexes preserve
+that structure: constructed owners are decomposed as `Fqn.Name` plus `Fqn.Args`, and bir2cir reflection keys use
+structural `TypeKey` / `SignatureKey` values. ilemit may render a `TypeNode` one-way into a private dictionary key,
+but no reader parses such a key back into a type and no owner name is scanned for embedded generic arguments.
 
-1. **The owner-FQN island** — ilemit `ParseOwner`/`ParseOwnerSlot`/`TryMapEmittedType` key this
-   assembly's emitted types (`_types`) by their bare FQN **string** and split a constructed-generic
-   `Name[arg,…]` owner spec into (open name, args). `ParseOwnerSlot(JsonElement)` reads a structured `fqn`
-   owner node (`ParseOwnerT`) — the wire stays structured — but the internal `_types` lookup and the
-   `Name[…]` split remain string-keyed. This is a private in-assembly type-table index, not a serialization
-   token.
-2. **The sig-key reflection island** — ilemit `SigTokenOf`/`SigTokenMatches`/`SigTokenMatchesOpen`
-   (and bir2cir `ParamKey`) RENDER a structured `Type` (incl. `fn`→`func:`/`sfunc:`, `clr:`/`clrg:`/`array:`/
-   `nullable:`/`byRef:`/`gp:` prefixes) to a canonical **string token** SOLELY to compare a call/binding
-   signature against a **reflected `MethodInfo`** from a `--ref` .NET assembly (`FindReflectedMethodBySig`).
-   Reflection surfaces `System.Type`, not our nodes, so the match unavoidably canonicalizes to a string on
-   both sides. This is why ilemit's `MapType(string)` prefix branches + `FuncType(string)`/`FuncRetEnd`/
-   `SkipTypeToken`/`GenericType`/`ClrRef(string)` are KEPT: they are the RE-PARSE side of this island (a
-   concrete `func:`/`clr:` sig token can route back through `MapType(string)`).
-
-Also NOTE — the bare-FQN + CLR-shorthand string LEAF resolver (bir2cir `LowerTypeString`/`LowerLeaf` + the
-`kotlin.*`→shorthand map; ilemit `MapType(string)`'s `_ =>` FQN/shorthand switch + `TryMapEmittedType`) is
-NOT retired: it is the primary resolver for every structured `fqn` node's bare `name` (reached via
-`MapType(fqn.Name)`), and it is still fed a few genuinely-string type slots that kotc/bir2cir emit as
-strings — synthetic interface names (`<>dotkt_KProperty`) and the synthesized `StringCharSequenceBridge`
-adapter's `kotlin.String`/`<>dotkt_CharSequence` slots. Only the **prefix-scanning** logic tied to the
-retired string TYPE TOKENS is dead; the leaf that resolves a bare identity is load-bearing.
+Also NOTE — the bare-FQN + CLR-shorthand string LEAF resolver inside ilemit
+(`MapType(string)`'s `_ =>` FQN/shorthand switch + `TryMapEmittedType`) is the primary resolver for every
+structured `fqn` node's bare `name` (reached via `MapType(fqn.Name)`). It is an internal identity resolver,
+not a serialized type-token reader.
 
 ### 2.3 `@ClrProperty(access:Int)` bitmask → structured flags (no encoded int)
 The stdlib `@ClrProperty` accessor binding encodes read/write as an **int bitmask** (`READ=1`/`WRITE=2`,
@@ -535,8 +513,8 @@ Every identifier in the serialization vocabulary is **lowerCamelCase**, uniforml
   - **.NET attribute TYPE names** are UpperCamel — `KotlinInlineAttribute`, `KotlinSuspendFunctionTypeAttribute`,
     `KotlinDefaultAttribute` — because they are CLR types and MUST follow the CLR/BCL convention. Their
     *constructor-arg / field* names still follow the lowerCamel rule.
-  - **carrier version tags** are kebab-with-slash — `"bir-json/1"`, `"bir-msgpack/1"` — a codec+schema version
-    identifier, not a vocabulary identifier; the `/` separates codec from schema-major.
+  - **carrier version tags** use the `codec/schema-version` shape — currently `"bir-json/1"` — and are not vocabulary
+    identifiers; the `/` separates codec from schema-major.
 - **SCOPE — vocabulary, NOT payload data.** This policy governs the format's OWN identifiers (the
   meta-language: `k`/`t` tags, field names, `mods` keys, decl kinds). It does **NOT** govern the DATA those
   fields carry — the Kotlin/CLR **symbol names** in a `name` value (`{"t":"fqn","name":"…"}`), which follow
@@ -761,8 +739,8 @@ ONE type read/write per language, used by EVERY site. No other code parses/build
 **C# (bir2cir / ilemit / dll2klib)** — a shared `DotKt.Bir.TypeNode` record hierarchy (Fqn/Tv/Fn/Nullable/
 Array/Byref) + `TypeNode Read(JsonElement)` / `JsonNode Write(TypeNode)`, in ONE shared file referenced by
 all three C# tools. Its `Fn.Clr` member is the sole phase extension: absent in kotc BIR, required in
-ilemit-facing CIR (§1). Every `MapType`/`SplitTopLevel`/`FuncRetEnd`/`SkipTypeToken`/`BirTokenToMeta`/
-`BareOwner`/`CanonSig` is DELETED and replaced by walking `TypeNode`.
+ilemit-facing CIR (§1). Serialized types are read only through `TypeNode`; internal CLR identity lookup and
+signature-key canonicalization consume the resulting nodes rather than parsing wire-format strings.
 
 ## 5b. Reference declarations (dll2klib → kotc)
 
@@ -816,7 +794,8 @@ emitting method's body in the BIR/CIR — validated there by the document walk.
 
 **Residual string type slots structuralized to land the enforcer clean** (bir2cir/kotc were still injecting a few
 bare-FQN strings the wire format forbids):
-- `conv.to` (kotc `BirEmitter.kt` numeric-conversion path) — was `str(to)` (bare `"kotlin.Int"`) → `fqnJson(to)`.
+- `to` is deliberately shared: under `k:"conv"` it is a structured target type; under `k:"for"`/`k:"forRange"` it
+  is a range endpoint expression. The parent `k`, never the child's value shape or global key uniqueness, owns the role.
 - Synthetic `<>dotkt_KProperty` interface refs (kotc `synthDelegate`/`kPropertyDefs`) — `str(iface)`/literal → `fqnJson`.
 - `newSuspendLambda`'s free-type-param list — a type-param NAME-declaration list, not a type-usage slot: renamed
   `typeArgs` → `typeParams` (the name-shorthand, consistent with the other lambda paths; kotc emit + bir2cir
