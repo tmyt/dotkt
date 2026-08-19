@@ -80,6 +80,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Lazy `Sequence.mapNotNull`/`filterNotNull` and `Sequence.filterIsInstance<R>` preserve their result element
   identity (#349, #446, #449).** Their Kotlin declaration bodies retain the lazy null/type predicates, while one
   annotation-driven bir2cir rule replaces only the final erased-platform cast with a typed element-view adapter.
+- **Rich enums may mix entries with and without per-entry bodies (#279).** An entry subclass no longer makes the enum
+  base abstract by itself, so a body-less sibling can instantiate the base while concrete open members retain their
+  default implementation. Entry subclasses also preserve method and property overrides, including abstract property
+  accessors.
 
 ## 0.9.9 (2026-08-17)
 
