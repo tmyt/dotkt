@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Rich-enum entry bodies now preserve their own state and initialization (#478).** Per-entry subclasses emit
+  property backing fields and frontend-synthesized instance fields, and run property initializers and `init` blocks
+  in declaration order after base construction.
+
 - **CLR properties accessed through a type-parameter receiver now emit verifier-valid dispatch (#325).** Interface
   accessors use `constrained.` for both reads and writes, while non-virtual class accessors use the receiver's resolved
   class constraint. Generic `CharSequence` constraints stay aligned when that app-level representation becomes

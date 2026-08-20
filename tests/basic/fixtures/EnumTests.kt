@@ -18,6 +18,7 @@
 //   il-enumrich   -> enumrich_ctorAndMethod      rich enum (ctor param + instance method) singleton lowering (mass/heavy/name/ordinal/valueOf/values/==)
 //   il-enumtostr  -> enumtostr_inheritedMembers  basic enum inherits ToString/Equals/GetHashCode from System.Enum (toString/println/concat/==/equals/compareTo); decl in sibling EnumCrossFileSupport.kt
 //   #279          -> mixedEntryBodies             rich enum mixing an entry subclass with a direct base instance
+//   #478          -> entryOwnedStateAndInitializers  entry-body fields and initializer blocks in declaration order
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and
 // `Enum`-prefixed so the two `enum class Color { RED, GREEN, BLUE }` (il-enum vs il-enumintr) don't clash.
@@ -73,6 +74,28 @@ enum class EnumAbstractEntryVar {
     abstract var label: String
 }
 
+object EnumEntryStateLog {
+    var text = ""
+    fun next(mark: String): Int { text += mark; return text.length }
+    fun add(mark: String) { text += mark }
+}
+
+enum class EnumEntryOwnedState(val base: Int) {
+    A(EnumEntryStateLog.next("b")) {
+        val first = EnumEntryStateLog.next("p")
+        init { EnumEntryStateLog.add("i$first") }
+        var second = EnumEntryStateLog.next("q")
+        init {
+            second += first
+            EnumEntryStateLog.add("j$second")
+        }
+
+        override fun snapshot(): String = "$first:$second"
+    };
+
+    abstract fun snapshot(): String
+}
+
 // ---- il-enumintr : basic enum + reified enumValues/enumValueOf intrinsics -------------------------------------
 enum class EnumIntrColor { RED, GREEN, BLUE }
 inline fun <reified T : Enum<T>> enumPick(i: Int): T = enumValues<T>()[i]
@@ -115,6 +138,13 @@ class EnumTests {
 
         EnumAbstractEntryVar.A.label = "ignored"
         assertEquals("a", EnumAbstractEntryVar.A.label)
+    }
+
+    @TestAttribute
+    fun entryOwnedStateAndInitializers() {
+        assertEquals(1, EnumEntryOwnedState.A.base)
+        assertEquals("2:7", EnumEntryOwnedState.A.snapshot())
+        assertEquals("bpi2qj7", EnumEntryStateLog.text)
     }
 
     @TestAttribute
