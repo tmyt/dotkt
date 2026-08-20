@@ -27,11 +27,17 @@ open class ProtectedNestedOwner {
     fun value(): Int = HiddenNested(19).value
 }
 
-enum class OwnedRichEnum {
+interface OwnedRichEnumContract {
+    fun contractMarker(): Int
+}
+
+enum class OwnedRichEnum : OwnedRichEnumContract {
     FIRST {
         override fun marker(): Int = 17
+        override fun toString(): String = "custom"
     };
 
+    override fun contractMarker(): Int = 18
     abstract fun marker(): Int
 }
 

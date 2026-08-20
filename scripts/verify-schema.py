@@ -173,7 +173,7 @@ STR_OK = {
                                                 # bir2cir DECISION (W1-S2 #46), NOT a type slot; ilemit emits the opcode
                                                 # verbatim (no re-derivation from reflected IsVirtual/IsFinal)
     "member", "method", "get", "set", "event",  # member/accessor/event NAME references (reflection/override — §2.2.1)
-    "field", "values", "valueOf",                 # rich-enum round-trip carrier's exact physical member names;
+    "field", "ordinal", "values", "valueOf",      # rich-enum round-trip carrier's exact physical member names;
                                                     # declaration identities, not value-type slots
     "accessor",                                  # W1-S3 (#46/#121): the ref.dll-resolved get_/set_/add_/remove_ accessor
                                                 # METHOD NAME ilemit links (clrPropGet/Set, clrEvent*, external field) — a
@@ -312,7 +312,7 @@ KINDS = {
     "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
     "newBoundDelegate", "newBoundClrDelegate", "newClrStaticDelegate",
     "companionValue",                           # #275 BIR-only semantic access; bir2cir resolves the nested carrier.
-    "enumValue", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",
+    "enumValue", "enumName", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",
     # §2.7 CALL-EVALUATION PLAN — BIR-only. `callEval` wraps a call in its ordered bindings; `bindRef` is a pure READ
     # of one. bir2cir's CallEvalLowering lowers both (to `var`+`valueBlock`, or to a ctor's `preStmts`) before CIR.
     "callEval", "bindRef",

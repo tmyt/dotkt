@@ -1355,11 +1355,14 @@ internal sealed class AssemblyScanner
 
     private sealed record RichEnumCarrier(
         IReadOnlyList<RichEnumEntryCarrier> Entries,
+        string Name,
+        string Ordinal,
         string Values,
         string ValueOf);
 
     private sealed record ValidatedRichEnumCarrier(
         IReadOnlyDictionary<FieldDefinitionHandle, string> EntryNames,
+        IReadOnlySet<FieldDefinitionHandle> SyntheticFields,
         IReadOnlySet<MethodDefinitionHandle> SyntheticMethods);
 
     private sealed record ProjectedFunction(
@@ -1715,18 +1718,22 @@ internal sealed class AssemblyScanner
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("malformed [KotlinRichEnum] carrier: expected an object");
         var properties = root.EnumerateObject().Select(property => property.Name).ToArray();
-        if (properties.Length != 3 || properties.Distinct(StringComparer.Ordinal).Count() != 3 ||
-            !properties.ToHashSet(StringComparer.Ordinal).SetEquals(["entries", "values", "valueOf"]))
+        if (properties.Length != 5 || properties.Distinct(StringComparer.Ordinal).Count() != 5 ||
+            !properties.ToHashSet(StringComparer.Ordinal).SetEquals(["entries", "name", "ordinal", "values", "valueOf"]))
             throw new InvalidDataException(
-                "malformed [KotlinRichEnum] carrier: expected exactly entries, values, and valueOf");
-        if (!root.TryGetProperty("values", out var valuesNode) ||
+                "malformed [KotlinRichEnum] carrier: expected exactly entries, name, ordinal, values, and valueOf");
+        if (!root.TryGetProperty("name", out var nameFieldNode) ||
+            nameFieldNode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(nameFieldNode.GetString()) ||
+            !root.TryGetProperty("ordinal", out var ordinalFieldNode) ||
+            ordinalFieldNode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(ordinalFieldNode.GetString()) ||
+            !root.TryGetProperty("values", out var valuesNode) ||
             valuesNode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(valuesNode.GetString()) ||
             !root.TryGetProperty("valueOf", out var valueOfNode) ||
             valueOfNode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(valueOfNode.GetString()) ||
             !root.TryGetProperty("entries", out var entriesNode) ||
             entriesNode.ValueKind != JsonValueKind.Array)
             throw new InvalidDataException(
-                "malformed [KotlinRichEnum] carrier: entries must be an array and API names must be strings");
+                "malformed [KotlinRichEnum] carrier: entries must be an array and physical member names must be strings");
         var entries = new List<RichEnumEntryCarrier>();
         var sourceNames = new HashSet<string>(StringComparer.Ordinal);
         var physicalNames = new HashSet<string>(StringComparer.Ordinal);
@@ -1750,7 +1757,13 @@ internal sealed class AssemblyScanner
                     "malformed [KotlinRichEnum] carrier: entry names and physical fields must be unique");
             entries.Add(new RichEnumEntryCarrier(name, field));
         }
-        return new RichEnumCarrier(entries, valuesNode.GetString()!, valueOfNode.GetString()!);
+        var nameField = nameFieldNode.GetString()!;
+        var ordinalField = ordinalFieldNode.GetString()!;
+        if (!physicalNames.Add(nameField) || !physicalNames.Add(ordinalField))
+            throw new InvalidDataException(
+                "malformed [KotlinRichEnum] carrier: physical fields must be distinct");
+        return new RichEnumCarrier(
+            entries, nameField, ordinalField, valuesNode.GetString()!, valueOfNode.GetString()!);
     }
 
     private ValidatedRichEnumCarrier ValidateRichEnumCarrier(
@@ -1764,6 +1777,7 @@ internal sealed class AssemblyScanner
     {
         if (def.GetGenericParameters().Count != 0 ||
             (def.Attributes & TypeAttributes.Interface) != 0 ||
+            IsSystemType(def.BaseType, "System", "ValueType") ||
             IsSystemType(def.BaseType, "System", "Enum"))
             throw new InvalidDataException(
                 $"malformed [KotlinRichEnum] carrier on '{MetadataTypeName(handle)}': expected a non-generic reference class");
@@ -1781,14 +1795,14 @@ internal sealed class AssemblyScanner
                         requireTrust: false))
                     continue;
                 var signature = method.DecodeSignature(signatures, context);
-                var shapeMatches = isValues
+                var shapeMatches = signature.GenericParameterCount == 0 && (isValues
                     ? signature.ParameterTypes.Length == 0 &&
                         signatures.ArrayElement(signature.ReturnType) is { } element &&
                         IsSelfType(element, projectedSelfName)
                     : signature.ParameterTypes.Length == 1 &&
                         signature.ParameterTypes[0].HasClassName &&
                         names.ClassName(signature.ParameterTypes[0].ClassName) == "kotlin.String" &&
-                        IsSelfType(signature.ReturnType, projectedSelfName);
+                        IsSelfType(signature.ReturnType, projectedSelfName));
                 if (shapeMatches) matches.Add(methodHandle);
             }
             if (matches.Count != 1)
@@ -1818,6 +1832,33 @@ internal sealed class AssemblyScanner
                     $"entry field '{entry.Field}' must be public static initonly and self-typed");
             entryNames.Add(fields[0], entry.Name);
         }
+        FieldDefinitionHandle RequireMetadataField(string physicalName, string expectedType)
+        {
+            var fields = def.GetFields().Where(fieldHandle =>
+                _md.GetString(_md.GetFieldDefinition(fieldHandle).Name) == physicalName).ToArray();
+            if (fields.Length != 1)
+                throw new InvalidDataException(
+                    $"malformed [KotlinRichEnum] carrier on '{MetadataTypeName(handle)}': " +
+                    $"metadata field '{physicalName}' has {fields.Length} declarations");
+            var field = _md.GetFieldDefinition(fields[0]);
+            var fieldType = field.DecodeSignature(signatures, context);
+            var required = FieldAttributes.Public | FieldAttributes.InitOnly;
+            if ((field.Attributes & required) != required ||
+                (field.Attributes & (FieldAttributes.Static | FieldAttributes.Literal)) != 0 ||
+                !fieldType.HasClassName || names.ClassName(fieldType.ClassName) != expectedType)
+                throw new InvalidDataException(
+                    $"malformed [KotlinRichEnum] carrier on '{MetadataTypeName(handle)}': " +
+                    $"metadata field '{physicalName}' must be public instance initonly and {expectedType}-typed");
+            return fields[0];
+        }
+        var syntheticFields = new HashSet<FieldDefinitionHandle>
+        {
+            RequireMetadataField(carrier.Name, "kotlin.String"),
+            RequireMetadataField(carrier.Ordinal, "kotlin.Int"),
+        };
+        if (syntheticFields.Count != 2)
+            throw new InvalidDataException(
+                $"malformed [KotlinRichEnum] carrier on '{MetadataTypeName(handle)}': metadata fields must be distinct");
         var syntheticMethods = new HashSet<MethodDefinitionHandle>
         {
             RequireSyntheticMethod(carrier.Values, isValues: true),
@@ -1826,7 +1867,7 @@ internal sealed class AssemblyScanner
         if (syntheticMethods.Count != 2)
             throw new InvalidDataException(
                 $"malformed [KotlinRichEnum] carrier on '{MetadataTypeName(handle)}': values and valueOf must be distinct");
-        return new ValidatedRichEnumCarrier(entryNames, syntheticMethods);
+        return new ValidatedRichEnumCarrier(entryNames, syntheticFields, syntheticMethods);
     }
 
     private Class ReadClass(
@@ -1934,6 +1975,30 @@ internal sealed class AssemblyScanner
             }))
             .Concat(customPropertyAccessorMethods)
             .ToHashSet();
+        void AddProjectedInterfaces()
+        {
+            var implementedInterfaces = ProjectedPublicInterfaces(def, names, signatures, typeContext).ToList();
+            var genericInterfaceNames = implementedInterfaces
+                .Where(x => x.Argument.Count != 0 && x.HasClassName)
+                .Select(x => names.ClassName(x.ClassName)?.Split('.').Last())
+                .Where(x => x is not null)
+                .ToHashSet(StringComparer.Ordinal);
+            if (isInterface && def.GetGenericParameters().Any())
+                genericInterfaceNames.Add(kotlinName);
+            foreach (var supertype in implementedInterfaces)
+            {
+                // Drop the legacy non-generic shadow when the same CLR class implements a generic collection face.
+                if (supertype.Argument.Count == 0 && supertype.HasClassName &&
+                    names.ClassName(supertype.ClassName)?.Split('.').Last() is string simple &&
+                    genericInterfaceNames.Contains(simple))
+                    continue;
+                if (signatures.IsKotlinComparable(supertype) && supertype.Argument.Count == 0)
+                    continue;
+                if (signatures.IsCompilerOwnedSlotCarrier(supertype))
+                    continue;
+                result.Supertype.Add(supertype);
+            }
+        }
         if (isEnum || isKotlinRichEnum)
         {
             var enumBase = new KType { ClassName = names.Class("kotlin.Enum") };
@@ -1950,6 +2015,13 @@ internal sealed class AssemblyScanner
                 Type = self,
             });
             result.Supertype.Add(enumBase);
+            // A rich enum is physically a reference class and can implement arbitrary Kotlin interfaces. Projecting
+            // its enum identity must not discard those semantic supertypes or the carrier-restored erased ones.
+            if (isKotlinRichEnum)
+            {
+                AddProjectedInterfaces();
+                RestoreErasedSupertypes(handle, result, signatures, names);
+            }
         }
         else if (isAnnotation)
         {
@@ -1971,40 +2043,7 @@ internal sealed class AssemblyScanner
                 !IsSystemType(def.BaseType, "System", "ValueType") &&
                 !IsSystemType(def.BaseType, "System", "Attribute"))
                 result.Supertype.Add(signatures.DecodeEntity(def.BaseType, typeContext, platform: false));
-            var implementedInterfaces = ProjectedPublicInterfaces(def, names, signatures, typeContext).ToList();
-            var genericInterfaceNames = implementedInterfaces
-                .Where(x => x.Argument.Count != 0 && x.HasClassName)
-                .Select(x => names.ClassName(x.ClassName)?.Split('.').Last())
-                .Where(x => x is not null)
-                .ToHashSet(StringComparer.Ordinal);
-            if (isInterface && def.GetGenericParameters().Any())
-                genericInterfaceNames.Add(kotlinName);
-            foreach (var supertype in implementedInterfaces)
-            {
-                // Drop the legacy non-generic shadow when the same CLR class
-                // implements IList<T>/ICollection<T>/IEnumerable<T>. Exposing
-                // both makes Kotlin demand the object-typed explicit-interface
-                // slots from subclasses of an otherwise concrete CLR base.
-                if (supertype.Argument.Count == 0 &&
-                    supertype.HasClassName &&
-                    names.ClassName(supertype.ClassName)?.Split('.').Last() is string simple &&
-                    genericInterfaceNames.Contains(simple))
-                    continue;
-                // DotKt emits both IComparable<T> and its non-generic CLR
-                // bridge. Only the generic face has Kotlin meaning.
-                if (signatures.IsKotlinComparable(supertype) && supertype.Argument.Count == 0)
-                    continue;
-                // A compiler-owned physical slot carrier is not a Kotlin supertype. `DotKt.Runtime.CompilerServices`
-                // is the compiler's reserved namespace, so an interface implemented from it exists only to give a
-                // Kotlin member a CLR slot the mapped BCL face lacks — e.g. the KotlinMutableCollectionSlots carrier
-                // for `removeAll`/`retainAll`/`addAll`. Its members are private MethodImpl bridges, dropped from the
-                // projection as non-public, so surfacing the interface would hand the consumer a supertype whose
-                // abstract members nothing appears to implement and would make a cross-module subclass of an open
-                // producer collection class unresolvable. A reserved-namespace rule, not a list of type names.
-                if (signatures.IsCompilerOwnedSlotCarrier(supertype))
-                    continue;
-                result.Supertype.Add(supertype);
-            }
+            AddProjectedInterfaces();
             if (result.Supertype.Count == 0)
                 result.Supertype.Add(new KType { ClassName = names.Class("kotlin.Any") });
             RestoreErasedSupertypes(handle, result, signatures, names);
@@ -2542,6 +2581,7 @@ internal sealed class AssemblyScanner
                 result.EnumEntry.Add(new EnumEntry { Name = names.String(richEnumEntryName) });
                 continue;
             }
+            if (validatedRichEnum?.SyntheticFields.Contains(fieldHandle) == true) continue;
             var field = _md.GetFieldDefinition(fieldHandle);
             if (!IsPublicOrProtected(field.Attributes)) continue;
             var name = _md.GetString(field.Name);

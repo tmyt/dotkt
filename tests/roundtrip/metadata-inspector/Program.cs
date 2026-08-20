@@ -452,7 +452,8 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
             birRichEnum["richEnum"] is JsonObject richFact &&
             richFact["entries"] is JsonArray richEntries && richEntries.Count == 1 &&
             richEntries[0] is JsonObject richEntry && Text(richEntry["name"]) == "FIRST" &&
-            Text(richEntry["field"]) == "FIRST" && Text(richFact["values"]) == "values" &&
+            Text(richEntry["field"]) == "FIRST" && Text(richFact["name"]) == "__name" &&
+            Text(richFact["ordinal"]) == "__ordinal" && Text(richFact["values"]) == "values" &&
             Text(richFact["valueOf"]) == "valueOf",
         "kotc did not state the complete rich-enum declaration-to-physical map");
     var birOwnedTypes = Types(bir).OfType<JsonObject>()
@@ -556,6 +557,8 @@ static void VerifyOwnershipDll(string path)
         var entries = root.GetProperty("entries").EnumerateArray().ToArray();
         Require(entries.Length == 1 && entries[0].GetProperty("name").GetString() == "FIRST" &&
                 entries[0].GetProperty("field").GetString() == "FIRST" &&
+                root.GetProperty("name").GetString() == "__name" &&
+                root.GetProperty("ordinal").GetString() == "__ordinal" &&
                 root.GetProperty("values").GetString() == "values" &&
                 root.GetProperty("valueOf").GetString() == "valueOf",
             "producer DLL lost the explicit rich-enum member map");
@@ -566,6 +569,16 @@ static void VerifyOwnershipDll(string path)
             (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly)) ==
             (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly),
         "rich-enum singleton entry is not a public static initonly physical field");
+    foreach (var metadataFieldName in new[] { "__name", "__ordinal" })
+    {
+        var metadataField = richEnumDefinition.GetFields().Single(field =>
+            md.GetString(md.GetFieldDefinition(field).Name) == metadataFieldName);
+        var attributes = md.GetFieldDefinition(metadataField).Attributes;
+        Require((attributes & (FieldAttributes.Public | FieldAttributes.InitOnly)) ==
+                    (FieldAttributes.Public | FieldAttributes.InitOnly) &&
+                (attributes & FieldAttributes.Static) == 0,
+            $"rich-enum metadata field {metadataFieldName} is not public instance initonly");
+    }
     foreach (var api in new[] { "values", "valueOf" })
     {
         var method = richEnumDefinition.GetMethods().Single(handle =>
@@ -1236,14 +1249,18 @@ static void VerifyKlib(string path)
         "rich enum exposed a physical constructor in Kotlin metadata");
     Require(richEnum.EnumEntry.Select(entry => String(ownership, entry.Name)).SequenceEqual(["FIRST"]),
         "rich enum did not project its carrier-declared entry exactly once");
-    Require(!richEnum.Property.Any(property => String(ownership, property.Name) == "FIRST"),
-        "rich-enum physical singleton field leaked as a Kotlin property");
+    Require(!richEnum.Property.Any(property =>
+            String(ownership, property.Name) is "FIRST" or "__name" or "__ordinal"),
+        "rich-enum physical field leaked as a Kotlin property");
     Require(!richEnum.Function.Any(function =>
             String(ownership, function.Name) is "values" or "valueOf"),
         "rich-enum compiler APIs leaked as ordinary Kotlin functions");
     Require(richEnum.Supertype.Any(type => type.HasClassName &&
             QualifiedName(ownership, type.ClassName) == "kotlin.Enum"),
         "rich enum lost its kotlin.Enum self supertype");
+    Require(richEnum.Supertype.Any(type => type.HasClassName &&
+            QualifiedName(ownership, type.ClassName) == "roundtrip.ownership.OwnedRichEnumContract"),
+        "rich enum lost its source interface supertype");
     Require(!ownership.Class.Any(c =>
             QualifiedName(ownership, c.FqName).Split('.').Any(p =>
                 p.StartsWith("dotkt$", StringComparison.Ordinal) ||

@@ -131,10 +131,16 @@ static class NetInteropBinding
         // Rich-enum values()/valueOf() are synthetic enum-owner statics, not companion declarations. The frontend
         // nevertheless marks their Kotlin call shape as companionCall. Admit only the exact API names and signatures
         // declared by a validated rich-enum carrier; arbitrary carrier-less DotKt calls still fail.
+        string richEnumPhysicalApi = null;
         var carrierlessRichEnumApi = companionCall && companionStatic == null && method != null &&
             _refs.HasDotKtOwner(bare) &&
-            _refs.IsKotlinRichEnumStaticApi(bare, method, DeclarationArgs(node).Count);
-        if (carrierlessRichEnumApi) companionStatic = true;
+            _refs.TryKotlinRichEnumStaticApi(
+                bare, method, DeclarationArgs(node).Count, out richEnumPhysicalApi);
+        if (carrierlessRichEnumApi)
+        {
+            companionStatic = true;
+            node["method"] = method = richEnumPhysicalApi;
+        }
         if (companionCall && companionStatic == null)
             throw new InvalidOperationException(
                 $"DotKt companion call owner '{bare}' has no trusted companion carrier");
@@ -526,9 +532,12 @@ static class NetInteropBinding
         if (netType == null && companionCall && _refs.HasDotKtOwner(bare))
         {
             netType = _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0);
-            if (netType != null && _refs.IsKotlinRichEnumStaticApi(
-                    bare, Str(node["method"]), declarationArgs.Count))
+            if (netType != null && _refs.TryKotlinRichEnumStaticApi(
+                    bare, Str(node["method"]), declarationArgs.Count, out var richEnumPhysicalApi))
+            {
                 companionStatic = true;
+                node["method"] = richEnumPhysicalApi;
+            }
             else
                 throw new InvalidOperationException(
                     $"DotKt companion callable-reference owner '{bare}' has no trusted companion carrier");

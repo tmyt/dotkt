@@ -101,6 +101,11 @@ RICH_ENUM_MISSING_FIELD_DLL="$WORK/RichEnumMissingField/bin/RichEnumMissingField
 run_rejected dll2klib "$RICH_ENUM_MISSING_FIELD_DLL" 'KotlinRichEnum.*entry field.*MISSING'
 run_rejected bir2cir "$RICH_ENUM_MISSING_FIELD_DLL" 'KotlinRichEnum.*entry field.*MISSING'
 
+build_fixture RichEnumGenericApi RICH_ENUM_GENERIC_API
+RICH_ENUM_GENERIC_API_DLL="$WORK/RichEnumGenericApi/bin/RichEnumGenericApi.dll"
+run_rejected dll2klib "$RICH_ENUM_GENERIC_API_DLL" 'KotlinRichEnum.*physical API.*0 matching'
+run_rejected bir2cir "$RICH_ENUM_GENERIC_API_DLL" 'KotlinRichEnum.*values/valueOf APIs.*missing or ambiguous'
+
 build_fixture ExtraStaticCarrierPayload EXTRA_STATIC_CARRIER_PAYLOAD
 EXTRA_STATIC_PAYLOAD="$WORK/ExtraStaticCarrierPayload/bin/ExtraStaticCarrierPayload.dll"
 run_rejected dll2klib "$EXTRA_STATIC_PAYLOAD" 'payload must contain exactly one'

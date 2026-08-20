@@ -573,7 +573,9 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	val ctors = (listOf(ctor) + enumCtors.filter { !it.isPrimary }.map(::secondaryCtor)).joinToString(",")
 	// instance fields: metadata + user props.
-	val fields = (listOf("""{"name":"__name","type":${fqnJson("kotlin.String")}}""", """{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}""") + userFields).toMutableList()
+	val fields = (listOf(
+		"""{"name":"__name","type":${fqnJson("kotlin.String")},"initOnly":true}""",
+		"""{"name":"__ordinal","type":${fqnJson("kotlin.Int")},"initOnly":true}""") + userFields).toMutableList()
 	// per-entry static singleton, init = new <Enum-or-entry-subclass>("NAME", ordinal, <entry ctor args>).
 	val subDefs = ArrayList<String>()
 	val nameOrd = { i: Int, ent: IrEnumEntry -> listOf("""{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(ent.name.asString())}}""", """{"k":"const","type":${fqnJson("kotlin.Int")},"value":$i}""") }
@@ -665,13 +667,14 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// bir2cir's EnumIntrinsicLowering can lower `enumValues<ThisEnum>()` to the synthesized static values()/valueOf()
 	// rather than the System.Enum-reflection semantic node (a rich enum is a plain class, invisible to that reflection).
 	// `richEnum` is the durable round-trip declaration fact: it explicitly relates each source entry to its physical
-	// singleton field and names the two compiler-generated physical APIs. A downstream compiler must not reconstruct
+	// singleton field, the two instance metadata slots, and the two compiler-generated physical APIs. A downstream
+	// compiler must not reconstruct
 	// enum meaning from those members' spellings or signatures. richEnumDef likewise does not flatten a companion's
 	// declarations into the enum class.
 	val richEnumEntries = entries.joinToString(",") { ent ->
 		"""{"name":${str(ent.name.asString())},"field":${str(ent.name.asString())}}"""
 	}
-	val richEnum = ""","richEnum":{"entries":[$richEnumEntries],"values":"values","valueOf":"valueOf"}"""
+	val richEnum = ""","richEnum":{"entries":[$richEnumEntries],"name":"__name","ordinal":"__ordinal","values":"values","valueOf":"valueOf"}"""
 	val kotlinCompanion = ""
 	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(visOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[${fields.joinToString(",")}],"ctors":[$ctors],"methods":[$methods],"properties":[$allPropsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson$richEnum}"""
 	// Emit the base enum class first, then each per-entry subclass.

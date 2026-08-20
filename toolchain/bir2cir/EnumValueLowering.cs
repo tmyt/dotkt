@@ -6,13 +6,15 @@ using System.Text.Json.Nodes;
 // those Kotlin identities to the selected reference DLL's physical representation.
 static class EnumValueLowering
 {
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs);
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, ISet<string> localBasicEnums) =>
+        Walk(root, refs, localBasicEnums);
 
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs)
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs, ISet<string> localBasicEnums)
     {
         if (node is JsonObject obj)
         {
-            if (obj["k"]?.GetValue<string>() == "enumValue"
+            var kind = obj["k"]?.GetValue<string>();
+            if (kind == "enumValue"
                 && obj["entry"]?.GetValue<string>() is string entry
                 && obj["type"] is JsonNode type
                 && TypeJson.OwnerName(type) is string owner)
@@ -30,12 +32,44 @@ static class EnumValueLowering
                     obj["physicalValue"] = physical.Value;
                 }
             }
+
+            if (kind is "enumName" or "enumOrdinal"
+                && obj["e"] is JsonNode receiver
+                && obj["type"] is JsonNode enumType
+                && TypeJson.OwnerName(enumType) is string enumOwner)
+            {
+                if (refs.TryKotlinRichEnumInstanceFields(enumOwner, out var nameField, out var ordinalField))
+                {
+                    var physicalField = kind == "enumName" ? nameField : ordinalField;
+                    var receiverClone = receiver.DeepClone();
+                    var typeClone = enumType.DeepClone();
+                    obj.Clear();
+                    obj["k"] = "field";
+                    obj["ownerType"] = typeClone;
+                    obj["recv"] = receiverClone;
+                    obj["name"] = physicalField;
+                }
+                else if (kind == "enumName")
+                {
+                    var receiverClone = receiver.DeepClone();
+                    obj.Clear();
+                    obj["k"] = "objMethod";
+                    obj["method"] = "toString";
+                    obj["recv"] = receiverClone;
+                }
+                else if (localBasicEnums.Contains(enumOwner))
+                {
+                    // A local basic enum's physical value is its contiguous Kotlin ordinal. The type-bearing form is
+                    // reserved for referenced CLR enums, whose declaration index may differ from the underlying value.
+                    obj.Remove("type");
+                }
+            }
             foreach (var kv in obj)
-                if (kv.Value != null) Walk(kv.Value, refs);
+                if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums);
         }
         else if (node is JsonArray arr)
             foreach (var item in arr)
-                if (item != null) Walk(item, refs);
+                if (item != null) Walk(item, refs, localBasicEnums);
     }
 }
 

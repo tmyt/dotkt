@@ -2,6 +2,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
 import roundtrip.ownership.Owner
 import roundtrip.ownership.OwnedRichEnum
+import roundtrip.ownership.OwnedRichEnumContract
 import roundtrip.ownership.OwnedRichLambdaEnum
 import roundtrip.ownership.SparseGenericSuspendOwner
 import roundtrip.ownership.sparseGenericSuspend
@@ -90,6 +91,12 @@ class NestedOwnershipRoundtripTests {
         ClassicAssert.AreEqual(55, genericRepeatedLocal.first)
         ClassicAssert.AreEqual(55, genericRepeatedLocal.second)
         ClassicAssert.AreEqual(17, OwnedRichEnum.FIRST.marker())
+        val richContract: OwnedRichEnumContract = OwnedRichEnum.FIRST
+        ClassicAssert.AreEqual(18, richContract.contractMarker())
+        ClassicAssert.AreEqual("FIRST", OwnedRichEnum.FIRST.name)
+        ClassicAssert.AreEqual("custom", OwnedRichEnum.FIRST.toString())
+        ClassicAssert.AreEqual(0, OwnedRichEnum.FIRST.ordinal)
+        ClassicAssert.AreEqual(0, OwnedRichEnum.FIRST.compareTo(OwnedRichEnum.FIRST))
         ClassicAssert.AreSame(OwnedRichEnum.FIRST, OwnedRichEnum.valueOf("FIRST"))
         ClassicAssert.AreSame(OwnedRichEnum.FIRST, enumValueOf<OwnedRichEnum>("FIRST"))
         ClassicAssert.AreEqual(listOf(OwnedRichEnum.FIRST), enumValues<OwnedRichEnum>().toList())

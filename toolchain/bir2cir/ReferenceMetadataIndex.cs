@@ -67,6 +67,8 @@ sealed partial class ReferenceMetadataIndex
 
     public sealed record RichEnumMetadata(
         IReadOnlyDictionary<string, string> EntryFields,
+        string Name,
+        string Ordinal,
         string Values,
         string ValueOf);
 
@@ -1640,16 +1642,25 @@ sealed partial class ReferenceMetadataIndex
         return false;
     }
 
-    public bool IsKotlinRichEnumStaticApi(string ownerFqn, string memberName, int paramCount)
+    public bool TryKotlinRichEnumStaticApi(
+        string ownerFqn, string sourceMemberName, int paramCount, out string physicalMemberName)
     {
         var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
-        if (!_richEnums.TryGetValue(bare, out var metadata)) return false;
-        return paramCount switch
+        if (_richEnums.TryGetValue(bare, out var metadata))
         {
-            0 => memberName == metadata.Values,
-            1 => memberName == metadata.ValueOf,
-            _ => false,
-        };
+            if (paramCount == 0 && sourceMemberName == "values")
+            {
+                physicalMemberName = metadata.Values;
+                return true;
+            }
+            if (paramCount == 1 && sourceMemberName == "valueOf")
+            {
+                physicalMemberName = metadata.ValueOf;
+                return true;
+            }
+        }
+        physicalMemberName = null;
+        return false;
     }
 
     public bool TryKotlinRichEnumEntryField(string ownerFqn, string entryName, out string physicalField)
@@ -1659,6 +1670,21 @@ sealed partial class ReferenceMetadataIndex
             metadata.EntryFields.TryGetValue(entryName, out physicalField))
             return true;
         physicalField = null;
+        return false;
+    }
+
+    public bool TryKotlinRichEnumInstanceFields(
+        string ownerFqn, out string nameField, out string ordinalField)
+    {
+        var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
+        if (_richEnums.TryGetValue(bare, out var metadata))
+        {
+            nameField = metadata.Name;
+            ordinalField = metadata.Ordinal;
+            return true;
+        }
+        nameField = null;
+        ordinalField = null;
         return false;
     }
     public JsonArray OwnerTypeParamDeclarations(string ownerFqn)
@@ -5192,13 +5218,17 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException("expected exactly one trusted [KotlinRichEnum]");
         var payload = CarrierJsonOf(type.GetCustomAttributesData(), declaringAssembly, KotlinRichEnumAttr) as JsonObject
             ?? throw new InvalidDataException("malformed [KotlinRichEnum] payload");
-        if (payload.Count != 3 || payload["entries"] is not JsonArray entries ||
+        if (payload.Count != 5 || payload["entries"] is not JsonArray entries ||
+            payload["name"] is not JsonValue nameFieldValue ||
+            !nameFieldValue.TryGetValue<string>(out var nameField) || string.IsNullOrEmpty(nameField) ||
+            payload["ordinal"] is not JsonValue ordinalFieldValue ||
+            !ordinalFieldValue.TryGetValue<string>(out var ordinalField) || string.IsNullOrEmpty(ordinalField) ||
             payload["values"] is not JsonValue valuesValue ||
             !valuesValue.TryGetValue<string>(out var values) || string.IsNullOrEmpty(values) ||
             payload["valueOf"] is not JsonValue valueOfValue ||
             !valueOfValue.TryGetValue<string>(out var valueOf) || string.IsNullOrEmpty(valueOf))
             throw new InvalidDataException(
-                "malformed [KotlinRichEnum] payload: expected entries plus values/valueOf names");
+                "malformed [KotlinRichEnum] payload: expected entries plus name/ordinal fields and values/valueOf APIs");
         if (!type.IsClass || type.IsEnum || type.IsGenericType)
             throw new InvalidDataException(
                 $"malformed [KotlinRichEnum] on '{type.FullName}': expected a non-generic reference class");
@@ -5223,13 +5253,30 @@ sealed partial class ReferenceMetadataIndex
                     "must be uniquely public, static, initonly, and self-typed");
         }
 
+        if (!physicalFields.Add(nameField) || !physicalFields.Add(ordinalField))
+            throw new InvalidDataException(
+                "malformed [KotlinRichEnum] payload: physical fields must be distinct");
+        void RequireMetadataField(string fieldName, IReadOnlySet<string> fieldTypes)
+        {
+            var fields = type.GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(field => field.Name == fieldName && fieldTypes.Contains(field.FieldType.FullName) && field.IsInitOnly)
+                .ToArray();
+            if (fields.Length != 1)
+                throw new InvalidDataException(
+                    $"malformed [KotlinRichEnum] on '{type.FullName}': metadata field '{fieldName}' " +
+                    $"must be uniquely public, instance, initonly, and {string.Join("/", fieldTypes)}-typed");
+        }
+        RequireMetadataField(nameField, new HashSet<string>(StringComparer.Ordinal) { "System.String", "kotlin.String" });
+        RequireMetadataField(ordinalField, new HashSet<string>(StringComparer.Ordinal) { "System.Int32", "kotlin.Int" });
+
         var generatedValues = type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
             .Where(method => method.Name == values && method.ReturnType.IsArray &&
                 method.ReturnType.GetArrayRank() == 1 && method.ReturnType.GetElementType() == type &&
-                method.GetParameters().Length == 0 &&
+                !method.IsGenericMethod && method.GetParameters().Length == 0 &&
                 HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
         var generatedValueOf = type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
             .Where(method => method.Name == valueOf && method.ReturnType == type &&
+                !method.IsGenericMethod &&
                 method.GetParameters() is [var parameter] &&
                 parameter.ParameterType.FullName is "System.String" or "kotlin.String" &&
                 HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
@@ -5237,7 +5284,7 @@ sealed partial class ReferenceMetadataIndex
             generatedValues[0].MetadataToken == generatedValueOf[0].MetadataToken)
             throw new InvalidDataException(
                 $"malformed [KotlinRichEnum] on '{type.FullName}': compiler-generated values/valueOf APIs are missing or ambiguous");
-        return new RichEnumMetadata(entryFields, values, valueOf);
+        return new RichEnumMetadata(entryFields, nameField, ordinalField, values, valueOf);
     }
 
     static JsonObject TrustedStaticCarrierPayload(Type carrierType, Assembly declaringAssembly)
