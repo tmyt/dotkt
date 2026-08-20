@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Constructed nested generic types now bind external member signatures (#503).** bir2cir resolves the exact CLR
+  metadata name for each flattened type identity, so an argument such as `Outer<Int>.Leaf<String>?` matches the
+  declaring MethodDef instead of guessing one aggregate arity suffix for the nested name.
+
 - **Referenced value-type classification now uses the complete type identity (#356).** Nested CLR names are
   normalized consistently and generic argument count distinguishes legal same-stem declarations, so every bir2cir
   consumer agrees whether a constructed external type needs value-type lowering regardless of scan order or which

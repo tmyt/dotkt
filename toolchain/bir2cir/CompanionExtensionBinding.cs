@@ -206,10 +206,11 @@ static class CompanionExtensionBinding
         // Preserve the semantic classifier through BirTypeLowering when it has a CLR alias. Exact metadata spelling is
         // needed only for unaliased referenced types (notably nested generic TypeDefs); applying it to an alias first
         // would turn `kotlin.collections.List` into `kotlin.collections.List`1` and bypass the IReadOnlyList binding.
-        var physicalReceiverClassifier = localTypes.ContainsKey(receiverClassifier) ||
-                refs.Aliases.ContainsKey(receiverClassifier)
-            ? receiverClassifier
-            : refs.ExactPhysicalTypeName(receiverClassifier) ?? receiverClassifier;
+        var physicalReceiverClassifier = receiverClassifier;
+        if (!localTypes.ContainsKey(receiverClassifier) && !refs.Aliases.ContainsKey(receiverClassifier) &&
+            refs.TryExactPhysicalTypeName(receiverClassifier, refs.OwnerArity(receiverClassifier), out var exactReceiver))
+            physicalReceiverClassifier = exactReceiver ?? throw new InvalidOperationException(
+                $"ambiguous CLR metadata identity for companion-extension receiver '{receiverClassifier}'");
         var graphKey = semanticOwner + "\u001f" + receiverClassifier;
         var containerName = semanticOwner + "$extensions$" + StableId(graphKey).ToLowerInvariant();
         var groupSimpleName = "<G>$" + StableId("group\u001f" + graphKey);

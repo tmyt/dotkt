@@ -23,5 +23,6 @@ class NestedArityTests {
         // Nested CLR declarations flatten the outer and inner generic arguments into one identity. The producer and
         // the BIR consumer must therefore agree that GenericOuter<Int>.Leaf<String> has arity two.
         assertEquals(true, Oracle.FlattenedNestedValue() != null)
+        assertEquals(true, Oracle.HasFlattenedNestedValue(Oracle.FlattenedNestedValue()))
     }
 }

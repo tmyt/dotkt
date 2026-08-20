@@ -272,7 +272,7 @@ sealed partial class ReferenceMetadataIndex
     // Source/KLIB vocabulary flattens CLR nesting to dots and drops per-TypeDef arity suffixes. Generated CLR
     // signatures must recover the exact metadata identity here in bir2cir; ilemit must not infer whether a generic
     // argument belongs to an outer or inner TypeDef from the flattened total arity.
-    readonly Dictionary<string, string> _exactPhysicalTypeByDottedName = new(StringComparer.Ordinal);
+    readonly Dictionary<OwnerTypeIdentity, string> _exactPhysicalTypeByDottedName = new();
     readonly Dictionary<string, string> _physicalTypeBySemanticName = new(StringComparer.Ordinal);
     readonly Dictionary<string, int> _innerCapturedCount = new(StringComparer.Ordinal);
     readonly Dictionary<string, string> _innerSemanticOwner = new(StringComparer.Ordinal);
@@ -335,13 +335,18 @@ sealed partial class ReferenceMetadataIndex
     // routes to the this-assembly-emitted type — `new` stays a local `new` (not `newClr`), and a
     // callInstance/callStatic/field/boundDelegate stays owner-local (NetInteropBinding leaves it for the emitted-type
     // path) instead of reshaping to a `clr*` node against the ref. Set once by the Driver before the transform loop.
-    // SCOPE: this filters the ResolveNetType axis ONLY. The ref.dll's DotKt sidecar indexes (TypeKinds/IsValueType,
+    // SCOPE: this filters both reflection-backed resolver axes. The ref.dll's DotKt sidecar indexes (TypeKinds/IsValueType,
     // owner arity, ctor param types) are NOT filtered by this set — in the #15 layout they are populated from the SAME
     // source that produced the local decl, so they agree; a genuinely divergent stale-dll is out of scope (source-wins
     // is still the right precedence there, matching Roslyn CS0436). `@ClrTypeAlias`/`@ClrIntrinsic` maps are empty for a
     // user lib, so TryResolveClrOwner never mis-binds a local user type.
     IReadOnlySet<string> _localEmittedTypes = new HashSet<string>(StringComparer.Ordinal);
-    public void SetLocalEmittedTypes(IReadOnlySet<string> fqns) => _localEmittedTypes = fqns;
+    public void SetLocalEmittedTypes(IReadOnlySet<string> fqns) => _localEmittedTypes = fqns
+        .Select(fqn => DottedFqn(BareOwnerFqn(fqn)))
+        .ToHashSet(StringComparer.Ordinal);
+
+    bool IsLocalEmittedType(string fqn) =>
+        _localEmittedTypes.Contains(DottedFqn(BareOwnerFqn(fqn)));
 
     // Foundational REFERENCE-type aliases known to bir2cir directly (the same principle as the foundational
     // kotlin.* -> CLR type map already hardcoded in this file). Listed here so member-call / construction
@@ -526,7 +531,7 @@ sealed partial class ReferenceMetadataIndex
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ExactPhysicalTypeByDottedName)
-                _exactPhysicalTypeByDottedName.TryAdd(kv.Key, kv.Value);
+                AddExactPhysicalTypeName(_exactPhysicalTypeByDottedName, kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.PhysicalTypeBySemanticName)
                 _physicalTypeBySemanticName.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.InnerCapturedCount)
@@ -1008,7 +1013,7 @@ sealed partial class ReferenceMetadataIndex
         // LOCAL-OVER-REF (#15): a type DECLARED in this compilation is this-assembly-emitted and is the authority for
         // its identity — never resolve it as an EXTERNAL .NET type off the refs, even when a referenced dll exports the
         // same FQN (the ProjectReference-source-glob layout). Source wins: leave the node routing to the emitted type.
-        if (_localEmittedTypes.Contains(BareOwnerFqn(fqn))) return null;
+        if (IsLocalEmittedType(fqn)) return null;
         return ProbeNetType(fqn, genericArity);
     }
 
@@ -1250,7 +1255,7 @@ sealed partial class ReferenceMetadataIndex
         if (string.IsNullOrEmpty(fqn)) return null;
         if (fqn.StartsWith("dotkt$", StringComparison.Ordinal)
             && !fqn.StartsWith("dotkt$obj", StringComparison.Ordinal)) return null;
-        if (_localEmittedTypes.Contains(BareOwnerFqn(fqn))) return null;
+        if (IsLocalEmittedType(fqn)) return null;
         return ProbeNetType(fqn, genericArity);
     }
 
@@ -1723,15 +1728,18 @@ sealed partial class ReferenceMetadataIndex
         return _publicParameterlessConstructibleOwners.Contains(bare);
     }
 
-    public string ExactPhysicalTypeName(string ownerFqn) => ownerFqn == null
-        ? null
-        : _exactPhysicalTypeByDottedName.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)));
+    public bool TryExactPhysicalTypeName(string ownerFqn, int arity, out string exact)
+    {
+        exact = null;
+        return ownerFqn != null &&
+            _exactPhysicalTypeByDottedName.TryGetValue(OwnerIdentity(ownerFqn, arity), out exact);
+    }
 
     // Exact CLR metadata identity for a trusted external DotKt classifier. Local source declarations remain
     // authoritative and therefore never rewrite through a same-named reference.
     public IReadOnlyDictionary<string, string> PhysicalTypeNames =>
         _physicalTypeBySemanticName
-            .Where(kv => !_localEmittedTypes.Contains(kv.Key))
+            .Where(kv => !IsLocalEmittedType(kv.Key))
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
 
     // Kotlin inner applications arrive in BIR as [own..., outer...]. Trusted DotKt metadata supplies the number of
@@ -2511,17 +2519,20 @@ sealed partial class ReferenceMetadataIndex
         // the trusted DotKt type index to its exact `Outer`N+Inner`M` metadata identity — never guessed by trying
         // separator/arity combinations. The same exact name is tried in both twins because a shipped-only helper can
         // legitimately be absent from the reference surface.
-        var exactOwner = ExactPhysicalTypeName(ownerFqn);
+        var hasExactOwner = TryExactPhysicalTypeName(ownerFqn, ownerArity, out var exactOwner);
+        if (hasExactOwner && exactOwner == null)
+            throw new InvalidOperationException(
+                $"ambiguous CLR metadata identity for nested type '{bareOwner}' with flattened arity {ownerArity}");
         // A bare semantic name with generic arguments must not win a same-named non-generic declaration
         // (`EventHandler` beside `EventHandler<T>`). Only a spelling that already encodes physical arity/nesting is
         // authoritative before the arity-aware probes.
         var physicalSpelling = ownerFqn.Contains('`') || ownerFqn.Contains('+');
-        var owner = (physicalSpelling || ownerArity == 0 ? ResolveRefType(ownerFqn) : null)
-            ?? (exactOwner == null ? null : ResolveRefType(exactOwner))
-            ?? ResolveRefType(bareOwner, ownerArity)
-            ?? PhysicalTypeNamed(ownerFqn)
-            ?? (exactOwner == null ? null : PhysicalTypeNamed(exactOwner))
-            ?? PhysicalTypeNamed(bareOwner, ownerArity);
+        var owner = hasExactOwner
+            ? ResolveRefType(exactOwner) ?? PhysicalTypeNamed(exactOwner)
+            : (physicalSpelling || ownerArity == 0 ? ResolveRefType(ownerFqn) : null)
+                ?? ResolveRefType(bareOwner, ownerArity)
+                ?? PhysicalTypeNamed(ownerFqn)
+                ?? PhysicalTypeNamed(bareOwner, ownerArity);
         if (owner == null)
             return false;
         // Instance as well as static: a call on a referenced Kotlin owner — every method on an `object`, reached
@@ -3753,8 +3764,9 @@ sealed partial class ReferenceMetadataIndex
                     // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
-                    metadata.ExactPhysicalTypeByDottedName.TryAdd(
-                        StripGenericArity(DottedFqn(ownerFqn)), ExactPhysicalMetadataName(type));
+                    AddExactPhysicalTypeName(metadata.ExactPhysicalTypeByDottedName,
+                        OwnerIdentity(ownerFqn, type.IsGenericType ? type.GetGenericArguments().Length : 0),
+                        ExactPhysicalMetadataName(type));
                     if (dotKtAuthored && type.IsInterface && !type.IsGenericType
                         && HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr)
                         && KotlinTypeOf(type.GetCustomAttributesData(), asm) is TypeNode.Fqn
@@ -5834,6 +5846,16 @@ sealed partial class ReferenceMetadataIndex
     static OwnerTypeIdentity OwnerIdentity(string name, int arity) =>
         new(DottedFqn(StripGenericArity(name)), arity);
 
+    // A flattened Kotlin/BIR identity does not encode which nested TypeDef segment owns each generic slot.
+    // Preserve that loss of information as an ambiguous null entry instead of letting reflection or reference order
+    // select between legal spellings such as Outer`1+Leaf`1 and Outer+Leaf`2.
+    static void AddExactPhysicalTypeName(
+        Dictionary<OwnerTypeIdentity, string> index, OwnerTypeIdentity identity, string exact)
+    {
+        if (!index.TryAdd(identity, exact) && index[identity] != exact)
+            index[identity] = null;
+    }
+
     // The nested-type separator normalizer: a reflected FullName uses `+` between an enclosing type and its nested type
     // (`kotlin.coroutines.CoroutineContext+Key`), while kotc/bir2cir speak dots everywhere. Converge onto dots so a
     // bound-index lookup keyed by kotc's `kotlin.coroutines.CoroutineContext.Key` matches.
@@ -5930,7 +5952,7 @@ sealed class ReferenceDotKtMetadata
     public readonly List<CtorBinding> CtorBindings = new();                               // per-ctor declaration shape (#86 D1)
     public readonly List<ReferencedAliasConstructorAdapter> AliasConstructorAdapters = new();
     public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
-    public readonly Dictionary<string, string> ExactPhysicalTypeByDottedName = new(StringComparer.Ordinal);
+    public readonly Dictionary<ReferenceMetadataIndex.OwnerTypeIdentity, string> ExactPhysicalTypeByDottedName = new();
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> InnerSemanticOwner = new(StringComparer.Ordinal);

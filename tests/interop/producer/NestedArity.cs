@@ -56,4 +56,6 @@ public static class Oracle
         value.HasValue && value.Value.Value == 7;
 
     public static GenericOuter<int>.Leaf<string>? FlattenedNestedValue() => new("flattened nested value");
+    public static bool HasFlattenedNestedValue(GenericOuter<int>.Leaf<string>? value) =>
+        value.HasValue && value.Value.Value == "flattened nested value";
 }
