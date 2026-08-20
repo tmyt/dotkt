@@ -1953,6 +1953,7 @@ internal sealed class AssemblyScanner
             foreach (var constraintHandle in gp.GetConstraints())
             {
                 var constraint = _md.GetGenericParameterConstraint(constraintHandle);
+                if (IsClrPhysicalOnlyConstraint(_md, constraint.Type)) continue;
                 parameter.UpperBound.Add(
                     signatures.DecodeEntity(constraint.Type, typeContext, platform: false));
             }
@@ -4156,7 +4157,10 @@ internal sealed class AssemblyScanner
                     Variance = TypeParameter.Types.Variance.Inv,
                 };
                 foreach (var cHandle in gp.GetConstraints())
-                    tp.UpperBound.Add(signatures.DecodeEntity(_md.GetGenericParameterConstraint(cHandle).Type, context, platform: false));
+                {
+                    var constraint = _md.GetGenericParameterConstraint(cHandle);
+                    tp.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
+                }
                 function.TypeParameter.Add(tp);
             }
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
@@ -4407,8 +4411,10 @@ internal sealed class AssemblyScanner
                 Variance = TypeParameter.Types.Variance.Inv,
             };
             foreach (var constraintHandle in gp.GetConstraints())
-                parameter.UpperBound.Add(signatures.DecodeEntity(
-                    _md.GetGenericParameterConstraint(constraintHandle).Type, context, platform: false));
+            {
+                var constraint = _md.GetGenericParameterConstraint(constraintHandle);
+                parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
+            }
             destination.Add(parameter);
         }
     }
@@ -4590,7 +4596,10 @@ internal sealed class AssemblyScanner
                     Variance = TypeParameter.Types.Variance.Inv,
                 };
                 foreach (var cHandle in gp.GetConstraints())
-                    tp.UpperBound.Add(signatures.DecodeEntity(_md.GetGenericParameterConstraint(cHandle).Type, context, platform: false));
+                {
+                    var constraint = _md.GetGenericParameterConstraint(cHandle);
+                    tp.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
+                }
                 function.TypeParameter.Add(tp);
             }
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
@@ -5306,8 +5315,10 @@ internal sealed class AssemblyScanner
                 Variance = TypeParameter.Types.Variance.Inv,
             };
             foreach (var constraintHandle in gp.GetConstraints())
-                parameter.UpperBound.Add(signatures.DecodeEntity(
-                    _md.GetGenericParameterConstraint(constraintHandle).Type, context, platform: false));
+            {
+                var constraint = _md.GetGenericParameterConstraint(constraintHandle);
+                parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
+            }
             property.TypeParameter.Add(parameter);
         }
         return property;
@@ -5969,6 +5980,25 @@ internal sealed class AssemblyScanner
         };
         bool IsReference(TypeReference t) => _md.GetString(t.Namespace) == ns && _md.GetString(t.Name) == name;
         bool IsDefinition(TypeDefinition t) => _md.GetString(t.Namespace) == ns && _md.GetString(t.Name) == name;
+    }
+
+    // System.ValueType and System.Enum are physical CLR roots, not classifiers in Kotlin's nominal subtype lattice.
+    // csc emits them as rows alongside struct/enum constraints; exposing the rows as KLIB upper bounds makes every
+    // otherwise-legal Kotlin value fail frontend checking. bir2cir validates these rows together with the associated
+    // GenericParameterAttributes against the actual physical TypeSpec.
+    private static bool IsClrPhysicalOnlyConstraint(MetadataReader reader, EntityHandle handle)
+    {
+        if (handle.IsNil) return false;
+        return handle.Kind switch
+        {
+            HandleKind.TypeReference => MatchReference(reader.GetTypeReference((TypeReferenceHandle)handle)),
+            HandleKind.TypeDefinition => MatchDefinition(reader.GetTypeDefinition((TypeDefinitionHandle)handle)),
+            _ => false,
+        };
+        bool MatchReference(TypeReference type) => reader.GetString(type.Namespace) == "System" &&
+            reader.GetString(type.Name) is "ValueType" or "Enum";
+        bool MatchDefinition(TypeDefinition type) => reader.GetString(type.Namespace) == "System" &&
+            reader.GetString(type.Name) is "ValueType" or "Enum";
     }
 
     private bool IsAttributeType(TypeDefinitionHandle handle)

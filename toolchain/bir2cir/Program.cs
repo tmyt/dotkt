@@ -1033,6 +1033,11 @@ sealed class Pipeline
         // declaration). Feeds StarProjectionBoundLowering so a `Key<object>` (kotc's star-projection erasure) is
         // repointed to `Key<Element>` for the stdlib's OWN Key; a REFERENCED Key resolves via refs.TvBound instead.
         var starProjBounds = StarProjectionBoundLowering.CollectTypeParamBounds(staged.Select(s => s.Root));
+        // The validator's local declaration index and referenced generic-declaration cache are module invariants.
+        // Prepare them once before per-file physical finishing; each root is checked only after its last BIR-space
+        // type-argument rewrite below.
+        var externalGenericConstraintValidation = ExternalGenericConstraintValidation.Prepare(
+            staged.Select(file => file.Root).ToList(), refs, isValueFqn, localBasicEnums);
         // The early semantic index only prevents a local accessor call from being captured by an external ancestor.
         // Capture the actual post-allocation MethodDef names now, once, for exact call allocation below.
         var localPropertyAccessors = MemberCallSubstitution.CollectLocalPropertyAccessors(
@@ -1108,6 +1113,13 @@ sealed class Pipeline
             // self-build) or refs.TvBound (a referenced owner). ALL builds, BEFORE BirTypeLowering (still kotlin.Any /
             // dotted Kotlin FQNs here), so ref.dll + rt.dll + app agree on the corrected signature.
             StarProjectionBoundLowering.Apply(substituted, starProjBounds, refs);
+            // A reference KLIB can express ordinary nominal generic bounds, but not ECMA's class/struct/new() flags;
+            // projecting the implicit ValueType/Enum rows as Kotlin bounds is worse, because no Kotlin value inhabits
+            // those CLR root classifiers. Validate that physical half against the authoritative reference metadata
+            // after every BIR-space splice/retyping/star-bound rewrite has settled the constructed arguments and before
+            // type lowering erases their Kotlin/value identities. Foreign declaration descriptors are deliberately not
+            // use-site TypeSpecs and retain their own generic frames. The frontend remains the owner of nominal bounds.
+            externalGenericConstraintValidation.Apply(substituted);
             // #29 ROUND-TRIP RECORD: before the type transform collapses a nested read-only `kotlin.collections.List/
             // Set/Collection` (Root V) to its invariant sibling `IList`/`ICollection` — colliding with the mutable
             // sibling's own alias and losing the Kotlin read-only-vs-mutable identity — stash the PRE-collapse Kotlin

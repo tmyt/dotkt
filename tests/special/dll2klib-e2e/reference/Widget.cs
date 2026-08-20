@@ -9,6 +9,57 @@ public interface IAdder
     int Add(int value);
 }
 
+public interface IConstraintSink<T>
+{
+    int Accept(T value);
+}
+
+public interface IConstraintMarker
+{
+}
+
+public sealed class GoodConstraintSink : IConstraintSink<string>, IConstraintMarker
+{
+    public int Accept(string value) => value.Length;
+}
+
+public sealed class ConstraintBox<T> where T : IConstraintSink<string>, IConstraintMarker
+{
+    public int Value => 1;
+}
+
+public readonly struct ConstraintValue;
+
+public enum ConstraintKind
+{
+    First,
+}
+
+public sealed class StructConstraintBox<T> where T : struct
+{
+    public int Value => 2;
+}
+
+public sealed class EnumConstraintBox<T> where T : System.Enum
+{
+    public int Value => 4;
+}
+
+public sealed class ReferenceConstraintBox<T> where T : class
+{
+    public int Value => 8;
+}
+
+public static class ConstraintApi
+{
+    public static int Read<T>(ReferenceConstraintBox<T> box) where T : class => box.Value;
+}
+
+public sealed class FreshConstraintBox<T> where T : class, new()
+{
+    public T Create() => new();
+}
+
 internal interface IHiddenControl
 {
     int HiddenDefault() => 101;

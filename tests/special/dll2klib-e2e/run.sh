@@ -196,6 +196,35 @@ PY
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
 
+# KLIB upper bounds own Kotlin-nominal rows. CLR class/struct/new() flags and the implicit ValueType/Enum rows have
+# no faithful Kotlin nominal encoding, so kotc accepts these source shapes and bir2cir must reject the invalid physical
+# TypeSpecs against the authoritative reference metadata instead of leaving a TypeLoadException for runtime.
+expect_constraint_failure() {
+	local name="$1" owner="$2" requirement="$3"
+	local bir="$OUT/constraint-$name-bir" cir="$OUT/constraint-$name-cir" log="$OUT/constraint-$name.log"
+	mkdir -p "$bir" "$cir"
+	"$KOTC" "$ROOT/tests/special/dll2klib-e2e/invalid-$name-constraint.kt" \
+		-no-stdlib \
+		-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$bir"
+	if dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "$bir"/*.bir.json >"$log" 2>&1; then
+		die "invalid $name generic constraint unexpectedly reached CIR"
+	fi
+	grep -q "CLR generic constraint violation" "$log" \
+		|| die "invalid $name generic constraint lacked the physical-constraint diagnostic"
+	grep -q "$owner" "$log" \
+		|| die "invalid $name generic constraint diagnostic did not name $owner"
+	grep -q "$requirement" "$log" \
+		|| die "invalid $name generic constraint diagnostic did not state $requirement"
+}
+
+compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
+expect_constraint_failure class ReferenceConstraintBox "reference type"
+expect_constraint_failure struct StructConstraintBox "value type"
+expect_constraint_failure enum EnumConstraintBox "enum type"
+expect_constraint_failure new FreshConstraintBox "parameterless constructor"
+expect_constraint_failure new-alias FreshConstraintBox "parameterless constructor"
+expect_constraint_failure nested-class ReferenceConstraintBox "reference type"
+
 # A CLR explicit implementation satisfies an interface slot but is not an ordinary class API. Method/property/
 # indexer/event collisions therefore remain reachable only through the exact interface, while a derived Kotlin class
 # may re-list one interface and supply a new implementation without changing the mappings it merely inherits.
@@ -239,7 +268,6 @@ for member in MissingReabstractMethod MissingReabstractProperty MissingReabstrac
 		|| die "$member was rejected for an unexpected reason"
 done
 
-compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
 mkdir -p "$OUT/default-bir" "$OUT/default-cir" "$OUT/default-il" \
 	"$OUT/explicit-slot-bir" "$OUT/explicit-slot-cir" "$OUT/explicit-slot-il"
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/default-interface-consumer.kt" \
@@ -283,11 +311,11 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "196" ]] || die "generated program returned '$actual', expected '196'"
+[[ "$actual" == "243" ]] || die "generated program returned '$actual', expected '243'"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/il/Consumer.dll"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR static member"
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (196)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (243)"

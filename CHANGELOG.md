@@ -7,6 +7,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Class type-parameter constraints now survive DLL-to-KLIB projection without inventing an uninhabitable Kotlin
+  bound (#351).** Ordinary nominal rows are enforced by the Kotlin frontend, including multiple bounds, while the
+  implicit CLR `ValueType`/`Enum` rows are kept out of the Kotlin classifier lattice. bir2cir validates those physical
+  roots and the CLR `class`, `struct`, and `new()` flags against the referenced construction, so legal value, enum,
+  reference, and default-constructible arguments run and invalid ones fail before emission. Round-trip inspection also
+  pins the exact classifier, self argument, and single-bound cardinality of Kotlin-origin `Comparable<T>` constraints.
+
 - **`suspendCoroutine` now accepts an already-materialized block value (#246).** `bir2cir` invokes a block held in a
   local, parameter, field, or other function-valued expression directly, preserving its single evaluation and
   captures instead of requiring a literal lambda body that can be reconstructed inline.
