@@ -206,14 +206,26 @@ static partial class ClrMemberResolution
 
     // ---- events --------------------------------------------------------------------------------
 
-    // A clrEventAdd/clrEventRemove on a .NET owner. Resolve the owner off the ref.dll, find the EventInfo, and stamp the
-    // add/remove accessor's complete memberRef plus `dispatch`. Replaces ilemit's unchecked
+    // A clrEventAdd/clrEventRemove. A local owner was already bound to its synthesized declaration by
+    // ClrEventImplBinding; resolve only its concrete delegate constructor here. For a .NET owner, resolve the owner off
+    // the ref.dll, find the EventInfo, and stamp the add/remove accessor's complete memberRef plus `dispatch`. Replaces ilemit's unchecked
     // `GetEvent(...).GetAddMethod()` (a NullReferenceException on a missing/value-type/constructed-generic event — #113):
     // a missing event is now a hard ABI error here, and the handler delegate type flows from the resolved accessor param.
     static void ResolveEvent(JsonObject node)
     {
         if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn)
             throw new InvalidOperationException($"bir2cir: clrEvent owner is not a .NET FQN slot ({TypeNode.ToJson(ReadOwnerNode(node["type"]))}) — #46 W1-S3");
+        if (_localTypes.Contains(ownerFqn.Name))
+        {
+            var delegateType = TypeJson.Read(node["delegateType"])
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: local clrEvent '{ownerFqn.Name}' is missing its bound delegate declaration");
+            if (node["accessor"] == null || node["dispatch"] == null)
+                throw new InvalidOperationException(
+                    $"bir2cir: local clrEvent '{ownerFqn.Name}' is missing its bound accessor identity");
+            ResolveDelegateCtor(node, delegateType);
+            return;
+        }
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
             throw new InvalidOperationException($"bir2cir: clrEvent owner '{ownerFqn.Name}' does not resolve to a .NET type (#46 W1-S3)");

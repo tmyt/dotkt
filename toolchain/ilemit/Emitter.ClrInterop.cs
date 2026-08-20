@@ -227,6 +227,13 @@ sealed partial class Emitter
     MethodInfo LinkClrMethod(Type type, string name, JsonElement e, bool instance)
     {
         if (PrimaryFromRef(e, "memberRef") is MethodInfo referenced) return referenced;
+        if (e.TryGetProperty("localAccessor", out var local) && local.ValueKind == JsonValueKind.True)
+        {
+            var sig = SigNodes(e)
+                ?? throw new InvalidOperationException(
+                    $"ilemit: local accessor {type?.FullName}.{name} carries no exact signature");
+            return ResolveMethod(ParseOwnerSlot(e.GetProperty("type")), name, out _, sig, 0);
+        }
         throw new InvalidOperationException(
             $"ilemit: clr{(instance ? "Instance" : "Static")} call to {type?.FullName}.{name} carries no resolved "
             + "member reference. Every external member arrives named; a node without one is an earlier-layer drop (#370)");
@@ -417,9 +424,9 @@ sealed partial class Emitter
 
     // `.NET event +=/-=` -> call the event's add/remove accessor with the handler bound as the event's OWN
     // delegate type (e.g. EventHandler).
-    // W1-S3 (#46 / #121 / #113) CONSUME-ONLY event add/remove. bir2cir (ClrMemberResolution) resolved the EventInfo off
-    // the ref.dll and stamped the add/remove accessor memberRef plus `dispatch`.
-    // ilemit LINKS the exact accessor (LinkClrMethod — hard-fails a missing/ambiguous slot, so the old unchecked
+    // W1-S3 (#46 / #121 / #113) CONSUME-ONLY event add/remove. bir2cir either bound a local synthesized accessor by
+    // its complete signature or resolved the EventInfo off the ref.dll and stamped its memberRef plus `dispatch`.
+    // ilemit LINKS that exact accessor (LinkClrMethod — hard-fails a missing/ambiguous slot, so the old unchecked
     // `GetEvent(...).GetAddMethod()` NRE on a missing/value-type/constructed-generic event is gone) and consumes the
     // carried dispatch.
     // The handler arrives in one of two STATED forms: `handlerExact` — an event-forwarder parameter already typed as

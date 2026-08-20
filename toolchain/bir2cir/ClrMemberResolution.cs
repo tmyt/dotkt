@@ -1418,7 +1418,7 @@ static partial class ClrMemberResolution
     {
         "newClr", "clrStatic", "clrInstance", "clrGenericStatic", "clrGenericInstance", "newBoundClrDelegate",
         "newClrStaticDelegate",
-        "clrPropGet", "clrPropSet", "clrEventAdd", "clrEventRemove",
+        "clrPropGet", "clrPropSet",
     };
 
     static void CheckForeignDeclStamped(JsonNode node, string file)
@@ -1428,7 +1428,11 @@ static partial class ClrMemberResolution
             case JsonObject obj:
             {
                 var k = (obj["k"] as JsonValue)?.TryGetValue<string>(out var ks) == true ? ks : null;
-                var resolved = obj["resolvedMemberParams"] != null || (k != null && Array.IndexOf(ResolvedOnlyKinds, k) >= 0);
+                // Event nodes have both a local and a referenced form.  Only the referenced form carries a memberRef;
+                // the local form names an emitted synthesized accessor and must not masquerade as a foreign declaration.
+                var resolvedEvent = k is "clrEventAdd" or "clrEventRemove" && obj["memberRef"] != null;
+                var resolved = obj["resolvedMemberParams"] != null || resolvedEvent
+                    || (k != null && Array.IndexOf(ResolvedOnlyKinds, k) >= 0);
                 if (resolved && obj[ResolvedMemberReturnKey] == null)
                     throw new InvalidOperationException(
                         $"bir2cir: {file}: a '{k ?? "?"}' node resolved against a .NET member carries no declared "

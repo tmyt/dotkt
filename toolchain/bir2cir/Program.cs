@@ -752,10 +752,14 @@ sealed class Pipeline
             staged.Add((substituted, outputName));
         }
 
-        // Event raises can target a Kotlin-declared event in a sibling source file. Every implementation now has its
-        // concrete delegate-derived raise_<E> declaration, so bind all call sites to that exact module-wide signature.
+        // Event raises and subscriptions can target a Kotlin-declared event in a sibling source file. Every
+        // implementation now has its concrete delegate-derived declaration, so bind all call sites to those exact
+        // module-wide facts before type lowering.
         if (!_options.RefBuild)
+        {
             ClrEventImplBinding.BindRaisesAll(staged.Select(s => s.Root), refs);
+            ClrEventImplBinding.BindLocalSubscriptionsAll(staged.Select(s => s.Root));
+        }
 
         // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
         // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.

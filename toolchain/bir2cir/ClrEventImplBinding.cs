@@ -59,6 +59,94 @@ static class ClrEventImplBinding
         foreach (var root in rootList) BindRaises(root, refs, signatures);
     }
 
+    // A subscription can live in a different source file from the Kotlin event declaration.  Once every
+    // `clrEventBacking` has become a concrete `clrEventDecl`, bind add/remove sites whose owner is emitted in this
+    // compilation to that declaration.  Referenced events deliberately remain untouched for
+    // ClrMemberResolution's EventInfo path.
+    public static void BindLocalSubscriptionsAll(IEnumerable<JsonNode> roots)
+    {
+        var rootList = roots.ToList();
+        var definitions = SupertypeGraph.Collect(rootList);
+
+        TypeNode ResolveDelegate(TypeNode.Fqn owner, string eventName)
+        {
+            if (!definitions.ContainsKey(owner.Name)) return null;
+            var pending = new Queue<TypeNode.Fqn>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            pending.Enqueue(owner);
+            while (pending.Count > 0)
+            {
+                var levelCount = pending.Count;
+                var matches = new List<TypeNode>();
+                for (var i = 0; i < levelCount; i++)
+                {
+                    var spec = pending.Dequeue();
+                    if (!seen.Add(SupertypeGraph.TypeKey(spec))
+                        || !definitions.TryGetValue(spec.Name, out var definition)) continue;
+                    var ownerArgs = SupertypeGraph.EffectiveArgs(spec, definition.Arity);
+                    if (ownerArgs == null)
+                        throw new InvalidOperationException(
+                            $"bir2cir: local clrEvent owner '{spec.Name}' has {definition.Arity} type parameter(s), "
+                            + "but the subscription owner does not carry that constructed argument vector");
+                    var declarations = definition.Node["clrEvents"] as JsonArray;
+                    foreach (var declaration in declarations?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
+                    {
+                        if (Str(declaration["k"]) != "clrEventDecl"
+                            || Str(declaration["name"]) != eventName) continue;
+                        var declaredDelegate = TypeJson.Read(declaration["delegateType"])
+                            ?? throw new InvalidOperationException(
+                                $"bir2cir: local clrEvent '{spec.Name}.{eventName}' has no concrete delegate type");
+                        matches.Add(SupertypeGraph.SubstOwnerTvs(declaredDelegate, ownerArgs));
+                    }
+                    foreach (var parent in definition.Interfaces)
+                        if (SupertypeGraph.SubstOwnerTvs(parent, ownerArgs) is TypeNode.Fqn constructed)
+                            pending.Enqueue(constructed);
+                    if (definition.Base != null
+                        && SupertypeGraph.SubstOwnerTvs(definition.Base, ownerArgs) is TypeNode.Fqn constructedBase)
+                        pending.Enqueue(constructedBase);
+                }
+                if (matches.Count == 0) continue;
+                var distinct = matches.GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
+                    .Select(group => group.First()).ToList();
+                if (distinct.Count != 1)
+                    throw new InvalidOperationException(
+                        $"bir2cir: local clrEvent '{owner.Name}.{eventName}' resolves to {distinct.Count} "
+                        + "different delegate declarations at the same inheritance depth");
+                return distinct[0];
+            }
+            return null;
+        }
+
+        void Walk(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                foreach (var child in obj.ToList()) if (child.Value != null) Walk(child.Value);
+                var kind = Str(obj["k"]);
+                if (kind is not ("clrEventAdd" or "clrEventRemove")
+                    || TypeJson.Read(obj["type"]) is not TypeNode.Fqn owner
+                    || !definitions.ContainsKey(owner.Name)) return;
+                var eventName = Str(obj["event"])
+                    ?? throw new InvalidOperationException(
+                        $"bir2cir: local {kind} on '{owner.Name}' is missing its event name");
+                var delegateType = ResolveDelegate(owner, eventName)
+                    ?? throw new InvalidOperationException(
+                        $"bir2cir: no synthesized local event '{eventName}' is reachable from '{owner.Name}'");
+                obj["accessor"] = (kind == "clrEventAdd" ? "add_" : "remove_") + eventName;
+                obj["delegateType"] = TypeJson.Write(delegateType);
+                obj["sig"] = new JsonArray(TypeJson.Write(delegateType));
+                obj["localAccessor"] = true;
+                // synthClrEvents emits public virtual newslot add/remove accessors.  A local inherited accessor is
+                // reached through the same virtual dispatch; no CLR metadata lookup is needed to decide it.
+                obj["dispatch"] = "callvirt";
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.ToList()) if (child != null) Walk(child);
+        }
+
+        foreach (var root in rootList) Walk(root);
+    }
+
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 
     // Resolve every field-like `clrEvents` directive and class-delegation `clrEventForwarders` directive on one type.

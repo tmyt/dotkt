@@ -19,6 +19,7 @@
 //   il-enumtostr  -> enumtostr_inheritedMembers  basic enum inherits ToString/Equals/GetHashCode from System.Enum (toString/println/concat/==/equals/compareTo); decl in sibling EnumCrossFileSupport.kt
 //   #279          -> mixedEntryBodies             rich enum mixing an entry subclass with a direct base instance
 //   #478          -> entryOwnedStateAndInitializers  entry-body fields and initializer blocks in declaration order
+//   #482          -> entryOwnedStateAndInitializers  direct subscribe/close on locally synthesized CLR events
 //   #480          -> baseStateAndInitializers      rich-enum base fields and init blocks run before entry-body initialization
 //   #479          -> implementedInterfaces         rich enum preserves constructed interface slots and defaults
 //
@@ -112,12 +113,24 @@ enum class EnumEntryOwnedEvent {
         val pulse: ClrEvent<(Int) -> Unit> by clrEvent()
 
         override fun exercise(): Int {
+            var seen = 0
+            val subscription = pulse.subscribe { seen += it }
             pulse.invoke(5)
-            return 5
+            subscription.close()
+            pulse.invoke(7)
+            return seen
         }
     };
 
     abstract fun exercise(): Int
+}
+
+class EnumNamedOwnedEvent {
+    val pulse: ClrEvent<(Int) -> Unit> by clrEvent()
+
+    fun raise(value: Int) {
+        pulse.invoke(value)
+    }
 }
 
 object EnumBaseStateLog {
@@ -296,6 +309,14 @@ class EnumTests {
         assertEquals(11, EnumEntryOverrideState.A.value)
         assertEquals(22, EnumEntryOverrideState.B.value)
         assertEquals(5, EnumEntryOwnedEvent.A.exercise())
+
+        val named = EnumNamedOwnedEvent()
+        var seen = 0
+        val subscription = named.pulse.subscribe { seen += it }
+        named.raise(3)
+        subscription.close()
+        named.raise(7)
+        assertEquals(3, seen)
     }
 
     @TestAttribute
