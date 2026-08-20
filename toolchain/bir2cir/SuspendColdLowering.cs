@@ -2245,12 +2245,10 @@ static partial class SuspendColdLowering
             var blockFn = CallEvalLowering.StaticTypeOf(arg) as TypeNode.Fn
                 ?? TypeJson.Read(arg?["funcType"]) as TypeNode.Fn
                 ?? TypeJson.Read((callNode["sig"] as JsonArray)?.FirstOrDefault()) as TypeNode.Fn;
-            if (invBody == null && (blockFn == null || blockFn.Suspend || blockFn.Params.Length != 1
-                || blockFn.Params[0] is not TypeNode.Fqn continuationParam
-                || ReferenceMetadataIndex.BareOwnerFqn(continuationParam.Name) != "kotlin.coroutines.Continuation"))
+            if (invBody == null && (blockFn == null || blockFn.Suspend || blockFn.DelegateParams.Length != 1))
                 throw new InvalidOperationException(
-                    $"malformed {method} block in '{(_ownerClass ?? _fileClass)}.{_name}': expected one non-suspend " +
-                    $"Continuation function argument");
+                    $"malformed {method} block in '{(_ownerClass ?? _fileClass)}.{_name}': expected a non-suspend " +
+                    $"function argument with one delegate parameter");
 
             // The intrinsic's Kotlin result type, in the toolchain's ONE stamp order (bir-common/NodeType.cs
             // PRECEDENCE): `suspendCoroutine<T>` is generic, so `ret` here is the DECLARED `T` while `sty` is the
@@ -2258,6 +2256,24 @@ static partial class SuspendColdLowering
             // and the Unit case — the resume slot is `Any?` either way.
             var resultT = CallEvalLowering.StaticTypeOf(callNode) ?? AnyTn;
             var retTok = IsUnitTn(resultT) ? AnyTn : resultT;
+
+            // Kotlin evaluates the argument before entering the inline intrinsic. A stored/produced function value
+            // therefore has to settle before newSafeContinuation intercepts the current continuation (which is
+            // observable user code), and before the unintercepted emitter arms its own label. Keep the evaluated
+            // delegate in a local and invoke exactly that value below. Stage 0 has already lifted any suspension in
+            // the producer, but Rewrite here remains the one general expression-to-SM vocabulary conversion.
+            if (invBody == null)
+            {
+                var blockLocal = CallEvalLowering.FreshBindingId();
+                var blockDecl = new JsonObject
+                {
+                    ["k"] = "var",
+                    ["name"] = blockLocal,
+                    ["type"] = TypeJson.Write(blockFn),
+                };
+                outp.Add(LocalVar(blockDecl, Rewrite(arg, outp, blockFn)));
+                arg = new JsonObject { ["k"] = "local", ["name"] = blockLocal };
+            }
 
             var state = ++_state;
             var resumeLabel = NextLabel();
@@ -2361,7 +2377,7 @@ static partial class SuspendColdLowering
                 new JsonObject
                 {
                     ["k"] = "cast",
-                    ["type"] = TypeJson.Write(blockFn.Params[0]),
+                    ["type"] = TypeJson.Write(blockFn.DelegateParams[0]),
                     ["e"] = continuation.DeepClone(),
                 },
             },

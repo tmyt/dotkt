@@ -89,6 +89,17 @@ suspend fun suspendCoroutine(value: Int): Int = value + 1
 
 suspend fun sameNameSuspendCoroutineCall(): Int = suspendCoroutine(50)
 
+suspend fun receiverContinuationBlockResume(): Int {
+    val block: Continuation<Int>.() -> Unit = { resume(52) }
+    return suspendCoroutine(block)
+}
+
+@Suppress("UNCHECKED_CAST")
+suspend fun contravariantContinuationBlockResume(): Int {
+    val block: (Any?) -> Unit = { value -> (value as Continuation<Int>).resume(53) }
+    return suspendCoroutine(block)
+}
+
 // il-counit: a PUBLIC Unit-returning suspend fun -> a non-generic `Task` bridge. `unitContinuationStep` completes
 // synchronously, so `unitContinuationGreet` genuinely suspends then resumes on the sync path, exercising the full
 // state-machine + Unit Task-bridge emit. The former println("hello 42") is captured into unitContinuationLog.
@@ -161,6 +172,16 @@ class ContinuationBridgeTests {
     @TestAttribute
     fun sameNameUserFunction() {
         assertEquals(51, blockOn { sameNameSuspendCoroutineCall() })
+    }
+
+    @TestAttribute
+    fun receiverBlockResume() {
+        assertEquals(52, blockOn { receiverContinuationBlockResume() })
+    }
+
+    @TestAttribute
+    fun contravariantBlockResume() {
+        assertEquals(53, blockOn { contravariantContinuationBlockResume() })
     }
 
     @TestAttribute
