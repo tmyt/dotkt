@@ -1153,6 +1153,17 @@ static partial class ClrMemberResolution
     // never shadows the generic def (ResolveRefType/ResolveNetType probe the bare name first).
     static Type RefDef(string bare, int arity)
     {
+        // A flattened nested identity needs each declaring segment's own metadata arity
+        // (`Outer`1+Leaf`1`), not one suffix made from the flattened total (`Outer+Leaf`2`).
+        if (_refs.TryExactPhysicalTypeName(bare, arity, out var exact))
+        {
+            if (exact == null)
+                throw new InvalidOperationException(
+                    $"ambiguous CLR metadata identity for nested type '{bare}' with flattened arity {arity}");
+            // The exact spelling is authoritative. If local-source precedence rejects it or its declaring reference
+            // is unavailable, do not fall back to a different aggregate-arity TypeDef.
+            return _refs.ResolveRefType(exact, 0);
+        }
         if (arity > 0 && !bare.Contains('`') && _refs.ResolveRefType(bare + "`" + arity, arity) is { } g) return g;
         return _refs.ResolveRefType(bare, arity);
     }
