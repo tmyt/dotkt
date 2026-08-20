@@ -404,7 +404,7 @@ internal fun BirEmitter.enumDef(e: IrClass): String {
 	return """{"name":${str(typeName(e))},"kind":"enum"$semanticOwner$kotlinCompanion,"entries":[${entries.joinToString(",")}]}"""
 }
 
-/** A "rich" enum has ctor params, user instance methods, or per-entry bodies -> can't be a CLR enum. */
+/** A "rich" enum has source-authored state/behavior or per-entry bodies -> can't be a CLR enum. */
 internal fun BirEmitter.isRichEnum(ec: IrClass): Boolean {
 	if (ec.kind != ClassKind.ENUM_CLASS) return false
 	val ctorParams = ec.declarations.filterIsInstance<IrConstructor>()
@@ -412,12 +412,14 @@ internal fun BirEmitter.isRichEnum(ec: IrClass): Boolean {
 	val userMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
 		.any { it.origin.toString() == "DEFINED" && it.correspondingPropertySymbol == null && it.body != null }
 	val entryBodies = ec.declarations.filterIsInstance<IrEnumEntry>().any { it.correspondingClass != null }
-	// A `companion { val v = … }` needs a non-literal static field, which a real CLR enum TypeDef may not carry
-	// (ECMA-335 II.14.3: one instance field, every other field static literal). A property-only companion block
-	// therefore forces the rich (plain class) shape, exactly as a companion-block function already does through
-	// `userMethods`.
-	val staticProps = ec.declarations.filterIsInstance<IrProperty>().any { isKotlinStaticProperty(it) }
-	return ctorParams || userMethods || entryBodies || staticProps
+	// Property accessors and anonymous initializers are not counted by userMethods. Either needs the plain-class shape:
+	// a source property may carry instance storage or a computed accessor, while a companion property needs a
+	// non-literal static field (ECMA-335 II.14.3 permits a CLR enum only one instance field and static literal fields).
+	// Match source properties by their declaration origin so synthetic `entries` does not make every enum rich.
+	val userProperties = ec.declarations.filterIsInstance<IrProperty>()
+		.any { it.origin.toString() == "DEFINED" && !it.isFakeOverride }
+	val initializers = ec.declarations.any { it is IrAnonymousInitializer }
+	return ctorParams || userMethods || entryBodies || userProperties || initializers
 }
 
 /**
@@ -461,13 +463,19 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	val propsList = userProps.filter { emitsGet(it) }.joinToString(",") { p ->
 		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}}"""
 	}
-	val setThis = { f: String, v: String -> """{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":${str(f)},"value":$v}""" }
-	val loc = { n: String -> """{"k":"local","name":${str(n)}}""" }
-	// ctor(__name, __ordinal, <user params>) storing each into a field.
+	// ctor(__name, __ordinal, <user params>). The frontend-authored property initializers below exclusively store
+	// constructor properties; a regular parameter that is not `val`/`var` has no field and remains available to later
+	// property initializers and init blocks as a constructor local.
 	val ctorParams = (listOf("""{"name":"__name","type":${fqnJson("kotlin.String")}}""", """{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}""") +
 		userParams.map { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }).joinToString(",")
-	val ctorBody = (listOf(setThis("__name", loc("__name")), setThis("__ordinal", loc("__ordinal"))) +
-		userParams.map { setThis(it.name.asString(), loc(it.name.asString())) }).joinToString(",")
+	// The synthesized rich-enum constructor replaces the frontend primary constructor, so it must also expand the
+	// frontend's IrInstanceInitializerCall: constructor-property storage, enum-body property initializers, and init
+	// blocks retain their frontend declaration order. Entry subclasses call this constructor before their own instance
+	// initializer expansion, preserving Kotlin's base-before-derived initialization order.
+	val ctorBody = (listOf(
+		"""{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__name","value":{"k":"local","name":"__name"}}""",
+		"""{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__ordinal","value":{"k":"local","name":"__ordinal"}}""") +
+		instanceInitializerStatements(ec)).joinToString(",")
 	// Per-entry bodies (`PLUS { override fun apply(…)=… }`) become subclasses, but their presence alone does not make
 	// the enum base abstract: a body-less sibling still constructs that base directly. Only an actual abstract member
 	// requires an abstract base; Kotlin then requires every entry to implement it. (T A-109, #279.)
