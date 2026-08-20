@@ -22,9 +22,11 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import System.Threading.Tasks.Task
 import dotkt.support.blockOn
 
 // il-suspendco: a synchronous resume — the block resumes immediately with 42 (never actually suspends).
@@ -46,13 +48,46 @@ suspend fun storedContinuationReferenceResume(): Int {
     return suspendCoroutine(block)
 }
 
-suspend fun continuationParameterResume(block: (Continuation<Int>) -> Unit): Int = suspendCoroutine(block)
+suspend fun <T> continuationParameterResume(block: (Continuation<T>) -> Unit): T = suspendCoroutine(block)
 
 suspend fun storedUninterceptedResult(): Int {
     val value = 45
     val block: (Continuation<Int>) -> Any? = { value }
     return suspendCoroutineUninterceptedOrReturn(block)
 }
+
+suspend fun storedUninterceptedResume(): Int {
+    val value = 47
+    val block: (Continuation<Int>) -> Any? = { continuation ->
+        continuation.resume(value)
+        COROUTINE_SUSPENDED
+    }
+    return suspendCoroutineUninterceptedOrReturn(block)
+}
+
+suspend fun makeStoredUninterceptedBlock(): (Continuation<Int>) -> Any? {
+    Task.Delay(1).await()
+    return { continuation ->
+        continuation.resume(48)
+        COROUTINE_SUSPENDED
+    }
+}
+
+suspend fun suspendingBlockExpressionResume(): Int =
+    suspendCoroutineUninterceptedOrReturn(makeStoredUninterceptedBlock())
+
+class ContinuationBlockHolder(private val value: Int) {
+    private val block: (Continuation<Int>) -> Unit = { continuation -> continuation.resume(value) }
+    suspend fun resume(): Int = suspendCoroutine(block)
+}
+
+fun continuationBlock(value: Int): (Continuation<Int>) -> Unit = { continuation -> continuation.resume(value) }
+
+suspend fun callResultContinuationResume(): Int = suspendCoroutine(continuationBlock(50))
+
+suspend fun suspendCoroutine(value: Int): Int = value + 1
+
+suspend fun sameNameSuspendCoroutineCall(): Int = suspendCoroutine(50)
 
 // il-counit: a PUBLIC Unit-returning suspend fun -> a non-generic `Task` bridge. `unitContinuationStep` completes
 // synchronously, so `unitContinuationGreet` genuinely suspends then resumes on the sync path, exercising the full
@@ -101,6 +136,31 @@ class ContinuationBridgeTests {
     @TestAttribute
     fun uninterceptedBlockResult() {
         assertEquals(45, blockOn { storedUninterceptedResult() })
+    }
+
+    @TestAttribute
+    fun uninterceptedBlockResume() {
+        assertEquals(47, blockOn { storedUninterceptedResume() })
+    }
+
+    @TestAttribute
+    fun suspendingBlockExpression() {
+        assertEquals(48, blockOn { suspendingBlockExpressionResume() })
+    }
+
+    @TestAttribute
+    fun fieldBlockResume() {
+        assertEquals(49, blockOn { ContinuationBlockHolder(49).resume() })
+    }
+
+    @TestAttribute
+    fun callResultBlockResume() {
+        assertEquals(50, blockOn { callResultContinuationResume() })
+    }
+
+    @TestAttribute
+    fun sameNameUserFunction() {
+        assertEquals(51, blockOn { sameNameSuspendCoroutineCall() })
     }
 
     @TestAttribute

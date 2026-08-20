@@ -235,9 +235,9 @@ static partial class SuspendColdLowering
     // SafeContinuation body / the unintercepted block, since the un-inlined wrapper body is unavailable). The
     // recognizer is purely STRUCTURAL (k/suspendCall/method/owner/one block arg) — no module-boundary gate — so it fires
     // identically same-module and cross-module.
-    // The two suspendCoroutine intrinsics and their stdlib file-class owners. kotc emits `owner:null`; an earlier
-    // bir2cir pass (call-owner resolution) fills in the file class — so a match is `owner == null` (unresolved) OR the
-    // exact stdlib owner (a user-defined same-name function in a DIFFERENT owner is thus never mistaken for these).
+    // The two suspendCoroutine intrinsics and their stdlib file-class owners. A referenced call may still have
+    // `owner:null`, while a same-module call carries its frontend-selected `calleeOwner`; when either owner fact is
+    // present it must name the stdlib file class, so a user declaration with the same source name is never consumed.
     static readonly Dictionary<string, string> SuspendCoroutineIntrinsicOwners = new(StringComparer.Ordinal)
     {
         ["suspendCoroutine"] = "kotlin.coroutines.ContinuationKt",
@@ -249,6 +249,8 @@ static partial class SuspendColdLowering
         if (Str(o["method"]) is not string m || !SuspendCoroutineIntrinsicOwners.TryGetValue(m, out var expectOwner)) return false;
         var owner = TypeJson.OwnerName(o["owner"]);
         if (owner != null && owner != expectOwner) return false;
+        var calleeOwner = TypeJson.OwnerName(o["calleeOwner"]);
+        if (calleeOwner != null && calleeOwner != expectOwner) return false;
         return o["args"] is JsonArray args && args.Count == 1 && args[0] is JsonObject;
     }
 
@@ -2243,7 +2245,9 @@ static partial class SuspendColdLowering
             var blockFn = CallEvalLowering.StaticTypeOf(arg) as TypeNode.Fn
                 ?? TypeJson.Read(arg?["funcType"]) as TypeNode.Fn
                 ?? TypeJson.Read((callNode["sig"] as JsonArray)?.FirstOrDefault()) as TypeNode.Fn;
-            if (invBody == null && (blockFn == null || blockFn.Suspend || blockFn.Params.Length != 1))
+            if (invBody == null && (blockFn == null || blockFn.Suspend || blockFn.Params.Length != 1
+                || blockFn.Params[0] is not TypeNode.Fqn continuationParam
+                || ReferenceMetadataIndex.BareOwnerFqn(continuationParam.Name) != "kotlin.coroutines.Continuation"))
                 throw new InvalidOperationException(
                     $"malformed {method} block in '{(_ownerClass ?? _fileClass)}.{_name}': expected one non-suspend " +
                     $"Continuation function argument");
@@ -2377,8 +2381,9 @@ static partial class SuspendColdLowering
                 closureType = TypeJson.OwnerName(arg["closureType"]);
                 if (closureType == null || !_closures.TryGetValue(closureType, out var cls))
                     return (null, null, null, null);
-                _consumedIntrinsicClosures?.Add(closureType);   // #22: this class is reconstructed INLINE below -> now dead; pruned by ApplyAll
                 invoke = (cls["methods"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault(m => Str(m["name"]) == "invoke");
+                if (invoke != null)
+                    _consumedIntrinsicClosures?.Add(closureType);   // #22: reconstructed INLINE below -> now dead; pruned by ApplyAll
                 if (cls["fields"] is JsonArray flds && arg["captures"] is JsonArray caps)
                     for (var i = 0; i < flds.Count && i < caps.Count; i++)
                         if (flds[i] is JsonObject fo && Str(fo["name"]) is string fn) capMap[fn] = caps[i];
