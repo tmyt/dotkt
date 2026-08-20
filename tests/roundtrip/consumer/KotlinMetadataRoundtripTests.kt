@@ -283,7 +283,7 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual("RED", Color.RED.toString())   // RED    inherited System.Enum.ToString on a value-type receiver
         ClassicAssert.IsFalse(Color.RED == Color.GREEN)       // False  structural inequality
         ClassicAssert.AreEqual(0, Color.RED.hashCode())       // 0      inherited System.Enum.GetHashCode (RED underlying int = 0)
-        ClassicAssert.AreEqual(42, StartMode.DEFAULT.marker()) // class-like enum entry: projected static owner survives re-import
+        ClassicAssert.AreEqual(42, StartMode.DEFAULT.marker())
     }
 
     // roundtrip-customprop (#103): field-backed property with a CUSTOM accessor invokes the getter/setter

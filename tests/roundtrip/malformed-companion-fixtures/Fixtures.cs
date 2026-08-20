@@ -26,6 +26,14 @@ namespace DotKt.Runtime.CompilerServices
     }
 
     [CompilerGenerated]
+    [AttributeUsage(AttributeTargets.Class)]
+    public sealed class KotlinRichEnumAttribute(string version, byte[] content) : Attribute
+    {
+        public string Version { get; } = version;
+        public byte[] Content { get; } = content;
+    }
+
+    [CompilerGenerated]
 #if !COMPANION_EXTENSION_WRONG_TARGET && !COMPANION_EXTENSION_PROPERTY_TARGET
     [AttributeUsage(AttributeTargets.Method | AttributeTargets.Field
 #if CONSTRUCTOR_COMPANION_EXTENSION || STATIC_CONSTRUCTOR_COMPANION_EXTENSION
@@ -274,6 +282,49 @@ namespace Fixture
     public sealed class Carrier
     {
         public static readonly Carrier XINSTANCE = new();
+    }
+#elif RICH_ENUM_MISSING_FIELD
+    // Current-format carrier with a valid codec and payload shape but a broken declaration relation. Both consumers
+    // must fail closed rather than treating the physical class as an ordinary source class or guessing FIRST.
+    [DotKt.Runtime.CompilerServices.KotlinRichEnum("bir-json/1", new byte[] {
+        123,34,101,110,116,114,105,101,115,34,58,91,123,34,110,97,109,101,34,58,34,70,73,82,83,84,34,44,
+        34,102,105,101,108,100,34,58,34,77,73,83,83,73,78,71,34,125,93,44,34,110,97,109,101,34,58,34,
+        95,95,110,97,109,101,34,44,34,111,114,100,105,110,97,108,34,58,34,95,95,111,114,100,105,110,97,
+        108,34,44,34,118,97,108,117,101,115,34,58,34,118,97,108,117,101,115,34,44,34,118,97,108,117,101,
+        79,102,34,58,34,118,97,108,117,101,79,102,34,125
+    })]
+    public class RichEnum
+    {
+        public static readonly RichEnum FIRST = new();
+        public readonly string __name = "FIRST";
+        public readonly int __ordinal;
+
+        [CompilerGenerated]
+        public static RichEnum[] values() => [FIRST];
+
+        [CompilerGenerated]
+        public static RichEnum valueOf(string name) => FIRST;
+    }
+#elif RICH_ENUM_GENERIC_API
+    // Current carrier whose named APIs have the right value-parameter and return shapes but an unusable generic arity.
+    [DotKt.Runtime.CompilerServices.KotlinRichEnum("bir-json/1", new byte[] {
+        123,34,101,110,116,114,105,101,115,34,58,91,123,34,110,97,109,101,34,58,34,70,73,82,83,84,34,44,
+        34,102,105,101,108,100,34,58,34,70,73,82,83,84,34,125,93,44,34,110,97,109,101,34,58,34,95,95,
+        110,97,109,101,34,44,34,111,114,100,105,110,97,108,34,58,34,95,95,111,114,100,105,110,97,108,
+        34,44,34,118,97,108,117,101,115,34,58,34,118,97,108,117,101,115,34,44,34,118,97,108,117,101,79,
+        102,34,58,34,118,97,108,117,101,79,102,34,125
+    })]
+    public class RichEnum
+    {
+        public static readonly RichEnum FIRST = new();
+        public readonly string __name = "FIRST";
+        public readonly int __ordinal;
+
+        [CompilerGenerated]
+        public static RichEnum[] values<T>() => [FIRST];
+
+        [CompilerGenerated]
+        public static RichEnum valueOf<T>(string name) => FIRST;
     }
 #elif NON_PUBLIC_CARRIER
     public class Owner

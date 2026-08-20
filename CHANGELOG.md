@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Rich enums retain their Kotlin enum contract across a DLL-to-KLIB round trip (#487).** The producer now carries
+  an explicit trusted entry/metadata/API map, so `dll2klib` projects the physical reference-class implementation as a
+  final enum with its source interfaces, enum entries, no callable constructors, and no leaked compiler-only fields or
+  methods. Cross-module `name`, `ordinal`, `compareTo`, `entries`, `values`, and `valueOf` use that carrier instead of
+  recognizing physical member names.
+
 - **Kotlin-declared CLR events can now be subscribed directly (#482).** `bir2cir` binds add/remove calls to the
   synthesized local event declaration and carries its exact owner, delegate, and accessor signature into CIR, so
   ordinary, inherited, generic, cross-file, and rich-enum entry events support `subscribe` and reliable removal

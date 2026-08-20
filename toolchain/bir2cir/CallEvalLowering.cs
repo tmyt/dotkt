@@ -586,7 +586,7 @@ static class CallEvalLowering
         "field", "setField", "staticField", "setStaticField", "arrayGet", "arraySet", "arrayLen",
         "binOp", "unaryOp", "conv", "cast", "isInst", "isInstRef", "objEq", "concat",
         "nullableWrap", "nullableValue", "nullableHasValue", "safeCastValue",
-        "byrefOf", "byrefLoad", "stackGet", "enumOrdinal", "lateinitGet", "exprStmt",
+        "byrefOf", "byrefLoad", "stackGet", "enumName", "enumOrdinal", "lateinitGet", "exprStmt",
     };
 
     static bool EagerSlot(JsonObject parent, string key) =>
