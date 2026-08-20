@@ -8,8 +8,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Fixed
 
 - **Kotlin-declared CLR events can now be subscribed directly (#482).** `bir2cir` binds add/remove calls to the
-  synthesized local event declaration and carries its exact delegate and accessor signature into CIR, so ordinary
-  classes and rich-enum entry subclasses support `subscribe` and reliable removal through `close()`.
+  synthesized local event declaration and carries its exact owner, delegate, and accessor signature into CIR, so
+  ordinary, inherited, generic, cross-file, and rich-enum entry events support `subscribe` and reliable removal
+  through `close()`, including custom interface delegates and type-parameter receivers.
 
 - **Rich enum entries may now select secondary constructors (#484).** Every rich-enum constructor preserves the
   frontend-selected delegation target after the synthesized name and ordinal parameters, including constructor

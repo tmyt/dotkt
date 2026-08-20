@@ -215,6 +215,10 @@ static class ClosureSynthesis
                         if (kv.Key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
                             or "delegationSig" or "memberSignature" or "memberOwnerTypeParams"
                             or "memberMethodTypeParams" or "memberReturnType" or "memberType"
+                            // Transient source-frame map consumed by local CLR-event binding after this closure has
+                            // been assembled. Its entries name the OUTER frame by definition; rebinding them here
+                            // would erase the correspondence needed to remap the selected add accessor into this class.
+                            or "eventBindingFree"
                             || (kv.Key == "argTypes" && Str(o["k"]) != "new"))
                             continue;
                         Walk(kv.Value);

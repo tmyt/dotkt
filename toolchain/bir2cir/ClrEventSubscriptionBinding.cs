@@ -86,6 +86,7 @@ static class ClrEventSubscriptionBinding
             if (_refs.TryClrEventIsStatic(ownerName, eventName, out var declaredStatic))
                 isStatic = declaredStatic;
             var id = _next++;
+            var bindingKey = _scope + ":" + id;
             var handlerLocal = $"__clrEventSubscriptionHandler{id}";
             var receiverLocal = $"__clrEventSubscriptionReceiver{id}";
             var closureName = $"dotkt${_scope}$EventRemove{id}";
@@ -121,6 +122,12 @@ static class ClrEventSubscriptionBinding
                 ["static"] = isStatic,
                 ["recv"] = removeReceiver,
                 ["handler"] = Local("handler", closureHandlerType),
+                // The add site still lives in the source generic frame and can resolve a type-parameter event owner
+                // from its constraint.  The remove callback is a synthesized generic class with remapped slots; this
+                // key lets the later module-wide local-event pass copy that exact declaration binding rather than
+                // attempting to rediscover Kotlin semantics from the closure's physical frame.
+                ["eventSubscriptionKey"] = bindingKey,
+                ["eventBindingFree"] = new JsonArray(free.Select(item => item.Original.DeepClone()).ToArray()),
             };
             // The synthesized remove method receives the same spilled source delegate as the add operation.  Keep
             // that delegate's Invoke identity before its transient expression type is gone.
@@ -174,6 +181,7 @@ static class ClrEventSubscriptionBinding
                 ["static"] = isStatic,
                 ["recv"] = isStatic ? null : Local(receiverLocal, ownerType),
                 ["handler"] = Local(handlerLocal, handlerType),
+                ["eventSubscriptionKey"] = bindingKey,
             };
             // The subscription spill turns the handler into a plain local and its transient `sty`
             // is consumed before final member stamping.  Preserve the already-known source delegate

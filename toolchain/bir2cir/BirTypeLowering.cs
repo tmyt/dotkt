@@ -124,7 +124,7 @@ static class BirTypeLowering
         "memberSignature",
         // expression / statement type positions
         "dynRet", "funcType", "typeArgs", "constraints", "recvType", "iface", "excType",
-        "keyType", "valType", "iterType", "accessOwner", "elem",
+        "keyType", "valType", "iterType", "accessOwner", "accessorOwner", "elem",
         "samType", "closureType",
         // W1-S1 (#46): the clrGeneric* FIR-resolved member descriptor — the callee's DECLARED param types (OPEN,
         // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).

@@ -125,14 +125,6 @@ enum class EnumEntryOwnedEvent {
     abstract fun exercise(): Int
 }
 
-class EnumNamedOwnedEvent {
-    val pulse: ClrEvent<(Int) -> Unit> by clrEvent()
-
-    fun raise(value: Int) {
-        pulse.invoke(value)
-    }
-}
-
 object EnumBaseStateLog {
     var text = ""
     fun next(mark: String): Int { text += mark; return text.length }
@@ -317,6 +309,25 @@ class EnumTests {
         subscription.close()
         named.raise(7)
         assertEquals(3, seen)
+
+        val derived = EnumDerivedOwnedEvent()
+        var inheritedSeen = 0
+        val inheritedSubscription = derived.pulse.subscribe { inheritedSeen += it }
+        derived.raise(4)
+        inheritedSubscription.close()
+        derived.raise(6)
+        assertEquals(4, inheritedSeen)
+
+        assertEquals(8, exerciseGenericLocalEvent(EnumDerivedOwnedEvent()))
+
+        val generic = EnumGenericOwnedEvent<String>()
+        var genericSeen = ""
+        val genericSubscription = generic.pulse.subscribe { genericSeen += it }
+        generic.raise("a")
+        genericSubscription.close()
+        generic.raise("b")
+        assertEquals("a", genericSeen)
+        assertEquals(1, exerciseGenericOwnerConstraint(generic, "c"))
     }
 
     @TestAttribute

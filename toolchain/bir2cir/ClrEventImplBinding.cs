@@ -26,6 +26,12 @@ using DotKt.Bir;
 // with the §6 guard: raise is legal ONLY for a Kotlin-DECLARED event (one that has a synthesized `raise_<E>`).
 static class ClrEventImplBinding
 {
+    sealed record LocalEventBinding(
+        TypeNode DelegateType,
+        TypeNode.Fqn AccessorOwner,
+        JsonArray AddSignature,
+        JsonArray RemoveSignature);
+
     public static JsonNode BindImplementations(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is JsonObject obj && obj["types"] is JsonArray types)
@@ -67,8 +73,50 @@ static class ClrEventImplBinding
     {
         var rootList = roots.ToList();
         var definitions = SupertypeGraph.Collect(rootList);
+        var scopes = new Dictionary<JsonObject, (JsonArray TypeParams, JsonArray MethodParams)>();
+        var empty = new JsonArray();
 
-        TypeNode ResolveDelegate(TypeNode.Fqn owner, string eventName)
+        void IndexCallable(JsonObject callable, JsonArray typeParams) =>
+            scopes[callable] = (typeParams, callable["typeParams"] as JsonArray ?? empty);
+
+        void IndexType(JsonObject type)
+        {
+            var typeParams = TypeParameterFrame.CloneDeclarations(type);
+            scopes[type] = (typeParams, empty);
+            if (type["ctors"] is JsonArray ctors)
+                foreach (var ctor in ctors.OfType<JsonObject>()) IndexCallable(ctor, typeParams);
+            if (type["methods"] is JsonArray methods)
+                foreach (var method in methods.OfType<JsonObject>()) IndexCallable(method, typeParams);
+            if (type["types"] is JsonArray nested)
+                foreach (var child in nested.OfType<JsonObject>()) IndexType(child);
+        }
+
+        foreach (var root in rootList.OfType<JsonObject>())
+        {
+            scopes[root] = (empty, empty);
+            if (root["methods"] is JsonArray methods)
+                foreach (var method in methods.OfType<JsonObject>()) IndexCallable(method, empty);
+            if (root["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>()) IndexType(type);
+        }
+
+        JsonArray AccessorSignature(SupertypeGraph.Def definition, string name)
+        {
+            var candidates = definition.Methods.OfType<JsonObject>()
+                .Where(method => Str(method["name"]) == name
+                    && method["specialName"] is JsonValue special
+                    && special.TryGetValue<bool>(out var isSpecial) && isSpecial
+                    && method["params"] is JsonArray)
+                .ToList();
+            if (candidates.Count != 1)
+                throw new InvalidOperationException(
+                    $"bir2cir: synthesized local event accessor '{definition.Name}.{name}' resolves to "
+                    + $"{candidates.Count} declarations");
+            return new JsonArray(((JsonArray)candidates[0]["params"]).OfType<JsonObject>()
+                .Select(parameter => parameter["type"]?.DeepClone()).ToArray());
+        }
+
+        LocalEventBinding ResolveFromOwner(TypeNode.Fqn owner, string eventName)
         {
             if (!definitions.ContainsKey(owner.Name)) return null;
             var pending = new Queue<TypeNode.Fqn>();
@@ -77,7 +125,7 @@ static class ClrEventImplBinding
             while (pending.Count > 0)
             {
                 var levelCount = pending.Count;
-                var matches = new List<TypeNode>();
+                var matches = new List<LocalEventBinding>();
                 for (var i = 0; i < levelCount; i++)
                 {
                     var spec = pending.Dequeue();
@@ -96,7 +144,11 @@ static class ClrEventImplBinding
                         var declaredDelegate = TypeJson.Read(declaration["delegateType"])
                             ?? throw new InvalidOperationException(
                                 $"bir2cir: local clrEvent '{spec.Name}.{eventName}' has no concrete delegate type");
-                        matches.Add(SupertypeGraph.SubstOwnerTvs(declaredDelegate, ownerArgs));
+                        matches.Add(new LocalEventBinding(
+                            SupertypeGraph.SubstOwnerTvs(declaredDelegate, ownerArgs),
+                            spec,
+                            AccessorSignature(definition, "add_" + eventName),
+                            AccessorSignature(definition, "remove_" + eventName)));
                     }
                     foreach (var parent in definition.Interfaces)
                         if (SupertypeGraph.SubstOwnerTvs(parent, ownerArgs) is TypeNode.Fqn constructed)
@@ -106,45 +158,133 @@ static class ClrEventImplBinding
                         pending.Enqueue(constructedBase);
                 }
                 if (matches.Count == 0) continue;
-                var distinct = matches.GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
+                var distinct = matches.GroupBy(match => SupertypeGraph.TypeKey(match.AccessorOwner), StringComparer.Ordinal)
                     .Select(group => group.First()).ToList();
                 if (distinct.Count != 1)
                     throw new InvalidOperationException(
                         $"bir2cir: local clrEvent '{owner.Name}.{eventName}' resolves to {distinct.Count} "
-                        + "different delegate declarations at the same inheritance depth");
+                        + "different accessor declarations at the same inheritance depth");
                 return distinct[0];
             }
             return null;
         }
 
-        void Walk(JsonNode node)
+        LocalEventBinding Resolve(JsonObject node, JsonArray typeParams, JsonArray methodParams)
+        {
+            var eventName = Str(node["event"]);
+            if (eventName == null) return null;
+            var owner = TypeJson.Read(node["type"]);
+            if (owner is TypeNode.Fqn fqn) return ResolveFromOwner(fqn, eventName);
+            if (owner is not TypeNode.Tv tv) return null;
+            var frame = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
+            if (frame == null || tv.I < 0 || tv.I >= frame.Count || frame[tv.I] is not JsonObject descriptor
+                || descriptor["constraints"] is not JsonArray constraints) return null;
+            var matches = constraints.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
+                .Select(constraint => ResolveFromOwner(constraint, eventName))
+                .Where(binding => binding != null)
+                .GroupBy(binding => SupertypeGraph.TypeKey(binding.AccessorOwner), StringComparer.Ordinal)
+                .Select(group => group.First()).ToList();
+            if (matches.Count > 1)
+                throw new InvalidOperationException(
+                    $"bir2cir: local clrEvent '{eventName}' on '{tv.Scope}' type parameter {tv.I} resolves to "
+                    + $"{matches.Count} different accessor declarations");
+            return matches.SingleOrDefault();
+        }
+
+        TypeNode RemapForClosure(TypeNode type, JsonArray free) => type switch
+        {
+            TypeNode.Tv tv => free.Select(TypeJson.Read).OfType<TypeNode.Tv>()
+                .Select((original, index) => (original, index))
+                .Where(item => item.original.Scope == tv.Scope && item.original.I == tv.I)
+                .Select(item => (TypeNode)new TypeNode.Tv("type", item.index))
+                .FirstOrDefault() ?? type,
+            TypeNode.Fqn f when f.Args is not null =>
+                new TypeNode.Fqn(f.Name, f.Args.Select(arg => RemapForClosure(arg, free)).ToArray()),
+            TypeNode.Nullable n => new TypeNode.Nullable(RemapForClosure(n.Of, free)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(RemapForClosure(o.Of, free)),
+            TypeNode.Array a => new TypeNode.Array(RemapForClosure(a.Elem, free)),
+            TypeNode.ByRef r => new TypeNode.ByRef(RemapForClosure(r.Of, free)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, RemapForClosure(fn.Ret, free),
+                fn.Params.Select(param => RemapForClosure(param, free)).ToArray(),
+                fn.Recv == null ? null : RemapForClosure(fn.Recv, free), fn.Clr,
+                fn.Ctx?.Select(param => RemapForClosure(param, free)).ToArray()),
+            _ => type,
+        };
+
+        LocalEventBinding RemapBindingForClosure(LocalEventBinding binding, JsonArray free) => new(
+            RemapForClosure(binding.DelegateType, free),
+            (TypeNode.Fqn)RemapForClosure(binding.AccessorOwner, free),
+            new JsonArray(binding.AddSignature.Select(item =>
+                TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()),
+            new JsonArray(binding.RemoveSignature.Select(item =>
+                TypeJson.Write(RemapForClosure(TypeJson.Read(item), free))).ToArray()));
+
+        var bySubscription = new Dictionary<string, LocalEventBinding>(StringComparer.Ordinal);
+        void Collect(JsonNode node, JsonArray typeParams, JsonArray methodParams)
         {
             if (node is JsonObject obj)
             {
-                foreach (var child in obj.ToList()) if (child.Value != null) Walk(child.Value);
+                if (scopes.TryGetValue(obj, out var scope))
+                    (typeParams, methodParams) = scope;
                 var kind = Str(obj["k"]);
-                if (kind is not ("clrEventAdd" or "clrEventRemove")
-                    || TypeJson.Read(obj["type"]) is not TypeNode.Fqn owner
-                    || !definitions.ContainsKey(owner.Name)) return;
-                var eventName = Str(obj["event"])
-                    ?? throw new InvalidOperationException(
-                        $"bir2cir: local {kind} on '{owner.Name}' is missing its event name");
-                var delegateType = ResolveDelegate(owner, eventName)
-                    ?? throw new InvalidOperationException(
-                        $"bir2cir: no synthesized local event '{eventName}' is reachable from '{owner.Name}'");
-                obj["accessor"] = (kind == "clrEventAdd" ? "add_" : "remove_") + eventName;
-                obj["delegateType"] = TypeJson.Write(delegateType);
-                obj["sig"] = new JsonArray(TypeJson.Write(delegateType));
-                obj["localAccessor"] = true;
-                // synthClrEvents emits public virtual newslot add/remove accessors.  A local inherited accessor is
-                // reached through the same virtual dispatch; no CLR metadata lookup is needed to decide it.
-                obj["dispatch"] = "callvirt";
+                if (kind is "clrEventAdd" or "clrEventRemove"
+                    && Str(obj["eventSubscriptionKey"]) is string key
+                    && obj["eventBindingFree"] == null
+                    && Resolve(obj, typeParams, methodParams) is LocalEventBinding binding)
+                    bySubscription[key] = binding;
+                foreach (var child in obj.ToList())
+                    if (child.Value != null) Collect(child.Value, typeParams, methodParams);
             }
             else if (node is JsonArray array)
-                foreach (var child in array.ToList()) if (child != null) Walk(child);
+                foreach (var child in array.ToList())
+                    if (child != null) Collect(child, typeParams, methodParams);
         }
 
-        foreach (var root in rootList) Walk(root);
+        void Stamp(JsonNode node, JsonArray typeParams, JsonArray methodParams)
+        {
+            if (node is JsonObject obj)
+            {
+                if (scopes.TryGetValue(obj, out var scope))
+                    (typeParams, methodParams) = scope;
+                var kind = Str(obj["k"]);
+                if (kind is "clrEventAdd" or "clrEventRemove")
+                {
+                    LocalEventBinding binding;
+                    // The remove callback is deliberately a new physical generic frame. Its binding is the add
+                    // site's already-selected declaration remapped into that frame, never a second semantic lookup.
+                    if (obj["eventBindingFree"] is JsonArray free
+                        && Str(obj["eventSubscriptionKey"]) is string key
+                        && bySubscription.TryGetValue(key, out var shared))
+                        binding = RemapBindingForClosure(shared, free);
+                    else
+                        binding = Resolve(obj, typeParams, methodParams);
+                    if (binding != null)
+                    {
+                        var eventName = Str(obj["event"])
+                            ?? throw new InvalidOperationException($"bir2cir: local {kind} is missing its event name");
+                        obj["accessor"] = (kind == "clrEventAdd" ? "add_" : "remove_") + eventName;
+                        obj["accessorOwner"] = TypeJson.Write(binding.AccessorOwner);
+                        obj["delegateType"] = TypeJson.Write(binding.DelegateType);
+                        obj["sig"] = (kind == "clrEventAdd"
+                            ? binding.AddSignature : binding.RemoveSignature).DeepClone();
+                        obj["localAccessor"] = true;
+                        // A type-parameter receiver requires an address plus constrained. dispatch.  A concrete local
+                        // owner uses the synthesized public-virtual accessor normally.
+                        obj["dispatch"] = TypeJson.Read(obj["type"]) is TypeNode.Tv ? "constrained" : "callvirt";
+                    }
+                    obj.Remove("eventSubscriptionKey");
+                    obj.Remove("eventBindingFree");
+                }
+                foreach (var child in obj.ToList())
+                    if (child.Value != null) Stamp(child.Value, typeParams, methodParams);
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array.ToList())
+                    if (child != null) Stamp(child, typeParams, methodParams);
+        }
+
+        foreach (var root in rootList) Collect(root, empty, empty);
+        foreach (var root in rootList) Stamp(root, empty, empty);
     }
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
