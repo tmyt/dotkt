@@ -73,12 +73,9 @@ suspend fun suspendResultTypeSafeInOperands(b: SuspendResultTypeBox?): Int = sus
 
 // ---- 3. a generic-owner suspend call: `sty` and `ret` disagree ------------------------------------------------
 //
-// The suspension in these two is a suspend CALL, not a `.await()` marker, and deliberately so: a `.await()` inside
-// a GENERIC cold state machine binds its completion `Action` to a method on the still-open `…$sm`1` type, which
-// ilverify rejects (`DelegateCtor`: unrecognized arguments for delegate .ctor) and which faults at runtime with
-// "the method itself or the containing type is not fully instantiated". That gap is INDEPENDENT of result typing —
-// it reproduces identically with the previous bir2cir — and no existing fixture reached it; typing a generic call's
-// resumed value is what this section is for, so it uses the shape that isolates it.
+// The suspension in these two is a suspend CALL, not a `.await()` marker, because typing a generic call's resumed
+// value is the behavior this section isolates. Generic await callback construction is covered independently by
+// DynamicCaptureContextTests (#303).
 class SuspendResultTypeCell<T>(val value: T) {
     // The declared return is the type parameter `T`; the call site below resolves it to `Int`, so the call node
     // carries `ret` = `T` and `sty` = `Int`.

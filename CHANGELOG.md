@@ -129,6 +129,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Added
 
+- **Regression coverage now pins constructed state-machine callback owners at generic `.await()` points (#303).**
+  The fix already shipped in 0.9.9; incomplete-task tests now exercise both method- and owner-generic state machines,
+  and same- and cross-module generic suspend fixtures use their own real await points instead of non-generic helpers.
+
 - **The Kotlin-only mutable-collection members have a physical CLR representation, and runtime-reflection dispatch is
   gone (#400).** `MutableCollection<E>` is `ICollection<E>` and `MutableList<E>` is `IList<E>`, neither of which has a
   slot for Kotlin's `removeAll`/`retainAll`/`addAll(elements)`/`addAll(index, elements)`. `removeAll` and `retainAll`

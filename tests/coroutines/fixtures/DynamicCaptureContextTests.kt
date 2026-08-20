@@ -21,9 +21,6 @@
 // marker's own operand list across a resume), and one that TRANSFERS CONTROL instead of producing a value —
 // including from inside a closure capture, where the transfer sits one frame down but still runs in this one.
 //
-// `.await()` inside a GENERIC suspend fun is separately broken (open-generic delegate binding, GitHub #303), so
-// every function here is non-generic — the same exclusion SuspendOperandOrderTests.kt carries.
-//
 // Consolidated coverage: il-cfgawait (non-generic configured awaiter, synchronous constant-false path) and
 // il-cfgawaitgen (generic ConfiguredTaskAwaitable`1 backtick arity) are represented by constantShapes below.
 //
@@ -46,6 +43,14 @@ val dynamicCaptureLog = mutableListOf<String>()
 
 // A RUNTIME Boolean: the capture policy is a parameter, which is the shape the issue names.
 suspend fun dynamicCaptureAwait(task: Task1<Int>, capture: Boolean): Int = task.await(captureContext = capture)
+
+// #303 — the await callback belongs to the constructed generic state machine, not its open TypeDef. An incomplete
+// Task forces OnCompleted(Action) to construct that callback; the completed-task fast path never reaches the defect.
+suspend fun <T> dynamicCaptureGenericAwait(task: Task1<T>): T = task.await()
+
+class DynamicCaptureGenericOwner<T> {
+    suspend fun await(task: Task1<T>): T = task.await()
+}
 
 // The same over a non-generic `Task` (a `void` GetResult -> Unit), so the dynamic arm is covered for both the
 // generic and the non-generic configured awaitable.
@@ -156,6 +161,27 @@ fun dynamicCaptureCompleted(v: Int): Task1<Int> {
 
 class DynamicCaptureContextTests {
     private fun order(): String = dynamicCaptureLog.joinToString(",")
+
+    @TestAttribute
+    fun genericSuspendAwaitUsesConstructedCallbackOwners() {
+        val tcs = TaskCompletionSource1<Int>()
+        val sink = DynamicCaptureSink()
+        val block: suspend () -> Int = { dynamicCaptureGenericAwait(tcs.Task) }
+        block.startCoroutine(sink)
+        tcs.SetResult(61)
+        dynamicCaptureDrain(sink)
+        assertEquals(true, sink.done)
+        assertEquals(61, sink.value)
+
+        val ownerTcs = TaskCompletionSource1<String>()
+        val ownerSink = DynamicCaptureSink()
+        val ownerBlock: suspend () -> String = { DynamicCaptureGenericOwner<String>().await(ownerTcs.Task) }
+        ownerBlock.startCoroutine(ownerSink)
+        ownerTcs.SetResult("owner")
+        dynamicCaptureDrain(ownerSink)
+        assertEquals(true, ownerSink.done)
+        assertEquals("owner", ownerSink.value)
+    }
 
     // A runtime `true`: the capturing policy, requested through a value the compiler cannot read.
     @TestAttribute

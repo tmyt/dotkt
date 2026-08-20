@@ -8,19 +8,11 @@
 //
 // Each callee GENUINELY suspends, which is what makes an operand-order defect observable: the state machine only
 // returns COROUTINE_SUSPENDED, and only then reads back the wrong saved state, when the cold call really does
-// suspend. The NON-generic callees suspend on a real `Task.Delay` await; the GENERIC ones suspend through
-// `suspendOperandCrossModulePause` instead, because a `.await()` MARKER inside a generic suspend fun is separately broken today (its
-// generic state machine builds the resume `Action` over a method it never instantiates, and the first suspension
-// throws `InvalidOperationException: ... not fully instantiated`) — a defect of the await-point emission, reachable
-// with no operand-order question anywhere in the program, and not what these fixtures are pinning.
+// suspend. Every callee that must genuinely suspend therefore awaits a real `Task.Delay`, including the generic state
+// machines whose callback owner must remain constructed at the await point (#303).
 package dotkt.support
 
 import System.Threading.Tasks.Task
-
-/** A real suspension point via the .await() bridge/marker, used by generic suspend callees to avoid the currently-broken generic-await emission path. */
-public suspend fun suspendOperandCrossModulePause() {
-    Task.Delay(1).await()
-}
 
 /** Cross-module top-level suspend callee — a `clrStatic` suspend call at every call site outside this assembly. */
 public suspend fun suspendOperandCrossModuleAdd(a: Int, b: Int): Int {
@@ -30,7 +22,7 @@ public suspend fun suspendOperandCrossModuleAdd(a: Int, b: Int): Int {
 
 /** Cross-module top-level GENERIC suspend callee — a `clrGenericStatic` suspend call. */
 public suspend fun <T> suspendOperandCrossModuleFirst(a: T, b: Int): T {
-    suspendOperandCrossModulePause()
+    Task.Delay(1).await()
     return a
 }
 
@@ -42,7 +34,7 @@ public class SuspendOperandCrossModuleBox(private val base: Int) {
     }
 
     public suspend fun <T> first(a: T, b: Int): T {
-        suspendOperandCrossModulePause()
+        Task.Delay(1).await()
         return a
     }
 }
