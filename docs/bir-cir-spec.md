@@ -449,6 +449,9 @@ member would be two members to it. The rules, all validator-enforced:
 Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
 built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature
 table). The presence of a `memberRef` is therefore itself the external-vs-emitted discriminator.
+For `clrEventAdd`/`clrEventRemove`, `localAccessor:true` is the same-unit discriminator and is mutually exclusive
+with `memberRef`; it carries the emitted `accessorOwner`, exact accessor `sig`, `delegateType`, accessor name, and
+dispatch decision. This is scalar MethodDef linkage, not permission for ilemit to search an inherited event by name.
 
 For a BIR `new`, `memberSignature` is the frontend-selected OPEN constructor declaration vector (including any
 compiler-authored enclosing/capture slots), while `argTypes` is the substituted use-site vector. For a same-unit
