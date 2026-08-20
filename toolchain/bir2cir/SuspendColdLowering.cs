@@ -228,12 +228,13 @@ static partial class SuspendColdLowering
     // call. Our compiler does NOT inline these @InlineOnly intrinsics at the call site (cross-module never; same-module
     // no longer either — kotc's same-module source-splice + the `suspendIntrinsic` valueBlock stamp were retired in
     // #75 S4b), so in EVERY build (app cross-module AND stdlib self-build same-module) kotc emits a plain
-    // `callStatic <name>(<newClosure|newDelegate>) suspendCall:true`, owner:null (top-level intrinsic) OR the resolved
-    // stdlib file-class, the block materialized as a closure class (capturing) or a top-level generated method
-    // (non-capturing). This IS a suspension point — recognized here, lowered by EmitSuspendCoroutineCall (which
-    // reconstructs the wrapper's SafeContinuation body / the unintercepted block, since the un-inlined wrapper body is
-    // unavailable). The recognizer is purely STRUCTURAL (k/suspendCall/method/owner/arg-shape) — no module-boundary
-    // gate — so it fires identically same-module and cross-module.
+    // `callStatic <name>(<block>) suspendCall:true`, owner:null (top-level intrinsic) OR the resolved stdlib file-class.
+    // A literal block is materialized as a closure class (capturing) or a top-level generated method (non-capturing),
+    // but Kotlin also permits an already-materialized function value (a local/parameter/field/call result) here. This
+    // IS a suspension point — recognized here, lowered by EmitSuspendCoroutineCall (which reconstructs the wrapper's
+    // SafeContinuation body / the unintercepted block, since the un-inlined wrapper body is unavailable). The
+    // recognizer is purely STRUCTURAL (k/suspendCall/method/owner/one block arg) — no module-boundary gate — so it fires
+    // identically same-module and cross-module.
     // The two suspendCoroutine intrinsics and their stdlib file-class owners. kotc emits `owner:null`; an earlier
     // bir2cir pass (call-owner resolution) fills in the file class — so a match is `owner == null` (unresolved) OR the
     // exact stdlib owner (a user-defined same-name function in a DIFFERENT owner is thus never mistaken for these).
@@ -248,8 +249,7 @@ static partial class SuspendColdLowering
         if (Str(o["method"]) is not string m || !SuspendCoroutineIntrinsicOwners.TryGetValue(m, out var expectOwner)) return false;
         var owner = TypeJson.OwnerName(o["owner"]);
         if (owner != null && owner != expectOwner) return false;
-        return (o["args"] as JsonArray)?.FirstOrDefault() is JsonObject a
-            && Str(a["k"]) is "newClosure" or "newDelegate";
+        return o["args"] is JsonArray args && args.Count == 1 && args[0] is JsonObject;
     }
 
     // GAP 1 (P3 wave-2b) — a call to a suspend functional VALUE: `b()` where `b: suspend (...) -> T` is a
@@ -2225,7 +2225,7 @@ static partial class SuspendColdLowering
         // F2 — a `suspendCoroutine { … }` / `suspendCoroutineUninterceptedOrReturn { … }` call, lowered to a real cold
         // suspension point. Our compiler does NOT inline these @InlineOnly intrinsics at the call site (cross-module
         // never; same-module no longer either since #75 S4b), so in EVERY build kotc carries a plain
-        // `callStatic <name>(<newClosure|newDelegate>)`, its wrapper body NOT inlined. We reconstruct it here:
+        // `callStatic <name>(<block>)`, its wrapper body NOT inlined. We reconstruct it here:
         //   suspendCoroutine (block returns Unit, wraps a SafeContinuation):
         //     this.__safe = newSafeContinuation((Continuation)this)   // buffers a synchronous resume
         //     <inlined block, `c` -> this.__safe>                      // e.g. resume(this.__safe, 42)
@@ -2240,10 +2240,13 @@ static partial class SuspendColdLowering
             var wrapper = method == "suspendCoroutine";
             var arg = (callNode["args"] as JsonArray)?.FirstOrDefault() as JsonObject;
             var (invBody, cParam, capMap, closureType) = ResolveBlockLambda(arg);
-            if (invBody == null)
+            var blockFn = CallEvalLowering.StaticTypeOf(arg) as TypeNode.Fn
+                ?? TypeJson.Read(arg?["funcType"]) as TypeNode.Fn
+                ?? TypeJson.Read((callNode["sig"] as JsonArray)?.FirstOrDefault()) as TypeNode.Fn;
+            if (invBody == null && (blockFn == null || blockFn.Suspend || blockFn.Params.Length != 1))
                 throw new InvalidOperationException(
-                    $"unresolved {method} block in '{(_ownerClass ?? _fileClass)}.{_name}': the `{{ c -> … }}` block " +
-                    $"(newClosure/newDelegate) could not be resolved in the compilation — refusing to emit a broken coroutine");
+                    $"malformed {method} block in '{(_ownerClass ?? _fileClass)}.{_name}': expected one non-suspend " +
+                    $"Continuation function argument");
 
             // The intrinsic's Kotlin result type, in the toolchain's ONE stamp order (bir-common/NodeType.cs
             // PRECEDENCE): `suspendCoroutine<T>` is generic, so `ret` here is the DECLARED `T` while `sty` is the
@@ -2277,7 +2280,14 @@ static partial class SuspendColdLowering
                     ["ret"] = ContAny(),
                 }));
                 var cBinding = SmSelfField(safeField, ContAnyTn);   // smSelf recv survives the this->$this member rewrite
-                foreach (var s in invBody) EmitStmt(SubstBlock(s, capMap, cParam, cBinding, closureType), outp);
+                if (invBody != null)
+                    foreach (var s in invBody) EmitStmt(SubstBlock(s, capMap, cParam, cBinding, closureType), outp);
+                else
+                    EmitStmt(new JsonObject
+                    {
+                        ["k"] = "exprStmt",
+                        ["expr"] = InvokeStoredBlock(arg, blockFn, cBinding),
+                    }, outp);
                 tail = new JsonObject
                 {
                     ["k"] = "callStatic",
@@ -2291,13 +2301,6 @@ static partial class SuspendColdLowering
             else
             {
                 var cBinding = new JsonObject { ["k"] = "smSelf" };
-                JsonNode t = Suspended();
-                var pre = new List<JsonNode>();
-                for (var i = 0; i < invBody.Count; i++)
-                    if (i == invBody.Count - 1 && invBody[i] is JsonObject last && Str(last["k"]) == "return")
-                        t = last["value"] ?? NullConst(AnyTn);
-                    else
-                        pre.Add(invBody[i]);
                 // #22 — the UNINTERCEPTED form passes the SM ITSELF (smSelf) as the raw continuation, so a block that
                 // SYNCHRONOUSLY `cont.resume(v)`s re-enters this same invokeSuspend before it returns. The state label
                 // must therefore be armed to `state` BEFORE the block runs (mirroring the JVM CPS, which sets
@@ -2308,8 +2311,19 @@ static partial class SuspendColdLowering
                 // suspension that would re-arm the label to a later state — arming `state` here is the sole write in
                 // this segment.
                 outp.Add(SetField("label", IntConst(state)));
-                foreach (var s in pre) EmitStmt(SubstBlock(s, capMap, cParam, cBinding, closureType), outp);
-                tail = SubstBlock(t, capMap, cParam, cBinding, closureType);
+                if (invBody != null)
+                {
+                    JsonNode t = Suspended();
+                    var pre = new List<JsonNode>();
+                    for (var i = 0; i < invBody.Count; i++)
+                        if (i == invBody.Count - 1 && invBody[i] is JsonObject last && Str(last["k"]) == "return")
+                            t = last["value"] ?? NullConst(AnyTn);
+                        else
+                            pre.Add(invBody[i]);
+                    foreach (var s in pre) EmitStmt(SubstBlock(s, capMap, cParam, cBinding, closureType), outp);
+                    tail = SubstBlock(t, capMap, cParam, cBinding, closureType);
+                }
+                else tail = InvokeStoredBlock(arg, blockFn, cBinding);
             }
 
             if (wrapper) outp.Add(SetField("label", IntConst(state)));
@@ -2329,6 +2343,25 @@ static partial class SuspendColdLowering
                 : new JsonObject { ["k"] = "cast", ["type"] = Tw(retTok), ["e"] = new JsonObject { ["k"] = "local", ["name"] = "result" } }));
             return FieldOf(awField, retTok);
         }
+
+        // A non-literal intrinsic argument is already a real function value. Invoke that value once instead of trying
+        // to reconstruct (and potentially re-evaluate) the expression that originally produced it. The function type
+        // is still Kotlin semantic vocabulary here; ClrMemberResolution later binds the one concrete delegate Invoke.
+        static JsonObject InvokeStoredBlock(JsonObject block, TypeNode.Fn blockFn, JsonNode continuation) => new()
+        {
+            ["k"] = "delegateInvoke",
+            ["funcType"] = TypeJson.Write(blockFn),
+            ["recv"] = block.DeepClone(),
+            ["args"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["k"] = "cast",
+                    ["type"] = TypeJson.Write(blockFn.Params[0]),
+                    ["e"] = continuation.DeepClone(),
+                },
+            },
+        };
 
         // Resolve a suspendCoroutine block arg (newClosure -> a top-level closure class in _closures; newDelegate -> a
         // top-level generated method in _lambdaMethods) to its invoke body, continuation-param name, and capture map (empty

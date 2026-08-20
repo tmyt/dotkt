@@ -21,6 +21,8 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.suspendCoroutine
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import dotkt.support.blockOn
@@ -30,6 +32,27 @@ suspend fun synchronousContinuationResume(): Int = suspendCoroutine { it.resume(
 
 // il-suspendco: a synchronous resumeWithException — getOrThrow() rethrows the failure at the (sync) point.
 suspend fun synchronousContinuationResumeWithException(): Int = suspendCoroutine { it.resumeWithException(IllegalStateException("boom")) }
+
+suspend fun storedContinuationBlockResume(): Int {
+    val value = 43
+    val block: (Continuation<Int>) -> Unit = { continuation -> continuation.resume(value) }
+    return suspendCoroutine(block)
+}
+
+fun resumeStoredContinuation(continuation: Continuation<Int>): Unit = continuation.resume(44)
+
+suspend fun storedContinuationReferenceResume(): Int {
+    val block: (Continuation<Int>) -> Unit = ::resumeStoredContinuation
+    return suspendCoroutine(block)
+}
+
+suspend fun continuationParameterResume(block: (Continuation<Int>) -> Unit): Int = suspendCoroutine(block)
+
+suspend fun storedUninterceptedResult(): Int {
+    val value = 45
+    val block: (Continuation<Int>) -> Any? = { value }
+    return suspendCoroutineUninterceptedOrReturn(block)
+}
 
 // il-counit: a PUBLIC Unit-returning suspend fun -> a non-generic `Task` bridge. `unitContinuationStep` completes
 // synchronously, so `unitContinuationGreet` genuinely suspends then resumes on the sync path, exercising the full
@@ -58,6 +81,26 @@ class ContinuationBridgeTests {
             msg = e.message
         }
         assertEquals("boom", msg)                // former golden: "caught:boom"
+    }
+
+    @TestAttribute
+    fun storedBlockResume() {
+        assertEquals(43, blockOn { storedContinuationBlockResume() })
+    }
+
+    @TestAttribute
+    fun storedReferenceResume() {
+        assertEquals(44, blockOn { storedContinuationReferenceResume() })
+    }
+
+    @TestAttribute
+    fun parameterBlockResume() {
+        assertEquals(46, blockOn { continuationParameterResume { it.resume(46) } })
+    }
+
+    @TestAttribute
+    fun uninterceptedBlockResult() {
+        assertEquals(45, blockOn { storedUninterceptedResult() })
     }
 
     @TestAttribute
