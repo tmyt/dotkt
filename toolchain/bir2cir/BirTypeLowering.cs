@@ -130,7 +130,7 @@ static class BirTypeLowering
         // method-tv positional), lowered to the CLR vocabulary for exact scalar memberRef resolution (replaces `shapes`).
         "resolvedMemberParams",
         // additional type-reference keys ilemit reads (absent in today's BIR but lowered for robustness)
-        "elemType", "accType", "clrType", "tupleType", "parameterTypes",
+        "elemType", "accType", "clrType", "tupleType", "parameterTypes", "delegateType",
         // A MethodImpl descriptor's parameter vector (`clrInterfaceImpls`/`clrBaseImpls`) is a RAW array of type
         // nodes, and ilemit matches it against a method builder keyed by LOWERED declaration params — so it has to
         // arrive in the same vocabulary. A declaration's own `params` are `{name, type}` objects rather than type
