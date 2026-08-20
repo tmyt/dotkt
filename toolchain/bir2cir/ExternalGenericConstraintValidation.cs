@@ -27,14 +27,14 @@ static class ExternalGenericConstraintValidation
     public sealed class Prepared
     {
         readonly ReferenceMetadataIndex _refs;
-        readonly Func<string, bool> _isValueFqn;
+        readonly ValueTypeOracle _isValueFqn;
         readonly IReadOnlySet<string> _localEnums;
         readonly IReadOnlyDictionary<string, LocalTypeFacts> _localTypes;
         // ReferenceMetadataIndex stores declarations as immutable serialized metadata. Parse each owner once for the
         // whole module instead of once for every occurrence of a constructed type.
         readonly Dictionary<string, JsonArray> _declarationCache = new(StringComparer.Ordinal);
 
-        internal Prepared(ReferenceMetadataIndex refs, Func<string, bool> isValueFqn,
+        internal Prepared(ReferenceMetadataIndex refs, ValueTypeOracle isValueFqn,
             IReadOnlySet<string> localEnums, IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
         {
             _refs = refs;
@@ -53,11 +53,10 @@ static class ExternalGenericConstraintValidation
     }
 
     public static Prepared Prepare(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs,
-        Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums) =>
-        new(refs, isValueFqn, localEnums, CollectLocalTypes(roots, isValueFqn));
+        ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums) =>
+        new(refs, isValueFqn, localEnums, CollectLocalTypes(roots));
 
-    static Dictionary<string, LocalTypeFacts> CollectLocalTypes(IEnumerable<JsonNode> roots,
-        Func<string, bool> isValueFqn)
+    static Dictionary<string, LocalTypeFacts> CollectLocalTypes(IEnumerable<JsonNode> roots)
     {
         var result = new Dictionary<string, LocalTypeFacts>(StringComparer.Ordinal);
         foreach (var root in roots) Collect(root);
@@ -79,7 +78,7 @@ static class ExternalGenericConstraintValidation
 
         void Add(string name, string kind, JsonObject declaration)
         {
-            var isValue = isValueFqn(name) || kind is "struct" or "enum" or "value";
+            var isValue = kind is "struct" or "enum" or "value";
             var isAbstract = Bool(declaration["abstract"]);
             var hasPublicDefault = isValue || !isAbstract && declaration["ctors"] is JsonArray ctors &&
                 ctors.OfType<JsonObject>().Any(ctor => Str(ctor["vis"]) is null or "public" &&
@@ -90,7 +89,7 @@ static class ExternalGenericConstraintValidation
 
     static void Walk(JsonNode node, string incomingKey, ParameterFacts[] typeParameters,
         ParameterFacts[] methodParameters,
-        ReferenceMetadataIndex refs, Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,
         IReadOnlyDictionary<string, LocalTypeFacts> localTypes, IDictionary<string, JsonArray> declarationCache)
     {
         if (node is JsonArray array)
@@ -139,7 +138,7 @@ static class ExternalGenericConstraintValidation
     }
 
     static void ValidateType(TypeNode type, ParameterFacts[] typeParameters, ParameterFacts[] methodParameters,
-        ReferenceMetadataIndex refs, Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,
         IReadOnlyDictionary<string, LocalTypeFacts> localTypes, IDictionary<string, JsonArray> declarationCache)
     {
         switch (type)
@@ -204,7 +203,7 @@ static class ExternalGenericConstraintValidation
     }
 
     static void WalkResolvedMembers(JsonNode node, string incomingKey, ParameterFacts[] typeParameters,
-        ParameterFacts[] methodParameters, ReferenceMetadataIndex refs, Func<string, bool> isValueFqn,
+        ParameterFacts[] methodParameters, ReferenceMetadataIndex refs, ValueTypeOracle isValueFqn,
         IReadOnlySet<string> localEnums, IReadOnlyDictionary<string, LocalTypeFacts> localTypes,
         IDictionary<string, JsonArray> declarationCache)
     {
@@ -263,7 +262,7 @@ static class ExternalGenericConstraintValidation
 
     static void ValidateArgument(string owner, int index, TypeNode argument, JsonObject declaration,
         ParameterFacts[] typeParameters, ParameterFacts[] methodParameters, ReferenceMetadataIndex refs,
-        Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums,
+        ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,
         IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
     {
         var actual = Facts(argument, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
@@ -298,7 +297,7 @@ static class ExternalGenericConstraintValidation
     }
 
     static ParameterFacts Facts(TypeNode type, ParameterFacts[] typeParameters, ParameterFacts[] methodParameters,
-        ReferenceMetadataIndex refs, Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,
         IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
     {
         switch (type)
@@ -333,7 +332,7 @@ static class ExternalGenericConstraintValidation
                 }
                 else
                     kind = LocalOrReferencedKind(name, refs, localTypes);
-                if (isValueFqn(name))
+                if (isValueFqn(fqn))
                     return new ParameterFacts(false, true, localEnums.Contains(name) || IsEnum(name, refs,
                         localTypes), true);
                 var isInterface = kind == "interface";
@@ -350,7 +349,7 @@ static class ExternalGenericConstraintValidation
     }
 
     static ParameterFacts[] ReadParameterFacts(JsonNode node, ReferenceMetadataIndex refs,
-        Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums,
+        ValueTypeOracle isValueFqn, IReadOnlySet<string> localEnums,
         IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
     {
         if (node is not JsonArray parameters) return Array.Empty<ParameterFacts>();
@@ -375,7 +374,7 @@ static class ExternalGenericConstraintValidation
                         value |= bound.Name == "System.ValueType";
                         isEnum |= bound.Name is "System.Enum" or "kotlin.Enum";
                         var kind = LocalOrReferencedKind(bound.Name, refs, localTypes);
-                        reference |= kind == "class" && !isValueFqn(bound.Name);
+                        reference |= kind == "class" && !isValueFqn(bound);
                     }
             result[i] = new ParameterFacts(reference, value, isEnum, specials.Contains("new") || value);
         }

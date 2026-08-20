@@ -240,13 +240,13 @@ static partial class NullableTvErasureCallRealign
 
     // The struct-ness oracle, needed by the WRITE axis to tell an `object` seam that genuinely needs a conversion
     // (a value / type-variable slot) from one that is plain reference assignment.
-    static Func<string, bool> _isValue = _ => false;
+    static ValueTypeOracle _isValue = _ => false;
     // The REFERENCED declarations (#86 D1). A slot whose declaration is not in this compilation is read off the
     // producing assembly instead — its `[KotlinNullableGeneric]` carrier where the erasure recorded one, its physical
     // signature otherwise — and typed by the identical formula. Null when the build has no references.
     static ReferenceMetadataIndex _refs;
 
-    public static void Apply(JsonNode root, DeclIndex idx, Func<string, bool> isValue, ReferenceMetadataIndex refs)
+    public static void Apply(JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
     {
         _isValue = isValue ?? (_ => false);
         _refs = refs;
@@ -258,7 +258,7 @@ static partial class NullableTvErasureCallRealign
     // as `callStatic owner=null`, and only MemberCallSubstitution attributes it to the file class the reference index
     // is keyed by, so those calls have no resolvable declaration on the first run. Every rewrite here is gated on a
     // difference plus the object-erasure relation, so re-deriving a slot the first run already corrected is a no-op.
-    public static void ApplyReferenced(JsonNode root, DeclIndex idx, Func<string, bool> isValue, ReferenceMetadataIndex refs)
+    public static void ApplyReferenced(JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
         => Apply(root, idx, isValue, refs);
 
     static void ApplyRec(JsonNode root, DeclIndex idx)
@@ -840,7 +840,7 @@ static partial class NullableTvErasureCallRealign
     // Late call-shape consumers use the same declaration-to-use formula as this pass without duplicating its
     // substitution grammar. In particular, constrained dispatch learns its constructed owner only after Apply.
     internal static TypeNode EraseAndSubstituteOwnerSlot(
-        TypeNode declared, TypeNode[] ownerArgs, Func<string, bool> isValue)
+        TypeNode declared, TypeNode[] ownerArgs, ValueTypeOracle isValue)
         => Subst(NullableGenericErasure.EraseNullableTv(declared, isValue), ownerArgs, null);
 
     // Whether `candidate` is `expected` with one or more sub-positions collapsed to the erased `object` — i.e.

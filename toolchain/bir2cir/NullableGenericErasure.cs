@@ -68,7 +68,7 @@ static class NullableGenericErasure
         Bound,
     }
 
-    public static void Apply(JsonNode root, Func<string, bool> isValue)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue)
     {
         if (root is not JsonObject o) return;
         // #18/#147/#86 ROUND-TRIP RECORD (runs BEFORE the erasure below): capture each declaration slot the erasure
@@ -94,7 +94,7 @@ static class NullableGenericErasure
     // itself. These are opaque JSON STRINGS (not structured type slots), so ReferenceNullableStrip / BirTypeLowering
     // leave them untouched until their reader takes them — RoundtripMetadata's carrier-encoding in a ref/app build,
     // and ForeignNullableGenericCrossing's slot-ownership question in every build.
-    static void RecordNullableGenericSlots(JsonObject o, Func<string, bool> isValue)
+    static void RecordNullableGenericSlots(JsonObject o, ValueTypeOracle isValue)
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods)
@@ -136,7 +136,7 @@ static class NullableGenericErasure
     // channel this does not have. dll2klib reads all three back (`RestoreErasedSupertypes`).
     internal const string SupertypesPre = "nullableGenericSupertypesPre";
 
-    static void RecordSupertypes(JsonObject to, Func<string, bool> isValue)
+    static void RecordSupertypes(JsonObject to, ValueTypeOracle isValue)
     {
         var pre = new JsonObject();
         var moved = false;
@@ -230,21 +230,21 @@ static class NullableGenericErasure
         _ => false,
     };
 
-    static void RecordNullableGenericCtorParams(JsonNode node, Func<string, bool> isValue)
+    static void RecordNullableGenericCtorParams(JsonNode node, ValueTypeOracle isValue)
     {
         if (node is not JsonArray a) return;
         foreach (var item in a)
             if (item is JsonObject ctor) RecordNullableGenericParams(ctor["params"], isValue);
     }
 
-    static void RecordNullableGenericParams(JsonNode node, Func<string, bool> isValue)
+    static void RecordNullableGenericParams(JsonNode node, ValueTypeOracle isValue)
     {
         if (node is not JsonArray a) return;
         foreach (var item in a)
             if (item is JsonObject p) RecordNullableGenericSlot(p, "type", "nullableGeneric", "nullableFlags", isValue);
     }
 
-    static void RecordNullableGenericDecls(JsonNode node, Func<string, bool> isValue)
+    static void RecordNullableGenericDecls(JsonNode node, ValueTypeOracle isValue)
     {
         if (node is not JsonArray a) return;
         foreach (var item in a)
@@ -252,7 +252,7 @@ static class NullableGenericErasure
     }
 
     static void RecordNullableGenericSlot(JsonObject decl, string typeKey, string factKey, string flagsKey,
-        Func<string, bool> isValue)
+        ValueTypeOracle isValue)
     {
         if (TypeJson.Read(decl[typeKey]) is not TypeNode t || !HasRestorableNullableTv(t, isValue)) return;
         decl[factKey] = TypeNode.ToJson(t);
@@ -278,7 +278,7 @@ static class NullableGenericErasure
     // A non-suspend `Fn` is a real delegate in CIR, so dll2klib can walk its Invoke signature in parallel with the
     // recorded Kotlin fn node. A suspend fn is excluded: BirTypeLowering erases the whole value to object and its
     // distinct suspend-fn carrier owns restoration, so there is no physical delegate shape for this carrier to align with.
-    static bool HasRestorableNullableTv(TypeNode t, Func<string, bool> isValue) => t switch
+    static bool HasRestorableNullableTv(TypeNode t, ValueTypeOracle isValue) => t switch
     {
         TypeNode.Nullable { Of: TypeNode.Tv } => true,
         TypeNode.Nullable n => HasRestorableNullableTv(n.Of, isValue),
@@ -297,10 +297,10 @@ static class NullableGenericErasure
 
     // One reified ARGUMENT the erasure rewrites: either it is itself the possibly-value `X?` that becomes `object`,
     // or it contains one deeper down (`List<List<Int?>>`).
-    static bool ErasedArgument(TypeNode t, Func<string, bool> isValue)
+    static bool ErasedArgument(TypeNode t, ValueTypeOracle isValue)
         => IsNullableMaybeValue(t, isValue) || HasRestorableNullableTv(t, isValue);
 
-    static void ApplyRec(JsonObject o, Func<string, bool> isValue)
+    static void ApplyRec(JsonObject o, ValueTypeOracle isValue)
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods) ApplyToMethod(m);
@@ -446,7 +446,7 @@ static class NullableGenericErasure
     // without its container, so the node KIND says which container it belongs to. An array's or a collection
     // iteration's element is a reified argument; a `nullableValue`/`byrefLoad` `elem` names the `V` of a
     // `Nullable<V>` or a `ref` referent, which are slots.
-    static void EraseNullableGpAllStrings(JsonNode node, Func<string, bool> isValue, Pos pos = Pos.Slot)
+    static void EraseNullableGpAllStrings(JsonNode node, ValueTypeOracle isValue, Pos pos = Pos.Slot)
     {
         switch (node)
         {
@@ -516,24 +516,24 @@ static class NullableGenericErasure
     // concrete `V?` keeps its CLR-native `System.Nullable<V>`; only the open `Nullable(Tv)`, which is inexpressible,
     // becomes `object`. Whatever the slot CONTAINS is erased at its own position, so a `List<Int?>` parameter still
     // becomes an `IReadOnlyList<object>`.
-    internal static TypeNode EraseNullableTv(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Slot, isValue);
+    internal static TypeNode EraseNullableTv(TypeNode t, ValueTypeOracle isValue) => Erase(t, Pos.Slot, isValue);
 
     // `Erase` at an ARGUMENT to a reified construction — a generic type argument, a generic method type argument, an
     // array element, a delegate component. A nullable POSSIBLY-VALUE type is `object` here, so `List<T?>`,
     // `List<Int?>` and `List<Boolean?>` all become `IReadOnlyList<object>` and meet each other, and `Array<T?>`,
     // `Array<Int?>` and `Array<Boolean?>` are all `object[]`. Anything else erases normally: `List<String?>` stays
     // `IReadOnlyList<string>` and `Array<String?>` stays `string[]` (the `?` rides the NRT byte).
-    internal static TypeNode EraseArgument(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Argument, isValue);
+    internal static TypeNode EraseArgument(TypeNode t, ValueTypeOracle isValue) => Erase(t, Pos.Argument, isValue);
 
     // A declaration bound elsewhere. Only the open `Nullable(Tv)` — which no CLR slot can hold for an unconstrained
     // type variable — is rewritten; a concrete `Nullable<V>` the target really declares stands.
-    internal static TypeNode EraseBound(TypeNode t, Func<string, bool> isValue) => Erase(t, Pos.Bound, isValue);
+    internal static TypeNode EraseBound(TypeNode t, ValueTypeOracle isValue) => Erase(t, Pos.Bound, isValue);
 
     // THE ONE RULE. `Nullable(Tv)` is `object` wherever it sits, because no CLR slot expresses it; a concrete
     // possibly-value `V?` is `object` in an ARGUMENT position and `Nullable<V>` in a slot. Everything else recurses,
     // with each child visited at ITS position: an Fqn's arguments, an array's element and a delegate's
     // parameters/return/receiver are arguments; a `ref` referent and a nullable's inner are slots.
-    internal static TypeNode Erase(TypeNode t, Pos pos, Func<string, bool> isValue)
+    internal static TypeNode Erase(TypeNode t, Pos pos, ValueTypeOracle isValue)
     {
         if (t is TypeNode.Nullable { Of: TypeNode.Tv }) return new TypeNode.Fqn("object");
         if (pos == Pos.Argument && IsNullableMaybeValue(t, isValue)) return new TypeNode.Fqn("object");
@@ -629,18 +629,19 @@ static class NullableGenericErasure
     // declaration, decided without resolving where each bound leads. The cost is a `CharSequence`-bounded array that
     // boxes for nothing; the alternative is a slot whose representation depends on a bound the reader has to chase,
     // and two `Array<T?>` declarations that cannot meet when one is bounded and one is not.
-    internal static bool IsNullableMaybeValue(TypeNode t, Func<string, bool> isValue)
+    internal static bool IsNullableMaybeValue(TypeNode t, ValueTypeOracle isValue)
         => t is TypeNode.Nullable n && MayBeValue(n.Of, isValue);
 
     // A CONSTRUCTED name is classified like any other: `KeyValuePair<K,V>` and `ArraySegment<T>` are structs, and the
-    // oracle strips generic arity to answer. Matching only the argument-less shape left every constructed BCL struct
+    // oracle uses their complete FQN, including arguments. Matching only the argument-less shape left every
+    // constructed BCL struct
     // classified as a reference, so `Array<KeyValuePair<K,V>?>` stayed a `Nullable<KVP>[]` while the open `Array<T?>`
     // it has to meet was `object[]` — the unrelated pair this whole decision exists to delete, and it segfaulted the
     // process rather than failing loudly.
-    static bool MayBeValue(TypeNode t, Func<string, bool> isValue) => t switch
+    static bool MayBeValue(TypeNode t, ValueTypeOracle isValue) => t switch
     {
         TypeNode.Tv => true,
-        TypeNode.Fqn f => isValue?.Invoke(f.Name) == true,
+        TypeNode.Fqn f => isValue?.Invoke(f) == true,
         TypeNode.Oblivious o => MayBeValue(o.Of, isValue),
         _ => false,
     };

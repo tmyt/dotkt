@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Referenced value-type classification now uses the complete type identity (#356).** Nested CLR names are
+  normalized consistently and generic argument count distinguishes legal same-stem declarations, so every bir2cir
+  consumer agrees whether a constructed external type needs value-type lowering regardless of scan order or which
+  compiler stage produced its token.
+
 - **Projected generic methods and properties now preserve the CLR-only half of their type-parameter constraints
   (#498).** dll2klib keeps implicit `System.ValueType`/`System.Enum` rows, including the modified `ValueType` row used
   by `unmanaged`, out of Kotlin bounds on every callable and

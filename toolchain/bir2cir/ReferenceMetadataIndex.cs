@@ -13,6 +13,8 @@ using System.Collections.Immutable;
 using DotKt.Bir;
 using DotKt.Toolchain;
 
+internal delegate bool ValueTypeOracle(TypeNode.Fqn type);
+
 sealed partial class ReferenceMetadataIndex
 {
     public enum TypeKeyKind
@@ -117,7 +119,15 @@ sealed partial class ReferenceMetadataIndex
 
     // Aggregate CALL-SUBSTITUTION index across all reference assemblies.
     readonly Dictionary<string, string> _ownerAlias = new(StringComparer.Ordinal);   // Kotlin FQN -> BCL alias
-    readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
+    // Exact projected type identity -> class/struct/interface/enum. A TypeNode keeps generic arguments outside its
+    // name, so the identity is the dotted, arity-free FQN PLUS the flattened argument count. Keying only by the name
+    // conflates legal CLR declarations such as `Vector` and `Vector<T>`; retaining reflection's `+` separator instead
+    // makes the answer depend on whether kotc or the reference-metadata reader minted the token.
+    readonly Dictionary<OwnerTypeIdentity, string> _ownerKind = new();
+    // The kind of an @ClrTypeAlias declaration is a fact about the SEMANTIC owner, not about whatever unrelated CLR
+    // declaration happens to share its arity-free name. Keep it beside the alias rather than recovering it from the
+    // all-reference type-kind index in TryResolveClrOwner.
+    readonly Dictionary<string, string> _ownerAliasKind = new(StringComparer.Ordinal);
     readonly HashSet<string> _byRefLikeOwners = new(StringComparer.Ordinal);         // Kotlin FQN -> is a `ref struct`
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
     readonly Dictionary<string, RichEnumMetadata> _richEnums = new(StringComparer.Ordinal);
@@ -325,7 +335,7 @@ sealed partial class ReferenceMetadataIndex
     // routes to the this-assembly-emitted type — `new` stays a local `new` (not `newClr`), and a
     // callInstance/callStatic/field/boundDelegate stays owner-local (NetInteropBinding leaves it for the emitted-type
     // path) instead of reshaping to a `clr*` node against the ref. Set once by the Driver before the transform loop.
-    // SCOPE: this filters the ResolveNetType axis ONLY. The ref.dll's DotKt sidecar indexes (TypeKinds/IsValueTypeFqn,
+    // SCOPE: this filters the ResolveNetType axis ONLY. The ref.dll's DotKt sidecar indexes (TypeKinds/IsValueType,
     // owner arity, ctor param types) are NOT filtered by this set — in the #15 layout they are populated from the SAME
     // source that produced the local decl, so they agree; a genuinely divergent stale-dll is out of scope (source-wins
     // is still the right precedence there, matching Roslyn CS0436). `@ClrTypeAlias`/`@ClrIntrinsic` maps are empty for a
@@ -363,7 +373,11 @@ sealed partial class ReferenceMetadataIndex
         _compileRefs = compileRefs;
         foreach (var asm in assemblies)
         {
-            foreach (var kv in asm.DotKt.Aliases) _ownerAlias[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.Aliases)
+            {
+                _ownerAlias[kv.Key] = kv.Value;
+                _ownerAliasKind[kv.Key] = asm.DotKt.AliasKinds.GetValueOrDefault(kv.Key, "class");
+            }
             foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
             foreach (var owner in asm.DotKt.ByRefLikeOwners) _byRefLikeOwners.Add(owner);
             foreach (var owner in asm.DotKt.DotKtOwners)
@@ -888,7 +902,7 @@ sealed partial class ReferenceMetadataIndex
     {
         var fqn = BareOwnerFqn(ownerToken);
         if (FoundationalRefAliases.TryGetValue(fqn, out bcl)) { kind = "class"; return true; }
-        if (_ownerAlias.TryGetValue(fqn, out bcl)) { kind = _ownerKind.GetValueOrDefault(fqn, "class"); return true; }
+        if (_ownerAlias.TryGetValue(fqn, out bcl)) { kind = _ownerAliasKind.GetValueOrDefault(fqn, "class"); return true; }
         bcl = null; kind = null; return false;
     }
 
@@ -1742,12 +1756,11 @@ sealed partial class ReferenceMetadataIndex
     // a reference `T?` is a bare type + an NRT byte. Consulted by BirTypeLowering (the Nullable strip) and the decl
     // NRT-byte walk. Not for type VARIABLES — use TvConstraint for those. Foundational value primitives resolve from
     // the hardcoded seed even with no ref.dll; a ref.dll struct/enum resolves from the scanned `_ownerKind`.
-    public bool IsValueTypeFqn(string fqn)
+    public bool IsValueType(TypeNode.Fqn type)
     {
-        if (fqn == null) return false;
-        if (ValueTypePrimitiveFqns.Contains(fqn)) return true;
-        var bare = StripGenericArity(fqn);
-        var kind = _ownerKind.GetValueOrDefault(bare);
+        if (type == null) return false;
+        if (ValueTypePrimitiveFqns.Contains(type.Name)) return true;
+        var kind = _ownerKind.GetValueOrDefault(OwnerIdentity(type.Name, type.Args?.Length ?? 0));
         return kind == "struct" || kind == "enum";
     }
 
@@ -3799,7 +3812,8 @@ sealed partial class ReferenceMetadataIndex
                     if (companionRepresentations.TryGetValue(type, out var companionIsStatic))
                         metadata.CompanionStaticByPhysicalOwner.Add(
                             StripGenericArity(DottedFqn(ownerFqn)), companionIsStatic);
-                    metadata.TypeKinds[ownerFqn] = TypeKind(type);
+                    metadata.TypeKinds[OwnerIdentity(ownerFqn,
+                        type.IsGenericType ? type.GetGenericArguments().Length : 0)] = TypeKind(type);
                     if (type.IsValueType || !type.IsAbstract && !type.IsInterface &&
                         type.GetConstructor(Type.EmptyTypes) is ConstructorInfo { IsPublic: true })
                     {
@@ -3843,6 +3857,8 @@ sealed partial class ReferenceMetadataIndex
                     {
                         metadata.Aliases[ownerFqn] = classAlias;
                         metadata.Aliases[DottedFqn(ownerFqn)] = classAlias;
+                        metadata.AliasKinds[ownerFqn] = TypeKind(type);
+                        metadata.AliasKinds[DottedFqn(ownerFqn)] = TypeKind(type);
                     }
                     // A compiler-generated implementation classifier carried by an inline body may capture the
                     // enclosing receiver/free values through its sole constructor. Record that exact declaration
@@ -5813,6 +5829,11 @@ sealed partial class ReferenceMetadataIndex
         return result.ToString();
     }
 
+    internal readonly record struct OwnerTypeIdentity(string Name, int Arity);
+
+    static OwnerTypeIdentity OwnerIdentity(string name, int arity) =>
+        new(DottedFqn(StripGenericArity(name)), arity);
+
     // The nested-type separator normalizer: a reflected FullName uses `+` between an enclosing type and its nested type
     // (`kotlin.coroutines.CoroutineContext+Key`), while kotc/bir2cir speak dots everywhere. Converge onto dots so a
     // bound-index lookup keyed by kotc's `kotlin.coroutines.CoroutineContext.Key` matches.
@@ -5877,7 +5898,8 @@ sealed class ReferenceDotKtMetadata
     // ownerFqn (the Kotlin FQN, e.g. "kotlin.String") -> the BCL alias it binds to ("System.String"), from a
     // class-level @ClrTypeAlias (the type-identity binding) or, for a not-yet-renamed bound class, a class-level @ClrIntrinsic.
     public readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
-    public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
+    public readonly Dictionary<string, string> AliasKinds = new(StringComparer.Ordinal);
+    public readonly Dictionary<ReferenceMetadataIndex.OwnerTypeIdentity, string> TypeKinds = new();
     public readonly HashSet<string> ByRefLikeOwners = new(StringComparer.Ordinal);        // ownerFqn -> is a `ref struct` (see IsByRefLikeFqn)
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
     public readonly Dictionary<string, ReferenceMetadataIndex.RichEnumMetadata> RichEnums = new(StringComparer.Ordinal);

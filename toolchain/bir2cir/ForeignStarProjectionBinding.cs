@@ -159,7 +159,7 @@ static class ForeignStarProjectionBinding
         if (refs.IsByRefLikeFqn(owner.Name))
             throw new NotSupportedException(
                 $"bir2cir: foreign byref-like generic star projection `{owner.Name}<*>` has no boxable CLR existential representation");
-        var valueReceiver = refs.IsValueTypeFqn(owner.Name);
+        var valueReceiver = refs.IsValueType(owner);
 
         var signature = ((obj["sig"] ?? obj["argTypes"] ?? obj["resolvedMemberParams"]) as JsonArray)?.Select(TypeJson.Read).ToArray();
         if (signature == null && kind == "clrPropSet" && obj["value"] is JsonNode setValue)

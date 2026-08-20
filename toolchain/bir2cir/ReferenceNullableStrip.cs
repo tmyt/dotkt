@@ -22,7 +22,7 @@ using DotKt.Bir;
 // strip, never an NRT byte (nullability at a type usage is compile-time-only, not NRT-annotated).
 static class ReferenceNullableStrip
 {
-    public static void Apply(JsonNode node, Func<string, bool> isValue)
+    public static void Apply(JsonNode node, ValueTypeOracle isValue)
     {
         switch (node)
         {
@@ -49,7 +49,7 @@ static class ReferenceNullableStrip
 
     // Recursively strip reference nullables within a Type: a `Nullable` with a value inner keeps its wrapper; a
     // `Nullable` with a reference/tv/generic/array/fn inner collapses to the (recursively-stripped) bare inner.
-    static TypeNode Strip(TypeNode t, Func<string, bool> isValue) => t switch
+    static TypeNode Strip(TypeNode t, ValueTypeOracle isValue) => t switch
     {
         TypeNode.Nullable n => IsValueInner(n.Of, isValue)
             ? new TypeNode.Nullable(Strip(n.Of, isValue))
@@ -70,6 +70,6 @@ static class ReferenceNullableStrip
     // struct, so a `null` element read out of an `Array<ArraySegment<String>?>` was unboxed as a NON-nullable struct —
     // a NullReferenceException, or silently no null at all. The oracle answers false for a constructed REFERENCE
     // generic (`List<String>?`), which is what keeps that side stripping as before.
-    static bool IsValueInner(TypeNode of, Func<string, bool> isValue) =>
-        of is TypeNode.Fqn f && isValue(f.Name);
+    static bool IsValueInner(TypeNode of, ValueTypeOracle isValue) =>
+        of is TypeNode.Fqn f && isValue(f);
 }

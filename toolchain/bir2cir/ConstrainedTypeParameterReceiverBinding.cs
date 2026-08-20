@@ -56,7 +56,7 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     // PHASE 2 — author the constrained dispatch over the now-declaring, now-constructed owner.
-    public static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue)
     {
         var rootList = roots.ToList();
         var arity = CollectTypeArity(rootList);
@@ -95,7 +95,7 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close,
-        Func<string, bool> isValue = null, bool resolvedPropertiesOnly = false)
+        ValueTypeOracle isValue = null, bool resolvedPropertiesOnly = false)
     {
         if (root is not JsonObject file) return;
         var noTypeParams = new JsonArray();
@@ -109,7 +109,7 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     static void BindType(JsonObject type, Dictionary<string, int> arity, bool close,
-        Func<string, bool> isValue, bool resolvedPropertiesOnly)
+        ValueTypeOracle isValue, bool resolvedPropertiesOnly)
     {
         var typeParams = TypeParameterFrame.CloneDeclarations(type);
         if (type["ctors"] is JsonArray ctors)
@@ -128,7 +128,7 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        Func<string, bool> isValue, bool resolvedPropertiesOnly)
+        ValueTypeOracle isValue, bool resolvedPropertiesOnly)
     {
         if (properties == null) return;
         foreach (var property in properties.OfType<JsonObject>())
@@ -138,7 +138,7 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        Func<string, bool> isValue, bool resolvedPropertiesOnly)
+        ValueTypeOracle isValue, bool resolvedPropertiesOnly)
     {
         var methodParams = method["typeParams"] as JsonArray ?? new JsonArray();
         // The declaration's local/param type environment, for a receiver read that carries no frontend `sty`
@@ -295,7 +295,7 @@ static class ConstrainedTypeParameterReceiverBinding
     // axis sees the bare semantic owner and cannot derive the slot an argument fills. Once `iface` is known, apply the
     // ordinary use-site rule to its declaration signature: Subst(Erase(declared slot), owner args). Only the castable
     // object-erasure seam is materialized; differences inside a constructed generic remain outside this conversion.
-    static void AlignArguments(JsonObject call, TypeNode.Fqn iface, BirScope scope, Func<string, bool> isValue)
+    static void AlignArguments(JsonObject call, TypeNode.Fqn iface, BirScope scope, ValueTypeOracle isValue)
     {
         if (isValue == null || iface.Args == null || call["sig"] is not JsonArray sig
             || call["args"] is not JsonArray args || sig.Count != args.Count)

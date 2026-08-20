@@ -25,12 +25,12 @@ using DotKt.Bir;
 // Task-bridge sets its own `retNullableFlags` up-front and must win).
 static class DeclNullableFlags
 {
-    public static void Apply(JsonNode root, Func<string, bool> isValue)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue)
     {
         if (root is JsonObject o) ApplyRec(o, isValue);
     }
 
-    static void ApplyRec(JsonObject o, Func<string, bool> isValue)
+    static void ApplyRec(JsonObject o, ValueTypeOracle isValue)
     {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods)
@@ -46,7 +46,7 @@ static class DeclNullableFlags
             foreach (var t in types) if (t is JsonObject to) ApplyRec(to, isValue);
     }
 
-    static void ApplyToMethod(JsonObject mo, Func<string, bool> isValue)
+    static void ApplyToMethod(JsonObject mo, ValueTypeOracle isValue)
     {
         if (!mo.ContainsKey("retNullableFlags")
             && TypeJson.Read(mo["ret"]) is TypeNode ret
@@ -57,7 +57,7 @@ static class DeclNullableFlags
 
     // Stamp `nullableFlags` on each declaration in a params/fields/properties array whose Type node carries a nullable
     // reference position (and that lacks the key already).
-    static void ApplyToDecls(JsonNode arr, Func<string, bool> isValue)
+    static void ApplyToDecls(JsonNode arr, ValueTypeOracle isValue)
     {
         if (arr is not JsonArray a) return;
         foreach (var d in a)

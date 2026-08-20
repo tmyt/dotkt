@@ -134,7 +134,7 @@ sealed class Pipeline
         // declaration/use-axis nullable-generic passes below retain the same oracle.
         var localValueTypeFqns = new HashSet<string>(StringComparer.Ordinal);
         foreach (var b in birFiles) CollectLocalValueTypes(b.Root, localValueTypeFqns);
-        Func<string, bool> isValueFqn = name => refs.IsValueTypeFqn(name) || localValueTypeFqns.Contains(name);
+        ValueTypeOracle isValueFqn = type => refs.IsValueType(type) || localValueTypeFqns.Contains(type.Name);
         if (!_options.RefBuild) SequenceElementAdapterLowering.Apply(birRoots, isValueFqn);
         var companionRepresentations = CompanionRepresentationLowering.Apply(birRoots);
         // CLR multiplies static storage and .cctors on a generic TypeDef per constructed type. Kotlin companion-block

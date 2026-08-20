@@ -20,9 +20,9 @@ using DotKt.Bir;
 // which then finds slot and creation already agreeing.
 static class ArrayNullableElemCanonicalization
 {
-    public static void Apply(JsonNode root, Func<string, bool> isValue) => Walk(root, isValue);
+    public static void Apply(JsonNode root, ValueTypeOracle isValue) => Walk(root, isValue);
 
-    static void Walk(JsonNode node, Func<string, bool> isValue)
+    static void Walk(JsonNode node, ValueTypeOracle isValue)
     {
         switch (node)
         {
@@ -38,7 +38,7 @@ static class ArrayNullableElemCanonicalization
 
     static readonly string[] ArrayCreationKinds = { "newArray", "newArraySized", "newArrayInit" };
 
-    static void Canonicalize(JsonObject obj, Func<string, bool> isValue)
+    static void Canonicalize(JsonObject obj, ValueTypeOracle isValue)
     {
         if ((obj["k"] as JsonValue)?.TryGetValue<string>(out var k) != true || (k != "var" && k != "field")) return;
         // The declared slot must be an `Array<E?>` whose `E` may be a value type — the shape D2 canonicalizes.

@@ -93,7 +93,7 @@ static class ValueSlotNullableWrite
                 + "value type has no null representation. Use an explicit Kotlin `Int?`-typed property for nullable value storage.");
 
         // A genuine `Nullable<V>` source (Kotlin `Int?`) -> unwrap to the bare `V` the slot expects.
-        if (src is TypeNode.Nullable ns && ns.Of is TypeNode.Fqn vf && _refs.IsValueTypeFqn(vf.Name))
+        if (src is TypeNode.Nullable ns && ns.Of is TypeNode.Fqn vf && _refs.IsValueType(vf))
             node["value"] = new JsonObject
             {
                 ["k"] = "nullableValue",
@@ -138,7 +138,7 @@ static class ValueSlotNullableWrite
             return ownerArgs[pos] switch
             {
                 TypeNode.Nullable => false,                              // ThreadLocal<Int?> -> Nullable<Int32> slot
-                TypeNode.Fqn af => _refs.IsValueTypeFqn(af.Name),        // ThreadLocal<Int> -> bare int32 slot
+                TypeNode.Fqn af => _refs.IsValueType(af),               // ThreadLocal<Int> -> bare int32 slot
                 _ => false,
             };
         }
