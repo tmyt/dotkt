@@ -12,15 +12,44 @@ using DotKt.Bir;
 static class ExternalGenericConstraintValidation
 {
     sealed record ParameterFacts(bool Reference, bool NonNullableValue, bool Enum, bool PublicDefaultConstructor);
-    sealed record LocalTypeFacts(string Kind, bool Abstract, bool PublicDefaultConstructor);
+    internal sealed record LocalTypeFacts(string Kind, bool Abstract, bool PublicDefaultConstructor);
 
-    public static void Apply(JsonNode root, IEnumerable<JsonNode> allRoots, ReferenceMetadataIndex refs,
-        Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums)
+    // These vectors describe another declaration in that declaration's own generic frame. They are selection/linkage
+    // facts, not use-site TypeSpecs, so resolving their !N/!!N against the caller's lexical frame is always wrong.
+    // Keep this boundary aligned with TypeOwnershipLowering's lexical-frame rewrites.
+    static readonly HashSet<string> ForeignDeclarationTypeKeys = new(StringComparer.Ordinal)
     {
-        var localTypes = CollectLocalTypes(allRoots, isValueFqn);
-        Walk(root, Array.Empty<ParameterFacts>(), Array.Empty<ParameterFacts>(), refs, isValueFqn, localEnums,
-            localTypes);
+        "sig", "resolvedMemberParams", "shapeTypes", "paramSig", "delegationSig",
+        "memberOwnerTypeParams", "memberMethodTypeParams", "memberReturnType", "memberSignature", "memberType",
+    };
+
+    public sealed class Prepared
+    {
+        readonly ReferenceMetadataIndex _refs;
+        readonly Func<string, bool> _isValueFqn;
+        readonly IReadOnlySet<string> _localEnums;
+        readonly IReadOnlyDictionary<string, LocalTypeFacts> _localTypes;
+        // ReferenceMetadataIndex stores declarations as immutable serialized metadata. Parse each owner once for the
+        // whole module instead of once for every occurrence of a constructed type.
+        readonly Dictionary<string, JsonArray> _declarationCache = new(StringComparer.Ordinal);
+
+        internal Prepared(ReferenceMetadataIndex refs, Func<string, bool> isValueFqn,
+            IReadOnlySet<string> localEnums, IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
+        {
+            _refs = refs;
+            _isValueFqn = isValueFqn;
+            _localEnums = localEnums;
+            _localTypes = localTypes;
+        }
+
+        public void Apply(JsonNode root) =>
+            Walk(root, null, Array.Empty<ParameterFacts>(), Array.Empty<ParameterFacts>(), _refs, _isValueFqn,
+                _localEnums, _localTypes, _declarationCache);
     }
+
+    public static Prepared Prepare(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs,
+        Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums) =>
+        new(refs, isValueFqn, localEnums, CollectLocalTypes(roots, isValueFqn));
 
     static Dictionary<string, LocalTypeFacts> CollectLocalTypes(IEnumerable<JsonNode> roots,
         Func<string, bool> isValueFqn)
@@ -33,12 +62,8 @@ static class ExternalGenericConstraintValidation
         {
             if (node is JsonObject o)
             {
-                if (Str(o["name"]) is string name && Str(o["kind"]) is string kind && o["types"] is JsonArray)
+                if (Str(o["name"]) is string name && Str(o["kind"]) is string kind && IsTypeKind(kind))
                     Add(name, kind, o);
-                // Ordinary type declarations need not themselves own a nested `types` array.
-                else if (Str(o["name"]) is string ordinaryName && Str(o["kind"]) is string ordinaryKind &&
-                         o.ContainsKey("ctors"))
-                    Add(ordinaryName, ordinaryKind, o);
                 foreach (var value in o.Select(pair => pair.Value))
                     if (value is not null) Collect(value);
             }
@@ -52,54 +77,78 @@ static class ExternalGenericConstraintValidation
             var isValue = isValueFqn(name) || kind is "struct" or "enum" or "value";
             var isAbstract = Bool(declaration["abstract"]);
             var hasPublicDefault = isValue || !isAbstract && declaration["ctors"] is JsonArray ctors &&
-                ctors.OfType<JsonObject>().Any(ctor => Str(ctor["vis"]) == "public" &&
+                ctors.OfType<JsonObject>().Any(ctor => Str(ctor["vis"]) is null or "public" &&
                     (ctor["params"] as JsonArray)?.Count == 0);
             result[name] = new LocalTypeFacts(kind, isAbstract, hasPublicDefault);
         }
     }
 
-    static void Walk(JsonNode node, ParameterFacts[] typeParameters, ParameterFacts[] methodParameters,
+    static void Walk(JsonNode node, string incomingKey, ParameterFacts[] typeParameters,
+        ParameterFacts[] methodParameters,
         ReferenceMetadataIndex refs, Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums,
-        IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
+        IReadOnlyDictionary<string, LocalTypeFacts> localTypes, IDictionary<string, JsonArray> declarationCache)
     {
         if (node is JsonArray array)
         {
             foreach (var value in array)
                 if (value is not null)
-                    Walk(value, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                    Walk(value, incomingKey, typeParameters, methodParameters, refs, isValueFqn, localEnums,
+                        localTypes, declarationCache);
             return;
         }
         if (node is not JsonObject o) return;
 
+        // A scalar memberRef is already a resolved foreign declaration identity. Its open declaring/parameter/return
+        // types belong to that declaration, exactly like the descriptor vectors skipped below.
+        if (o.ContainsKey("assembly") && o.ContainsKey("declaringType") && o.ContainsKey("genericArity") &&
+            o.ContainsKey("returnType") && MemberRefNode.Kinds.IsKnown(Str(o["kind"])))
+            return;
+
         if (o["t"] is JsonValue)
         {
             if (TypeJson.Read(o) is TypeNode type)
-                ValidateType(type, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                ValidateType(type, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
             return;
         }
 
         var nextTypeParameters = typeParameters;
         var nextMethodParameters = methodParameters;
-        if (Str(o["kind"]) is string && o.ContainsKey("ctors"))
-            nextTypeParameters = ReadParameterFacts(o["typeParams"], refs, isValueFqn, localEnums, localTypes);
-        else if (o.ContainsKey("params") && (o.ContainsKey("ret") || o.ContainsKey("body")))
+        if (Str(o["kind"]) is string kind && IsTypeKind(kind))
+            nextTypeParameters = ReadParameterFacts(TypeParameterFrame.CloneDeclarations(o), refs, isValueFqn,
+                localEnums, localTypes);
+        if (incomingKey == "methods")
             nextMethodParameters = ReadParameterFacts(o["typeParams"], refs, isValueFqn, localEnums, localTypes);
+        else if (incomingKey == "ctors")
+            nextMethodParameters = Array.Empty<ParameterFacts>();
 
-        foreach (var value in o.Select(pair => pair.Value))
-            if (value is not null)
-                Walk(value, nextTypeParameters, nextMethodParameters, refs, isValueFqn, localEnums, localTypes);
+        var nodeKind = Str(o["k"]);
+        foreach (var pair in o.ToList())
+        {
+            if (pair.Value is null || ForeignDeclarationTypeKeys.Contains(pair.Key) ||
+                pair.Key == "argTypes" && nodeKind != "new")
+                continue;
+            Walk(pair.Value, pair.Key, nextTypeParameters, nextMethodParameters, refs, isValueFqn, localEnums,
+                localTypes, declarationCache);
+        }
     }
 
     static void ValidateType(TypeNode type, ParameterFacts[] typeParameters, ParameterFacts[] methodParameters,
         ReferenceMetadataIndex refs, Func<string, bool> isValueFqn, IReadOnlySet<string> localEnums,
-        IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
+        IReadOnlyDictionary<string, LocalTypeFacts> localTypes, IDictionary<string, JsonArray> declarationCache)
     {
         switch (type)
         {
             case TypeNode.Fqn { Args: { } args } application:
                 foreach (var argument in args)
-                    ValidateType(argument, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
-                if (refs.OwnerTypeParamDeclarations(application.Name) is not JsonArray declarations ||
+                    ValidateType(argument, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                        declarationCache);
+                if (!declarationCache.TryGetValue(application.Name, out var declarations))
+                {
+                    declarations = refs.OwnerTypeParamDeclarations(application.Name);
+                    declarationCache[application.Name] = declarations;
+                }
+                if (declarations is null ||
                     declarations.Count != args.Length)
                     return;
                 for (var i = 0; i < args.Length; i++)
@@ -134,28 +183,37 @@ static class ExternalGenericConstraintValidation
             case TypeNode.Star:
                 return;
             case TypeNode.Nullable nullable:
-                ValidateType(nullable.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                ValidateType(nullable.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
                 return;
             case TypeNode.Oblivious oblivious:
-                ValidateType(oblivious.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                ValidateType(oblivious.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
                 return;
             case TypeNode.Array array:
-                ValidateType(array.Elem, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                ValidateType(array.Elem, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
                 return;
             case TypeNode.ByRef byRef:
-                ValidateType(byRef.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                ValidateType(byRef.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
                 return;
             case TypeNode.Ptr pointer:
-                ValidateType(pointer.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                ValidateType(pointer.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
                 return;
             case TypeNode.Mod modifier:
-                ValidateType(modifier.M, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
-                ValidateType(modifier.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                ValidateType(modifier.M, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
+                ValidateType(modifier.Of, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
                 return;
             case TypeNode.Fn function:
-                ValidateType(function.Ret, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                ValidateType(function.Ret, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                    declarationCache);
                 foreach (var parameter in function.DelegateParams)
-                    ValidateType(parameter, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes);
+                    ValidateType(parameter, typeParameters, methodParameters, refs, isValueFqn, localEnums, localTypes,
+                        declarationCache);
                 return;
         }
     }
@@ -185,15 +243,25 @@ static class ExternalGenericConstraintValidation
                 return new ParameterFacts(true, false, false, false);
             case TypeNode.Fqn fqn:
             {
-                if (isValueFqn(fqn.Name))
-                    return new ParameterFacts(false, true, localEnums.Contains(fqn.Name) || IsEnum(fqn.Name, refs,
+                var name = fqn.Name;
+                string kind;
+                if (localTypes.TryGetValue(name, out var localFact))
+                    kind = localFact.Kind;
+                else if (refs.TryResolveClrOwner(name, out var physicalName, out var aliasKind))
+                {
+                    name = physicalName;
+                    kind = aliasKind;
+                }
+                else
+                    kind = LocalOrReferencedKind(name, refs, localTypes);
+                if (isValueFqn(name))
+                    return new ParameterFacts(false, true, localEnums.Contains(name) || IsEnum(name, refs,
                         localTypes), true);
-                var kind = LocalOrReferencedKind(fqn.Name, refs, localTypes);
                 var isInterface = kind == "interface";
-                var isAbstract = localTypes.TryGetValue(fqn.Name, out var local) && local.Abstract;
-                var hasDefault = fqn.Name is "kotlin.Any" or "System.Object" ||
-                    localTypes.GetValueOrDefault(fqn.Name)?.PublicDefaultConstructor == true ||
-                    refs.HasPublicParameterlessConstructor(fqn.Name);
+                var isAbstract = localTypes.TryGetValue(name, out var local) && local.Abstract;
+                var hasDefault = name == "System.Object" ||
+                    localTypes.GetValueOrDefault(name)?.PublicDefaultConstructor == true ||
+                    refs.HasPublicParameterlessConstructor(name);
                 return new ParameterFacts(true, false, kind == "enum",
                     !isInterface && !isAbstract && hasDefault);
             }
@@ -234,6 +302,8 @@ static class ExternalGenericConstraintValidation
         }
         return result;
     }
+
+    static bool IsTypeKind(string kind) => kind is "class" or "interface" or "enum" or "struct" or "value";
 
     static string LocalOrReferencedKind(string name, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, LocalTypeFacts> localTypes)

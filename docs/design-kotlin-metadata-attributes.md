@@ -172,6 +172,9 @@ is not invented as Kotlin nominal bounds: dll2klib omits a class parameter's imp
 `System.ValueType`/`System.Enum` rows, which no Kotlin classifier can inhabit, and bir2cir validates those rows
 together with the `class`, `struct`, and `new()` generic-parameter flags against each physical construction from the
 authoritative reference metadata.
+The validation follows metadata rather than Kotlin callability: a rich Kotlin enum has a reference-class
+representation and therefore is not a CLR enum, and default arguments do not make a nonzero-parameter constructor
+satisfy `new()` unless a public zero-parameter `.ctor` is actually emitted.
 
 WHAT IT DOES NOT COVER, measured rather than assumed: **#29's collection-identity collapse at a supertype
 position**. `class B : Box<List<String>>` emits `Box<IList<string>>` and a consumer still cannot assign `B()` to a

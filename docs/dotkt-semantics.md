@@ -1951,6 +1951,9 @@ type parameter's ordinary CLR constraint rows are projected directly, however: a
 were erased. The physical-only roots and flags cannot be represented as Kotlin nominal upper bounds: a class
 parameter's `System.ValueType`/`System.Enum` rows are omitted from the KLIB, and bir2cir validates them together with
 CLR `class`, `struct`, and `new()` flags against every referenced constructed type before CLR type lowering.
+This test is against the emitted CLR shape, not Kotlin call syntax: a rich enum is physically a reference class and
+does not satisfy a CLR `System.Enum` row, while a constructor whose arguments are all defaulted is still not a CLR
+parameterless constructor unless the emitted metadata contains a public zero-parameter `.ctor`.
 
 **Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
 `unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —

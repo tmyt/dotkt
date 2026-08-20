@@ -18,6 +18,7 @@ import Probe.Contracts.IExternalDefaultSlot
 import GlobalWidgetExtensions
 import GlobalBump
 import Probe.ConstraintBox
+import Probe.ConstraintApi
 import Probe.ConstraintKind
 import Probe.EnumConstraintBox
 import Probe.FreshConstraintBox
@@ -28,6 +29,16 @@ import kotlin.clr.byref
 
 class LocalDefaultConstraintValue {
     val value: Int = 16
+}
+
+open class LocalReferenceConstraintBase
+
+class LocalReferenceConstraintValue : LocalReferenceConstraintBase()
+
+class NestedConstraintOuter<T : LocalReferenceConstraintBase>(val value: T) {
+    inner class NestedConstraintInner<U>(val other: U) {
+        fun read(): Int = ReferenceConstraintBox<T>().Value
+    }
 }
 
 class DefaultCarrierSubclass1 : DefaultCarrier1()
@@ -85,7 +96,9 @@ fun consume(): Int {
         StructConstraintBox<Int>().Value +
         EnumConstraintBox<ConstraintKind>().Value +
         ReferenceConstraintBox<String>().Value +
-        FreshConstraintBox<LocalDefaultConstraintValue>().Create().value
+        FreshConstraintBox<LocalDefaultConstraintValue>().Create().value +
+        ConstraintApi.Read(ReferenceConstraintBox<String>()) +
+        NestedConstraintOuter(LocalReferenceConstraintValue()).NestedConstraintInner(1).read()
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
         widget.Value + widget.Inherited + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +

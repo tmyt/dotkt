@@ -50,6 +50,11 @@ public sealed class ReferenceConstraintBox<T> where T : class
     public int Value => 8;
 }
 
+public static class ConstraintApi
+{
+    public static int Read<T>(ReferenceConstraintBox<T> box) where T : class => box.Value;
+}
+
 public sealed class FreshConstraintBox<T> where T : class, new()
 {
     public T Create() => new();
