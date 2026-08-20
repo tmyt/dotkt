@@ -92,18 +92,10 @@ suspend fun suspendOperandNestedInMemberArgument(): Int = SuspendOperandBox(10).
 // The suspension in the RECEIVER operand of a suspend call, not in an argument.
 suspend fun suspendOperandNestedInReceiver(): Int = suspendOperandMakeBox().add(4, 2)
 
-// A same-module GENERIC suspend callee. It suspends through a non-generic cold call rather than a `.await()`
-// MARKER: an await point inside a GENERIC suspend fun is separately broken today (its generic state machine builds
-// the resume `Action` over a method it never instantiates, so the first suspension throws
-// `InvalidOperationException: ... not fully instantiated`). That defect is reachable with no operand-order question
-// anywhere in the program — `suspend fun <T> f(x: T): T { Task.Delay(1).await(); return x }` called as `f(7)` is
-// enough — so it is a separate subject, and pinning it here would only hide what these fixtures do test.
-suspend fun suspendOperandPause() {
-    Task.Delay(1).await()
-}
-
+// A same-module GENERIC suspend callee. Its real await also keeps the constructed callback-owner contract (#303)
+// exercised in the larger operand-order battery.
 suspend fun <T> suspendOperandFirst(a: T, b: Int): T {
-    suspendOperandPause()
+    Task.Delay(1).await()
     suspendOperandLog.add("P")
     return a
 }
