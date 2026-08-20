@@ -1,0 +1,27 @@
+{
+  "methods": [
+    {
+      "name": "probe",
+      "params": [],
+      "ret": { "t": "fqn", "name": "void" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "clrEventRemove",
+            "type": { "t": "fqn", "name": "LocalEventOwner" },
+            "event": "pulse",
+            "static": false,
+            "recv": { "k": "this" },
+            "handler": { "k": "local", "name": "handler" },
+            "accessor": "remove_pulse",
+            "delegateType": { "t": "fqn", "name": "System.Action" },
+            "sig": [ { "t": "fqn", "name": "System.Action" } ],
+            "localAccessor": true,
+            "dispatch": "callvirt"
+          }
+        }
+      ]
+    }
+  ]
+}

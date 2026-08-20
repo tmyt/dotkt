@@ -20,12 +20,13 @@ import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.ComponentModel.INotifyPropertyChanged
 import System.ComponentModel.PropertyChangedEventArgs
 import EventDelegation.EventSource
+import kotlin.clr.ClrEvent
 import kotlin.clr.clrEvent
 import kotlin.reflect.KProperty
 
 // IMPLEMENT — synthesize add_/remove_/raise_PropertyChanged + the backing delegate field + the `.event` metadata.
 open class ViewModelBase : INotifyPropertyChanged {
-    override val PropertyChanged by clrEvent()
+    override val PropertyChanged: ClrEvent<(Any?, PropertyChangedEventArgs) -> Unit> by clrEvent()
 }
 
 // A property delegate that RAISES the ViewModel's event from OUTSIDE the declaring type (a DIFFERENT class) — the §6
@@ -66,6 +67,20 @@ class ClrEventTests {
         subscription.close()
         vm.name = "Bob"
         assertEquals(1, fired)                                       // unsubscribed -> no raise
+    }
+
+    // Subscribe through the Kotlin implementation type itself. This binds the synthesized local accessors while
+    // preserving the interface event's named PropertyChangedEventHandler delegate identity.
+    @TestAttribute
+    fun localImplementationUsesInterfaceDelegate() {
+        val vm = ViewModelBase()
+        var fired = 0
+        val subscription = vm.PropertyChanged.subscribe { _, _ -> fired++ }
+        vm.PropertyChanged.invoke(vm, PropertyChangedEventArgs("direct"))
+        assertEquals(1, fired)
+        subscription.close()
+        vm.PropertyChanged.invoke(vm, PropertyChangedEventArgs("after-close"))
+        assertEquals(1, fired)
     }
 
     // Two distinct properties raise with their own names through one shared event.

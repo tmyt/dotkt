@@ -880,12 +880,21 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	fun eventOwnerType(p: IrProperty, recv: IrExpression): String {
 		val declarationOwner = p.parent as? IrClass
 		return if (declarationOwner != null && anonNames.containsKey(declarationOwner))
-			fqnJson(typeName(declarationOwner))
+			ownerSpec(declarationOwner, recv.type).toJson()
 		else birType(recv.type).toJson()
 	}
-	val localEventProp = callee.correspondingPropertySymbol?.owner
+	val selectedEventProp = callee.correspondingPropertySymbol?.owner
+	// An inherited field-like event is selected through a frontend fake override.  Its wrapper is intentionally not
+	// emitted as a property/getter, so classify the event from the real Kotlin declaration while retaining the selected
+	// receiver type below.  Otherwise `Derived().pulse.subscribe { ... }` falls through to an ordinary call of the
+	// deliberately omitted fake getter instead of producing the same event handle as a direct base-typed access.
+	val localEventProp = selectedEventProp?.let { selected ->
+		if (selected.isFakeOverride)
+			selected.getter?.resolveFakeOverride()?.correspondingPropertySymbol?.owner ?: selected
+		else selected
+	}
 	val localEventOwner = localEventProp?.parent as? IrClass
-	if (localEventProp != null && callee === localEventProp.getter
+	if (localEventProp != null && callee === selectedEventProp.getter
 		&& callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent"
 		&& (hasDelegatedEventOrigin(localEventProp) || clrEventDelegateCall(localEventProp) != null)
 		&& localEventOwner != null && !isExternalNetType(localEventOwner)) {

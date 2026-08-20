@@ -983,13 +983,34 @@ class V:
                 for required_key in REQUIRED_OPERATION_REFS.get(o.get("k"), ()):
                     if required_key not in o:
                         self.err(f, path, f"{o['k']} must carry {required_key}: the operation emits that external member operand")
+                kind = o.get("k")
+                if kind in ("clrEventAdd", "clrEventRemove") and "localAccessor" in o:
+                    if o.get("localAccessor") is not True:
+                        self.err(f, path, f"{kind}.localAccessor must be true when present")
+                    else:
+                        # A same-emission-unit event accessor has no assembly identity and therefore no memberRef.
+                        # Its scalar linkage is the emitted owner plus the exact declaration signature; requiring
+                        # these together prevents a consumer from selecting an inherited/name-only MethodDef.
+                        if "memberRef" in o:
+                            self.err(f, path, f"{kind} cannot carry both localAccessor and an external memberRef")
+                        if not isinstance(o.get("accessorOwner"), dict) or o["accessorOwner"].get("t") != "fqn":
+                            self.err(f, path, f"{kind} localAccessor must carry an fqn accessorOwner")
+                        if not isinstance(o.get("accessor"), str) or not o["accessor"]:
+                            self.err(f, path, f"{kind} localAccessor must carry a non-empty accessor name")
+                        if not isinstance(o.get("delegateType"), dict) or "t" not in o["delegateType"]:
+                            self.err(f, path, f"{kind} localAccessor must carry its delegateType")
+                        if not isinstance(o.get("sig"), list) or len(o["sig"]) != 1:
+                            self.err(f, path, f"{kind} localAccessor must carry its one-parameter declaration sig")
+                        if o.get("dispatch") not in ("call", "callvirt", "constrained"):
+                            self.err(f, path, f"{kind} localAccessor must carry call|callvirt|constrained dispatch")
             if f.endswith(".cir.json") and "memberRef" not in o:
                 kind = o.get("k")
                 if kind in MEMBER_REF_REQUIRED_KINDS:
                     # A node of this kind IS a reference to another assembly's member. One without a resolved
                     # identity has nothing for a consumer to link, which is why ilemit refuses it — and refusing
                     # it here names the layer that dropped it rather than the one that noticed.
-                    self.err(f, path, f"{kind} is an external member reference and must carry a resolved memberRef")
+                    if not (kind in ("clrEventAdd", "clrEventRemove") and o.get("localAccessor") is True):
+                        self.err(f, path, f"{kind} is an external member reference and must carry a resolved memberRef")
                 elif MEMBER_REF_CONDITIONAL_KEYS.get(kind) == "memberRef":
                     # Sometimes external, sometimes a member of the assembly being built. The durable `member`
                     # discriminator says WHICH this node is for a property or field, carrying a
