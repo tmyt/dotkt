@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Rich-enum base state now follows Kotlin instance-initialization semantics (#480).** Enum-body property
+  initializers and `init` blocks run in declaration order after constructor-property storage and before an entry
+  subclass initializes its own state. Property- and initializer-only enums use the rich plain-class shape as well,
+  and a regular non-property constructor parameter no longer becomes a nonexistent backing-field write.
+
 - **Rich-enum entry bodies now preserve their own state and initialization (#478).** Per-entry subclasses emit
   property backing fields and run property initializers and `init` blocks in declaration order after base
   construction. Kotlin-owned CLR events declared by an entry are synthesized on that subclass as well.
