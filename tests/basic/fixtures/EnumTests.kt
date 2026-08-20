@@ -236,6 +236,24 @@ enum class EnumPlanet(val mass: Int) {
     fun heavy(): Boolean = mass > 3
 }
 
+enum class EnumSecondaryState(val value: Int, val label: String) {
+    PRIMARY(1, "primary"),
+    NUMBER(2),
+    TEXT("word"),
+    CHAINED(true),
+    DEFAULTED(5L),
+    BODY(7) { override fun marker(): String = "body:$label" };
+
+    var path = "initialized"
+
+    constructor(value: Int) : this(value, "number:$value") { path += ":int" }
+    constructor(label: String) : this(label.length, label) { path += ":string" }
+    constructor(chained: Boolean) : this(if (chained) "yes" else "no") { path += ":bool" }
+    constructor(value: Long, label: String = "long") : this(value.toInt(), label) { path += ":long" }
+
+    open fun marker(): String = "$value:$label"
+}
+
 class EnumTests {
     @TestAttribute
     fun whenOverEnum() {
@@ -352,6 +370,19 @@ class EnumTests {
         assertEquals("EARTH|MARS|JUPITER", log.joinToString("|"))
         assertTrue(EnumPlanet.EARTH == EnumPlanet.EARTH)        // True
         assertFalse(EnumPlanet.EARTH == EnumPlanet.MARS)       // False
+
+        assertEquals("1:primary", EnumSecondaryState.PRIMARY.marker())
+        assertEquals("2:number:2", EnumSecondaryState.NUMBER.marker())
+        assertEquals("4:word", EnumSecondaryState.TEXT.marker())
+        assertEquals("3:yes", EnumSecondaryState.CHAINED.marker())
+        assertEquals("5:long", EnumSecondaryState.DEFAULTED.marker())
+        assertEquals("body:number:7", EnumSecondaryState.BODY.marker())
+        assertEquals("initialized", EnumSecondaryState.PRIMARY.path)
+        assertEquals("initialized:int", EnumSecondaryState.NUMBER.path)
+        assertEquals("initialized:string", EnumSecondaryState.TEXT.path)
+        assertEquals("initialized:string:bool", EnumSecondaryState.CHAINED.path)
+        assertEquals("initialized:long", EnumSecondaryState.DEFAULTED.path)
+        assertEquals("initialized:int", EnumSecondaryState.BODY.path)
     }
 
     @TestAttribute
