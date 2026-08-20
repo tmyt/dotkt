@@ -377,7 +377,7 @@ class V:
         if has_marker and o.get("enumRich") is not True:
             self.err(f, path + "/enumRich", "enumRich must be true when present")
         if has_marker != has_carrier:
-            self.err(f, path, "enumRich:true and richEnum must be present together")
+            self.err(f, path, "enumRich=true and richEnum must be present together")
         if o.get("kind") != "class":
             self.err(f, path, "rich-enum declaration facts may appear only on a class type declaration")
         if not has_carrier:
