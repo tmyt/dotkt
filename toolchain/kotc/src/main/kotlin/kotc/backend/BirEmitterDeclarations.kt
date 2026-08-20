@@ -630,7 +630,14 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	// Kotlin's `Enum.valueOf` throws IllegalArgumentException on an unknown name (@ClrTypeAlias System.ArgumentException).
 	val voThrow = throwExpr(newExc("kotlin.IllegalArgumentException", str("No enum constant $name")))
-	val voBody = """{"k":"if","branches":[$voBranches,{"else":true,"body":[{"k":"exprStmt","expr":$voThrow}]}]}"""
+	// With no entries there is no conditional arm: emit the failure as the method's unconditional body. Besides being
+	// the faithful control-flow shape, this avoids manufacturing an `if` whose interpolated branch list starts with a
+	// comma. Non-empty enums retain the ordinary linear name match followed by the same failure path.
+	val voBody = if (entries.isEmpty()) {
+		"""{"k":"exprStmt","expr":$voThrow}"""
+	} else {
+		"""{"k":"if","branches":[$voBranches,{"else":true,"body":[{"k":"exprStmt","expr":$voThrow}]}]}"""
+	}
 	val valueOfM = """{"name":"valueOf","generated":true,"static":true,"override":false,"virtual":false,"vis":"public","params":[{"name":"name","type":${fqnJson("kotlin.String")}}],"ret":${fqnJson(name)},"body":[$voBody]}"""
 	// A `companion { }` property of an enum: static storage (initialized in the type initializer, after the entry
 	// singletons declared above, which is the order Kotlin specifies) plus its own static accessors and CLR property.

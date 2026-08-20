@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Empty rich enums now emit valid BIR (#490).** Their synthesized `values()` returns an empty array, while
+  `valueOf(name)` emits its `IllegalArgumentException` path directly instead of constructing a malformed empty
+  conditional branch list.
+
 - **Rich enums retain their Kotlin enum contract across a DLL-to-KLIB round trip (#487).** The producer now carries
   an explicit trusted entry/metadata/API map, so `dll2klib` projects the physical reference-class implementation as a
   final enum with its source interfaces, enum entries, no callable constructors, and no leaked compiler-only fields or
