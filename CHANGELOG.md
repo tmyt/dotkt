@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **The rich-enum BIR carrier is now part of the enforced schema (#492).** Its current declaration/member-map shape
+  is documented and structurally validated, including empty enums, and the gate rejects a malformed carrier or one
+  that survives bir2cir into CIR.
+
 - **Empty rich enums now emit valid BIR (#490).** Their synthesized `values()` returns an empty array, while
   `valueOf(name)` emits its `IllegalArgumentException` path directly instead of constructing a malformed empty
   conditional branch list.

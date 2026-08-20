@@ -1,0 +1,7 @@
+{
+  "types": [{
+    "name": "BrokenRich",
+    "kind": "class",
+    "enumRich": true
+  }]
+}

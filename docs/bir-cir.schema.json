@@ -269,6 +269,30 @@
       "required": ["name", "type"],
       "additionalProperties": false
     },
+    "richEnumCarrier": {
+      "type": "object",
+      "$comment": "BIR-only exact Kotlin rich-enum declaration-to-physical-member map. kotc authors it beside enumRich:true; bir2cir consumes it into [KotlinRichEnum] and removes both facts before CIR. Empty entries are valid for a source enum with no entries.",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "$comment": "Kotlin source entry name." },
+              "field": { "type": "string", "minLength": 1, "$comment": "Exact physical singleton field name." }
+            },
+            "required": ["name", "field"],
+            "additionalProperties": false
+          }
+        },
+        "name": { "type": "string", "minLength": 1, "$comment": "Exact physical instance field carrying Enum.name." },
+        "ordinal": { "type": "string", "minLength": 1, "$comment": "Exact physical instance field carrying Enum.ordinal." },
+        "values": { "type": "string", "minLength": 1, "$comment": "Exact physical static values method name." },
+        "valueOf": { "type": "string", "minLength": 1, "$comment": "Exact physical static valueOf method name." }
+      },
+      "required": ["entries", "name", "ordinal", "values", "valueOf"],
+      "additionalProperties": false
+    },
     "typeDecl": {
       "type": "object",
       "description": "A class/interface/object/enum/annotation. `mods` carries data/sealed/inner/enum/fun/annotation/value; `vis` is separate.",
@@ -278,6 +302,8 @@
         "generated":  { "type": "boolean", "description": "#68: compiler-generated synthetic (closure/ref-cell/KProperty/CharSequence/ClrH/lifted-anon); ilemit stamps [CompilerGenerated] from it — replaces the retired `<>dotkt_` name-sniff" },
         "specialName": { "type": "boolean", "$comment": "CIR-only exact CLR TypeAttributes.SpecialName flag." },
         "beforeFieldInit": { "type": "boolean", "$comment": "CIR-only exact CLR TypeAttributes.BeforeFieldInit flag." },
+        "enumRich": { "const": true, "$comment": "BIR-only faithful fact that this class originated as a Kotlin rich enum. It is present exactly when richEnum is present and bir2cir consumes both before CIR." },
+        "richEnum": { "$ref": "#/$defs/richEnumCarrier" },
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
         "_syntheticTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "#68 BIR-ONLY transient correspondence between a synthetic declaration's dense typeParams and the lexical frame from which they were captured. kotc authors it on a lexical local `fun`; bir2cir's ClosureSynthesis derives it for a lifted closure class. Consumers use it for owner-slot partition and shared synthetic identity. Consumed and DROPPED before CIR." },
@@ -367,6 +393,14 @@
               }
             }
           }
+        },
+        {
+          "if": { "required": ["enumRich"] },
+          "then": { "required": ["richEnum"], "properties": { "kind": { "const": "class" } } }
+        },
+        {
+          "if": { "required": ["richEnum"] },
+          "then": { "required": ["enumRich"], "properties": { "kind": { "const": "class" } } }
         }
       ],
       "required": ["name", "kind"],

@@ -49,6 +49,9 @@ head of `EmitAssembly`, ahead of any resolution.
   it (`accept-unplanned-suspension-operand`). Where a suspension is planned, and by whom, is bir2cir's
   decision; a BIR-side "every suspension-bearing operand must be planned" rule would make the emitter's own
   legal output illegal, and this fixture reddens if one is added.
+- The **current rich-enum declaration carrier** — `accept-current-rich-enum-carrier` pins the exact
+  `enumRich:true` + `richEnum` pair while permitting an empty entry map. The matching reject fixtures pin required
+  physical member roles and the exact `{name,field}` entry shape; a CIR fixture pins that bir2cir consumes both facts.
 
 **Sanity (`*.cir.json`).**
 
