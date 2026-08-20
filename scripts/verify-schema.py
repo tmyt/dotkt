@@ -12,6 +12,7 @@
 #   3. WELL-FORMED TYPES (§1): each {t} carries its required fields with the right value shapes.
 #   4. mods keys ⊆ MOD_KEYS, vis ∈ VIS (§2.1), and `mods.suspend` — Kotlin vocabulary bir2cir consumes —
 #      appears in BIR only.
+#   5. The current rich-enum declaration carrier has its exact frozen shape and is consumed before CIR.
 #
 # The carrier (§0) — [KotlinInline]/[KotlinSuspendFunctionType] ride as CLR attributes on the
 # emitted assembly, not as document nodes; their version is guarded loudly at decode time by
@@ -357,6 +358,55 @@ class V:
     def err(self, f, path, msg):
         self.viol.append((f, path, msg))
 
+    def rich_enum_decl(self, f, path, o, is_type_decl):
+        """Validate kotc's exact current rich-enum type-declaration facts."""
+        has_marker = "enumRich" in o
+        has_carrier = "richEnum" in o
+        if not has_marker and not has_carrier:
+            return
+
+        if not is_type_decl:
+            self.err(f, path, "enumRich/richEnum may appear only on a root types[] declaration")
+
+        if f.endswith(".cir.json"):
+            if has_marker:
+                self.err(f, path + "/enumRich", "enumRich is a BIR declaration fact and must be consumed before CIR")
+            if has_carrier:
+                self.err(f, path + "/richEnum", "richEnum is a BIR declaration fact and must be consumed before CIR")
+
+        if has_marker and o.get("enumRich") is not True:
+            self.err(f, path + "/enumRich", "enumRich must be true when present")
+        if has_marker != has_carrier:
+            self.err(f, path, "enumRich=true and richEnum must be present together")
+        if o.get("kind") != "class":
+            self.err(f, path, "rich-enum declaration facts may appear only on a class type declaration")
+        if not has_carrier:
+            return
+
+        carrier = o.get("richEnum")
+        where = path + "/richEnum"
+        if not isinstance(carrier, dict):
+            self.err(f, where, "richEnum must be an object")
+            return
+        required = {"entries", "name", "ordinal", "values", "valueOf"}
+        if set(carrier) != required:
+            self.err(f, where, "richEnum must contain exactly entries/name/ordinal/values/valueOf")
+        for key in ("name", "ordinal", "values", "valueOf"):
+            if not isinstance(carrier.get(key), str) or not carrier[key]:
+                self.err(f, where + "/" + key, f"richEnum.{key} must be a non-empty physical member name")
+        entries = carrier.get("entries")
+        if not isinstance(entries, list):
+            self.err(f, where + "/entries", "richEnum.entries must be an array")
+            return
+        for i, entry in enumerate(entries):
+            entry_where = where + f"/entries[{i}]"
+            if not isinstance(entry, dict) or set(entry) != {"name", "field"}:
+                self.err(f, entry_where, "richEnum entry must contain exactly name/field")
+                continue
+            for key in ("name", "field"):
+                if not isinstance(entry.get(key), str) or not entry[key]:
+                    self.err(f, entry_where + "/" + key, f"richEnum entry {key} must be a non-empty string")
+
     def type_node(self, f, path, o):
         """Validate a {t:...} type node: known tag + required fields (§1)."""
         t = o.get("t")
@@ -672,8 +722,9 @@ class V:
             for i, x in enumerate(o):
                 self.plan_scope(f, x, path + f"[{i}]", bound)
 
-    def walk(self, f, o, path):
+    def walk(self, f, o, path, is_type_decl=False):
         if isinstance(o, dict):
+            self.rich_enum_decl(f, path, o, is_type_decl)
             for internal in BIR2CIR_INTERNAL_MEMBER_FACTS:
                 if internal in o:
                     self.err(
@@ -1050,11 +1101,12 @@ class V:
                     elif key not in STR_OK:
                         self.err(f, p, f"bare STRING at type slot {key!r}: {val!r} (types must be {{t:...}} nodes)")
                 elif isinstance(val, list):
+                    children_are_type_decls = path == "" and key == "types"
                     for i, x in enumerate(val):
                         if isinstance(x, str) and key not in STRARR_OK:
                             self.err(f, p + f"[{i}]", f"bare STRING in type-array {key!r}: {x!r} (must be a {{t:...}} node)")
                         else:
-                            self.walk(f, x, p + f"[{i}]")
+                            self.walk(f, x, p + f"[{i}]", children_are_type_decls)
                 else:
                     self.walk(f, val, p)
         elif isinstance(o, list):

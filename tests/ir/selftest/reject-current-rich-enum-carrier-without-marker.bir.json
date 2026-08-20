@@ -1,0 +1,13 @@
+{
+  "types": [{
+    "name": "BrokenRich",
+    "kind": "class",
+    "richEnum": {
+      "entries": [],
+      "name": "__name",
+      "ordinal": "__ordinal",
+      "values": "values",
+      "valueOf": "valueOf"
+    }
+  }]
+}

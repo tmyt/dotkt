@@ -33,3 +33,7 @@ those facts exists to stop a consumer having to reconstruct it, and reconstructi
 `accept-memberref` is the other half: one well-formed reference per `kind`, plus the three CIR-only ECMA
 signature carriers (`ptr`, `array.rank`, in-position `mod`). Without it, a validator that refused *every*
 `memberRef` would pass every fixture above.
+
+The **current rich-enum declaration carrier** is BIR-only. `reject-rich-enum-carrier-in-cir` and
+`reject-rich-enum-marker-in-cir` independently pin that bir2cir consumes the exact `richEnum` map and its paired
+`enumRich:true` marker before CIR.

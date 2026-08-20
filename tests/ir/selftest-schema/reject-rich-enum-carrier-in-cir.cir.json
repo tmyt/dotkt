@@ -1,0 +1,14 @@
+{
+  "types": [{
+    "name": "EscapedRich",
+    "kind": "class",
+    "enumRich": true,
+    "richEnum": {
+      "entries": [],
+      "name": "__name",
+      "ordinal": "__ordinal",
+      "values": "values",
+      "valueOf": "valueOf"
+    }
+  }]
+}
