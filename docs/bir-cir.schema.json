@@ -540,6 +540,8 @@
       "required": ["k"],
       "properties": {
         "k": { "$ref": "#/$defs/nodeKind" },
+        "enumRich": false,
+        "richEnum": false,
         "companionReceiver": { "type": "string", "$comment": "BIR-only use-site identity for a receiverless companion-extension call, delegate, or field access. bir2cir resolves it together with owner, source member name, and explicit operation role, then removes it." },
         "lateinitSourceName": { "type": "string", "$comment": "bir2cir-only transient source property identity retained when companion-extension binding replaces a lateinitGet's field name with its collision-free physical name. LateinitGetLowering consumes it into the exception message and removes it before CIR." },
         "volatile": { "type": "boolean", "$comment": "CIR-only access fact. bir2cir authors it on direct field, CLR-field-as-property, and UnsafeAccessor byref dereference nodes; ilemit emits the volatile. prefix one-to-one." },

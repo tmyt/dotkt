@@ -1,0 +1,21 @@
+{
+  "methods": [{
+    "name": "misplacedCarrier",
+    "params": [],
+    "ret": { "t": "fqn", "name": "kotlin.Int" },
+    "body": [{
+      "k": "const",
+      "type": { "t": "fqn", "name": "kotlin.Int" },
+      "value": 0,
+      "kind": "class",
+      "enumRich": true,
+      "richEnum": {
+        "entries": [],
+        "name": "__name",
+        "ordinal": "__ordinal",
+        "values": "values",
+        "valueOf": "valueOf"
+      }
+    }]
+  }]
+}

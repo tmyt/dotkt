@@ -358,12 +358,15 @@ class V:
     def err(self, f, path, msg):
         self.viol.append((f, path, msg))
 
-    def rich_enum_decl(self, f, path, o):
+    def rich_enum_decl(self, f, path, o, is_type_decl):
         """Validate kotc's exact current rich-enum type-declaration facts."""
         has_marker = "enumRich" in o
         has_carrier = "richEnum" in o
         if not has_marker and not has_carrier:
             return
+
+        if not is_type_decl:
+            self.err(f, path, "enumRich/richEnum may appear only on a root types[] declaration")
 
         if f.endswith(".cir.json"):
             if has_marker:
@@ -719,9 +722,9 @@ class V:
             for i, x in enumerate(o):
                 self.plan_scope(f, x, path + f"[{i}]", bound)
 
-    def walk(self, f, o, path):
+    def walk(self, f, o, path, is_type_decl=False):
         if isinstance(o, dict):
-            self.rich_enum_decl(f, path, o)
+            self.rich_enum_decl(f, path, o, is_type_decl)
             for internal in BIR2CIR_INTERNAL_MEMBER_FACTS:
                 if internal in o:
                     self.err(
@@ -1098,11 +1101,12 @@ class V:
                     elif key not in STR_OK:
                         self.err(f, p, f"bare STRING at type slot {key!r}: {val!r} (types must be {{t:...}} nodes)")
                 elif isinstance(val, list):
+                    children_are_type_decls = path == "" and key == "types"
                     for i, x in enumerate(val):
                         if isinstance(x, str) and key not in STRARR_OK:
                             self.err(f, p + f"[{i}]", f"bare STRING in type-array {key!r}: {x!r} (must be a {{t:...}} node)")
                         else:
-                            self.walk(f, x, p + f"[{i}]")
+                            self.walk(f, x, p + f"[{i}]", children_are_type_decls)
                 else:
                     self.walk(f, val, p)
         elif isinstance(o, list):

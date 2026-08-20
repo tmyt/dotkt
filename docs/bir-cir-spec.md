@@ -194,6 +194,12 @@ suspend captures, not Type slots, and must be consumed before CIR. The schema ga
 `capturedTypeParams` are forbidden in BIR. A CIR `newClrStaticDelegate` must already carry the resolved
 `memberRef` of the method it binds.
 
+Rich Kotlin enums are also phase-owned. kotc records `enumRich:true` on the root `types[]` class declaration beside
+one exact `richEnum` map: `entries` maps each non-empty Kotlin entry name to its non-empty physical singleton field,
+and `name`, `ordinal`, `values`, and `valueOf` name the four required physical members. The entry map may be empty.
+bir2cir consumes the pair into `[KotlinRichEnum]` metadata; neither fact may survive into CIR or appear on any
+non-declaration object.
+
 Kotlin property accessors follow the same phase ownership (#397). In BIR, each accessor declaration carries the
 source `propertyName`, an explicit `propertyAccessor` role (`get` or `set`), and a file-local `propertyAssociation`;
 the Property declaration carries the same association plus its `kotlinAccessors` role list. The association is needed
@@ -783,6 +789,8 @@ freshly-emitted BIR + CIR and reddens the gate on any drift.
   `setFieldExpr`/`staticFieldSet`), or an ad-hoc new kind reds. Casing is enforced by set membership.
 - **Well-formed types (§1):** each `{t}` carries its required fields with the right value shapes; a `{k}`+`{t}`
   mixed object (roles are disjoint) reds.
+- **Current rich-enum declaration facts:** `enumRich:true` and the exact `richEnum` member map occur together only
+  on a root `types[]` class declaration, accept empty or populated entry maps, and are absent from CIR.
 - **`mods` keys ⊆ the frozen set, `vis` ∈ the enum (§2.1).**
 
 **Coverage** = freshly emitted stdlib and application BIR/CIR. `tests/ir/run-schema.sh` drives the structural
