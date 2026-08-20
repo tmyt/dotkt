@@ -168,10 +168,12 @@ type-level and giving a member one is a channel that does not exist — so a `fu
 re-imports its bound as the physical `Sink<object>`. For a CLASS type parameter, dll2klib first projects the ordinary
 CLR constraint rows directly, so an unmoved `class Box<T : Sink<String>>` retains that bound without help from the
 carrier. `bounds` then replaces or adds only the pre-erasure form that the carrier actually records. The CLR-only half
-is not invented as Kotlin nominal bounds: dll2klib omits a class parameter's implicit
-`System.ValueType`/`System.Enum` rows, which no Kotlin classifier can inhabit, and bir2cir validates those rows
-together with the `class`, `struct`, and `new()` generic-parameter flags against each physical construction from the
-authoritative reference metadata.
+is not invented as Kotlin nominal bounds: dll2klib omits a type or member parameter's implicit
+`System.ValueType`/`System.Enum` rows (including the custom-modified `ValueType` row for `unmanaged`), which no Kotlin
+classifier can inhabit. bir2cir validates those rows together
+with the `class`, `struct`, and `new()` generic-parameter flags against each physical type construction and each
+generic member use from authoritative reference metadata. Member constraints come from the exact resolved MethodDef;
+their declarations remain in the callee's frame while supplied arguments are interpreted in the caller's frame.
 The validation follows metadata rather than Kotlin callability: a rich Kotlin enum has a reference-class
 representation and therefore is not a CLR enum, and default arguments do not make a nonzero-parameter constructor
 satisfy `new()` unless a public zero-parameter `.ctor` is actually emitted.

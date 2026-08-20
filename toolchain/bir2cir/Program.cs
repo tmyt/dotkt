@@ -1275,6 +1275,11 @@ sealed class Pipeline
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
             ClrMemberResolution.Apply(lowered, refs, localBasicEnums, emittedLocalTypes);
+            // Exact member resolution above selected the authoritative MethodDef and temporarily carried its CLR-only
+            // generic parameter facts. Validate the call's actual method arguments in the caller's lexical frame, then
+            // consume that internal carrier before CIR serialization. Generic Kotlin properties are physical accessor
+            // MethodDefs here and therefore follow the same rule as functions and extension methods.
+            externalGenericConstraintValidation.ApplyResolvedMembers(lowered);
             // Property nodes reveal whether they denote an accessor or a public field only after CLR member
             // resolution. Convert the accessor subset on type-variable receivers to constrained calls now, retaining
             // the exact memberRef just resolved; fields keep their distinct load/store representation.

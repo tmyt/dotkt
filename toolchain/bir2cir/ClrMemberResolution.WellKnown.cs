@@ -256,6 +256,7 @@ static partial class ClrMemberResolution
         if (distinctAnswers.Count != 1) return;
         call["memberRef"] = distinctAnswers[0];
         var chosen = answers[0];
+        StampResolvedMethodTypeParameters(call, chosen.Declaration);
         StampDelegateArgumentTargets(call, chosen.Declaration, chosen.OwnerArgs);
     }
 

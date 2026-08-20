@@ -1948,9 +1948,13 @@ so `Box<BadSink>` can fail at the wrong layer. Both are Kotlin source breaks rat
 type-parameter bound is not on that carrier (it is type-level) and re-imports as the physical `Sink<object>`. A CLASS
 type parameter's ordinary CLR constraint rows are projected directly, however: an unmoved
 `class Box<T : Sink<String>>` retains that bound, while the carrier replaces only bounds whose Kotlin type arguments
-were erased. The physical-only roots and flags cannot be represented as Kotlin nominal upper bounds: a class
-parameter's `System.ValueType`/`System.Enum` rows are omitted from the KLIB, and bir2cir validates them together with
-CLR `class`, `struct`, and `new()` flags against every referenced constructed type before CLR type lowering.
+were erased. The physical-only roots and flags cannot be represented as Kotlin nominal upper bounds: a type or member
+parameter's `System.ValueType`/`System.Enum` rows, including the modified `ValueType` row used by `unmanaged`, are
+omitted from the KLIB. bir2cir validates them together with CLR
+`class`, `struct`, and `new()` flags against every referenced constructed type before CLR type lowering, and against
+every generic member use after exact member resolution identifies the authoritative MethodDef. The selected
+declaration's generic variables stay in its own frame; each supplied argument is evaluated in the caller's lexical
+frame.
 This test is against the emitted CLR shape, not Kotlin call syntax: a rich enum is physically a reference class and
 does not satisfy a CLR `System.Enum` row, while a constructor whose arguments are all defaulted is still not a CLR
 parameterless constructor unless the emitted metadata contains a public zero-parameter `.ctor`.

@@ -566,6 +566,7 @@ static partial class ClrMemberResolution
         // this call kept a parameter vector rather than an identity was only that the vector was all this
         // resolution used to return.
         node["memberRef"] = MemberRefJson(declaration, MemberRefNode.Kinds.Method, declaringOwner, ownerFqn.Args);
+        StampResolvedMethodTypeParameters(node, declaration);
         StampDelegateArgumentTargets(node, declaration, ownerFqn.Args ?? Array.Empty<TypeNode>());
     }
 
@@ -709,6 +710,7 @@ static partial class ClrMemberResolution
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
+        StampResolvedMethodTypeParameters(node, win);
         StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
         StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
@@ -779,6 +781,7 @@ static partial class ClrMemberResolution
                 // The generic method DEFINITION is the identity; the call's own `typeArgs` instantiate it, exactly
                 // as an ECMA MethodSpec wraps a MemberRef to the uninstantiated signature.
                 node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
+                StampResolvedMethodTypeParameters(node, win);
                 StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
                 StampResolvedMemberReturn(node, win.ReturnType);
             }
@@ -853,6 +856,7 @@ static partial class ClrMemberResolution
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newBoundClrDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
+        StampResolvedMethodTypeParameters(node, win);
         StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
     }
@@ -877,6 +881,7 @@ static partial class ClrMemberResolution
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"newClrStaticDelegate owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
+        StampResolvedMethodTypeParameters(node, win);
         StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
     }

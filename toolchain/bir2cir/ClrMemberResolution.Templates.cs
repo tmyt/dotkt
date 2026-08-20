@@ -471,6 +471,7 @@ static partial class ClrMemberResolution
                 $"bir2cir: constrained call '{iface.Name}.{name}' does not resolve to one declared signature (#370)");
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open,
             iface.Args ?? Array.Empty<TypeNode>());
+        StampResolvedMethodTypeParameters(node, win);
         StampDelegateArgumentTargets(node, win, iface.Args ?? Array.Empty<TypeNode>());
         StampResolvedMemberReturn(node, win.ReturnType);
     }
