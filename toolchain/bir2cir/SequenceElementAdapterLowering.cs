@@ -14,12 +14,12 @@ static class SequenceElementAdapterLowering
     const string Sequence = "kotlin.sequences.Sequence";
     const string Adapter = "kotlin.sequences.ClrSequenceElementAdapter";
 
-    public static void Apply(IEnumerable<JsonNode> roots, Func<string, bool> isValueFqn)
+    public static void Apply(IEnumerable<JsonNode> roots, ValueTypeOracle isValueFqn)
     {
         foreach (var root in roots.OfType<JsonObject>()) WalkOwner(root, isValueFqn);
     }
 
-    static void WalkOwner(JsonObject owner, Func<string, bool> isValueFqn)
+    static void WalkOwner(JsonObject owner, ValueTypeOracle isValueFqn)
     {
         if (owner["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
@@ -32,7 +32,7 @@ static class SequenceElementAdapterLowering
         method["attrs"] is JsonArray attrs
         && attrs.OfType<JsonObject>().Any(attr => TypeJson.OwnerName(attr["attr"]) == Marker);
 
-    static void RewriteMarkedMethod(JsonObject method, Func<string, bool> isValueFqn)
+    static void RewriteMarkedMethod(JsonObject method, ValueTypeOracle isValueFqn)
     {
         var typeParams = method["typeParams"] as JsonArray;
         var parameters = method["params"] as JsonArray;
@@ -108,7 +108,7 @@ static class SequenceElementAdapterLowering
         if (!ReferenceEquals(value, rewrittenValue)) ret["value"] = rewrittenValue;
     }
 
-    static bool IsElementBoundary(JsonObject node, JsonNode resultType, Func<string, bool> isValueFqn,
+    static bool IsElementBoundary(JsonObject node, JsonNode resultType, ValueTypeOracle isValueFqn,
         out JsonObject operand)
     {
         operand = null;
@@ -124,7 +124,7 @@ static class SequenceElementAdapterLowering
         return true;
     }
 
-    static bool IsObjectErasedElement(TypeNode element, Func<string, bool> isValueFqn) =>
+    static bool IsObjectErasedElement(TypeNode element, ValueTypeOracle isValueFqn) =>
         IsObjectType(NullableGenericErasure.EraseArgument(element, isValueFqn));
 
     // Reference-nullability wrappers disappear before physical type emission. The nullable-generic rule above owns

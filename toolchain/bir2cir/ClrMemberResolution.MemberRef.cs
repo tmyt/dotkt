@@ -252,7 +252,7 @@ static partial class ClrMemberResolution
     // the owner; nested function nodes remain valid signature types and ilemit maps them through their carried clr.
     static TypeNode PhysicalOwnerArg(TypeNode arg, bool typeArg)
     {
-        var lowered = BirTypeLowering.LowerPhysicalType(arg, _refs.Aliases, _refs.IsValueTypeFqn,
+        var lowered = BirTypeLowering.LowerPhysicalType(arg, _refs.Aliases, _refs.IsValueType,
             _refs.PhysicalTypeNames, typeArg, _localTypes);
         return lowered is TypeNode.Fn fn
             ? BirTypeLowering.DelegateFqnOf(fn)

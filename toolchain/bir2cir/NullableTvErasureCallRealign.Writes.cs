@@ -335,7 +335,7 @@ static partial class NullableTvErasureCallRealign
         // callee's declaration; a delegate invocation has only the `funcType`, and it is read here.
         if (flowed != null && obj["args"] is JsonArray args2)
             for (var i = 0; i < args2.Count && i < declParams.Length; i++)
-                if (declParams[i] is TypeNode.Nullable { Of: TypeNode.Fqn ev } && _isValue(ev.Name)
+                if (declParams[i] is TypeNode.Nullable { Of: TypeNode.Fqn ev } && _isValue(ev)
                     && flowed[i] is TypeNode.Fqn av && av.Name == ev.Name
                     && args2[i] is JsonObject a2)
                     args2[i] = new JsonObject { ["k"] = "nullableWrap", ["elem"] = TypeJson.Write(ev), ["e"] = a2.DeepClone() };
@@ -508,11 +508,11 @@ static partial class NullableTvErasureCallRealign
     // same object-erasure seam. The caller supplies the pipeline's value-type oracle explicitly so this helper carries
     // no ordering dependency on Apply's per-run state.
     internal static JsonNode CastForErasedObjectSlot(
-        JsonNode value, TypeNode src, TypeNode target, Func<string, bool> isValue)
+        JsonNode value, TypeNode src, TypeNode target, ValueTypeOracle isValue)
         => CastForTarget(value, src, target, exactPropertyTarget: false, isValue);
 
     static JsonNode CastForTarget(JsonNode value, TypeNode src, TypeNode target,
-        bool exactPropertyTarget, Func<string, bool> isValue)
+        bool exactPropertyTarget, ValueTypeOracle isValue)
     {
         if (value is not JsonObject vo || src == null || target == null || src.Equals(target)) return null;
         // A compiler-generated mutable-property-reference adapter can expose `value: kotlin.Any` even though its
@@ -568,16 +568,16 @@ static partial class NullableTvErasureCallRealign
     // Whether widening this type into `object` needs a real IL conversion. A `Tv` does (it may be instantiated with a
     // struct, and `box` on a type variable is the verifier-clean form for both instantiations); a structural
     // `Nullable<V>` does; a struct does — INCLUDING a constructed one, since `KeyValuePair<K,V>` needs the same `box`
-    // its argument-less siblings do and the oracle strips generic arity to say so. A reference is already an `object`
+    // and the oracle classifies its complete constructed FQN. A reference is already an `object`
     // and needs nothing.
     static bool NeedsObjectSeam(TypeNode t) => NeedsObjectSeam(t, _isValue);
 
-    static bool NeedsObjectSeam(TypeNode t, Func<string, bool> isValue) => t switch
+    static bool NeedsObjectSeam(TypeNode t, ValueTypeOracle isValue) => t switch
     {
         TypeNode.Tv => true,
         TypeNode.Nullable n => NeedsObjectSeam(n.Of, isValue),
         TypeNode.Oblivious o => NeedsObjectSeam(o.Of, isValue),
-        TypeNode.Fqn f => isValue(f.Name),
+        TypeNode.Fqn f => isValue(f),
         _ => false,
     };
 }

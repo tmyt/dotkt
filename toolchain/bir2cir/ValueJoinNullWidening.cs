@@ -31,9 +31,9 @@ static class ValueJoinNullWidening
 {
     const string Fact = "joinNullBranch";
 
-    public static void Apply(JsonNode root, Func<string, bool> isValue) => Walk(root, isValue);
+    public static void Apply(JsonNode root, ValueTypeOracle isValue) => Walk(root, isValue);
 
-    static void Walk(JsonNode node, Func<string, bool> isValue)
+    static void Walk(JsonNode node, ValueTypeOracle isValue)
     {
         switch (node)
         {
@@ -52,7 +52,7 @@ static class ValueJoinNullWidening
                     // legal over it as over a primitive (BirTypeLowering builds exactly that). Requiring `Args: null`
                     // here consumed the fact and left the join a bare struct, which is the same defect this family
                     // already had at the array-element oracle site (#86 D2).
-                    if (TypeJson.Read(o["type"]) is TypeNode.Fqn t && isValue(t.Name) && !IsVoidish(t.Name))
+                    if (TypeJson.Read(o["type"]) is TypeNode.Fqn t && isValue(t) && !IsVoidish(t.Name))
                         o["type"] = TypeJson.Write(new TypeNode.Nullable(t));
                 }
                 foreach (var c in children) Walk(c, isValue);

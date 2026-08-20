@@ -39,13 +39,13 @@ using DotKt.Bir;
 // write axis. Both are ordinary erasure-boundary uses; this pass states the declaration and nothing else.
 static class DelegateTargetSlotAlignment
 {
-    static Func<string, bool> _isValue = _ => false;
+    static ValueTypeOracle _isValue = _ => false;
 
     // Reports whether any target slot MOVED. The use axis has to see the moved declaration — a now-`object`
     // parameter is read as `object` and narrowed at its first typed consumer, a now-`object` return boxes its
     // `return` value — and it has already run by the time this pass can act, so the caller re-runs it exactly when
     // there is something new to type. Nothing moved is the common case and costs nothing.
-    public static bool Apply(JsonNode root, Func<string, bool> isValue)
+    public static bool Apply(JsonNode root, ValueTypeOracle isValue)
     {
         _isValue = isValue ?? (_ => false);
         if (root is not JsonObject o) return false;
@@ -208,12 +208,12 @@ static class DelegateTargetSlotAlignment
     // `Nullable<V>` and a type variable each need the slot itself rewritten (there is no assignability between them
     // and `object` without a `box`/`unbox.any`); a reference is assignable in both directions a delegate needs and
     // stays exactly as declared — that is the #189 rule, and rewriting it would break the concrete-delegate ctor.
-    // A CONSTRUCTED struct counts, since the oracle strips generic arity to say so.
+    // A CONSTRUCTED struct counts because the oracle classifies its complete FQN, including arguments.
     static bool NeedsObjectSeam(TypeNode t) => t switch
     {
         TypeNode.Tv => true,
         TypeNode.Nullable n => NeedsObjectSeam(n.Of),
-        TypeNode.Fqn f => _isValue(f.Name),
+        TypeNode.Fqn f => _isValue(f),
         _ => false,
     };
 

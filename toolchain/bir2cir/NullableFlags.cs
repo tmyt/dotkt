@@ -14,7 +14,7 @@ using DotKt.Bir;
 //
 // This is the promoted, oracle-keyed generalization of SuspendColdLowering's former private `WalkNullable` +
 // `ValueTypeFqns` (which only ever handled the Task<R> return). The value-ness decision is the struct-ness ORACLE
-// (ReferenceMetadataIndex.IsValueTypeFqn + local enum/struct types), not a hardcoded FQN set. `kotlin.Unit` is the one
+// (ReferenceMetadataIndex.IsValueType + local enum/struct types), not a hardcoded FQN set. `kotlin.Unit` is the one
 // name answered here rather than by the oracle — it is a CLASS on the CLR but the type ECMA `void` projects to, and
 // the reader answers both with one rule (see the [TypeNode.Fqn] arm).
 //
@@ -28,7 +28,7 @@ static class NullableFlags
     // Compute the flattened NRT byte array for a SEMANTIC type node (BEFORE BirTypeLowering strips reference wrappers),
     // or null when the type carries NO nullable (2) position — in which case the type's [NullableContext(1)] non-null
     // default already covers every node, so no per-position override is needed. `isValue` is the struct-ness oracle.
-    public static JsonArray Compute(TypeNode t, Func<string, bool> isValue)
+    public static JsonArray Compute(TypeNode t, ValueTypeOracle isValue)
     {
         if (t == null) return null;
         var flags = new List<int>();
@@ -49,7 +49,7 @@ static class NullableFlags
     // at the nullable wrapper wrote 2 where the rule says 0. That is one position's nullability, not a shift — the
     // reader's traversal is driven by the signature, so a wrong byte VALUE leaves every other position where it was;
     // it is a wrong byte COUNT (the value-type rule above) that moves them.
-    static bool Walk(TypeNode t, bool nullableHere, List<int> flags, Func<string, bool> isValue, bool obliviousHere = false)
+    static bool Walk(TypeNode t, bool nullableHere, List<int> flags, ValueTypeOracle isValue, bool obliviousHere = false)
     {
         // The head byte for a node that HOLDS one. Oblivious wins over nullable: `T!` is the un-annotated position.
         int Head() => obliviousHere ? 0 : nullableHere ? 2 : 1;
@@ -85,7 +85,7 @@ static class NullableFlags
                 // `Dictionary<E, string?>` (E an enum) is `[1, 2]`. Dropping the position, or the arguments under it,
                 // shifts every later byte in the same slot. `Args` is tested for EMPTINESS, not for null, because the
                 // reader asks the projected type's argument COUNT and an empty non-null list is not a construction.
-                if (isValue(f.Name))
+                if (isValue(f))
                 {
                     if (f.Args == null || f.Args.Length == 0) return false;
                     flags.Add(0);

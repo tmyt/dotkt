@@ -142,7 +142,7 @@ static partial class ClrMemberResolution
         var shape = slotType;
         while (shape is TypeNode.Nullable nullable) shape = nullable.Of;
         while (shape is TypeNode.Oblivious oblivious) shape = oblivious.Of;
-        var physical = BirTypeLowering.LowerPhysicalType(shape, _refs.Aliases, _refs.IsValueTypeFqn,
+        var physical = BirTypeLowering.LowerPhysicalType(shape, _refs.Aliases, _refs.IsValueType,
             _refs.PhysicalTypeNames, typeArg: false, _localTypes);
         if (physical is TypeNode.Fn fn) physical = BirTypeLowering.DelegateFqnOf(fn);
         if (physical is not TypeNode.Fqn named) return null;

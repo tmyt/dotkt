@@ -76,15 +76,15 @@ static class KotlinOverrideSlotBridge
     // are copies of the erased ones — so the halves do not race.
     //
     // The declaration half, over every file at once (a base may be declared in another file of this compilation).
-    public static void PropagateErasedSlots(IEnumerable<JsonNode> roots, Func<string, bool> isValue,
+    public static void PropagateErasedSlots(IEnumerable<JsonNode> roots, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs) => ApplyAll(roots, isValue, refs, emitBridges: false, localTypeNames: null);
 
     // The bridge half.
-    public static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue, ReferenceMetadataIndex refs,
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         IReadOnlySet<string> localTypeNames) =>
         ApplyAll(roots, isValue, refs, emitBridges: true, localTypeNames);
 
-    static void ApplyAll(IEnumerable<JsonNode> roots, Func<string, bool> isValue, ReferenceMetadataIndex refs,
+    static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
         bool emitBridges, IReadOnlySet<string> localTypeNames)
     {
         var defs = SupertypeGraph.Collect(roots);
@@ -113,7 +113,7 @@ static class KotlinOverrideSlotBridge
             }
     }
 
-    static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, Func<string, bool> isValue,
+    static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, bool emitBridges, IDictionary<JsonObject, string> exactBridgeSources,
         IReadOnlySet<string> localTypeNames)
     {
@@ -398,7 +398,7 @@ static class KotlinOverrideSlotBridge
     // Ordinary-function twin of the property rule below. This matters when a DIM has a CLR physical name that differs
     // from its Kotlin name and an unrelated class/base method already occupies that physical signature.
     static void AddInheritedDefaultMethodBridges(Def cls, IReadOnlyDictionary<string, Def> defs,
-        JsonArray methods, TypeNode[] ownArgs, ReferenceMetadataIndex refs, Func<string, bool> isValue,
+        JsonArray methods, TypeNode[] ownArgs, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
         Dictionary<string, JsonObject> bridges, ref int ordinal, IReadOnlySet<string> localTypeNames)
     {
         if (cls.Node[KotlinPropertyAccessors.InheritedDefaultMethodsKey] is not JsonArray inheritedFacts)
@@ -497,7 +497,7 @@ static class KotlinOverrideSlotBridge
     // over the DIM unless the property slot receives an exact class-level MethodImpl. The selected implementation is
     // an explicit BIR fact; only the physical collision and MethodImpl allocation are decided here.
     static void AddInheritedDefaultPropertyBridges(Def cls, IReadOnlyDictionary<string, Def> defs,
-        JsonArray methods, TypeNode[] ownArgs, ReferenceMetadataIndex refs, Func<string, bool> isValue,
+        JsonArray methods, TypeNode[] ownArgs, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
         IReadOnlyDictionary<JsonObject, string> exactBridgeSources,
         Dictionary<string, JsonObject> bridges, ref int ordinal, IReadOnlySet<string> localTypeNames)
     {
@@ -666,7 +666,7 @@ static class KotlinOverrideSlotBridge
         + "a callable producer-side trampoline is required");
 
     static bool SignatureMatches(JsonObject method, TypeNode[] expectedParams, TypeNode expectedRet,
-        TypeNode[] ownerArgs, ReferenceMetadataIndex refs, Func<string, bool> isValue)
+        TypeNode[] ownerArgs, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         var sourceParameters = method[KotlinPropertyAccessors.SuspendSourceParamsKey] as JsonArray;
         var parameters = sourceParameters ?? method["params"] as JsonArray;
@@ -693,7 +693,7 @@ static class KotlinOverrideSlotBridge
     // the physical frame selected by those same general lowering rules. `ErasureAligned` is deliberately directional:
     // only an object position already present on the erased source declaration may absorb a concrete class-frame type.
     static bool InheritedDefaultSignatureTypeMatches(TypeNode erasedDeclaration, TypeNode frontendFact,
-        ReferenceMetadataIndex refs, Func<string, bool> isValue, bool returnPosition) =>
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, bool returnPosition) =>
         erasedDeclaration.Equals(frontendFact)
         || BirTypeLowering.SamePhysicalSlotType(erasedDeclaration, frontendFact,
             refs?.Aliases, isValue, refs?.PhysicalTypeNames, returnPosition)
@@ -721,7 +721,7 @@ static class KotlinOverrideSlotBridge
     }
 
     static void AddInheritedDefaultBridge(Def cls, IReadOnlyDictionary<string, Def> defs,
-        JsonArray methods, TypeNode[] ownArgs, ReferenceMetadataIndex refs, Func<string, bool> isValue,
+        JsonArray methods, TypeNode[] ownArgs, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
         Dictionary<string, JsonObject> bridges, ref int ordinal, string propertyName, string accessorKind,
         TypeNode.Fqn callOwner, JsonObject source, string sourceAssociation, JsonArray descriptors,
         TypeNode[] sourceOwnerArgs, TypeNode[] descriptorOwnerArgs, bool virtualCall,
@@ -820,7 +820,7 @@ static class KotlinOverrideSlotBridge
 
     static bool HasOrdinaryPhysicalCollisionInHierarchy(Def cls, IReadOnlyDictionary<string, Def> defs,
         JsonArray methods, string physicalName, int methodArity, TypeNode[] slotParams, TypeNode slotRet,
-        TypeNode[] ownArgs, ReferenceMetadataIndex refs, Func<string, bool> isValue,
+        TypeNode[] ownArgs, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
         bool includeNonVirtual)
     {
         if (HasOrdinaryPhysicalCollision(methods, physicalName, methodArity,
@@ -865,7 +865,7 @@ static class KotlinOverrideSlotBridge
 
     static bool HasOrdinaryPhysicalCollision(JsonArray methods, string physicalName, int methodArity,
         TypeNode[] slotParams, TypeNode slotRet, TypeNode[] ownArgs, ReferenceMetadataIndex refs,
-        Func<string, bool> isValue, bool includeNonVirtual)
+        ValueTypeOracle isValue, bool includeNonVirtual)
     {
         foreach (var method in methods.OfType<JsonObject>())
         {
@@ -899,7 +899,7 @@ static class KotlinOverrideSlotBridge
         || Bool(method["objectOverride"]) || method["pendingOverrideOwner"] != null;
 
     static bool SamePhysicalSignature(TypeNode[] candidateParams, TypeNode candidateRet,
-        TypeNode[] slotParams, TypeNode slotRet, ReferenceMetadataIndex refs, Func<string, bool> isValue)
+        TypeNode[] slotParams, TypeNode slotRet, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         if (candidateParams == null || candidateRet == null || candidateParams.Length != slotParams.Length)
             return false;
@@ -922,7 +922,7 @@ static class KotlinOverrideSlotBridge
     // the reader saw the declaration and declined to state it, and inventing a slot from the physical signature is
     // the derivation the refusal exists to prevent.
     static void FillFromReference(Def cls, IReadOnlyDictionary<string, Def> defs, TypeNode.Fqn spec,
-        bool supIsInterface, JsonArray methods, TypeNode[] ownArgs, Func<string, bool> isValue,
+        bool supIsInterface, JsonArray methods, TypeNode[] ownArgs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs,
         Action<TypeNode.Fqn, bool, bool, string, string, string, TypeNode[], TypeNode, JsonObject, JsonArray, bool> fill)
     {
@@ -1046,7 +1046,7 @@ static class KotlinOverrideSlotBridge
     //             no conversion exists in either direction, so the declaration has to adopt the slot's shape.
     //   Foreign — a difference this erasure did not create (a covariantly narrowed return, a `@ClrTypeAlias` reshape).
     //             Not this pass's to reconcile, and moving it would state a type the author never wrote.
-    static Fit Classify(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs, Func<string, bool> isValue,
+    static Fit Classify(TypeNode slot, TypeNode declared, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
         bool returnPosition)
     {
         if (declared.Equals(slot)
@@ -1223,7 +1223,7 @@ static class KotlinOverrideSlotBridge
     // Move a slot the CLR cannot bridge onto the supertype's shape, carrying the override's own pre-erasure Kotlin
     // type across on the round-trip channels so the surface survives the move.
     static void Rewrite(JsonObject decl, string typeKey, string factKey, string flagsKey, TypeNode slot,
-        Func<string, bool> isValue)
+        ValueTypeOracle isValue)
     {
         if (TypeJson.Read(decl[typeKey]) is not TypeNode t || t.Equals(slot)) return;
         decl[typeKey] = TypeJson.Write(slot);
@@ -1236,7 +1236,7 @@ static class KotlinOverrideSlotBridge
     // Each argument is narrowed out of the slot's `object` into the declared type
     // (`unbox.any` for a value, `castclass` for a reference) and the result widened back.
     static JsonObject BuildBridge(Def cls, JsonObject impl, TypeNode[] slotParams, TypeNode slotRet, string bridgeName,
-        Func<string, bool> isValue, TypeNode.Fqn callOwner = null, bool virtualCall = true, string callMember = null)
+        ValueTypeOracle isValue, TypeNode.Fqn callOwner = null, bool virtualCall = true, string callMember = null)
     {
         var declParams = impl["params"] as JsonArray ?? new JsonArray();
         var bridgeParams = new JsonArray();
@@ -1347,7 +1347,7 @@ static class KotlinOverrideSlotBridge
     // `IntSink().accept(3)` ambiguous. Carried, the two keys coincide, the bridge de-duplicates away, and the
     // re-imported type carries exactly the one declaration that was written.
     static void CarryKotlinType(JsonObject decl, string factKey, string flagsKey, TypeNode kotlin, TypeNode slot,
-        Func<string, bool> isValue)
+        ValueTypeOracle isValue)
     {
         decl[factKey] ??= TypeNode.ToJson(kotlin);
         // The byte walk describes the PHYSICAL slot, which is the bare `object` this bridge states, carrying the

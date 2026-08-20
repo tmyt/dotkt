@@ -101,7 +101,7 @@ static class InlineSplice
         // node — a cond branch (`getOrPut`'s `else value`), a var init (a `?.let` receiver `__self = tmp0_safe_receiver`),
         // a return. ilemit emits the raw struct into the VT slot and reads its HasValue bit (=1). Runs whole-tree (the
         // `?.let` receiver binding is minted by STEP 5, AFTER the per-splice STEP-2c cast normalization). Types are still
-        // the pre-lowering `kotlin.*` form here, so IsValueTypeFqn matches (same oracle as NormalizeConcretizedCasts).
+        // the pre-lowering `kotlin.*` form here, so IsValueType matches (same oracle as NormalizeConcretizedCasts).
         NormalizeImplicitNullableUnwrap(root);
         WidenCovariantConstruction(root);
         RetypeReceiverToConcrete(root);
@@ -354,7 +354,7 @@ static class InlineSplice
         // so the raw struct's HasValue bit would be read as the value. The whole-tree var/cond/setLocal arms don't see a
         // valueBlock `result` local — unwrap it HERE against the concretized return type (an EARLY return routes through
         // the setLocal arm instead). Prefixed body locals already carry their declared `nullable(VT)` type.
-        if (!unit && VtFqnOf(pRet) is string foldVt && result != null)
+        if (!unit && VtFqnOf(pRet) is TypeNode.Fqn foldVt && result != null)
         {
             var pbTypes = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
             CollectVarTypes(pBody, pbTypes);
@@ -2487,12 +2487,12 @@ static class InlineSplice
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) == "cast" && o["type"] is JsonObject ct && Str(ct["t"]) == "fqn" && Str(ct["name"]) is string cn
-                && _refs != null && _refs.IsValueTypeFqn(cn)
+            if (Str(o["k"]) == "cast" && TypeJson.Read(o["type"]) is TypeNode.Fqn castType
+                && _refs != null && _refs.IsValueType(castType)
                 && o["e"] is JsonObject e && Str(e["k"]) == "local" && Str(e["name"]) is string en
                 && varTypes.TryGetValue(en, out var et)
-                && et is JsonObject eto && Str(eto["t"]) == "nullable" && eto["of"] is JsonObject ofo
-                && Str(ofo["t"]) == "fqn" && Str(ofo["name"]) == cn)
+                && TypeJson.Read(et) is TypeNode.Nullable { Of: TypeNode.Fqn nullableType }
+                && nullableType == castType)
             {
                 o["k"] = "nullableValue";
                 var elemT = o["type"].DeepClone();
@@ -2692,32 +2692,32 @@ static class InlineSplice
     // safe to widen to a reference supertype with no boxing. A value-type (`kotlin.Int`), a `nullable`(-of-value struct),
     // or a `tv` is NOT — widening its slot to `object`/an interface would leave the unboxed value in a reference field.
     static bool IsRefTypeArg(JsonNode argType) =>
-        argType is JsonObject a && Str(a["t"]) == "fqn" && Str(a["name"]) is string nm && !(_refs?.IsValueTypeFqn(nm) ?? false);
+        TypeJson.Read(argType) is TypeNode.Fqn type && !(_refs?.IsValueType(type) ?? false);
 
     static void NormalizeFlowsWith(JsonNode node, Dictionary<string, JsonNode> varTypes)
     {
         if (node is JsonObject o)
         {
             var k = Str(o["k"]);
-            if (k == "cond" && VtFqnOf(o["type"]) is string condVt)
+            if (k == "cond" && VtFqnOf(o["type"]) is TypeNode.Fqn condVt)
             {
                 foreach (var br in CondBranchKeys)
                     if (o[br] is JsonNode bn && UnwrapNullableLocal(bn, condVt, varTypes) is JsonNode w) o[br] = w;
             }
-            else if (k == "var" && VtFqnOf(o["type"]) is string slotVt
+            else if (k == "var" && VtFqnOf(o["type"]) is TypeNode.Fqn slotVt
                      && o["init"] is JsonNode ini && UnwrapNullableLocal(ini, slotVt, varTypes) is JsonNode wi)
                 o["init"] = wi;
             // FINDING 3a: a `setLocal <VT-local> = <Nullable<VT> local>` — the shape RouteReturns MINTS for an early
             // `return <T?-local>` with a concretized value-type return (`setLocal __inlsN$ret(:Int32) = {nullable Int32}`).
             // Without the unwrap ilemit stores the raw struct and later reads its HasValue bit as the value.
             else if (k == "setLocal" && Str(o["name"]) is string sn && varTypes.TryGetValue(sn, out var st)
-                     && VtFqnOf(st) is string setVt && o["value"] is JsonNode sv
+                     && VtFqnOf(st) is TypeNode.Fqn setVt && o["value"] is JsonNode sv
                      && UnwrapNullableLocal(sv, setVt, varTypes) is JsonNode sw)
                 o["value"] = sw;
             // FINDING 3b: a `cast to <VT>` over a Nullable<VT> splice local that STEP-2c NormalizeConcretizedCasts MISSED
             // — a payload PARAM operand (params bind to vars only in STEP 5, AFTER 2c's var-decl-only scan), e.g.
             // `inline fun <T> f(x: T?) = x as T` with T=Int. Same unbox as seq/single; re-tag the cast to nullableValue.
-            else if (k == "cast" && VtFqnOf(o["type"]) is string castVt && o["e"] is JsonNode ce
+            else if (k == "cast" && VtFqnOf(o["type"]) is TypeNode.Fqn castVt && o["e"] is JsonNode ce
                      && UnwrapNullableLocal(ce, castVt, varTypes) != null)
             {
                 o["elem"] = o["type"].DeepClone();
@@ -2730,13 +2730,12 @@ static class InlineSplice
     }
 
     // The fqn of a `{t:fqn,name}` type node when it names a (non-nullable) value type, else null.
-    static string VtFqnOf(JsonNode typeNode) =>
-        typeNode is JsonObject t && Str(t["t"]) == "fqn" && Str(t["name"]) is string nm
-            && _refs != null && _refs.IsValueTypeFqn(nm) ? nm : null;
+    static TypeNode.Fqn VtFqnOf(JsonNode typeNode) =>
+        TypeJson.Read(typeNode) is TypeNode.Fqn type && _refs != null && _refs.IsValueType(type) ? type : null;
 
     // A `{k:local}` whose declared type is exactly `nullable(vtFqn)` -> a `nullableValue` (Nullable.get_Value) wrapper;
     // else null (leave the node untouched — a boxed/object or non-matching operand).
-    static JsonNode UnwrapNullableLocal(JsonNode value, string vtFqn, Dictionary<string, JsonNode> varTypes)
+    static JsonNode UnwrapNullableLocal(JsonNode value, TypeNode.Fqn valueType, Dictionary<string, JsonNode> varTypes)
     {
         if (value is not JsonObject e || Str(e["k"]) != "local" || Str(e["name"]) is not string en) return null;
         // Gate on a SPLICE-MINTED local (`__inls<N>$`/`__inll<N>$`, always `__inl`-prefixed): the raw-Nullable<VT>-into-VT
@@ -2745,9 +2744,9 @@ static class InlineSplice
         // `val x: Int? ... else x` never hits this — it is not a struct-reinterpret bug.
         if (!en.Contains("__inl", StringComparison.Ordinal)) return null;
         if (!varTypes.TryGetValue(en, out var et) || et is not JsonObject eto) return null;
-        if (Str(eto["t"]) != "nullable" || eto["of"] is not JsonObject ofo
-            || Str(ofo["t"]) != "fqn" || Str(ofo["name"]) != vtFqn) return null;
-        return new JsonObject { ["k"] = "nullableValue", ["elem"] = new JsonObject { ["t"] = "fqn", ["name"] = vtFqn }, ["e"] = value.DeepClone() };
+        if (TypeJson.Read(eto) is not TypeNode.Nullable { Of: TypeNode.Fqn nullableType }
+            || nullableType != valueType) return null;
+        return new JsonObject { ["k"] = "nullableValue", ["elem"] = TypeNode.Write(valueType), ["e"] = value.DeepClone() };
     }
 
     // Rename each spliced `newSam`/`newClosure` synthClass (and every reference to it — the node's samType/closureType and

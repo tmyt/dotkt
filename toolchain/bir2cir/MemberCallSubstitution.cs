@@ -102,10 +102,10 @@ static class MemberCallSubstitution
     };
 
     // The struct-ness oracle, for the `Array<X?>` element canonicalization (#86 D2) the array factories below apply.
-    static Func<string, bool> _isValue = _ => false;
+    static ValueTypeOracle _isValue = _ => false;
 
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, Func<string, bool> isValue,
+        IReadOnlySet<string> localTopLevelFns, bool attributeTopLevelOwner, ValueTypeOracle isValue,
         IReadOnlyDictionary<LocalPropertyAccessorKey, IReadOnlyList<LocalPropertyAccessor>> localPropertyAccessors)
     {
         _localTopLevelFns = localTopLevelFns;

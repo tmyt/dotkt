@@ -30,11 +30,11 @@ using DotKt.Bir;
 // so it is a no-op in the rt-stdlib self-build. A REFERENCE element needs nothing: covariance already works there.
 static class ValueElementIterableCoercion
 {
-    // The struct-ness ORACLE (ReferenceMetadataIndex.IsValueTypeFqn + the local enum/struct types), not a hardcoded
+    // The struct-ness ORACLE (ReferenceMetadataIndex.IsValueType + the local enum/struct types), not a hardcoded
     // primitive list: a Kotlin `value class` over a struct, a projected .NET struct and a local enum are value
     // elements for exactly the same CLR reason as `Int`, and a list that names only the primitives answers "no" for
     // them and silently drops the conversion.
-    static Func<string, bool> _isValue = _ => false;
+    static ValueTypeOracle _isValue = _ => false;
 
     // The one Kotlin collection head whose CLR form is `IEnumerable<E>` — the type the wrap produces.
     const string IterableFqn = "kotlin.collections.Iterable";
@@ -45,7 +45,7 @@ static class ValueElementIterableCoercion
     static readonly TypeNode CastResultTn =
         new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new TypeNode[] { new TypeNode.Fqn("object") });
 
-    public static void Apply(JsonNode root, Func<string, bool> isValue)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue)
     {
         _isValue = isValue ?? (_ => false);
         Walk(root);
@@ -110,8 +110,8 @@ static class ValueElementIterableCoercion
     }
 
     // Is this type argument a value type, per the struct-ness oracle, on the pre-lowering structured Type node? A
-    // CONSTRUCTED name is asked like any other — `KeyValuePair<K,V>` is a struct — and the oracle, which strips
-    // generic arity, answers false for a constructed reference generic.
+    // CONSTRUCTED name is asked like any other — `KeyValuePair<K,V>` is a struct — and its full argument count
+    // distinguishes it from an arity-sharing reference declaration.
     static bool IsValueTypeArg(JsonNode n)
-        => TypeJson.Read(n) is TypeNode.Fqn f && _isValue(f.Name);
+        => TypeJson.Read(n) is TypeNode.Fqn f && _isValue(f);
 }

@@ -169,7 +169,7 @@ static class BirTypeLowering
     // (a foundational primitive, a ref.dll struct/enum, or a LOCAL enum/struct in this compilation). Decides whether a
     // `{t:nullable}` node keeps its wrapper (value inner -> `System.Nullable<T>`) or is STRIPPED to the bare inner
     // (reference inner -> the CLR type is nullable in IL regardless; the `?` rides an NRT byte the decl walk emitted).
-    static Func<string, bool> _isValueFqn = _ => false;
+    static ValueTypeOracle _isValueFqn = _ => false;
 
     static string AliasBcl(string fqn) => _aliases.TryGetValue(fqn, out var bcl) ? bcl : null;
 
@@ -299,7 +299,7 @@ static class BirTypeLowering
     // REFERENCE generic, so `List<String>?` still strips.
     static bool IsValueNullableInner(TypeNode of) => of switch
     {
-        TypeNode.Fqn f => _isValueFqn(f.Name),
+        TypeNode.Fqn f => _isValueFqn(f),
         _ => false,
     };
 
@@ -427,7 +427,7 @@ static class BirTypeLowering
     // exact CLR slot read from metadata. Use the one canonical lowering rule under the reference facts for that
     // comparison; do not duplicate a partial primitive/@ClrTypeAlias table in the caller.
     internal static bool SamePhysicalSlotType(TypeNode left, TypeNode right,
-        IReadOnlyDictionary<string, string> aliases, Func<string, bool> isValueFqn,
+        IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool returnPosition,
         IReadOnlySet<string> localTypeNames = null)
     {
@@ -444,7 +444,7 @@ static class BirTypeLowering
     // caller must not reproduce only the primitive, alias, collection-collapse or delegate branch it happened to
     // encounter first. The statics are per-run state, so preserve them just as SamePhysicalSlotType historically did.
     internal static TypeNode LowerPhysicalType(TypeNode type,
-        IReadOnlyDictionary<string, string> aliases, Func<string, bool> isValueFqn,
+        IReadOnlyDictionary<string, string> aliases, ValueTypeOracle isValueFqn,
         IReadOnlyDictionary<string, string> physicalTypeNames, bool typeArg,
         IReadOnlySet<string> localTypeNames = null)
     {
@@ -597,7 +597,7 @@ static class BirTypeLowering
     static IReadOnlySet<string> _localTypeNames = new HashSet<string>(StringComparer.Ordinal);
 
     public static JsonNode Lower(JsonNode root, bool refBuild, IReadOnlyDictionary<string, string> aliases = null,
-        Func<string, bool> isValueFqn = null, string file = null,
+        ValueTypeOracle isValueFqn = null, string file = null,
         IReadOnlyDictionary<string, string> physicalTypeNames = null,
         IReadOnlySet<string> localTypeNames = null)
     {
