@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Rich enums now preserve their implemented Kotlin interfaces (#479).** Constructed interface supertypes remain
+  explicit BIR facts, so rich-enum methods and properties fill their selected slots and inherited default methods and
+  property accessors remain available through interface-typed calls.
+
 - **Rich-enum base state now follows Kotlin instance-initialization semantics (#480).** Enum-body property
   initializers and `init` blocks run in declaration order after constructor-property storage and before an entry
   subclass initializes its own state. Property- and initializer-only enums use the rich plain-class shape as well,

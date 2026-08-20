@@ -266,6 +266,24 @@ private fun BirEmitter.kotlinCompanionFact(owner: IrClass, companion: IrClass): 
 	return ""","kotlinCompanion":{"owner":${str(ownerName)},"name":${str(companion.name.asString())},"visibility":${str(visOf(companion))}}"""
 }
 
+/** Kotlin interface supertypes as representation-neutral BIR identities. The declaration kind using this list is
+ * irrelevant: interfaces, ordinary classes, and rich-enum classes must preserve the same frontend supertype facts. */
+private fun BirEmitter.interfaceSuperTypes(klass: IrClass): String = klass.superTypes
+	.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
+	.mapNotNull { st ->
+		// A stdlib/projected interface may already have a CLR-bound semantic type node; a user generic interface keeps
+		// its Kotlin owner plus the actual constructed arguments. Function types are value representations, not an
+		// implemented interface edge authored by this declaration.
+		val bt = birType(st)
+		val stClass = st.classifierOrNull?.owner as? IrClass
+		when {
+			bt is TypeNode.Fn -> null
+			stClass != null && isExternalNetType(stClass) -> bt.toJson()
+			else -> stClass?.let { ownerSpec(it, st).toJson() }
+		}
+	}
+	.joinToString(",")
+
 internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 		val savedSemanticOwner = activeSemanticOwner
@@ -374,18 +392,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		}
 	val allIfaceProps = listOf(ifaceProps, staticProps).filter { it.isNotEmpty() }.joinToString(",")
 	val semanticOwner = semanticOwnerJson(iface)
-	val ifaces = iface.superTypes
-		.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
-		.mapNotNull { st ->
-			val bt = birType(st)
-			val stClass = st.classifierOrNull?.owner as? IrClass
-			when {
-				bt is TypeNode.Fn -> null
-				stClass != null && isExternalNetType(stClass) -> bt.toJson()
-				else -> stClass?.let { ownerSpec(it, st).toJson() }
-			}
-		}
-		.joinToString(",")
+	val ifaces = interfaceSuperTypes(iface)
 	// Round-trip class-nature facts (Kotlin, not CLR) as structured `mods` (spec §2.1): `fun interface` (SAM) and
 	// `sealed` — carried so a re-consuming Kotlin module can restore them (ilemit stamps [KotlinFunInterface]/
 	// [KotlinSealed]; a plain CLR interface loses both).
@@ -554,12 +561,13 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	val allPropsList = listOf(propsList, staticPropsList).filter { it.isNotEmpty() }.joinToString(",")
 	val methods = (userMethods + propAccessors + staticPropAccessors + listOf(toStr, valuesM, valueOfM)).joinToString(",")
+	val ifaces = interfaceSuperTypes(ec)
 	// `enumRich:true` — a FAITHFUL "this class originated from a Kotlin enum" fact (not a CLR-shape decision), so
 	// bir2cir's EnumIntrinsicLowering can lower `enumValues<ThisEnum>()` to the synthesized static values()/valueOf()
 	// rather than the System.Enum-reflection semantic node (a rich enum is a plain class, invisible to that reflection).
 	// richEnumDef likewise does not flatten a companion's declarations into the enum class.
 	val kotlinCompanion = ""
-	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(visOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$allPropsList]}"""
+	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(visOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$allPropsList]}"""
 	// Emit the base enum class first, then each per-entry subclass.
 	val result = (listOf(baseDef) + subDefs).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
@@ -1330,26 +1338,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	} ?: "null"
 	// Stdlib interface supertypes (Iterator, Iterable, Read(Write)Property) -> the REAL generic identity;
 	// a user generic interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
-	val ifaces = klass.superTypes
-		.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
-		.mapNotNull { st ->
-			// A stdlib interface birType maps to .NET (Continuation, Comparable, Comparator, AutoCloseable, …) ->
-			// its clr:/clrg: spec; a user generic interface `Container<Int>` -> the constructed spec `Container[int]`
-			// (ownerSpec). The Kotlin iterator/iterable protocol is NOT special-cased: a user `class R : Iterable<Int>`
-			// links the REAL generic `kotlin.collections.Iterable<Int>` (bir2cir @ClrTypeAlias'd to
-			// `IEnumerable<int>`; ilemit's reverse bridge synthesizes `GetEnumerator` from the class's `iterator()`),
-			// and an `Iterator<Int>` supertype the real generic `kotlin.collections.Iterator<Int>` (a real emitted
-			// stdlib interface). `for (x in r)` resolves the iterator on that real generic — the real generic
-			// interface is used, and every build takes the same reverse-bridge path.
-			val bt = birType(st)
-			val stClass = st.classifierOrNull?.owner as? IrClass
-			when {
-				bt is TypeNode.Fn -> null
-				stClass != null && isExternalNetType(stClass) -> bt.toJson()
-				else -> stClass?.let { ownerSpec(it, st).toJson() }
-			}
-		}
-		.joinToString(",")
+	val ifaces = interfaceSuperTypes(klass)
 	// Anonymous objects are synthetic implementation types and remain public. Lifted companions also use anonNames
 	// for their physical name, but their source visibility is authoritative: widening a private companion here makes
 	// its carrier an ordinary public CLR/KLIB type on re-import.
