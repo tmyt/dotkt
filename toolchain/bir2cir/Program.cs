@@ -1086,6 +1086,13 @@ sealed class Pipeline
             if (attributeTopLevelOwner)
                 ClrMemberResolution.ResolveReferencedStaticCalls(
                     substituted, refs, emittedLocalTypes, externalCanonicalTypes);
+            // A reference KLIB can express ordinary nominal generic bounds, but not ECMA's class/struct/new() flags;
+            // projecting the implicit ValueType/Enum rows as Kotlin bounds is worse, because no Kotlin value inhabits
+            // those CLR root classifiers. Validate that physical half against the authoritative reference metadata
+            // after every splice/retyping pass has settled the constructed arguments and before type lowering erases
+            // their Kotlin/value identities. The frontend remains the owner of ordinary nominal-bound diagnostics.
+            ExternalGenericConstraintValidation.Apply(
+                substituted, staged.Select(file => file.Root), refs, isValueFqn, localBasicEnums);
             // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
             // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
             // the ref.dll + rt.dll + app views of a signature's nullability agree (the scalar decl flags are retired).

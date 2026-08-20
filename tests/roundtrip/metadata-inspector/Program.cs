@@ -1279,7 +1279,9 @@ static void VerifyKlib(string path)
     var shadowOwner = Class(ownership, "roundtrip.ownership.ShadowOwner");
     Require(shadowOwner.TypeParameter.Count == 1,
         "generic owner type parameter was dropped from the projected KLIB");
-    var shadowBound = shadowOwner.TypeParameter[0].UpperBound.SingleOrDefault();
+    Require(shadowOwner.TypeParameter[0].UpperBound.Count == 1,
+        "generic owner constraint was duplicated while restoring its projected KLIB bound");
+    var shadowBound = shadowOwner.TypeParameter[0].UpperBound[0];
     Require(shadowBound is not null && shadowBound.HasClassName &&
             QualifiedName(ownership, shadowBound.ClassName) == "kotlin.Comparable" &&
             shadowBound.Argument.Count == 1 && shadowBound.Argument[0].Type.HasTypeParameter &&

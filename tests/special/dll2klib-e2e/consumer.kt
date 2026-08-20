@@ -17,7 +17,18 @@ import Probe.Contracts.IVisibleGeneric
 import Probe.Contracts.IExternalDefaultSlot
 import GlobalWidgetExtensions
 import GlobalBump
+import Probe.ConstraintBox
+import Probe.ConstraintKind
+import Probe.EnumConstraintBox
+import Probe.FreshConstraintBox
+import Probe.GoodConstraintSink
+import Probe.ReferenceConstraintBox
+import Probe.StructConstraintBox
 import kotlin.clr.byref
+
+class LocalDefaultConstraintValue {
+    val value: Int = 16
+}
 
 class DefaultCarrierSubclass1 : DefaultCarrier1()
 
@@ -70,12 +81,18 @@ fun consume(): Int {
     externalDefaultCarrier.Value()
     val explicitDefaultCarrier: IExternalDefaultSlot = ExplicitDefaultCarrierSubclass()
     explicitDefaultCarrier.Value()
+    val genericConstraints = ConstraintBox<GoodConstraintSink>().Value +
+        StructConstraintBox<Int>().Value +
+        EnumConstraintBox<ConstraintKind>().Value +
+        ReferenceConstraintBox<String>().Value +
+        FreshConstraintBox<LocalDefaultConstraintValue>().Create().value
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
         widget.Value + widget.Inherited + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +
         externalTransformed + externalGenericTransformed + staticBump + globalExtensionBump + globalStaticBump +
         (nullable?.length ?: 0) + required.length + changed + incremented + shifted.Add(0) +
-        visibility.Read() + visibleControl.Read() + (if (visibleGeneric === visibility) 1 else 0)
+        visibility.Read() + visibleControl.Read() + (if (visibleGeneric === visibility) 1 else 0) +
+        genericConstraints
 }
 
 fun main() {

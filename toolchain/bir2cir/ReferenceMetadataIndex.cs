@@ -143,6 +143,10 @@ sealed partial class ReferenceMetadataIndex
     // receiver block's constraints verbatim; the coarser nullability/star-projection indexes below are insufficient
     // for F-bounds and the CLR class/struct/new() flags.
     readonly Dictionary<string, string> _ownerTypeParamDeclarations = new(StringComparer.Ordinal);
+    // A referenced concrete type satisfies the CLR new() constraint exactly when it is a non-abstract reference type
+    // with a public parameterless instance constructor, or any value type. This is a physical metadata fact used by
+    // ExternalGenericConstraintValidation; Kotlin has no nominal upper bound that can encode it.
+    readonly HashSet<string> _publicParameterlessConstructibleOwners = new(StringComparer.Ordinal);
     // Per owner-FQN, the declared parameter types of its (first/sole) constructor — used to adapt a static-String arg
     // flowing into a CharSequence ctor param of a SPLICED anonymous stdlib object (`dotkt$obj*`, e.g. the anonymous
     // Grouping from `CharSequence.groupingBy` whose ctor captures the receiver as `kotlin.CharSequence`). The spliced
@@ -459,6 +463,8 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TypeArity) _ownerArity[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamNames) _ownerTypeParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamDeclarations) _ownerTypeParamDeclarations[kv.Key] = kv.Value;
+            foreach (var owner in asm.DotKt.PublicParameterlessConstructibleOwners)
+                _publicParameterlessConstructibleOwners.Add(owner);
             foreach (var kv in asm.DotKt.CtorParamTypes) _ownerCtorParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamConstraints) _ownerTypeParamConstraints[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamBounds) _ownerTypeParamBounds[kv.Key] = kv.Value;
@@ -1694,6 +1700,13 @@ sealed partial class ReferenceMetadataIndex
             ?? _ownerTypeParamDeclarations.GetValueOrDefault(StripGenericArity(ownerFqn))
             ?? _ownerTypeParamDeclarations.GetValueOrDefault(StripGenericArity(DottedFqn(ownerFqn)));
         return value == null ? null : JsonNode.Parse(value) as JsonArray;
+    }
+
+    public bool HasPublicParameterlessConstructor(string ownerFqn)
+    {
+        if (ownerFqn == null) return false;
+        var bare = StripGenericArity(DottedFqn(ownerFqn));
+        return _publicParameterlessConstructibleOwners.Contains(bare);
     }
 
     public string ExactPhysicalTypeName(string ownerFqn) => ownerFqn == null
@@ -3787,6 +3800,12 @@ sealed partial class ReferenceMetadataIndex
                         metadata.CompanionStaticByPhysicalOwner.Add(
                             StripGenericArity(DottedFqn(ownerFqn)), companionIsStatic);
                     metadata.TypeKinds[ownerFqn] = TypeKind(type);
+                    if (type.IsValueType || !type.IsAbstract && !type.IsInterface &&
+                        type.GetConstructor(Type.EmptyTypes) is ConstructorInfo { IsPublic: true })
+                    {
+                        metadata.PublicParameterlessConstructibleOwners.Add(
+                            StripGenericArity(DottedFqn(ownerFqn)));
+                    }
                     // Both spellings: the reflection name nests with `+`, every bir2cir type token is DOTTED, and a
                     // NESTED `ref struct` (`Span<T>.Enumerator`, `MemoryExtensions.SpanSplitEnumerator`) is exactly
                     // the shape a spill of `for (x in span)` would mint a field of.
@@ -5876,6 +5895,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string> TypeParamDeclarations = new(StringComparer.Ordinal); // ownerFqn -> exact descriptor array JSON
+    public readonly HashSet<string> PublicParameterlessConstructibleOwners = new(StringComparer.Ordinal);
     public readonly Dictionary<string, TypeNode[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> sole ctor parameter types
     public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
     public readonly Dictionary<string, TypeNode[]> TypeParamBounds = new(StringComparer.Ordinal); // DOTTED ownerFqn -> per-param declared bound TypeNode (null when unconstrained/objectish)

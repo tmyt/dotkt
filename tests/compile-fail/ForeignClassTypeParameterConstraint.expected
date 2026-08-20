@@ -1,3 +1,2 @@
-# The error comes from the frontend reading the projected class type-parameter bound, before bir2cir or ilemit.
 type argument is not within its bounds
 NotSink

@@ -5,13 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
-### Added
-
-- **Regression coverage now pins class type-parameter constraints across DLL-to-KLIB projection (#351).** A foreign
-  `Box<T>` constrained by `Sink<String>` rejects an invalid `NotSink` argument in the Kotlin frontend, and a
-  Kotlin-origin `Comparable<T>` bound retains both its classifier and self-referential type argument when re-imported.
-
 ### Fixed
+
+- **Class type-parameter constraints now survive DLL-to-KLIB projection without inventing an uninhabitable Kotlin
+  bound (#351).** Ordinary nominal rows are enforced by the Kotlin frontend, including multiple bounds, while the
+  implicit CLR `ValueType`/`Enum` rows are kept out of the Kotlin classifier lattice. bir2cir validates those physical
+  roots and the CLR `class`, `struct`, and `new()` flags against the referenced construction, so legal value, enum,
+  reference, and default-constructible arguments run and invalid ones fail before emission. Round-trip inspection also
+  pins the exact classifier, self argument, and single-bound cardinality of Kotlin-origin `Comparable<T>` constraints.
 
 - **`suspendCoroutine` now accepts an already-materialized block value (#246).** `bir2cir` invokes a block held in a
   local, parameter, field, or other function-valued expression directly, preserving its single evaluation and
@@ -808,10 +809,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   several upper bounds), so nothing was ever recorded; and `RestoreErasedSupertypes` read only `base` and
   `interfaces`. So `class Box<T : Sink<Int?>>` re-imported with NO bound at all: `Box<BadSink>` compiled and then
   died at LOAD with the CLR's wording, on a line the author never wrote. Both ends are wired, and the bad type
-  argument is now refused by the frontend against the Kotlin bound the author declared. At the time, a METHOD's
-  type-parameter bounds remained outside this type-level carrier and ordinary class constraints were not projected.
-  The latter gap was subsequently closed by direct projection of class generic-constraint rows; #351 now pins that
-  general contract independently of nullable-generic erasure.
+  argument is now refused by the frontend against the Kotlin bound the author declared. Two limits, both measured
+  and recorded in `docs/design-kotlin-metadata-attributes.md`: a METHOD's type-parameter bounds are not on this
+  carrier (it is type-level), and a class bound the erasure never moved is still lost, because a CLASS type
+  parameter's CLR constraint is not projected at all — a gap older than this erasure, which the non-erasing
+  reference control fails on identically.
 
 - **bir2cir (area:bir2cir): every node resolved against a .NET member states that member's declared type, and the
   build now asserts it (#86).** Two families were silently outside the crossing refusal: a GENERIC .NET method,

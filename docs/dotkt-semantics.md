@@ -1948,8 +1948,9 @@ so `Box<BadSink>` can fail at the wrong layer. Both are Kotlin source breaks rat
 type-parameter bound is not on that carrier (it is type-level) and re-imports as the physical `Sink<object>`. A CLASS
 type parameter's ordinary CLR constraint rows are projected directly, however: an unmoved
 `class Box<T : Sink<String>>` retains that bound, while the carrier replaces only bounds whose Kotlin type arguments
-were erased. CLR `class`, `struct`, and `new()` flags remain physical generic-constraint facts rather than nominal
-Kotlin upper bounds supplied by this carrier.
+were erased. The physical-only roots and flags cannot be represented as Kotlin nominal upper bounds: a class
+parameter's `System.ValueType`/`System.Enum` rows are omitted from the KLIB, and bir2cir validates them together with
+CLR `class`, `struct`, and `new()` flags against every referenced constructed type before CLR type lowering.
 
 **Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
 `unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —
