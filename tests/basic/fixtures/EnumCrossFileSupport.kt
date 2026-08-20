@@ -27,6 +27,14 @@ open class EnumGenericOwnedEvent<T> {
     }
 }
 
+open class EnumConstraintOnlyOwnedEvent<T> {
+    val pulse: ClrEvent<(Int) -> Unit> by clrEvent()
+
+    fun raise(value: Int) {
+        pulse.invoke(value)
+    }
+}
+
 fun <V, T : EnumGenericOwnedEvent<V>> exerciseGenericOwnerConstraint(source: T, value: V): Int {
     var seen = 0
     val subscription = source.pulse.subscribe { if (it == value) seen++ }
@@ -42,5 +50,14 @@ fun <T : EnumNamedOwnedEvent> exerciseGenericLocalEvent(source: T): Int {
     source.raise(8)
     subscription.close()
     source.raise(10)
+    return seen
+}
+
+fun <V, T : EnumConstraintOnlyOwnedEvent<V>> exerciseConstraintOnlyLocalEvent(source: T, marker: V): Int {
+    var seen = 0
+    val subscription = source.pulse.subscribe { seen += it }
+    source.raise(5)
+    subscription.close()
+    source.raise(7)
     return seen
 }

@@ -24,6 +24,8 @@ static class ClrEventSubscriptionBinding
         readonly ReferenceMetadataIndex _refs;
         readonly IReadOnlyDictionary<(string Owner, string Event), JsonNode> _forwardedOwners;
         readonly IReadOnlySet<string> _localTypes;
+        readonly Dictionary<JsonObject, (JsonArray TypeParams, JsonArray MethodParams)> _scopes = new();
+        readonly JsonArray _empty = new();
         int _next;
 
         public Binder(
@@ -37,28 +39,58 @@ static class ClrEventSubscriptionBinding
             _localTypes = localTypes;
             var fileClass = root is JsonObject f ? Str(f["fileClass"]) : null;
             _scope = string.Concat((fileClass ?? "File").Select(c => char.IsLetterOrDigit(c) ? c : '_'));
+            IndexScopes(root);
         }
 
-        public JsonNode Apply(JsonNode root) => Walk(root);
+        void IndexScopes(JsonNode root)
+        {
+            void IndexCallable(JsonObject callable, JsonArray typeParams) =>
+                _scopes[callable] = (typeParams, callable["typeParams"] as JsonArray ?? _empty);
 
-        JsonNode Walk(JsonNode node)
+            void IndexType(JsonObject type)
+            {
+                var typeParams = TypeParameterFrame.CloneDeclarations(type);
+                _scopes[type] = (typeParams, _empty);
+                if (type["ctors"] is JsonArray ctors)
+                    foreach (var ctor in ctors.OfType<JsonObject>()) IndexCallable(ctor, typeParams);
+                if (type["methods"] is JsonArray methods)
+                    foreach (var method in methods.OfType<JsonObject>()) IndexCallable(method, typeParams);
+                if (type["types"] is JsonArray nested)
+                    foreach (var child in nested.OfType<JsonObject>()) IndexType(child);
+            }
+
+            if (root is not JsonObject file) return;
+            _scopes[file] = (_empty, _empty);
+            if (file["methods"] is JsonArray methods)
+                foreach (var method in methods.OfType<JsonObject>()) IndexCallable(method, _empty);
+            if (file["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>()) IndexType(type);
+        }
+
+        public JsonNode Apply(JsonNode root) => Walk(root, _empty, _empty);
+
+        JsonNode Walk(JsonNode node, JsonArray typeParams, JsonArray methodParams)
         {
             if (node is JsonObject obj)
             {
+                if (_scopes.TryGetValue(obj, out var scope))
+                    (typeParams, methodParams) = scope;
                 var copy = new JsonObject();
-                foreach (var kv in obj) copy[kv.Key] = kv.Value == null ? null : Walk(kv.Value);   // children first (bottom-up)
-                return Transform(copy) ?? copy;
+                foreach (var kv in obj)
+                    copy[kv.Key] = kv.Value == null ? null : Walk(kv.Value, typeParams, methodParams);
+                return Transform(copy, typeParams, methodParams) ?? copy;
             }
             if (node is JsonArray arr)
             {
                 var copy = new JsonArray();
-                foreach (var item in arr) copy.Add(item == null ? null : Walk(item));
+                foreach (var item in arr)
+                    copy.Add(item == null ? null : Walk(item, typeParams, methodParams));
                 return copy;
             }
             return node.DeepClone();
         }
 
-        JsonNode Transform(JsonObject node)
+        JsonNode Transform(JsonObject node, JsonArray typeParams, JsonArray methodParams)
         {
             if (Str(node["k"]) != "callInstance") return null;
             if (TypeJson.OwnerName(node["ownerType"]) != "kotlin.clr.ClrEvent") return null;
@@ -67,10 +99,15 @@ static class ClrEventSubscriptionBinding
             // owner type (`type`), the event name (`name`), and the actual owner value (`recv`). Anything else is not an event op.
             if (node["recv"] is not JsonObject eventGet || Str(eventGet["k"]) != "clrEventGet") return null;
             if (node["args"] is not JsonArray args || args.Count != 1) return null;
-            return Subscribe(node, eventGet, args[0]);
+            return Subscribe(node, eventGet, args[0], typeParams, methodParams);
         }
 
-        JsonNode Subscribe(JsonObject call, JsonObject eventGet, JsonNode handler)
+        JsonNode Subscribe(
+            JsonObject call,
+            JsonObject eventGet,
+            JsonNode handler,
+            JsonArray typeParams,
+            JsonArray methodParams)
         {
             var handlerType = HandlerType(call, handler)
                 ?? throw new InvalidOperationException("bir2cir: ClrEvent.subscribe is missing its instantiated handler type");
@@ -92,6 +129,11 @@ static class ClrEventSubscriptionBinding
             var closureName = $"dotkt${_scope}$EventRemove{id}";
 
             var free = FreeTypeVariables(ownerType, handlerType);
+            // The remove callback is a new physical generic class. Preserve the source parameters' constraints so a
+            // captured `T : EventOwner<U>` remains a verifier-valid constrained receiver, and recursively capture U
+            // even when it is absent from the handler type. These are source-frame facts available at synthesis time;
+            // later layers must not reconstruct them from the closure field layout.
+            ExpandConstraintVariables(free, typeParams, methodParams);
             var closureOwnerType = RemapForClosure(ownerType, free);
             var closureHandlerType = RemapForClosure(handlerType, free);
             var unit = Fqn("kotlin.Unit");
@@ -147,7 +189,8 @@ static class ClrEventSubscriptionBinding
                 },
             };
             if (free.Count > 0)
-                synthClass["typeParams"] = new JsonArray(free.Select((_, i) => (JsonNode)JsonValue.Create($"T{i}")).ToArray());
+                synthClass["typeParams"] = new JsonArray(free.Select((item, i) =>
+                    ClosureTypeParameter(item, i, free, typeParams, methodParams)).ToArray());
 
             var removeClosure = new JsonObject
             {
@@ -207,6 +250,44 @@ static class ClrEventSubscriptionBinding
                     ["args"] = new JsonArray { Local(handlerLocal, handlerType), removeClosure },
                 },
             };
+        }
+
+        static JsonNode SourceTypeParameter(FreeTv item, JsonArray typeParams, JsonArray methodParams)
+        {
+            var frame = item.Scope == "type" ? typeParams : item.Scope == "method" ? methodParams : null;
+            return frame != null && item.Index >= 0 && item.Index < frame.Count ? frame[item.Index] : null;
+        }
+
+        static void ExpandConstraintVariables(
+            List<FreeTv> free,
+            JsonArray typeParams,
+            JsonArray methodParams)
+        {
+            for (var i = 0; i < free.Count; i++)
+            {
+                if (SourceTypeParameter(free[i], typeParams, methodParams) is not JsonObject descriptor
+                    || descriptor["constraints"] is not JsonArray constraints) continue;
+                foreach (var dependency in FreeTypeVariables(constraints))
+                    if (!free.Any(item => item.Scope == dependency.Scope && item.Index == dependency.Index))
+                        free.Add(dependency);
+            }
+        }
+
+        static JsonNode ClosureTypeParameter(
+            FreeTv item,
+            int index,
+            List<FreeTv> free,
+            JsonArray typeParams,
+            JsonArray methodParams)
+        {
+            var name = $"T{index}";
+            if (SourceTypeParameter(item, typeParams, methodParams) is not JsonObject descriptor)
+                return JsonValue.Create(name);
+            var clone = descriptor.DeepClone() as JsonObject;
+            clone["name"] = name;
+            if (clone["constraints"] is JsonArray constraints)
+                clone["constraints"] = RemapForClosure(constraints, free);
+            return clone;
         }
 
         // A handle on a Kotlin delegating class names that Kotlin receiver in `type`; the CLR event itself belongs to
