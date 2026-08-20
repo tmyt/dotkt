@@ -173,6 +173,8 @@ STR_OK = {
                                                 # bir2cir DECISION (W1-S2 #46), NOT a type slot; ilemit emits the opcode
                                                 # verbatim (no re-derivation from reflected IsVirtual/IsFinal)
     "member", "method", "get", "set", "event",  # member/accessor/event NAME references (reflection/override — §2.2.1)
+    "field", "values", "valueOf",                 # rich-enum round-trip carrier's exact physical member names;
+                                                    # declaration identities, not value-type slots
     "accessor",                                  # W1-S3 (#46/#121): the ref.dll-resolved get_/set_/add_/remove_ accessor
                                                 # METHOD NAME ilemit links (clrPropGet/Set, clrEvent*, external field) — a
                                                 # bir2cir resolution decision, NOT a type slot (paired with `member`+`dispatch`)

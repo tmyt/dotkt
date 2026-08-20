@@ -1,8 +1,9 @@
 using System.Text.Json.Nodes;
 
-// A basic Kotlin enum entry is semantic declaration identity: owner + entry name. For a local Kotlin enum its
-// declaration ordinal is also the contiguous CLR value. A referenced C# enum may be sparse, negative, aliased, or
-// UInt64-backed, so only bir2cir may translate that identity to the selected reference DLL's physical constant.
+// A Kotlin enum entry is semantic declaration identity: owner + entry name. A referenced rich Kotlin enum carries an
+// explicit producer map from that identity to its singleton field; a basic local enum uses its contiguous ordinal,
+// while a referenced C# enum may be sparse, negative, aliased, or UInt64-backed. Only bir2cir may translate each of
+// those Kotlin identities to the selected reference DLL's physical representation.
 static class EnumValueLowering
 {
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs) => Walk(root, refs);
@@ -13,11 +14,21 @@ static class EnumValueLowering
         {
             if (obj["k"]?.GetValue<string>() == "enumValue"
                 && obj["entry"]?.GetValue<string>() is string entry
-                && TypeJson.OwnerName(obj["type"]) is string owner
-                && refs.ResolveNetEnumConstant(owner, entry) is EnumPhysicalConstant physical)
+                && obj["type"] is JsonNode type
+                && TypeJson.OwnerName(type) is string owner)
             {
-                obj["underlying"] = physical.Underlying;
-                obj["physicalValue"] = physical.Value;
+                if (refs.TryKotlinRichEnumEntryField(owner, entry, out var field))
+                {
+                    foreach (var key in obj.Select(kv => kv.Key).ToList()) obj.Remove(key);
+                    obj["k"] = "staticField";
+                    obj["ownerType"] = type.DeepClone();
+                    obj["name"] = field;
+                }
+                else if (refs.ResolveNetEnumConstant(owner, entry) is EnumPhysicalConstant physical)
+                {
+                    obj["underlying"] = physical.Underlying;
+                    obj["physicalValue"] = physical.Value;
+                }
             }
             foreach (var kv in obj)
                 if (kv.Value != null) Walk(kv.Value, refs);

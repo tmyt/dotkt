@@ -1285,6 +1285,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		}
 	}
 	enumApiOwner?.let { ec ->
+		val enumType = birType(ec.defaultType).toJson()
 		// K2 may expose the synthesized entries getter without a corresponding
 		// property symbol after KLIB dependencies are present. Its special IR
 		// name still carries the same Kotlin declaration identity.
@@ -1294,22 +1295,22 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// Rich enum -> the synthesized static values()/valueOf() methods on the class.
 		if (isRichEnum(ec)) {
 			if (name == "values" || isEntriesGetter)
-				return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"values","args":[],"dotktFrontendDeclarationConsumed":true}"""
-			if (name == "valueOf") return """{"k":"callStatic","owner":${fqnJson(ec.name.asString())},"method":"valueOf","sig":[${fqnJson("kotlin.String")}],"args":[${expr(regularArgs(call).first())}],"dotktFrontendDeclarationConsumed":true}"""
+				return """{"k":"callStatic","owner":$enumType,"method":"values","args":[],"dotktFrontendDeclarationConsumed":true}"""
+			if (name == "valueOf") return """{"k":"callStatic","owner":$enumType,"method":"valueOf","sig":[${fqnJson("kotlin.String")}],"args":[${expr(regularArgs(call).first())}],"dotktFrontendDeclarationConsumed":true}"""
 		}
 		// Basic enum -> the semantic enumValues/enumParse node carrying the enum's FAITHFUL FQN identity (a
 		// structured Type, never the banned `@Name` type-token). bir2cir/ilemit resolve it to the local enum type,
 		// exactly as the reified `enumValues<T>()` path does (EnumIntrinsicLowering re-emits the same node shape).
 		if (name == "values" || isEntriesGetter)
-			return """{"k":"enumValues","type":${fqnJson(ec.name.asString())}}"""
-		if (name == "valueOf") return """{"k":"enumParse","type":${fqnJson(ec.name.asString())},"arg":${expr(regularArgs(call).first())}}"""
+			return """{"k":"enumValues","type":$enumType}"""
+		if (name == "valueOf") return """{"k":"enumParse","type":$enumType,"arg":${expr(regularArgs(call).first())}}"""
 	}
 	// The top-level reified enum intrinsics `enumValues<T>()` / `enumValueOf<T>(name)` / `enumEntries<T>()`
 	// / `enumEntriesIntrinsic<T>()` are NOT recognized here: kotc emits the FAITHFUL top-level call
 	// `callStatic owner:null method:<the callee's bare name> typeArgs:[T] args:[…]` (the plain Kotlin fact) via the
 	// general call path. bir2cir's EnumIntrinsicLowering re-emits the same BIR vocabulary — a rich enum's synthesized static
 	// `values()`/`valueOf()`, or the semantic `enumValues`/`enumParse` node for a basic/generic-param T — deriving
-	// rich-vs-basic from the enum type's emitted shape (a local rich enum carries `enumRich:true`). "This call is
+	// rich-vs-basic from explicit producer facts (local `enumRich:true`, referenced trusted carrier). "This call is
 	// enumValues" is a Kotlin<->CLR relation, so it lives in bir2cir. (The `.name`/`.ordinal` handling below asks
 	// the IR — `ClassKind.ENUM_CLASS` — not an FQN table, so it stays here.)
 	// `c.code` (Char -> Int code point) is NOT recognized here: kotc emits the FAITHFUL top-level extension-property

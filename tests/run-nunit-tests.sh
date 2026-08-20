@@ -162,7 +162,7 @@ for proj in "${PROJECTS[@]}"; do
 		fi
 		if bash "$ROOT/tests/roundtrip/run-companion-metadata-negative-tests.sh" \
 			>"$ROOT/build/nunit-$name.metadata-negative.log" 2>&1; then
-			echo "  malformed companion carriers rejected by dll2klib + bir2cir OK"
+			echo "  malformed trusted metadata carriers rejected by dll2klib + bir2cir OK"
 		else
 			echo "  COMPANION METADATA NEGATIVE FAIL — see build/nunit-$name.metadata-negative.log"
 			tail -25 "$ROOT/build/nunit-$name.metadata-negative.log"; rc=1

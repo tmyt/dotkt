@@ -96,6 +96,11 @@ NON_PUBLIC_STATIC="$WORK/NonPublicStaticCarrier/bin/NonPublicStaticCarrier.dll"
 run_rejected dll2klib "$NON_PUBLIC_STATIC" 'KotlinStaticCarrier.*must be public'
 run_rejected bir2cir "$NON_PUBLIC_STATIC" 'KotlinStaticCarrier.*must be public'
 
+build_fixture RichEnumMissingField RICH_ENUM_MISSING_FIELD
+RICH_ENUM_MISSING_FIELD_DLL="$WORK/RichEnumMissingField/bin/RichEnumMissingField.dll"
+run_rejected dll2klib "$RICH_ENUM_MISSING_FIELD_DLL" 'KotlinRichEnum.*entry field.*MISSING'
+run_rejected bir2cir "$RICH_ENUM_MISSING_FIELD_DLL" 'KotlinRichEnum.*entry field.*MISSING'
+
 build_fixture ExtraStaticCarrierPayload EXTRA_STATIC_CARRIER_PAYLOAD
 EXTRA_STATIC_PAYLOAD="$WORK/ExtraStaticCarrierPayload/bin/ExtraStaticCarrierPayload.dll"
 run_rejected dll2klib "$EXTRA_STATIC_PAYLOAD" 'payload must contain exactly one'
@@ -173,4 +178,4 @@ PARAMETERIZED_EXTENSION="$WORK/ParameterizedCompanionExtension/bin/Parameterized
 run_rejected dll2klib "$PARAMETERIZED_EXTENSION" 'malformed.*KotlinCompanionExtension.*payload'
 run_rejected bir2cir "$PARAMETERIZED_EXTENSION" 'companion-extension receiver is not a bare classifier type'
 
-echo "malformed companion/static trusted carriers rejected consistently by dll2klib + bir2cir: OK"
+echo "malformed companion/static/rich-enum trusted carriers rejected consistently by dll2klib + bir2cir: OK"

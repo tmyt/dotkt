@@ -129,8 +129,8 @@ static class NetInteropBinding
         else if (netType == null && _refs.HasDotKtOwner(bare))
             dotKtEmittedType = _refs.ResolveRefType(reflectedOwner, ownerFqnNode.Args?.Length ?? 0);
         // Rich-enum values()/valueOf() are synthetic enum-owner statics, not companion declarations. The frontend
-        // nevertheless marks their Kotlin call shape as companionCall. Admit only those two exact, structurally
-        // verified signatures when no association carrier exists; arbitrary carrier-less DotKt calls still fail.
+        // nevertheless marks their Kotlin call shape as companionCall. Admit only the exact API names and signatures
+        // declared by a validated rich-enum carrier; arbitrary carrier-less DotKt calls still fail.
         var carrierlessRichEnumApi = companionCall && companionStatic == null && method != null &&
             _refs.HasDotKtOwner(bare) &&
             _refs.IsKotlinRichEnumStaticApi(bare, method, DeclarationArgs(node).Count);
@@ -413,6 +413,7 @@ static class NetInteropBinding
         if (ownerFqnNode == null) return;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
         var companionCall = node["companionCall"]?.GetValue<bool>() == true;
+        string richEnumPhysicalField = null;
         bool? companionStatic = null;
         if (companionCall)
         {
@@ -428,11 +429,12 @@ static class NetInteropBinding
             netType ??= _refs.HasDotKtOwner(bare)
                 ? _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0)
                 : null;
-            if (netType == null || !_refs.IsKotlinRichEnumOwner(bare) ||
-                !IsPublicStaticSelfField(netType, fieldName))
+            if (netType == null ||
+                !_refs.TryKotlinRichEnumEntryField(bare, fieldName, out richEnumPhysicalField))
                 throw new InvalidOperationException(
                     $"DotKt companion field owner '{bare}' has no trusted companion carrier");
             companionStatic = true;
+            node["name"] = richEnumPhysicalField;
         }
         if (netType == null)
         {
@@ -683,17 +685,6 @@ static class NetInteropBinding
     static bool DeclaresPublicStaticMethod(Type type, string name)
     {
         try { return type.GetMethods(BindingFlags.Public | BindingFlags.Static).Any(m => m.Name == name); }
-        catch { return false; }
-    }
-
-    static bool IsPublicStaticSelfField(Type type, string name)
-    {
-        if (type == null || name == null) return false;
-        try
-        {
-            var field = type.GetField(name, BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly);
-            return field != null && field.FieldType == type;
-        }
         catch { return false; }
     }
 

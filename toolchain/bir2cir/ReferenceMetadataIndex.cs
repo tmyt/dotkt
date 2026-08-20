@@ -65,6 +65,11 @@ sealed partial class ReferenceMetadataIndex
     public readonly record struct DefaultKey(
         string Owner, string Method, int ParamCount, SignatureKey Signature = null, bool Relaxed = false);
 
+    public sealed record RichEnumMetadata(
+        IReadOnlyDictionary<string, string> EntryFields,
+        string Values,
+        string ValueOf);
+
     sealed class MalformedTrustedCompanionException : Exception
     {
         public MalformedTrustedCompanionException(string message, Exception inner = null) : base(message, inner) { }
@@ -87,6 +92,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinConstructorAdapterAttr = "DotKt.Runtime.CompilerServices.KotlinConstructorAdapterAttribute";
     const string KotlinExtensionCoreAttr = "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute";
     const string KotlinStaticCarrierAttr = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
+    const string KotlinRichEnumAttr = "DotKt.Runtime.CompilerServices.KotlinRichEnumAttribute";
     const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
     // The #86/#147 positional carrier: the PRE-erasure Kotlin TypeNode of a declaration slot whose `Nullable(Tv)`
     // NullableGenericErasure object-erased. Read per member slot (return parameter and each value parameter) so a
@@ -112,6 +118,7 @@ sealed partial class ReferenceMetadataIndex
     readonly Dictionary<string, string> _ownerKind = new(StringComparer.Ordinal);    // Kotlin FQN -> class/struct/...
     readonly HashSet<string> _byRefLikeOwners = new(StringComparer.Ordinal);         // Kotlin FQN -> is a `ref struct`
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
+    readonly Dictionary<string, RichEnumMetadata> _richEnums = new(StringComparer.Ordinal);
     // Trusted [KotlinType(G<*,...>)] on a compiler-generated non-generic interface is the explicit existential ABI
     // relation. No physical-name suffix participates in recognition.
     readonly Dictionary<string, string> _existentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
@@ -355,6 +362,19 @@ sealed partial class ReferenceMetadataIndex
             foreach (var owner in asm.DotKt.ByRefLikeOwners) _byRefLikeOwners.Add(owner);
             foreach (var owner in asm.DotKt.DotKtOwners)
                 _dotKtOwners.Add(StripGenericArity(DottedFqn(owner)));
+            foreach (var kv in asm.DotKt.RichEnums)
+            {
+                var owner = StripGenericArity(DottedFqn(kv.Key));
+                if (!_richEnums.TryAdd(owner, kv.Value))
+                {
+                    var existing = _richEnums[owner];
+                    if (existing.Values != kv.Value.Values || existing.ValueOf != kv.Value.ValueOf ||
+                        existing.EntryFields.Count != kv.Value.EntryFields.Count ||
+                        existing.EntryFields.Any(entry =>
+                            !kv.Value.EntryFields.TryGetValue(entry.Key, out var field) || field != entry.Value))
+                        throw new InvalidOperationException($"conflicting Kotlin rich-enum metadata for '{owner}'");
+                }
+            }
             foreach (var kv in asm.DotKt.ExistentialPhysicalBySemanticOwner)
             {
                 var semantic = StripGenericArity(DottedFqn(kv.Key));
@@ -1606,34 +1626,41 @@ sealed partial class ReferenceMetadataIndex
     public bool TryExistentialSemanticOwner(string physicalOwner, out string semanticOwner) =>
         _existentialSemanticByPhysicalOwner.TryGetValue(
             StripGenericArity(DottedFqn(BareOwnerFqn(physicalOwner))), out semanticOwner);
-    public bool IsKotlinRichEnumOwner(string ownerFqn)
+    public bool TryKotlinRichEnumStaticApis(string ownerFqn, out string values, out string valueOf)
     {
-        var bare = BareOwnerFqn(ownerFqn);
-        if (!_membersByOwner.TryGetValue(bare, out var members)) return false;
-        var values = members.Count(m => m.IsStatic && m.Name == "values" && m.ParamCount == 0
-            && m.ReturnTypeNode is TypeNode.Array { Elem: TypeNode.Fqn valueElem } && valueElem.Name == bare);
-        var valueOf = members.Count(m => m.IsStatic && m.Name == "valueOf" && m.ParamCount == 1
-            && m.ParamTypeNodes is { Length: 1 } && IsStringType(m.ParamTypeNodes[0])
-            && m.ReturnTypeNode is TypeNode.Fqn valueType && valueType.Name == bare);
-        return values == 1 && valueOf == 1;
+        var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
+        if (_richEnums.TryGetValue(bare, out var metadata))
+        {
+            values = metadata.Values;
+            valueOf = metadata.ValueOf;
+            return true;
+        }
+        values = null;
+        valueOf = null;
+        return false;
     }
+
     public bool IsKotlinRichEnumStaticApi(string ownerFqn, string memberName, int paramCount)
     {
-        var bare = BareOwnerFqn(ownerFqn);
-        if (!IsKotlinRichEnumOwner(bare) || !_membersByOwner.TryGetValue(bare, out var members)) return false;
-        return memberName switch
+        var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
+        if (!_richEnums.TryGetValue(bare, out var metadata)) return false;
+        return paramCount switch
         {
-            "values" when paramCount == 0 => members.Count(m => m.IsStatic && m.Name == memberName &&
-                m.ParamCount == 0 && m.ReturnTypeNode is TypeNode.Array { Elem: TypeNode.Fqn elem } &&
-                elem.Name == bare) == 1,
-            "valueOf" when paramCount == 1 => members.Count(m => m.IsStatic && m.Name == memberName &&
-                m.ParamCount == 1 && m.ParamTypeNodes is { Length: 1 } && IsStringType(m.ParamTypeNodes[0]) &&
-                m.ReturnTypeNode is TypeNode.Fqn ret && ret.Name == bare) == 1,
+            0 => memberName == metadata.Values,
+            1 => memberName == metadata.ValueOf,
             _ => false,
         };
     }
-    static bool IsStringType(TypeNode type) => type is TypeNode.Fqn f &&
-        f.Name is "kotlin.String" or "System.String" or "string";
+
+    public bool TryKotlinRichEnumEntryField(string ownerFqn, string entryName, out string physicalField)
+    {
+        var bare = StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn)));
+        if (_richEnums.TryGetValue(bare, out var metadata) &&
+            metadata.EntryFields.TryGetValue(entryName, out physicalField))
+            return true;
+        physicalField = null;
+        return false;
+    }
     public JsonArray OwnerTypeParamDeclarations(string ownerFqn)
     {
         if (ownerFqn == null) return null;
@@ -3723,6 +3750,13 @@ sealed partial class ReferenceMetadataIndex
                             metadata.InnerSemanticOwner[innerName] = StripGenericArity(DottedFqn(
                                 declaringType.FullName ?? declaringType.Name));
                     }
+                    if (dotKtAuthored && RichEnumMetadataOf(type, asm) is { } richEnum)
+                    {
+                        var semanticOwner = StripGenericArity(DottedFqn(ownerFqn));
+                        if (!metadata.RichEnums.TryAdd(semanticOwner, richEnum))
+                            throw new InvalidDataException(
+                                $"duplicate trusted [KotlinRichEnum] for '{semanticOwner}'");
+                    }
                     if (companionRepresentations.TryGetValue(type, out var companionIsStatic))
                         metadata.CompanionStaticByPhysicalOwner.Add(
                             StripGenericArity(DottedFqn(ownerFqn)), companionIsStatic);
@@ -4128,10 +4162,14 @@ sealed partial class ReferenceMetadataIndex
         attrs.ValidateCarrierTargets(
             KotlinStaticCarrierAttr,
             HandleKind.TypeDefinition);
+        attrs.ValidateCarrierTargets(
+            KotlinRichEnumAttr,
+            HandleKind.TypeDefinition);
         foreach (var typeHandle in reader.TypeDefinitions)
         {
             var type = reader.GetTypeDefinition(typeHandle);
             using (attrs.CarrierDocument(typeHandle, KotlinStaticCarrierAttr)) { }
+            using (attrs.CarrierDocument(typeHandle, KotlinRichEnumAttr)) { }
             foreach (var method in type.GetMethods())
             {
                 using (attrs.CarrierDocument(method, KotlinCompanionExtensionAttr)) { }
@@ -5143,6 +5181,65 @@ sealed partial class ReferenceMetadataIndex
             metadata.CompanionExtensionMembers[key] = "";
     }
 
+    static RichEnumMetadata RichEnumMetadataOf(Type type, Assembly declaringAssembly)
+    {
+        var trusted = type.GetCustomAttributesData().Where(attribute =>
+            attribute.AttributeType.FullName == KotlinRichEnumAttr &&
+            attribute.AttributeType.Assembly == declaringAssembly &&
+            HasAttribute(attribute.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
+        if (trusted.Length == 0) return null;
+        if (trusted.Length != 1)
+            throw new InvalidDataException("expected exactly one trusted [KotlinRichEnum]");
+        var payload = CarrierJsonOf(type.GetCustomAttributesData(), declaringAssembly, KotlinRichEnumAttr) as JsonObject
+            ?? throw new InvalidDataException("malformed [KotlinRichEnum] payload");
+        if (payload.Count != 3 || payload["entries"] is not JsonArray entries ||
+            payload["values"] is not JsonValue valuesValue ||
+            !valuesValue.TryGetValue<string>(out var values) || string.IsNullOrEmpty(values) ||
+            payload["valueOf"] is not JsonValue valueOfValue ||
+            !valueOfValue.TryGetValue<string>(out var valueOf) || string.IsNullOrEmpty(valueOf))
+            throw new InvalidDataException(
+                "malformed [KotlinRichEnum] payload: expected entries plus values/valueOf names");
+        if (!type.IsClass || type.IsEnum || type.IsGenericType)
+            throw new InvalidDataException(
+                $"malformed [KotlinRichEnum] on '{type.FullName}': expected a non-generic reference class");
+
+        var entryFields = new Dictionary<string, string>(StringComparer.Ordinal);
+        var physicalFields = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var node in entries)
+        {
+            if (node is not JsonObject entry || entry.Count != 2 ||
+                entry["name"] is not JsonValue nameValue ||
+                !nameValue.TryGetValue<string>(out var name) || string.IsNullOrEmpty(name) ||
+                entry["field"] is not JsonValue fieldValue ||
+                !fieldValue.TryGetValue<string>(out var fieldName) || string.IsNullOrEmpty(fieldName) ||
+                !entryFields.TryAdd(name, fieldName) || !physicalFields.Add(fieldName))
+                throw new InvalidDataException(
+                    "malformed [KotlinRichEnum] payload: entries require unique non-empty name/field pairs");
+            var fields = type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Where(field => field.Name == fieldName && field.FieldType == type && field.IsInitOnly).ToArray();
+            if (fields.Length != 1)
+                throw new InvalidDataException(
+                    $"malformed [KotlinRichEnum] on '{type.FullName}': entry field '{fieldName}' " +
+                    "must be uniquely public, static, initonly, and self-typed");
+        }
+
+        var generatedValues = type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(method => method.Name == values && method.ReturnType.IsArray &&
+                method.ReturnType.GetArrayRank() == 1 && method.ReturnType.GetElementType() == type &&
+                method.GetParameters().Length == 0 &&
+                HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
+        var generatedValueOf = type.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(method => method.Name == valueOf && method.ReturnType == type &&
+                method.GetParameters() is [var parameter] &&
+                parameter.ParameterType.FullName is "System.String" or "kotlin.String" &&
+                HasAttribute(method.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
+        if (generatedValues.Length != 1 || generatedValueOf.Length != 1 ||
+            generatedValues[0].MetadataToken == generatedValueOf[0].MetadataToken)
+            throw new InvalidDataException(
+                $"malformed [KotlinRichEnum] on '{type.FullName}': compiler-generated values/valueOf APIs are missing or ambiguous");
+        return new RichEnumMetadata(entryFields, values, valueOf);
+    }
+
     static JsonObject TrustedStaticCarrierPayload(Type carrierType, Assembly declaringAssembly)
     {
         try
@@ -5717,6 +5814,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> TypeKinds = new(StringComparer.Ordinal);   // ownerFqn -> class/struct/interface/enum
     public readonly HashSet<string> ByRefLikeOwners = new(StringComparer.Ordinal);        // ownerFqn -> is a `ref struct` (see IsByRefLikeFqn)
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
+    public readonly Dictionary<string, ReferenceMetadataIndex.RichEnumMetadata> RichEnums = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ExistentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
     public readonly HashSet<string> FileClassOwners = new(StringComparer.Ordinal);         // trusted [KotlinFileClass] types
     public readonly Dictionary<string, bool> CompanionStaticByPhysicalOwner = new(StringComparer.Ordinal);

@@ -464,16 +464,19 @@ sealed class Pipeline
             // ENUM REIFIED INTRINSICS (#73): kotc emits the faithful top-level `callStatic owner:null method:enumValues
             // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`/`enums.enumEntries<T>()`/`enumEntriesIntrinsic<T>()`.
             // Re-emit the same BIR vocabulary — rich enum -> static values()/valueOf(), basic/generic-param -> semantic
-            // enumValues/enumParse — deriving rich-vs-basic from the enum's emitted shape (local `enumRich:true`). Runs
+            // enumValues/enumParse — deriving rich-vs-basic from the explicit producer fact (local `enumRich:true`,
+            // referenced trusted [KotlinRichEnum]). Runs
             // BEFORE ArrayConstructionLowering (#77): a `for (x in enumValues<Color>())` / `.entries` for-loop wraps
             // this call in a `forArray` whose element ArrayConstructionLowering derives via StaticType off the ALREADY-
             // lowered `enumValues`/rich-`values()` node — so the reified top-level intrinsic must already be in its
             // final semantic shape when elem-derivation runs, exactly as kotc's retired call-site interception order
             // implied. entries family: App-build sites only (stdlib self-build keeps the filler body — see
             // EnumIntrinsicLowering).
-            EnumIntrinsicLowering.Apply(bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner);
-            // BASIC ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced CLR
-            // enum's potentially sparse/negative/aliased physical constant from the exact compile reference here.
+            EnumIntrinsicLowering.Apply(
+                bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs);
+            // ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced rich enum's
+            // carrier-mapped singleton field, or a CLR enum's potentially sparse/negative/aliased physical constant,
+            // from the exact compile reference here.
             EnumValueLowering.Apply(bir.Root, refs);
             // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
             // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray

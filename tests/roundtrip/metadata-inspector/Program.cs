@@ -13,6 +13,7 @@ const string Ns = "roundtrip.dispatchsurface.";
 const string CarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
 const string LateinitAttribute = "DotKt.Runtime.CompilerServices.KotlinLateinitAttribute";
 const string StaticCarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
+const string RichEnumAttribute = "DotKt.Runtime.CompilerServices.KotlinRichEnumAttribute";
 // Kotlin 2.4 metadata Flags.IS_STATIC_FUNCTION.
 const int IsStaticFunctionFlag = 1 << 18;
 // A hoisted companion carrier's reserved separator keeps compiler companion types disjoint from ordinary source
@@ -445,6 +446,15 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
 
     var bir = Root(birPath);
     var cir = Root(cirPath);
+    var birRichEnum = Types(bir).OfType<JsonObject>().Single(type =>
+        Text(type["name"]) == "roundtrip.ownership.OwnedRichEnum");
+    Require(birRichEnum["enumRich"] is JsonValue richFlag && richFlag.GetValue<bool>() &&
+            birRichEnum["richEnum"] is JsonObject richFact &&
+            richFact["entries"] is JsonArray richEntries && richEntries.Count == 1 &&
+            richEntries[0] is JsonObject richEntry && Text(richEntry["name"]) == "FIRST" &&
+            Text(richEntry["field"]) == "FIRST" && Text(richFact["values"]) == "values" &&
+            Text(richFact["valueOf"]) == "valueOf",
+        "kotc did not state the complete rich-enum declaration-to-physical map");
     var birOwnedTypes = Types(bir).OfType<JsonObject>()
         .Where(t => Text(t["semanticOwner"]) is not null)
         .ToArray();
@@ -454,6 +464,9 @@ static void VerifyOwnershipLayerBoundary(string birPath, string cirPath)
 
     var cirTypes = Types(cir).OfType<JsonObject>()
         .ToDictionary(t => Text(t["name"])!, StringComparer.Ordinal);
+    var cirRichEnum = cirTypes["roundtrip.ownership.OwnedRichEnum"];
+    Require(cirRichEnum["richEnum"] is null && cirRichEnum["enumRich"] is null,
+        "CIR retained the consumed rich-enum semantic hand-off instead of only its trusted attribute");
     foreach (var semantic in birOwnedTypes)
     {
         var name = Text(semantic["name"])!;
@@ -530,6 +543,36 @@ static void VerifyOwnershipDll(string path)
     // metadata. A metadata-only prefetch intentionally makes PE section data unavailable.
     using var pe = new PEReader(stream);
     var md = pe.GetMetadataReader();
+    var richEnumAttributeDefinition = md.TypeDefinitions.Single(h => DefinitionName(md, h) == RichEnumAttribute);
+    Require(HasAttribute(md, richEnumAttributeDefinition,
+            "System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
+        "KotlinRichEnumAttribute is not a compiler-generated trusted carrier definition");
+    var richEnum = md.TypeDefinitions.Single(h =>
+        StripArities(DefinitionName(md, h)) == "roundtrip.ownership.OwnedRichEnum");
+    var richEnumDefinition = md.GetTypeDefinition(richEnum);
+    using (var carrier = CarrierDocument(md, richEnum, RichEnumAttribute))
+    {
+        var root = carrier.RootElement;
+        var entries = root.GetProperty("entries").EnumerateArray().ToArray();
+        Require(entries.Length == 1 && entries[0].GetProperty("name").GetString() == "FIRST" &&
+                entries[0].GetProperty("field").GetString() == "FIRST" &&
+                root.GetProperty("values").GetString() == "values" &&
+                root.GetProperty("valueOf").GetString() == "valueOf",
+            "producer DLL lost the explicit rich-enum member map");
+    }
+    var richEntryField = richEnumDefinition.GetFields().Single(field =>
+        md.GetString(md.GetFieldDefinition(field).Name) == "FIRST");
+    Require((md.GetFieldDefinition(richEntryField).Attributes &
+            (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly)) ==
+            (FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.InitOnly),
+        "rich-enum singleton entry is not a public static initonly physical field");
+    foreach (var api in new[] { "values", "valueOf" })
+    {
+        var method = richEnumDefinition.GetMethods().Single(handle =>
+            md.GetString(md.GetMethodDefinition(handle).Name) == api);
+        Require(HasMethodAttribute(md, method, "System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
+            $"rich-enum physical API '{api}' is not marked compiler-generated");
+    }
     var owner = md.TypeDefinitions.Single(h => StripArities(DefinitionName(md, h)) == "roundtrip.ownership.Owner");
     var ownerDef = md.GetTypeDefinition(owner);
     var ownerChildren = ownerDef.GetNestedTypes().ToArray();
@@ -1185,6 +1228,22 @@ static void VerifyKlib(string path)
         e.FullName.EndsWith("/package_roundtrip.ownership/0_ownership.knm", StringComparison.Ordinal));
     using var ownershipStream = ownershipEntry.Open();
     var ownership = PackageFragment.Parser.ParseFrom(ownershipStream);
+    var richEnum = Class(ownership, "roundtrip.ownership.OwnedRichEnum");
+    Require(((richEnum.Flags >> 6) & 7) == 2 && ((richEnum.Flags >> 4) & 3) == 0 &&
+            (richEnum.Flags & (1 << 15)) != 0,
+        "rich enum did not round-trip as a final Kotlin enum with enum entries");
+    Require(richEnum.Constructor.Count == 0,
+        "rich enum exposed a physical constructor in Kotlin metadata");
+    Require(richEnum.EnumEntry.Select(entry => String(ownership, entry.Name)).SequenceEqual(["FIRST"]),
+        "rich enum did not project its carrier-declared entry exactly once");
+    Require(!richEnum.Property.Any(property => String(ownership, property.Name) == "FIRST"),
+        "rich-enum physical singleton field leaked as a Kotlin property");
+    Require(!richEnum.Function.Any(function =>
+            String(ownership, function.Name) is "values" or "valueOf"),
+        "rich-enum compiler APIs leaked as ordinary Kotlin functions");
+    Require(richEnum.Supertype.Any(type => type.HasClassName &&
+            QualifiedName(ownership, type.ClassName) == "kotlin.Enum"),
+        "rich enum lost its kotlin.Enum self supertype");
     Require(!ownership.Class.Any(c =>
             QualifiedName(ownership, c.FqName).Split('.').Any(p =>
                 p.StartsWith("dotkt$", StringComparison.Ordinal) ||
@@ -1273,6 +1332,11 @@ static bool HasFieldAttribute(MetadataReader md, FieldDefinitionHandle handle, s
         .Select(md.GetCustomAttribute)
         .Any(attribute => AttributeName(md, attribute) == name);
 
+static bool HasMethodAttribute(MetadataReader md, MethodDefinitionHandle handle, string name) =>
+    md.GetMethodDefinition(handle).GetCustomAttributes()
+        .Select(md.GetCustomAttribute)
+        .Any(attribute => AttributeName(md, attribute) == name);
+
 static bool ContainsVolatileFieldAccess(byte[] il)
 {
     var opCodes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
@@ -1341,6 +1405,27 @@ static bool HasCarrierOwner(MetadataReader md, TypeDefinitionHandle handle, stri
             doc.RootElement.TryGetProperty("owner", out var value) && value.GetString() == owner;
     }
     return false;
+}
+
+static JsonDocument CarrierDocument(
+    MetadataReader md,
+    TypeDefinitionHandle handle,
+    string attributeName)
+{
+    var attributes = md.GetTypeDefinition(handle).GetCustomAttributes()
+        .Select(md.GetCustomAttribute)
+        .Where(attribute => AttributeName(md, attribute) == attributeName)
+        .ToArray();
+    Require(attributes.Length == 1, $"{DefinitionName(md, handle)} has {attributes.Length} [{attributeName}] carriers");
+    var blob = md.GetBlobReader(attributes[0].Value);
+    Require(blob.ReadUInt16() == 1, $"invalid [{attributeName}] prolog");
+    var version = blob.ReadSerializedString() ?? throw new InvalidDataException($"missing [{attributeName}] version");
+    var length = blob.ReadInt32();
+    Require(length >= 0 && length <= blob.RemainingBytes - 2, $"invalid [{attributeName}] payload length");
+    var payload = blob.ReadBytes(length);
+    Require(blob.ReadUInt16() == 0 && blob.RemainingBytes == 0,
+        $"unexpected named arguments in [{attributeName}]");
+    return JsonDocument.Parse(BirCarrier.DecodeBody(version, payload).ToJsonString());
 }
 
 static string AttributeName(MetadataReader md, CustomAttribute attribute)

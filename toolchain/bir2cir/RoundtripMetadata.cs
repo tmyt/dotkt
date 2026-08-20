@@ -43,6 +43,7 @@ static class RoundtripMetadata
     const string AKValue        = Ns + "KotlinValueAttribute";
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKInner        = Ns + "KotlinInnerAttribute";
+    const string AKRichEnum     = Ns + "KotlinRichEnumAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
     const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
@@ -138,6 +139,15 @@ static class RoundtripMetadata
         {
             var capturedCount = to["capturedTypeParams"] is JsonArray captured ? captured.Count : 0;
             Append(to, Marker(AKInner, IntArg(capturedCount)));
+        }
+        // [KotlinRichEnum(version, bytes)] — a rich enum is physically a reference class so its entry-specific
+        // subclasses can derive from it. The payload is the explicit Kotlin declaration-to-physical-member map;
+        // downstream projection must not rediscover enum meaning from field or values()/valueOf() conventions.
+        if (to["richEnum"] is JsonObject richEnum)
+        {
+            Append(to, JsonCarrierAttr(AKRichEnum, richEnum));
+            to.Remove("richEnum");
+            to.Remove("enumRich");
         }
         // [KotlinCompanion(version, bytes)] (#275) — the association, source name, and bir2cir-resolved physical
         // representation. MaterializeCompanionCarriers above consumes kotc's semantic-only {owner,name} fact.
@@ -458,6 +468,8 @@ static class RoundtripMetadata
         o.Remove("retKotlinType");
         o.Remove(NullableGenericErasure.SupertypesPre);
         o.Remove("kotlinCompanion");
+        o.Remove("richEnum");
+        o.Remove("enumRich");
         StripAttrs(o, "attrs");
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
@@ -690,6 +702,7 @@ static class RoundtripMetadata
             AttrClass(AKValue, Ctor()),
             AttrClass(AKObject, Ctor()),
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
+            AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit rich-enum entry/API map
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association
