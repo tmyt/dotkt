@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **`suspendCoroutine` now accepts an already-materialized block value (#246).** `bir2cir` invokes a block held in a
+  local, parameter, field, or other function-valued expression directly, preserving its single evaluation and
+  captures instead of requiring a literal lambda body that can be reconstructed inline.
+
 - **The rich-enum BIR carrier is now part of the enforced schema (#492).** Its current declaration/member-map shape
   is documented and structurally validated, including empty enums, and the gate rejects a malformed carrier or one
   that survives bir2cir into CIR.

@@ -22,6 +22,8 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.startCoroutine
 
 // ---- il-coctxkey: subclassing AbstractCoroutineContextElement with a self-typed companion Key ----------------
@@ -55,6 +57,7 @@ fun <E : CoroutineContext.Element> contextInterceptionTransitiveGet(
 // ---- il-awaitintercept: an interceptor that COUNTS resumes routed through it (#7 Part B, harness inlined) -----
 class ContextInterceptionAwaitCountingInterceptor : ContinuationInterceptor {
     var resumes: Int = 0
+    var trace: String = ""
 
     override val key: CoroutineContext.Key<*> get() = ContinuationInterceptor
 
@@ -62,7 +65,10 @@ class ContextInterceptionAwaitCountingInterceptor : ContinuationInterceptor {
     override fun <E : CoroutineContext.Element> get(key: CoroutineContext.Key<E>): E? =
         if (key === ContinuationInterceptor) this as E else null
 
-    override fun <T> interceptContinuation(continuation: Continuation<T>): Continuation<T> = Wrapped(continuation)
+    override fun <T> interceptContinuation(continuation: Continuation<T>): Continuation<T> {
+        trace += "I"
+        return Wrapped(continuation)
+    }
 
     private inner class Wrapped<T>(val delegate: Continuation<T>) : Continuation<T> {
         override val context: CoroutineContext get() = delegate.context
@@ -87,6 +93,16 @@ class ContextInterceptionAwaitSink<T>(override val context: CoroutineContext) : 
 
 suspend fun contextInterceptionAwaitCapturing(tcs: TaskCompletionSource1<Int>): Int = tcs.Task.await()
 suspend fun contextInterceptionAwaitWithoutCapture(tcs: TaskCompletionSource1<Int>): Int = tcs.Task.await(captureContext = false)
+
+fun contextInterceptionProducedBlock(interceptor: ContextInterceptionAwaitCountingInterceptor): (Continuation<String>) -> Unit {
+    interceptor.trace += "P"
+    return { continuation -> interceptor.trace += "B"; continuation.resume(interceptor.trace) }
+}
+
+suspend fun contextInterceptionBlockProducerOrder(interceptor: ContextInterceptionAwaitCountingInterceptor): String {
+    interceptor.trace = ""
+    return suspendCoroutine(contextInterceptionProducedBlock(interceptor))
+}
 
 // Deterministic drain: the captureContext=false / no-SyncContext resume MAY land on the threadpool (async), so the
 // completion is not necessarily set synchronously by SetResult. Bounded-wait for the sink to complete (the analog of
@@ -134,6 +150,16 @@ class CoroutineContextInterceptionTests {
         assertEquals(1, icept.resumes)   // A:resumes=1
         assertEquals(true, sink.done)    // done=True
         assertEquals(42, sink.value)     // value=42
+    }
+
+    @TestAttribute
+    fun blockProducerPrecedesInterception() {
+        val interceptor = ContextInterceptionAwaitCountingInterceptor()
+        val sink = ContextInterceptionAwaitSink<String>(interceptor)
+        val block: suspend () -> String = { contextInterceptionBlockProducerOrder(interceptor) }
+        block.startCoroutine(sink)
+        assertEquals(true, sink.done)
+        assertEquals("PIB", sink.value)
     }
 
     @TestAttribute

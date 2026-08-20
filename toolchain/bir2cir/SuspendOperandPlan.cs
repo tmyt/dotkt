@@ -103,8 +103,9 @@ static partial class SuspendColdLowering
         { "callInstance", "clrInstance", "clrGenericInstance" };
 
     // The operand description of a node whose evaluation order this pass owns — or null when it has none (an
-    // `.await()` marker and a `suspendCoroutine` intrinsic are reconstructed by their own emitters, which read
-    // their operands directly; every other node kind is copied operand-by-operand in key-rank order).
+    // `.await()` marker is reconstructed by its own emitter, which reads its operand directly; every other node kind
+    // is copied operand-by-operand in key-rank order. A suspendCoroutine intrinsic participates like any other suspend
+    // call: its block can be an arbitrary function-valued expression and therefore can itself carry a suspension.
     internal static EvalOrder? EvalOrderOf(JsonObject o)
     {
         var k = Str(o["k"]);
@@ -122,7 +123,7 @@ static partial class SuspendColdLowering
         var kids = new List<JsonNode>();
         if (Bool(o["suspendCall"]))
         {
-            if (IsAwaitMarkerCall(o) || IsSuspendCoroutineCall(o)) return null;
+            if (IsAwaitMarkerCall(o)) return null;
             var coldInstance = InstanceCallKinds.Contains(k);
             if (coldInstance) kids.Add(o["recv"]);
             if (o["args"] is JsonArray sa) foreach (var a in sa) kids.Add(a);
