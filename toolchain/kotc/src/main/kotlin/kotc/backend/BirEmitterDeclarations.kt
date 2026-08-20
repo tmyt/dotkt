@@ -466,8 +466,13 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// ctor(__name, __ordinal, <user params>) storing each into a field.
 	val ctorParams = (listOf("""{"name":"__name","type":${fqnJson("kotlin.String")}}""", """{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}""") +
 		userParams.map { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }).joinToString(",")
+	// The synthesized rich-enum constructor replaces the frontend primary constructor, so it must also expand the
+	// frontend's IrInstanceInitializerCall: constructor-property storage is established first, followed by enum-body
+	// property initializers and init blocks in declaration order. Entry subclasses call this constructor before their
+	// own instance initializer expansion, preserving Kotlin's base-before-derived initialization order.
 	val ctorBody = (listOf(setThis("__name", loc("__name")), setThis("__ordinal", loc("__ordinal"))) +
-		userParams.map { setThis(it.name.asString(), loc(it.name.asString())) }).joinToString(",")
+		userParams.map { setThis(it.name.asString(), loc(it.name.asString())) } +
+		instanceInitializerStatements(ec)).joinToString(",")
 	// Per-entry bodies (`PLUS { override fun apply(…)=… }`) become subclasses, but their presence alone does not make
 	// the enum base abstract: a body-less sibling still constructs that base directly. Only an actual abstract member
 	// requires an abstract base; Kotlin then requires every entry to implement it. (T A-109, #279.)

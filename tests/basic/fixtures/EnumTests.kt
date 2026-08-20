@@ -19,6 +19,7 @@
 //   il-enumtostr  -> enumtostr_inheritedMembers  basic enum inherits ToString/Equals/GetHashCode from System.Enum (toString/println/concat/==/equals/compareTo); decl in sibling EnumCrossFileSupport.kt
 //   #279          -> mixedEntryBodies             rich enum mixing an entry subclass with a direct base instance
 //   #478          -> entryOwnedStateAndInitializers  entry-body fields and initializer blocks in declaration order
+//   #480          -> baseStateAndInitializers      rich-enum base fields and init blocks run before entry-body initialization
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and
 // `Enum`-prefixed so the two `enum class Color { RED, GREEN, BLUE }` (il-enum vs il-enumintr) don't clash.
@@ -118,6 +119,29 @@ enum class EnumEntryOwnedEvent {
     abstract fun exercise(): Int
 }
 
+object EnumBaseStateLog {
+    var text = ""
+    fun next(mark: String): Int { text += mark; return text.length }
+    fun add(mark: String) { text += mark }
+}
+
+enum class EnumBaseOwnedState(val arg: Int) {
+    A(EnumBaseStateLog.next("a")),
+    B(EnumBaseStateLog.next("b")) {
+        val entry = EnumBaseStateLog.next("e")
+        init { EnumBaseStateLog.add("f$entry") }
+
+        override fun entryState(): Int = entry
+    };
+
+    val first = EnumBaseStateLog.next("p")
+    init { EnumBaseStateLog.add("i$first") }
+    val second = EnumBaseStateLog.next("q")
+    init { EnumBaseStateLog.add("j$second") }
+
+    open fun entryState(): Int = 0
+}
+
 // ---- il-enumintr : basic enum + reified enumValues/enumValueOf intrinsics -------------------------------------
 enum class EnumIntrColor { RED, GREEN, BLUE }
 inline fun <reified T : Enum<T>> enumPick(i: Int): T = enumValues<T>()[i]
@@ -170,6 +194,19 @@ class EnumTests {
         assertEquals(11, EnumEntryOverrideState.A.value)
         assertEquals(22, EnumEntryOverrideState.B.value)
         assertEquals(5, EnumEntryOwnedEvent.A.exercise())
+    }
+
+    @TestAttribute
+    fun baseStateAndInitializers() {
+        assertEquals(1, EnumBaseOwnedState.A.arg)
+        assertEquals(2, EnumBaseOwnedState.A.first)
+        assertEquals(5, EnumBaseOwnedState.A.second)
+        assertEquals(0, EnumBaseOwnedState.A.entryState())
+        assertEquals(8, EnumBaseOwnedState.B.arg)
+        assertEquals(9, EnumBaseOwnedState.B.first)
+        assertEquals(12, EnumBaseOwnedState.B.second)
+        assertEquals(16, EnumBaseOwnedState.B.entryState())
+        assertEquals("api2qj5bpi9qj12ef16", EnumBaseStateLog.text)
     }
 
     @TestAttribute
