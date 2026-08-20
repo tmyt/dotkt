@@ -1943,12 +1943,13 @@ The Kotlin surface survives on three channels, which a re-consuming DotKt reader
 byte carries the outer `?`, and `[KotlinSupertypes]` carries the type's pre-erasure supertype EDGES and the upper
 bounds of the type's OWN type parameters — the erased positions with no slot to hang a per-slot carrier on. Without
 that third one a consumer re-imports `class E : Sink<Int?>` as `Sink<Any?>` and `val s: Sink<Int?> = E()` stops
-compiling, and `class Box<T : Sink<Int?>>` re-imports with no bound at all, so `Box<BadSink>` compiles and then
-fails to LOAD with the CLR's wording instead of being turned away at the line that wrote it. Both are Kotlin source
-breaks rather than internal ones. A METHOD's type-parameter bound is not on that carrier (it is type-level) and
-re-imports as the physical `Sink<object>`; and a class bound the erasure never moved is not restored at all, because
-a CLASS type parameter's CLR constraint is not projected in the first place — a gap older than this erasure, which
-the non-erasing reference control fails on identically.
+compiling, and `class Box<T : Sink<Int?>>` re-imports with the erased physical bound unless the carrier restores it,
+so `Box<BadSink>` can fail at the wrong layer. Both are Kotlin source breaks rather than internal ones. A METHOD's
+type-parameter bound is not on that carrier (it is type-level) and re-imports as the physical `Sink<object>`. A CLASS
+type parameter's ordinary CLR constraint rows are projected directly, however: an unmoved
+`class Box<T : Sink<String>>` retains that bound, while the carrier replaces only bounds whose Kotlin type arguments
+were erased. CLR `class`, `struct`, and `new()` flags remain physical generic-constraint facts rather than nominal
+Kotlin upper bounds supplied by this carrier.
 
 **Restoring the surface is only half of consuming it.** A consumer that re-imports `unwrapSlot(slot: Slot<T?>)` writes
 `unwrapSlot(Slot<Int?>(5))`, and `Slot<Nullable<int32>>` is not the `Slot<object>` the producer's slot actually is —

@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+
+- **Regression coverage now pins class type-parameter constraints across DLL-to-KLIB projection (#351).** A foreign
+  `Box<T>` constrained by `Sink<String>` rejects an invalid `NotSink` argument in the Kotlin frontend, and a
+  Kotlin-origin `Comparable<T>` bound retains both its classifier and self-referential type argument when re-imported.
+
 ### Fixed
 
 - **`suspendCoroutine` now accepts an already-materialized block value (#246).** `bir2cir` invokes a block held in a
@@ -802,11 +808,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   several upper bounds), so nothing was ever recorded; and `RestoreErasedSupertypes` read only `base` and
   `interfaces`. So `class Box<T : Sink<Int?>>` re-imported with NO bound at all: `Box<BadSink>` compiled and then
   died at LOAD with the CLR's wording, on a line the author never wrote. Both ends are wired, and the bad type
-  argument is now refused by the frontend against the Kotlin bound the author declared. Two limits, both measured
-  and recorded in `docs/design-kotlin-metadata-attributes.md`: a METHOD's type-parameter bounds are not on this
-  carrier (it is type-level), and a class bound the erasure never moved is still lost, because a CLASS type
-  parameter's CLR constraint is not projected at all — a gap older than this erasure, which the non-erasing
-  reference control fails on identically.
+  argument is now refused by the frontend against the Kotlin bound the author declared. At the time, a METHOD's
+  type-parameter bounds remained outside this type-level carrier and ordinary class constraints were not projected.
+  The latter gap was subsequently closed by direct projection of class generic-constraint rows; #351 now pins that
+  general contract independently of nullable-generic erasure.
 
 - **bir2cir (area:bir2cir): every node resolved against a .NET member states that member's declared type, and the
   build now asserts it (#86).** Two families were silently outside the crossing refusal: a GENERIC .NET method,

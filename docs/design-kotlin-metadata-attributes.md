@@ -165,11 +165,11 @@ members replace a projected edge by head, `bounds` is applied to the type parame
 
 Two boundaries of `bounds`, both measured. A METHOD's type-parameter bounds are not on it — this carrier is
 type-level and giving a member one is a channel that does not exist — so a `fun <T : Sink<Int?>> f()` still
-re-imports its bound as the physical `Sink<object>`. And a bound the erasure never moved is not restored by it
-either: dll2klib does not project a CLASS type parameter's CLR constraint at all (only method and property ones,
-`AddMethodTypeParameters`), so a `class Box<T : Sink<String>>` re-imports with no bound whatever this carrier does.
-That gap is older than the erasure and independent of it — the reference control fails identically — and closing it
-means deciding what a CLR `struct`/`ValueType` constraint means as a Kotlin bound, which is its own subject.
+re-imports its bound as the physical `Sink<object>`. For a CLASS type parameter, dll2klib first projects the ordinary
+CLR constraint rows directly, so an unmoved `class Box<T : Sink<String>>` retains that bound without help from the
+carrier. `bounds` then replaces or adds only the pre-erasure form that the carrier actually records. CLR generic-
+parameter flags such as `class`, `struct`, and `new()` remain physical constraint facts; they are not reconstructed
+as Kotlin nominal bounds by this carrier.
 
 WHAT IT DOES NOT COVER, measured rather than assumed: **#29's collection-identity collapse at a supertype
 position**. `class B : Box<List<String>>` emits `Box<IList<string>>` and a consumer still cannot assign `B()` to a

@@ -1277,9 +1277,14 @@ static void VerifyKlib(string path)
     Require((protectedNested.Flags & 0xE) == 4,
         "protected nested CLR type was projected as a public Kotlin classifier");
     var shadowOwner = Class(ownership, "roundtrip.ownership.ShadowOwner");
-    Require(shadowOwner.TypeParameter.Count == 1 &&
-            shadowOwner.TypeParameter[0].UpperBound.Count != 0,
-        "generic owner constraint was dropped from the projected KLIB");
+    Require(shadowOwner.TypeParameter.Count == 1,
+        "generic owner type parameter was dropped from the projected KLIB");
+    var shadowBound = shadowOwner.TypeParameter[0].UpperBound.SingleOrDefault();
+    Require(shadowBound is not null && shadowBound.HasClassName &&
+            QualifiedName(ownership, shadowBound.ClassName) == "kotlin.Comparable" &&
+            shadowBound.Argument.Count == 1 && shadowBound.Argument[0].Type.HasTypeParameter &&
+            shadowBound.Argument[0].Type.TypeParameter == shadowOwner.TypeParameter[0].Id,
+        "generic owner constraint lost its Comparable<T> identity in the projected KLIB");
 }
 
 static void VerifyCompanion(
