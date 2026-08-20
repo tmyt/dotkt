@@ -18,6 +18,7 @@
 //   il-enumrich   -> enumrich_ctorAndMethod      rich enum (ctor param + instance method) singleton lowering (mass/heavy/name/ordinal/valueOf/values/==)
 //   il-enumtostr  -> enumtostr_inheritedMembers  basic enum inherits ToString/Equals/GetHashCode from System.Enum (toString/println/concat/==/equals/compareTo); decl in sibling EnumCrossFileSupport.kt
 //   #279          -> mixedEntryBodies             rich enum mixing an entry subclass with a direct base instance
+//   #478          -> entryOwnedStateAndInitializers  entry-body fields and initializer blocks in declaration order
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and
 // `Enum`-prefixed so the two `enum class Color { RED, GREEN, BLUE }` (il-enum vs il-enumintr) don't clash.
@@ -25,6 +26,8 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import kotlin.clr.ClrEvent
+import kotlin.clr.clrEvent
 
 // ---- il-enum : basic enum + `when` over enum -----------------------------------------------------------------
 enum class EnumWhenColor { RED, GREEN, BLUE }
@@ -73,6 +76,48 @@ enum class EnumAbstractEntryVar {
     abstract var label: String
 }
 
+object EnumEntryStateLog {
+    var text = ""
+    fun next(mark: String): Int { text += mark; return text.length }
+    fun add(mark: String) { text += mark }
+}
+
+enum class EnumEntryOwnedState(val base: Int) {
+    A(EnumEntryStateLog.next("b")) {
+        val first = EnumEntryStateLog.next("p")
+        init { EnumEntryStateLog.add("i$first") }
+        var second = EnumEntryStateLog.next("q")
+        init {
+            second += first
+            EnumEntryStateLog.add("j$second")
+        }
+
+        override fun snapshot(): String = "$first:$second"
+    };
+
+    abstract fun snapshot(): String
+}
+
+enum class EnumEntryOverrideState {
+    A { override val value = 11 },
+    B { override val value = 22 };
+
+    abstract val value: Int
+}
+
+enum class EnumEntryOwnedEvent {
+    A {
+        val pulse: ClrEvent<(Int) -> Unit> by clrEvent()
+
+        override fun exercise(): Int {
+            pulse.invoke(5)
+            return 5
+        }
+    };
+
+    abstract fun exercise(): Int
+}
+
 // ---- il-enumintr : basic enum + reified enumValues/enumValueOf intrinsics -------------------------------------
 enum class EnumIntrColor { RED, GREEN, BLUE }
 inline fun <reified T : Enum<T>> enumPick(i: Int): T = enumValues<T>()[i]
@@ -115,6 +160,16 @@ class EnumTests {
 
         EnumAbstractEntryVar.A.label = "ignored"
         assertEquals("a", EnumAbstractEntryVar.A.label)
+    }
+
+    @TestAttribute
+    fun entryOwnedStateAndInitializers() {
+        assertEquals(1, EnumEntryOwnedState.A.base)
+        assertEquals("2:7", EnumEntryOwnedState.A.snapshot())
+        assertEquals("bpi2qj7", EnumEntryStateLog.text)
+        assertEquals(11, EnumEntryOverrideState.A.value)
+        assertEquals(22, EnumEntryOverrideState.B.value)
+        assertEquals(5, EnumEntryOwnedEvent.A.exercise())
     }
 
     @TestAttribute

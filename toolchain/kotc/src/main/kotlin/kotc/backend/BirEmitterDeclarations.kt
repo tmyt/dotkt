@@ -571,6 +571,65 @@ internal fun BirEmitter.enumSuperArgs(cc: IrClass): Pair<List<String>, String?> 
 	return args to plan.bindingsJson().takeIf { !plan.isEmpty }
 }
 
+/** Instance storage authored by a Kotlin class body. Rich-enum entry subclasses and ordinary classes share this
+ * declaration rule; only their constructor/base-call shapes differ. */
+internal fun BirEmitter.instanceStorageFields(klass: IrClass): List<String> {
+	val propertyFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
+		// A `by clrEvent()` property's fictional ClrEvent<T> field is replaced by the event synthesis, and a companion
+		// property's storage belongs to the enclosing type rather than each instance.
+		if (clrEventDelegateCall(p) != null || hasStaticPropertyStorage(klass, p)) return@mapNotNull null
+		val bf = p.backingField ?: return@mapNotNull null
+		// Accessor-routed storage is an implementation detail. @ClrField / const / lateinit retain their declared
+		// visibility; a non-publicly-settable plain field remains read-only to a re-consuming Kotlin module.
+		val routed = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p)
+		val visibility = if (routed) "private" else visOf(p)
+		val visJson = if (visibility != "public") ""","vis":${str(visibility)}""" else ""
+		val readOnly = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public")))
+			""","readOnly":true""" else ""
+		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson$readOnly${lateinitFieldFlag(p)}${volatileFieldFlag(p)}}"""
+	}
+	// Standalone frontend-synthesized fields (chiefly class-delegation storage) follow the same instance-initializer
+	// expansion below as property backing fields.
+	val syntheticFields = klass.declarations.filterIsInstance<IrField>()
+		.filter { it.correspondingPropertySymbol == null && !it.isStatic }
+		.map { f ->
+			val visibility = visOf(f)
+			val visJson = if (visibility != "public") ""","vis":${str(visibility)}""" else ""
+			val readOnly = if (f.isFinal) ""","readOnly":true""" else ""
+			"""{"name":${str(f.name.asString())},"type":${birType(f.type).toJson()}$visJson$readOnly}"""
+		}
+	return propertyFields + syntheticFields
+}
+
+/** Expand one frontend [IrInstanceInitializerCall] in declaration order. The caller owns constructor delegation and
+ * installs the concrete BIR type identity before invoking this helper. */
+internal fun BirEmitter.instanceInitializerStatements(klass: IrClass): List<String> {
+	val statements = ArrayList<String>()
+	klass.declarations.forEach { d ->
+		when (d) {
+			is IrProperty -> if (clrEventDelegateCall(d) == null && !hasStaticPropertyStorage(klass, d)) {
+				d.backingField?.let { field -> field.initializer?.let { initializer ->
+					val expression = (initializer as IrExpressionBody).expression
+					statements.add(withClonedLocalFunctionIds(expression) {
+						"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(field.name.asString())},"value":${expr(expression)}}"""
+					})
+				} }
+			}
+			is IrField -> if (d.correspondingPropertySymbol == null && !d.isStatic) d.initializer?.let { initializer ->
+				val expression = (initializer as IrExpressionBody).expression
+				statements.add(withClonedLocalFunctionIds(expression) {
+					"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(d.name.asString())},"value":${expr(expression)}}"""
+				})
+			}
+			is IrAnonymousInitializer -> withClonedLocalFunctionIds(d) {
+				(d.body as? IrBlockBody)?.statements?.forEach { statements.add(stmt(it)) }
+			}
+			else -> {}
+		}
+	}
+	return statements
+}
+
 /** A per-entry enum body `NAME(args) { override fun … }` -> a subclass `<>Enum_NAME : Enum` whose ctor takes only
  *  (__name, __ordinal) and forwards them plus the baked-in `args` to the base ctor; carries overriding members. */
 internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc: IrClass,
@@ -578,12 +637,16 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 	// The frontend's anonymous entry class has no stable source name. Pin every member-body owner reference to the
 	// explicit BIR subclass identity chosen above, just as lifted anonymous classes do before emitting their bodies.
 	anonNames[cc] = subName
+	checkUnimplementedClrEvents(cc)
+	val (clrEventBackings, clrEventMethods) = synthClrEvents(cc)
 	val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
 		.filter { it.body != null && it.correspondingPropertySymbol == null }
 		.map { method(it, static = false, semanticOwnerOverride = subName) }
 	val entryProps = cc.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
-	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
-	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
+	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit &&
+		!isClrField(p) && !isClrEventProperty(p)
+	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit &&
+		!isClrField(p) && !isClrEventProperty(p)
 	val accessors = entryProps.flatMap { p ->
 		listOfNotNull(
 			p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
@@ -592,14 +655,29 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 	val properties = entryProps.filter { emitsGet(it) }.joinToString(",") { p ->
 		"""{"name":${str(p.name.asString())},"type":${birType(p.getter!!.returnType).toJson()}${kotlinPropertyAccessors(p, emitsSet(p))}${overridesJson(p.getter!!)}}"""
 	}
+	val fields = instanceStorageFields(cc).joinToString(",")
+	val savedSemanticOwner = activeSemanticOwner
+	activeSemanticOwner = subName
+	val ctorBody = ArrayList<String>()
+	(cc.declarations.filterIsInstance<IrConstructor>().firstOrNull()?.body as? IrBlockBody)
+		?.statements?.forEach { statement ->
+			when (statement) {
+				is IrEnumConstructorCall, is IrDelegatingConstructorCall -> {}
+				is IrInstanceInitializerCall -> ctorBody.addAll(instanceInitializerStatements(cc))
+				else -> ctorBody.add(stmt(statement))
+			}
+		}
+	activeSemanticOwner = savedSemanticOwner
 	val baseArgs = (listOf("""{"k":"local","name":"__name"}""", """{"k":"local","name":"__ordinal"}""") + userArgs).joinToString(",")
 	val delegationSig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) +
 		baseParamTypes).joinToString(",")
 	val bindings = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
-	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"delegationSig":[$delegationSig]$bindings,"vis":"public","body":[]}"""
+	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"delegationSig":[$delegationSig]$bindings,"vis":"public","body":[${ctorBody.joinToString(",")}]}"""
+	val clrEventsJson = if (clrEventBackings.isEmpty()) "" else
+		""","clrEvents":[${clrEventBackings.joinToString(",")}]"""
 	// An enum-entry body is an anonymous subclass semantically owned by the enum declaration. Keep that fact explicit;
 	// bir2cir chooses its physical nesting just like it does for an object expression or local class.
-	return """{"name":${str(subName)},"kind":"class","generated":true,"abstract":false,"vis":"public","semanticOwner":${str(baseName)},"base":${fqnJson(baseName)},"interfaces":[],"fields":[],"ctors":[$subCtor],"methods":[${(overrides + accessors).joinToString(",")}],"properties":[$properties]}"""
+	return """{"name":${str(subName)},"kind":"class","generated":true,"abstract":false,"vis":"public","semanticOwner":${str(baseName)},"base":${fqnJson(baseName)},"interfaces":[],"fields":[$fields],"ctors":[$subCtor],"methods":[${(overrides + accessors + clrEventMethods).joinToString(",")}],"properties":[$properties]$clrEventsJson}"""
 }
 
 /** Nested non-inner user classes inside [c] (recursively); excludes companion/inner/anonymous/@Clr. */
@@ -1161,42 +1239,8 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val (clrEventBackings, clrEventMethods) = synthClrEvents(klass)
 	// `class A : B by c` over a CLR event synthesizes forwarding add_/remove_ accessors (no backing field, no raise).
 	val (clrEventForwarders, clrEventForwardMethods) = synthClrEventForwarders(klass)
-	val instFields = klass.declarations.filterIsInstance<IrProperty>().mapNotNull { p ->
-		// A `by clrEvent()` property's `<E>$delegate` backing field (of the un-emittable `kotlin.clr.ClrEvent<T>` type) is
-		// REPLACED by the synthesized backing delegate field (bir2cir stamps `<E>$delegate : D`); never emit the fiction.
-		if (clrEventDelegateCall(p) != null) return@mapNotNull null
-		// A `companion { }` property's storage belongs to the TYPE, not to an instance: it is emitted below with its
-		// own initializer (which runs in the type initializer) instead of being stored by every constructor.
-		if (hasStaticPropertyStorage(klass, p)) return@mapNotNull null
-		val bf = p.backingField ?: return@mapNotNull null
-		// Honor the property's visibility on its backing field (A-108): a `private`/`internal`/`protected`
-		// property gets a non-public field. (Kotlin's own access rules already keep same-class field reads valid.)
-		// An accessor-routed property's backing slot is an implementation detail. Keep it private; a frontend-valid
-		// `byref(obj.prop)` edge that ownership places in another TypeDef is projected by bir2cir via UnsafeAccessor.
-		// Only @ClrField / const / lateinit keep a plain source-visible field. A delegated property exposes its
-		// generated accessor; the provider-typed field remains private.
-		val routed = p.getter != null && !p.isConst && !p.isLateinit && !isClrField(p)
-		val declaredVisibility = if (routed) "private" else visOf(p)
-		val v = declaredVisibility
-		val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
-		// A property that isn't publicly SETTABLE (`val`, or `var ... private/protected set`) -> mark the public
-		// backing field read-only so a consuming Kotlin module restores it as `val` (rejecting external writes).
-		val ro = if (!routed && (!p.isVar || (p.setter != null && visOf(p.setter!!) != "public"))) ""","readOnly":true""" else ""
-		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson$ro${lateinitFieldFlag(p)}${volatileFieldFlag(p)}}"""
-	}
+	val instStorageFields = instanceStorageFields(klass)
 	val staticPropFields = staticPropertyFields(klass)
-	// Standalone (non-property) instance fields the FRONTEND synthesized — chiefly the class-delegation backing
-	// field `$$delegate_0` (origin DELEGATE) for `class Foo : Bar by baz`: an IrField with NO corresponding
-	// property whose forwarding members (`DELEGATED_MEMBER`) read it via GET_FIELD. It carries an EXPRESSION_BODY
-	// initializer (the delegate expression, usually a ctor param) run through the IrInstanceInitializerCall path
-	// in `ctor` below, exactly like a property backing field. Emit it as a plain instance field so those reads resolve.
-	val synthFields = klass.declarations.filterIsInstance<IrField>()
-		.filter { it.correspondingPropertySymbol == null && !it.isStatic }
-		.map { f ->
-			val v = visOf(f); val visJson = if (v != "public") ""","vis":${str(v)}""" else ""
-			val ro = if (f.isFinal) ""","readOnly":true""" else ""
-			"""{"name":${str(f.name.asString())},"type":${birType(f.type).toJson()}$visJson$ro}"""
-		}
 	// A capturing object literal carries its captured outer values as extra instance fields.
 	val capFields = captures.map { (decl, fname) ->
 		"""{"name":${str(fname)},"type":${str(captureFieldType(decl))},"vis":"private"}"""
@@ -1206,7 +1250,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val instanceField = if (isObject && !klass.isCompanion)
 		listOf("""{"name":"INSTANCE","type":${fqnJson(typeName(klass))},"static":true,"init":{"k":"new","type":${fqnJson(typeName(klass))},"argTypes":[],"args":[]}}""")
 	else emptyList()
-	val fields = (instFields + staticPropFields + synthFields + capFields + instanceField).joinToString(",")
+	val fields = (instStorageFields + staticPropFields + capFields + instanceField).joinToString(",")
 	val ctors = klass.declarations.filterIsInstance<IrConstructor>().joinToString(",") { ctor(klass, it, captures) }
 	// `companion { fun f() }` is a static member of THIS type; every other member is an instance one. The partition
 	// is the frontend's static fact ([isKotlinStaticFunction]), not a shape guess.
@@ -1437,36 +1481,7 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 	body?.statements?.forEach { s ->
 		when (s) {
 			is IrDelegatingConstructorCall -> {}
-			is IrInstanceInitializerCall -> klass.declarations.forEach { d ->
-				when (d) {
-					// A `by clrEvent()` property has NO backing `<E>$delegate` field (synthClrEvents replaced it with the
-					// event's own `<E>$delegate : D` field, initialized to null); skip its ctor delegate-store, which would
-					// otherwise call the erased `clrEvent()` marker + store into the removed field.
-					// A `companion { }` property's storage is the TYPE's, initialized once in the type initializer
-					// (its `init` rides the static field declaration). Storing it here would re-run the
-					// initializer on every construction and write through a `this` the field does not have.
-					is IrProperty -> if (clrEventDelegateCall(d) == null && !hasStaticPropertyStorage(klass, d)) d.backingField?.let { bf -> bf.initializer?.let {
-						// Use the backing-field name (a delegated property's field is `<name>$delegate`).
-						val expression = (it as IrExpressionBody).expression
-						stmts.add(withClonedLocalFunctionIds(expression) {
-							"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(bf.name.asString())},"value":${expr(expression)}}"""
-						})
-					} }
-					// A standalone synthetic field (class-delegation `$$delegate_0`) initializes here too: its
-					// EXPRESSION_BODY (the delegate expr — typically the ctor param) stores into the field, exactly
-					// like a property backing field. Static synthetic fields run in the .cctor, not here.
-					is IrField -> if (d.correspondingPropertySymbol == null && !d.isStatic) d.initializer?.let {
-						val expression = (it as IrExpressionBody).expression
-						stmts.add(withClonedLocalFunctionIds(expression) {
-							"""{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(d.name.asString())},"value":${expr(expression)}}"""
-						})
-					}
-					is IrAnonymousInitializer -> withClonedLocalFunctionIds(d) {
-						(d.body as? IrBlockBody)?.statements?.forEach { stmts.add(stmt(it)) }
-					}
-					else -> {}
-				}
-			}
+			is IrInstanceInitializerCall -> stmts.addAll(instanceInitializerStatements(klass))
 			else -> stmts.add(stmt(s))
 		}
 	}
