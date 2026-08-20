@@ -877,11 +877,17 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		return p.origin == IrDeclarationOrigin.DELEGATED_MEMBER ||
 			p.overriddenSymbols.any { hasDelegatedEventOrigin(it.owner, seen) }
 	}
+	fun eventOwnerType(p: IrProperty, recv: IrExpression): String {
+		val declarationOwner = p.parent as? IrClass
+		return if (declarationOwner != null && anonNames.containsKey(declarationOwner))
+			fqnJson(typeName(declarationOwner))
+		else birType(recv.type).toJson()
+	}
 	val localEventProp = callee.correspondingPropertySymbol?.owner
 	val localEventOwner = localEventProp?.parent as? IrClass
 	if (localEventProp != null && callee === localEventProp.getter
 		&& callee.returnType.classFqName?.asString() == "kotlin.clr.ClrEvent"
-		&& hasDelegatedEventOrigin(localEventProp)
+		&& (hasDelegatedEventOrigin(localEventProp) || clrEventDelegateCall(localEventProp) != null)
 		&& localEventOwner != null && !isExternalNetType(localEventOwner)) {
 		if (!clrEventReceiverOk) {
 			hadError = true
@@ -893,7 +899,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		}
 		val eventRecv = dispatchReceiver(call)
 		if (eventRecv != null)
-			return """{"k":"clrEventGet","type":${birType(eventRecv.type).toJson()},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)}${overridesJson(callee)}}"""
+			return """{"k":"clrEventGet","type":${eventOwnerType(localEventProp, eventRecv)},"name":${str(localEventProp.name.asString())},"static":false,"recv":${expr(eventRecv)}${overridesJson(callee)}}"""
 	}
 	// A .NET event subscription `w.Changed.subscribe(h)` resolves (normal Kotlin resolution) to a member of the
 	// compiler-owned `kotlin.clr.ClrEvent<T>` fiction (the surfaced form of a .NET event member).
@@ -932,7 +938,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val rawArgs = regularArgs(call)
 		val argExprs = if (rawArgs.size == 1 && rawArgs[0] is IrVararg)
 			(rawArgs[0] as IrVararg).elements.filterIsInstance<IrExpression>() else rawArgs
-		return """{"k":"clrEventRaise","type":${birType(eventRecv.type).toJson()},"event":${str(prop.name.asString())},"recv":${expr(eventRecv)},"args":[${argExprs.joinToString(",") { expr(it) }}]}"""
+		return """{"k":"clrEventRaise","type":${eventOwnerType(prop, eventRecv)},"event":${str(prop.name.asString())},"recv":${expr(eventRecv)},"args":[${argExprs.joinToString(",") { expr(it) }}]}"""
 	}
 	// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 	((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }

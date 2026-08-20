@@ -26,6 +26,8 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import kotlin.clr.ClrEvent
+import kotlin.clr.clrEvent
 
 // ---- il-enum : basic enum + `when` over enum -----------------------------------------------------------------
 enum class EnumWhenColor { RED, GREEN, BLUE }
@@ -96,6 +98,26 @@ enum class EnumEntryOwnedState(val base: Int) {
     abstract fun snapshot(): String
 }
 
+enum class EnumEntryOverrideState {
+    A { override val value = 11 },
+    B { override val value = 22 };
+
+    abstract val value: Int
+}
+
+enum class EnumEntryOwnedEvent {
+    A {
+        val pulse: ClrEvent<(Int) -> Unit> by clrEvent()
+
+        override fun exercise(): Int {
+            pulse.invoke(5)
+            return 5
+        }
+    };
+
+    abstract fun exercise(): Int
+}
+
 // ---- il-enumintr : basic enum + reified enumValues/enumValueOf intrinsics -------------------------------------
 enum class EnumIntrColor { RED, GREEN, BLUE }
 inline fun <reified T : Enum<T>> enumPick(i: Int): T = enumValues<T>()[i]
@@ -145,6 +167,9 @@ class EnumTests {
         assertEquals(1, EnumEntryOwnedState.A.base)
         assertEquals("2:7", EnumEntryOwnedState.A.snapshot())
         assertEquals("bpi2qj7", EnumEntryStateLog.text)
+        assertEquals(11, EnumEntryOverrideState.A.value)
+        assertEquals(22, EnumEntryOverrideState.B.value)
+        assertEquals(5, EnumEntryOwnedEvent.A.exercise())
     }
 
     @TestAttribute

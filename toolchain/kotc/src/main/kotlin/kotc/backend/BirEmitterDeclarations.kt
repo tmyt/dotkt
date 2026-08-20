@@ -637,12 +637,16 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 	// The frontend's anonymous entry class has no stable source name. Pin every member-body owner reference to the
 	// explicit BIR subclass identity chosen above, just as lifted anonymous classes do before emitting their bodies.
 	anonNames[cc] = subName
+	checkUnimplementedClrEvents(cc)
+	val (clrEventBackings, clrEventMethods) = synthClrEvents(cc)
 	val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
 		.filter { it.body != null && it.correspondingPropertySymbol == null }
 		.map { method(it, static = false, semanticOwnerOverride = subName) }
 	val entryProps = cc.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
-	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
-	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit && !isClrField(p)
+	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit &&
+		!isClrField(p) && !isClrEventProperty(p)
+	fun emitsSet(p: IrProperty) = p.setter?.body is IrBlockBody && !p.isConst && !p.isLateinit &&
+		!isClrField(p) && !isClrEventProperty(p)
 	val accessors = entryProps.flatMap { p ->
 		listOfNotNull(
 			p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
@@ -669,9 +673,11 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 		baseParamTypes).joinToString(",")
 	val bindings = delegationBindings?.let { ""","delegationBindings":$it""" } ?: ""
 	val subCtor = """{"params":[{"name":"__name","type":${fqnJson("kotlin.String")}},{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}],"baseArgs":[$baseArgs],"thisArgs":null,"delegationSig":[$delegationSig]$bindings,"vis":"public","body":[${ctorBody.joinToString(",")}]}"""
+	val clrEventsJson = if (clrEventBackings.isEmpty()) "" else
+		""","clrEvents":[${clrEventBackings.joinToString(",")}]"""
 	// An enum-entry body is an anonymous subclass semantically owned by the enum declaration. Keep that fact explicit;
 	// bir2cir chooses its physical nesting just like it does for an object expression or local class.
-	return """{"name":${str(subName)},"kind":"class","generated":true,"abstract":false,"vis":"public","semanticOwner":${str(baseName)},"base":${fqnJson(baseName)},"interfaces":[],"fields":[$fields],"ctors":[$subCtor],"methods":[${(overrides + accessors).joinToString(",")}],"properties":[$properties]}"""
+	return """{"name":${str(subName)},"kind":"class","generated":true,"abstract":false,"vis":"public","semanticOwner":${str(baseName)},"base":${fqnJson(baseName)},"interfaces":[],"fields":[$fields],"ctors":[$subCtor],"methods":[${(overrides + accessors + clrEventMethods).joinToString(",")}],"properties":[$properties]$clrEventsJson}"""
 }
 
 /** Nested non-inner user classes inside [c] (recursively); excludes companion/inner/anonymous/@Clr. */
