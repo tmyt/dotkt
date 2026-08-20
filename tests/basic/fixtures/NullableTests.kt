@@ -751,6 +751,9 @@ class NullableTests {
         val uz: UInt? = null
         val npeU = try { uz!!; "no" } catch (e: NullPointerException) { "npe-u" }
         assertEquals("npe-u", npeU)                       // npe-u
+        val enumValue: NullReifiedEnum? = NullReifiedEnum.B
+        val presentEnum: NullReifiedEnum = enumValue!!
+        assertEquals(NullReifiedEnum.B, presentEnum)       // local enum Nullable<V> -> V uses the exact local type
     }
 
     @TestAttribute

@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **External generic structs now cross nullable value slots with their structural CLR representation (#501).**
+  bir2cir wraps a bare value entering `Nullable<V>` and extracts a proven-present value before it enters a bare
+  receiver, argument, local, field, array element, branch, or return slot, using the complete value-type identity
+  rather than member or type-name special cases.
+
 - **Constructed nested generic types now bind external member signatures (#503).** bir2cir resolves the exact CLR
   metadata name for each flattened type identity, so an argument such as `Outer<Int>.Leaf<String>?` matches the
   declaring MethodDef instead of guessing one aggregate arity suffix for the nested name.

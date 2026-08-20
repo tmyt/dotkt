@@ -105,7 +105,12 @@ sealed partial class Emitter
         if (type.IsConstructedGenericType)
             return ProvenanceTypeIdentity(type.GetGenericTypeDefinition()) + "["
                 + string.Join(",", type.GetGenericArguments().Select(ProvenanceTypeIdentity)) + "]";
-        return type.AssemblyQualifiedName ?? type.FullName ?? type.Name;
+        // Reflection.Emit TypeBuilder throws for AssemblyQualifiedName until the type is persisted. Local signature
+        // views still need a stable provenance identity while bodies are emitted, where FullName is the authored
+        // assembly-local identity (duplicate FullNames cannot be defined in one module).
+        string assemblyQualifiedName = null;
+        try { assemblyQualifiedName = type.AssemblyQualifiedName; } catch (NotSupportedException) { }
+        return assemblyQualifiedName ?? type.FullName ?? type.Name;
     }
 
     /// <summary>
