@@ -224,6 +224,12 @@ expect_constraint_failure enum EnumConstraintBox "enum type"
 expect_constraint_failure new FreshConstraintBox "parameterless constructor"
 expect_constraint_failure new-alias FreshConstraintBox "parameterless constructor"
 expect_constraint_failure nested-class ReferenceConstraintBox "reference type"
+expect_constraint_failure member-class MemberConstraintApi.Reference "reference type"
+expect_constraint_failure member-struct MemberConstraintApi.Struct "value type"
+expect_constraint_failure member-enum MemberConstraintApi.Enum "enum type"
+expect_constraint_failure member-new MemberConstraintApi.Fresh "parameterless constructor"
+expect_constraint_failure member-open-class MemberConstraintApi.Reference "reference type"
+expect_constraint_failure member-extension-struct WidgetExtensions.ConstrainedValue "value type"
 
 # A CLR explicit implementation satisfies an interface slot but is not an ordinary class API. Method/property/
 # indexer/event collisions therefore remain reachable only through the exact interface, while a derived Kotlin class
@@ -311,11 +317,14 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "243" ]] || die "generated program returned '$actual', expected '243'"
+[[ "$actual" == "283" ]] || die "generated program returned '$actual', expected '283'"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/il/Consumer.dll"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR static member"
+if grep -q '"_resolvedMethodTypeParams"' "$OUT/cir/consumer.cir.json"; then
+	die "bir2cir leaked its resolved-method constraint carrier into CIR"
+fi
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (243)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (283)"

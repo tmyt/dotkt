@@ -20,9 +20,12 @@ import GlobalBump
 import Probe.ConstraintBox
 import Probe.ConstraintApi
 import Probe.ConstraintKind
+import Probe.ConstrainedValue
 import Probe.EnumConstraintBox
 import Probe.FreshConstraintBox
 import Probe.GoodConstraintSink
+import Probe.MemberConstraintApi
+import Probe.MemberDefaultValue
 import Probe.ReferenceConstraintBox
 import Probe.StructConstraintBox
 import kotlin.clr.byref
@@ -40,6 +43,9 @@ class NestedConstraintOuter<T : LocalReferenceConstraintBase>(val value: T) {
         fun read(): Int = ReferenceConstraintBox<T>().Value
     }
 }
+
+fun <T : LocalReferenceConstraintBase> readOpenMemberConstraint(value: T): Int =
+    MemberConstraintApi.Reference(value)
 
 class DefaultCarrierSubclass1 : DefaultCarrier1()
 
@@ -98,7 +104,13 @@ fun consume(): Int {
         ReferenceConstraintBox<String>().Value +
         FreshConstraintBox<LocalDefaultConstraintValue>().Create().value +
         ConstraintApi.Read(ReferenceConstraintBox<String>()) +
-        NestedConstraintOuter(LocalReferenceConstraintValue()).NestedConstraintInner(1).read()
+        NestedConstraintOuter(LocalReferenceConstraintValue()).NestedConstraintInner(1).read() +
+        MemberConstraintApi.Struct(1) +
+        MemberConstraintApi.Enum(ConstraintKind.First) +
+        MemberConstraintApi.Reference("member") +
+        MemberConstraintApi.Fresh<MemberDefaultValue>().Value +
+        widget.ConstrainedValue(1) +
+        readOpenMemberConstraint(LocalReferenceConstraintValue())
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
         widget.Value + widget.Inherited + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +

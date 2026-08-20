@@ -1950,10 +1950,8 @@ internal sealed class AssemblyScanner
         foreach (var (gpHandle, parameter) in retainedTypeParameters)
         {
             var gp = _md.GetGenericParameter(gpHandle);
-            foreach (var constraintHandle in gp.GetConstraints())
+            foreach (var constraint in KotlinNominalConstraints(_md, gp))
             {
-                var constraint = _md.GetGenericParameterConstraint(constraintHandle);
-                if (IsClrPhysicalOnlyConstraint(_md, constraint.Type)) continue;
                 parameter.UpperBound.Add(
                     signatures.DecodeEntity(constraint.Type, typeContext, platform: false));
             }
@@ -3270,9 +3268,8 @@ internal sealed class AssemblyScanner
                 Name = names.String(reader.GetString(parameter.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
             };
-            foreach (var constraintHandle in parameter.GetConstraints())
+            foreach (var constraint in KotlinNominalConstraints(reader, parameter))
             {
-                var constraint = reader.GetGenericParameterConstraint(constraintHandle);
                 projected.UpperBound.Add(SubstituteTypeParameters(
                     signatures.DecodeEntity(constraint.Type, context, platform: false),
                     interfaceArguments));
@@ -3340,9 +3337,8 @@ internal sealed class AssemblyScanner
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
             };
-            foreach (var constraintHandle in gp.GetConstraints())
+            foreach (var constraint in KotlinNominalConstraints(_md, gp))
             {
-                var constraint = _md.GetGenericParameterConstraint(constraintHandle);
                 parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
             }
             function.TypeParameter.Add(parameter);
@@ -4156,9 +4152,8 @@ internal sealed class AssemblyScanner
                     Name = names.String(_md.GetString(gp.Name)),
                     Variance = TypeParameter.Types.Variance.Inv,
                 };
-                foreach (var cHandle in gp.GetConstraints())
+                foreach (var constraint in KotlinNominalConstraints(_md, gp))
                 {
-                    var constraint = _md.GetGenericParameterConstraint(cHandle);
                     tp.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
                 }
                 function.TypeParameter.Add(tp);
@@ -4410,9 +4405,8 @@ internal sealed class AssemblyScanner
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
             };
-            foreach (var constraintHandle in gp.GetConstraints())
+            foreach (var constraint in KotlinNominalConstraints(_md, gp))
             {
-                var constraint = _md.GetGenericParameterConstraint(constraintHandle);
                 parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
             }
             destination.Add(parameter);
@@ -4595,9 +4589,8 @@ internal sealed class AssemblyScanner
                     Name = names.String(_md.GetString(gp.Name)),
                     Variance = TypeParameter.Types.Variance.Inv,
                 };
-                foreach (var cHandle in gp.GetConstraints())
+                foreach (var constraint in KotlinNominalConstraints(_md, gp))
                 {
-                    var constraint = _md.GetGenericParameterConstraint(cHandle);
                     tp.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
                 }
                 function.TypeParameter.Add(tp);
@@ -5314,9 +5307,8 @@ internal sealed class AssemblyScanner
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
             };
-            foreach (var constraintHandle in gp.GetConstraints())
+            foreach (var constraint in KotlinNominalConstraints(_md, gp))
             {
-                var constraint = _md.GetGenericParameterConstraint(constraintHandle);
                 parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
             }
             property.TypeParameter.Add(parameter);
@@ -5999,6 +5991,19 @@ internal sealed class AssemblyScanner
             reader.GetString(type.Name) is "ValueType" or "Enum";
         bool MatchDefinition(TypeDefinition type) => reader.GetString(type.Namespace) == "System" &&
             reader.GetString(type.Name) is "ValueType" or "Enum";
+    }
+
+    // One projection policy for class parameters and every callable/accessor path: only Kotlin-nominal rows enter
+    // KLIB bounds. CLR-only rows stay authoritative in the DLL and are validated by bir2cir at constructed uses.
+    private static IEnumerable<GenericParameterConstraint> KotlinNominalConstraints(
+        MetadataReader reader, GenericParameter parameter)
+    {
+        foreach (var handle in parameter.GetConstraints())
+        {
+            var constraint = reader.GetGenericParameterConstraint(handle);
+            if (!IsClrPhysicalOnlyConstraint(reader, constraint.Type))
+                yield return constraint;
+        }
     }
 
     private bool IsAttributeType(TypeDefinitionHandle handle)

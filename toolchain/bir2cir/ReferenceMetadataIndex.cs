@@ -5837,7 +5837,7 @@ sealed partial class ReferenceMetadataIndex
         return null;
     }
 
-    static JsonNode GenericParamDeclaration(Type gp)
+    internal static JsonNode GenericParamDeclaration(Type gp)
     {
         var declaration = new JsonObject { ["name"] = gp.Name };
         var constraints = new JsonArray();

@@ -35,6 +35,28 @@ using DotKt.Toolchain;
 
 static partial class ClrMemberResolution
 {
+    // Temporary bir2cir-only carrier consumed by ExternalGenericConstraintValidation immediately after member
+    // resolution. The selected MethodDef is the sole authority for these CLR flags/rows; ilemit never sees them.
+    internal const string ResolvedMethodTypeParamsKey = "_resolvedMethodTypeParams";
+
+    internal static void StampResolvedMethodTypeParameters(JsonObject node, MethodInfo method)
+    {
+        method = OpenDeclarationOf(method);
+        if (node["typeArgs"] is not JsonArray typeArgs || typeArgs.Count == 0 ||
+            !method.IsGenericMethodDefinition)
+        {
+            node.Remove(ResolvedMethodTypeParamsKey);
+            return;
+        }
+        var parameters = method.GetGenericArguments();
+        if (parameters.Length != typeArgs.Count)
+            throw new InvalidOperationException(
+                $"bir2cir: resolved generic method '{method.DeclaringType?.FullName}.{method.Name}' declares " +
+                $"{parameters.Length} type parameter(s), but the use carries {typeArgs.Count} argument(s)");
+        node[ResolvedMethodTypeParamsKey] = new JsonArray(
+            parameters.Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+    }
+
     /// <summary>The scalar reference for a resolved method/constructor, ready to be stamped on a node.</summary>
     internal static JsonNode MemberRefJson(MethodBase member, string kind, Type openOwner, TypeNode[] ownerArgs,
         bool? ownerArgumentsAreMethodSlots = null)

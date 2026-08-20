@@ -55,6 +55,19 @@ public static class ConstraintApi
     public static int Read<T>(ReferenceConstraintBox<T> box) where T : class => box.Value;
 }
 
+public sealed class MemberDefaultValue
+{
+    public int Value => 8;
+}
+
+public static class MemberConstraintApi
+{
+    public static int Struct<T>(T value) where T : struct => 1;
+    public static int Enum<T>(T value) where T : System.Enum => 2;
+    public static int Reference<T>(T value) where T : class => 4;
+    public static T Fresh<T>() where T : class, new() => new();
+}
+
 public sealed class FreshConstraintBox<T> where T : class, new()
 {
     public T Create() => new();
@@ -633,4 +646,5 @@ public class Widget : WidgetBase, IAdder
 public static class WidgetExtensions
 {
     public static int Bump(this Widget widget, int value) => widget.Add(value) + 1;
+    public static int ConstrainedValue<T>(this Widget widget, T value) where T : struct => widget.Value + 16;
 }
