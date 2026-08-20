@@ -266,6 +266,26 @@ private fun BirEmitter.kotlinCompanionFact(owner: IrClass, companion: IrClass): 
 	return ""","kotlinCompanion":{"owner":${str(ownerName)},"name":${str(companion.name.asString())},"visibility":${str(visOf(companion))}}"""
 }
 
+/** Kotlin interface supertypes as representation-neutral BIR identities. The declaration kind using this list is
+ * irrelevant: interfaces, ordinary classes, and rich-enum classes must preserve the same frontend supertype facts. */
+private fun BirEmitter.interfaceSuperTypes(klass: IrClass): String = klass.superTypes
+	.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
+	.mapNotNull { st ->
+		// A stdlib/projected interface may already have a CLR-bound semantic type node; a user generic interface keeps
+		// its Kotlin owner plus the actual constructed arguments. Function types are value representations, not an
+		// implemented interface edge authored by this declaration. The Kotlin iterator/iterable protocol is deliberately
+		// not special-cased: its real generic interface edge lets bir2cir's general reverse bridge synthesize
+		// GetEnumerator from iterator().
+		val bt = birType(st)
+		val stClass = st.classifierOrNull?.owner as? IrClass
+		when {
+			bt is TypeNode.Fn -> null
+			stClass != null && isExternalNetType(stClass) -> bt.toJson()
+			else -> stClass?.let { ownerSpec(it, st).toJson() }
+		}
+	}
+	.joinToString(",")
+
 internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 		val savedSemanticOwner = activeSemanticOwner
@@ -374,18 +394,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		}
 	val allIfaceProps = listOf(ifaceProps, staticProps).filter { it.isNotEmpty() }.joinToString(",")
 	val semanticOwner = semanticOwnerJson(iface)
-	val ifaces = iface.superTypes
-		.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
-		.mapNotNull { st ->
-			val bt = birType(st)
-			val stClass = st.classifierOrNull?.owner as? IrClass
-			when {
-				bt is TypeNode.Fn -> null
-				stClass != null && isExternalNetType(stClass) -> bt.toJson()
-				else -> stClass?.let { ownerSpec(it, st).toJson() }
-			}
-		}
-		.joinToString(",")
+	val ifaces = interfaceSuperTypes(iface)
 	// Round-trip class-nature facts (Kotlin, not CLR) as structured `mods` (spec §2.1): `fun interface` (SAM) and
 	// `sealed` — carried so a re-consuming Kotlin module can restore them (ilemit stamps [KotlinFunInterface]/
 	// [KotlinSealed]; a plain CLR interface loses both).
@@ -407,6 +416,12 @@ internal fun BirEmitter.enumDef(e: IrClass): String {
 /** A "rich" enum has source-authored state/behavior or per-entry bodies -> can't be a CLR enum. */
 internal fun BirEmitter.isRichEnum(ec: IrClass): Boolean {
 	if (ec.kind != ClassKind.ENUM_CLASS) return false
+	// A CLR enum cannot implement an interface. Even a marker/default-only interface therefore requires the rich
+	// class shape; checking only source members misses `enum class E : Marker { A }` because every inherited member is
+	// synthetic in that declaration.
+	val implementedInterfaces = ec.superTypes.any { st ->
+		(st.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE && birType(st) !is TypeNode.Fn
+	}
 	val ctorParams = ec.declarations.filterIsInstance<IrConstructor>()
 		.any { c -> c.parameters.any { it.kind == IrParameterKind.Regular } }
 	val userMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
@@ -419,7 +434,7 @@ internal fun BirEmitter.isRichEnum(ec: IrClass): Boolean {
 	val userProperties = ec.declarations.filterIsInstance<IrProperty>()
 		.any { it.origin.toString() == "DEFINED" && !it.isFakeOverride }
 	val initializers = ec.declarations.any { it is IrAnonymousInitializer }
-	return ctorParams || userMethods || entryBodies || userProperties || initializers
+	return implementedInterfaces || ctorParams || userMethods || entryBodies || userProperties || initializers
 }
 
 /**
@@ -445,7 +460,17 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// concrete IrBlockBody or an abstract body-less declaration; no other body shape belongs in this class.
 	// A `companion { }` property of an enum is a static of the enum class, not per-entry state: it keeps its own
 	// storage and accessors (below) and never reaches the entry constructor.
-	val userProps = ec.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride && !isKotlinStaticProperty(it) }
+	val userProps = ec.declarations.filterIsInstance<IrProperty>().filter { p ->
+		if (isKotlinStaticProperty(p)) return@filter false
+		if (!p.isFakeOverride) return@filter true
+		// If every entry body implements an interface property, FIR materializes the still-unimplemented base slot as an
+		// abstract fake override. Keep that declaration on the abstract enum base so each entry subclass has a CLR slot
+		// to override. Concrete inherited implementations remain omitted exactly as on an ordinary class.
+		listOfNotNull(p.getter, p.setter).any { accessor ->
+			isInheritedSynthetic(accessor) && accessor.modality == Modality.ABSTRACT &&
+				selectedInheritedImplementation(accessor) == null
+		}
+	}
 	fun emitsAccessor(a: IrSimpleFunction?) = a != null &&
 		(a.body is IrBlockBody || (a.body == null && a.modality == Modality.ABSTRACT))
 	fun emitsGet(p: IrProperty) = emitsAccessor(p.getter) && !p.isConst && !p.isLateinit && !isClrField(p)
@@ -454,7 +479,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		val bf = p.backingField ?: return@mapNotNull null
 		val visJson = if (emitsGet(p)) ""","vis":"internal"""" else ""
 		"""{"name":${str(bf.name.asString())},"type":${birType(bf.type).toJson()}$visJson}"""
-	}
+	} + syntheticInstanceStorageFields(ec)
 	val propAccessors = userProps.flatMap { p ->
 		listOfNotNull(
 			p.getter?.takeIf { emitsGet(p) }?.let { accessorMethod(it, p.name.asString(), true) },
@@ -524,7 +549,10 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// methods: concrete user methods + abstract member decls + toString + values() + valueOf().
 	// A `companion { }` member rides the same list, marked static from the frontend's own fact.
 	val userMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
-		.filter { it.origin.toString() == "DEFINED" && it.correspondingPropertySymbol == null && it.body != null }
+		// A frontend-generated class-delegation forwarder owns a real body and interface slot just like a source method.
+		// Other synthetic enum helpers remain excluded and are emitted explicitly below.
+		.filter { (it.origin.toString() == "DEFINED" || it.origin == IrDeclarationOrigin.DELEGATED_MEMBER) &&
+			it.correspondingPropertySymbol == null && it.body != null }
 		.map { method(it, static = isKotlinStaticFunction(it)) } +
 		absMethods.map { m -> """{"name":${str(m.name.asString())},"static":false,"override":false,"virtual":true,"abstract":true,"vis":"public","params":[${paramsJsonList(m.parameters).joinToString(",")}],"ret":${birType(m.returnType).toJson()},"body":[]}""" }
 	val sf = { e: IrEnumEntry -> """{"k":"staticField","ownerType":${fqnJson(name)},"name":${str(e.name.asString())}}""" }
@@ -554,12 +582,27 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	}
 	val allPropsList = listOf(propsList, staticPropsList).filter { it.isNotEmpty() }.joinToString(",")
 	val methods = (userMethods + propAccessors + staticPropAccessors + listOf(toStr, valuesM, valueOfM)).joinToString(",")
+	val ifaces = interfaceSuperTypes(ec)
+	// As for an ordinary class, inherited default members are frontend-selected implementations. Preserve that
+	// choice so bir2cir can allocate an exact MethodImpl when an unrelated CLR-shaped method would otherwise capture
+	// the interface slot.
+	val inheritedDefaultAccessors = ec.declarations.filterIsInstance<IrProperty>().flatMap { p ->
+		listOfNotNull(
+			inheritedDefaultAccessorFact(p, p.getter, "get"),
+			inheritedDefaultAccessorFact(p, p.setter, "set"))
+	}
+	val inheritedDefaultMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
+		.mapNotNull(::inheritedDefaultMethodFact)
+	val inheritedDefaultsJson = if (inheritedDefaultAccessors.isEmpty()) "" else
+		""","inheritedDefaultAccessors":[${inheritedDefaultAccessors.joinToString(",")}]"""
+	val inheritedDefaultMethodsJson = if (inheritedDefaultMethods.isEmpty()) "" else
+		""","inheritedDefaultMethods":[${inheritedDefaultMethods.joinToString(",")}]"""
 	// `enumRich:true` — a FAITHFUL "this class originated from a Kotlin enum" fact (not a CLR-shape decision), so
 	// bir2cir's EnumIntrinsicLowering can lower `enumValues<ThisEnum>()` to the synthesized static values()/valueOf()
 	// rather than the System.Enum-reflection semantic node (a rich enum is a plain class, invisible to that reflection).
 	// richEnumDef likewise does not flatten a companion's declarations into the enum class.
 	val kotlinCompanion = ""
-	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(visOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$allPropsList]}"""
+	val baseDef = """{"name":${str(name)},"kind":"class","enumRich":true,"abstract":$baseAbstract,"vis":${str(visOf(ec))}${semanticOwnerJson(ec)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[${fields.joinToString(",")}],"ctors":[$ctor],"methods":[$methods],"properties":[$allPropsList]$inheritedDefaultsJson$inheritedDefaultMethodsJson}"""
 	// Emit the base enum class first, then each per-entry subclass.
 	val result = (listOf(baseDef) + subDefs).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
@@ -598,7 +641,12 @@ internal fun BirEmitter.instanceStorageFields(klass: IrClass): List<String> {
 	}
 	// Standalone frontend-synthesized fields (chiefly class-delegation storage) follow the same instance-initializer
 	// expansion below as property backing fields.
-	val syntheticFields = klass.declarations.filterIsInstance<IrField>()
+	return propertyFields + syntheticInstanceStorageFields(klass)
+}
+
+/** Frontend-owned instance storage not associated with a Kotlin property, chiefly a `by`-delegation receiver. */
+private fun BirEmitter.syntheticInstanceStorageFields(klass: IrClass): List<String> =
+	klass.declarations.filterIsInstance<IrField>()
 		.filter { it.correspondingPropertySymbol == null && !it.isStatic }
 		.map { f ->
 			val visibility = visOf(f)
@@ -606,8 +654,6 @@ internal fun BirEmitter.instanceStorageFields(klass: IrClass): List<String> {
 			val readOnly = if (f.isFinal) ""","readOnly":true""" else ""
 			"""{"name":${str(f.name.asString())},"type":${birType(f.type).toJson()}$visJson$readOnly}"""
 		}
-	return propertyFields + syntheticFields
-}
 
 /** Expand one frontend [IrInstanceInitializerCall] in declaration order. The caller owns constructor delegation and
  * installs the concrete BIR type identity before invoking this helper. */
@@ -1330,26 +1376,7 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	} ?: "null"
 	// Stdlib interface supertypes (Iterator, Iterable, Read(Write)Property) -> the REAL generic identity;
 	// a user generic interface `Container<Int>` -> the constructed spec `Container[int]` (ownerSpec).
-	val ifaces = klass.superTypes
-		.filter { (it.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE }
-		.mapNotNull { st ->
-			// A stdlib interface birType maps to .NET (Continuation, Comparable, Comparator, AutoCloseable, …) ->
-			// its clr:/clrg: spec; a user generic interface `Container<Int>` -> the constructed spec `Container[int]`
-			// (ownerSpec). The Kotlin iterator/iterable protocol is NOT special-cased: a user `class R : Iterable<Int>`
-			// links the REAL generic `kotlin.collections.Iterable<Int>` (bir2cir @ClrTypeAlias'd to
-			// `IEnumerable<int>`; ilemit's reverse bridge synthesizes `GetEnumerator` from the class's `iterator()`),
-			// and an `Iterator<Int>` supertype the real generic `kotlin.collections.Iterator<Int>` (a real emitted
-			// stdlib interface). `for (x in r)` resolves the iterator on that real generic — the real generic
-			// interface is used, and every build takes the same reverse-bridge path.
-			val bt = birType(st)
-			val stClass = st.classifierOrNull?.owner as? IrClass
-			when {
-				bt is TypeNode.Fn -> null
-				stClass != null && isExternalNetType(stClass) -> bt.toJson()
-				else -> stClass?.let { ownerSpec(it, st).toJson() }
-			}
-		}
-		.joinToString(",")
+	val ifaces = interfaceSuperTypes(klass)
 	// Anonymous objects are synthetic implementation types and remain public. Lifted companions also use anonNames
 	// for their physical name, but their source visibility is authoritative: widening a private companion here makes
 	// its carrier an ordinary public CLR/KLIB type on re-import.

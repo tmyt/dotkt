@@ -20,6 +20,7 @@
 //   #279          -> mixedEntryBodies             rich enum mixing an entry subclass with a direct base instance
 //   #478          -> entryOwnedStateAndInitializers  entry-body fields and initializer blocks in declaration order
 //   #480          -> baseStateAndInitializers      rich-enum base fields and init blocks run before entry-body initialization
+//   #479          -> implementedInterfaces         rich enum preserves constructed interface slots and defaults
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and
 // `Enum`-prefixed so the two `enum class Color { RED, GREEN, BLUE }` (il-enum vs il-enumintr) don't clash.
@@ -178,6 +179,53 @@ enum class EnumInitOnlyState {
     init { EnumInitOnlyLog.total += ordinal + 1 }
 }
 
+interface EnumRichContract<T> {
+    fun value(): T
+    val item: T
+    fun defaultValue(): T = item
+    val defaultItem: T get() = item
+}
+
+enum class EnumInterfaceState(private val n: Int) : EnumRichContract<Int> {
+    A(7), B(11);
+
+    override fun value(): Int = n
+    override val item: Int get() = n + 1
+}
+
+fun enumInterfaceSnapshot(value: EnumRichContract<Int>): String =
+    "${value.value()}:${value.item}:${value.defaultValue()}:${value.defaultItem}"
+
+interface EnumDefaultOnlyContract {
+    fun defaultValue(): Int = 13
+    val defaultItem: Int get() = 14
+}
+
+enum class EnumDefaultOnlyState : EnumDefaultOnlyContract { A }
+
+interface EnumEntryPropertyContract {
+    val item: Int
+}
+
+enum class EnumEntryPropertyState : EnumEntryPropertyContract {
+    A { override val item: Int get() = 21 },
+    B { override val item: Int get() = 22 }
+}
+
+interface EnumDelegatedContract {
+    fun value(): Int
+    val item: Int
+}
+
+class EnumDelegatedContractImpl(private val n: Int) : EnumDelegatedContract {
+    override fun value(): Int = n
+    override val item: Int get() = n + 1
+}
+
+enum class EnumDelegatingState(delegate: EnumDelegatedContract) : EnumDelegatedContract by delegate {
+    A(EnumDelegatedContractImpl(31)), B(EnumDelegatedContractImpl(41))
+}
+
 // ---- il-enumintr : basic enum + reified enumValues/enumValueOf intrinsics -------------------------------------
 enum class EnumIntrColor { RED, GREEN, BLUE }
 inline fun <reified T : Enum<T>> enumPick(i: Int): T = enumValues<T>()[i]
@@ -252,6 +300,31 @@ class EnumTests {
         assertEquals(20, EnumComputedOnlyState.A.computed)
         assertEquals(1, EnumInitOnlyState.B.ordinal)
         assertEquals(3, EnumInitOnlyLog.total)
+    }
+
+    @TestAttribute
+    fun implementedInterfaces() {
+        val erased: Any = EnumInterfaceState.A
+        assertTrue(erased is EnumRichContract<*>)
+        assertEquals("7:8:8:8", enumInterfaceSnapshot(EnumInterfaceState.A))
+        assertEquals("11:12:12:12", enumInterfaceSnapshot(EnumInterfaceState.B))
+
+        val defaultOnly: Any = EnumDefaultOnlyState.A
+        assertTrue(defaultOnly is EnumDefaultOnlyContract)
+        assertEquals(13, (defaultOnly as EnumDefaultOnlyContract).defaultValue())
+        assertEquals(14, defaultOnly.defaultItem)
+
+        val entryPropertyA: EnumEntryPropertyContract = EnumEntryPropertyState.A
+        val entryPropertyB: EnumEntryPropertyContract = EnumEntryPropertyState.B
+        assertEquals(21, entryPropertyA.item)
+        assertEquals(22, entryPropertyB.item)
+
+        val delegatedA: EnumDelegatedContract = EnumDelegatingState.A
+        val delegatedB: EnumDelegatedContract = EnumDelegatingState.B
+        assertEquals(31, delegatedA.value())
+        assertEquals(32, delegatedA.item)
+        assertEquals(41, delegatedB.value())
+        assertEquals(42, delegatedB.item)
     }
 
     @TestAttribute
