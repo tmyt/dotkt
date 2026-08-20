@@ -236,20 +236,20 @@ enum class EnumPlanet(val mass: Int) {
     fun heavy(): Boolean = mass > 3
 }
 
-enum class EnumSecondaryState(val value: Int, val label: String) {
+enum class EnumSecondaryState(val value: Int, val label: String = "number:$value") {
     PRIMARY(1, "primary"),
-    NUMBER(2),
+    NUMBER("xx", true),
     TEXT("word"),
     CHAINED(true),
-    DEFAULTED(5L),
-    BODY(7) { override fun marker(): String = "body:$label" };
+    DEFAULTED(value = 5L),
+    BODY("1234567", true) { override fun marker(): String = "body:$label" };
 
     var path = "initialized"
 
-    constructor(value: Int) : this(value, "number:$value") { path += ":int" }
-    constructor(label: String) : this(label.length, label) { path += ":string" }
-    constructor(chained: Boolean) : this(if (chained) "yes" else "no") { path += ":bool" }
-    constructor(value: Long, label: String = "long") : this(value.toInt(), label) { path += ":long" }
+    constructor(input: String, secondary: Boolean) : this(input.length) { path += if (secondary) ":int" else ":unused" }
+    constructor(__name: String) : this(__name.length, __name) { path += ":string" }
+    constructor(__ordinal: Boolean) : this(if (__ordinal) "yes" else "no") { path += ":bool" }
+    constructor(label: String = "long", value: Long) : this(value.toInt(), label) { path += ":long" }
 
     open fun marker(): String = "$value:$label"
 }
@@ -383,6 +383,12 @@ class EnumTests {
         assertEquals("initialized:string:bool", EnumSecondaryState.CHAINED.path)
         assertEquals("initialized:long", EnumSecondaryState.DEFAULTED.path)
         assertEquals("initialized:int", EnumSecondaryState.BODY.path)
+        assertEquals("TEXT", EnumSecondaryState.TEXT.name)
+        assertEquals(2, EnumSecondaryState.TEXT.ordinal)
+        assertEquals("CHAINED", EnumSecondaryState.CHAINED.toString())
+        assertEquals(3, EnumSecondaryState.CHAINED.ordinal)
+        assertEquals(6, EnumSecondaryState.values().size)
+        assertEquals(EnumSecondaryState.BODY, EnumSecondaryState.valueOf("BODY"))
     }
 
     @TestAttribute

@@ -450,7 +450,17 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	val entries = ec.declarations.filterIsInstance<IrEnumEntry>()
 	val enumCtors = ec.declarations.filterIsInstance<IrConstructor>()
 	val primaryCtor = enumCtors.first { it.isPrimary }
-	val userParams = primaryCtor.parameters.filter { it.kind == IrParameterKind.Regular }
+	val userParams = primaryCtor.parameters.filter(::isValueParameter)
+	fun metadataParamNames(c: IrConstructor): Pair<String, String> {
+		val used = c.parameters.filter(::isValueParameter).mapTo(HashSet()) { it.name.asString() }
+		fun fresh(base: String): String {
+			var candidate = base
+			while (!used.add(candidate)) candidate = "_$candidate"
+			return candidate
+		}
+		return fresh("__name") to fresh("__ordinal")
+	}
+	val (primaryNameParam, primaryOrdinalParam) = metadataParamNames(primaryCtor)
 	// User properties follow the CLR property model exactly like typeDef: the access site emits an explicit property
 	// identity and role (there is no rich-enum special case for user props — only name/ordinal route to the
 	// __name/__ordinal fields), so the class must carry real accessors plus a
@@ -493,15 +503,17 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 	// ctor(__name, __ordinal, <user params>). The frontend-authored property initializers below exclusively store
 	// constructor properties; a regular parameter that is not `val`/`var` has no field and remains available to later
 	// property initializers and init blocks as a constructor local.
-	val ctorParams = (listOf("""{"name":"__name","type":${fqnJson("kotlin.String")}}""", """{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}""") +
-		userParams.map { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }).joinToString(",")
+	val ctorParams = (listOf(
+		"""{"name":${str(primaryNameParam)},"type":${fqnJson("kotlin.String")}}""",
+		"""{"name":${str(primaryOrdinalParam)},"type":${fqnJson("kotlin.Int")}}""") +
+		paramsJsonList(userParams)).joinToString(",")
 	// The synthesized rich-enum constructor replaces the frontend primary constructor, so it must also expand the
 	// frontend's IrInstanceInitializerCall: constructor-property storage, enum-body property initializers, and init
 	// blocks retain their frontend declaration order. Entry subclasses call this constructor before their own instance
 	// initializer expansion, preserving Kotlin's base-before-derived initialization order.
 	val ctorBody = (listOf(
-		"""{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__name","value":{"k":"local","name":"__name"}}""",
-		"""{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__ordinal","value":{"k":"local","name":"__ordinal"}}""") +
+		"""{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__name","value":{"k":"local","name":${str(primaryNameParam)}}}""",
+		"""{"k":"setField","ownerType":${fqnJson(name)},"recv":{"k":"this"},"name":"__ordinal","value":{"k":"local","name":${str(primaryOrdinalParam)}}}""") +
 		instanceInitializerStatements(ec)).joinToString(",")
 	// Per-entry bodies (`PLUS { override fun apply(…)=… }`) become subclasses, but their presence alone does not make
 	// the enum base abstract: a body-less sibling still constructs that base directly. Only an actual abstract member
@@ -531,17 +543,18 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			invariantBroken(c, "a rich enum secondary constructor has no same-enum delegation target")
 			return """{"params":[],"baseArgs":null,"thisArgs":null,"vis":"private","body":[]}"""
 		}
-		val sourceParams = c.parameters.filter { it.kind == IrParameterKind.Regular }
+		val sourceParams = c.parameters.filter(::isValueParameter)
+		val (nameParam, ordinalParam) = metadataParamNames(c)
 		val params = (listOf(
-			"""{"name":"__name","type":${fqnJson("kotlin.String")}}""",
-			"""{"name":"__ordinal","type":${fqnJson("kotlin.Int")}}""") +
-			sourceParams.map { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" })
+			"""{"name":${str(nameParam)},"type":${fqnJson("kotlin.String")}}""",
+			"""{"name":${str(ordinalParam)},"type":${fqnJson("kotlin.Int")}}""") +
+			paramsJsonList(sourceParams))
 			.joinToString(",")
 		val (plan, delegatedArgs) = withCallPlan(delegating) { delegatedCtorArgs(delegating) }
 		val thisArgs = (listOf(
-			"""{"k":"local","name":"__name"}""",
-			"""{"k":"local","name":"__ordinal"}""") + delegatedArgs).joinToString(",")
-		val targetTypes = delegating.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
+			"""{"k":"local","name":${str(nameParam)}}""",
+			"""{"k":"local","name":${str(ordinalParam)}}""") + delegatedArgs).joinToString(",")
+		val targetTypes = delegating.symbol.owner.parameters.filter(::isValueParameter)
 			.map { birType(it.type).toJson() }
 		val delegationSig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) + targetTypes)
 			.joinToString(",")
@@ -577,15 +590,18 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 			fields.add("""{"name":${str(ent.name.asString())},"type":${fqnJson(name)},"static":true,"init":{"k":"new","type":${fqnJson(sub)},"argTypes":[${fqnJson("kotlin.String")},${fqnJson("kotlin.Int")}],"args":[${nameOrd(i, ent).joinToString(",")}]}}""")
 		} else {
 			val ecc = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
+			if (ecc == null) {
+				invariantBroken(ent, "a rich enum entry has no enum-constructor call")
+				return@forEachIndexed
+			}
 			// An entry's `NAME(args)` is an omitting call site too (`R(1)` on `enum class Col(val rgb: Int, val
 			// label: String = "c")`), so it fills omitted defaults like every other call shape — under its own
 			// evaluation plan (§2.7), which rides a `callEval` around this initializer because a static field's
 			// initializer IS an expression position.
-			val (entryPlan, entryArgs) = ecc?.let { c -> withCallPlan(c) { filledArgs(c) } }
-				?: (null to emptyList<String>())
+			val (entryPlan, entryArgs) = withCallPlan(ecc) { filledArgs(ecc) }
 			val newArgs = (nameOrd(i, ent) + entryArgs).joinToString(",")
-			val selectedCtor = ecc?.symbol?.owner ?: primaryCtor
-			val selectedTypes = selectedCtor.parameters.filter { it.kind == IrParameterKind.Regular }
+			val selectedCtor = ecc.symbol.owner
+			val selectedTypes = selectedCtor.parameters.filter(::isValueParameter)
 				.map { birType(it.type).toJson() }
 			val entrySig = (listOf(fqnJson("kotlin.String"), fqnJson("kotlin.Int")) + selectedTypes)
 				.joinToString(",")
@@ -669,11 +685,17 @@ internal data class EnumSuperCall(
  * emits ahead of the base call. */
 internal fun BirEmitter.enumSuperCall(cc: IrClass): EnumSuperCall {
 	val ctor = cc.declarations.filterIsInstance<IrConstructor>().firstOrNull()
-		?: return EnumSuperCall(emptyList(), null, emptyList())
+	if (ctor == null) {
+		invariantBroken(cc, "a rich enum entry body has no constructor")
+		return EnumSuperCall(emptyList(), null, emptyList())
+	}
 	val call = (ctor.body as? IrBlockBody)?.statements?.firstNotNullOfOrNull { it as? IrEnumConstructorCall }
-		?: return EnumSuperCall(emptyList(), null, emptyList())
+	if (call == null) {
+		invariantBroken(ctor, "a rich enum entry body has no enum-constructor call")
+		return EnumSuperCall(emptyList(), null, emptyList())
+	}
 	val (plan, args) = withCallPlan(call) { filledArgs(call) }
-	val parameterTypes = call.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
+	val parameterTypes = call.symbol.owner.parameters.filter(::isValueParameter)
 		.map { birType(it.type).toJson() }
 	return EnumSuperCall(args, plan.bindingsJson().takeIf { !plan.isEmpty }, parameterTypes)
 }
