@@ -22,6 +22,7 @@
 //   #482          -> entryOwnedStateAndInitializers  direct subscribe/close on locally synthesized CLR events
 //   #480          -> baseStateAndInitializers      rich-enum base fields and init blocks run before entry-body initialization
 //   #479          -> implementedInterfaces         rich enum preserves constructed interface slots and defaults
+//   #490          -> emptyRichEnum                  zero-entry rich enum emits valid values/valueOf bodies
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace) and
 // `Enum`-prefixed so the two `enum class Color { RED, GREEN, BLUE }` (il-enum vs il-enumintr) don't clash.
@@ -241,6 +242,11 @@ enum class EnumPlanet(val mass: Int) {
     fun heavy(): Boolean = mass > 3
 }
 
+enum class EnumEmptyRich {
+    ;
+    fun marker(): Int = 1
+}
+
 enum class EnumSecondaryState(val value: Int, val label: String = "number:$value") {
     PRIMARY(1, "primary"),
     NUMBER("xx", true),
@@ -422,6 +428,19 @@ class EnumTests {
         assertEquals(3, EnumSecondaryState.CHAINED.ordinal)
         assertEquals(6, EnumSecondaryState.values().size)
         assertEquals(EnumSecondaryState.BODY, EnumSecondaryState.valueOf("BODY"))
+    }
+
+    @TestAttribute
+    fun emptyRichEnum() {
+        assertEquals(0, EnumEmptyRich.values().size)
+        assertEquals(0, enumValues<EnumEmptyRich>().size)
+        val missing = try {
+            EnumEmptyRich.valueOf("MISSING")
+            "no-throw"
+        } catch (e: IllegalArgumentException) {
+            "iae"
+        }
+        assertEquals("iae", missing)
     }
 
     @TestAttribute
