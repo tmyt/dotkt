@@ -196,6 +196,36 @@ enum class EnumInterfaceState(private val n: Int) : EnumRichContract<Int> {
 fun enumInterfaceSnapshot(value: EnumRichContract<Int>): String =
     "${value.value()}:${value.item}:${value.defaultValue()}:${value.defaultItem}"
 
+interface EnumDefaultOnlyContract {
+    fun defaultValue(): Int = 13
+    val defaultItem: Int get() = 14
+}
+
+enum class EnumDefaultOnlyState : EnumDefaultOnlyContract { A }
+
+interface EnumEntryPropertyContract {
+    val item: Int
+}
+
+enum class EnumEntryPropertyState : EnumEntryPropertyContract {
+    A { override val item: Int get() = 21 },
+    B { override val item: Int get() = 22 }
+}
+
+interface EnumDelegatedContract {
+    fun value(): Int
+    val item: Int
+}
+
+class EnumDelegatedContractImpl(private val n: Int) : EnumDelegatedContract {
+    override fun value(): Int = n
+    override val item: Int get() = n + 1
+}
+
+enum class EnumDelegatingState(delegate: EnumDelegatedContract) : EnumDelegatedContract by delegate {
+    A(EnumDelegatedContractImpl(31)), B(EnumDelegatedContractImpl(41))
+}
+
 // ---- il-enumintr : basic enum + reified enumValues/enumValueOf intrinsics -------------------------------------
 enum class EnumIntrColor { RED, GREEN, BLUE }
 inline fun <reified T : Enum<T>> enumPick(i: Int): T = enumValues<T>()[i]
@@ -278,6 +308,23 @@ class EnumTests {
         assertTrue(erased is EnumRichContract<*>)
         assertEquals("7:8:8:8", enumInterfaceSnapshot(EnumInterfaceState.A))
         assertEquals("11:12:12:12", enumInterfaceSnapshot(EnumInterfaceState.B))
+
+        val defaultOnly: Any = EnumDefaultOnlyState.A
+        assertTrue(defaultOnly is EnumDefaultOnlyContract)
+        assertEquals(13, (defaultOnly as EnumDefaultOnlyContract).defaultValue())
+        assertEquals(14, defaultOnly.defaultItem)
+
+        val entryPropertyA: EnumEntryPropertyContract = EnumEntryPropertyState.A
+        val entryPropertyB: EnumEntryPropertyContract = EnumEntryPropertyState.B
+        assertEquals(21, entryPropertyA.item)
+        assertEquals(22, entryPropertyB.item)
+
+        val delegatedA: EnumDelegatedContract = EnumDelegatingState.A
+        val delegatedB: EnumDelegatedContract = EnumDelegatingState.B
+        assertEquals(31, delegatedA.value())
+        assertEquals(32, delegatedA.item)
+        assertEquals(41, delegatedB.value())
+        assertEquals(42, delegatedB.item)
     }
 
     @TestAttribute
