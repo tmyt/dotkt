@@ -8,7 +8,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Fixed
 
 - **Projected generic methods and properties now preserve the CLR-only half of their type-parameter constraints
-  (#498).** dll2klib keeps implicit `System.ValueType`/`System.Enum` rows out of Kotlin bounds on every callable and
+  (#498).** dll2klib keeps implicit `System.ValueType`/`System.Enum` rows, including the modified `ValueType` row used
+  by `unmanaged`, out of Kotlin bounds on every callable and
   accessor projection path, while bir2cir validates those rows and CLR `class`, `struct`, and `new()` flags against
   the exact MethodDef selected for each use. Closed and open calls, extension methods, delegates, and generic Kotlin
   property accessors therefore reject invalid physical instantiations before emission without inventing Kotlin

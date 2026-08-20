@@ -230,6 +230,23 @@ expect_constraint_failure member-enum MemberConstraintApi.Enum "enum type"
 expect_constraint_failure member-new MemberConstraintApi.Fresh "parameterless constructor"
 expect_constraint_failure member-open-class MemberConstraintApi.Reference "reference type"
 expect_constraint_failure member-extension-struct WidgetExtensions.ConstrainedValue "value type"
+expect_constraint_failure member-unmanaged MemberConstraintApi.Unmanaged "value type"
+expect_constraint_failure member-static-delegate MemberConstraintApi.Struct "value type"
+expect_constraint_failure member-bound-delegate MemberConstraintHost.Struct "value type"
+expect_constraint_failure member-inherited-class IMemberConstraintSlot.Reference "reference type"
+expect_constraint_failure member-constrained-class IMemberConstraintSlot.Reference "reference type"
+
+# The mixed struct + nominal row proves the common projection policy removes only the physical ValueType root.
+# The ordinary interface bound must remain visible to kotc and reject Int before bir2cir is involved.
+nominal_log="$OUT/constraint-member-nominal.log"
+if "$KOTC" "$ROOT/tests/special/dll2klib-e2e/invalid-member-nominal-constraint.kt" \
+	-no-stdlib \
+	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" \
+	-d "$OUT/constraint-member-nominal-bir" >"$nominal_log" 2>&1; then
+	die "dll2klib dropped the nominal IConstraintMarker method bound"
+fi
+grep -q "IConstraintMarker" "$nominal_log" \
+	|| die "nominal method-constraint rejection did not name IConstraintMarker"
 
 # A CLR explicit implementation satisfies an interface slot but is not an ordinary class API. Method/property/
 # indexer/event collisions therefore remain reachable only through the exact interface, while a derived Kotlin class
@@ -317,7 +334,7 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "283" ]] || die "generated program returned '$actual', expected '283'"
+[[ "$actual" == "508" ]] || die "generated program returned '$actual', expected '508'"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/il/Consumer.dll"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
@@ -327,4 +344,4 @@ if grep -q '"_resolvedMethodTypeParams"' "$OUT/cir/consumer.cir.json"; then
 	die "bir2cir leaked its resolved-method constraint carrier into CIR"
 fi
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (283)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (508)"

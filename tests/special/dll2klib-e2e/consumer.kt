@@ -25,6 +25,7 @@ import Probe.EnumConstraintBox
 import Probe.FreshConstraintBox
 import Probe.GoodConstraintSink
 import Probe.MemberConstraintApi
+import Probe.MemberConstraintHost
 import Probe.MemberDefaultValue
 import Probe.ReferenceConstraintBox
 import Probe.StructConstraintBox
@@ -46,6 +47,12 @@ class NestedConstraintOuter<T : LocalReferenceConstraintBase>(val value: T) {
 
 fun <T : LocalReferenceConstraintBase> readOpenMemberConstraint(value: T): Int =
     MemberConstraintApi.Reference(value)
+
+fun readMemberConstraintDelegates(): Int {
+    val staticCall: (Int) -> Int = MemberConstraintApi::Struct
+    val boundCall: (Int) -> Int = MemberConstraintHost()::Struct
+    return staticCall(1) + boundCall(1)
+}
 
 class DefaultCarrierSubclass1 : DefaultCarrier1()
 
@@ -109,8 +116,11 @@ fun consume(): Int {
         MemberConstraintApi.Enum(ConstraintKind.First) +
         MemberConstraintApi.Reference("member") +
         MemberConstraintApi.Fresh<MemberDefaultValue>().Value +
+        MemberConstraintApi.NominalStruct(MemberConstraintApi.MemberValue()) +
+        MemberConstraintApi.Unmanaged(1) +
         widget.ConstrainedValue(1) +
-        readOpenMemberConstraint(LocalReferenceConstraintValue())
+        readOpenMemberConstraint(LocalReferenceConstraintValue()) +
+        readMemberConstraintDelegates()
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
         widget.Value + widget.Inherited + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +

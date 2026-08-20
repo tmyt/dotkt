@@ -5985,6 +5985,8 @@ internal sealed class AssemblyScanner
         {
             HandleKind.TypeReference => MatchReference(reader.GetTypeReference((TypeReferenceHandle)handle)),
             HandleKind.TypeDefinition => MatchDefinition(reader.GetTypeDefinition((TypeDefinitionHandle)handle)),
+            HandleKind.TypeSpecification => reader.GetTypeSpecification((TypeSpecificationHandle)handle)
+                .DecodeSignature(ClrPhysicalConstraintTypeProvider.Instance, genericContext: null),
             _ => false,
         };
         bool MatchReference(TypeReference type) => reader.GetString(type.Namespace) == "System" &&
@@ -6137,6 +6139,37 @@ internal sealed class NameTable
         _qualified.Add(key, id);
         return id;
     }
+}
+
+// A generic-constraint row may wrap its physical root in custom modifiers (`unmanaged` is encoded as
+// `System.ValueType modreq(IsUnmanagedAttribute)`). Decode only enough of a TypeSpec to identify that root; every
+// composite form remains nominal, and a modifier preserves the answer of the type it annotates.
+internal sealed class ClrPhysicalConstraintTypeProvider : ISignatureTypeProvider<bool, object?>
+{
+    public static ClrPhysicalConstraintTypeProvider Instance { get; } = new();
+
+    public bool GetArrayType(bool elementType, ArrayShape shape) => false;
+    public bool GetByReferenceType(bool elementType) => false;
+    public bool GetFunctionPointerType(MethodSignature<bool> signature) => false;
+    public bool GetGenericInstantiation(bool genericType, ImmutableArray<bool> typeArguments) => false;
+    public bool GetGenericMethodParameter(object? genericContext, int index) => false;
+    public bool GetGenericTypeParameter(object? genericContext, int index) => false;
+    public bool GetModifiedType(bool modifier, bool unmodifiedType, bool isRequired) => unmodifiedType;
+    public bool GetPinnedType(bool elementType) => false;
+    public bool GetPointerType(bool elementType) => false;
+    public bool GetPrimitiveType(PrimitiveTypeCode typeCode) => false;
+    public bool GetSZArrayType(bool elementType) => false;
+    public bool GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind) =>
+        Match(reader.GetString(reader.GetTypeDefinition(handle).Namespace),
+            reader.GetString(reader.GetTypeDefinition(handle).Name));
+    public bool GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind) =>
+        Match(reader.GetString(reader.GetTypeReference(handle).Namespace),
+            reader.GetString(reader.GetTypeReference(handle).Name));
+    public bool GetTypeFromSpecification(MetadataReader reader, object? genericContext,
+        TypeSpecificationHandle handle, byte rawTypeKind) =>
+        reader.GetTypeSpecification(handle).DecodeSignature(this, genericContext);
+
+    static bool Match(string ns, string name) => ns == "System" && name is "ValueType" or "Enum";
 }
 
 internal sealed record GenericContext(

@@ -1949,7 +1949,8 @@ type-parameter bound is not on that carrier (it is type-level) and re-imports as
 type parameter's ordinary CLR constraint rows are projected directly, however: an unmoved
 `class Box<T : Sink<String>>` retains that bound, while the carrier replaces only bounds whose Kotlin type arguments
 were erased. The physical-only roots and flags cannot be represented as Kotlin nominal upper bounds: a type or member
-parameter's `System.ValueType`/`System.Enum` rows are omitted from the KLIB. bir2cir validates them together with CLR
+parameter's `System.ValueType`/`System.Enum` rows, including the modified `ValueType` row used by `unmanaged`, are
+omitted from the KLIB. bir2cir validates them together with CLR
 `class`, `struct`, and `new()` flags against every referenced constructed type before CLR type lowering, and against
 every generic member use after exact member resolution identifies the authoritative MethodDef. The selected
 declaration's generic variables stay in its own frame; each supplied argument is evaluated in the caller's lexical

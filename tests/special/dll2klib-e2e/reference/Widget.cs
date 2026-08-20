@@ -60,12 +60,27 @@ public sealed class MemberDefaultValue
     public int Value => 8;
 }
 
+public readonly struct MemberConstraintValue : IConstraintMarker;
+
 public static class MemberConstraintApi
 {
+    public static MemberConstraintValue MemberValue() => default;
     public static int Struct<T>(T value) where T : struct => 1;
     public static int Enum<T>(T value) where T : System.Enum => 2;
     public static int Reference<T>(T value) where T : class => 4;
     public static T Fresh<T>() where T : class, new() => new();
+    public static int NominalStruct<T>(T value) where T : struct, IConstraintMarker => 32;
+    public static int Unmanaged<T>(T value) where T : unmanaged => 64;
+}
+
+public sealed class MemberConstraintHost
+{
+    public int Struct<T>(T value) where T : struct => 128;
+}
+
+public interface IMemberConstraintSlot
+{
+    int Reference<T>(T value) where T : class;
 }
 
 public sealed class FreshConstraintBox<T> where T : class, new()
