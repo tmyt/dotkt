@@ -236,6 +236,24 @@ enum class EnumPlanet(val mass: Int) {
     fun heavy(): Boolean = mass > 3
 }
 
+enum class EnumSecondaryState(val value: Int, val label: String = "number:$value") {
+    PRIMARY(1, "primary"),
+    NUMBER("xx", true),
+    TEXT("word"),
+    CHAINED(true),
+    DEFAULTED(value = 5L),
+    BODY("1234567", true) { override fun marker(): String = "body:$label" };
+
+    var path = "initialized"
+
+    constructor(input: String, secondary: Boolean) : this(input.length) { path += if (secondary) ":int" else ":unused" }
+    constructor(__name: String) : this(__name.length, __name) { path += ":string" }
+    constructor(__ordinal: Boolean) : this(if (__ordinal) "yes" else "no") { path += ":bool" }
+    constructor(label: String = "long", value: Long) : this(value.toInt(), label) { path += ":long" }
+
+    open fun marker(): String = "$value:$label"
+}
+
 class EnumTests {
     @TestAttribute
     fun whenOverEnum() {
@@ -352,6 +370,25 @@ class EnumTests {
         assertEquals("EARTH|MARS|JUPITER", log.joinToString("|"))
         assertTrue(EnumPlanet.EARTH == EnumPlanet.EARTH)        // True
         assertFalse(EnumPlanet.EARTH == EnumPlanet.MARS)       // False
+
+        assertEquals("1:primary", EnumSecondaryState.PRIMARY.marker())
+        assertEquals("2:number:2", EnumSecondaryState.NUMBER.marker())
+        assertEquals("4:word", EnumSecondaryState.TEXT.marker())
+        assertEquals("3:yes", EnumSecondaryState.CHAINED.marker())
+        assertEquals("5:long", EnumSecondaryState.DEFAULTED.marker())
+        assertEquals("body:number:7", EnumSecondaryState.BODY.marker())
+        assertEquals("initialized", EnumSecondaryState.PRIMARY.path)
+        assertEquals("initialized:int", EnumSecondaryState.NUMBER.path)
+        assertEquals("initialized:string", EnumSecondaryState.TEXT.path)
+        assertEquals("initialized:string:bool", EnumSecondaryState.CHAINED.path)
+        assertEquals("initialized:long", EnumSecondaryState.DEFAULTED.path)
+        assertEquals("initialized:int", EnumSecondaryState.BODY.path)
+        assertEquals("TEXT", EnumSecondaryState.TEXT.name)
+        assertEquals(2, EnumSecondaryState.TEXT.ordinal)
+        assertEquals("CHAINED", EnumSecondaryState.CHAINED.toString())
+        assertEquals(3, EnumSecondaryState.CHAINED.ordinal)
+        assertEquals(6, EnumSecondaryState.values().size)
+        assertEquals(EnumSecondaryState.BODY, EnumSecondaryState.valueOf("BODY"))
     }
 
     @TestAttribute

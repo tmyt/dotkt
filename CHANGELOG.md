@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Rich enum entries may now select secondary constructors (#484).** Every rich-enum constructor preserves the
+  frontend-selected delegation target after the synthesized name and ordinal parameters, including constructor
+  chaining, default arguments, secondary-constructor bodies, and entries with anonymous class bodies.
+
 - **Rich enums now preserve their implemented Kotlin interfaces (#479).** Constructed interface supertypes remain
   explicit BIR facts, so rich-enum methods and properties fill their selected slots and inherited default methods and
   property accessors remain available through interface-typed calls.
