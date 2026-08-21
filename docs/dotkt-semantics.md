@@ -2173,6 +2173,8 @@ lowering.
 A spelling difference that lowers to the same CLR type (`void` / `System.Void`, nullability-oblivious wrappers, or an
 exact alias) is not covariance and does not allocate a return bridge. Other slot passes retain ownership of their own
 representation seams, and ilemit only emits the declarations and MethodImpl descriptors bir2cir has already stated.
+Referenced suspend declarations are not routed through this bridge path until their logical result is carried
+explicitly (#511); bir2cir does not reconstruct that missing Kotlin fact from the physical `Task<T>` signature.
 
 ### Two declarations that erase to one signature are REFUSED, never renamed
 

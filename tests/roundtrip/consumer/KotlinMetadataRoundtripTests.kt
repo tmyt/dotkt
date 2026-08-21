@@ -64,6 +64,8 @@ import roundtrip.covariantreference.ReferencedCovariantRoot
 import roundtrip.covariantreference.ReferencedCovariantSlot
 import roundtrip.covariantreference.ReferencedCovariantValue
 import roundtrip.covariantreference.ReferencedNarrowCovariantValue
+import roundtrip.covariantreference.ReferencedConstrainedCovariantRoot
+import roundtrip.covariantreference.ReferencedSuspendCovariantControl
 import roundtrip.pkg.Vec
 import roundtrip.pkg.Dir
 import roundtrip.pkg.greet as pkgGreet
@@ -171,6 +173,9 @@ private class CrossModuleCovariantImplementation : ReferencedCovariantSlot {
 
     override fun make(): ReferencedNarrowCovariantValue = ReferencedNarrowCovariantValue(52)
 
+    override fun makeWith(seed: Int): ReferencedNarrowCovariantValue =
+        ReferencedNarrowCovariantValue(seed)
+
     override fun <X> makeFrom(seed: X): ReferencedNarrowCovariantValue =
         ReferencedNarrowCovariantValue(53)
 }
@@ -181,7 +186,32 @@ private class CrossModuleNothingCovariantImplementation : ReferencedCovariantSlo
 
     override fun make(): Nothing = throw IllegalStateException("referenced-make")
 
+    override fun makeWith(seed: Int): Nothing = throw IllegalStateException("referenced-parameter")
+
     override fun <X> makeFrom(seed: X): Nothing = throw IllegalStateException("referenced-generic")
+}
+
+private interface CrossModuleAbstractCovariantSlot : ReferencedCovariantSlot {
+    override fun make(): ReferencedNarrowCovariantValue
+}
+
+private class CrossModuleAbstractCovariantImplementation : CrossModuleAbstractCovariantSlot {
+    override val item: ReferencedNarrowCovariantValue
+        get() = ReferencedNarrowCovariantValue(54)
+    override fun make(): ReferencedNarrowCovariantValue = ReferencedNarrowCovariantValue(55)
+    override fun makeWith(seed: Int): ReferencedNarrowCovariantValue = ReferencedNarrowCovariantValue(seed)
+    override fun <X> makeFrom(seed: X): ReferencedNarrowCovariantValue =
+        ReferencedNarrowCovariantValue(56)
+}
+
+private class CrossModuleConstrainedCovariantImplementation<A, B : ReferencedCovariantValue> :
+    ReferencedConstrainedCovariantRoot<B, ReferencedCovariantValue> {
+    override fun <X : B> makeConstrained(seed: X): ReferencedNarrowCovariantValue =
+        ReferencedNarrowCovariantValue(seed.value + 1)
+}
+
+private class CrossModuleReferencedSuspendControl : ReferencedSuspendCovariantControl {
+    override suspend fun load(): ReferencedCovariantValue = ReferencedCovariantValue(57)
 }
 
 class KotlinApiShapeRoundtripTests {
@@ -482,10 +512,25 @@ class KotlinApiShapeRoundtripTests {
         val slot: ReferencedCovariantRoot<ReferencedCovariantValue> = implementation
         ClassicAssert.AreEqual(51, slot.item.value)
         ClassicAssert.AreEqual(52, slot.make().value)
+        ClassicAssert.AreEqual(54, slot.makeWith(54).value)
         ClassicAssert.AreEqual(53, slot.makeFrom("seed").value)
         ClassicAssert.AreEqual(51, implementation.item.value)
         ClassicAssert.AreEqual(52, implementation.make().value)
+        ClassicAssert.AreEqual(55, implementation.makeWith(55).value)
         ClassicAssert.AreEqual(53, implementation.makeFrom(1).value)
+
+        val abstractSlot: ReferencedCovariantRoot<ReferencedCovariantValue> =
+            CrossModuleAbstractCovariantImplementation()
+        ClassicAssert.AreEqual(55, abstractSlot.make().value)
+
+        val constrained = CrossModuleConstrainedCovariantImplementation<Any,
+            ReferencedNarrowCovariantValue>()
+        val constrainedSlot: ReferencedConstrainedCovariantRoot<ReferencedNarrowCovariantValue,
+            ReferencedCovariantValue> = constrained
+        ClassicAssert.AreEqual(59,
+            constrainedSlot.makeConstrained(ReferencedNarrowCovariantValue(58)).value)
+
+        ClassicAssert.IsNotNull(CrossModuleReferencedSuspendControl())
 
         val nothing: ReferencedCovariantRoot<ReferencedCovariantValue> =
             CrossModuleNothingCovariantImplementation()
@@ -493,6 +538,8 @@ class KotlinApiShapeRoundtripTests {
             try { nothing.item.value.toString() } catch (e: IllegalStateException) { e.message })
         ClassicAssert.AreEqual("referenced-make",
             try { nothing.make().value.toString() } catch (e: IllegalStateException) { e.message })
+        ClassicAssert.AreEqual("referenced-parameter",
+            try { nothing.makeWith(1).value.toString() } catch (e: IllegalStateException) { e.message })
         ClassicAssert.AreEqual("referenced-generic",
             try { nothing.makeFrom(1).value.toString() } catch (e: IllegalStateException) { e.message })
     }

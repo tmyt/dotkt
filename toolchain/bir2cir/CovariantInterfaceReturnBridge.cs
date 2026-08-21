@@ -96,7 +96,8 @@ static class CovariantInterfaceReturnBridge
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
 
                 var candidates = methods.OfType<JsonObject>().Where(m =>
-                    !Bool(m["static"]) && !KotlinPropertyAccessors.IsPhysicalSlotBridge(m)
+                    !Bool(m["static"]) && !Bool(m["abstract"])
+                    && !KotlinPropertyAccessors.IsPhysicalSlotBridge(m)
                     && SameIdentity(m, name, propertyName, accessorKind)
                     && ((m["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
                     && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
@@ -123,7 +124,9 @@ static class CovariantInterfaceReturnBridge
                 var key = name + "`" + methodArity + "<"
                           + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
                               slot["typeParams"] as JsonArray, ifaceArgs)
-                          + ">(" + string.Join(",", slotParams.Select(TypeKey)) + ")->" + TypeKey(slotRet);
+                          + ">(" + string.Join(",", slotParams.Select(type =>
+                              ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->"
+                          + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
                     bridge = BuildBridge(cls, implementation, slotParams, slotRet,
@@ -168,7 +171,12 @@ static class CovariantInterfaceReturnBridge
         var ownArgs = ClassOwnArgs(cls);
         foreach (var implementation in methods.OfType<JsonObject>().ToList())
         {
-            if (Bool(implementation["static"]) || KotlinPropertyAccessors.IsPhysicalSlotBridge(implementation)
+            // A referenced suspend MethodDef exposes the physical Task ABI but not its logical Kotlin result. Until
+            // that fact is carried explicitly (#511), leave suspend declarations to suspend lowering; never infer the
+            // missing semantic result from Task<T> and accidentally classify an ordinary override as covariance.
+            if (Bool(implementation["static"]) || Bool(implementation["abstract"])
+                || IsSuspend(implementation)
+                || KotlinPropertyAccessors.IsPhysicalSlotBridge(implementation)
                 || Str(implementation["name"]) is not string implementationName
                 || implementation["params"] is not JsonArray implementationParamNodes
                 || implementation["overrides"] is not JsonArray overrides
@@ -199,7 +207,8 @@ static class CovariantInterfaceReturnBridge
                 if (accessorKind == "set") continue; // a setter's Unit return cannot be covariantly narrowed
                 if (!refs.TrySelectedOverrideDeclaration(semanticOwner.Name, sourceMember, accessorKind,
                         methodArity, implementationParams, ownerArgs,
-                        implementation["typeParams"] as JsonArray, out var declaration))
+                        implementation["typeParams"] as JsonArray, ownArgs,
+                        selectedSuspend: false, out var declaration))
                     continue;
 
                 var slotParams = declaration.Parameters
@@ -209,7 +218,7 @@ static class CovariantInterfaceReturnBridge
                 var slotRet = SupertypeGraph.SubstOwnerTvs(
                     NullableGenericErasure.EraseNullableTv(declaration.Return, isValue), ownerArgs);
                 if (slotParams.Any(type => type == null) || slotRet == null
-                    || !ParamsEqual(implementation, slotParams, ownArgs))
+                    || !ParamsPhysicallyEqual(implementation, slotParams, ownArgs, refs, isValue))
                     continue;
                 var implementationRet = SubstOwnerTvs(implementationRet0, ownArgs);
                 if (implementationRet == slotRet
@@ -394,6 +403,23 @@ static class CovariantInterfaceReturnBridge
         return true;
     }
 
+    static bool ParamsPhysicallyEqual(JsonObject method, TypeNode[] slotParams, TypeNode[] ownerArgs,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue)
+    {
+        if (method["params"] is not JsonArray ps || ps.Count != slotParams.Length) return false;
+        for (var i = 0; i < ps.Count; i++)
+        {
+            var parameter = TypeJson.Read((ps[i] as JsonObject)?["type"]);
+            if (parameter == null) return false;
+            var implementation = SubstOwnerTvs(parameter, ownerArgs);
+            if (implementation != slotParams[i]
+                && !BirTypeLowering.SamePhysicalSlotType(slotParams[i], implementation,
+                    refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: false))
+                return false;
+        }
+        return true;
+    }
+
     static bool SameIdentity(JsonObject method, string physicalName, string propertyName, string accessorKind) =>
         propertyName != null
             ? KotlinPropertyAccessors.TryIdentity(method, out var candidateName, out var candidateKind)
@@ -431,5 +457,7 @@ static class CovariantInterfaceReturnBridge
     static string TypeKey(TypeNode type) => TypeJson.Write(type).ToJsonString();
     static string SafeName(string name) => new(name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
     static bool Bool(JsonNode node) => node is JsonValue v && v.TryGetValue<bool>(out var b) && b;
+    static bool IsSuspend(JsonObject method) =>
+        method["mods"] is JsonObject mods && Bool(mods["suspend"]);
     static string Str(JsonNode node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }

@@ -2437,7 +2437,8 @@ sealed partial class ReferenceMetadataIndex
     // intermediate interface), and each such CLR MethodImpl must name that exact declaring interface.
     public bool TrySelectedOverrideDeclaration(string ownerFqn, string sourceMember, string accessorKind,
         int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments,
-        JsonArray selectedTypeParams, out ReferencedMethodDeclaration declaration)
+        JsonArray selectedTypeParams, TypeNode[] implementationOwnerTypeArguments,
+        bool selectedSuspend, out ReferencedMethodDeclaration declaration)
     {
         declaration = null;
         if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
@@ -2447,8 +2448,10 @@ sealed partial class ReferenceMetadataIndex
                         && (member.SourceMethodName ?? member.Name) == sourceMember
                     : member.SourcePropertyName == sourceMember && member.AccessorKind == accessorKind)
                 && member.MethodArity == methodArity
+                && member.Suspend == selectedSuspend
                 && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                    member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
+                    member.MethodTypeParams, selectedTypeParams,
+                    ownerTypeArguments, implementationOwnerTypeArguments)
                 && AccessorSignatureMatches(member, signature, ownerTypeArguments)
                 && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
             .ToList();
