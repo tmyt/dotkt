@@ -79,6 +79,8 @@ class NestedArityTests {
         val nullableSlot = NullableSlot<NestedSlotEnum>()
         nullableSlot.Value = NestedSlotEnum.VALUE
         assertEquals(NestedSlotEnum.VALUE, nullableSlot.Value!!)
+        nullableSlot.Value = null
+        assertEquals(true, nullableSlot.Value == null)
     }
 
     @TestAttribute

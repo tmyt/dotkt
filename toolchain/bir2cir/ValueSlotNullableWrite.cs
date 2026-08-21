@@ -90,15 +90,16 @@ static class ValueSlotNullableWrite
         if (name == null) return;
         var src = StaticType.Surface(value, scope);
         var slotType = MemberType(netType, name);
-        var target = ConcreteValueSlot(slotType, ownerFqn.Args, src);
-        if (target == null) return;
-
-        // A literal `null` into a null-less value slot -> loud emit-time error (no valid IL; a silent default(V) would
-        // mask a user bug). Recognized by the source's `nullable(kotlin.Nothing)` static type or a raw null const.
-        if (target is TypeNode.Fqn bare && _isValue(bare) && IsNullSource(value, src))
+        // Literal null carries no concrete value Fqn from which ConcreteValueSlot can recover a reflected bare
+        // slot's Kotlin spelling. Classify that physical CLR shape directly, before target inference: a concrete
+        // value type (or a generic parameter closed by the owner to a bare value type) has no null representation.
+        // A genuine Nullable<V> slot remains null-capable and is deliberately excluded.
+        if (IsNullSource(value, src) && IsBareValueSlot(slotType, ownerFqn.Args))
             throw new InvalidOperationException(
                 $"bir2cir (#11): cannot assign `null` to the value-type platform slot `{ownerFqn.Name}.{name}` — a CLR "
                 + "value type has no null representation. Use an explicit Kotlin `Int?`-typed property for nullable value storage.");
+        var target = ConcreteValueSlot(slotType, ownerFqn.Args, src);
+        if (target == null) return;
         if (NullableTvErasureCallRealign.CoerceForFixedSlot(value, src, target, _isValue) is JsonNode coerced)
             node["value"] = coerced;
     }
@@ -183,6 +184,25 @@ static class ValueSlotNullableWrite
                 case TypeNode.Oblivious oblivious: surface = oblivious.Of; break;
                 default: return surface;
             }
+    }
+
+    // Whether the reflected member's instantiated CLR slot is a non-Nullable value type. Reflection exposes a
+    // concrete/open struct directly through IsValueType; a type-generic slot needs owner-argument substitution.
+    // Oblivious annotates a platform view only and does not add a physical Nullable<V> wrapper.
+    static bool IsBareValueSlot(Type slotType, TypeNode[] ownerArgs)
+    {
+        if (slotType == null) return false;
+        if (slotType.IsGenericParameter)
+        {
+            var pos = slotType.GenericParameterPosition;
+            if (ownerArgs == null || pos < 0 || pos >= ownerArgs.Length) return false;
+            var arg = ownerArgs[pos];
+            while (arg is TypeNode.Oblivious oblivious) arg = oblivious.Of;
+            return arg is TypeNode.Fqn fqn && _isValue(fqn);
+        }
+        if (slotType.IsGenericType && slotType.GetGenericTypeDefinition().FullName == "System.Nullable`1")
+            return false;
+        return slotType.IsValueType;
     }
 
     // A literal-null source: the frontend types `= null` as `nullable(kotlin.Nothing)`, and the value node is a `const`

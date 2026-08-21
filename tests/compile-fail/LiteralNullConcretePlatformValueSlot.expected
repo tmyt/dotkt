@@ -1,0 +1,3 @@
+bir2cir (#11): cannot assign `null` to the value-type platform slot
+LiteralNullConcretePlatformValueSlotFixture.PlatformIntBox.Value
+value type has no null representation
