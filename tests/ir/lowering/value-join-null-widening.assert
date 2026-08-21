@@ -60,9 +60,16 @@
 # A CONSTRUCTED struct join is the witness for that half: `Nullable<ArraySegment<string>>` is as legal a slot as
 # `Nullable<int32>`, and an oracle that declines on the presence of `args` consumes the fact and leaves the join bare
 # — the same defect this family already had at the array-element oracle site (#86 D2). Both halves are asserted: the
-# join carries the widened CONSTRUCTED type, and no `cond` is left holding the bare one.
-+"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]}},"cond":{"k":"local","name":"a"},"then":{"k":"local","name":"s"}
+# join carries the widened CONSTRUCTED type, its bare struct branch is explicitly wrapped to inhabit that physical
+# Nullable<V> slot, and no `cond` is left holding the bare one.
++"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]}},"cond":{"k":"local","name":"a"},"then":{"k":"nullableWrap","elem":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]},"e":{"k":"local","name":"s"}
 -"k":"cond","type":{"t":"fqn","name":"System.ArraySegment"
+
+# A top-level oblivious wrapper is a platform annotation that BirTypeLowering erases, not a physical container.
+# Crossing between that V! surface and a fixed Nullable<V>/V! return slot therefore performs the same explicit
+# construction/extraction as the unwrapped V spelling in either direction.
++"k":"nullableWrap","elem":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]},"e":{"k":"local","name":"platformValue"}
++"k":"nullableValue","elem":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]},"e":{"k":"local","name":"nullableValue"}
 
 # The fact is a producer-to-consumer hint and is CONSUMED: no CIR node may still carry it.
 -"joinNullBranch"

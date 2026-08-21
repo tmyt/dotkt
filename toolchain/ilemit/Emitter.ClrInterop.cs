@@ -77,11 +77,11 @@ sealed partial class Emitter
         // node lands on an already-unwrapped value. `stloc` of a raw `elem` into a `Nullable<elem>` local would
         // REINTERPRET its bytes as the {HasValue,value} struct layout -> `.Value` reads garbage (a Char 'x' -> 0).
         // The stack already holds `elem` -- nothing to do.
-        if (src == elem) return elem;
+        if (SameEmittedType(src, elem)) return elem;
         // Any source that is neither the unwrapped `elem` nor the `Nullable<elem>` we expect would be
         // silently byte-reinterpreted by the `stloc` below. Fail loud so a future frontend shape surfaces
         // at emit time rather than as another garbage value.
-        if (src != null && src != nt)
+        if (src != null && !SameEmittedType(src, nt))
             throw new NotSupportedException($"nullableValue: source {src} is neither {elem} nor {nt}");
         var loc = _il.DeclareLocal(nt);
         _il.Emit(OpCodes.Stloc, loc);
@@ -89,6 +89,15 @@ sealed partial class Emitter
         EmitMethod(_il, OpCodes.Call, RequiredRef<MethodInfo>(e, "valueRef", "a nullable conversion"));
         return elem;
     }
+
+    // Persisted/local signature views may be distinct System.Type wrappers for the same emitted type (notably a
+    // constructed Nullable<local enum>). Reference equality therefore is not a sufficient validation. The member-ref
+    // provenance identity retains assembly identity and recursively retains generic arguments, so unlike FullName it
+    // still refuses same-named types supplied by different referenced assemblies.
+    static bool SameEmittedType(Type left, Type right) =>
+        ReferenceEquals(left, right)
+        || left != null && right != null
+            && string.Equals(ProvenanceTypeIdentity(left), ProvenanceTypeIdentity(right), StringComparison.Ordinal);
 
     Type EmitNativeClrTypeOf(JsonElement e)
     {

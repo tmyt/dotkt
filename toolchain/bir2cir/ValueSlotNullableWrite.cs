@@ -5,30 +5,33 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// VALUE-TYPE PLATFORM SLOT WRITE COERCION (#11): the WRITE twin of #8. A reference-KLIB-projected value-type platform
-// property/field — e.g. `System.Threading.ThreadLocal<Int>.Value`, whose setter slot is a BARE `int32` (T reified to a
-// value type, §9a-bis / clr-all-type-args-reified) — can, under platform-type laxity, be assigned a NULLABLE or `null`
-// source (`ti.Value = someIntQ`, `ti.Value = null`). kotc is .NET-agnostic and emits the plain nullable source; the
-// slot vs source type mismatch (`Nullable<Int32>` value flowing into a bare `int32` setter) is a Kotlin<->CLR relation
-// fact, so the coercion belongs HERE, not in kotc/ilemit:
+// VALUE-TYPE PLATFORM SLOT ACCESS COERCION (#11/#501): a reference-KLIB-projected property/field
+// may expose either a bare CLR value slot or a structural Nullable<V> slot. Kotlin platform flexibility and smart
+// casts can feed the opposite representation into it. kotc is .NET-agnostic and emits the source representation; the
+// slot vs source mismatch is a Kotlin<->CLR relation fact, so the coercion belongs HERE, not in kotc/ilemit:
 //   - a `Nullable<V>` source (a genuine Kotlin `Int?`) into a bare value slot -> unwrap it via the existing
 //     `nullableValue` node (ilemit emits `Nullable<V>.get_Value()` — which throws InvalidOperationException at runtime
 //     if the source is dynamically `null`, the faithful "no value to store" outcome for a null-less value slot).
 //   - a literal `null` source into a bare value slot -> a LOUD emit-time error. A CLR value type has no null
 //     representation, so this is a user-code bug; a clear diagnostic beats a silent `default(V)` (0).
-// Only a BARE value slot triggers coercion: a genuine `Nullable<V>` .NET property (a real `int?` slot) or a
-// `ThreadLocal<Int?>` (owner-arg `Int?`) keeps the source verbatim, and a reference slot is untouched (a `String!`
-// platform reference has real null). Runs right AFTER NetInteropBinding (so the `clrPropSet` nodes exist) and BEFORE
+//   - a bare V source into a structural Nullable<V> slot -> construct Nullable<V> explicitly.
+// On reads, stamp that same reflected physical slot onto `ret`/`sty`; a projected `T!` can physically be Nullable<T>
+// when the CLR declaration is `T? where T : struct`, and a bare frontend stamp would otherwise corrupt the receiving
+// local before any consumer can unwrap it. Reference slots are untouched (a `String!` platform reference has real
+// null). Runs right AFTER NetInteropBinding
+// (so the `clrPropSet` nodes exist) and BEFORE
 // BirTypeLowering (owner args + the `nullableValue` elem are still pure-Kotlin `kotlin.*`, lowered downstream exactly
 // as PrimitiveOperatorLowering's `nullableValue` is). BirScope-tracking walk (mirrors PrimitiveOperatorLowering) so a
 // `{local q}` source resolves its declared static type. Non-ref build only (clrPropSet is a NetInteropBinding product).
 static class ValueSlotNullableWrite
 {
     static ReferenceMetadataIndex _refs;
+    static ValueTypeOracle _isValue;
 
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         _refs = refs;
+        _isValue = isValue;
         switch (root)
         {
             case JsonObject o: WalkObject(o, BirScope.Empty); break;
@@ -65,10 +68,14 @@ static class ValueSlotNullableWrite
                 case JsonObject co: WalkObject(co, child); break;
                 case JsonArray ca: WalkArray(ca, child); break;
             }
-        if ((obj["k"] as JsonValue)?.GetValue<string>() == "clrPropSet") Coerce(obj, child);
+        switch ((obj["k"] as JsonValue)?.GetValue<string>())
+        {
+            case "clrPropSet": CoerceWrite(obj, child); break;
+            case "clrPropGet": StampRead(obj, child); break;
+        }
     }
 
-    static void Coerce(JsonObject node, BirScope scope)
+    static void CoerceWrite(JsonObject node, BirScope scope)
     {
         var value = node["value"];
         if (value == null) return;
@@ -81,25 +88,34 @@ static class ValueSlotNullableWrite
         if (netType == null) return;
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         if (name == null) return;
-        var slotType = MemberType(netType, name);
-        if (!SlotIsBareValue(slotType, ownerFqn.Args)) return;
-
-        // A literal `null` into a null-less value slot -> loud emit-time error (no valid IL; a silent default(V) would
-        // mask a user bug). Recognized by the source's `nullable(kotlin.Nothing)` static type or a raw null const.
         var src = StaticType.Surface(value, scope);
-        if (IsNullSource(value, src))
+        var slotType = MemberType(netType, name);
+        // Literal null carries no concrete value Fqn from which ConcreteValueSlot can recover a reflected bare
+        // slot's Kotlin spelling. Classify that physical CLR shape directly, before target inference: a concrete
+        // value type (or a generic parameter closed by the owner to a bare value type) has no null representation.
+        // A genuine Nullable<V> slot remains null-capable and is deliberately excluded.
+        if (IsNullSource(value, src) && IsBareValueSlot(slotType, ownerFqn.Args))
             throw new InvalidOperationException(
                 $"bir2cir (#11): cannot assign `null` to the value-type platform slot `{ownerFqn.Name}.{name}` — a CLR "
                 + "value type has no null representation. Use an explicit Kotlin `Int?`-typed property for nullable value storage.");
+        var target = ConcreteValueSlot(slotType, ownerFqn.Args, src);
+        if (target == null) return;
+        if (NullableTvErasureCallRealign.CoerceForFixedSlot(value, src, target, _isValue) is JsonNode coerced)
+            node["value"] = coerced;
+    }
 
-        // A genuine `Nullable<V>` source (Kotlin `Int?`) -> unwrap to the bare `V` the slot expects.
-        if (src is TypeNode.Nullable ns && ns.Of is TypeNode.Fqn vf && _refs.IsValueType(vf))
-            node["value"] = new JsonObject
-            {
-                ["k"] = "nullableValue",
-                ["elem"] = TypeNode.Write(ns.Of),
-                ["e"] = value.DeepClone(),
-            };
+    static void StampRead(JsonObject node, BirScope scope)
+    {
+        var ownerFqn = UnwrapOwnerFqn(node["type"]);
+        if (ownerFqn == null) return;
+        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
+        var name = (node["name"] as JsonValue)?.GetValue<string>();
+        if (netType == null || name == null) return;
+        var surface = StaticType.Surface(node, scope);
+        var target = ConcreteValueSlot(MemberType(netType, name), ownerFqn.Args, surface);
+        if (target == null) return;
+        node["ret"] = TypeJson.Write(target);
+        if (node["sty"] != null) node["sty"] = TypeJson.Write(target);
     }
 
     // Peel Nullable/Oblivious/ByRef wrappers off the clrPropSet owner slot to reach the underlying .NET Fqn (name +
@@ -119,30 +135,73 @@ static class ValueSlotNullableWrite
             }
     }
 
-    // True iff the setter slot, after generic instantiation with the owner's type-args, is a BARE (non-Nullable) value
-    // type — the only case that needs a nullable/null source coerced. A generic-parameter slot maps to the owner arg at
-    // its position (`ThreadLocal<T>.Value` param `T` -> owner arg 0); a `Nullable<...>` owner arg (`ThreadLocal<Int?>`)
-    // or a concrete `Nullable<>` member type is a genuine nullable-value slot (keep the source verbatim); a concrete
-    // struct is bare-value; a reference member is untouched.
-    static bool SlotIsBareValue(Type slotType, TypeNode[] ownerArgs)
+    // The concrete structural value slot after owner substitution. Reflection supplies the declaration shape, while
+    // BIR's owner args supply local/emitted types Reflection cannot load yet. For a concrete reflected Nullable<V>,
+    // Kotlin has already type-checked the assignment; the source's exact value Fqn is therefore the authoritative
+    // pre-lowering spelling of V (including nested/generic identity).
+    static TypeNode ConcreteValueSlot(Type slotType, TypeNode[] ownerArgs, TypeNode src)
+    {
+        if (slotType == null) return null;
+        if (slotType.IsGenericParameter)
+        {
+            var pos = slotType.GenericParameterPosition;
+            if (ownerArgs == null || pos < 0 || pos >= ownerArgs.Length) return null;
+            return ownerArgs[pos] switch
+            {
+                TypeNode.Fqn direct when _isValue(direct) => direct,
+                TypeNode.Nullable { Of: TypeNode.Fqn nullableElem } nullable
+                    when _isValue(nullableElem) => nullable,
+                _ => null,
+            };
+        }
+        if (slotType.IsGenericType && slotType.GetGenericTypeDefinition().FullName == "System.Nullable`1")
+        {
+            var reflectedElem = slotType.GetGenericArguments()[0];
+            TypeNode elem = null;
+            if (reflectedElem.IsGenericParameter)
+            {
+                var pos = reflectedElem.GenericParameterPosition;
+                if (ownerArgs != null && pos >= 0 && pos < ownerArgs.Length)
+                    elem = ownerArgs[pos] is TypeNode.Nullable n ? n.Of : ownerArgs[pos];
+            }
+            elem ??= UnwrapSurface(src);
+            return elem is TypeNode.Fqn concreteElem && _isValue(concreteElem)
+                ? new TypeNode.Nullable(concreteElem) : null;
+        }
+        // For a bare reflected value slot, the source/surface supplies the exact pre-lowering V spelling. Platform
+        // (`oblivious`) and nullable wrappers annotate the Kotlin view but do not change this physical bare slot.
+        var bareSurface = UnwrapSurface(src);
+        if (slotType.IsValueType && bareSurface is TypeNode.Fqn bareElem && _isValue(bareElem)) return bareElem;
+        return null;
+    }
+
+    static TypeNode UnwrapSurface(TypeNode surface)
+    {
+        while (true)
+            switch (surface)
+            {
+                case TypeNode.Nullable nullable: surface = nullable.Of; break;
+                case TypeNode.Oblivious oblivious: surface = oblivious.Of; break;
+                default: return surface;
+            }
+    }
+
+    // Whether the reflected member's instantiated CLR slot is a non-Nullable value type. Reflection exposes a
+    // concrete/open struct directly through IsValueType; a type-generic slot needs owner-argument substitution.
+    // Oblivious annotates a platform view only and does not add a physical Nullable<V> wrapper.
+    static bool IsBareValueSlot(Type slotType, TypeNode[] ownerArgs)
     {
         if (slotType == null) return false;
         if (slotType.IsGenericParameter)
         {
-            // GenericParameterPosition indexes the DECLARING type's params, mapped against THIS owner's args. Exact for
-            // a member declared on the owner itself (`ThreadLocal<T>.Value`); an inherited member whose param comes from
-            // a base with a different arity would map to the wrong arg — but that only ever mis-decides toward a no-op /
-            // a loud ilemit mismatch, never a silent miscompile (the `nullableValue` guard fails loud on a bad source).
             var pos = slotType.GenericParameterPosition;
             if (ownerArgs == null || pos < 0 || pos >= ownerArgs.Length) return false;
-            return ownerArgs[pos] switch
-            {
-                TypeNode.Nullable => false,                              // ThreadLocal<Int?> -> Nullable<Int32> slot
-                TypeNode.Fqn af => _refs.IsValueType(af),               // ThreadLocal<Int> -> bare int32 slot
-                _ => false,
-            };
+            var arg = ownerArgs[pos];
+            while (arg is TypeNode.Oblivious oblivious) arg = oblivious.Of;
+            return arg is TypeNode.Fqn fqn && _isValue(fqn);
         }
-        if (slotType.IsGenericType && slotType.GetGenericTypeDefinition().FullName == "System.Nullable`1") return false;
+        if (slotType.IsGenericType && slotType.GetGenericTypeDefinition().FullName == "System.Nullable`1")
+            return false;
         return slotType.IsValueType;
     }
 

@@ -110,6 +110,16 @@ static partial class NullableTvErasureCallRealign
         // exactly that pair: index only the generic half and every `coerceIn` call gets the erased parameter vector.)
         var fileClass = topLevel ? Str(o["fileClass"]) : null;
         if (fileClass is { Length: > 0 }) idx.FileClasses.Add(fileClass);
+        if (fileClass is { Length: > 0 })
+        {
+            // Top-level property backing fields live on the file facade and `staticFieldSet` addresses that owner.
+            // They are fixed declaration slots exactly like fields on an ordinary type, so retain them on the same
+            // owner-index axis instead of limiting Slots to entries nested under `types`.
+            if (!idx.Slots.TryGetValue(fileClass, out var fileSlots))
+                idx.Slots[fileClass] = fileSlots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+            CollectSlots(o["fields"], fileSlots);
+            CollectSlots(o["properties"], fileSlots);
+        }
         if (topLevel && o["methods"] is JsonArray topMethods)
             foreach (var m in topMethods)
                 if (m is JsonObject mo && Str(mo["name"]) is string mn && ReadSig(mo) is DeclSig sig)
@@ -400,6 +410,8 @@ static partial class NullableTvErasureCallRealign
                 return EvalCallInstance(obj, ctx);
             case string ck when IsClrBoundKind(ck):
                 return EvalClrCall(obj, ctx);
+            case string mk when ClrBoundNode.IsMemberAccess(mk):
+                return EvalClrMemberAccess(obj, ctx);
             case "delegateInvoke":
                 // A `(…) -> R` invocation is a call whose DECLARATION is the function type itself: the erasure has
                 // already given `funcType` its physical components, so each argument fills the slot named there and
@@ -413,12 +425,15 @@ static partial class NullableTvErasureCallRealign
                 EvalSetLocal(obj, ctx);
                 return null;
             case "setField":
+            case "setFieldExpr":
+            case "staticFieldSet":
                 EvalSetField(obj, ctx);
                 return null;
             case "arraySet":
                 EvalArraySet(obj, ctx);
                 return null;
             case "return":
+            case "returnExpr":
                 EvalReturn(obj, ctx);
                 return null;
             case "cond":
@@ -490,25 +505,40 @@ static partial class NullableTvErasureCallRealign
         var name = Str(obj["name"]);
         var declType = TypeJson.Read(obj["type"]);
         if (name == null) return;
-        if (declType != null && initType != null && !initType.Equals(declType) && IsObjectErasureOf(initType, declType))
+        if (declType != null && initType != null && !initType.Equals(declType))
         {
+            // A platform (`V!`) local inherits its PHYSICAL representation from the reflected value slot that
+            // initialized it. In particular `T? where T : struct` is Nullable<V>, even though dll2klib/Kotlin spell
+            // the flexible surface as oblivious(V). Retype this carrier instead of unwrapping at the store: the
+            // subsequent Kotlin `!!`/safe-call must still observe HasValue and produce Kotlin's null behavior.
+            if (declType is TypeNode.Oblivious platform
+                && (initType.Equals(platform.Of)
+                    || initType is TypeNode.Nullable nullable && nullable.Of.Equals(platform.Of)))
+            {
+                obj["type"] = TypeJson.Write(initType);
+                env[name] = initType;
+                return;
+            }
+            if (obj["init"] is JsonObject initNode
+                && CoerceForTarget(initNode, initType, declType) is JsonNode coercedInit)
+            {
+                obj["init"] = coercedInit;
+                env[name] = declType;
+                return;
+            }
+            if (!IsObjectErasureOf(initType, declType))
+            {
+                env[name] = declType;
+                return;
+            }
             // A DIFFERENCE THE CLR CAN CONVERT keeps the declared slot and wraps the init: the whole value erased to a
             // TOP-LEVEL `object` (`val x: Int? = r.v`), reconciled by `unbox.any` for a value declared type and
             // `castclass` for a reference one. Anything else is retyped below.
-            if (obj["init"] is JsonObject initNode
-                && CastForTarget(initNode, initType, declType) is JsonNode wrappedInit)
-            {
-                obj["init"] = wrappedInit;
-                env[name] = declType;
-            }
-            else
-            {
-                // The erasure sits INSIDE a constructed-generic arg / array elem (e.g. `val r: Ref<Int?> =
-                // b.a[0]` -> `Ref<object>`). Ref<object> and Ref<Nullable<int32>> are irreconcilable invariant
-                // reified generics — retype the slot to the erased form and keep propagating.
-                obj["type"] = TypeJson.Write(initType);
-                env[name] = initType;
-            }
+            // The erasure sits INSIDE a constructed-generic arg / array elem (e.g. `val r: Ref<Int?> =
+            // b.a[0]` -> `Ref<object>`). Ref<object> and Ref<Nullable<int32>> are irreconcilable invariant
+            // reified generics — retype the slot to the erased form and keep propagating.
+            obj["type"] = TypeJson.Write(initType);
+            env[name] = initType;
             return;
         }
         env[name] = declType ?? initType;
@@ -536,22 +566,11 @@ static partial class NullableTvErasureCallRealign
             && IsObjectErasureOf(owner, stampedOwner))
             obj["ownerType"] = TypeJson.Write(owner);
 
-        // THE RECEIVER IS A USE POSITION TOO. A member call whose receiver flowed out of the erasure as a bare
-        // `object` — `t!!.tag()` on a `t: T?`, whose null-check temp is the erased slot — must narrow to the
-        // member's own owner before dispatch: `callvirt Tagged::tag` on an `object` is not verifiable IL, and at a
-        // value instantiation the narrowing is the `unbox.any` that produces a callable receiver at all. Fires only
-        // for a bare-`object` receiver against a non-object owner, which is ill-typed however it arose.
-        if (erasedRecv && obj["recv"] is JsonObject recvNode
-            && owner is not TypeNode.Fqn { Name: "object" or "System.Object" or "kotlin.Any", Args: null }
-            && !(Str(recvNode["k"]) == "cast" && TypeJson.Read(recvNode["type"]) is TypeNode rc && rc.Equals(owner)))
-        {
-            obj["recv"] = new JsonObject
-            {
-                ["k"] = "cast",
-                ["type"] = TypeJson.Write(owner),
-                ["e"] = recvNode.DeepClone(),
-            };
-        }
+        // THE RECEIVER IS A USE POSITION TOO. Reconcile the flowed value with the member's bare owner: an erased
+        // object narrows through a cast/unbox, while a proven-present Nullable<V> reads V before value dispatch.
+        if (obj["recv"] is JsonObject recvNode
+            && CoerceForTarget(recvNode, recvType, owner) is JsonNode coercedReceiver)
+            obj["recv"] = coercedReceiver;
 
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         var argCount = (obj["args"] as JsonArray)?.Count ?? 0;

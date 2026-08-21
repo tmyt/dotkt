@@ -717,6 +717,96 @@
           }
         }
       ]
+    },
+    {
+      "name": "platformStructIntoNullableReturn",
+      "static": true,
+      "vis": "public",
+      "params": [
+        {
+          "name": "platformValue",
+          "type": {
+            "t": "oblivious",
+            "of": {
+              "t": "fqn",
+              "name": "System.ArraySegment",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "kotlin.String"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ret": {
+        "t": "nullable",
+        "of": {
+          "t": "fqn",
+          "name": "System.ArraySegment",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.String"
+            }
+          ]
+        }
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "local",
+            "name": "platformValue"
+          }
+        }
+      ]
+    },
+    {
+      "name": "nullableStructIntoPlatformReturn",
+      "static": true,
+      "vis": "public",
+      "params": [
+        {
+          "name": "nullableValue",
+          "type": {
+            "t": "nullable",
+            "of": {
+              "t": "fqn",
+              "name": "System.ArraySegment",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "kotlin.String"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ret": {
+        "t": "oblivious",
+        "of": {
+          "t": "fqn",
+          "name": "System.ArraySegment",
+          "args": [
+            {
+              "t": "fqn",
+              "name": "kotlin.String"
+            }
+          ]
+        }
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "local",
+            "name": "nullableValue"
+          }
+        }
+      ]
     }
   ]
 }
