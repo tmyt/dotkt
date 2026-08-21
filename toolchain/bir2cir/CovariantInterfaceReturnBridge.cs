@@ -96,7 +96,7 @@ static class CovariantInterfaceReturnBridge
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
 
                 var candidates = methods.OfType<JsonObject>().Where(m =>
-                    !Bool(m["static"]) && !Bool(m["abstract"])
+                    !Bool(m["static"]) && !(cls.Kind == "interface" && Bool(m["abstract"]))
                     && !KotlinPropertyAccessors.IsPhysicalSlotBridge(m)
                     && SameIdentity(m, name, propertyName, accessorKind)
                     && ((m["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
@@ -174,7 +174,8 @@ static class CovariantInterfaceReturnBridge
             // A referenced suspend MethodDef exposes the physical Task ABI but not its logical Kotlin result. Until
             // that fact is carried explicitly (#511), leave suspend declarations to suspend lowering; never infer the
             // missing semantic result from Task<T> and accidentally classify an ordinary override as covariance.
-            if (Bool(implementation["static"]) || Bool(implementation["abstract"])
+            if (Bool(implementation["static"])
+                || (cls.Kind == "interface" && Bool(implementation["abstract"]))
                 || IsSuspend(implementation)
                 || KotlinPropertyAccessors.IsPhysicalSlotBridge(implementation)
                 || Str(implementation["name"]) is not string implementationName
@@ -315,9 +316,10 @@ static class CovariantInterfaceReturnBridge
         {
             ["k"] = "callInstance",
             ["ownerType"] = TypeJson.Write(owner),
-            // The bridge itself owns the interface slot. A virtual call here can redispatch straight back into this
-            // bridge (same source member, different CLR return signature) and recurse forever.
-            ["virtual"] = false,
+            // A concrete declaration is called non-virtually so the bridge cannot redispatch through the interface
+            // slot it owns. An abstract class declaration has no body to call directly: callvirt its distinct narrow
+            // class slot so the eventual concrete subclass supplies the implementation.
+            ["virtual"] = Bool(implementation["abstract"]),
             // This call is synthesized by bir2cir with its exact CLR declaration owner.  Do not let the later
             // inherited-owner pass reinterpret it as an ordinary Kotlin receiver call and bind it back to the
             // interface slot that this bridge implements.

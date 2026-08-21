@@ -524,11 +524,6 @@ sealed partial class Emitter
                             var cands = ti.MethodsBySig
                                 .Where(kv => kv.Key.Name == im.Name && kv.Key.GenericArity == methodArity)
                                 .Select(kv => kv.Value)
-                                // An abstract declaration is not a MethodImpl body. In particular, selecting a
-                                // same-name/same-parameter declaration with a covariant return creates an invalid
-                                // body/declaration signature pair. bir2cir names any real exact implementation
-                                // above; otherwise an abstract class leaves the interface obligation deferred.
-                                .Where(b => !b.IsAbstract)
                                 .Where(b => _mparams.TryGetValue(b, out var bps)
                                     && bps.Length == ips.Length
                                     && bps.Zip(ips, SlotParamMatches).All(x => x))

@@ -169,12 +169,6 @@ static class KotlinOverrideSlotBridge
             var declRet = TypeJson.Read(impl["ret"]);
             if (declParams == null || declRet == null || declParams.Count != slotParams.Length) return;
 
-            // An abstract declaration has no callable body for a forwarding bridge. In particular, emitting a
-            // concrete MethodImpl that calls an abstract class member produces unverifiable CallAbstract IL. Leave
-            // the interface obligation deferred; the concrete subclass that supplies the body receives its own
-            // exact bridge when its override edge is processed.
-            if (Bool(impl["abstract"])) return;
-
             var fit = new Fit[slotParams.Length];
             for (var i = 0; i < slotParams.Length; i++)
             {
@@ -272,6 +266,12 @@ static class KotlinOverrideSlotBridge
                         constructedSlotTypeParams));
                 return;
             }
+            // A CLR interface can implement a base-interface slot only through a FINAL MethodImpl body. Keep the
+            // authored DIM public/overridable and synthesize the explicit-implementation shape. An abstract accessor
+            // has no body to forward to; its eventual implementing class receives the descriptor instead.
+            if (cls.Kind == "interface" && Bool(impl["abstract"]))
+                return;
+
             // The typed body is what the bridge dispatches to, so it must own a virtual slot of its own. Kotlin
             // does not require `open` to satisfy an interface, and the exact-signature normalization that would
             // otherwise mark it no longer matches — the signatures deliberately differ now.
