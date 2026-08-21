@@ -124,11 +124,13 @@ sealed partial class ReferenceMetadataIndex
     // conflates legal CLR declarations such as `Vector` and `Vector<T>`; retaining reflection's `+` separator instead
     // makes the answer depend on whether kotc or the reference-metadata reader minted the token.
     readonly Dictionary<OwnerTypeIdentity, string> _ownerKind = new();
+    readonly Dictionary<string, string> _ownerKindByPhysicalOwner = new(StringComparer.Ordinal);
     // The kind of an @ClrTypeAlias declaration is a fact about the SEMANTIC owner, not about whatever unrelated CLR
     // declaration happens to share its arity-free name. Keep it beside the alias rather than recovering it from the
     // all-reference type-kind index in TryResolveClrOwner.
     readonly Dictionary<string, string> _ownerAliasKind = new(StringComparer.Ordinal);
-    readonly HashSet<string> _byRefLikeOwners = new(StringComparer.Ordinal);         // Kotlin FQN -> is a `ref struct`
+    readonly HashSet<OwnerTypeIdentity> _byRefLikeOwners = new();
+    readonly HashSet<string> _byRefLikePhysicalOwners = new(StringComparer.Ordinal);
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
     readonly Dictionary<string, RichEnumMetadata> _richEnums = new(StringComparer.Ordinal);
     // Trusted [KotlinType(G<*,...>)] on a compiler-generated non-generic interface is the explicit existential ABI
@@ -156,7 +158,8 @@ sealed partial class ReferenceMetadataIndex
     // A referenced concrete type satisfies the CLR new() constraint exactly when it is a non-abstract reference type
     // with a public parameterless instance constructor, or any value type. This is a physical metadata fact used by
     // ExternalGenericConstraintValidation; Kotlin has no nominal upper bound that can encode it.
-    readonly HashSet<string> _publicParameterlessConstructibleOwners = new(StringComparer.Ordinal);
+    readonly HashSet<OwnerTypeIdentity> _publicParameterlessConstructibleOwners = new();
+    readonly HashSet<string> _publicParameterlessConstructiblePhysicalOwners = new(StringComparer.Ordinal);
     // Per owner-FQN, the declared parameter types of its (first/sole) constructor — used to adapt a static-String arg
     // flowing into a CharSequence ctor param of a SPLICED anonymous stdlib object (`dotkt$obj*`, e.g. the anonymous
     // Grouping from `CharSequence.groupingBy` whose ctor captures the receiver as `kotlin.CharSequence`). The spliced
@@ -272,7 +275,9 @@ sealed partial class ReferenceMetadataIndex
     // needs the same constructed base/interface graph for referenced types as it has for local CIR
     // declarations.  Keep the graph as structured TypeNodes -- never reconstruct generic owners in
     // ilemit from reflection strings.
-    readonly Dictionary<string, ReferenceTypeShape> _referenceTypeShapes = new(StringComparer.Ordinal);
+    readonly Dictionary<OwnerTypeIdentity, ReferenceTypeShape> _referenceTypeShapes = new();
+    readonly Dictionary<string, ReferenceTypeShape> _referenceTypeShapesByPhysicalOwner =
+        new(StringComparer.Ordinal);
     // Source/KLIB vocabulary flattens CLR nesting to dots and drops per-TypeDef arity suffixes. Generated CLR
     // signatures must recover the exact metadata identity here in bir2cir; ilemit must not infer whether a generic
     // argument belongs to an outer or inner TypeDef from the flattened total arity.
@@ -388,7 +393,11 @@ sealed partial class ReferenceMetadataIndex
                 _ownerAliasKind[kv.Key] = asm.DotKt.AliasKinds.GetValueOrDefault(kv.Key, "class");
             }
             foreach (var kv in asm.DotKt.TypeKinds) _ownerKind[kv.Key] = kv.Value;
+            foreach (var kv in asm.DotKt.PhysicalTypeKinds)
+                _ownerKindByPhysicalOwner[kv.Key] = kv.Value;
             foreach (var owner in asm.DotKt.ByRefLikeOwners) _byRefLikeOwners.Add(owner);
+            foreach (var owner in asm.DotKt.ByRefLikePhysicalOwners)
+                _byRefLikePhysicalOwners.Add(owner);
             foreach (var owner in asm.DotKt.DotKtOwners)
                 _dotKtOwners.Add(StripGenericArity(DottedFqn(owner)));
             foreach (var kv in asm.DotKt.RichEnums)
@@ -488,6 +497,8 @@ sealed partial class ReferenceMetadataIndex
             foreach (var kv in asm.DotKt.TypeParamDeclarations) _ownerTypeParamDeclarations[kv.Key] = kv.Value;
             foreach (var owner in asm.DotKt.PublicParameterlessConstructibleOwners)
                 _publicParameterlessConstructibleOwners.Add(owner);
+            foreach (var owner in asm.DotKt.PublicParameterlessConstructiblePhysicalOwners)
+                _publicParameterlessConstructiblePhysicalOwners.Add(owner);
             foreach (var kv in asm.DotKt.CtorParamTypes) _ownerCtorParams[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamConstraints) _ownerTypeParamConstraints[kv.Key] = kv.Value;
             foreach (var kv in asm.DotKt.TypeParamBounds) _ownerTypeParamBounds[kv.Key] = kv.Value;
@@ -547,6 +558,8 @@ sealed partial class ReferenceMetadataIndex
                 adapters.Add(adapter.Adapter);
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.PhysicalTypeShapes)
+                _referenceTypeShapesByPhysicalOwner.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ExactPhysicalTypeByDottedName)
                 AddExactPhysicalTypeName(_exactPhysicalTypeByDottedName, kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.PhysicalTypeBySemanticName)
@@ -609,6 +622,17 @@ sealed partial class ReferenceMetadataIndex
                 if (!_inlinePayloadByDeclarationId.TryAdd(kv.Key, kv.Value)
                     && _inlinePayloadByDeclarationId[kv.Key] != kv.Value)
                     throw new InvalidOperationException($"conflicting inline declaration identity '{kv.Key}'");
+        }
+        // A flattened Kotlin identity cannot distinguish where nested CLR generic slots are owned. Current-format
+        // external classifiers carry the exact TypeDef spelling, so exact physical indexes remain authoritative;
+        // the semantic fallback must abstain instead of exposing the last scanned sibling.
+        foreach (var ambiguous in _exactPhysicalTypeByDottedName
+                     .Where(entry => entry.Value == null).Select(entry => entry.Key).ToArray())
+        {
+            _ownerKind.Remove(ambiguous);
+            _byRefLikeOwners.Remove(ambiguous);
+            _publicParameterlessConstructibleOwners.Remove(ambiguous);
+            _referenceTypeShapes.Remove(ambiguous);
         }
         // Build the owner-less candidate index (S3, §4.2): "name|pc|ga" -> the candidate payload JSONs across every `kotlin.*`
         // file-class hosting that shape. The owner is NOT resolvable from the bare key (it collides across owners) — the call
@@ -1769,11 +1793,15 @@ sealed partial class ReferenceMetadataIndex
         return value == null ? null : JsonNode.Parse(value) as JsonArray;
     }
 
-    public bool HasPublicParameterlessConstructor(string ownerFqn)
+    public bool HasPublicParameterlessConstructor(TypeNode.Fqn owner)
     {
-        if (ownerFqn == null) return false;
-        var bare = StripGenericArity(DottedFqn(ownerFqn));
-        return _publicParameterlessConstructibleOwners.Contains(bare);
+        if (owner == null) return false;
+        var identity = OwnerIdentity(owner.Name, owner.Args?.Length ?? 0);
+        if (HasExactOwnerPunctuation(owner.Name))
+            return _publicParameterlessConstructiblePhysicalOwners.Contains(owner.Name);
+        if (_exactPhysicalTypeByDottedName.TryGetValue(identity, out var exact))
+            return exact != null && _publicParameterlessConstructiblePhysicalOwners.Contains(exact);
+        return _publicParameterlessConstructibleOwners.Contains(identity);
     }
 
     public bool TryExactPhysicalTypeName(string ownerFqn, int arity, out string exact)
@@ -1816,7 +1844,14 @@ sealed partial class ReferenceMetadataIndex
     {
         if (type == null) return false;
         if (ValueTypePrimitiveFqns.Contains(type.Name)) return true;
-        var kind = _ownerKind.GetValueOrDefault(OwnerIdentity(type.Name, type.Args?.Length ?? 0));
+        var identity = OwnerIdentity(type.Name, type.Args?.Length ?? 0);
+        string kind;
+        if (HasExactOwnerPunctuation(type.Name))
+            kind = _ownerKindByPhysicalOwner.GetValueOrDefault(type.Name);
+        else if (_exactPhysicalTypeByDottedName.TryGetValue(identity, out var exact))
+            kind = exact == null ? null : _ownerKindByPhysicalOwner.GetValueOrDefault(exact);
+        else
+            kind = _ownerKind.GetValueOrDefault(identity);
         return kind == "struct" || kind == "enum";
     }
 
@@ -1828,12 +1863,17 @@ sealed partial class ReferenceMetadataIndex
     // and BirTypeLowering rewrites it, but the storage decisions run BEFORE that pass and so see the intrinsic token.
     // Both spellings come from the ONE pair of constants there, so this is the same identity that lowering asserts,
     // not a second fact.
-    public bool IsByRefLikeFqn(string fqn)
+    public bool IsByRefLikeFqn(TypeNode.Fqn type)
     {
-        if (fqn == null) return false;
-        var bare = StripGenericArity(fqn);
-        if (bare == BirTypeLowering.SpanIntrinsicFqn) bare = BirTypeLowering.SpanClrFqn;
-        return _byRefLikeOwners.Contains(bare);
+        if (type == null) return false;
+        var name = type.Name;
+        if (StripGenericArity(name) == BirTypeLowering.SpanIntrinsicFqn)
+            name = BirTypeLowering.SpanClrFqn;
+        var identity = OwnerIdentity(name, type.Args?.Length ?? 0);
+        if (HasExactOwnerPunctuation(name)) return _byRefLikePhysicalOwners.Contains(name);
+        if (_exactPhysicalTypeByDottedName.TryGetValue(identity, out var exact))
+            return exact != null && _byRefLikePhysicalOwners.Contains(exact);
+        return _byRefLikeOwners.Contains(identity);
     }
 
     // The CLR generic-parameter constraint class of a type variable declared on `ownerFqn` at flattened index `i`:
@@ -2248,7 +2288,8 @@ sealed partial class ReferenceMetadataIndex
         declaredParams = null;
         paramsRefused = null;
         if (ownerFqn == null || propertyName == null || accessorKind is not ("get" or "set")) return false;
-        var path = new HashSet<string>(StringComparer.Ordinal) { BareOwnerFqn(ownerFqn) };
+        var path = new HashSet<string>(StringComparer.Ordinal)
+            { ReferenceWalkKey(ownerFqn, ownerTypeArguments) };
         if (FindDeclaredSlot(ownerFqn, null, isStatic, argCount, methodArity, path,
                 out var ret, out var parameters, out _, propertyName, accessorKind, accessorSignature,
                 ownerTypeArguments, includeClosedPropertyReturn: includeUnchanged) != SlotLookup.Declared)
@@ -2936,7 +2977,8 @@ sealed partial class ReferenceMetadataIndex
         declaredParams = null;
         paramsRefused = null;
         if (ownerFqn == null || name == null) return false;
-        var path = new HashSet<string>(StringComparer.Ordinal) { BareOwnerFqn(ownerFqn) };
+        var path = new HashSet<string>(StringComparer.Ordinal)
+            { ReferenceWalkKey(ownerFqn, ownerTypeArguments) };
         if (FindDeclaredSlot(ownerFqn, name, isStatic, argCount, methodArity, path, out var ret, out var ps,
                 out _,
                 methodSignature: resolvedSignature, methodReturn: resolvedReturn,
@@ -2969,7 +3011,8 @@ sealed partial class ReferenceMetadataIndex
         physicalMember = null;
         declarationTypeParams = null;
         if (ownerFqn == null || name == null) return false;
-        var path = new HashSet<string>(StringComparer.Ordinal) { BareOwnerFqn(ownerFqn) };
+        var path = new HashSet<string>(StringComparer.Ordinal)
+            { ReferenceWalkKey(ownerFqn, ownerTypeArguments) };
         if (FindDeclaredSlot(ownerFqn, name, isStatic, argCount, methodArity, path,
                 out var ret, out var parameters, out var declaration,
                 ownerTypeArguments: ownerTypeArguments, includeUnchangedMethod: true,
@@ -2991,9 +3034,9 @@ sealed partial class ReferenceMetadataIndex
     // the slot is declared on `Derived`'s own base `Sink` — reaches `Sink<Int>` as a spec of its own: a MethodImpl must
     // name the interface that DECLARES the slot, and the emitter looks the directive up under exactly that spec.
     // Empty for a type this index does not know, which is a supertype no bridge decision may be made about.
-    public IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReferencedSupertypes(string ownerFqn)
+    public IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReferencedSupertypes(TypeNode.Fqn owner)
     {
-        if (ownerFqn == null || !TryReferenceTypeShapeValue(ownerFqn, out var shape))
+        if (owner == null || !TryReferenceTypeShapeValue(owner, out var shape))
             yield break;
         foreach (var i in shape.Interfaces ?? Array.Empty<TypeNode.Fqn>()) yield return (i, true);
         if (shape.Base != null) yield return (shape.Base, false);
@@ -3071,7 +3114,8 @@ sealed partial class ReferenceMetadataIndex
                 return SlotLookup.Declared;
             }
         }
-        if (!TryReferenceTypeShapeValue(lookupOwner, out var shape)) return SlotLookup.NotDeclared;
+        if (!TryReferenceTypeShapeValue(new TypeNode.Fqn(lookupOwner, ownerTypeArguments), out var shape))
+            return SlotLookup.NotDeclared;
         // Reflection reports the interface set TRANSITIVELY, so one hop reaches every interface declaration; the base
         // chain is walked one link at a time. Every supertype that answers is collected and they must AGREE — an
         // inherited member the call cannot distinguish is not a declaration this pass may act on.
@@ -3088,9 +3132,9 @@ sealed partial class ReferenceMetadataIndex
             // once per path, the walk terminates on its own — a base chain is as deep as the program declares it, and
             // an arbitrary hop limit would silently drop a carrier declared past the limit AND let a shallower
             // same-shape interface answer win instead of triggering the disagreement refusal.
-            var key = BareOwnerFqn(super.Name);
-            if (!path.Add(key)) continue;
             var superTypeArguments = ConstructedSupertypeArguments(super, ownerTypeArguments);
+            var key = ReferenceWalkKey(super.Name, superTypeArguments);
+            if (!path.Add(key)) continue;
             var found = FindDeclaredSlot(super.Name, name, isStatic, argCount, methodArity, path,
                 out var sret, out var sps, out var smethod, propertyName, accessorKind, accessorSignature,
                 superTypeArguments, includeClosedPropertyReturn, includeUnchangedMethod,
@@ -3482,7 +3526,8 @@ sealed partial class ReferenceMetadataIndex
         physicalMethodName = null;
         var lookupOwner = HasExactOwnerPunctuation(ownerFqn)
             ? ownerFqn : DottedFqn(BareOwnerFqn(ownerFqn));
-        if (!path.Add(lookupOwner)) return false;
+        var pathKey = ReferenceWalkKey(lookupOwner, ownerTypeArguments);
+        if (!path.Add(pathKey)) return false;
         try
         {
             (string Property, string Method)? associated = null;
@@ -3522,7 +3567,7 @@ sealed partial class ReferenceMetadataIndex
             }
 
             var inherited = new HashSet<(string Property, string Method)>();
-            if (TryReferenceTypeShapeValue(lookupOwner, out var shape))
+            if (TryReferenceTypeShapeValue(new TypeNode.Fqn(lookupOwner, ownerTypeArguments), out var shape))
                 foreach (var super in Supertypes(shape))
                     if (TryReferencedPropertyPhysicalBinding(super.Name, propertyName, accessorKind, paramCount,
                             methodArity, accessorSignature,
@@ -3569,8 +3614,18 @@ sealed partial class ReferenceMetadataIndex
         }
         finally
         {
-            path.Remove(lookupOwner);
+            path.Remove(pathKey);
         }
+    }
+
+    string ReferenceWalkKey(string owner, TypeNode[] arguments)
+    {
+        var arity = arguments?.Length ?? 0;
+        if (HasExactOwnerPunctuation(owner)) return ReflectedOwnerFqn(owner) + "|" + arity;
+        if (_exactPhysicalTypeByDottedName.TryGetValue(OwnerIdentity(owner, arity), out var exact)
+            && exact != null) return exact + "|" + arity;
+        var semantic = OwnerIdentity(owner, arity);
+        return semantic.Name + "|" + semantic.Arity;
     }
 
     // `super.Args` is expressed in the current owner's declaration frame.  Carry the caller's constructed owner
@@ -3655,11 +3710,11 @@ sealed partial class ReferenceMetadataIndex
     // Return the declaration-shape of a referenced owner, normalized to BIR's dotted nested-type
     // spelling.  The returned base/interfaces may contain type-scoped Tvs and are substituted by
     // InheritedMemberOwnerBinding exactly like locally declared supertypes.
-    public bool TryReferenceTypeShape(string ownerToken, out int typeParamCount, out string kind,
+    public bool TryReferenceTypeShape(TypeNode.Fqn owner, out int typeParamCount, out string kind,
         out TypeNode.Fqn baseType, out TypeNode.Fqn[] interfaces)
     {
-        if (ownerToken != null && !IsAliasedOwner(ownerToken)
-            && TryReferenceTypeShapeValue(ownerToken, out var shape))
+        if (owner != null && !IsAliasedOwner(owner.Name)
+            && TryReferenceTypeShapeValue(owner, out var shape))
         {
             typeParamCount = shape.TypeParamCount;
             kind = shape.Kind;
@@ -3674,11 +3729,12 @@ sealed partial class ReferenceMetadataIndex
         return false;
     }
 
-    bool TryReferenceTypeShapeValue(string ownerToken, out ReferenceTypeShape shape)
+    bool TryReferenceTypeShapeValue(TypeNode.Fqn owner, out ReferenceTypeShape shape)
     {
-        if (HasExactOwnerPunctuation(ownerToken))
-            return _referenceTypeShapes.TryGetValue(ownerToken, out shape);
-        return _referenceTypeShapes.TryGetValue(DottedFqn(BareOwnerFqn(ownerToken)), out shape);
+        if (HasExactOwnerPunctuation(owner.Name)
+            && _referenceTypeShapesByPhysicalOwner.TryGetValue(owner.Name, out shape)) return true;
+        return _referenceTypeShapes.TryGetValue(
+            OwnerIdentity(owner.Name, owner.Args?.Length ?? 0), out shape);
     }
 
     // @ClrTypeAlias owners are not CLR declaration owners: their calls must go through
@@ -3892,39 +3948,41 @@ sealed partial class ReferenceMetadataIndex
                     if (companionRepresentations.TryGetValue(type, out var companionIsStatic))
                         metadata.CompanionStaticByPhysicalOwner.Add(
                             StripGenericArity(DottedFqn(ownerFqn)), companionIsStatic);
-                    metadata.TypeKinds[OwnerIdentity(ownerFqn,
-                        type.IsGenericType ? type.GetGenericArguments().Length : 0)] = TypeKind(type);
+                    var typeDeclarationIdentity = OwnerIdentity(ownerFqn,
+                        type.IsGenericType ? type.GetGenericArguments().Length : 0);
+                    var declarationKind = TypeKind(type);
+                    metadata.TypeKinds[typeDeclarationIdentity] = declarationKind;
+                    metadata.PhysicalTypeKinds[exactPhysicalOwner] = declarationKind;
                     if (type.IsValueType || !type.IsAbstract && !type.IsInterface &&
                         type.GetConstructor(Type.EmptyTypes) is ConstructorInfo { IsPublic: true })
                     {
                         metadata.PublicParameterlessConstructibleOwners.Add(
-                            StripGenericArity(DottedFqn(ownerFqn)));
+                            typeDeclarationIdentity);
+                        metadata.PublicParameterlessConstructiblePhysicalOwners.Add(exactPhysicalOwner);
                     }
                     // Both spellings: the reflection name nests with `+`, every bir2cir type token is DOTTED, and a
                     // NESTED `ref struct` (`Span<T>.Enumerator`, `MemoryExtensions.SpanSplitEnumerator`) is exactly
                     // the shape a spill of `for (x in span)` would mint a field of.
                     if (IsByRefLikeType(type))
                     {
-                        metadata.ByRefLikeOwners.Add(ownerFqn);
-                        metadata.ByRefLikeOwners.Add(DottedFqn(ownerFqn));
+                        metadata.ByRefLikeOwners.Add(typeDeclarationIdentity);
+                        metadata.ByRefLikePhysicalOwners.Add(exactPhysicalOwner);
                     }
                     var semanticTypeShape = new ReferenceTypeShape(
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),
                         DeclarationTypeNode(type.BaseType) as TypeNode.Fqn,
                         type.GetInterfaces().Select(DeclarationTypeNode).OfType<TypeNode.Fqn>().ToArray());
-                    metadata.TypeShapes[DottedFqn(ownerFqn)] = semanticTypeShape;
+                    metadata.TypeShapes[typeDeclarationIdentity] = semanticTypeShape;
                     // Inheritance edges are declaration identities just like member owners. The exact index retains
                     // the reflected TypeDef spelling so current-format override markers traverse a physical graph
                     // without falling back to arity-free names. Keep the semantic graph separately: Kotlin aliases
                     // intentionally walk that vocabulary before bir2cir selects their CLR representation.
-                    metadata.TypeShapes[exactPhysicalOwner] = exactPhysicalOwner == DottedFqn(ownerFqn)
-                        ? semanticTypeShape
-                        : new ReferenceTypeShape(
-                            semanticTypeShape.TypeParamCount,
-                            semanticTypeShape.Kind,
-                            ExactDeclaringView(type.BaseType),
-                            type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray());
+                    metadata.PhysicalTypeShapes[exactPhysicalOwner] = new ReferenceTypeShape(
+                        semanticTypeShape.TypeParamCount,
+                        semanticTypeShape.Kind,
+                        ExactDeclaringView(type.BaseType),
+                        type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray());
                     if (type.IsGenericType)
                     {
                         var gargs = type.GetGenericArguments();
@@ -6009,7 +6067,9 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> AliasKinds = new(StringComparer.Ordinal);
     public readonly Dictionary<ReferenceMetadataIndex.OwnerTypeIdentity, string> TypeKinds = new();
-    public readonly HashSet<string> ByRefLikeOwners = new(StringComparer.Ordinal);        // ownerFqn -> is a `ref struct` (see IsByRefLikeFqn)
+    public readonly Dictionary<string, string> PhysicalTypeKinds = new(StringComparer.Ordinal);
+    public readonly HashSet<ReferenceMetadataIndex.OwnerTypeIdentity> ByRefLikeOwners = new();
+    public readonly HashSet<string> ByRefLikePhysicalOwners = new(StringComparer.Ordinal);
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
     public readonly Dictionary<string, ReferenceMetadataIndex.RichEnumMetadata> RichEnums = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ExistentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
@@ -6026,7 +6086,8 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string> TypeParamDeclarations = new(StringComparer.Ordinal); // ownerFqn -> exact descriptor array JSON
-    public readonly HashSet<string> PublicParameterlessConstructibleOwners = new(StringComparer.Ordinal);
+    public readonly HashSet<ReferenceMetadataIndex.OwnerTypeIdentity> PublicParameterlessConstructibleOwners = new();
+    public readonly HashSet<string> PublicParameterlessConstructiblePhysicalOwners = new(StringComparer.Ordinal);
     public readonly Dictionary<string, TypeNode[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> sole ctor parameter types
     public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
     public readonly Dictionary<string, TypeNode[]> TypeParamBounds = new(StringComparer.Ordinal); // DOTTED ownerFqn -> per-param declared bound TypeNode (null when unconstrained/objectish)
@@ -6038,7 +6099,8 @@ sealed class ReferenceDotKtMetadata
     public readonly List<MethodImplBinding> MethodImplBindings = new();                   // trusted exact accessor bridge -> CLR slot
     public readonly List<CtorBinding> CtorBindings = new();                               // per-ctor declaration shape (#86 D1)
     public readonly List<ReferencedAliasConstructorAdapter> AliasConstructorAdapters = new();
-    public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
+    public readonly Dictionary<ReferenceMetadataIndex.OwnerTypeIdentity, ReferenceTypeShape> TypeShapes = new();
+    public readonly Dictionary<string, ReferenceTypeShape> PhysicalTypeShapes = new(StringComparer.Ordinal);
     public readonly Dictionary<ReferenceMetadataIndex.OwnerTypeIdentity, string> ExactPhysicalTypeByDottedName = new();
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);

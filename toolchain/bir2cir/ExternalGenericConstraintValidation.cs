@@ -331,15 +331,15 @@ static class ExternalGenericConstraintValidation
                     kind = aliasKind;
                 }
                 else
-                    kind = LocalOrReferencedKind(name, refs, localTypes);
+                    kind = LocalOrReferencedKind(fqn, refs, localTypes);
                 if (isValueFqn(fqn))
-                    return new ParameterFacts(false, true, localEnums.Contains(name) || IsEnum(name, refs,
-                        localTypes), true);
+                    return new ParameterFacts(false, true, localEnums.Contains(name) || kind == "enum", true);
                 var isInterface = kind == "interface";
                 var isAbstract = localTypes.TryGetValue(name, out var local) && local.Abstract;
+                var referencedOwner = new TypeNode.Fqn(name, fqn.Args);
                 var hasDefault = name == "System.Object" ||
                     localTypes.GetValueOrDefault(name)?.PublicDefaultConstructor == true ||
-                    refs.HasPublicParameterlessConstructor(name);
+                    refs.HasPublicParameterlessConstructor(referencedOwner);
                 return new ParameterFacts(true, false, kind == "enum",
                     !isInterface && !isAbstract && hasDefault);
             }
@@ -373,7 +373,7 @@ static class ExternalGenericConstraintValidation
                     {
                         value |= bound.Name == "System.ValueType";
                         isEnum |= bound.Name is "System.Enum" or "kotlin.Enum";
-                        var kind = LocalOrReferencedKind(bound.Name, refs, localTypes);
+                        var kind = LocalOrReferencedKind(bound, refs, localTypes);
                         reference |= kind == "class" && !isValueFqn(bound);
                     }
             result[i] = new ParameterFacts(reference, value, isEnum, specials.Contains("new") || value);
@@ -383,16 +383,12 @@ static class ExternalGenericConstraintValidation
 
     static bool IsTypeKind(string kind) => kind is "class" or "interface" or "enum" or "struct" or "value";
 
-    static string LocalOrReferencedKind(string name, ReferenceMetadataIndex refs,
+    static string LocalOrReferencedKind(TypeNode.Fqn type, ReferenceMetadataIndex refs,
         IReadOnlyDictionary<string, LocalTypeFacts> localTypes)
     {
-        if (localTypes.TryGetValue(name, out var local)) return local.Kind;
-        return refs.TryReferenceTypeShape(name, out _, out var kind, out _, out _) ? kind : null;
+        if (localTypes.TryGetValue(type.Name, out var local)) return local.Kind;
+        return refs.TryReferenceTypeShape(type, out _, out var kind, out _, out _) ? kind : null;
     }
-
-    static bool IsEnum(string name, ReferenceMetadataIndex refs,
-        IReadOnlyDictionary<string, LocalTypeFacts> localTypes) =>
-        LocalOrReferencedKind(name, refs, localTypes) == "enum";
 
     static void Fail(string owner, int index, TypeNode actual, string requirement) =>
         throw new InvalidOperationException(

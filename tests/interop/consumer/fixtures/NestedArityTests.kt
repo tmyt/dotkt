@@ -7,6 +7,10 @@ import NestedArityInterop.SegmentCollisionOuter.Leaf as InnerGenericLeaf
 import NestedArityInterop.SegmentCollisionOuter1.Leaf as OuterGenericLeaf
 import NestedArityInterop.SegmentCollisionOuter.Contract as InnerGenericContract
 import NestedArityInterop.SegmentCollisionOuter1.Contract as OuterGenericContract
+import NestedArityInterop.SegmentKindOuter.Kind as InnerGenericKind
+import NestedArityInterop.SegmentKindOuter1.Kind as OuterGenericKind
+import NestedArityInterop.SameStemShape
+import NestedArityInterop.SameStemShape1
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
@@ -14,6 +18,8 @@ private enum class NestedSlotEnum { VALUE }
 
 private class OuterGenericContractImpl : OuterGenericContract<Int, String>
 private class InnerGenericContractImpl : InnerGenericContract<Int, String>
+private class SameStemShapeImpl : SameStemShape
+private class SameStemGenericShapeImpl : SameStemShape1<String>
 
 private class NestedValueField(initial: Outer.ValueItem<String>) {
     @ClrField var value: Outer.ValueItem<String> = initial
@@ -105,6 +111,22 @@ class NestedArityTests {
         assertEquals(43, outerStar.Marker)
         val innerStar: InnerGenericLeaf<*, *> = innerGeneric
         assertEquals(47, innerStar.Marker)
+
+        // The non-generic and generic declarations have distinct inherited graphs even though stripping CLR arity
+        // gives both the same owner name. Each local implementer must see only its declaration's own default chain.
+        val plainShape: SameStemShape = SameStemShapeImpl()
+        assertEquals(53, plainShape.Marker)
+        val genericShape: SameStemShape1<String> = SameStemGenericShapeImpl()
+        assertEquals("shape", genericShape.Echo("shape"))
+        // The generic declaration directly extends its non-generic same-stem sibling. The hierarchy walk must not
+        // mistake that cross-arity edge for a metadata cycle.
+        assertEquals(53, genericShape.Marker)
+
+        val segmentReference: InnerGenericKind<Int, String>? = null
+        assertEquals(true, segmentReference == null)
+        val segmentValue: OuterGenericKind<Int, String>? = OuterGenericKind("segment value")
+        assertEquals("segment value", segmentValue!!.Value)
+        assertEquals(59, Oracle.NeedsNew<OuterGenericKind<Int, String>>())
     }
 
     @TestAttribute

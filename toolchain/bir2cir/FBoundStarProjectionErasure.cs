@@ -1067,7 +1067,7 @@ static class FBoundStarProjectionErasure
                 // non-reifiable on the CLR.  In particular Outer<Inner<*>> is not Outer<object> (nor
                 // Outer<Inner<object>>); keep the original runtime value in one opaque object slot and let
                 // ForeignStarProjectionBinding route member access through the reflection ABI.
-                if (refs.IsByRefLikeFqn(nestedForeign.Name))
+                if (refs.IsByRefLikeFqn(nestedForeign))
                     throw new NotSupportedException(
                         $"bir2cir: foreign byref-like generic star projection `{nestedForeign.Name}<*>` has no boxable CLR existential representation");
                 return new TypeNode.Fqn("kotlin.Any");
@@ -1082,7 +1082,7 @@ static class FBoundStarProjectionErasure
                 // ForeignStarProjectionBinding above. Never manufacture the invariant fiction G<object>.
                 if (!refs.HasDotKtOwner(f.Name) && refs.ResolveNetType(f.Name, args.Length) != null)
                 {
-                    if (refs.IsByRefLikeFqn(f.Name))
+                    if (refs.IsByRefLikeFqn(f))
                         throw new NotSupportedException(
                             $"bir2cir: foreign byref-like generic star projection `{f.Name}<*>` has no boxable CLR existential representation");
                     return new TypeNode.Fqn("kotlin.Any");

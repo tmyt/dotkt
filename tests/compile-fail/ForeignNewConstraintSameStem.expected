@@ -1,0 +1,3 @@
+CLR generic constraint violation
+ConstructorCollision
+requires a public parameterless constructor

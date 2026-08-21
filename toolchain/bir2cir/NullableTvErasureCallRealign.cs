@@ -579,7 +579,7 @@ static partial class NullableTvErasureCallRealign
         var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
         var decl = hasPropertyIdentity
             ? propertyDecl
-            : LookupDecl(owner.Name, method, argCount, methodArgs?.Length ?? 0, isStatic: false, idx);
+            : LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: false, idx);
         // THE ARGUMENT AXIS: each parameter slot is `Subst(Erase(declared param))` exactly as the return is; with no
         // declaration the call's own descriptor stands in (see RealignArgs).
         RealignArgs(obj, decl?.Params, decl?.ParamsRefused, owner.Args, methodArgs, ctx,
@@ -613,7 +613,7 @@ static partial class NullableTvErasureCallRealign
                 var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(obj, out _, out _);
                 decl = hasPropertyIdentity
                     ? propertyDecl
-                    : LookupDecl(owner.Name, method, argCount, methodArgs?.Length ?? 0, isStatic: true, ctx.Idx);
+                    : LookupDecl(owner, method, argCount, methodArgs?.Length ?? 0, isStatic: true, ctx.Idx);
                 ownerArgs = owner.Args;
             }
             else
@@ -721,17 +721,19 @@ static partial class NullableTvErasureCallRealign
     // the real declaration, so the general `Subst(Erase(decl))` rule covers a referenced generic member — including
     // `Iterable<E>.iterator()`, `Iterator<E>.next()` and `List<E>.get(i)` on a receiver corrected to its erased
     // instantiation, which a hardcoded member table used to approximate.
-    static DeclSig LookupDecl(string ownerFqn, string method, int argCount, int methodArity, bool isStatic, DeclIndex idx)
+    static DeclSig LookupDecl(TypeNode.Fqn owner, string method, int argCount, int methodArity, bool isStatic,
+        DeclIndex idx)
     {
-        if (idx.ByOwner.TryGetValue(ownerFqn, out var sigs))
+        if (idx.ByOwner.TryGetValue(owner.Name, out var sigs))
             return sigs.TryGetValue(method + "|" + argCount, out var local) ? local : null;
-        return LookupReferencedDecl(ownerFqn, method, argCount, methodArity, isStatic);
+        return LookupReferencedDecl(owner, method, argCount, methodArity, isStatic);
     }
 
-    static DeclSig LookupReferencedDecl(string ownerFqn, string method, int argCount, int methodArity, bool isStatic)
+    static DeclSig LookupReferencedDecl(TypeNode.Fqn owner, string method, int argCount, int methodArity,
+        bool isStatic)
         => _refs != null
-           && _refs.TryNullableGenericSlot(ownerFqn, method, isStatic, argCount, methodArity,
-               out var ret, out var ps, out var refused)
+           && _refs.TryNullableGenericSlot(owner.Name, method, isStatic, argCount, methodArity,
+               out var ret, out var ps, out var refused, ownerTypeArguments: owner.Args ?? Array.Empty<TypeNode>())
             ? new DeclSig { Ret = ret, Params = ps, ParamsRefused = refused }
             : null;
 

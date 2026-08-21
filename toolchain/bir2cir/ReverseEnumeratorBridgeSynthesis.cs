@@ -247,7 +247,7 @@ static class ReverseEnumeratorBridgeSynthesis
             }
             if (ReferencedIterator(current, refs) is { } referenced) return referenced;
             var currentArgs = current.Args ?? Array.Empty<TypeNode>();
-            current = refs?.ReferencedSupertypes(current.Name)
+            current = refs?.ReferencedSupertypes(current)
                 .Where(parent => !parent.isInterface)
                 .Select(parent => SupertypeGraph.SubstOwnerTvs(parent.spec, currentArgs) as TypeNode.Fqn)
                 .FirstOrDefault(parent => parent != null);
@@ -265,7 +265,7 @@ static class ReverseEnumeratorBridgeSynthesis
             .ToList();
         var mostSpecific = declarations.Where(candidate => !declarations.Any(other =>
                 !ReferenceEquals(candidate, other)
-                && SupertypeGraph.Reaches(other.Owner.Name, candidate.Owner.Name, defs, refs)))
+                && SupertypeGraph.ReachesDeclaration(other.Owner, candidate.Owner, defs, refs)))
             .ToList();
         return mostSpecific.Count == 1 && !mostSpecific[0].Abstract ? mostSpecific[0] : null;
     }
@@ -336,7 +336,7 @@ static class ReverseEnumeratorBridgeSynthesis
 
             if (refs == null) continue;
             var referencedArgs = spec.Args ?? Array.Empty<TypeNode>();
-            foreach (var (parent, _) in refs.ReferencedSupertypes(spec.Name))
+            foreach (var (parent, _) in refs.ReferencedSupertypes(spec))
                 if (SupertypeGraph.SubstOwnerTvs(parent, referencedArgs) is TypeNode.Fqn constructed)
                     queue.Enqueue(constructed);
         }

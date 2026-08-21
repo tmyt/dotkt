@@ -97,43 +97,28 @@ static class SupertypeGraph
             // interface that merely EXTENDS the declaring one hands over none of its base's members to reflection.
             if (refs == null) continue;
             var refArgs = spec.Args ?? Array.Empty<TypeNode>();
-            foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec.Name))
+            foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec))
                 if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
                     queue.Enqueue((constructed, parentIsInterface));
         }
     }
 
-    // Is `owner` `from` itself, or one of its supertypes — through this compilation's declarations and through the
-    // referenced graph alike? The bridge asks it to tie an override marker to the supertype spec it may answer for.
-    // Bounded by a visited set, so cyclic or repeated metadata terminates.
-    public static bool Reaches(string from, string owner, IReadOnlyDictionary<string, Def> defs,
-        ReferenceMetadataIndex refs)
-    {
-        var queue = new Queue<string>();
-        queue.Enqueue(from);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        while (queue.Count > 0)
-        {
-            var n = queue.Dequeue();
-            if (!seen.Add(n)) continue;
-            if (n == owner) return true;
-            if (defs.TryGetValue(n, out var d))
-            {
-                foreach (var i in d.Interfaces) queue.Enqueue(i.Name);
-                if (d.Base != null) queue.Enqueue(d.Base.Name);
-                continue;
-            }
-            if (refs == null) continue;
-            foreach (var (parent, _) in refs.ReferencedSupertypes(n)) queue.Enqueue(parent.Name);
-        }
-        return false;
-    }
+    // Declaration reachability ignores construction arguments, matching an override marker to the declaration family
+    // it names while retaining exact current-format owner spelling and flattened arity. Current-format external
+    // markers carry that arity in the CLR name even when they omit construction args.
+    public static bool ReachesDeclaration(TypeNode.Fqn from, TypeNode.Fqn owner,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs) =>
+        ReachesCore(from, owner, defs, refs, exactConstruction: false);
 
-    // Constructed counterpart used when authorization depends on the exact direct-interface instance. A class may
+    // Constructed reachability is used when authorization depends on the exact direct-interface instance. A class may
     // inherit `I<string>` through its base while directly re-listing only `I<int>`; matching names there would grant
     // the new declaration a MethodImpl for the wrong constructed slot.
     public static bool Reaches(TypeNode.Fqn from, TypeNode.Fqn owner,
-        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs) =>
+        ReachesCore(from, owner, defs, refs, exactConstruction: true);
+
+    static bool ReachesCore(TypeNode.Fqn from, TypeNode.Fqn owner,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, bool exactConstruction)
     {
         var queue = new Queue<TypeNode.Fqn>();
         queue.Enqueue(from);
@@ -143,7 +128,7 @@ static class SupertypeGraph
         {
             var spec = queue.Dequeue();
             if (!seen.Add(TypeKey(spec))) continue;
-            if (TypeKey(spec) == ownerKey) return true;
+            if (exactConstruction ? TypeKey(spec) == ownerKey : SameDeclaration(spec, owner)) return true;
             if (defs.TryGetValue(spec.Name, out var def))
             {
                 var args = EffectiveArgs(spec, def.Arity);
@@ -157,12 +142,19 @@ static class SupertypeGraph
             }
             if (refs == null) continue;
             var refArgs = spec.Args ?? Array.Empty<TypeNode>();
-            foreach (var (parent, _) in refs.ReferencedSupertypes(spec.Name))
+            foreach (var (parent, _) in refs.ReferencedSupertypes(spec))
                 if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
                     queue.Enqueue(constructed);
         }
         return false;
     }
+
+    static bool SameDeclaration(TypeNode.Fqn left, TypeNode.Fqn right) =>
+        left.Name == right.Name && DeclarationArity(left) == DeclarationArity(right);
+
+    static int DeclarationArity(TypeNode.Fqn type) => type.Name.Contains('`')
+        ? MemberRefNode.ArityOfName(type.Name)
+        : type.Args?.Length ?? 0;
 
     public static TypeNode[] EffectiveArgs(TypeNode.Fqn spec, int arity)
     {

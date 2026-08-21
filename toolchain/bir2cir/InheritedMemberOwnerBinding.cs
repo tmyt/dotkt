@@ -140,7 +140,7 @@ static class InheritedMemberOwnerBinding
         if (kind is "newBoundClrDelegate" or "clrInstance" or "clrPropGet" or "clrPropSet"
             or "clrEventAdd" or "clrEventRemove") return;
         if (!types.ContainsKey(owner.Name)
-            && !refs.TryReferenceTypeShape(owner.Name, out _, out _, out _, out _)) return;
+            && !refs.TryReferenceTypeShape(owner, out _, out _, out _, out _)) return;
         if (Str(call["method"]) is not string method) return;
         var hasPropertyIdentity = KotlinPropertyAccessors.TryCallIdentity(
             call, out var propertyName, out var propertyAccessor);
@@ -253,7 +253,7 @@ static class InheritedMemberOwnerBinding
             if (ExactDeclarationSignature(types.GetValueOrDefault(direct[0].Name), method, methodArity,
                     sig, direct[0].Args, propertyName, propertyAccessor) is { } directDeclarationSig)
                 call["sig"] = directDeclarationSig;
-            if (IsInterface(direct[0].Name, types, refs)) call["virtual"] = true;
+            if (IsInterface(direct[0], types, refs)) call["virtual"] = true;
             if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(direct[0]);
             return;
         }
@@ -267,7 +267,7 @@ static class InheritedMemberOwnerBinding
         if (ExactDeclarationSignature(types.GetValueOrDefault(nearest[0].Name), method, methodArity,
                 sig, nearest[0].Args, propertyName, propertyAccessor) is { } nearestDeclarationSig)
             call["sig"] = nearestDeclarationSig;
-        if (IsInterface(nearest[0].Name, types, refs)) call["virtual"] = true;
+        if (IsInterface(nearest[0], types, refs)) call["virtual"] = true;
         if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(nearest[0]);
     }
 
@@ -291,7 +291,8 @@ static class InheritedMemberOwnerBinding
                 baseType = def.Base;
                 interfaces = def.Interfaces;
             }
-            else if (refs.TryReferenceTypeShape(current.Type.Name, out typeParamCount, out _, out baseType, out interfaces)) { }
+            else if (refs.TryReferenceTypeShape(current.Type, out typeParamCount, out _, out baseType,
+                         out interfaces)) { }
             else continue;
             var args = EffectiveArgs(current.Type, typeParamCount);
             if (args == null) continue;
@@ -302,9 +303,9 @@ static class InheritedMemberOwnerBinding
         }
     }
 
-    static bool IsInterface(string owner, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs)
+    static bool IsInterface(TypeNode.Fqn owner, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs)
     {
-        if (types.GetValueOrDefault(owner)?.Kind == "interface") return true;
+        if (types.GetValueOrDefault(owner.Name)?.Kind == "interface") return true;
         return refs.TryReferenceTypeShape(owner, out _, out var kind, out _, out _) && kind == "interface";
     }
 

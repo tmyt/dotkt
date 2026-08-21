@@ -15,6 +15,8 @@
 // has two readers and must become a local — which is what puts a materialised binding after the byref-like argument
 // and makes the order observable.
 import ByRefLikeInterop.ByRefLikeApi
+import ByRefLikeInterop.SegmentStorageOuter.Leaf as SegmentHeapStorage
+import ByRefLikeInterop.StorageCollision
 import ByRefLikeInterop.Tally
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
@@ -43,6 +45,13 @@ private fun ReadOnlySpan<Char>.brlExt(a: Int = brlBump(), b: Int = a * 10): Int 
 
 private suspend fun brlRelay(): Int = 5
 
+private suspend fun brlSameStemHeapClass(): Int {
+    val value = StorageCollision(37)
+    val nested = SegmentHeapStorage<Int, String>(41)
+    val after = brlRelay()
+    return value.Value + nested.Value + after
+}
+
 private suspend fun brlSuspendTally(): Int = brlTally(ByRefLikeApi.MakeTally(brlMark(4))) + brlRelay()
 private suspend fun brlSuspendChars(): Int = brlSpanChars(ByRefLikeApi.Chars("hello")) + brlRelay()
 private suspend fun brlSuspendSpan(): Int = brlSpanInts(ByRefLikeApi.MakeSpan(intArrayOf(1, 2, 3, 4))) + brlRelay()
@@ -69,6 +78,11 @@ private suspend fun brlSuspendInlined(): Int {
 }
 
 class ByRefLikeSingleEvalTests {
+    @TestAttribute
+    fun genericRefStructDoesNotPoisonSameStemHeapClass() {
+        assertEquals(83, blockOn { brlSameStemHeapClass() })
+    }
+
     // Each of these emitted a state machine that failed to LOAD while every `var` of a coroutine body became an SM
     // field. The VALUE assertions are the load-bearing ones: `a` must be evaluated once and `b` must read THAT value,
     // so with `brlBump()` returning 3 on its first call the result is `4 + 30`. A second evaluation of `a` would make

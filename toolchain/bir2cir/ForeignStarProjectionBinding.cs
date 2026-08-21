@@ -84,7 +84,7 @@ static class ForeignStarProjectionBinding
         var kind = Str(obj["k"]);
         if (kind is not ("isInst" or "isInstRef" or "cast") || obj["e"] is not JsonNode operand
             || !TryForeignStarOwner(TypeJson.Read(obj["type"]), refs, out var owner, out var nullable)) return false;
-        if (refs.IsByRefLikeFqn(owner.Name))
+        if (refs.IsByRefLikeFqn(owner))
             throw new NotSupportedException(
                 $"bir2cir: foreign byref-like generic star projection `{owner.Name}<*>` has no boxable CLR existential representation");
 
@@ -156,7 +156,7 @@ static class ForeignStarProjectionBinding
             var receiverType = NodeType.Of(receiver);
             if (!TryForeignStarOwner(receiverType, refs, out owner, out _)) return false;
         }
-        if (refs.IsByRefLikeFqn(owner.Name))
+        if (refs.IsByRefLikeFqn(owner))
             throw new NotSupportedException(
                 $"bir2cir: foreign byref-like generic star projection `{owner.Name}<*>` has no boxable CLR existential representation");
         var valueReceiver = refs.IsValueType(owner);
@@ -435,7 +435,7 @@ static class ForeignStarProjectionBinding
 
     static bool ContainsByRefLike(TypeNode type, ReferenceMetadataIndex refs) => type switch
     {
-        TypeNode.Fqn f => refs.IsByRefLikeFqn(f.Name)
+        TypeNode.Fqn f => refs.IsByRefLikeFqn(f)
             || (f.Args?.Any(a => ContainsByRefLike(a, refs)) ?? false),
         TypeNode.Nullable n => ContainsByRefLike(n.Of, refs),
         TypeNode.Oblivious o => ContainsByRefLike(o.Of, refs),
