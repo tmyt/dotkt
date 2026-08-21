@@ -32,7 +32,7 @@ static partial class ClrMemberResolution
             // ResolveNetType intentionally excludes DotKt-authored dependencies and local types. Their Kotlin override
             // edges must already be present in BIR; this fallback is only for CLR classes loaded from reference KLIBs.
             var baseType = _refs.ResolveNetType(
-                ReferenceMetadataIndex.BareOwnerFqn(baseNode.Name),
+                ReferenceMetadataIndex.ReflectedOwnerFqn(baseNode.Name),
                 baseNode.Args?.Length ?? 0);
             if (baseType == null || !baseType.IsClass) continue;
 

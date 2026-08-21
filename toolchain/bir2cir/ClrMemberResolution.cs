@@ -904,7 +904,7 @@ static partial class ClrMemberResolution
         // backtick and lose the nested type. (Its `args` instantiate the OUTER; a member whose sig has no outer type-var
         // — OnCompleted(Action) — matches on the open nested def regardless, so no MakeGenericType is needed.)
         if (ownerFqn.Name.Contains('`')) return _refs.ResolveRefType(ownerFqn.Name, 0);
-        return RefDef(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
+        return RefDef(ownerFqn.Name, ownerFqn.Args?.Length ?? 0);
     }
 
     // The structured TypeNode carried by an owner slot.
@@ -1057,7 +1057,7 @@ static partial class ClrMemberResolution
         if (a is TypeNode.Fn fnOpen) return MatchFnToDelegate(fnOpen, p, ownerArgs);     // a lambda arg binding an OPEN delegate param (`ThreadLocal<T>(Func<T>)`)
         if (a is not TypeNode.Fqn f) return MatchKind.No;
         var pdef = SafeDef(p);
-        var adef = RefDef(ReferenceMetadataIndex.BareOwnerFqn(f.Name), f.Args?.Length ?? 0);
+        var adef = RefDef(f.Name, f.Args?.Length ?? 0);
         if (adef == null) return MatchKind.No;
         var adefDef = SafeDef(adef);
         if (adefDef == pdef)
@@ -1151,8 +1151,12 @@ static partial class ClrMemberResolution
     // Resolve a .NET type by name off the ref.dll, RESPECTING generic arity: probe the arity-suffixed def (`Foo`1`)
     // FIRST when arity>0, so a same-named NON-generic sibling (`TaskCompletionSource`/the `System.Nullable` static class)
     // never shadows the generic def (ResolveRefType/ResolveNetType probe the bare name first).
-    static Type RefDef(string bare, int arity)
+    static Type RefDef(string owner, int arity)
     {
+        var physical = owner.Contains('`') || owner.Contains('+');
+        if (physical)
+            return _refs.ResolveRefType(ReferenceMetadataIndex.ReflectedOwnerFqn(owner), 0);
+        var bare = ReferenceMetadataIndex.BareOwnerFqn(owner);
         // A flattened nested identity needs each declaring segment's own metadata arity
         // (`Outer`1+Leaf`1`), not one suffix made from the flattened total (`Outer+Leaf`2`).
         if (_refs.TryExactPhysicalTypeName(bare, arity, out var exact))
@@ -1192,7 +1196,7 @@ static partial class ClrMemberResolution
             case TypeNode.Fn: return null;
             case TypeNode.Fqn f:
             {
-                var baseT = RefDef(ReferenceMetadataIndex.BareOwnerFqn(f.Name), f.Args?.Length ?? 0);
+                var baseT = RefDef(f.Name, f.Args?.Length ?? 0);
                 if (baseT == null) return null;
                 if (f.Args == null || f.Args.Length == 0) return baseT;
                 if (!baseT.IsGenericTypeDefinition) return baseT;

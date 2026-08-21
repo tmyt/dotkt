@@ -436,7 +436,7 @@ static class ClrEventImplBinding
                 {
                     var overrideSpec = TypeJson.Read(o["owner"]) as TypeNode.Fqn;
                     var ownerArity = overrideSpec?.Args?.Length ?? 0;
-                    iface = refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(owner), ownerArity);
+                    iface = refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(owner), ownerArity);
                     ownerArgs = overrideSpec?.Args;
                 }
                 // Kotlin's override closure can name the immediate delegated interface even when the event is inherited
@@ -475,7 +475,7 @@ static class ClrEventImplBinding
         targetInterface = null;
         targetArgs = null;
         var root = refs.ResolveNetType(
-            ReferenceMetadataIndex.BareOwnerFqn(rootSpec.Name), rootSpec.Args?.Length ?? 0);
+            ReferenceMetadataIndex.ReflectedOwnerFqn(rootSpec.Name), rootSpec.Args?.Length ?? 0);
         if (root == null) return false;
         return Walk(root, rootSpec.Args ?? Array.Empty<TypeNode>(), 0, out targetInterface, out targetArgs);
 
@@ -629,7 +629,7 @@ static class ClrEventImplBinding
                 // .NET type off the ref.dll, this is a CONSUMED foreign event (no synthesized raise_) — a hard error (you
                 // raise on the declaring instance, and only Kotlin-declared events have a raise_ accessor).
                 if (TypeJson.OwnerName(owner) is string ownerName
-                    && refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerName)) != null)
+                    && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(ownerName)) != null)
                     throw new InvalidOperationException(
                         $"bir2cir: cannot raise the .NET event '{Str(obj["event"])}' on '{ownerName}' — you can only raise an "
                         + "event you DECLARE in Kotlin (`override val E by clrEvent()`), not a consumed foreign .NET event (§6/#187)");

@@ -166,3 +166,36 @@ public static class RefTickApi
     // signature (cf. ByRefLikeInterop.ByRefLikeApi).
     public static RefTick Make(int value) => new(value);
 }
+
+// ---- 4. an awaiter generic on both nested TypeDef segments ----------------------------------------------------
+// The exact definition is NestedAwaitable`1+Awaiter`1. Stripping the inner suffix leaves a different metadata name;
+// flattened generic argument count alone cannot reconstruct which segment declares either slot.
+public sealed class NestedAwaitable<T>
+{
+    private readonly T _value;
+    private readonly bool _synchronous;
+
+    public NestedAwaitable(T value, bool synchronous)
+    {
+        _value = value;
+        _synchronous = synchronous;
+    }
+
+    public Awaiter<T> GetAwaiter() => new(_value, _synchronous);
+
+    public readonly struct Awaiter<U> : INotifyCompletion
+    {
+        private readonly U _value;
+        private readonly bool _synchronous;
+
+        internal Awaiter(U value, bool synchronous)
+        {
+            _value = value;
+            _synchronous = synchronous;
+        }
+
+        public bool IsCompleted => _synchronous;
+        public U GetResult() => _value;
+        public void OnCompleted(Action continuation) => ThreadPool.QueueUserWorkItem(_ => continuation());
+    }
+}

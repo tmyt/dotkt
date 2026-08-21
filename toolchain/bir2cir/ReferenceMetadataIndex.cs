@@ -177,6 +177,10 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _helperTypes = new(StringComparer.Ordinal);             // emitted "dotkt$ClrH_*"
     readonly HashSet<string> _restrictsSuspension = new(StringComparer.Ordinal);     // @RestrictsSuspension owners
     readonly Dictionary<string, List<MemberBinding>> _membersByOwner = new(StringComparer.Ordinal);
+    // The semantic owner index above deliberately omits CLR arity punctuation. Legal metadata can therefore make it
+    // ambiguous (Outer`1+Leaf`1 and Outer+Leaf`2). Current-format ClrExternal tokens carry the exact TypeDef identity;
+    // keep a separate physical index so those facts never fall back through the ambiguous semantic spelling.
+    readonly Dictionary<string, List<MemberBinding>> _membersByPhysicalOwner = new(StringComparer.Ordinal);
     // Exact ECMA MethodImpl declarations keyed by their compiler-authored body. The frontend says which inherited
     // Kotlin default implementation was selected; this index contributes only the referenced DLL's physical slot
     // allocation for a trusted accessor bridge. No hierarchy/default-body inference is performed here.
@@ -507,6 +511,12 @@ sealed partial class ReferenceMetadataIndex
                 if (!_membersByOwner.TryGetValue(m.Owner, out var list))
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
                 list.Add(m);
+                if (m.DeclarationPhysicalOwner is string physicalOwner)
+                {
+                    if (!_membersByPhysicalOwner.TryGetValue(physicalOwner, out var physicalList))
+                        _membersByPhysicalOwner[physicalOwner] = physicalList = new List<MemberBinding>();
+                    physicalList.Add(m);
+                }
             }
             foreach (var implementation in asm.DotKt.MethodImplBindings)
             {
@@ -517,10 +527,17 @@ sealed partial class ReferenceMetadataIndex
             }
             foreach (var c in asm.DotKt.CtorBindings)
             {
-                if (!_ctorsByOwner.TryGetValue(c.Owner, out var byArity))
-                    _ctorsByOwner[c.Owner] = byArity = new Dictionary<int, List<CtorBinding>>();
-                if (!byArity.TryGetValue(c.ParamCount, out var ctors)) byArity[c.ParamCount] = ctors = new List<CtorBinding>();
-                ctors.Add(c);
+                AddCtor(c.Owner, c);
+                if (c.PhysicalOwner != c.Owner) AddCtor(c.PhysicalOwner, c);
+
+                void AddCtor(string owner, CtorBinding binding)
+                {
+                    if (!_ctorsByOwner.TryGetValue(owner, out var byArity))
+                        _ctorsByOwner[owner] = byArity = new Dictionary<int, List<CtorBinding>>();
+                    if (!byArity.TryGetValue(binding.ParamCount, out var ctors))
+                        byArity[binding.ParamCount] = ctors = new List<CtorBinding>();
+                    ctors.Add(binding);
+                }
             }
             foreach (var adapter in asm.DotKt.AliasConstructorAdapters)
             {
@@ -890,6 +907,16 @@ sealed partial class ReferenceMetadataIndex
     // CLR metadata arity punctuation, which is the only decoration normalized here.
     public static string BareOwnerFqn(string fqnName) => StripGenericArity(fqnName.Trim());
 
+    // The spelling used to resolve a BIR owner against CLR metadata. Current-format ClrExternal identities already
+    // carry the exact TypeDef name (`Outer`1+Leaf`1`) and must remain verbatim; source-authored/Kotlin semantic names
+    // still use the arity-aware bare-name probe. Keep this separate from BareOwnerFqn because semantic indexes are
+    // intentionally keyed by their arity-free Kotlin identity.
+    public static string ReflectedOwnerFqn(string fqnName)
+    {
+        var name = fqnName.Trim();
+        return name.Contains('`') || name.Contains('+') ? name : BareOwnerFqn(name);
+    }
+
     // The top-level-extension receiver KEY of a call's first-sig-arg Fqn — the call-site mirror of the ref-side
     // RecvKey(Type) (used to index/disambiguate TopLevelStatics by receiver type). A specialized primitive-array Fqn
     // (`kotlin.IntArray`/`CharArray`/... + the unsigned specialized arrays) collapses to "[]" — the SAME canonicalization
@@ -911,6 +938,20 @@ sealed partial class ReferenceMetadataIndex
         bcl = null; kind = null; return false;
     }
 
+    // Resolve a semantic Kotlin alias or a current-format ClrExternal token to the exact CLR TypeDef identity that a
+    // CIR member descriptor must name. The type argument count is only a lookup aid for arity-free alias names; it is
+    // never used to reconstruct an already exact nested identity.
+    public string ExactReflectedOwner(string ownerToken, int typeArgumentCount)
+    {
+        var candidate = TryResolveClrOwner(ownerToken, out var aliasOwner, out _)
+            ? aliasOwner : ReflectedOwnerFqn(ownerToken);
+        var type = ResolveNetType(candidate, typeArgumentCount);
+        if (type == null) return candidate;
+        var definition = type.IsGenericType && !type.IsGenericTypeDefinition
+            ? type.GetGenericTypeDefinition() : type;
+        return ExactPhysicalMetadataName(definition);
+    }
+
     public bool TryDeclaresAccessibleInstanceMethod(string sourceOwner, int genericArity, string methodName,
         out bool declares)
     {
@@ -918,7 +959,7 @@ sealed partial class ReferenceMetadataIndex
         if (string.IsNullOrEmpty(methodName)) return false;
         var owner = TryResolveClrOwner(sourceOwner, out var physicalOwner, out _)
             ? physicalOwner
-            : BareOwnerFqn(sourceOwner);
+            : ReflectedOwnerFqn(sourceOwner);
         var type = ResolveNetType(owner, genericArity);
         if (type == null) return false;
         try
@@ -969,7 +1010,7 @@ sealed partial class ReferenceMetadataIndex
         AccessibleDeclaredKotlinInstanceMethods(TypeNode.Fqn ownerSpec, string sourceMethodName, int methodArity)
     {
         if (ownerSpec == null || string.IsNullOrEmpty(sourceMethodName)) yield break;
-        if (!TryMembersByBirOwner(BareOwnerFqn(ownerSpec.Name), out var members)) yield break;
+        if (!TryMembersByBirOwner(ownerSpec.Name, out var members)) yield break;
         var args = ownerSpec.Args ?? Array.Empty<TypeNode>();
         foreach (var member in members)
         {
@@ -1009,7 +1050,7 @@ sealed partial class ReferenceMetadataIndex
         // (`kotlinx.*`, `roundtrip.*`, ...). Its calls must retain Kotlin ABI handling in MemberCallSubstitution rather
         // than being reclassified as raw C# members by NetInteropBinding. This replaces namespace-prefix ownership
         // guesses for external DotKt libraries while leaving genuine .NET types on the reflection path.
-        if (_dotKtOwners.Contains(BareOwnerFqn(fqn))) return null;
+        if (HasDotKtOwner(fqn)) return null;
         // LOCAL-OVER-REF (#15): a type DECLARED in this compilation is this-assembly-emitted and is the authority for
         // its identity — never resolve it as an EXTERNAL .NET type off the refs, even when a referenced dll exports the
         // same FQN (the ProjectReference-source-glob layout). Source wins: leave the node routing to the emitted type.
@@ -1039,7 +1080,7 @@ sealed partial class ReferenceMetadataIndex
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
             || callSignature == null || HasDotKtOwner(sourceOwner.Name)) return false;
 
-        var sourceType = ResolveNetType(BareOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        var sourceType = ResolveNetType(ReflectedOwnerFqn(sourceOwner.Name), ownerArgs.Length);
         if (sourceType == null) return false;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
         var seenTypes = new HashSet<Type>();
@@ -1094,7 +1135,7 @@ sealed partial class ReferenceMetadataIndex
 
         var declaring = selected.DeclaringType;
         if (declaring == null) return false;
-        declaringView = DeclarationTypeNode(declaring);
+        declaringView = ExactDeclaringView(declaring);
         if (declaring.IsConstructedGenericType) declaring = declaring.GetGenericTypeDefinition();
         // Reflection over a constructed inherited owner substitutes its parameters in the DERIVED owner's frame
         // (`Derived<A,B> : Base<B>` exposes Base.Put(T) as Put(!1)).  The runtime receives the OPEN declaring type,
@@ -1204,7 +1245,7 @@ sealed partial class ReferenceMetadataIndex
         declarationType = null;
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
             || HasDotKtOwner(sourceOwner.Name)) return false;
-        var sourceType = ResolveNetType(BareOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        var sourceType = ResolveNetType(ReflectedOwnerFqn(sourceOwner.Name), ownerArgs.Length);
         if (sourceType == null) return false;
 
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
@@ -1232,12 +1273,19 @@ sealed partial class ReferenceMetadataIndex
         }
         if (selected == null || selected.DeclaringType == null) return false;
         var declaring = selected.DeclaringType;
-        declaringView = DeclarationTypeNode(declaring);
+        declaringView = ExactDeclaringView(declaring);
         if (declaring.IsConstructedGenericType) declaring = declaring.GetGenericTypeDefinition();
         openDeclaringType = ExactPhysicalMetadataName(declaring);
         metadataToken = selected.MetadataToken;
         declarationType = DeclarationTypeNode(selected.FieldType);
         return declarationType != null;
+    }
+
+    static TypeNode.Fqn ExactDeclaringView(Type type)
+    {
+        if (DeclarationTypeNode(type) is not TypeNode.Fqn view) return null;
+        var definition = type.IsConstructedGenericType ? type.GetGenericTypeDefinition() : type;
+        return new TypeNode.Fqn(ExactPhysicalMetadataName(definition), view.Args);
     }
 
     // W1-S2 (#46): resolve a STDLIB-owner clr* member's declaring type off the ref.dll — WITHOUT the `kotlin.*`
@@ -1863,7 +1911,7 @@ sealed partial class ReferenceMetadataIndex
             ?? throw new InvalidDataException("companion-extension receiver payload is not a classifier");
         // The source language association is the bare classifier. dll2klib can legitimately rehydrate a generic
         // receiver as C<Any>; its arguments are not declaration identity and must not enter this trusted key.
-        var receiver = TypeJson.Fqn(classifier).ToJsonString();
+        var receiver = TypeJson.Fqn(BareOwnerFqn(DottedFqn(classifier))).ToJsonString();
         return StripGenericArity(DottedFqn(owner)) + "\u001f" + receiver + "\u001f" + kind + "\u001f" + sourceName;
     }
 
@@ -1913,7 +1961,7 @@ sealed partial class ReferenceMetadataIndex
     {
         isStatic = false;
         if (ownerFqn == null || eventName == null) return false;
-        var type = ResolveNetType(BareOwnerFqn(ownerFqn), 0);
+        var type = ResolveNetType(ReflectedOwnerFqn(ownerFqn), 0);
         if (type == null) return false;
 
         const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
@@ -2018,7 +2066,7 @@ sealed partial class ReferenceMetadataIndex
         parameters = null;
         result = null;
         if (ownerToken == null || memberName == null
-            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var members)) return false;
+            || !TryMembersByBirOwner(ownerToken, out var members)) return false;
         var candidates = members.Where(m => m.IsStatic == isStatic && m.Name == memberName
             && m.MethodArity == methodArity && m.ParamCount == paramCount
             && m.ParamTypeNodes != null && m.ReturnType != null).ToList();
@@ -2083,7 +2131,7 @@ sealed partial class ReferenceMetadataIndex
         IReadOnlyList<TypeNode> parameters, TypeNode ret)
     {
         if (ownerFqn == null || memberName == null || parameters == null || ret == null
-            || !TryMembersByBirOwner(BareOwnerFqn(ownerFqn), out var members)) return false;
+            || !TryMembersByBirOwner(ownerFqn, out var members)) return false;
         var candidates = members.Where(member => !member.IsStatic && member.IsPublic && !member.IsAbstract
                 && member.Name == memberName && member.MethodArity == methodArity
                 && member.ParamTypeNodes is { } ps && ps.Length == parameters.Count
@@ -2112,15 +2160,16 @@ sealed partial class ReferenceMetadataIndex
         }
         else
         {
-            physicalOwner = bareOwner;
-            ownerType = ResolveNetType(bareOwner, ownerArity);
+            physicalOwner = ReflectedOwnerFqn(sourceOwner);
+            ownerType = ResolveNetType(physicalOwner, ownerArity);
         }
         if (paramCount < 0 || accessorSignature == null) return false;
         string exactMethod = null;
         // A caller carrying the frontend-resolved property signature must never fall back to a name-only sibling.
         // The reference index records the exact MethodSemantics association for ordinary CLR properties as well as
         // compiler-authored carriers, so failure here means no physical binding was stated.
-        if (!TryReferencedPropertyPhysicalBinding(bareOwner, sourcePropertyName, accessorKind, paramCount,
+        var indexedOwner = TryResolveClrOwner(bareOwner, out _, out _) ? bareOwner : sourceOwner;
+        if (!TryReferencedPropertyPhysicalBinding(indexedOwner, sourcePropertyName, accessorKind, paramCount,
                 methodArity, accessorSignature, ownerTypeArguments,
                 new HashSet<string>(StringComparer.Ordinal), out physicalPropertyName, out exactMethod))
         {
@@ -2178,8 +2227,11 @@ sealed partial class ReferenceMetadataIndex
                 if (inherited.Count != 1) return false;
                 method = inherited[0];
             }
-            physicalOwner = StripGenericArity(method.DeclaringType?.FullName ?? method.DeclaringType?.Name
-                ?? physicalOwner);
+            // This value leaves the semantic reference index and becomes a CIR MethodImpl/call owner. Preserve the
+            // declaring TypeDef's exact metadata identity, including every nested segment's arity. Returning the bare
+            // lookup key here made an exact current-format owner disagree with its own reflected declaration and
+            // silently dropped the interface-property MethodImpl bridge.
+            physicalOwner = method.DeclaringType?.FullName ?? method.DeclaringType?.Name ?? physicalOwner;
             physicalMethodName = method.Name;
             return true;
         }
@@ -2519,14 +2571,15 @@ sealed partial class ReferenceMetadataIndex
         // the trusted DotKt type index to its exact `Outer`N+Inner`M` metadata identity — never guessed by trying
         // separator/arity combinations. The same exact name is tried in both twins because a shipped-only helper can
         // legitimately be absent from the reference surface.
-        var hasExactOwner = TryExactPhysicalTypeName(ownerFqn, ownerArity, out var exactOwner);
+        var physicalSpelling = ownerFqn.Contains('`') || ownerFqn.Contains('+');
+        string exactOwner = null;
+        var hasExactOwner = !physicalSpelling && TryExactPhysicalTypeName(ownerFqn, ownerArity, out exactOwner);
         if (hasExactOwner && exactOwner == null)
             throw new InvalidOperationException(
                 $"ambiguous CLR metadata identity for nested type '{bareOwner}' with flattened arity {ownerArity}");
         // A bare semantic name with generic arguments must not win a same-named non-generic declaration
         // (`EventHandler` beside `EventHandler<T>`). Only a spelling that already encodes physical arity/nesting is
         // authoritative before the arity-aware probes.
-        var physicalSpelling = ownerFqn.Contains('`') || ownerFqn.Contains('+');
         var owner = hasExactOwner
             ? ResolveRefType(exactOwner) ?? PhysicalTypeNamed(exactOwner)
             : (physicalSpelling || ownerArity == 0 ? ResolveRefType(ownerFqn) : null)
@@ -2817,7 +2870,7 @@ sealed partial class ReferenceMetadataIndex
     {
         kotlinReturn = null;
         if (ownerFqn == null || name == null
-            || !TryMembersByBirOwner(BareOwnerFqn(ownerFqn), out var list))
+            || !TryMembersByBirOwner(ownerFqn, out var list))
             return false;
         var shapeMatches = list.Where(m =>
                 m.Name == name
@@ -2940,7 +2993,7 @@ sealed partial class ReferenceMetadataIndex
     // Empty for a type this index does not know, which is a supertype no bridge decision may be made about.
     public IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReferencedSupertypes(string ownerFqn)
     {
-        if (ownerFqn == null || !_referenceTypeShapes.TryGetValue(DottedFqn(BareOwnerFqn(ownerFqn)), out var shape))
+        if (ownerFqn == null || !TryReferenceTypeShapeValue(ownerFqn, out var shape))
             yield break;
         foreach (var i in shape.Interfaces ?? Array.Empty<TypeNode.Fqn>()) yield return (i, true);
         if (shape.Base != null) yield return (shape.Base, false);
@@ -2958,8 +3011,8 @@ sealed partial class ReferenceMetadataIndex
         declaredRet = default;
         declaredParams = null;
         declaredMethod = null;
-        var bare = BareOwnerFqn(ownerFqn);
-        if (TryMembersByBirOwner(bare, out var list))
+        var lookupOwner = HasExactOwnerPunctuation(ownerFqn) ? ownerFqn : BareOwnerFqn(ownerFqn);
+        if (TryMembersByBirOwner(lookupOwner, out var list))
         {
             var declaredHere = list.Where(m =>
                     (propertyName == null
@@ -3018,7 +3071,7 @@ sealed partial class ReferenceMetadataIndex
                 return SlotLookup.Declared;
             }
         }
-        if (!_referenceTypeShapes.TryGetValue(DottedFqn(bare), out var shape)) return SlotLookup.NotDeclared;
+        if (!TryReferenceTypeShapeValue(lookupOwner, out var shape)) return SlotLookup.NotDeclared;
         // Reflection reports the interface set TRANSITIVELY, so one hop reaches every interface declaration; the base
         // chain is walked one link at a time. Every supertype that answers is collected and they must AGREE — an
         // inherited member the call cannot distinguish is not a declaration this pass may act on.
@@ -3130,10 +3183,11 @@ sealed partial class ReferenceMetadataIndex
         declaredParams = null;
         paramsRefused = null;
         if (ownerFqn == null) return false;
-        var bare = BareOwnerFqn(ownerFqn);
-        if (!_ctorsByOwner.TryGetValue(bare, out var byArity))
+        var lookupOwner = HasExactOwnerPunctuation(ownerFqn) ? ownerFqn : BareOwnerFqn(ownerFqn);
+        if (!_ctorsByOwner.TryGetValue(lookupOwner, out var byArity))
         {
-            var matches = _ctorsByOwner.Where(kv => DottedFqn(kv.Key) == bare).Take(2).ToList();
+            if (HasExactOwnerPunctuation(ownerFqn)) return false;
+            var matches = _ctorsByOwner.Where(kv => DottedFqn(kv.Key) == lookupOwner).Take(2).ToList();
             if (matches.Count != 1) return false;
             byArity = matches[0].Value;
         }
@@ -3279,7 +3333,7 @@ sealed partial class ReferenceMetadataIndex
     {
         physicalMethodName = null;
         isVirtual = false;
-        if (!TryMembersByBirOwner(BareOwnerFqn(ownerFqn), out var list)) return false;
+        if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
         var declarations = list.Where(member => member.SourcePropertyName == propertyName
                 && !member.IsPropertyBridge && member.AccessorKind == accessorKind && member.ParamCount == paramCount
                 && member.MethodArity == methodArity)
@@ -3426,12 +3480,13 @@ sealed partial class ReferenceMetadataIndex
     {
         physicalPropertyName = null;
         physicalMethodName = null;
-        var bare = DottedFqn(BareOwnerFqn(ownerFqn));
-        if (!path.Add(bare)) return false;
+        var lookupOwner = HasExactOwnerPunctuation(ownerFqn)
+            ? ownerFqn : DottedFqn(BareOwnerFqn(ownerFqn));
+        if (!path.Add(lookupOwner)) return false;
         try
         {
             (string Property, string Method)? associated = null;
-            if (TryMembersByBirOwner(bare, out var members))
+            if (TryMembersByBirOwner(lookupOwner, out var members))
             {
                 var direct = members.Where(member => member.SourcePropertyName == propertyName
                         && !member.IsPropertyBridge && member.AccessorKind == accessorKind
@@ -3467,7 +3522,7 @@ sealed partial class ReferenceMetadataIndex
             }
 
             var inherited = new HashSet<(string Property, string Method)>();
-            if (_referenceTypeShapes.TryGetValue(bare, out var shape))
+            if (TryReferenceTypeShapeValue(lookupOwner, out var shape))
                 foreach (var super in Supertypes(shape))
                     if (TryReferencedPropertyPhysicalBinding(super.Name, propertyName, accessorKind, paramCount,
                             methodArity, accessorSignature,
@@ -3514,7 +3569,7 @@ sealed partial class ReferenceMetadataIndex
         }
         finally
         {
-            path.Remove(bare);
+            path.Remove(lookupOwner);
         }
     }
 
@@ -3534,7 +3589,7 @@ sealed partial class ReferenceMetadataIndex
     // LinkedHashSet is the case an APP sees non-locally; the AbstractMutable{Collection,Set} bases keep iterator() ABSTRACT
     // (IsAbstract) so they still reroute. Mirrors the local-decl scan MemberCallSubstitution does for same-file owners.
     public bool DeclaresConcreteIterator(string ownerToken) =>
-        ownerToken != null && TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)
+        ownerToken != null && TryMembersByBirOwner(ownerToken, out var list)
         && list.Any(m => m.Name == "iterator" && m.ParamCount == 0 && !m.IsAbstract && !m.IsStatic);
 
     // Exact referenced declaration lookup for inherited-member owner binding.  The signature is
@@ -3544,7 +3599,7 @@ sealed partial class ReferenceMetadataIndex
         IReadOnlyList<TypeNode> signature)
     {
         if (ownerToken == null || memberName == null || IsAliasedOwner(ownerToken)
-            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)) return false;
+            || !TryMembersByBirOwner(ownerToken, out var list)) return false;
         return list.Count(m => !m.IsStatic && m.Name == memberName && m.MethodArity == methodArity
             && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
             && ps.Select((p, i) => p == signature[i]).All(x => x)) == 1;
@@ -3557,7 +3612,7 @@ sealed partial class ReferenceMetadataIndex
     {
         if (ownerToken == null || propertyName == null || accessorKind is not ("get" or "set")
             || IsAliasedOwner(ownerToken)
-            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)) return false;
+            || !TryMembersByBirOwner(ownerToken, out var list)) return false;
         return list.Count(m => !m.IsStatic && !m.IsPropertyBridge && m.SourcePropertyName == propertyName
             && m.AccessorKind == accessorKind && m.MethodArity == methodArity
             && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
@@ -3571,7 +3626,7 @@ sealed partial class ReferenceMetadataIndex
         IReadOnlyList<TypeNode> signature, int paramCount)
     {
         if (ownerToken == null || memberName == null || IsAliasedOwner(ownerToken)
-            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)) return false;
+            || !TryMembersByBirOwner(ownerToken, out var list)) return false;
         var candidates = list.Where(m => !m.IsStatic && m.Name == memberName
             && m.MethodArity == methodArity && m.ParamCount == paramCount);
         if (signature != null)
@@ -3588,7 +3643,7 @@ sealed partial class ReferenceMetadataIndex
     {
         if (ownerToken == null || propertyName == null || accessorKind is not ("get" or "set")
             || IsAliasedOwner(ownerToken)
-            || !TryMembersByBirOwner(BareOwnerFqn(ownerToken), out var list)) return false;
+            || !TryMembersByBirOwner(ownerToken, out var list)) return false;
         var candidates = list.Where(m => !m.IsStatic && !m.IsPropertyBridge && m.SourcePropertyName == propertyName
             && m.AccessorKind == accessorKind && m.MethodArity == methodArity && m.ParamCount == paramCount);
         if (signature != null)
@@ -3604,7 +3659,7 @@ sealed partial class ReferenceMetadataIndex
         out TypeNode.Fqn baseType, out TypeNode.Fqn[] interfaces)
     {
         if (ownerToken != null && !IsAliasedOwner(ownerToken)
-            && _referenceTypeShapes.TryGetValue(DottedFqn(BareOwnerFqn(ownerToken)), out var shape))
+            && TryReferenceTypeShapeValue(ownerToken, out var shape))
         {
             typeParamCount = shape.TypeParamCount;
             kind = shape.Kind;
@@ -3617,6 +3672,13 @@ sealed partial class ReferenceMetadataIndex
         baseType = null;
         interfaces = Array.Empty<TypeNode.Fqn>();
         return false;
+    }
+
+    bool TryReferenceTypeShapeValue(string ownerToken, out ReferenceTypeShape shape)
+    {
+        if (HasExactOwnerPunctuation(ownerToken))
+            return _referenceTypeShapes.TryGetValue(ownerToken, out shape);
+        return _referenceTypeShapes.TryGetValue(DottedFqn(BareOwnerFqn(ownerToken)), out shape);
     }
 
     // @ClrTypeAlias owners are not CLR declaration owners: their calls must go through
@@ -3635,6 +3697,8 @@ sealed partial class ReferenceMetadataIndex
     // (`A.B+C` and `A.B.C` both exist) instead of guessing which CLR owner the Kotlin token meant.
     bool TryMembersByBirOwner(string ownerFqn, out List<MemberBinding> members)
     {
+        if (HasExactOwnerPunctuation(ownerFqn))
+            return _membersByPhysicalOwner.TryGetValue(ownerFqn, out members);
         if (_membersByOwner.TryGetValue(ownerFqn, out members)) return true;
         var matches = _membersByOwner.Where(kv => DottedFqn(kv.Key) == ownerFqn).Take(2).ToList();
         if (matches.Count == 1)
@@ -3645,6 +3709,9 @@ sealed partial class ReferenceMetadataIndex
         members = null;
         return false;
     }
+
+    static bool HasExactOwnerPunctuation(string ownerFqn) =>
+        ownerFqn != null && (ownerFqn.Contains('`') || ownerFqn.Contains('+'));
 
     public static string HelperTypeName(string ownerFqn) =>
         "dotkt$ClrH_" + System.Text.RegularExpressions.Regex.Replace(ownerFqn, "[^A-Za-z0-9]", "_");
@@ -3764,9 +3831,10 @@ sealed partial class ReferenceMetadataIndex
                     // member-call owner token matches. A CLR-bound owner carries @ClrTypeAlias (the type-identity
                     // binding) or, for any not-yet-renamed bound class, a class-level @ClrIntrinsic.
                     var ownerFqn = StripGenericArity(type.FullName ?? type.Name);
+                    var exactPhysicalOwner = ExactPhysicalMetadataName(type);
                     AddExactPhysicalTypeName(metadata.ExactPhysicalTypeByDottedName,
                         OwnerIdentity(ownerFqn, type.IsGenericType ? type.GetGenericArguments().Length : 0),
-                        ExactPhysicalMetadataName(type));
+                        exactPhysicalOwner);
                     if (dotKtAuthored && type.IsInterface && !type.IsGenericType
                         && HasAttribute(type.GetCustomAttributesData(), CompilerGeneratedAttr)
                         && KotlinTypeOf(type.GetCustomAttributesData(), asm) is TypeNode.Fqn
@@ -3840,11 +3908,23 @@ sealed partial class ReferenceMetadataIndex
                         metadata.ByRefLikeOwners.Add(ownerFqn);
                         metadata.ByRefLikeOwners.Add(DottedFqn(ownerFqn));
                     }
-                    metadata.TypeShapes[DottedFqn(ownerFqn)] = new ReferenceTypeShape(
+                    var semanticTypeShape = new ReferenceTypeShape(
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),
                         DeclarationTypeNode(type.BaseType) as TypeNode.Fqn,
                         type.GetInterfaces().Select(DeclarationTypeNode).OfType<TypeNode.Fqn>().ToArray());
+                    metadata.TypeShapes[DottedFqn(ownerFqn)] = semanticTypeShape;
+                    // Inheritance edges are declaration identities just like member owners. The exact index retains
+                    // the reflected TypeDef spelling so current-format override markers traverse a physical graph
+                    // without falling back to arity-free names. Keep the semantic graph separately: Kotlin aliases
+                    // intentionally walk that vocabulary before bir2cir selects their CLR representation.
+                    metadata.TypeShapes[exactPhysicalOwner] = exactPhysicalOwner == DottedFqn(ownerFqn)
+                        ? semanticTypeShape
+                        : new ReferenceTypeShape(
+                            semanticTypeShape.TypeParamCount,
+                            semanticTypeShape.Kind,
+                            ExactDeclaringView(type.BaseType),
+                            type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray());
                     if (type.IsGenericType)
                     {
                         var gargs = type.GetGenericArguments();
@@ -3992,6 +4072,8 @@ sealed partial class ReferenceMetadataIndex
                         if (CallableDefaultsOf(method) is Dictionary<int, string> defaults)
                         {
                             AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults);
+                            if (exactPhysicalOwner != indexedOwnerFqn)
+                                AddKotlinDefaults(metadata, exactPhysicalOwner, method.Name, method.GetParameters(), defaults);
                             if (declarationIdentity?.Id is string declarationId
                                 && !metadata.KotlinDefaultsByDeclarationId.TryAdd(declarationId, defaults))
                                 throw new InvalidDataException($"duplicate defaults for Kotlin declaration identity '{declarationId}'");
@@ -4041,7 +4123,7 @@ sealed partial class ReferenceMetadataIndex
                                 .Select(GenericParamDeclaration).ToArray()),
                             declarationIdentity?.Id,
                             declarationIdentity?.Name,
-                            declarationIdentity == null ? null : ExactPhysicalMetadataName(type),
+                            exactPhysicalOwner,
                             collectionFactoryKind,
                             arrayFactoryKind,
                             arrayFactoryElementHint,
@@ -4168,7 +4250,11 @@ sealed partial class ReferenceMetadataIndex
                     foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
                         if (CallableDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
+                        {
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
+                            if (exactPhysicalOwner != ownerFqn)
+                                AddKotlinDefaults(metadata, exactPhysicalOwner, CtorKeyName, ctor.GetParameters(), cdefaults);
+                        }
                         if (dotKtAuthored && AliasConstructorAdapterOf(
                                 ctor.GetCustomAttributesData(), ctor.DeclaringType?.Assembly) is { } adapter)
                             metadata.AliasConstructorAdapters.Add(new(DottedFqn(ownerFqn), adapter));
@@ -4177,6 +4263,7 @@ sealed partial class ReferenceMetadataIndex
                         // holds the pre-erasure `T?`.
                         metadata.CtorBindings.Add(new CtorBinding(
                             ownerFqn,
+                            exactPhysicalOwner,
                             ctor.GetParameters().Length,
                             ctor.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray(),
                             dotKtAuthored
@@ -6051,6 +6138,7 @@ sealed record ExactClrMemberBinding(string Intrinsic, int PropertyAccess, string
 // so the key is owner + declared parameter count. `ParamTypeNodes` is the physical CLR signature with generic
 // parameters retained; `NullableGenericParams[i]` is the pre-erasure `[KotlinNullableGeneric]` carrier of that slot
 // when it has one.
-sealed record CtorBinding(string Owner, int ParamCount, TypeNode[] ParamTypeNodes, TypeNode[] NullableGenericParams);
+sealed record CtorBinding(string Owner, string PhysicalOwner, int ParamCount, TypeNode[] ParamTypeNodes,
+    TypeNode[] NullableGenericParams);
 
 sealed record ReferencedAliasConstructorAdapter(string Owner, AliasConstructorAdapter Adapter);

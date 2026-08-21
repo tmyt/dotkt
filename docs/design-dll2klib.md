@@ -302,8 +302,19 @@ most notably a top-level declaration stored in a DotKt file-facade class.
 Declarations that require this identity carry:
 
 ```kotlin
-@kotlin.clr.ClrExternal(owner = "<CLR metadata type name>")
+@kotlin.clr.ClrExternal(
+    owner = "<projected Kotlin owner>",
+    physicalOwner = "<exact CLR TypeDef name>",
+)
 ```
+
+`owner` is the Kotlin-facing classifier identity, including any deterministic
+arity-clash rename used by the projected KLIB. `physicalOwner`
+retains the metadata nesting separator and every segment's own generic arity
+(for example, ``Namespace.Outer`1+Leaf`1``). The latter is required because a
+flattened Kotlin argument vector cannot distinguish that legal CLR declaration
+from ``Namespace.Outer+Leaf`2``. Both arguments are required current-format
+facts; older compiler artifacts are not inferred or accepted through a fallback.
 
 The standard KLIB loader restores this as an ordinary IR annotation. `kotc`
 consumes it while emitting BIR:
@@ -311,8 +322,11 @@ consumes it while emitting BIR:
 - class and instance-member references receive `ownerType`; and
 - top-level, static, and inline references receive `owner`.
 
-The annotation is not propagated beyond BIR. `bir2cir` continues to consume
-the existing owner fields and the MSBuild-resolved reference assemblies.
+The annotation is not propagated beyond BIR. `kotc` requires both facts to
+recognize the current-format external declaration and transports
+`physicalOwner` in the existing owner/type fields; `bir2cir` uses that exact
+identity with the MSBuild-resolved reference assemblies while its semantic
+indexes remain keyed in Kotlin vocabulary.
 
 ### Delegates
 

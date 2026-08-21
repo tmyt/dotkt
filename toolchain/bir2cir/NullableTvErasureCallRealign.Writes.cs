@@ -109,7 +109,7 @@ static partial class NullableTvErasureCallRealign
             // names instead of building the wrong one and failing to convert it.
             if (target is TypeNode.Fqn tf && args[i] is JsonObject na && Str(na["k"]) == "new"
                 && TypeJson.Read(na["type"]) is TypeNode.Fqn sf
-                && sf.Name == tf.Name && !sf.Equals(tf) && IsObjectErasureOf(tf, sf))
+                && SameClassifier(sf, tf) && !sf.Equals(tf) && IsObjectErasureOf(tf, sf))
                 na["type"] = TypeJson.Write(tf);
             // The same rule for an ARRAY construction, which is how a `vararg` argument list is packed: build the
             // element type the slot names. `EvalNewArray` then reconciles the elements against it, so the `newarr`
@@ -236,7 +236,7 @@ static partial class NullableTvErasureCallRealign
                 // means walking the supertype chain, which is a subtyping question this pass does not need to answer:
                 // it exists to notice an `object[]`, and an array pairs by its own shape, not by a head.
                 case (TypeNode.Fqn { Args: { } dargs } df, TypeNode.Fqn { Args: { } fargs } ff)
-                    when dargs.Length == fargs.Length && df.Name == ff.Name:
+                    when dargs.Length == fargs.Length && SameClassifier(df, ff):
                     for (var i = 0; i < dargs.Length; i++) Walk(dargs[i], fargs[i], nested: true);
                     break;
             }

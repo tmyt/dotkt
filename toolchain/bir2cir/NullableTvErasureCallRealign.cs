@@ -873,7 +873,7 @@ static partial class NullableTvErasureCallRealign
         return (candidate, expected) switch
         {
             (TypeNode.Fqn { Args: { } ca } cf, TypeNode.Fqn { Args: { } ea } ef)
-                when cf.Name == ef.Name && ca.Length == ea.Length
+                when SameClassifier(cf, ef) && ca.Length == ea.Length
                 => ca.Zip(ea, IsObjectErasureOf).All(x => x),
             (TypeNode.Array c, TypeNode.Array e) => IsObjectErasureOf(c.Elem, e.Elem),
             (TypeNode.Nullable c, TypeNode.Nullable e) => IsObjectErasureOf(c.Of, e.Of),
@@ -885,6 +885,21 @@ static partial class NullableTvErasureCallRealign
                    && (c.Recv == null || IsObjectErasureOf(c.Recv, e.Recv)),
             _ => false,
         };
+    }
+
+    // Current-format ClrExternal classifiers carry their exact CLR TypeDef identity, while nullable-generic
+    // declaration carriers retain the Kotlin classifier spelling they describe. They name the same generic head only
+    // when the reference index can project that semantic spelling to one unique exact TypeDef. An ambiguous flattened
+    // nested identity deliberately has no answer here and therefore never participates in an erasure rewrite.
+    static bool SameClassifier(TypeNode.Fqn left, TypeNode.Fqn right)
+    {
+        if (left.Name == right.Name) return true;
+        if (_refs == null) return false;
+        if (_refs.TryExactPhysicalTypeName(left.Name, left.Args?.Length ?? 0, out var leftExact)
+            && leftExact != null && leftExact == right.Name)
+            return true;
+        return _refs.TryExactPhysicalTypeName(right.Name, right.Args?.Length ?? 0, out var rightExact)
+            && rightExact != null && rightExact == left.Name;
     }
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;

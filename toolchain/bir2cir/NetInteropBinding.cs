@@ -109,9 +109,10 @@ static class NetInteropBinding
         var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
         if (ownerFqnNode == null) return;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
+        var physicalOwner = ReferenceMetadataIndex.ReflectedOwnerFqn(ownerFqnNode.Name);
         var reflectedOwner = _refs.TryCompanionMetadataCarrier(bare, out var metadataCarrier)
             ? metadataCarrier
-            : bare;
+            : physicalOwner;
         var method = Str(node["method"]);
         var companionCall = node["companionCall"]?.GetValue<bool>() == true;
         bool? companionStatic = null;
@@ -120,7 +121,7 @@ static class NetInteropBinding
             if (_refs.TryCompanionIsStatic(bare, out var resolvedStatic))
                 companionStatic = resolvedStatic;
         }
-        var netType = _refs.ResolveNetType(bare, ownerFqnNode.Args?.Length ?? 0);
+        var netType = _refs.ResolveNetType(physicalOwner, ownerFqnNode.Args?.Length ?? 0);
         Type dotKtEmittedType = null;
         // Compiler-generated companion carriers are deliberately absent from the ordinary source-visible DotKt owner
         // index. A validated companion association is its own, narrower authority to resolve that exact physical type.
@@ -200,7 +201,7 @@ static class NetInteropBinding
         var projectedPropKind = Str(node["prop"]);
         var projectedEventName = projectedPropKind == "get" ? method : null;
         if (projectedEventName != null &&
-            _refs.TryClrEventIsStatic(bare, projectedEventName, out var eventIsStatic))
+            _refs.TryClrEventIsStatic(physicalOwner, projectedEventName, out var eventIsStatic))
         {
             var recv = node["recv"];
             // Captured BEFORE the Clear detaches them: the handle this reads is the same `ClrEvent<T>` value the
@@ -418,6 +419,7 @@ static class NetInteropBinding
         var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
         if (ownerFqnNode == null) return;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
+        var physicalOwner = ReferenceMetadataIndex.ReflectedOwnerFqn(ownerFqnNode.Name);
         var companionCall = node["companionCall"]?.GetValue<bool>() == true;
         string richEnumPhysicalField = null;
         bool? companionStatic = null;
@@ -427,13 +429,13 @@ static class NetInteropBinding
                 companionStatic = resolvedStatic;
         }
         var netType = companionStatic != null
-            ? _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0)
-            : _refs.ResolveNetType(bare, ownerFqnNode.Args?.Length ?? 0);
+            ? _refs.ResolveRefType(physicalOwner, ownerFqnNode.Args?.Length ?? 0)
+            : _refs.ResolveNetType(physicalOwner, ownerFqnNode.Args?.Length ?? 0);
         if (companionCall && companionStatic == null)
         {
             var fieldName = Str(node["name"]);
             netType ??= _refs.HasDotKtOwner(bare)
-                ? _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0)
+                ? _refs.ResolveRefType(physicalOwner, ownerFqnNode.Args?.Length ?? 0)
                 : null;
             if (netType == null ||
                 !_refs.TryKotlinRichEnumEntryField(bare, fieldName, out richEnumPhysicalField))
@@ -518,6 +520,7 @@ static class NetInteropBinding
         var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
         if (ownerFqnNode == null) return;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
+        var physicalOwner = ReferenceMetadataIndex.ReflectedOwnerFqn(ownerFqnNode.Name);
         var declarationArgs = DeclarationArgs(node);
         var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         bool? companionStatic = null;
@@ -527,11 +530,11 @@ static class NetInteropBinding
                 companionStatic = resolvedStatic;
         }
         var netType = companionStatic != null
-            ? _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0)
-            : _refs.ResolveNetType(bare, ownerFqnNode.Args?.Length ?? 0);
+            ? _refs.ResolveRefType(physicalOwner, ownerFqnNode.Args?.Length ?? 0)
+            : _refs.ResolveNetType(physicalOwner, ownerFqnNode.Args?.Length ?? 0);
         if (netType == null && companionCall && _refs.HasDotKtOwner(bare))
         {
-            netType = _refs.ResolveRefType(bare, ownerFqnNode.Args?.Length ?? 0);
+            netType = _refs.ResolveRefType(physicalOwner, ownerFqnNode.Args?.Length ?? 0);
             if (netType != null && _refs.TryKotlinRichEnumStaticApi(
                     bare, Str(node["method"]), declarationArgs.Count, out var richEnumPhysicalApi))
             {

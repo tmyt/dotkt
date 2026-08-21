@@ -298,7 +298,11 @@ static class ForeignNullableGenericCrossing
     static bool Declares(JsonObject to, Slot slot, ReferenceMetadataIndex refs)
     {
         if (to["methods"] is not JsonArray methods) return false;
-        var want = slot.Params.Select(p => Norm(NullableGenericErasure.ErasedLoweredSlot(p))).ToArray();
+        // The reflected slot reader uses document type spelling while current-format declarations may already carry
+        // an exact metadata TypeDef name. Compare both through the reference index's authoritative physical identity;
+        // stripping arity here would merge legal nested/same-flattened-arity collisions, which is the defect #505
+        // removes.
+        var want = slot.Params.Select(p => PhysicalNorm(NullableGenericErasure.ErasedLoweredSlot(p), refs)).ToArray();
         var moved = slot.Params.Select(NullableGenericErasure.ErasureWouldMove).ToArray();
         foreach (var m in methods.OfType<JsonObject>())
         {
@@ -310,7 +314,7 @@ static class ForeignNullableGenericCrossing
             for (var i = 0; i < ps.Count && ok; i++)
             {
                 var po = ps[i] as JsonObject;
-                ok = TypeJson.Read(po?["type"]) is TypeNode t && Norm(t) == want[i]
+                ok = TypeJson.Read(po?["type"]) is TypeNode t && PhysicalNorm(t, refs) == want[i]
                      && (!moved[i] || StatesSlot(po, slot.Params[i], refs));
             }
             if (ok) return true;
@@ -424,6 +428,25 @@ static class ForeignNullableGenericCrossing
     // except the top type, which reflection names `System.Object` and the lowering names `object`, and the NRT
     // OBLIVIOUS wrapper, which is an annotation on a type rather than a type.
     static string Norm(TypeNode t) => SupertypeGraph.TypeKey(Canon(t));
+
+    static string PhysicalNorm(TypeNode t, ReferenceMetadataIndex refs) =>
+        SupertypeGraph.TypeKey(Exact(Canon(t), refs));
+
+    static TypeNode Exact(TypeNode t, ReferenceMetadataIndex refs) => t switch
+    {
+        TypeNode.Fqn f => new TypeNode.Fqn(
+            refs.ExactReflectedOwner(f.Name, f.Args?.Length ?? 0),
+            f.Args?.Select(a => Exact(a, refs)).ToArray()),
+        TypeNode.Array a => new TypeNode.Array(Exact(a.Elem, refs)),
+        TypeNode.Nullable n => new TypeNode.Nullable(Exact(n.Of, refs)),
+        TypeNode.ByRef b => new TypeNode.ByRef(Exact(b.Of, refs)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(Exact(o.Of, refs)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Exact(fn.Ret, refs),
+            fn.Params.Select(p => Exact(p, refs)).ToArray(),
+            fn.Recv == null ? null : Exact(fn.Recv, refs), fn.Clr,
+            fn.Ctx?.Select(p => Exact(p, refs)).ToArray()),
+        _ => t,
+    };
 
     static TypeNode Canon(TypeNode t) => t switch
     {

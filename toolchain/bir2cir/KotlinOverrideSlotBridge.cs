@@ -375,8 +375,7 @@ static class KotlinOverrideSlotBridge
                         slotParams.Length, methodArity, slotParams, spec.Args ?? Array.Empty<TypeNode>(),
                         out var physicalOwner, out _, out var externalAccessor))
                 {
-                    var currentPhysicalOwner = refs.TryResolveClrOwner(spec.Name, out var aliasedOwner, out _)
-                        ? aliasedOwner : spec.Name;
+                    var currentPhysicalOwner = refs.ExactReflectedOwner(spec.Name, spec.Args?.Length ?? 0);
                     // Reflection reports the MethodSemantics method's DECLARING interface. A Kotlin interface may
                     // redeclare a property while its CLR alias merely inherits that property (List.size over
                     // IReadOnlyList<T> -> IReadOnlyCollection<T>.Count). Such a spec owns no CLR slot; its reachable
@@ -475,8 +474,7 @@ static class KotlinOverrideSlotBridge
                 var referencedSlotRet = SupertypeGraph.SubstOwnerTvs(
                     NullableGenericErasure.EraseNullableTv(referencedDeclaration.Return, isValue), specArgs);
                 var physicalMember = referencedDeclaration.PhysicalMember;
-                var physicalOwner = refs.TryResolveClrOwner(spec.Name, out var aliasOwner, out _)
-                    ? aliasOwner : spec.Name;
+                var physicalOwner = refs.ExactReflectedOwner(spec.Name, spec.Args?.Length ?? 0);
                 var descriptorOwner = new TypeNode.Fqn(physicalOwner, spec.Args);
                 var referencedSource = MethodShape(
                     physicalMember, referencedSlotParams, referencedSlotRet, methodArity,
@@ -999,8 +997,7 @@ static class KotlinOverrideSlotBridge
                             ps.Count, methodArity, implementationSignature, spec.Args ?? Array.Empty<TypeNode>(),
                             out var physicalOwner, out _, out var externalAccessor))
                     {
-                        var currentPhysicalOwner = refs.TryResolveClrOwner(spec.Name, out var aliasedOwner, out _)
-                            ? aliasedOwner : spec.Name;
+                        var currentPhysicalOwner = refs.ExactReflectedOwner(spec.Name, spec.Args?.Length ?? 0);
                         if (physicalOwner != currentPhysicalOwner) continue;
                         descriptorOwner = new TypeNode.Fqn(physicalOwner, spec.Args);
                         descriptorMember = externalAccessor;

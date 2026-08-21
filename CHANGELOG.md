@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Projected CLR owners now retain each nested generic segment's exact arity (#505).** `dll2klib` records both the
+  Kotlin-facing owner and its exact ECMA TypeDef identity, so legal declarations such as ``Outer`1+Leaf`1`` and
+  ``Outer+Leaf`2`` no longer collapse to the same flattened BIR owner before bir2cir resolves their members.
+
 - **External generic structs now cross nullable value slots with their structural CLR representation (#501).**
   bir2cir wraps a bare value entering `Nullable<V>` and extracts a proven-present value before it enters a bare
   receiver, argument, local, field, array element, branch, or return slot, using the complete value-type identity

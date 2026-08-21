@@ -214,10 +214,66 @@ private fun selectedInheritedImplementation(fn: IrSimpleFunction): IrSimpleFunct
 	return fn.resolveFakeOverride(::isInheritedSynthetic)?.takeIf { it.modality != Modality.ABSTRACT }
 }
 
+/** The resolved fake-override target may be a substituted IR copy whose callable and parent no longer carry imported
+ *  annotations. The original declaration remains in the frontend override closure: select only declarations with the
+ *  same Kotlin owner/member identity as the already-selected target, then transport their unique exact CLR owner. */
+private fun BirEmitter.inheritedImplementationOwner(
+	source: IrSimpleFunction,
+	target: IrSimpleFunction,
+	targetOwner: IrClass
+): String? {
+	val targetSemanticOwner = targetOwner.fqNameWhenAvailable?.asString()
+	val targetProperty = target.correspondingPropertySymbol?.owner
+	val targetMember = targetProperty?.name?.asString() ?: target.name.asString()
+	val targetKind = when {
+		targetProperty == null -> "method"
+		target === targetProperty.getter -> "getter"
+		else -> "setter"
+	}
+	val exactOwners = linkedSetOf<String>()
+	val visitedFunctions = hashSetOf<IrSimpleFunction>()
+	fun consider(candidate: IrSimpleFunction) {
+		if (!visitedFunctions.add(candidate)) return
+		val candidateOwner = candidate.parent as? IrClass
+		val candidateProperty = candidate.correspondingPropertySymbol?.owner
+		val candidateMember = candidateProperty?.name?.asString() ?: candidate.name.asString()
+		val candidateKind = when {
+			candidateProperty == null -> "method"
+			candidate === candidateProperty.getter -> "getter"
+			else -> "setter"
+		}
+		if (candidateOwner?.fqNameWhenAvailable?.asString() == targetSemanticOwner
+			&& candidateMember == targetMember && candidateKind == targetKind) {
+			val projectedOwner = candidateOwner?.let { overrideOwnerType(source, it) as? TypeNode.Fqn }?.name
+			(projectedOwner ?: clrExternalOwner(candidate) ?: candidateOwner?.let(::clrExternalOwner))
+				?.let(exactOwners::add)
+		}
+		candidate.overriddenSymbols.forEach { consider(it.owner) }
+	}
+	consider(source)
+	val sourceProperty = source.correspondingPropertySymbol?.owner
+	if (sourceProperty != null) {
+		val visitedProperties = hashSetOf<IrProperty>()
+		fun considerProperty(property: IrProperty) {
+			if (!visitedProperties.add(property)) return
+			(if (targetKind == "getter") property.getter else property.setter)?.let(::consider)
+			property.overriddenSymbols.forEach { considerProperty(it.owner) }
+		}
+		considerProperty(sourceProperty)
+	}
+	if (exactOwners.size > 1)
+		error("selected inherited implementation '$targetSemanticOwner.$targetMember' has multiple exact CLR owners: ${exactOwners.joinToString()}")
+	return exactOwners.singleOrNull()
+		?: clrExternalOwner(target)
+		?: clrExternalOwner(targetOwner)
+		?: targetSemanticOwner
+}
+
 /** Preserve the frontend-selected implementation identity instead of rediscovering it from ancestor bodies. */
 private fun BirEmitter.inheritedImplementationFact(fn: IrSimpleFunction): String {
 	val target = selectedInheritedImplementation(fn) ?: return ""
-	val owner = (target.parent as? IrClass)?.fqNameWhenAvailable?.asString() ?: return ""
+	val targetOwner = target.parent as? IrClass ?: return ""
+	val owner = inheritedImplementationOwner(fn, target, targetOwner) ?: return ""
 	val property = target.correspondingPropertySymbol?.owner
 	val member = property?.name?.asString() ?: target.name.asString()
 	val kind = when {
@@ -240,7 +296,7 @@ private fun BirEmitter.inheritedDefaultAccessorFact(property: IrProperty, access
 	if (targetOwner.kind != ClassKind.INTERFACE) return null
 	val targetProperty = target.correspondingPropertySymbol?.owner ?: return null
 	val targetKind = if (target === targetProperty.getter) "getter" else "setter"
-	val targetOwnerName = targetOwner.fqNameWhenAvailable?.asString() ?: return null
+	val targetOwnerName = inheritedImplementationOwner(accessor, target, targetOwner) ?: return null
 	val extRecv = extensionReceiverParam(accessor)
 	val parameterTypes = (listOfNotNull(extRecv?.type) + accessor.parameters.filter { isValueParameter(it) }.map { it.type })
 		.joinToString(",") { birType(it).toJson() }
@@ -254,7 +310,7 @@ private fun BirEmitter.inheritedDefaultMethodFact(fn: IrSimpleFunction): String?
 	val target = selectedInheritedImplementation(fn) ?: return null
 	val targetOwner = target.parent as? IrClass ?: return null
 	if (targetOwner.kind != ClassKind.INTERFACE) return null
-	val targetOwnerName = targetOwner.fqNameWhenAvailable?.asString() ?: return null
+	val targetOwnerName = inheritedImplementationOwner(fn, target, targetOwner) ?: return null
 	val extRecv = extensionReceiverParam(fn)
 	val parameterTypes = (listOfNotNull(extRecv?.type) + fn.parameters.filter { isValueParameter(it) }.map { it.type })
 		.joinToString(",") { birType(it).toJson() }
@@ -1086,7 +1142,7 @@ internal fun BirEmitter.synthClrEventForwarders(klass: IrClass): Pair<List<Strin
  *  derive the BCL slot name. Behavior-neutral: bir2cir strips
  *  the `overrides` key, so it never reaches ilemit (Step 1 keeps CIR byte-identical). `member` is the property name
  *  for an accessor (kind getter/setter) so bir2cir can resolve the external Property/MethodSemantics slot. */
-private fun BirEmitter.overrideOwnerJson(fn: IrSimpleFunction, owner: IrClass): String {
+private fun BirEmitter.overrideOwnerType(fn: IrSimpleFunction, owner: IrClass): TypeNode {
 	val currentOwner = (fn.parent as? IrClass)
 		?: (fn.correspondingPropertySymbol?.owner?.parent as? IrClass)
 	val directOwner = currentOwner?.superTypes?.firstOrNull { superType ->
@@ -1101,10 +1157,13 @@ private fun BirEmitter.overrideOwnerJson(fn: IrSimpleFunction, owner: IrClass): 
 	// Use the frontend's constructed supertype itself. External IR stubs may not expose their declaration type
 	// parameters even though the subclass supertype carries concrete arguments; ownerSpec intentionally treats such
 	// declarations as non-generic and would discard those arguments.
-	return (instantiatedOwner?.let { birType(it) }
+	return instantiatedOwner?.let { birType(it) }
 		?: TypeNode.Fqn(owner.fqNameWhenAvailable?.asString()
-			?: error("override owner '${owner.name}' has no Kotlin qualified name"))).toJson()
+			?: error("override owner '${owner.name}' has no Kotlin qualified name"))
 }
+
+private fun BirEmitter.overrideOwnerJson(fn: IrSimpleFunction, owner: IrClass): String =
+	overrideOwnerType(fn, owner).toJson()
 
 internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 	val prop = fn.correspondingPropertySymbol?.owner

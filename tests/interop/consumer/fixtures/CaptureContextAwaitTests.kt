@@ -18,6 +18,7 @@
 //
 // The awaiter is what crosses a suspension in all three, and it is an ordinary struct in all three.
 import CaptureAwaitable.Duo
+import CaptureAwaitable.NestedAwaitable
 import CaptureAwaitable.Pair
 import CaptureAwaitable.RefTickApi
 import NUnit.Framework.TestAttribute
@@ -44,6 +45,10 @@ private suspend fun capByRefLikeEscaping(v: Int, bail: Boolean): Int =
 
 private suspend fun capByRefLikeDynamic(v: Int, capture: Boolean): Int =
     RefTickApi.Make(v).await(captureContext = capture)
+
+// ---- 4. nested generic awaiter --------------------------------------------------------------------------------
+private suspend fun capNestedAwaiter(v: Int, synchronous: Boolean): Int =
+    NestedAwaitable<Int>(v, synchronous).await()
 
 class CaptureContextAwaitTests {
     // The value comes back through the configured awaiter's `GetResult()`, which is only reachable if the configured
@@ -93,5 +98,11 @@ class CaptureContextAwaitTests {
 
         assertEquals(33, blockOn { capByRefLikeDynamic(33, true) })
         assertEquals(34, blockOn { capByRefLikeDynamic(34, false) })
+    }
+
+    @TestAttribute
+    fun nestedGenericAwaiterKeepsEachSegmentArity() {
+        assertEquals(41, blockOn { capNestedAwaiter(41, true) })
+        assertEquals(42, blockOn { capNestedAwaiter(42, false) })
     }
 }

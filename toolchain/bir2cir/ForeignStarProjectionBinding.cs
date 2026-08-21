@@ -469,12 +469,14 @@ static class ForeignStarProjectionBinding
     {
         if (receiver is JsonObject { } obj && Str(obj["k"]) == "local"
             && Str(obj["name"]) is string name && _closedViewHints.TryGetValue(name, out var hint)
-            && hint.Name == owner.Name && hint.Args?.Length == owner.Args?.Length)
+            && hint.Name == owner.Name
+            && hint.Args?.Length == owner.Args?.Length)
         {
             // MetadataLoadContext reports a method declared directly on an open generic as the bare definition.
             // In that case the authored exact closure already is the declaring view; emitting the bare generic as a
             // classRef would be an invalid/absent CLR type token.
-            if (declaringView is TypeNode.Fqn { Args: null } direct && direct.Name == owner.Name)
+            if (declaringView is TypeNode.Fqn { Args: null } direct
+                && direct.Name == owner.Name)
                 return ClassRef(hint);
             var translated = SubstituteOwnerSlots(declaringView, hint.Args);
             if (translated is TypeNode.Fqn translatedFqn && !ContainsStar(translatedFqn))

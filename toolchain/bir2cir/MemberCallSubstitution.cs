@@ -398,7 +398,7 @@ static class MemberCallSubstitution
             // .NET struct ctor is a valid `newobj`, and kotc emitted newClr for a projected struct too. Also
             // catches a REFERENCED Kotlin library class (`new mylib.W(..)`, ktproj-pr) whose dll is on the refs — the
             // same axis #61 established for its CALLs; ilemit's EmitClrNew resolves it identically.
-            if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0) == null) return null;
+            if (refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0) == null) return null;
             bcl = ownerFqn.Name; kind = "class";
         }
 
