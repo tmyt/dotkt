@@ -110,6 +110,16 @@ static partial class NullableTvErasureCallRealign
         // exactly that pair: index only the generic half and every `coerceIn` call gets the erased parameter vector.)
         var fileClass = topLevel ? Str(o["fileClass"]) : null;
         if (fileClass is { Length: > 0 }) idx.FileClasses.Add(fileClass);
+        if (fileClass is { Length: > 0 })
+        {
+            // Top-level property backing fields live on the file facade and `staticFieldSet` addresses that owner.
+            // They are fixed declaration slots exactly like fields on an ordinary type, so retain them on the same
+            // owner-index axis instead of limiting Slots to entries nested under `types`.
+            if (!idx.Slots.TryGetValue(fileClass, out var fileSlots))
+                idx.Slots[fileClass] = fileSlots = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+            CollectSlots(o["fields"], fileSlots);
+            CollectSlots(o["properties"], fileSlots);
+        }
         if (topLevel && o["methods"] is JsonArray topMethods)
             foreach (var m in topMethods)
                 if (m is JsonObject mo && Str(mo["name"]) is string mn && ReadSig(mo) is DeclSig sig)
@@ -415,12 +425,15 @@ static partial class NullableTvErasureCallRealign
                 EvalSetLocal(obj, ctx);
                 return null;
             case "setField":
+            case "setFieldExpr":
+            case "staticFieldSet":
                 EvalSetField(obj, ctx);
                 return null;
             case "arraySet":
                 EvalArraySet(obj, ctx);
                 return null;
             case "return":
+            case "returnExpr":
                 EvalReturn(obj, ctx);
                 return null;
             case "cond":
@@ -494,6 +507,18 @@ static partial class NullableTvErasureCallRealign
         if (name == null) return;
         if (declType != null && initType != null && !initType.Equals(declType))
         {
+            // A platform (`V!`) local inherits its PHYSICAL representation from the reflected value slot that
+            // initialized it. In particular `T? where T : struct` is Nullable<V>, even though dll2klib/Kotlin spell
+            // the flexible surface as oblivious(V). Retype this carrier instead of unwrapping at the store: the
+            // subsequent Kotlin `!!`/safe-call must still observe HasValue and produce Kotlin's null behavior.
+            if (declType is TypeNode.Oblivious platform
+                && (initType.Equals(platform.Of)
+                    || initType is TypeNode.Nullable nullable && nullable.Of.Equals(platform.Of)))
+            {
+                obj["type"] = TypeJson.Write(initType);
+                env[name] = initType;
+                return;
+            }
             if (obj["init"] is JsonObject initNode
                 && CoerceForTarget(initNode, initType, declType) is JsonNode coercedInit)
             {

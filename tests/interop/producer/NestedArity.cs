@@ -42,6 +42,21 @@ public sealed class GenericOuter<T>
     }
 }
 
+public sealed class NullableSlot<T> where T : struct
+{
+    public T? Value { get; set; }
+}
+
+public readonly struct EventValueItem
+{
+    // Custom accessors keep the struct immutable while still exposing a real instance event declaration.
+    public event System.Action<int>? Changed
+    {
+        add { }
+        remove { }
+    }
+}
+
 public static class Oracle
 {
     public static Outer.ValueItem<string>? NestedValue() => new("nested value");
@@ -58,4 +73,6 @@ public static class Oracle
     public static GenericOuter<int>.Leaf<string>? FlattenedNestedValue() => new("flattened nested value");
     public static bool HasFlattenedNestedValue(GenericOuter<int>.Leaf<string>? value) =>
         value.HasValue && value.Value.Value == "flattened nested value";
+
+    public static EventValueItem EventValue() => new();
 }

@@ -28,6 +28,8 @@ static class ClrEventSubscriptionBinding
         readonly JsonArray _empty = new();
         int _next;
 
+        public bool BoundAny { get; private set; }
+
         public Binder(
             JsonNode root,
             ReferenceMetadataIndex refs,
@@ -99,6 +101,7 @@ static class ClrEventSubscriptionBinding
             // owner type (`type`), the event name (`name`), and the actual owner value (`recv`). Anything else is not an event op.
             if (node["recv"] is not JsonObject eventGet || Str(eventGet["k"]) != "clrEventGet") return null;
             if (node["args"] is not JsonArray args || args.Count != 1) return null;
+            BoundAny = true;
             return Subscribe(node, eventGet, args[0], typeParams, methodParams);
         }
 
@@ -384,8 +387,14 @@ static class ClrEventSubscriptionBinding
         JsonNode root,
         ReferenceMetadataIndex refs,
         IReadOnlyDictionary<(string Owner, string Event), JsonNode> forwardedOwners,
-        IReadOnlySet<string> localTypes) =>
-        new Binder(root, refs, forwardedOwners, localTypes).Apply(root);
+        IReadOnlySet<string> localTypes,
+        out bool boundAny)
+    {
+        var binder = new Binder(root, refs, forwardedOwners, localTypes);
+        var result = binder.Apply(root);
+        boundAny = binder.BoundAny;
+        return result;
+    }
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 

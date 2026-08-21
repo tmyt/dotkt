@@ -526,12 +526,11 @@ sealed class Pipeline
             // statics, and its bodies are squashed later.
             LocalStaticOwnerBinding.Apply(bir.Root, localStatics);
             if (!_options.RefBuild) CompanionRepresentationLowering.AssertNoCompanionValues(bir.Root);
-            // #11 — VALUE-TYPE PLATFORM SLOT WRITE COERCION: a `Nullable<V>`/`null` source assigned to a bare value-type
-            // platform property/field slot (`ThreadLocal<Int>.Value = someIntQ`) — the WRITE twin of #8's oblivious read.
-            // Unwrap a `Nullable<V>` source to the bare `V` the setter expects (`nullableValue`), and fail loud on a
-            // literal `null` into a null-less value slot. Runs right after NetInteropBinding (consumes its `clrPropSet`
-            // nodes) and before BirTypeLowering (owner args + the wrap's elem are still `kotlin.*`). Non-ref only.
-            if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs);
+            // #11/#501 — VALUE-TYPE PLATFORM SLOT ACCESS COERCION: reconcile reflected bare/Nullable<V> property or
+            // field slots with the Kotlin platform view on both writes and reads. Writes receive explicit wrap/unwrap;
+            // reads carry the reflected physical result so the receiving local cannot reinterpret Nullable<V> as V.
+            // Runs right after NetInteropBinding and before BirTypeLowering. Non-ref only.
+            if (!_options.RefBuild) ValueSlotNullableWrite.Apply(bir.Root, refs, isValueFqn);
             // W1-S1 (#46/#44): the `clrGeneric*` overload-matcher is now the STRUCTURED `resolvedMemberParams` descriptor
             // NetInteropBinding carries (the callee's declared param TypeNodes) — BirTypeLowering lowers it and ilemit
             // exact-matches it. The retired ShapeSynthesis pass (lossy `shapes` string derived off the @ClrTypeAlias
@@ -588,9 +587,10 @@ sealed class Pipeline
             // member that does not exist at all when the call's `sig` descriptor is what drifted. So every USE is
             // re-derived as `Subst(Erase(declaration), typeArgs)` and never `Erase(Subst(...))`: call returns, call
             // and constructor ARGUMENTS (descriptor included), field reads, and the WRITE positions — setLocal,
-            // setField, arraySet, return, and the `if/else` value join. Each rewrite is gated to the exact
-            // object-erasure boundary (IsObjectErasureOf), and a value is only ever converted across a bare `object`
-            // seam, which is the only one the CLR can express. BEFORE BirTypeLowering.
+            // setField (statement/expression/static forms), arraySet, return (statement/expression forms), and the
+            // `if/else` value join. Object-erasure rewrites stay gated to the exact bare-object boundary; concrete
+            // V <-> Nullable<V> fixed slots use explicit construction/extraction with complete type identity.
+            // BEFORE BirTypeLowering.
             NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn, refs);
             // DELEGATE-TARGET slot alignment (ALL builds — the declaration half neither axis above can reach on its
             // own): a delegate's parameters and return are reified ARGUMENTS, so `(Int?) -> String` is
@@ -659,7 +659,14 @@ sealed class Pipeline
             // call — which has no ref.dll owner — is bound here. `subscribe` also constructs the stdlib close token with
             // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
             hoisted = ClrEventSubscriptionBinding.Apply(
-                hoisted, refs, clrEventForwardedOwners, localTypeFqns);
+                hoisted, refs, clrEventForwardedOwners, localTypeFqns, out var boundClrEventSubscription);
+            // Event binding has just synthesized receiver/handler locals plus add/remove member accesses. Feed those
+            // NEW fixed slots through the same nullable-value use-axis rule as the original tree. In particular, a
+            // proven-present Nullable<V> event receiver must enter the synthesized bare-V spill as V; the first pass
+            // could not see a node that did not exist yet. The walk is idempotent and is paid only when a subscription
+            // was actually lowered.
+            if (boundClrEventSubscription)
+                NullableTvErasureCallRealign.Apply(hoisted, nullableTvDeclRets, isValueFqn, refs);
             // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
             // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
             // these newly-created callback classes are assembled before the remaining whole-tree passes.

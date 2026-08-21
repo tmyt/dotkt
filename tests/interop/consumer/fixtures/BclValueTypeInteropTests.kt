@@ -23,6 +23,9 @@ class BclValueTypeInteropTests {
         assertEquals(-1, cmp(b))                    // -1
         val g: () -> String = a::ToString           // virtual (Object.ToString override) -> box + dup + ldvirtftn
         assertEquals("00:00:05", g())               // 00:00:05
+        val nullable: TimeSpan? = a
+        val fromNullable: () -> String = nullable!!::ToString
+        assertEquals("00:00:05", fromNullable())    // CLR delegate nodes carry their owner in clrType, not type
     }
 
     // il-inlonlyintr: `sb[0]='X'` is StringBuilder.set (@InlineOnly @ClrIntrinsic("set_Chars")) — the canonical #40

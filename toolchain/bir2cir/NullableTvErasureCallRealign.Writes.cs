@@ -264,14 +264,16 @@ static partial class NullableTvErasureCallRealign
     static TypeNode EvalClrCall(JsonObject obj, Ctx ctx)
     {
         var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
+        var owner = ClrOwner(obj);
         // NetInteropBinding runs before this pass, so an external property/method receiver no longer reaches the
-        // callInstance arm. Its resolved `type` is the same fixed bare owner slot: a proven-present Nullable<V>
-        // receiver must yield V before ilemit performs the already-resolved one-to-one member dispatch.
+        // callInstance arm. Its resolved declaration owner is the same fixed bare owner slot: a proven-present
+        // Nullable<V> receiver must yield V before ilemit performs the already-resolved one-to-one member dispatch.
+        // Ordinary calls/constructors carry it in `type`; CLR delegate constructions carry it in `clrType`.
         if (obj["recv"] is JsonObject recv
-            && TypeJson.Read(obj["type"]) is TypeNode.Fqn owner
+            && owner != null
             && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
             obj["recv"] = coercedReceiver;
-        var ownerArgs = (TypeJson.Read(obj["type"]) as TypeNode.Fqn)?.Args;
+        var ownerArgs = owner?.Args;
         var methodArgs = (obj["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray();
         // No declaration and nothing to refuse: the callee is .NET, so `resolvedMemberParams` IS its declaration.
         RealignArgs(obj, null, null, ownerArgs, methodArgs, ctx);
@@ -281,7 +283,12 @@ static partial class NullableTvErasureCallRealign
             if (kv.Value != null
                 && kv.Key is not ("recv" or "args" or "k" or "sty" or "type" or "ret" or "resolvedMemberParams" or "argTypes" or "sig"))
                 Eval(kv.Value, ctx);
-        return Str(obj["k"]) == "newClr" ? TypeJson.Read(obj["type"]) : TypeJson.Read(obj["ret"]);
+        return Str(obj["k"]) switch
+        {
+            "newClr" => TypeJson.Read(obj["type"]),
+            "newBoundClrDelegate" or "newClrStaticDelegate" => TypeJson.Read(obj["funcType"]),
+            _ => TypeJson.Read(obj["ret"]),
+        };
     }
 
     // A property/event access has no call argument vector, but its instance receiver still enters the member's
@@ -291,8 +298,9 @@ static partial class NullableTvErasureCallRealign
     static TypeNode EvalClrMemberAccess(JsonObject obj, Ctx ctx)
     {
         var recvType = obj["recv"] != null ? Eval(obj["recv"], ctx) : null;
+        var owner = ClrOwner(obj);
         if (obj["recv"] is JsonObject recv
-            && TypeJson.Read(obj["type"]) is TypeNode.Fqn owner
+            && owner != null
             && CoerceForTarget(recv, recvType, owner) is JsonNode coercedReceiver)
             obj["recv"] = coercedReceiver;
         if (obj["value"] != null) Eval(obj["value"], ctx);
@@ -300,6 +308,27 @@ static partial class NullableTvErasureCallRealign
             if (kv.Value != null && kv.Key is not ("recv" or "value" or "k" or "type" or "ret" or "sty"))
                 Eval(kv.Value, ctx);
         return Str(obj["k"]) == "clrPropGet" ? TypeJson.Read(obj["ret"]) : null;
+    }
+
+    // The declaration owner of a CLR-bound node. NetInteropBinding deliberately preserves source nullability and
+    // byref wrappers on the owner slot, while member resolution peels them to address the underlying declaration.
+    // Do the identical structural peel here; a wrapper describes the receiver value, not a different CLR owner.
+    // Bound/static delegate constructions are the one CLR-call family whose owner key is `clrType`.
+    static TypeNode.Fqn ClrOwner(JsonObject obj)
+    {
+        var k = Str(obj["k"]);
+        TypeNode t = TypeJson.Read(k is "newBoundClrDelegate" or "newClrStaticDelegate"
+            ? obj["clrType"]
+            : obj["type"]);
+        while (true)
+            switch (t)
+            {
+                case TypeNode.Fqn f: return f;
+                case TypeNode.Nullable n: t = n.Of; break;
+                case TypeNode.Oblivious o: t = o.Of; break;
+                case TypeNode.ByRef b: t = b.Of; break;
+                default: return null;
+            }
     }
 
     // An array construction, and the ELEMENTS it is built from, are one operation. The `elem` may already have been
@@ -408,7 +437,10 @@ static partial class NullableTvErasureCallRealign
         var srcType = obj["e"] != null ? Eval(obj["e"], ctx) : null;
         var elem = TypeJson.Read(obj["elem"]);
         if (elem != null && obj["e"] is JsonObject e
-            && CoerceForTarget(e, srcType, new TypeNode.Nullable(elem)) is JsonNode wrapped)
+            // A nullableValue node already declares extraction to V. A redundant frontend unwrap can therefore
+            // receive an already-bare V and is itself the no-op; wrapping V back into Nullable<V> here only to extract
+            // it again defeats that contract. The sole meaningful operand repair is the nullable-generic object seam.
+            && CastForTarget(e, srcType, new TypeNode.Nullable(elem)) is JsonNode wrapped)
             obj["e"] = wrapped;
         return Str(obj["k"]) == "nullableValue" ? elem : new TypeNode.Fqn("kotlin.Boolean");
     }
@@ -512,12 +544,24 @@ static partial class NullableTvErasureCallRealign
     // construction/extraction in either direction. The complete Fqn (including generic arguments) must agree, and
     // the value-type oracle must classify it as a struct; reference nullability remains annotation-only.
     static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
-        bool exactPropertyTarget = false)
+        bool exactPropertyTarget = false) =>
+        CoerceForTarget(value, src, target, exactPropertyTarget, _isValue);
+
+    // A late bir2cir pass that obtains a reflected fixed slot after this walk may apply the same complete concrete
+    // slot rule without depending on Apply's per-run oracle state.
+    internal static JsonNode CoerceForFixedSlot(
+        JsonNode value, TypeNode src, TypeNode target, ValueTypeOracle isValue) =>
+        CoerceForTarget(value, src, target, exactPropertyTarget: false, isValue);
+
+    static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
+        bool exactPropertyTarget, ValueTypeOracle isValue)
     {
         if (value is not JsonObject vo || src == null || target == null || src.Equals(target)) return null;
+        if ((IsBareObject(src) && IsSemanticObject(target))
+            || (IsSemanticObject(src) && (IsBareObject(target) || IsSemanticObject(target)))) return null;
         if (Str(vo["k"]) is "throwExpr" or "throw") return null;
         if (target is TypeNode.Nullable { Of: TypeNode.Fqn targetElem }
-            && src.Equals(targetElem) && _isValue(targetElem))
+            && src.Equals(targetElem) && isValue(targetElem))
             return new JsonObject
             {
                 ["k"] = "nullableWrap",
@@ -525,14 +569,14 @@ static partial class NullableTvErasureCallRealign
                 ["e"] = vo.DeepClone(),
             };
         if (src is TypeNode.Nullable { Of: TypeNode.Fqn sourceElem }
-            && target.Equals(sourceElem) && _isValue(sourceElem))
+            && target.Equals(sourceElem) && isValue(sourceElem))
             return new JsonObject
             {
                 ["k"] = "nullableValue",
                 ["elem"] = TypeJson.Write(sourceElem),
                 ["e"] = vo.DeepClone(),
             };
-        return CastForTarget(value, src, target, exactPropertyTarget);
+        return CastForTarget(value, src, target, exactPropertyTarget, isValue);
     }
 
     // The object-erasure conversion a value needs to inhabit `target`, or null when it needs none / none is
