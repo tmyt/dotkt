@@ -96,6 +96,17 @@ static class KotlinOverrideSlotBridge
         var exactBridgeSources = emitBridges
             ? new Dictionary<JsonObject, string>(ReferenceEqualityComparer.Instance)
             : null;
+        // An earlier physical-slot owner (notably CovariantInterfaceReturnBridge) can already have authored an exact
+        // interface property bridge. Its carrier explicitly preserves the selected source association; seed this
+        // pass-local hand-off from that fact so inherited-DIM collision repair can consume the bridge without asking
+        // this pass to synthesize a duplicate or reconstructing the property relation from CLR names.
+        if (exactBridgeSources != null)
+            foreach (var method in defs.Values.Where(def => def.Kind == "interface")
+                         .SelectMany(def => def.Methods.OfType<JsonObject>()))
+                if (Bool(method[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey])
+                    && Str((method[KotlinPropertyAccessors.MetadataCarrierKey] as JsonObject)?["sourceAssociation"])
+                        is string sourceAssociation)
+                    exactBridgeSources[method] = sourceAssociation;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
             ApplyClass(cls, defs, isValue, refs, emitBridges, exactBridgeSources, localTypeNames,
                 covariantBridgedSlots);
