@@ -520,24 +520,34 @@ internal fun BirEmitter.clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnn
 	return clrExternalOwner(decl)
 }
 
-/** The exact CLR metadata owner written by dll2klib. The arity-stripped owner is annotation argument 0; argument 1
- *  retains every nested TypeDef segment's own `N suffix and is the current-format BIR transport identity. */
-internal fun BirEmitter.clrExternalOwner(
+private fun BirEmitter.clrExternalArguments(
 	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
-): String? {
+): List<org.jetbrains.kotlin.ir.expressions.IrExpression>? {
 	val host = (decl as? IrSimpleFunction)?.correspondingPropertySymbol?.owner ?: decl
 	val annotation = host.annotations.firstOrNull {
 		it.type.classFqName?.asString() == "kotlin.clr.ClrExternal"
 	} ?: return null
-	return (regularArgs(annotation).getOrNull(1) as? IrConst)?.value as? String
+	return regularArgs(annotation)
 }
+
+/** The Kotlin-facing declaration owner written by dll2klib. This fact is kept distinct from the exact TypeDef name;
+ *  an arity clash can rename a projected classifier (`Outer<T>` -> `Outer1`) without changing CLR metadata. */
+internal fun BirEmitter.clrExternalSemanticOwner(
+	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
+): String? = (clrExternalArguments(decl)?.getOrNull(0) as? IrConst)?.value as? String
+
+/** The exact CLR metadata owner written by dll2klib. Argument 1 retains every nested TypeDef segment's own `N suffix
+ *  and is the current-format BIR transport identity. */
+internal fun BirEmitter.clrExternalOwner(
+	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
+): String? = (clrExternalArguments(decl)?.getOrNull(1) as? IrConst)?.value as? String
 
 /** Boolean ORIGIN-GATE: is `decl` an external .NET/CLR type (vs a pure-Kotlin/stdlib type)? The truthiness
  *  half of [clrName] — call sites that only test "is this a .NET owner?" (routing a ctor to a plain `new`, a field to a
  *  plain `field`, excluding a .NET owner from a user-class path) use THIS; only sites that EMIT the .NET FQN identity
  *  keep [clrName] for its returned string. */
 internal fun BirEmitter.isExternalNetType(decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer): Boolean =
-	clrName(decl) != null
+	clrExternalSemanticOwner(decl) != null && clrExternalOwner(decl) != null
 
 /** JSON for a structured type in a node template — `str(typeNode)` emits the `{t:…}` object (no quotes).
  *  An overload of `str(String)` so every `"type":${str(x)}` site works whether x is a name or a Type. */

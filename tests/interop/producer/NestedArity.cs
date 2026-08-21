@@ -48,21 +48,41 @@ public sealed class GenericOuter<T>
 // Their exact CLR identities are SegmentCollisionOuter`1+Leaf`1 and SegmentCollisionOuter+Leaf`2.
 public sealed class SegmentCollisionOuter<T>
 {
+    public interface Contract<U>
+    {
+        int Offset => 5;
+        string Describe(T outer, U inner) => $"outer-contract:{outer}:{inner}";
+    }
+
     public sealed class Leaf<U>
     {
-        public Leaf(T outer, U inner) => (Outer, Inner) = (outer, inner);
+        public Leaf(T outer, U inner, int marker = 43) => (Outer, Inner, Marker) = (outer, inner, marker);
         public T Outer { get; }
         public U Inner { get; }
+        public int Marker { get; }
+        public string Describe(string prefix = "outer") => $"{prefix}:{Outer}:{Inner}";
+        public event System.Action<int>? Changed;
+        public void Raise(int value) => Changed?.Invoke(value);
     }
 }
 
 public sealed class SegmentCollisionOuter
 {
+    public interface Contract<T, U>
+    {
+        int Offset => 7;
+        string Describe(T outer, U inner) => $"inner-contract:{outer}:{inner}";
+    }
+
     public sealed class Leaf<T, U>
     {
-        public Leaf(T outer, U inner) => (Outer, Inner) = (outer, inner);
+        public Leaf(T outer, U inner, int marker = 47) => (Outer, Inner, Marker) = (outer, inner, marker);
         public T Outer { get; }
         public U Inner { get; }
+        public int Marker { get; }
+        public string Describe(string prefix = "inner") => $"{prefix}:{Outer}:{Inner}";
+        public event System.Action<int>? Changed;
+        public void Raise(int value) => Changed?.Invoke(value);
     }
 }
 

@@ -303,12 +303,13 @@ Declarations that require this identity carry:
 
 ```kotlin
 @kotlin.clr.ClrExternal(
-    owner = "<arity-free Kotlin owner>",
+    owner = "<projected Kotlin owner>",
     physicalOwner = "<exact CLR TypeDef name>",
 )
 ```
 
-`owner` is the Kotlin-facing identity used by semantic indexes. `physicalOwner`
+`owner` is the Kotlin-facing classifier identity, including any deterministic
+arity-clash rename used by the projected KLIB. `physicalOwner`
 retains the metadata nesting separator and every segment's own generic arity
 (for example, ``Namespace.Outer`1+Leaf`1``). The latter is required because a
 flattened Kotlin argument vector cannot distinguish that legal CLR declaration
@@ -321,10 +322,11 @@ consumes it while emitting BIR:
 - class and instance-member references receive `ownerType`; and
 - top-level, static, and inline references receive `owner`.
 
-The annotation is not propagated beyond BIR. `kotc` transports
+The annotation is not propagated beyond BIR. `kotc` requires both facts to
+recognize the current-format external declaration and transports
 `physicalOwner` in the existing owner/type fields; `bir2cir` uses that exact
-identity with the MSBuild-resolved reference assemblies while keeping
-arity-free names only for Kotlin-semantic indexes.
+identity with the MSBuild-resolved reference assemblies while its semantic
+indexes remain keyed in Kotlin vocabulary.
 
 ### Delegates
 

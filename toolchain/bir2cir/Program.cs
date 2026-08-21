@@ -1245,6 +1245,16 @@ sealed class Pipeline
             ClrMemberResolution.ResolveReferencedStaticCalls(
                 lowered, refs, emittedLocalTypes, externalCanonicalTypes);
 
+        // Declaration inheritance and MethodImpl ownership are physical CLR edges. Put their final TypeSpecs on the
+        // same exact reflected identity so ilemit cannot visit one slot twice through an arity-free alias and an exact
+        // owner. This runs after every pass that can add an interface or descriptor (including read-only collection
+        // views and reverse-enumerator synthesis), but before ResolveInterfaceSlots snapshots those final edges into
+        // ilemit's exact slot manifests. The reference build keeps Kotlin vocabulary and deliberately skips this
+        // CIR-only normalization.
+        if (!_options.RefBuild)
+            foreach (var (lowered, _) in loweredRoots)
+                ExactExternalDeclarationIdentity.Apply(lowered, refs);
+
         // PHASE 3B — metadata, exact external identities, and validation over the now-stable module graph.
         foreach (var (lowered, outputName) in loweredRoots)
         {

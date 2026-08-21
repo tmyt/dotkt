@@ -119,7 +119,8 @@ static class InheritedMemberOwnerBinding
         // both `sty` and the local declarations are still available.  A receiver may reach the same generic owner
         // through more than one construction; only a unique constructed spec is authoritative, so ambiguity stays
         // unresolved instead of being guessed from arguments or expression values.
-        if (TypeJson.Read(call["recv"]?["sty"]) is TypeNode.Fqn receiver && receiver.Name != owner.Name)
+        if (TypeJson.Read(call["recv"]?["sty"]) is TypeNode.Fqn receiver
+            && (receiver.Name != owner.Name || owner.Args == null && receiver.Args != null))
         {
             var projectedOwners = ReachableTypes(receiver, types, refs)
                 .Where(candidate => candidate.Type.Name == owner.Name)
@@ -195,10 +196,9 @@ static class InheritedMemberOwnerBinding
         {
             // kotc's implementation fact identifies the declaration, not its use-site instantiation. Project that
             // identity through the already-constructed receiver hierarchy so `Local<T> : External<T>` becomes
-            // `External<T>`, rather than throwing away T by copying the carrier's deliberately bare owner.
+            // `External<T>`, rather than throwing away T by copying the carrier's open declaration owner.
             var projectedOwners = ReachableTypes(owner, types, refs)
-                .Where(candidate => ReferenceMetadataIndex.BareOwnerFqn(candidate.Type.Name)
-                    == ReferenceMetadataIndex.BareOwnerFqn(implementationOwner.Name))
+                .Where(candidate => candidate.Type.Name == implementationOwner.Name)
                 .Select(candidate => candidate.Type).Distinct().ToList();
             if (projectedOwners.Count != 1) return;
             var projectedOwner = projectedOwners[0];

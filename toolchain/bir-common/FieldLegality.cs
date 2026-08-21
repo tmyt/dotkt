@@ -13,6 +13,7 @@
 
 #nullable enable
 using System;
+using System.Text.RegularExpressions;
 using System.Text.Json.Nodes;
 
 namespace DotKt.Bir;
@@ -71,8 +72,8 @@ public static class FieldLegality
     {
         null => "<untyped>",
         TypeNode.Fqn f => f.Args == null || f.Args.Length == 0
-            ? f.Name
-            : f.Name + "<" + string.Join(", ", System.Array.ConvertAll(f.Args, Render)) + ">",
+            ? DisplayFqn(f.Name)
+            : DisplayFqn(f.Name) + "<" + string.Join(", ", System.Array.ConvertAll(f.Args, Render)) + ">",
         TypeNode.Array a => "Array<" + Render(a.Elem) + ">",
         TypeNode.Nullable n => Render(n.Of) + "?",
         TypeNode.Oblivious ob => Render(ob.Of) + "!",
@@ -83,10 +84,14 @@ public static class FieldLegality
         _ => t.ToString() ?? "<type>",
     };
 
+    // Exact metadata names are compiler identity (`Span`1`, `Outer`1+Inner`1`), not useful source-facing prose.
+    // Diagnostics deliberately hide arity punctuation while the TypeNode itself retains it for every binding step.
+    static string DisplayFqn(string fqn) => Regex.Replace(fqn, @"`[0-9]+", "");
+
     static string KindPhrase(FieldRejection why, string? offendingFqn) =>
         why == FieldRejection.ByRef
             ? "a managed pointer (`ref`)"
-            : $"byref-like (a `ref struct`{(offendingFqn != null ? $", via `{offendingFqn}`" : "")})";
+            : $"byref-like (a `ref struct`{(offendingFqn != null ? $", via `{DisplayFqn(offendingFqn)}`" : "")})";
 
     /// <summary>
     /// How a diagnostic refers to the value: its ROLE, plus the emitted NAME when the role alone does not identify

@@ -201,7 +201,7 @@ static class NetInteropBinding
         var projectedPropKind = Str(node["prop"]);
         var projectedEventName = projectedPropKind == "get" ? method : null;
         if (projectedEventName != null &&
-            _refs.TryClrEventIsStatic(bare, projectedEventName, out var eventIsStatic))
+            _refs.TryClrEventIsStatic(physicalOwner, projectedEventName, out var eventIsStatic))
         {
             var recv = node["recv"];
             // Captured BEFORE the Clear detaches them: the handle this reads is the same `ClrEvent<T>` value the

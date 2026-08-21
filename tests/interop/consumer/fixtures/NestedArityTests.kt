@@ -3,10 +3,17 @@ import NestedArityInterop.Oracle
 import NestedArityInterop.ConcreteNullableSlot
 import NestedArityInterop.EventValueItem
 import NestedArityInterop.NullableSlot
+import NestedArityInterop.SegmentCollisionOuter.Leaf as InnerGenericLeaf
+import NestedArityInterop.SegmentCollisionOuter1.Leaf as OuterGenericLeaf
+import NestedArityInterop.SegmentCollisionOuter.Contract as InnerGenericContract
+import NestedArityInterop.SegmentCollisionOuter1.Contract as OuterGenericContract
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 private enum class NestedSlotEnum { VALUE }
+
+private class OuterGenericContractImpl : OuterGenericContract<Int, String>
+private class InnerGenericContractImpl : InnerGenericContract<Int, String>
 
 private class NestedValueField(initial: Outer.ValueItem<String>) {
     @ClrField var value: Outer.ValueItem<String> = initial
@@ -58,6 +65,46 @@ class NestedArityTests {
         // contract must retain each segment's exact metadata arity instead of selecting by reference order.
         assertEquals(true, Oracle.HasOuterGenericLeaf(Oracle.OuterGenericLeaf()))
         assertEquals(true, Oracle.HasInnerGenericLeaf(Oracle.InnerGenericLeaf()))
+
+        // Exercise each declaration directly. Static Oracle parameters alone prove that a signature type can be
+        // transported, but do not cover constructor or property-member lookup through the exact owner index.
+        val outerGeneric = OuterGenericLeaf<Int, String>(29, "direct outer generic")
+        assertEquals(29, outerGeneric.Outer)
+        assertEquals("direct outer generic", outerGeneric.Inner)
+        assertEquals(43, outerGeneric.Marker)
+        assertEquals("outer:29:direct outer generic", outerGeneric.Describe())
+        val innerGeneric = InnerGenericLeaf<Int, String>(31, "direct inner generic")
+        assertEquals(31, innerGeneric.Outer)
+        assertEquals("direct inner generic", innerGeneric.Inner)
+        assertEquals(47, innerGeneric.Marker)
+        assertEquals("inner:31:direct inner generic", innerGeneric.Describe())
+
+        var outerEvent = 0
+        val outerSubscription = outerGeneric.Changed.subscribe { outerEvent = it }
+        outerGeneric.Raise(37)
+        assertEquals(37, outerEvent)
+        outerSubscription.close()
+        var innerEvent = 0
+        val innerSubscription = innerGeneric.Changed.subscribe { innerEvent = it }
+        innerGeneric.Raise(41)
+        assertEquals(41, innerEvent)
+        innerSubscription.close()
+
+        val outerContract: OuterGenericContract<Int, String> = OuterGenericContractImpl()
+        assertEquals(5, outerContract.Offset)
+        val outerDescribe = outerContract::Describe
+        assertEquals("outer-contract:43:dim", outerDescribe(43, "dim"))
+        val innerContract: InnerGenericContract<Int, String> = InnerGenericContractImpl()
+        assertEquals(7, innerContract.Offset)
+        val innerDescribe = innerContract::Describe
+        assertEquals("inner-contract:47:dim", innerDescribe(47, "dim"))
+
+        // Both closed values can flow through their own star-projected CLR generic. The reflection fallback needs the
+        // exact declaring view; comparing arity-free owner names would reuse whichever collision was scanned first.
+        val outerStar: OuterGenericLeaf<*, *> = outerGeneric
+        assertEquals(43, outerStar.Marker)
+        val innerStar: InnerGenericLeaf<*, *> = innerGeneric
+        assertEquals(47, innerStar.Marker)
     }
 
     @TestAttribute

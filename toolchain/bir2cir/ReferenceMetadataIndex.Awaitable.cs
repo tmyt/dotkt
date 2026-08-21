@@ -258,17 +258,13 @@ partial class ReferenceMetadataIndex
         return hasIsCompleted && hasGetResult && hasOnCompleted;
     }
 
-    // The CIR type-token name of a .NET type DEFINITION (open generic def name; instance→ same). A SIMPLE generic type
-    // (`TaskAwaiter`1`) drops the trailing `arity so the ilemit ConstructGeneric appends it from the emitted type-args;
-    // a NESTED type whose arity rides the OUTER (`ConfiguredTaskAwaitable`1+ConfiguredTaskAwaiter`) has no trailing
-    // backtick and is kept verbatim (ilemit must NOT append a second `1 — cf. il-cfgawaitgen).
+    // The CIR type-token name of a .NET type DEFINITION (open generic def name; instance→ same). Preserve every
+    // segment's metadata arity. ilemit treats a name containing a backtick as already complete; stripping only the
+    // innermost suffix would collapse Outer`1+Awaiter`1 into the different legal type Outer`1+Awaiter`2.
     static (string name, bool generic) NetDefName(Type t)
     {
         var generic = t.IsGenericType;
         var full = (generic ? t.GetGenericTypeDefinition() : t).FullName ?? t.Name;
-        var bt = full.LastIndexOf('`');
-        if (bt > full.LastIndexOf('+') && bt >= 0 && full.Skip(bt + 1).All(char.IsDigit))
-            full = full.Substring(0, bt);
         return (full, generic);
     }
 

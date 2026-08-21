@@ -5351,7 +5351,7 @@ internal sealed class AssemblyScanner
             Value = new Annotation.Types.Argument.Types.Value
             {
                 Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
-                StringValue = names.String(MetadataTypeName(owner)),
+                StringValue = names.String(_semanticOwnerNames.GetValueOrDefault(owner) ?? KotlinFullName(owner)),
             },
         });
         annotation.Argument.Add(new Annotation.Types.Argument
