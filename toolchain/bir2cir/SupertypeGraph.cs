@@ -104,7 +104,8 @@ static class SupertypeGraph
     }
 
     // Declaration reachability ignores construction arguments, matching an override marker to the declaration family
-    // it names while retaining exact current-format owner spelling (including CLR arity punctuation).
+    // it names while retaining exact current-format owner spelling and flattened arity. Current-format external
+    // markers carry that arity in the CLR name even when they omit construction args.
     public static bool ReachesDeclaration(TypeNode.Fqn from, TypeNode.Fqn owner,
         IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs) =>
         ReachesCore(from, owner, defs, refs, exactConstruction: false);
@@ -127,7 +128,7 @@ static class SupertypeGraph
         {
             var spec = queue.Dequeue();
             if (!seen.Add(TypeKey(spec))) continue;
-            if (exactConstruction ? TypeKey(spec) == ownerKey : spec.Name == owner.Name) return true;
+            if (exactConstruction ? TypeKey(spec) == ownerKey : SameDeclaration(spec, owner)) return true;
             if (defs.TryGetValue(spec.Name, out var def))
             {
                 var args = EffectiveArgs(spec, def.Arity);
@@ -147,6 +148,13 @@ static class SupertypeGraph
         }
         return false;
     }
+
+    static bool SameDeclaration(TypeNode.Fqn left, TypeNode.Fqn right) =>
+        left.Name == right.Name && DeclarationArity(left) == DeclarationArity(right);
+
+    static int DeclarationArity(TypeNode.Fqn type) => type.Name.Contains('`')
+        ? MemberRefNode.ArityOfName(type.Name)
+        : type.Args?.Length ?? 0;
 
     public static TypeNode[] EffectiveArgs(TypeNode.Fqn spec, int arity)
     {
