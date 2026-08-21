@@ -33,9 +33,9 @@ public static class FieldLegality
 {
     /// <summary>
     /// Classify a type as heap-storable or not. <paramref name="isByRefLike"/> answers whether this exact named
-    /// construction's declaration is a `ref struct` for the compilation's reference set. The walk is recursive: a byref-like appearing anywhere
-    /// in the type (array element, generic argument) is equally unstorable — and equally unconstructable — so
-    /// there is no valid program the recursion can reject.
+    /// construction's declaration is a `ref struct` for the compilation's reference set. The walk is recursive: a
+    /// byref-like appearing anywhere in the type (array element, generic argument) is equally unstorable — and equally
+    /// unconstructable — so there is no valid program the recursion can reject.
     /// </summary>
     public static FieldRejection Classify(TypeNode? t, Func<TypeNode.Fqn, bool> isByRefLike,
         out string? offendingFqn)

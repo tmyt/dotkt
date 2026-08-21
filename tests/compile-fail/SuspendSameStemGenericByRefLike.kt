@@ -1,4 +1,4 @@
-import DeclarationIdentityInterop.StorageCollision1
+import DeclarationIdentityInterop.StorageSegmentOuter1.Leaf as NestedByRefLike
 
-// The generic arm is genuinely byref-like and remains illegal in the suspend ABI after the same-stem index is split.
-suspend fun sameStemGenericByRefLike(value: StorageCollision1<Int>): Int = value.Value
+// The generic arm is genuinely byref-like even though a class with the same flattened owner and total arity exists.
+suspend fun sameStemGenericByRefLike(value: NestedByRefLike<Int, String>): String = value.Value

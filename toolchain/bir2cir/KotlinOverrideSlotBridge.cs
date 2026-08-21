@@ -946,7 +946,7 @@ static class KotlinOverrideSlotBridge
                 // wires both slots to whichever body the first marker named. "Not declared here" establishes only
                 // externality; reachability from the spec is what makes this marker THIS spec's business.
                 if (TypeJson.Read(o["owner"]) is not TypeNode.Fqn owner || defs.ContainsKey(owner.Name)) continue;
-                if (!SupertypeGraph.Reaches(spec, owner, defs, refs)) continue;
+                if (!SupertypeGraph.ReachesDeclaration(spec, owner, defs, refs)) continue;
                 if (Str(o["member"]) is not string member) continue;
                 // A PROPERTY marker names the Kotlin property and getter/setter role. Reference metadata supplies the
                 // exact physical CLR slot independently of the implementation MethodDef name.

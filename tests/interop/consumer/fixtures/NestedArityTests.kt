@@ -7,6 +7,8 @@ import NestedArityInterop.SegmentCollisionOuter.Leaf as InnerGenericLeaf
 import NestedArityInterop.SegmentCollisionOuter1.Leaf as OuterGenericLeaf
 import NestedArityInterop.SegmentCollisionOuter.Contract as InnerGenericContract
 import NestedArityInterop.SegmentCollisionOuter1.Contract as OuterGenericContract
+import NestedArityInterop.SegmentKindOuter.Kind as InnerGenericKind
+import NestedArityInterop.SegmentKindOuter1.Kind as OuterGenericKind
 import NestedArityInterop.SameStemShape
 import NestedArityInterop.SameStemShape1
 import NUnit.Framework.TestAttribute
@@ -116,6 +118,15 @@ class NestedArityTests {
         assertEquals(53, plainShape.Marker)
         val genericShape: SameStemShape1<String> = SameStemGenericShapeImpl()
         assertEquals("shape", genericShape.Echo("shape"))
+        // The generic declaration directly extends its non-generic same-stem sibling. The hierarchy walk must not
+        // mistake that cross-arity edge for a metadata cycle.
+        assertEquals(53, genericShape.Marker)
+
+        val segmentReference: InnerGenericKind<Int, String>? = null
+        assertEquals(true, segmentReference == null)
+        val segmentValue: OuterGenericKind<Int, String>? = OuterGenericKind("segment value")
+        assertEquals("segment value", segmentValue!!.Value)
+        assertEquals(59, Oracle.NeedsNew<OuterGenericKind<Int, String>>())
     }
 
     @TestAttribute

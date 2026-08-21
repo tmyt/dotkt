@@ -25,6 +25,24 @@ public ref struct StorageCollision<T>
     public StorageCollision(T value) => Value = value;
 }
 
+public sealed class SegmentStorageOuter<T>
+{
+    public ref struct Leaf<U>
+    {
+        public U Value;
+        public Leaf(U value) => Value = value;
+    }
+}
+
+public sealed class SegmentStorageOuter
+{
+    public sealed class Leaf<T, U>
+    {
+        public Leaf(int value) => Value = value;
+        public int Value { get; }
+    }
+}
+
 public static class ByRefLikeApi
 {
     public static Tally MakeTally(int v) => new Tally(v);

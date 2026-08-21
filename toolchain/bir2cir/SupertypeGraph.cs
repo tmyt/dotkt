@@ -103,14 +103,21 @@ static class SupertypeGraph
         }
     }
 
-    // Is `owner` `from` itself, or one of its supertypes — through this compilation's declarations and through the
-    // referenced graph alike? The bridge asks it to tie an override marker to the supertype spec it may answer for.
-    // Bounded by a visited set, so cyclic or repeated metadata terminates.
-    // Constructed counterpart used when authorization depends on the exact direct-interface instance. A class may
+    // Declaration reachability ignores construction arguments, matching an override marker to the declaration family
+    // it names while retaining exact current-format owner spelling (including CLR arity punctuation).
+    public static bool ReachesDeclaration(TypeNode.Fqn from, TypeNode.Fqn owner,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs) =>
+        ReachesCore(from, owner, defs, refs, exactConstruction: false);
+
+    // Constructed reachability is used when authorization depends on the exact direct-interface instance. A class may
     // inherit `I<string>` through its base while directly re-listing only `I<int>`; matching names there would grant
     // the new declaration a MethodImpl for the wrong constructed slot.
     public static bool Reaches(TypeNode.Fqn from, TypeNode.Fqn owner,
-        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs) =>
+        ReachesCore(from, owner, defs, refs, exactConstruction: true);
+
+    static bool ReachesCore(TypeNode.Fqn from, TypeNode.Fqn owner,
+        IReadOnlyDictionary<string, Def> defs, ReferenceMetadataIndex refs, bool exactConstruction)
     {
         var queue = new Queue<TypeNode.Fqn>();
         queue.Enqueue(from);
@@ -120,7 +127,7 @@ static class SupertypeGraph
         {
             var spec = queue.Dequeue();
             if (!seen.Add(TypeKey(spec))) continue;
-            if (TypeKey(spec) == ownerKey) return true;
+            if (exactConstruction ? TypeKey(spec) == ownerKey : spec.Name == owner.Name) return true;
             if (defs.TryGetValue(spec.Name, out var def))
             {
                 var args = EffectiveArgs(spec, def.Arity);

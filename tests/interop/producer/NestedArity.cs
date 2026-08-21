@@ -100,8 +100,28 @@ public interface SameStemShapeBase<T>
     T Echo(T value) => value;
 }
 
-public interface SameStemShape<T> : SameStemShapeBase<T>
+public interface SameStemShape<T> : SameStemShape, SameStemShapeBase<T>
 {
+}
+
+// These nested declarations have the same flattened source identity and total arity, but the generic slots belong
+// to different TypeDef segments. Their value/reference classification must come from the exact physical owner.
+public sealed class SegmentKindOuter<T>
+{
+    public readonly struct Kind<U>
+    {
+        public Kind(U value) => Value = value;
+        public U Value { get; }
+    }
+}
+
+public sealed class SegmentKindOuter
+{
+    public sealed class Kind<T, U>
+    {
+        public Kind(U value) => Value = value;
+        public U Value { get; }
+    }
 }
 
 public sealed class NullableSlot<T> where T : struct
@@ -150,6 +170,8 @@ public static class Oracle
     public static SegmentCollisionOuter.Leaf<int, string> InnerGenericLeaf() => new(23, "inner generic");
     public static bool HasInnerGenericLeaf(SegmentCollisionOuter.Leaf<int, string> value) =>
         value.Outer == 23 && value.Inner == "inner generic";
+
+    public static int NeedsNew<T>() where T : new() => 59;
 
     public static EventValueItem EventValue() => new();
 }

@@ -15,6 +15,7 @@
 // has two readers and must become a local — which is what puts a materialised binding after the byref-like argument
 // and makes the order observable.
 import ByRefLikeInterop.ByRefLikeApi
+import ByRefLikeInterop.SegmentStorageOuter.Leaf as SegmentHeapStorage
 import ByRefLikeInterop.StorageCollision
 import ByRefLikeInterop.Tally
 import NUnit.Framework.TestAttribute
@@ -46,8 +47,9 @@ private suspend fun brlRelay(): Int = 5
 
 private suspend fun brlSameStemHeapClass(): Int {
     val value = StorageCollision(37)
+    val nested = SegmentHeapStorage<Int, String>(41)
     val after = brlRelay()
-    return value.Value + after
+    return value.Value + nested.Value + after
 }
 
 private suspend fun brlSuspendTally(): Int = brlTally(ByRefLikeApi.MakeTally(brlMark(4))) + brlRelay()
@@ -78,7 +80,7 @@ private suspend fun brlSuspendInlined(): Int {
 class ByRefLikeSingleEvalTests {
     @TestAttribute
     fun genericRefStructDoesNotPoisonSameStemHeapClass() {
-        assertEquals(42, blockOn { brlSameStemHeapClass() })
+        assertEquals(83, blockOn { brlSameStemHeapClass() })
     }
 
     // Each of these emitted a state machine that failed to LOAD while every `var` of a coroutine body became an SM
