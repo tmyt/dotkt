@@ -178,14 +178,18 @@ The validation follows metadata rather than Kotlin callability: a rich Kotlin en
 representation and therefore is not a CLR enum, and default arguments do not make a nonzero-parameter constructor
 satisfy `new()` unless a public zero-parameter `.ctor` is actually emitted.
 
-WHAT IT DOES NOT COVER, measured rather than assumed: **#29's collection-identity collapse at a supertype
-position**. `class B : Box<List<String>>` emits `Box<IList<string>>` and a consumer still cannot assign `B()` to a
-`Box<List<String>>` — the identical source break, one transform over. The carrier does not fire because it is
-recorded only where `NullableGenericErasure.Erase` moves the node, and the collection collapse is a different
-rewrite that `Erase` does not implement; `[KotlinCollectionIdentity]` records the same four declaration slots and no
-type-level one, exactly as the nullable-value carrier did before this. The CHANNEL generalizes — the payload is an
-opaque TypeNode object and a second producer could stamp into it — but nothing stamps it today, so the break is
-real and open.
+The channel has two independent producers. Nullable-generic erasure records every edge or bound its positional
+`Erase` rule moves. Collection-identity recording does the same when Root-V lowering collapses a nested read-only
+`List`/`Set`/`Collection` onto its invariant CLR sibling. They merge by edge head and type-parameter index before
+the attribute is authored: when both transforms touch one edge, the earlier producer's less-erased TypeNode wins;
+unrelated moved edges and bounds are appended. Thus `class B : Box<List<String>>` re-imports with that Kotlin edge,
+not the physical `Box<IList<string>>`, without teaching dll2klib which transform produced the correction.
+
+Collection-bearing type edges are captured at the last all-Kotlin boundary, before inner applications rotate to CLR
+argument order, F-bound stars become existential views, or reference nullability is stripped. Their classifier names
+are bound later to exact nested metadata paths without changing the captured Kotlin argument order. A `bounds` key is
+the parameter's flattened publication index, including captured outer parameters of an `inner` class; that is the
+same frame ilemit emits and dll2klib assigns to `TypeParameter.Id`.
 
 `dll2klib` restores the edges by HEAD, not by position, and that is load-bearing: the projected supertype list is not
 a transcription of the metadata's interface list — it drops the non-generic shadows, collapses the `IComparable`

@@ -72,6 +72,20 @@ import nestedlist.boxOfList
 import nestedlist.stateOfList
 import nestedlist.boxOfMutable
 import nestedlist.useNestedMutable
+import nestedlist.CollectionEdge
+import nestedlist.ReadonlyCollectionBase
+import nestedlist.CollectionContract
+import nestedlist.ReadonlyCollectionInterface
+import nestedlist.CollectionBound
+import nestedlist.MixedCollectionEdge
+import nestedlist.MixedCollectionDerived
+import nestedlist.NullableCollectionBase
+import nestedlist.StarCollectionBase
+import nestedlist.NullableEdge
+import nestedlist.ReadonlyEdge
+import nestedlist.MixedInterfaceEdges
+import nestedlist.CollectionOuter
+import nestedlist.InnerApplicationBound
 import kotlinx.cell.makeCell
 import demo.hello
 import demo.Plain
@@ -134,6 +148,8 @@ private class LocalStarDerivedImpl : LocalStarDerived<String> {
 private fun requireNullableSuspendType(
     probe: InvariantTypeProbe<(suspend () -> Int)?>
 ): (suspend () -> Int)? = probe.value
+
+private class LocalReadonlyCollectionEdge : CollectionEdge<List<String>>(listOf("bound edge"))
 
 class CrossModuleCaptureTests {
     // ktproj-dotktpkg (#26 follow-up): a `dotkt.foo.bar` cross-module local captured in a lambda,
@@ -322,6 +338,45 @@ class GenericMetadataRoundtripTests {
         // (the direct `mb.v` generic-member read — the #33 shape — is covered by genmember's p.b/w.items; omitting
         //  it here keeps this method's emitted IL ilverify-clean, since the read-only vs invariant collection
         //  interface of the Root-V collapse would surface a formal-only IList/IReadOnlyCollection variance finding.)
+    }
+
+    // #350: collection identity on a type edge has no member slot on which [KotlinCollectionIdentity] can ride.
+    // [KotlinSupertypes] must restore base, interface and class-bound positions, and must merge with the earlier
+    // nullable-generic producer when both rewrites touch the same edge.
+    @TestAttribute
+    fun collectionIdentityOnTypeEdgesRoundTrips() {
+        val base: CollectionEdge<List<String>> = ReadonlyCollectionBase()
+        ClassicAssert.AreEqual("base edge", base.value[0])
+
+        val contract: CollectionContract<List<String>> = ReadonlyCollectionInterface()
+        ClassicAssert.IsNotNull(contract)
+
+        val bounded = CollectionBound(LocalReadonlyCollectionEdge())
+        ClassicAssert.AreEqual("bound edge", bounded.value.value[0])
+
+        val mixed: MixedCollectionEdge<List<Int?>> = MixedCollectionDerived<Int>()
+        ClassicAssert.IsNotNull(mixed)
+
+        val nullable: CollectionEdge<List<String?>> = NullableCollectionBase()
+        ClassicAssert.IsNull(nullable.value[0])
+
+        val star: CollectionEdge<List<*>> = StarCollectionBase()
+        ClassicAssert.AreEqual("star edge", star.value[0])
+
+        val mixedInterfaces = MixedInterfaceEdges<Int>()
+        val nullableInterface: NullableEdge<Int?> = mixedInterfaces
+        val readonlyInterface: ReadonlyEdge<List<Int>> = mixedInterfaces
+        ClassicAssert.IsNotNull(nullableInterface)
+        ClassicAssert.IsNotNull(readonlyInterface)
+
+        val outer = CollectionOuter<String>()
+        val innerBound = outer.BoundInner(LocalReadonlyCollectionEdge())
+        ClassicAssert.AreEqual("bound edge", innerBound.value.value[0])
+
+        val applicationOuter = CollectionOuter<List<String>>()
+        val application = applicationOuter.ApplicationInner(7)
+        val applicationBound = InnerApplicationBound(application)
+        ClassicAssert.AreEqual(7, applicationBound.value.value)
     }
 
     // A bounded generic G<*> is represented in CLR by a compiler-generated existential interface. The referenced

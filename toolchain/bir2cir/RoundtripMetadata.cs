@@ -170,11 +170,11 @@ static class RoundtripMetadata
         // bounds. A supertype argument erases like any other reified argument, and unlike a member slot there is no
         // per-slot attribute to hang the Kotlin type on: the edge itself is what a consumer binds to when it writes
         // `val s: Sink<Int?> = E()`. Same opaque TypeNode payload as every other carrier.
-        if ((to[NullableGenericErasure.SupertypesPre] as JsonValue)?.GetValue<string>() is string sup)
+        if ((to[KotlinSupertypesRecord.PreKey] as JsonValue)?.GetValue<string>() is string sup)
         {
             Append(to, Marker(AKSupertypes, StringArg(BirCarrier.JsonV1),
                 BytesArg(Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, JsonNode.Parse(sup))))));
-            to.Remove(NullableGenericErasure.SupertypesPre);
+            to.Remove(KotlinSupertypesRecord.PreKey);
         }
         if ((to["kotlinType"] as JsonValue)?.GetValue<string>() is string kt)
         {
@@ -466,7 +466,7 @@ static class RoundtripMetadata
         // The runtime build deliberately emits no round-trip attribute, but must still discard the temporary fact.
         o.Remove("kotlinType");
         o.Remove("retKotlinType");
-        o.Remove(NullableGenericErasure.SupertypesPre);
+        o.Remove(KotlinSupertypesRecord.PreKey);
         o.Remove("kotlinCompanion");
         o.Remove("richEnum");
         o.Remove("enumRich");

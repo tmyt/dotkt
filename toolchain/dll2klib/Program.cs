@@ -6791,7 +6791,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private KType FromFqn(TypeNode.Fqn f)
     {
         var name = NormalizeKotlinName(f.Name);
-        var type = Named(name);
+        var type = NamedCarrierClassifier(name);
         if (f.Args is not null)
             type.Argument.Add(f.Args.Select(a => a is TypeNode.Star
                 ? new KType.Types.Argument { Projection = KType.Types.Argument.Types.Projection.Star }
@@ -6801,6 +6801,21 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
                     Type = FromTypeNode(a),
                 }));
         return type;
+    }
+
+    // Carrier TypeNodes can name an exact nested metadata path with '+'. Keep the package/class boundary and each
+    // nesting segment explicit in the KLIB qualified-name table; treating the whole suffix as one top-level simple
+    // name creates a different Kotlin classifier even when its rendered text looks similar.
+    private KType NamedCarrierClassifier(string name)
+    {
+        var firstNested = name.IndexOf('+');
+        if (firstNested < 0) return Named(name);
+        var outer = name[..firstNested];
+        var packageEnd = outer.LastIndexOf('.');
+        var package = packageEnd < 0 ? "" : outer[..packageEnd];
+        var outerSimple = packageEnd < 0 ? outer : outer[(packageEnd + 1)..];
+        var nested = name[(firstNested + 1)..].Split('+', StringSplitOptions.None);
+        return new KType { ClassName = _names.Class(package, nested.Prepend(outerSimple)) };
     }
 
     private KType FromFunction(TypeNode.Fn function)
@@ -6873,9 +6888,9 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // [ApplyOuterNullability] then declines to put back.
     public bool ConsumesOuterNullability(TypeNode type) => type switch
     {
-        // A CONSTRUCTED value type holds a byte but is never annotated by it, so the bare `Named` here is the right
-        // question for BOTH: can this node's `?` ride the byte at all.
-        TypeNode.Fqn f => ConsumesNullability(Named(NormalizeKotlinName(f.Name))),
+        // A CONSTRUCTED value type holds a byte but is never annotated by it, so the bare carrier classifier here is
+        // the right question for BOTH: can this node's `?` ride the byte at all.
+        TypeNode.Fqn f => ConsumesNullability(NamedCarrierClassifier(NormalizeKotlinName(f.Name))),
         TypeNode.ByRef => false,
         _ => true,
     };
