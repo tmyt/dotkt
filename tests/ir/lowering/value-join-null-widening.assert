@@ -65,5 +65,11 @@
 +"k":"cond","type":{"t":"nullable","of":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]}},"cond":{"k":"local","name":"a"},"then":{"k":"nullableWrap","elem":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]},"e":{"k":"local","name":"s"}
 -"k":"cond","type":{"t":"fqn","name":"System.ArraySegment"
 
+# A top-level oblivious wrapper is a platform annotation that BirTypeLowering erases, not a physical container.
+# Crossing between that V! surface and a fixed Nullable<V>/V! return slot therefore performs the same explicit
+# construction/extraction as the unwrapped V spelling in either direction.
++"k":"nullableWrap","elem":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]},"e":{"k":"local","name":"platformValue"}
++"k":"nullableValue","elem":{"t":"fqn","name":"System.ArraySegment","args":[{"t":"fqn","name":"System.String"}]},"e":{"k":"local","name":"nullableValue"}
+
 # The fact is a producer-to-consumer hint and is CONSUMED: no CIR node may still carry it.
 -"joinNullBranch"

@@ -556,7 +556,14 @@ static partial class NullableTvErasureCallRealign
     static JsonNode CoerceForTarget(JsonNode value, TypeNode src, TypeNode target,
         bool exactPropertyTarget, ValueTypeOracle isValue)
     {
-        if (value is not JsonObject vo || src == null || target == null || src.Equals(target)) return null;
+        if (value is not JsonObject vo || src == null || target == null) return null;
+        // Oblivious is an NRT/platform annotation, not a CLR container. BirTypeLowering erases the OUTER wrapper to
+        // its inner physical slot, so compare that physical spelling here as well: V! -> Nullable<V> still needs a
+        // constructor, and Nullable<V> -> V! still needs extraction. A platform local that must retain the reflected
+        // initializer representation is retyped by EvalVar before it reaches this fixed-slot rule.
+        src = PhysicalTopLevel(src);
+        target = PhysicalTopLevel(target);
+        if (src.Equals(target)) return null;
         if ((IsBareObject(src) && IsSemanticObject(target))
             || (IsSemanticObject(src) && (IsBareObject(target) || IsSemanticObject(target)))) return null;
         if (Str(vo["k"]) is "throwExpr" or "throw") return null;
@@ -578,6 +585,8 @@ static partial class NullableTvErasureCallRealign
             };
         return CastForTarget(value, src, target, exactPropertyTarget, isValue);
     }
+
+    static TypeNode PhysicalTopLevel(TypeNode type) => type is TypeNode.Oblivious o ? o.Of : type;
 
     // The object-erasure conversion a value needs to inhabit `target`, or null when it needs none / none is
     // expressible.
