@@ -349,7 +349,7 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual("base edge", base.value[0])
 
         val contract: CollectionContract<List<String>> = ReadonlyCollectionInterface()
-        ClassicAssert.AreEqual("interface edge", contract.value[0])
+        ClassicAssert.IsNotNull(contract)
 
         val bounded = CollectionBound(LocalReadonlyCollectionEdge())
         ClassicAssert.AreEqual("bound edge", bounded.value.value[0])

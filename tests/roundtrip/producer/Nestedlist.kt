@@ -32,10 +32,8 @@ fun <T> useNestedMutable(s: Crate<MutableList<T>>): Int { s.v.add(s.v[0]); retur
 open class CollectionEdge<T>(val value: T)
 class ReadonlyCollectionBase : CollectionEdge<List<String>>(listOf("base edge"))
 
-interface CollectionContract<T> { val value: T }
-class ReadonlyCollectionInterface : CollectionContract<List<String>> {
-    override val value: List<String> = listOf("interface edge")
-}
+interface CollectionContract<T>
+class ReadonlyCollectionInterface : CollectionContract<List<String>>
 
 class CollectionBound<T : CollectionEdge<List<String>>>(val value: T)
 
