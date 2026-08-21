@@ -2429,6 +2429,45 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    // Resolve the exact DIRECT referenced declaration named by a frontend override edge. Covariant return selection
+    // cannot compare the implementation return with the slot return — their deliberate difference is why the caller
+    // needs the declaration — so identity is source member/property role + method arity + parameter vector. Kotlin
+    // does not overload on return type. Inherited declarations are not searched here: kotc emits an override marker
+    // for each interface that contributes a direct declaration (including a synthesized redeclaration on an
+    // intermediate interface), and each such CLR MethodImpl must name that exact declaring interface.
+    public bool TrySelectedOverrideDeclaration(string ownerFqn, string sourceMember, string accessorKind,
+        int methodArity, IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments,
+        JsonArray selectedTypeParams, TypeNode[] implementationOwnerTypeArguments,
+        bool selectedSuspend, out ReferencedMethodDeclaration declaration)
+    {
+        declaration = null;
+        if (!TryMembersByBirOwner(ownerFqn, out var list)) return false;
+        var matches = list.Where(member => !member.IsStatic && !member.IsPropertyBridge
+                && (accessorKind == null
+                    ? member.SourcePropertyName == null
+                        && (member.SourceMethodName ?? member.Name) == sourceMember
+                    : member.SourcePropertyName == sourceMember && member.AccessorKind == accessorKind)
+                && member.MethodArity == methodArity
+                && member.Suspend == selectedSuspend
+                && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
+                    member.MethodTypeParams, selectedTypeParams,
+                    ownerTypeArguments, implementationOwnerTypeArguments)
+                && AccessorSignatureMatches(member, signature, ownerTypeArguments)
+                && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
+            .ToList();
+        if (matches.Count != 1) return false;
+        var match = matches[0];
+        declaration = new ReferencedMethodDeclaration(
+            match.Name,
+            match.ParamTypeNodes.Select((type, index) =>
+                match.NullableGenericParams is { } carriers && index < carriers.Length && carriers[index] != null
+                    ? carriers[index]
+                    : type).ToArray(),
+            match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
+            match.MethodTypeParams);
+        return true;
+    }
+
     // FULL-SIGNATURE @ClrIntrinsic lookup for the member-STRIP: is owner.name(paramKeys) a bound stub? Matches the
     // @ClrIntrinsic member whose canonicalized param types equal the emitted method's — so `StringBuilder.append(Char)`
     // (@ClrIntrinsic, dropped) is distinguished from `append(CharSequence?)` (rule-3, kept), which share name+arity.

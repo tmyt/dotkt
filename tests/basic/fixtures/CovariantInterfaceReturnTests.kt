@@ -15,6 +15,17 @@ private class CovariantSlotImpl : CovariantSlot {
         get() = CovariantBoxImpl(CovariantDerived(42))
 }
 
+// The exact-return MethodImpl is inherited from this open class. Its forwarding body must still dispatch to a
+// further-derived override of the narrow Kotlin member rather than pinning interface calls to this implementation.
+private open class OpenCovariantSlotImpl : CovariantSlot {
+    override val boxed: CovariantBox<CovariantDerived>
+        get() = CovariantBoxImpl(CovariantDerived(44))
+}
+private class DerivedCovariantSlotImpl : OpenCovariantSlotImpl() {
+    override val boxed: CovariantBox<CovariantDerived>
+        get() = CovariantBoxImpl(CovariantDerived(45))
+}
+
 private interface CovariantGenericConstraint
 private class CovariantGenericReceiver<T>(val value: T)
 private interface CovariantGenericExtensionSlot {
@@ -59,6 +70,9 @@ class CovariantInterfaceReturnTests {
 
         val value: CovariantSlot = CovariantSlotImpl()
         assertEquals(42, value.boxed.item.value)
+
+        val inheritedBridge: CovariantSlot = DerivedCovariantSlotImpl()
+        assertEquals(45, inheritedBridge.boxed.item.value)
 
         // Constructing the class forces CoreCLR to validate the method-generic MethodImpl row. Invocation of a
         // method-generic member-extension property is a separate call-site type-argument concern, not this slot test.

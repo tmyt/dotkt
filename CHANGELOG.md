@@ -7,6 +7,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Covariant overrides now fill interface slots declared in referenced Kotlin assemblies (#320).** bir2cir joins
+  frontend override edges with the referenced declaration's exact MethodDef identity, synthesizing one private
+  exact-return bridge per physical signature and attaching every redeclared interface slot to it. Property getters,
+  ordinary and generic functions, inherited generic interfaces, and `Nothing` returns now load and dispatch through
+  both the broad interface type and the authored narrow member. Bridge forwarding remains virtual, so an inherited
+  MethodImpl reaches a further-derived override instead of pinning interface calls to the first concrete class.
+
 - **Read-only collection identity now survives on cross-module supertypes and class bounds (#350).** bir2cir records
   collection-bearing base edges, interface edges, and type-parameter constraints in the shared Kotlin supertype
   carrier before CLR inner-type, star-projection, and nullability transforms erase their source meaning. dll2klib
