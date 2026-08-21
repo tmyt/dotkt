@@ -81,11 +81,13 @@ static class KotlinOverrideSlotBridge
 
     // The bridge half.
     public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTypeNames) =>
-        ApplyAll(roots, isValue, refs, emitBridges: true, localTypeNames);
+        IReadOnlySet<string> localTypeNames,
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null) =>
+        ApplyAll(roots, isValue, refs, emitBridges: true, localTypeNames, covariantBridgedSlots);
 
     static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs,
-        bool emitBridges, IReadOnlySet<string> localTypeNames)
+        bool emitBridges, IReadOnlySet<string> localTypeNames,
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots = null)
     {
         var defs = SupertypeGraph.Collect(roots);
         // The source accessor relation is needed only between the two halves of this one pass. Keep it in memory by
@@ -95,7 +97,8 @@ static class KotlinOverrideSlotBridge
             ? new Dictionary<JsonObject, string>(ReferenceEqualityComparer.Instance)
             : null;
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface").ToList())
-            ApplyClass(cls, defs, isValue, refs, emitBridges, exactBridgeSources, localTypeNames);
+            ApplyClass(cls, defs, isValue, refs, emitBridges, exactBridgeSources, localTypeNames,
+                covariantBridgedSlots);
         // A class-level inherited-DIM bridge consumes the exact MethodImpl descriptor synthesized on its interface.
         // Declarations may appear in either order and in different input files, so first finish every interface/class's
         // own slot allocation above, then inspect classes. Reading the live method arrays during the first loop would
@@ -115,7 +118,8 @@ static class KotlinOverrideSlotBridge
 
     static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs, bool emitBridges, IDictionary<JsonObject, string> exactBridgeSources,
-        IReadOnlySet<string> localTypeNames)
+        IReadOnlySet<string> localTypeNames,
+        IReadOnlySet<CovariantInterfaceReturnBridge.BridgedSlot> covariantBridgedSlots)
     {
         if (cls.Node["methods"] is not JsonArray methods) return;
         var ownArgs = ClassOwnArgs(cls);
@@ -166,23 +170,24 @@ static class KotlinOverrideSlotBridge
             if (fit == null || fit.Contains(Fit.Foreign)) return;
             var retFit = Classify(slotRet, SupertypeGraph.SubstOwnerTvs(declRet, ownArgs), refs, isValue,
                 returnPosition: true);
-            // Kotlin Nothing is below every return type because the declaration never returns normally. For a local
-            // Kotlin interface CovariantInterfaceReturnBridge already sees that subtype relation; an imported CLR
-            // slot has no local declaration graph for that pass to inspect. Materialize the same exact-signature
-            // MethodImpl here, where referenced slot identity is authoritative. Its forwarding call retains the
-            // Nothing return stamp and the final NothingValueTermination sweep turns it into a terminator before
-            // physical type lowering (#321).
-            if (retFit == Fit.Foreign && referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
             if (retFit == Fit.Foreign)
             {
-                // A local covariant return is CovariantInterfaceReturnBridge's. A REFERENCED property interface has
-                // no declaration in that pass's local index, however, and its accessor's dedicated physical name also
-                // prevents implicit CLR binding. The frontend override edge already proves the getter return is a valid
-                // Kotlin narrowing; author its exact MethodImpl bridge here instead of asking ilemit to rediscover it.
-                // A foreign difference on any other member remains owned by the pass that introduced that difference.
-                if (!fit.Any(f => f is Fit.Bridge or Fit.Rewrite)
-                    && !(referencedSlot && supIsInterface && propertyAccessor == "get")) return;
-                retFit = Fit.Bridge;
+                // The covariant pass now resolves referenced Kotlin declarations too. Its explicit hand-off says
+                // exactly which slot obligation already owns that foreign return divergence; do not allocate the same
+                // MethodImpl a second time here. Other foreign property/Nothing shapes retain this pass's
+                // existing referenced-slot handling (not every physical-vocabulary difference is Kotlin covariance).
+                if (covariantBridgedSlots?.Contains(CovariantInterfaceReturnBridge.BridgedSlotKey(
+                        impl, descriptorSpec, descriptorMember,
+                        (impl["typeParams"] as JsonArray)?.Count ?? 0,
+                        slotParams, slotRet, refs, isValue)) == true)
+                    return;
+                if (referencedSlot && NodeType.IsNothing(declRet)) retFit = Fit.Bridge;
+                else
+                {
+                    if (!fit.Any(f => f is Fit.Bridge or Fit.Rewrite)
+                        && !(referencedSlot && supIsInterface && propertyAccessor == "get")) return;
+                    retFit = Fit.Bridge;
+                }
             }
 
             // At the logical suspend signature, `object <- Int?` is a bridgeable bare seam. Its public CLR

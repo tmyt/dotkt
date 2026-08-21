@@ -2154,6 +2154,26 @@ erases to `Box<object>`, and `Box<object>` and `Box<Nullable<int32>>` are unrela
 cast converts, so there is no forwarding body to write and the override's own `Box<Int?>` becomes `Box<object>`. Its
 Kotlin type rides `[KotlinNullableGeneric]`, so the surface still reads `Box<Int?>`.
 
+### A covariant return keeps its narrow member and fills every referenced interface slot
+
+Kotlin also permits an override to narrow only its result, such as an interface declaration returning `Base` and an
+implementation returning `Derived`. CLR MethodImpl requires the body and declaration signatures to match exactly;
+assignability of `Derived` to `Base` is not enough. DotKt therefore keeps the public `Derived`-returning member and
+adds a private forwarding body returning `Base`, with an exact MethodImpl for each interface declaration it fills.
+
+This rule crosses module boundaries. kotc's override edge identifies the source declaration selected by Kotlin, and
+bir2cir combines that fact with `ReferenceMetadataIndex`'s exact referenced MethodDef name, generic parameter shape,
+parameter vector, return type, and physical declaring interface. It does not resolve the override again from names or
+infer it from the lowered signature. If an intermediate interface redeclares the member, that declaration and the
+generic root declaration are distinct CLR slots; when their physical signatures agree, one bridge body carries both
+MethodImpl rows. The same construction applies to property getters, ordinary and method-generic functions, and a
+legal `Nothing` return; the final Nothing-value sweep turns the forwarding call into a terminator before CLR type
+lowering.
+
+A spelling difference that lowers to the same CLR type (`void` / `System.Void`, nullability-oblivious wrappers, or an
+exact alias) is not covariance and does not allocate a return bridge. Other slot passes retain ownership of their own
+representation seams, and ilemit only emits the declarations and MethodImpl descriptors bir2cir has already stated.
+
 ### Two declarations that erase to one signature are REFUSED, never renamed
 
 `fun f(x: T?)` and `fun f(x: Any?)` on the same owner are different Kotlin types and Kotlin's own resolution tells

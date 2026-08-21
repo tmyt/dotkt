@@ -798,7 +798,8 @@ sealed class Pipeline
         // KOTLIN COVARIANT OVERRIDE -> EXACT CLR METHODIMPL: preserve the Kotlin declaration's narrow return and add a
         // private forwarding bridge with the interface slot's exact return. The bridge carries a resolved
         // `clrInterfaceImpls` instruction; ilemit only consumes that instruction and does not infer covariance.
-        CovariantInterfaceReturnBridge.ApplyAll(staged.Select(s => s.Root).ToList());
+        var covariantBridgedSlots = CovariantInterfaceReturnBridge.ApplyAll(
+            staged.Select(s => s.Root).ToList(), refs, isValueFqn);
 
         // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: `MutableCollection<E>`/`MutableList<E>` ARE
         // `ICollection<E>`/`IList<E>`, which carry no slot for Kotlin's `removeAll`/`retainAll`/`addAll(elements)`/
@@ -882,7 +883,8 @@ sealed class Pipeline
         // Ref builds skip suspend lowering and normalize their logical declaration here; app and rt builds normalize
         // the final Task/cold shapes. Star views already exist, and all types are still in the Kotlin vocabulary.
         KotlinOverrideSlotBridge.ApplyAll(
-            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns);
+            staged.Select(s => s.Root).ToList(), isValueFqn, refs, localTypeFqns,
+            covariantBridgedSlots);
 
         // The final override bridge deliberately runs after the main F-bound/star rewrite because suspend lowering
         // can create additional physical slots. Project any Kotlin star types copied into those late declarations

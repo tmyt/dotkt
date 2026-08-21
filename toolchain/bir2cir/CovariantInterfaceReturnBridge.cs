@@ -13,6 +13,8 @@ using DotKt.Bir;
 // instruction consumed mechanically by ilemit; ilemit does not decide whether a bridge is required.
 static class CovariantInterfaceReturnBridge
 {
+    internal readonly record struct BridgedSlot(JsonObject Implementation, string Descriptor);
+
     sealed class Def
     {
         public string Name;
@@ -23,14 +25,17 @@ static class CovariantInterfaceReturnBridge
         public JsonArray Methods;
     }
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots)
+    public static IReadOnlySet<BridgedSlot> ApplyAll(IEnumerable<JsonNode> roots,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue)
     {
         var defs = Collect(roots);
+        var bridgedSlots = new HashSet<BridgedSlot>();
         // A concrete member on a derived interface is a DIM body, but it still needs an exact MethodImpl when its
         // covariant return differs from the base-interface slot. Treat interfaces and classes uniformly here: the
         // frontend override edge selects the declaration, and this pass only materializes its CLR representation.
         foreach (var cls in defs.Values.Where(d => d.Kind is "class" or "interface"))
-            ApplyClass(cls, defs);
+            ApplyClass(cls, defs, refs, isValue, bridgedSlots);
+        return bridgedSlots;
     }
 
     static Dictionary<string, Def> Collect(IEnumerable<JsonNode> roots)
@@ -60,7 +65,8 @@ static class CovariantInterfaceReturnBridge
         }
     }
 
-    static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs)
+    static void ApplyClass(Def cls, IReadOnlyDictionary<string, Def> defs,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, ISet<BridgedSlot> bridgedSlots)
     {
         if (cls.Node["methods"] is not JsonArray methods) return;
         var bridges = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -144,7 +150,138 @@ static class CovariantInterfaceReturnBridge
                             slot["typeParams"] as JsonArray, ifaceArgs)));
             }
         }
+
+        ApplyReferencedInterfaces(cls, defs, refs, isValue, methods, bridges,
+            bridgedSlots, ref bridgeOrdinal);
     }
+
+    // A referenced interface contributes no MethodDef nodes to the staged BIR. The frontend override edge still
+    // names its exact declaring interface and source member, while ReferenceMetadataIndex owns the referenced
+    // declaration's physical MethodDef identity and signature. Join those two authoritative facts here; neither
+    // ilemit nor a different semantic pass should infer covariance from names or physical layout.
+    static void ApplyReferencedInterfaces(Def cls, IReadOnlyDictionary<string, Def> defs,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue, JsonArray methods,
+        Dictionary<string, JsonObject> bridges, ISet<BridgedSlot> bridgedSlots,
+        ref int bridgeOrdinal)
+    {
+        if (refs == null) return;
+        var ownArgs = ClassOwnArgs(cls);
+        foreach (var implementation in methods.OfType<JsonObject>().ToList())
+        {
+            if (Bool(implementation["static"]) || KotlinPropertyAccessors.IsPhysicalSlotBridge(implementation)
+                || Str(implementation["name"]) is not string implementationName
+                || implementation["params"] is not JsonArray implementationParamNodes
+                || implementation["overrides"] is not JsonArray overrides
+                || TypeJson.Read(implementation["ret"]) is not TypeNode implementationRet0)
+                continue;
+            var implementationParams = implementationParamNodes.OfType<JsonObject>()
+                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+            if (implementationParams.Length != implementationParamNodes.Count
+                || implementationParams.Any(type => type == null)) continue;
+            var methodArity = (implementation["typeParams"] as JsonArray)?.Count ?? 0;
+
+            foreach (var edge in overrides.OfType<JsonObject>())
+            {
+                if (TypeJson.Read(edge["owner"]) is not TypeNode.Fqn semanticOwner
+                    || defs.ContainsKey(semanticOwner.Name)
+                    || Str(edge["member"]) is not string sourceMember
+                    || !refs.TryReferenceTypeShape(semanticOwner, out var ownerArity, out var ownerKind,
+                        out _, out _) || ownerKind != "interface")
+                    continue;
+                var ownerArgs = semanticOwner.Args ?? Array.Empty<TypeNode>();
+                if (ownerArity != ownerArgs.Length) continue;
+                var accessorKind = Str(edge["kind"]) switch
+                {
+                    "getter" => "get",
+                    "setter" => "set",
+                    _ => null,
+                };
+                if (accessorKind == "set") continue; // a setter's Unit return cannot be covariantly narrowed
+                if (!refs.TrySelectedOverrideDeclaration(semanticOwner.Name, sourceMember, accessorKind,
+                        methodArity, implementationParams, ownerArgs,
+                        implementation["typeParams"] as JsonArray, out var declaration))
+                    continue;
+
+                var slotParams = declaration.Parameters
+                    .Select(type => SupertypeGraph.SubstOwnerTvs(
+                        NullableGenericErasure.EraseNullableTv(type, isValue), ownerArgs))
+                    .ToArray();
+                var slotRet = SupertypeGraph.SubstOwnerTvs(
+                    NullableGenericErasure.EraseNullableTv(declaration.Return, isValue), ownerArgs);
+                if (slotParams.Any(type => type == null) || slotRet == null
+                    || !ParamsEqual(implementation, slotParams, ownArgs))
+                    continue;
+                var implementationRet = SubstOwnerTvs(implementationRet0, ownArgs);
+                if (implementationRet == slotRet
+                    || BirTypeLowering.SamePhysicalSlotType(slotRet, implementationRet,
+                        refs.Aliases, isValue, refs.PhysicalTypeNames, returnPosition: true)
+                    || KotlinOverrideSlotBridge.IsErasureDivergence(slotRet, implementationRet))
+                    continue;
+
+                var physicalOwner = refs.ExactReflectedOwner(semanticOwner.Name, ownerArity);
+                if (physicalOwner == null) continue;
+                var descriptorOwner = new TypeNode.Fqn(physicalOwner,
+                    ownerArgs.Length == 0 ? null : ownerArgs);
+                // Two referenced interfaces can redeclare the same physical slot with equivalent Kotlin surface
+                // spellings (`T` substituted through an oblivious edge versus the concrete type directly). One CLR
+                // body can implement both MethodImpl declarations, so key the body by the canonical physical
+                // signature while retaining each declaration's own descriptor below.
+                var key = declaration.PhysicalMember + "`" + methodArity + "<"
+                          + KotlinOverrideSlotBridge.MethodTypeParameterShapeKey(
+                              declaration.TypeParams, ownerArgs)
+                          + ">(" + string.Join(",", slotParams.Select(type =>
+                              ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->"
+                          + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
+                if (!bridges.TryGetValue(key, out var bridge))
+                {
+                    bridge = BuildBridge(cls, implementation, slotParams, slotRet,
+                        $"dotkt$covar${SafeName(implementationName)}${bridgeOrdinal++}");
+                    bridges[key] = bridge;
+                    methods.Add(bridge);
+                    if (accessorKind != null)
+                    {
+                        var sourceAssociation = Str(implementation[KotlinPropertyAccessors.AssociationKey]);
+                        if (cls.Kind == "interface")
+                            KotlinPropertyAccessors.MarkExactInterfaceBridgeProperty(
+                                bridge, sourceMember, accessorKind, sourceAssociation);
+                        else
+                            KotlinPropertyAccessors.AssociateBridgeProperty(cls.Node, bridge, sourceMember,
+                                accessorKind, sourceAssociation, slotParams, slotRet);
+                    }
+                }
+                var descriptor = ImplDescriptor(descriptorOwner, declaration.PhysicalMember, methodArity,
+                    slotParams, slotRet,
+                    KotlinOverrideSlotBridge.SubstituteOwnerTypeParameterConstraints(
+                        declaration.TypeParams, ownerArgs));
+                var encoded = descriptor.ToJsonString();
+                if (!((JsonArray)bridge["clrInterfaceImpls"])
+                    .Any(existing => existing?.ToJsonString() == encoded))
+                    ((JsonArray)bridge["clrInterfaceImpls"]).Add(descriptor);
+                bridgedSlots.Add(BridgedSlotKey(implementation, descriptorOwner,
+                    declaration.PhysicalMember, methodArity, slotParams, slotRet, refs, isValue));
+            }
+        }
+    }
+
+    internal static BridgedSlot BridgedSlotKey(JsonObject implementation, TypeNode.Fqn descriptorOwner,
+        string descriptorMember, int methodArity, IEnumerable<TypeNode> slotParams, TypeNode slotRet,
+        ReferenceMetadataIndex refs, ValueTypeOracle isValue)
+    {
+        var ownerName = refs.ExactReflectedOwner(descriptorOwner.Name, descriptorOwner.Args?.Length ?? 0);
+        var ownerArgs = descriptorOwner.Args == null
+            ? ""
+            : "<" + string.Join(",", descriptorOwner.Args.Select(type =>
+                ReferencedPhysicalTypeKey(type, refs, isValue))) + ">";
+        var descriptor = ownerName + ownerArgs + "::" + descriptorMember + "`" + methodArity
+                         + "(" + string.Join(",", slotParams.Select(type =>
+                             ReferencedPhysicalTypeKey(type, refs, isValue))) + ")->"
+                         + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
+        return new BridgedSlot(implementation, descriptor);
+    }
+
+    static string ReferencedPhysicalTypeKey(TypeNode type, ReferenceMetadataIndex refs, ValueTypeOracle isValue) =>
+        TypeKey(BirTypeLowering.LowerPhysicalType(type, refs.Aliases, isValue,
+            refs.PhysicalTypeNames, typeArg: false));
 
     static JsonObject BuildBridge(Def cls, JsonObject implementation, TypeNode[] slotParams, TypeNode slotRet,
         string bridgeName)

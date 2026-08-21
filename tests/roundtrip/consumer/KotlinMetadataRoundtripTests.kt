@@ -60,6 +60,10 @@ import roundtrip.genop.Arr
 import roundtrip.nothingret.pick
 import roundtrip.nothingret.Boom
 import roundtrip.nothingret.fail as nothingretFail
+import roundtrip.covariantreference.ReferencedCovariantRoot
+import roundtrip.covariantreference.ReferencedCovariantSlot
+import roundtrip.covariantreference.ReferencedCovariantValue
+import roundtrip.covariantreference.ReferencedNarrowCovariantValue
 import roundtrip.pkg.Vec
 import roundtrip.pkg.Dir
 import roundtrip.pkg.greet as pkgGreet
@@ -160,6 +164,25 @@ import roundtrip.ctxparams.flushA
 import roundtrip.ctxparams.GenHolder
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
+
+private class CrossModuleCovariantImplementation : ReferencedCovariantSlot {
+    override val item: ReferencedNarrowCovariantValue
+        get() = ReferencedNarrowCovariantValue(51)
+
+    override fun make(): ReferencedNarrowCovariantValue = ReferencedNarrowCovariantValue(52)
+
+    override fun <X> makeFrom(seed: X): ReferencedNarrowCovariantValue =
+        ReferencedNarrowCovariantValue(53)
+}
+
+private class CrossModuleNothingCovariantImplementation : ReferencedCovariantSlot {
+    override val item: Nothing
+        get() = throw IllegalStateException("referenced-item")
+
+    override fun make(): Nothing = throw IllegalStateException("referenced-make")
+
+    override fun <X> makeFrom(seed: X): Nothing = throw IllegalStateException("referenced-generic")
+}
 
 class KotlinApiShapeRoundtripTests {
     @TestAttribute
@@ -453,11 +476,26 @@ class KotlinApiShapeRoundtripTests {
         if (n >= 0) "ok" else { nothingLog.add("side"); nothingretFail("tail") }
     private fun nothingInBothArms(n: Int): String = if (n >= 0) nothingretFail("both") else Boom.Companion.boom()
     private fun nothingIntoValueSlot(n: Int): Int = if (n >= 0) 7 else nothingretFail("int")
-    // NOT covered here: a covariant override returning `Nothing` against a RE-IMPORTED interface. The in-module twin
-    // is tests/basic CovariantInterfaceReturnTests.covariantOverrideReturningNothing; cross-module, bir2cir never
-    // synthesizes the bridge at all (its synthesizer resolves interface slots from the staged BIR only, so a
-    // reference-KLIB interface is invisible to it) and the override claims the slot directly with its erased
-    // signature — a TypeLoadException at class load, not this issue's value-merge, and not Nothing-specific.
+    @TestAttribute
+    fun covariantOverrideOfReferencedInterfaceGetsExactBridge() {
+        val implementation = CrossModuleCovariantImplementation()
+        val slot: ReferencedCovariantRoot<ReferencedCovariantValue> = implementation
+        ClassicAssert.AreEqual(51, slot.item.value)
+        ClassicAssert.AreEqual(52, slot.make().value)
+        ClassicAssert.AreEqual(53, slot.makeFrom("seed").value)
+        ClassicAssert.AreEqual(51, implementation.item.value)
+        ClassicAssert.AreEqual(52, implementation.make().value)
+        ClassicAssert.AreEqual(53, implementation.makeFrom(1).value)
+
+        val nothing: ReferencedCovariantRoot<ReferencedCovariantValue> =
+            CrossModuleNothingCovariantImplementation()
+        ClassicAssert.AreEqual("referenced-item",
+            try { nothing.item.value.toString() } catch (e: IllegalStateException) { e.message })
+        ClassicAssert.AreEqual("referenced-make",
+            try { nothing.make().value.toString() } catch (e: IllegalStateException) { e.message })
+        ClassicAssert.AreEqual("referenced-generic",
+            try { nothing.makeFrom(1).value.toString() } catch (e: IllegalStateException) { e.message })
+    }
 
     // roundtrip-pkg: namespaces; reified inline -> generic method; cross-module inline + non-local return;
     // properties (custom getter + mutable write); top-level ext operator + ext property; vararg; default; nullable.
