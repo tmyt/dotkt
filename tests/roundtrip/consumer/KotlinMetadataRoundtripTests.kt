@@ -64,6 +64,8 @@ import roundtrip.covariantreference.ReferencedCovariantRoot
 import roundtrip.covariantreference.ReferencedCovariantSlot
 import roundtrip.covariantreference.ReferencedCovariantValue
 import roundtrip.covariantreference.ReferencedNarrowCovariantValue
+import roundtrip.covariantreference.ReferencedRedeclaredCovariantRoot
+import roundtrip.covariantreference.ReferencedRedeclaredCovariantSlot
 import roundtrip.covariantreference.ReferencedConstrainedCovariantRoot
 import roundtrip.covariantreference.ReferencedSuspendCovariantControl
 import roundtrip.pkg.Vec
@@ -179,6 +181,12 @@ private class CrossModuleCovariantImplementation : ReferencedCovariantSlot {
     override fun <X> makeFrom(seed: X): ReferencedNarrowCovariantValue =
         ReferencedNarrowCovariantValue(53)
 }
+
+private interface CrossModuleRedeclaredCovariantDim : ReferencedRedeclaredCovariantSlot {
+    override fun makeRedeclared(): ReferencedNarrowCovariantValue = ReferencedNarrowCovariantValue(64)
+}
+
+private class CrossModuleRedeclaredCovariantImplementation : CrossModuleRedeclaredCovariantDim
 
 private class CrossModuleNothingCovariantImplementation : ReferencedCovariantSlot {
     override val item: Nothing
@@ -535,6 +543,9 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual(52, implementation.make().value)
         ClassicAssert.AreEqual(55, implementation.makeWith(55).value)
         ClassicAssert.AreEqual(53, implementation.makeFrom(1).value)
+
+        val redeclaredSlot: ReferencedRedeclaredCovariantRoot = CrossModuleRedeclaredCovariantImplementation()
+        ClassicAssert.AreEqual(64, redeclaredSlot.makeRedeclared().value)
 
         val abstractSlot: ReferencedCovariantRoot<ReferencedCovariantValue> =
             CrossModuleAbstractCovariantImplementation()

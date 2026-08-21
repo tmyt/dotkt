@@ -316,10 +316,11 @@ static class CovariantInterfaceReturnBridge
         {
             ["k"] = "callInstance",
             ["ownerType"] = TypeJson.Write(owner),
-            // A concrete declaration is called non-virtually so the bridge cannot redispatch through the interface
-            // slot it owns. An abstract class declaration has no body to call directly: callvirt its distinct narrow
-            // class slot so the eventual concrete subclass supplies the implementation.
-            ["virtual"] = Bool(implementation["abstract"]),
+            // Forward through the implementation's distinct narrow virtual slot. The bridge has a private physical
+            // name and the broad slot return, so this call cannot redispatch into the bridge itself; virtual dispatch
+            // is required both for an abstract class and when a further-derived class overrides a concrete narrow
+            // member while inheriting this exact-return MethodImpl.
+            ["virtual"] = true,
             // This call is synthesized by bir2cir with its exact CLR declaration owner.  Do not let the later
             // inherited-owner pass reinterpret it as an ordinary Kotlin receiver call and bind it back to the
             // interface slot that this bridge implements.

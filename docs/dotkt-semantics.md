@@ -2160,6 +2160,8 @@ Kotlin also permits an override to narrow only its result, such as an interface 
 implementation returning `Derived`. CLR MethodImpl requires the body and declaration signatures to match exactly;
 assignability of `Derived` to `Base` is not enough. DotKt therefore keeps the public `Derived`-returning member and
 adds a private forwarding body returning `Base`, with an exact MethodImpl for each interface declaration it fills.
+The body calls the distinct narrow member virtually, so an inherited bridge still reaches a further-derived Kotlin
+override; its private physical name and broad signature keep that dispatch separate from the bridge itself.
 
 This rule crosses module boundaries. kotc's override edge identifies the source declaration selected by Kotlin, and
 bir2cir combines that fact with `ReferenceMetadataIndex`'s exact referenced MethodDef name, generic parameter shape,
