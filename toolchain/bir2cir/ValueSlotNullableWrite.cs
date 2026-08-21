@@ -163,23 +163,26 @@ static class ValueSlotNullableWrite
                 if (ownerArgs != null && pos >= 0 && pos < ownerArgs.Length)
                     elem = ownerArgs[pos] is TypeNode.Nullable n ? n.Of : ownerArgs[pos];
             }
-            elem ??= src as TypeNode.Fqn;
+            elem ??= UnwrapSurface(src);
             return elem is TypeNode.Fqn concreteElem && _isValue(concreteElem)
                 ? new TypeNode.Nullable(concreteElem) : null;
         }
         // For a bare reflected value slot, the source/surface supplies the exact pre-lowering V spelling. Platform
         // (`oblivious`) and nullable wrappers annotate the Kotlin view but do not change this physical bare slot.
-        TypeNode bareSurface = src;
-        while (true)
-            switch (bareSurface)
-            {
-                case TypeNode.Nullable nullable: bareSurface = nullable.Of; break;
-                case TypeNode.Oblivious oblivious: bareSurface = oblivious.Of; break;
-                default: goto UnwrappedSurface;
-            }
-        UnwrappedSurface:
+        var bareSurface = UnwrapSurface(src);
         if (slotType.IsValueType && bareSurface is TypeNode.Fqn bareElem && _isValue(bareElem)) return bareElem;
         return null;
+    }
+
+    static TypeNode UnwrapSurface(TypeNode surface)
+    {
+        while (true)
+            switch (surface)
+            {
+                case TypeNode.Nullable nullable: surface = nullable.Of; break;
+                case TypeNode.Oblivious oblivious: surface = oblivious.Of; break;
+                default: return surface;
+            }
     }
 
     // A literal-null source: the frontend types `= null` as `nullable(kotlin.Nothing)`, and the value node is a `const`

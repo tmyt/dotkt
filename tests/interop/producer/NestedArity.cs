@@ -1,5 +1,7 @@
 #nullable enable
 
+using System.Diagnostics.CodeAnalysis;
+
 namespace NestedArityInterop;
 
 public sealed class Outer
@@ -47,6 +49,11 @@ public sealed class NullableSlot<T> where T : struct
     public T? Value { get; set; }
 }
 
+public sealed class ConcreteNullableSlot
+{
+    public Outer.ValueItem<string>? Value { get; set; }
+}
+
 public readonly struct EventValueItem
 {
     // Custom accessors keep the struct immutable while still exposing a real instance event declaration.
@@ -60,6 +67,8 @@ public readonly struct EventValueItem
 public static class Oracle
 {
     public static Outer.ValueItem<string>? NestedValue() => new("nested value");
+    [return: MaybeNull]
+    public static Outer.ValueItem<string> PlatformNestedValue() => new("platform nested value");
     public static bool HasNestedValue(Outer.ValueItem<string>? value) =>
         value.HasValue && value.Value.Value == "nested value";
 

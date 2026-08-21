@@ -1,5 +1,6 @@
 import NestedArityInterop.Outer
 import NestedArityInterop.Oracle
+import NestedArityInterop.ConcreteNullableSlot
 import NestedArityInterop.EventValueItem
 import NestedArityInterop.NullableSlot
 import NUnit.Framework.TestAttribute
@@ -78,6 +79,13 @@ class NestedArityTests {
         val nullableSlot = NullableSlot<NestedSlotEnum>()
         nullableSlot.Value = NestedSlotEnum.VALUE
         assertEquals(NestedSlotEnum.VALUE, nullableSlot.Value!!)
+    }
+
+    @TestAttribute
+    fun concreteClrNullablePropertyWrapsPlatformStruct() {
+        val nullableSlot = ConcreteNullableSlot()
+        nullableSlot.Value = Oracle.PlatformNestedValue()
+        assertEquals("platform nested value", nullableSlot.Value!!.Value)
     }
 
     @TestAttribute
