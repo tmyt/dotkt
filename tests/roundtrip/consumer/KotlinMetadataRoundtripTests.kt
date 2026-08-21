@@ -204,6 +204,23 @@ private class CrossModuleAbstractCovariantImplementation : CrossModuleAbstractCo
         ReferencedNarrowCovariantValue(56)
 }
 
+private abstract class CrossModuleAbstractClassCovariantImplementation : ReferencedCovariantSlot {
+    abstract override val item: ReferencedNarrowCovariantValue
+    abstract override fun make(): ReferencedNarrowCovariantValue
+    abstract override fun makeWith(seed: Int): ReferencedNarrowCovariantValue
+    abstract override fun <X> makeFrom(seed: X): ReferencedNarrowCovariantValue
+}
+
+private class CrossModuleConcreteAfterAbstractCovariantImplementation :
+    CrossModuleAbstractClassCovariantImplementation() {
+    override val item: ReferencedNarrowCovariantValue
+        get() = ReferencedNarrowCovariantValue(60)
+    override fun make(): ReferencedNarrowCovariantValue = ReferencedNarrowCovariantValue(61)
+    override fun makeWith(seed: Int): ReferencedNarrowCovariantValue = ReferencedNarrowCovariantValue(seed)
+    override fun <X> makeFrom(seed: X): ReferencedNarrowCovariantValue =
+        ReferencedNarrowCovariantValue(62)
+}
+
 private class CrossModuleConstrainedCovariantImplementation<A, B : ReferencedCovariantValue> :
     ReferencedConstrainedCovariantRoot<B, ReferencedCovariantValue> {
     override fun <X : B> makeConstrained(seed: X): ReferencedNarrowCovariantValue =
@@ -522,6 +539,13 @@ class KotlinApiShapeRoundtripTests {
         val abstractSlot: ReferencedCovariantRoot<ReferencedCovariantValue> =
             CrossModuleAbstractCovariantImplementation()
         ClassicAssert.AreEqual(55, abstractSlot.make().value)
+
+        val abstractClassSlot: ReferencedCovariantRoot<ReferencedCovariantValue> =
+            CrossModuleConcreteAfterAbstractCovariantImplementation()
+        ClassicAssert.AreEqual(60, abstractClassSlot.item.value)
+        ClassicAssert.AreEqual(61, abstractClassSlot.make().value)
+        ClassicAssert.AreEqual(63, abstractClassSlot.makeWith(63).value)
+        ClassicAssert.AreEqual(62, abstractClassSlot.makeFrom("seed").value)
 
         val constrained = CrossModuleConstrainedCovariantImplementation<Any,
             ReferencedNarrowCovariantValue>()
