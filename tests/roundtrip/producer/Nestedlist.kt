@@ -26,3 +26,20 @@ fun <T> stateOfList(items: List<T>): Store<List<T>> = Store(items)
 // survives: MutableList lowers to IList via its own alias, is NOT stamped, and dll2klib reverse-maps it correctly).
 fun <T> boxOfMutable(items: MutableList<T>): Crate<MutableList<T>> = Crate(items)
 fun <T> useNestedMutable(s: Crate<MutableList<T>>): Int { s.v.add(s.v[0]); return s.v.size }
+
+// A member carrier cannot restore these positions: the Kotlin collection identity is part of the declaration edge
+// itself. All three type-level positions share [KotlinSupertypes] with nullable-generic erasure.
+open class CollectionEdge<T>(val value: T)
+class ReadonlyCollectionBase : CollectionEdge<List<String>>(listOf("base edge"))
+
+interface CollectionContract<T> { val value: T }
+class ReadonlyCollectionInterface : CollectionContract<List<String>> {
+    override val value: List<String> = listOf("interface edge")
+}
+
+class CollectionBound<T : CollectionEdge<List<String>>>(val value: T)
+
+// Both producers move this one edge. Nullable-generic recording runs first and owns the less-erased `T?`; the later
+// collection producer must merge without overwriting that source truth with its already-erased view.
+open class MixedCollectionEdge<T>
+class MixedCollectionDerived<T> : MixedCollectionEdge<List<T?>>()

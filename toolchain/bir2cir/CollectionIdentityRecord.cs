@@ -18,11 +18,11 @@ using DotKt.Bir;
 //
 // So — mirroring the #18/#147 [KotlinNullableGeneric] precedent (NullableGenericErasure's positional records)
 // and the positional-fact model (suspendFnType, retNothing, nullableGenericRet) — record the PRE-collapse Kotlin
-// type of every decl-surface slot (method return/param, ctor param, property, field) that nests a collapsing
-// read-only collection, as the OPAQUE canonical TypeNode JSON STRING. Stored as a string (not a `{t:…}` node) so the
-// intervening BirTypeLowering / ReferenceNullableStrip passes leave it untouched; RoundtripMetadata reads it back at
-// stamp time into [KotlinCollectionIdentity(version, bytes)], and dll2klib restores `List` vs `MutableList` at every
-// nested position from the recorded truth (the whole type — so a mixed `Pair<List<T>, MutableList<T>>` restores both).
+// type of every moved declaration position. Method returns/params, ctor params, properties and fields use the
+// per-slot [KotlinCollectionIdentity] carrier. Base/interface edges and type-parameter bounds merge into the shared
+// type-level [KotlinSupertypes] payload. Each pass-local fact is an OPAQUE canonical TypeNode JSON STRING, so the
+// intervening lowering passes leave it untouched until RoundtripMetadata authors the carrier and dll2klib restores
+// `List` vs `MutableList` from the recorded truth.
 //
 // APP builds only (StdlibMode == App): the collapse only fires in a non-ref build, and only an app-emitted library is
 // re-consumed cross-module via dll2klib. The stdlib ref surface keeps `kotlin.*` verbatim (no collapse -> no
@@ -47,6 +47,7 @@ static class CollectionIdentityRecord
 
     static void RecordDecls(JsonObject o)
     {
+        RecordSupertypes(o);
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods) if (m is JsonObject mo) RecordMethod(mo);
         if (o["ctors"] is JsonArray ctors)
@@ -55,6 +56,38 @@ static class CollectionIdentityRecord
         RecordSimpleDecls(o["fields"]);
         if (o["types"] is JsonArray types)
             foreach (var t in types) if (t is JsonObject to) RecordDecls(to);
+    }
+
+    static void RecordSupertypes(JsonObject declaration)
+    {
+        var pre = new JsonObject();
+        if (TypeJson.Read(declaration["base"]) is TypeNode baseType && NestsCollapsingReadonly(baseType))
+            pre["base"] = declaration["base"].DeepClone();
+
+        if (declaration["interfaces"] is JsonArray interfaces)
+        {
+            var moved = new JsonArray();
+            foreach (var edge in interfaces)
+                if (TypeJson.Read(edge) is TypeNode type && NestsCollapsingReadonly(type))
+                    moved.Add(edge?.DeepClone());
+            if (moved.Count > 0) pre["interfaces"] = moved;
+        }
+
+        if (declaration["typeParams"] is JsonArray parameters)
+        {
+            var bounds = new JsonObject();
+            for (var i = 0; i < parameters.Count; i++)
+            {
+                if (parameters[i] is not JsonObject parameter
+                    || parameter["constraints"] is not JsonArray constraints || constraints.Count == 0
+                    || !constraints.Any(edge => TypeJson.Read(edge) is TypeNode type
+                        && NestsCollapsingReadonly(type))) continue;
+                bounds[i.ToString()] = constraints.DeepClone();
+            }
+            if (bounds.Count > 0) pre["bounds"] = bounds;
+        }
+
+        KotlinSupertypesRecord.Merge(declaration, pre);
     }
 
     static void RecordMethod(JsonObject mo)

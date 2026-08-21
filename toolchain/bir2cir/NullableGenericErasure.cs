@@ -134,8 +134,6 @@ static class NullableGenericErasure
     // type parameters, keyed by parameter index, which erase for exactly the same reason and are lost the same way.
     // A METHOD's type-parameter bounds are not on it: the carrier is type-level, and giving them one is a per-member
     // channel this does not have. dll2klib reads all three back (`RestoreErasedSupertypes`).
-    internal const string SupertypesPre = "nullableGenericSupertypesPre";
-
     static void RecordSupertypes(JsonObject to, ValueTypeOracle isValue)
     {
         var pre = new JsonObject();
@@ -177,7 +175,7 @@ static class NullableGenericErasure
         // Nested types are visited by `RecordNullableGenericSlots`, which calls this on each of them directly, so
         // there is nothing to recurse into here — and recursing behind the `moved` gate reached them only when the
         // OUTER type happened to carry an erased edge of its own.
-        if (moved) to[SupertypesPre] = pre.ToJsonString();
+        if (moved) KotlinSupertypesRecord.Merge(to, pre);
     }
 
     // The keys the pre-erasure SUSPEND function shape is stashed under, for BirTypeLowering's suspend-fn carrier.

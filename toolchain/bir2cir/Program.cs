@@ -1130,10 +1130,10 @@ sealed class Pipeline
             // #29 ROUND-TRIP RECORD: before the type transform collapses a nested read-only `kotlin.collections.List/
             // Set/Collection` (Root V) to its invariant sibling `IList`/`ICollection` — colliding with the mutable
             // sibling's own alias and losing the Kotlin read-only-vs-mutable identity — stash the PRE-collapse Kotlin
-            // type of each affected decl-surface slot as an opaque string. RoundtripMetadata reads it into
-            // [KotlinCollectionIdentity] so dll2klib restores `List` vs `MutableList` cross-module. APP builds only
-            // (the collapse is non-ref; only an app-emitted library is dll2klib-re-consumed). Mirrors the #18
-            // [KotlinNullableGeneric] pre-erasure record. Runs on kotlin.* names (BEFORE BirTypeLowering).
+            // type of each affected declaration position as an opaque string. Member slots use
+            // [KotlinCollectionIdentity]; type edges and bounds merge into [KotlinSupertypes]. dll2klib therefore
+            // restores `List` vs `MutableList` cross-module in both channels. APP builds only (the collapse is
+            // non-ref; only an app-emitted library is dll2klib-re-consumed). Runs on kotlin.* names before lowering.
             if (attributeTopLevelOwner) CollectionIdentityRecord.Apply(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
