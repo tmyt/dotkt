@@ -114,7 +114,7 @@ static partial class ClrMemberResolution
         if (p.IsGenericType)   // constructed generic reference/value type -> recurse args structurally
         {
             if (a is not TypeNode.Fqn f || f.Args == null) return false;
-            var adef = RefDef(ReferenceMetadataIndex.BareOwnerFqn(f.Name), f.Args.Length);
+            var adef = RefDef(f.Name, f.Args.Length);
             if (adef == null || SafeDef(adef) != SafeDef(p)) return false;
             var pa = p.GetGenericArguments();
             if (pa.Length != f.Args.Length) return false;

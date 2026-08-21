@@ -13,7 +13,7 @@ package kotlin.clr
 // declaration identity is a separate compiler fact carried by KotlinDeclarationIdentity below.
 @Target(AnnotationTarget.CLASS, AnnotationTarget.FUNCTION, AnnotationTarget.PROPERTY)
 @Retention(AnnotationRetention.BINARY)
-public annotation class ClrExternal(val owner: String)
+public annotation class ClrExternal(val owner: String, val physicalOwner: String)
 
 // Marks a metadata-only suspend declaration synthesized by dll2klib beside a
 // conforming CLR GetAwaiter pattern. kotc forwards this declaration fact to

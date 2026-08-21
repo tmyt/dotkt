@@ -520,7 +520,8 @@ internal fun BirEmitter.clrName(decl: org.jetbrains.kotlin.ir.declarations.IrAnn
 	return clrExternalOwner(decl)
 }
 
-/** The CLR owner written by dll2klib. Exact declaration linkage is carried independently. */
+/** The exact CLR metadata owner written by dll2klib. The arity-stripped owner is annotation argument 0; argument 1
+ *  retains every nested TypeDef segment's own `N suffix and is the current-format BIR transport identity. */
 internal fun BirEmitter.clrExternalOwner(
 	decl: org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
 ): String? {
@@ -528,7 +529,7 @@ internal fun BirEmitter.clrExternalOwner(
 	val annotation = host.annotations.firstOrNull {
 		it.type.classFqName?.asString() == "kotlin.clr.ClrExternal"
 	} ?: return null
-	return (regularArgs(annotation).singleOrNull() as? IrConst)?.value as? String
+	return (regularArgs(annotation).getOrNull(1) as? IrConst)?.value as? String
 }
 
 /** Boolean ORIGIN-GATE: is `decl` an external .NET/CLR type (vs a pure-Kotlin/stdlib type)? The truthiness

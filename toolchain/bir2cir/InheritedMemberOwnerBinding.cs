@@ -197,7 +197,8 @@ static class InheritedMemberOwnerBinding
             // identity through the already-constructed receiver hierarchy so `Local<T> : External<T>` becomes
             // `External<T>`, rather than throwing away T by copying the carrier's deliberately bare owner.
             var projectedOwners = ReachableTypes(owner, types, refs)
-                .Where(candidate => candidate.Type.Name == implementationOwner.Name)
+                .Where(candidate => ReferenceMetadataIndex.BareOwnerFqn(candidate.Type.Name)
+                    == ReferenceMetadataIndex.BareOwnerFqn(implementationOwner.Name))
                 .Select(candidate => candidate.Type).Distinct().ToList();
             if (projectedOwners.Count != 1) return;
             var projectedOwner = projectedOwners[0];

@@ -890,6 +890,16 @@ sealed partial class ReferenceMetadataIndex
     // CLR metadata arity punctuation, which is the only decoration normalized here.
     public static string BareOwnerFqn(string fqnName) => StripGenericArity(fqnName.Trim());
 
+    // The spelling used to resolve a BIR owner against CLR metadata. Current-format ClrExternal identities already
+    // carry the exact TypeDef name (`Outer`1+Leaf`1`) and must remain verbatim; source-authored/Kotlin semantic names
+    // still use the arity-aware bare-name probe. Keep this separate from BareOwnerFqn because semantic indexes are
+    // intentionally keyed by their arity-free Kotlin identity.
+    public static string ReflectedOwnerFqn(string fqnName)
+    {
+        var name = fqnName.Trim();
+        return name.Contains('`') || name.Contains('+') ? name : BareOwnerFqn(name);
+    }
+
     // The top-level-extension receiver KEY of a call's first-sig-arg Fqn — the call-site mirror of the ref-side
     // RecvKey(Type) (used to index/disambiguate TopLevelStatics by receiver type). A specialized primitive-array Fqn
     // (`kotlin.IntArray`/`CharArray`/... + the unsigned specialized arrays) collapses to "[]" — the SAME canonicalization
@@ -918,7 +928,7 @@ sealed partial class ReferenceMetadataIndex
         if (string.IsNullOrEmpty(methodName)) return false;
         var owner = TryResolveClrOwner(sourceOwner, out var physicalOwner, out _)
             ? physicalOwner
-            : BareOwnerFqn(sourceOwner);
+            : ReflectedOwnerFqn(sourceOwner);
         var type = ResolveNetType(owner, genericArity);
         if (type == null) return false;
         try
@@ -1039,7 +1049,7 @@ sealed partial class ReferenceMetadataIndex
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
             || callSignature == null || HasDotKtOwner(sourceOwner.Name)) return false;
 
-        var sourceType = ResolveNetType(BareOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        var sourceType = ResolveNetType(ReflectedOwnerFqn(sourceOwner.Name), ownerArgs.Length);
         if (sourceType == null) return false;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
         var seenTypes = new HashSet<Type>();
@@ -1204,7 +1214,7 @@ sealed partial class ReferenceMetadataIndex
         declarationType = null;
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
             || HasDotKtOwner(sourceOwner.Name)) return false;
-        var sourceType = ResolveNetType(BareOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        var sourceType = ResolveNetType(ReflectedOwnerFqn(sourceOwner.Name), ownerArgs.Length);
         if (sourceType == null) return false;
 
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
@@ -1863,7 +1873,7 @@ sealed partial class ReferenceMetadataIndex
             ?? throw new InvalidDataException("companion-extension receiver payload is not a classifier");
         // The source language association is the bare classifier. dll2klib can legitimately rehydrate a generic
         // receiver as C<Any>; its arguments are not declaration identity and must not enter this trusted key.
-        var receiver = TypeJson.Fqn(classifier).ToJsonString();
+        var receiver = TypeJson.Fqn(BareOwnerFqn(DottedFqn(classifier))).ToJsonString();
         return StripGenericArity(DottedFqn(owner)) + "\u001f" + receiver + "\u001f" + kind + "\u001f" + sourceName;
     }
 
@@ -1913,7 +1923,7 @@ sealed partial class ReferenceMetadataIndex
     {
         isStatic = false;
         if (ownerFqn == null || eventName == null) return false;
-        var type = ResolveNetType(BareOwnerFqn(ownerFqn), 0);
+        var type = ResolveNetType(ReflectedOwnerFqn(ownerFqn), 0);
         if (type == null) return false;
 
         const BindingFlags Flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance
@@ -2112,8 +2122,8 @@ sealed partial class ReferenceMetadataIndex
         }
         else
         {
-            physicalOwner = bareOwner;
-            ownerType = ResolveNetType(bareOwner, ownerArity);
+            physicalOwner = ReflectedOwnerFqn(sourceOwner);
+            ownerType = ResolveNetType(physicalOwner, ownerArity);
         }
         if (paramCount < 0 || accessorSignature == null) return false;
         string exactMethod = null;
@@ -2178,8 +2188,11 @@ sealed partial class ReferenceMetadataIndex
                 if (inherited.Count != 1) return false;
                 method = inherited[0];
             }
-            physicalOwner = StripGenericArity(method.DeclaringType?.FullName ?? method.DeclaringType?.Name
-                ?? physicalOwner);
+            // This value leaves the semantic reference index and becomes a CIR MethodImpl/call owner. Preserve the
+            // declaring TypeDef's exact metadata identity, including every nested segment's arity. Returning the bare
+            // lookup key here made an exact current-format owner disagree with its own reflected declaration and
+            // silently dropped the interface-property MethodImpl bridge.
+            physicalOwner = method.DeclaringType?.FullName ?? method.DeclaringType?.Name ?? physicalOwner;
             physicalMethodName = method.Name;
             return true;
         }
@@ -2519,14 +2532,15 @@ sealed partial class ReferenceMetadataIndex
         // the trusted DotKt type index to its exact `Outer`N+Inner`M` metadata identity — never guessed by trying
         // separator/arity combinations. The same exact name is tried in both twins because a shipped-only helper can
         // legitimately be absent from the reference surface.
-        var hasExactOwner = TryExactPhysicalTypeName(ownerFqn, ownerArity, out var exactOwner);
+        var physicalSpelling = ownerFqn.Contains('`') || ownerFqn.Contains('+');
+        string exactOwner = null;
+        var hasExactOwner = !physicalSpelling && TryExactPhysicalTypeName(ownerFqn, ownerArity, out exactOwner);
         if (hasExactOwner && exactOwner == null)
             throw new InvalidOperationException(
                 $"ambiguous CLR metadata identity for nested type '{bareOwner}' with flattened arity {ownerArity}");
         // A bare semantic name with generic arguments must not win a same-named non-generic declaration
         // (`EventHandler` beside `EventHandler<T>`). Only a spelling that already encodes physical arity/nesting is
         // authoritative before the arity-aware probes.
-        var physicalSpelling = ownerFqn.Contains('`') || ownerFqn.Contains('+');
         var owner = hasExactOwner
             ? ResolveRefType(exactOwner) ?? PhysicalTypeNamed(exactOwner)
             : (physicalSpelling || ownerArity == 0 ? ResolveRefType(ownerFqn) : null)

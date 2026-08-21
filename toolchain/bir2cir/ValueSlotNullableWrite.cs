@@ -84,7 +84,7 @@ static class ValueSlotNullableWrite
         // `nullable(ThreadLocal<Int>)`) to reach the underlying Fqn — its `Args` drive the generic-param slot mapping.
         var ownerFqn = UnwrapOwnerFqn(node["type"]);
         if (ownerFqn == null) return;
-        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
+        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
         if (netType == null) return;
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         if (name == null) return;
@@ -108,7 +108,7 @@ static class ValueSlotNullableWrite
     {
         var ownerFqn = UnwrapOwnerFqn(node["type"]);
         if (ownerFqn == null) return;
-        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
+        var netType = _refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(ownerFqn.Name), ownerFqn.Args?.Length ?? 0);
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         if (netType == null || name == null) return;
         var surface = StaticType.Surface(node, scope);

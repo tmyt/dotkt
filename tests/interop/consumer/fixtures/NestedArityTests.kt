@@ -52,6 +52,12 @@ class NestedArityTests {
         // the BIR consumer must therefore agree that GenericOuter<Int>.Leaf<String> has arity two.
         assertEquals(true, Oracle.FlattenedNestedValue() != null)
         assertEquals(true, Oracle.HasFlattenedNestedValue(Oracle.FlattenedNestedValue()))
+
+        // Flattened arity alone cannot identify either of these legal CLR types: one owns a generic slot on each
+        // segment, while the other owns both slots on the nested segment. Exercise both directions so the BIR/CIR
+        // contract must retain each segment's exact metadata arity instead of selecting by reference order.
+        assertEquals(true, Oracle.HasOuterGenericLeaf(Oracle.OuterGenericLeaf()))
+        assertEquals(true, Oracle.HasInnerGenericLeaf(Oracle.InnerGenericLeaf()))
     }
 
     @TestAttribute

@@ -133,13 +133,13 @@ static class DeclarationRename
             var owner = ownerSpec.Name;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var overrideKind = (oo["kind"] as JsonValue)?.GetValue<string>();
-            var bare = ReferenceMetadataIndex.BareOwnerFqn(owner);
-            if (refs.ResolveNetType(bare, ownerSpec.Args?.Length ?? 0) is not Type nt || !nt.IsClass) continue;   // IsClass excludes interface + struct
+            var reflected = ReferenceMetadataIndex.ReflectedOwnerFqn(owner);
+            if (refs.ResolveNetType(reflected, ownerSpec.Args?.Length ?? 0) is not Type nt || !nt.IsClass) continue;   // IsClass excludes interface + struct
             if (!TryExactPropertySlot(declaration, refs, ownerSpec, member, overrideKind,
                     out _, out var physicalProperty, out _, out var exactReturn)
                 || !HasOverridableAccessor(nt, physicalProperty, overrideKind)) continue;
             slotReturn = exactReturn;
-            return new TypeNode.Fqn(bare, ownerSpec.Args);
+            return new TypeNode.Fqn(reflected, ownerSpec.Args);
         }
         // @ClrProperty on a @ClrTypeAlias base (issue #24): the override's ancestor is a kotlin.* alias (kotlin.Throwable)
         // that ResolveNetType above deliberately SKIPS, yet it binds a real BCL CLASS property via @ClrProperty (message
@@ -216,7 +216,7 @@ static class DeclarationRename
             var owner = ownerSpec.Name;
             if ((oo["member"] as JsonValue)?.GetValue<string>() is not string member) continue;
             var kind = (oo["kind"] as JsonValue)?.GetValue<string>();
-            if (refs.ResolveNetType(ReferenceMetadataIndex.BareOwnerFqn(owner), ownerSpec.Args?.Length ?? 0) is not Type nt) continue;
+            if (refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(owner), ownerSpec.Args?.Length ?? 0) is not Type nt) continue;
             if (kind is "getter" or "setter") continue;
             if (NetInteropBinding.DeclaresPublicMethodNamed(nt, member)) return member;
         }

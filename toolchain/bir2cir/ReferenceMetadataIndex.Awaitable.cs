@@ -82,9 +82,12 @@ partial class ReferenceMetadataIndex
         // match a NON-generic sibling that shares the name (Task/Task`1, ValueTask/ValueTask`1 both exist), yielding the
         // non-generic awaiter (`TaskAwaiter` instead of `TaskAwaiter`1<T>`) — an ilverify StackUnexpected at the field
         // store. No non-generic fallback for arity>0: it would re-open exactly that sibling hazard.
-        var awaitable = arity > 0
-            ? ResolveNetType(awaitableFqn + "`" + arity, arity)
-            : ResolveNetType(awaitableFqn, arity);
+        var physicalSpelling = awaitableFqn.Contains('`') || awaitableFqn.Contains('+');
+        var awaitable = physicalSpelling
+            ? ResolveNetType(awaitableFqn, arity)
+            : arity > 0
+                ? ResolveNetType(awaitableFqn + "`" + arity, arity)
+                : ResolveNetType(awaitableFqn, arity);
         if (awaitable == null) return null;
 
         // The default-path GetAwaiter: member first, then a referenced [Extension] static.

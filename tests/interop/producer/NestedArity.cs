@@ -44,6 +44,28 @@ public sealed class GenericOuter<T>
     }
 }
 
+// Both nested declarations have flattened arity two, but the generic slots belong to different TypeDef segments.
+// Their exact CLR identities are SegmentCollisionOuter`1+Leaf`1 and SegmentCollisionOuter+Leaf`2.
+public sealed class SegmentCollisionOuter<T>
+{
+    public sealed class Leaf<U>
+    {
+        public Leaf(T outer, U inner) => (Outer, Inner) = (outer, inner);
+        public T Outer { get; }
+        public U Inner { get; }
+    }
+}
+
+public sealed class SegmentCollisionOuter
+{
+    public sealed class Leaf<T, U>
+    {
+        public Leaf(T outer, U inner) => (Outer, Inner) = (outer, inner);
+        public T Outer { get; }
+        public U Inner { get; }
+    }
+}
+
 public sealed class NullableSlot<T> where T : struct
 {
     public T? Value { get; set; }
@@ -82,6 +104,14 @@ public static class Oracle
     public static GenericOuter<int>.Leaf<string>? FlattenedNestedValue() => new("flattened nested value");
     public static bool HasFlattenedNestedValue(GenericOuter<int>.Leaf<string>? value) =>
         value.HasValue && value.Value.Value == "flattened nested value";
+
+    public static SegmentCollisionOuter<int>.Leaf<string> OuterGenericLeaf() => new(17, "outer generic");
+    public static bool HasOuterGenericLeaf(SegmentCollisionOuter<int>.Leaf<string> value) =>
+        value.Outer == 17 && value.Inner == "outer generic";
+
+    public static SegmentCollisionOuter.Leaf<int, string> InnerGenericLeaf() => new(23, "inner generic");
+    public static bool HasInnerGenericLeaf(SegmentCollisionOuter.Leaf<int, string> value) =>
+        value.Outer == 23 && value.Inner == "inner generic";
 
     public static EventValueItem EventValue() => new();
 }

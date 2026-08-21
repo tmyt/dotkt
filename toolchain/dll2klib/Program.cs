@@ -1918,7 +1918,7 @@ internal sealed class AssemblyScanner
         var clrVisibility = def.Attributes & TypeAttributes.VisibilityMask;
         if (clrVisibility is TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem)
             result.Flags = Flags.AsProtected(result.Flags);
-        result.ClassAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
+        result.ClassAnnotation.Add(ClrExternalAnnotation(names, handle));
         result.Flags |= 1;
 
         var typeParameterIds = new Dictionary<GenericParameterHandle, int>();
@@ -4158,7 +4158,7 @@ internal sealed class AssemblyScanner
                 }
                 function.TypeParameter.Add(tp);
             }
-            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
+            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
             function.Flags |= 1;
             package.Function.Add(function);
             projectedFunctions.Add(new ProjectedFunction(
@@ -4247,7 +4247,7 @@ internal sealed class AssemblyScanner
             };
             PromoteContextParameters(method, function);
             AddCSharp14MethodTypeParameters(method, function.TypeParameter, names, signatures, context);
-            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
+            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
                     KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
@@ -4287,7 +4287,7 @@ internal sealed class AssemblyScanner
                     eraseBlockArguments: entry.KotlinGetterImplementation != entry.GetterImplementation));
             ApplyCSharp14PropertyStorageFacts(
                 property, entry.KotlinGetterImplementation, names);
-            property.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(owner)));
+            property.PropertyAnnotation.Add(ClrExternalAnnotation(names, owner));
             property.Flags |= 1;
             package.Property.Add(property);
         }
@@ -4532,7 +4532,7 @@ internal sealed class AssemblyScanner
             {
                 property.Name = names.String(companion.Name);
             }
-            property.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
+            property.PropertyAnnotation.Add(ClrExternalAnnotation(names, handle));
             property.Flags |= 1;
             package.Property.Add(property);
         }
@@ -4595,7 +4595,7 @@ internal sealed class AssemblyScanner
                 }
                 function.TypeParameter.Add(tp);
             }
-            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
+            function.FunctionAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
                     KotlinDeclarationIdentityAnnotation(names, identity.Id, ""));
@@ -4668,7 +4668,7 @@ internal sealed class AssemblyScanner
             var setterIdentity = accessors.Setter.IsNil
                 ? null
                 : KotlinDeclarationIdentityCarrier(accessors.Setter)?.Id;
-            projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
+            projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (getterIdentity is not null || setterIdentity is not null)
                 projected.PropertyAnnotation.Add(KotlinDeclarationIdentityAnnotation(
                     names, getterIdentity ?? "", setterIdentity ?? ""));
@@ -4709,7 +4709,7 @@ internal sealed class AssemblyScanner
             var isLateinit = _attrs.Has(fieldHandle, MetadataAttributes.DotKtNs + "KotlinLateinitAttribute");
             if (isLateinit)
                 projected.Flags |= 1 << 12; // IS_LATEINIT
-            projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, MetadataTypeName(handle)));
+            projected.PropertyAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (hasCustomAccessors)
                 ApplyAccessorFlags(projected, custom.Handles);
             else
@@ -5342,7 +5342,7 @@ internal sealed class AssemblyScanner
         return semanticParameters.Count;
     }
 
-    private static Annotation ClrExternalAnnotation(NameTable names, string owner)
+    private Annotation ClrExternalAnnotation(NameTable names, TypeDefinitionHandle owner)
     {
         var annotation = new Annotation { Id = names.Class("kotlin.clr.ClrExternal") };
         annotation.Argument.Add(new Annotation.Types.Argument
@@ -5351,7 +5351,16 @@ internal sealed class AssemblyScanner
             Value = new Annotation.Types.Argument.Types.Value
             {
                 Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
-                StringValue = names.String(owner),
+                StringValue = names.String(MetadataTypeName(owner)),
+            },
+        });
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String("physicalOwner"),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                StringValue = names.String(ExactMetadataTypeName(owner)),
             },
         });
         return annotation;
@@ -5936,6 +5945,25 @@ internal sealed class AssemblyScanner
             // classifier's type parameters and the BIR TypeNode arguments. Retaining `` `N`` here makes ilemit append
             // arity a second time (`Signal`1`1), so keep only the metadata-name stem.
             chain.Push(StripArity(_md.GetString(def.Name)));
+            var parent = def.GetDeclaringType();
+            if (parent.IsNil) package = _md.GetString(def.Namespace);
+            current = parent;
+        }
+        var name = string.Join("+", chain);
+        return string.IsNullOrEmpty(package) ? name : package + "." + name;
+    }
+
+    // The exact ECMA-335 TypeDef identity. Unlike MetadataTypeName, this retains each nested segment's own `N arity;
+    // a flattened Kotlin argument vector cannot distinguish Outer`1+Leaf`1 from Outer+Leaf`2 by itself.
+    private string ExactMetadataTypeName(TypeDefinitionHandle handle)
+    {
+        var chain = new Stack<string>();
+        var current = handle;
+        string package = "";
+        while (!current.IsNil)
+        {
+            var def = _md.GetTypeDefinition(current);
+            chain.Push(_md.GetString(def.Name));
             var parent = def.GetDeclaringType();
             if (parent.IsNil) package = _md.GetString(def.Namespace);
             current = parent;
