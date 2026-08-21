@@ -32,12 +32,13 @@ public enum FieldRejection
 public static class FieldLegality
 {
     /// <summary>
-    /// Classify a type as heap-storable or not. <paramref name="isByRefLikeFqn"/> answers "is this bare FQN a
-    /// `ref struct`" for the compilation's reference set. The walk is recursive: a byref-like appearing anywhere
+    /// Classify a type as heap-storable or not. <paramref name="isByRefLike"/> answers whether this exact named
+    /// construction's declaration is a `ref struct` for the compilation's reference set. The walk is recursive: a byref-like appearing anywhere
     /// in the type (array element, generic argument) is equally unstorable — and equally unconstructable — so
     /// there is no valid program the recursion can reject.
     /// </summary>
-    public static FieldRejection Classify(TypeNode? t, Func<string, bool> isByRefLikeFqn, out string? offendingFqn)
+    public static FieldRejection Classify(TypeNode? t, Func<TypeNode.Fqn, bool> isByRefLike,
+        out string? offendingFqn)
     {
         offendingFqn = null;
         if (t == null) return FieldRejection.None;
@@ -46,20 +47,20 @@ public static class FieldLegality
             case TypeNode.ByRef:
                 return FieldRejection.ByRef;
             case TypeNode.Fqn f:
-                if (isByRefLikeFqn(f.Name)) { offendingFqn = f.Name; return FieldRejection.ByRefLike; }
+                if (isByRefLike(f)) { offendingFqn = f.Name; return FieldRejection.ByRefLike; }
                 if (f.Args != null)
                     foreach (var a in f.Args)
                     {
-                        var r = Classify(a, isByRefLikeFqn, out offendingFqn);
+                        var r = Classify(a, isByRefLike, out offendingFqn);
                         if (r != FieldRejection.None) return r;
                     }
                 return FieldRejection.None;
             case TypeNode.Array a2:
-                return Classify(a2.Elem, isByRefLikeFqn, out offendingFqn);
+                return Classify(a2.Elem, isByRefLike, out offendingFqn);
             case TypeNode.Nullable n:
-                return Classify(n.Of, isByRefLikeFqn, out offendingFqn);
+                return Classify(n.Of, isByRefLike, out offendingFqn);
             case TypeNode.Oblivious ob:
-                return Classify(ob.Of, isByRefLikeFqn, out offendingFqn);
+                return Classify(ob.Of, isByRefLike, out offendingFqn);
             default:
                 // tv / star / fn: a type variable is always a heap-storable slot on the CLR (a `ref struct` cannot
                 // be a generic argument), `star` is erased before emission, and a function type is a delegate.

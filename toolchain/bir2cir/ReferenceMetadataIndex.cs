@@ -128,7 +128,7 @@ sealed partial class ReferenceMetadataIndex
     // declaration happens to share its arity-free name. Keep it beside the alias rather than recovering it from the
     // all-reference type-kind index in TryResolveClrOwner.
     readonly Dictionary<string, string> _ownerAliasKind = new(StringComparer.Ordinal);
-    readonly HashSet<string> _byRefLikeOwners = new(StringComparer.Ordinal);         // Kotlin FQN -> is a `ref struct`
+    readonly HashSet<OwnerTypeIdentity> _byRefLikeOwners = new();                   // exact declaration -> is a `ref struct`
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
     readonly Dictionary<string, RichEnumMetadata> _richEnums = new(StringComparer.Ordinal);
     // Trusted [KotlinType(G<*,...>)] on a compiler-generated non-generic interface is the explicit existential ABI
@@ -156,7 +156,7 @@ sealed partial class ReferenceMetadataIndex
     // A referenced concrete type satisfies the CLR new() constraint exactly when it is a non-abstract reference type
     // with a public parameterless instance constructor, or any value type. This is a physical metadata fact used by
     // ExternalGenericConstraintValidation; Kotlin has no nominal upper bound that can encode it.
-    readonly HashSet<string> _publicParameterlessConstructibleOwners = new(StringComparer.Ordinal);
+    readonly HashSet<OwnerTypeIdentity> _publicParameterlessConstructibleOwners = new();
     // Per owner-FQN, the declared parameter types of its (first/sole) constructor — used to adapt a static-String arg
     // flowing into a CharSequence ctor param of a SPLICED anonymous stdlib object (`dotkt$obj*`, e.g. the anonymous
     // Grouping from `CharSequence.groupingBy` whose ctor captures the receiver as `kotlin.CharSequence`). The spliced
@@ -272,7 +272,9 @@ sealed partial class ReferenceMetadataIndex
     // needs the same constructed base/interface graph for referenced types as it has for local CIR
     // declarations.  Keep the graph as structured TypeNodes -- never reconstruct generic owners in
     // ilemit from reflection strings.
-    readonly Dictionary<string, ReferenceTypeShape> _referenceTypeShapes = new(StringComparer.Ordinal);
+    readonly Dictionary<OwnerTypeIdentity, ReferenceTypeShape> _referenceTypeShapes = new();
+    readonly Dictionary<string, ReferenceTypeShape> _referenceTypeShapesByPhysicalOwner =
+        new(StringComparer.Ordinal);
     // Source/KLIB vocabulary flattens CLR nesting to dots and drops per-TypeDef arity suffixes. Generated CLR
     // signatures must recover the exact metadata identity here in bir2cir; ilemit must not infer whether a generic
     // argument belongs to an outer or inner TypeDef from the flattened total arity.
@@ -547,6 +549,8 @@ sealed partial class ReferenceMetadataIndex
                 adapters.Add(adapter.Adapter);
             }
             foreach (var kv in asm.DotKt.TypeShapes) _referenceTypeShapes.TryAdd(kv.Key, kv.Value);
+            foreach (var kv in asm.DotKt.PhysicalTypeShapes)
+                _referenceTypeShapesByPhysicalOwner.TryAdd(kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.ExactPhysicalTypeByDottedName)
                 AddExactPhysicalTypeName(_exactPhysicalTypeByDottedName, kv.Key, kv.Value);
             foreach (var kv in asm.DotKt.PhysicalTypeBySemanticName)
@@ -1769,11 +1773,12 @@ sealed partial class ReferenceMetadataIndex
         return value == null ? null : JsonNode.Parse(value) as JsonArray;
     }
 
-    public bool HasPublicParameterlessConstructor(string ownerFqn)
+    public bool HasPublicParameterlessConstructor(TypeNode.Fqn owner)
     {
-        if (ownerFqn == null) return false;
-        var bare = StripGenericArity(DottedFqn(ownerFqn));
-        return _publicParameterlessConstructibleOwners.Contains(bare);
+        if (owner == null) return false;
+        var name = TryResolveClrOwner(owner.Name, out var physicalName, out _) ? physicalName : owner.Name;
+        return _publicParameterlessConstructibleOwners.Contains(
+            OwnerIdentity(name, owner.Args?.Length ?? 0));
     }
 
     public bool TryExactPhysicalTypeName(string ownerFqn, int arity, out string exact)
@@ -1828,12 +1833,15 @@ sealed partial class ReferenceMetadataIndex
     // and BirTypeLowering rewrites it, but the storage decisions run BEFORE that pass and so see the intrinsic token.
     // Both spellings come from the ONE pair of constants there, so this is the same identity that lowering asserts,
     // not a second fact.
-    public bool IsByRefLikeFqn(string fqn)
+    public bool IsByRefLikeFqn(TypeNode.Fqn type)
     {
-        if (fqn == null) return false;
-        var bare = StripGenericArity(fqn);
-        if (bare == BirTypeLowering.SpanIntrinsicFqn) bare = BirTypeLowering.SpanClrFqn;
-        return _byRefLikeOwners.Contains(bare);
+        if (type == null) return false;
+        var name = type.Name;
+        if (StripGenericArity(name) == BirTypeLowering.SpanIntrinsicFqn)
+            name = BirTypeLowering.SpanClrFqn;
+        else if (TryResolveClrOwner(name, out var physicalName, out _))
+            name = physicalName;
+        return _byRefLikeOwners.Contains(OwnerIdentity(name, type.Args?.Length ?? 0));
     }
 
     // The CLR generic-parameter constraint class of a type variable declared on `ownerFqn` at flattened index `i`:
@@ -2991,9 +2999,9 @@ sealed partial class ReferenceMetadataIndex
     // the slot is declared on `Derived`'s own base `Sink` — reaches `Sink<Int>` as a spec of its own: a MethodImpl must
     // name the interface that DECLARES the slot, and the emitter looks the directive up under exactly that spec.
     // Empty for a type this index does not know, which is a supertype no bridge decision may be made about.
-    public IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReferencedSupertypes(string ownerFqn)
+    public IEnumerable<(TypeNode.Fqn spec, bool isInterface)> ReferencedSupertypes(TypeNode.Fqn owner)
     {
-        if (ownerFqn == null || !TryReferenceTypeShapeValue(ownerFqn, out var shape))
+        if (owner == null || !TryReferenceTypeShapeValue(owner, out var shape))
             yield break;
         foreach (var i in shape.Interfaces ?? Array.Empty<TypeNode.Fqn>()) yield return (i, true);
         if (shape.Base != null) yield return (shape.Base, false);
@@ -3071,7 +3079,8 @@ sealed partial class ReferenceMetadataIndex
                 return SlotLookup.Declared;
             }
         }
-        if (!TryReferenceTypeShapeValue(lookupOwner, out var shape)) return SlotLookup.NotDeclared;
+        if (!TryReferenceTypeShapeValue(new TypeNode.Fqn(lookupOwner, ownerTypeArguments), out var shape))
+            return SlotLookup.NotDeclared;
         // Reflection reports the interface set TRANSITIVELY, so one hop reaches every interface declaration; the base
         // chain is walked one link at a time. Every supertype that answers is collected and they must AGREE — an
         // inherited member the call cannot distinguish is not a declaration this pass may act on.
@@ -3522,7 +3531,7 @@ sealed partial class ReferenceMetadataIndex
             }
 
             var inherited = new HashSet<(string Property, string Method)>();
-            if (TryReferenceTypeShapeValue(lookupOwner, out var shape))
+            if (TryReferenceTypeShapeValue(new TypeNode.Fqn(lookupOwner, ownerTypeArguments), out var shape))
                 foreach (var super in Supertypes(shape))
                     if (TryReferencedPropertyPhysicalBinding(super.Name, propertyName, accessorKind, paramCount,
                             methodArity, accessorSignature,
@@ -3655,11 +3664,11 @@ sealed partial class ReferenceMetadataIndex
     // Return the declaration-shape of a referenced owner, normalized to BIR's dotted nested-type
     // spelling.  The returned base/interfaces may contain type-scoped Tvs and are substituted by
     // InheritedMemberOwnerBinding exactly like locally declared supertypes.
-    public bool TryReferenceTypeShape(string ownerToken, out int typeParamCount, out string kind,
+    public bool TryReferenceTypeShape(TypeNode.Fqn owner, out int typeParamCount, out string kind,
         out TypeNode.Fqn baseType, out TypeNode.Fqn[] interfaces)
     {
-        if (ownerToken != null && !IsAliasedOwner(ownerToken)
-            && TryReferenceTypeShapeValue(ownerToken, out var shape))
+        if (owner != null && !IsAliasedOwner(owner.Name)
+            && TryReferenceTypeShapeValue(owner, out var shape))
         {
             typeParamCount = shape.TypeParamCount;
             kind = shape.Kind;
@@ -3674,11 +3683,15 @@ sealed partial class ReferenceMetadataIndex
         return false;
     }
 
-    bool TryReferenceTypeShapeValue(string ownerToken, out ReferenceTypeShape shape)
+    bool TryReferenceTypeShapeValue(TypeNode.Fqn owner, out ReferenceTypeShape shape)
     {
-        if (HasExactOwnerPunctuation(ownerToken))
-            return _referenceTypeShapes.TryGetValue(ownerToken, out shape);
-        return _referenceTypeShapes.TryGetValue(DottedFqn(BareOwnerFqn(ownerToken)), out shape);
+        if (HasExactOwnerPunctuation(owner.Name)
+            && _referenceTypeShapesByPhysicalOwner.TryGetValue(owner.Name, out shape)) return true;
+        if (TryExactPhysicalTypeName(owner.Name, owner.Args?.Length ?? 0, out var exact)
+            && exact != null && _referenceTypeShapesByPhysicalOwner.TryGetValue(exact, out shape))
+            return true;
+        return _referenceTypeShapes.TryGetValue(
+            OwnerIdentity(owner.Name, owner.Args?.Length ?? 0), out shape);
     }
 
     // @ClrTypeAlias owners are not CLR declaration owners: their calls must go through
@@ -3892,39 +3905,35 @@ sealed partial class ReferenceMetadataIndex
                     if (companionRepresentations.TryGetValue(type, out var companionIsStatic))
                         metadata.CompanionStaticByPhysicalOwner.Add(
                             StripGenericArity(DottedFqn(ownerFqn)), companionIsStatic);
-                    metadata.TypeKinds[OwnerIdentity(ownerFqn,
-                        type.IsGenericType ? type.GetGenericArguments().Length : 0)] = TypeKind(type);
+                    var typeDeclarationIdentity = OwnerIdentity(ownerFqn,
+                        type.IsGenericType ? type.GetGenericArguments().Length : 0);
+                    metadata.TypeKinds[typeDeclarationIdentity] = TypeKind(type);
                     if (type.IsValueType || !type.IsAbstract && !type.IsInterface &&
                         type.GetConstructor(Type.EmptyTypes) is ConstructorInfo { IsPublic: true })
                     {
                         metadata.PublicParameterlessConstructibleOwners.Add(
-                            StripGenericArity(DottedFqn(ownerFqn)));
+                            typeDeclarationIdentity);
                     }
                     // Both spellings: the reflection name nests with `+`, every bir2cir type token is DOTTED, and a
                     // NESTED `ref struct` (`Span<T>.Enumerator`, `MemoryExtensions.SpanSplitEnumerator`) is exactly
                     // the shape a spill of `for (x in span)` would mint a field of.
                     if (IsByRefLikeType(type))
-                    {
-                        metadata.ByRefLikeOwners.Add(ownerFqn);
-                        metadata.ByRefLikeOwners.Add(DottedFqn(ownerFqn));
-                    }
+                        metadata.ByRefLikeOwners.Add(typeDeclarationIdentity);
                     var semanticTypeShape = new ReferenceTypeShape(
                         type.IsGenericType ? type.GetGenericArguments().Length : 0,
                         TypeKind(type),
                         DeclarationTypeNode(type.BaseType) as TypeNode.Fqn,
                         type.GetInterfaces().Select(DeclarationTypeNode).OfType<TypeNode.Fqn>().ToArray());
-                    metadata.TypeShapes[DottedFqn(ownerFqn)] = semanticTypeShape;
+                    metadata.TypeShapes[typeDeclarationIdentity] = semanticTypeShape;
                     // Inheritance edges are declaration identities just like member owners. The exact index retains
                     // the reflected TypeDef spelling so current-format override markers traverse a physical graph
                     // without falling back to arity-free names. Keep the semantic graph separately: Kotlin aliases
                     // intentionally walk that vocabulary before bir2cir selects their CLR representation.
-                    metadata.TypeShapes[exactPhysicalOwner] = exactPhysicalOwner == DottedFqn(ownerFqn)
-                        ? semanticTypeShape
-                        : new ReferenceTypeShape(
-                            semanticTypeShape.TypeParamCount,
-                            semanticTypeShape.Kind,
-                            ExactDeclaringView(type.BaseType),
-                            type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray());
+                    metadata.PhysicalTypeShapes[exactPhysicalOwner] = new ReferenceTypeShape(
+                        semanticTypeShape.TypeParamCount,
+                        semanticTypeShape.Kind,
+                        ExactDeclaringView(type.BaseType),
+                        type.GetInterfaces().Select(ExactDeclaringView).OfType<TypeNode.Fqn>().ToArray());
                     if (type.IsGenericType)
                     {
                         var gargs = type.GetGenericArguments();
@@ -6009,7 +6018,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, string> Aliases = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> AliasKinds = new(StringComparer.Ordinal);
     public readonly Dictionary<ReferenceMetadataIndex.OwnerTypeIdentity, string> TypeKinds = new();
-    public readonly HashSet<string> ByRefLikeOwners = new(StringComparer.Ordinal);        // ownerFqn -> is a `ref struct` (see IsByRefLikeFqn)
+    public readonly HashSet<ReferenceMetadataIndex.OwnerTypeIdentity> ByRefLikeOwners = new();
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
     public readonly Dictionary<string, ReferenceMetadataIndex.RichEnumMetadata> RichEnums = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ExistentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
@@ -6026,7 +6035,7 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, int> TypeArity = new(StringComparer.Ordinal);       // ownerFqn -> generic arity
     public readonly Dictionary<string, string[]> TypeParamNames = new(StringComparer.Ordinal); // ownerFqn -> generic param names
     public readonly Dictionary<string, string> TypeParamDeclarations = new(StringComparer.Ordinal); // ownerFqn -> exact descriptor array JSON
-    public readonly HashSet<string> PublicParameterlessConstructibleOwners = new(StringComparer.Ordinal);
+    public readonly HashSet<ReferenceMetadataIndex.OwnerTypeIdentity> PublicParameterlessConstructibleOwners = new();
     public readonly Dictionary<string, TypeNode[]> CtorParamTypes = new(StringComparer.Ordinal); // ownerFqn -> sole ctor parameter types
     public readonly Dictionary<string, string[]> TypeParamConstraints = new(StringComparer.Ordinal); // ownerFqn -> per-param "struct"/"class"/"unconstrained"
     public readonly Dictionary<string, TypeNode[]> TypeParamBounds = new(StringComparer.Ordinal); // DOTTED ownerFqn -> per-param declared bound TypeNode (null when unconstrained/objectish)
@@ -6038,7 +6047,8 @@ sealed class ReferenceDotKtMetadata
     public readonly List<MethodImplBinding> MethodImplBindings = new();                   // trusted exact accessor bridge -> CLR slot
     public readonly List<CtorBinding> CtorBindings = new();                               // per-ctor declaration shape (#86 D1)
     public readonly List<ReferencedAliasConstructorAdapter> AliasConstructorAdapters = new();
-    public readonly Dictionary<string, ReferenceTypeShape> TypeShapes = new(StringComparer.Ordinal);
+    public readonly Dictionary<ReferenceMetadataIndex.OwnerTypeIdentity, ReferenceTypeShape> TypeShapes = new();
+    public readonly Dictionary<string, ReferenceTypeShape> PhysicalTypeShapes = new(StringComparer.Ordinal);
     public readonly Dictionary<ReferenceMetadataIndex.OwnerTypeIdentity, string> ExactPhysicalTypeByDottedName = new();
     public readonly Dictionary<string, string> PhysicalTypeBySemanticName = new(StringComparer.Ordinal);
     public readonly Dictionary<string, int> InnerCapturedCount = new(StringComparer.Ordinal);

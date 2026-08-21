@@ -11,6 +11,20 @@ public ref struct Tally
     public Tally(int v) { V = v; }
 }
 
+// Legal same-stem CLR declarations with different generic arity. The generic declaration is byref-like; the
+// non-generic declaration is an ordinary heap class and may therefore live in a coroutine state-machine field.
+public sealed class StorageCollision
+{
+    public StorageCollision(int value) => Value = value;
+    public int Value { get; }
+}
+
+public ref struct StorageCollision<T>
+{
+    public T Value;
+    public StorageCollision(T value) => Value = value;
+}
+
 public static class ByRefLikeApi
 {
     public static Tally MakeTally(int v) => new Tally(v);

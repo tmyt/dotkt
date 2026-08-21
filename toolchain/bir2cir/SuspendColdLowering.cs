@@ -1674,7 +1674,7 @@ static partial class SuspendColdLowering
 
         // The referenced-metadata `ref struct` oracle. Null refs (a unit-test/lambda path with no reference set)
         // answers "not byref-like": a byref-like value cannot exist without a reference assembly declaring it.
-        static bool IsByRefLikeFqn(string fqn) => _refs != null && _refs.IsByRefLikeFqn(fqn);
+        static bool IsByRefLikeFqn(TypeNode.Fqn type) => _refs != null && _refs.IsByRefLikeFqn(type);
 
         // How a diagnostic names the thing being compiled.
         string DiagOwner => _isLambda ? _smType : (_ownerClass ?? _fileClass) + "." + _name;

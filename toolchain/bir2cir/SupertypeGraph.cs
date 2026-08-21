@@ -97,7 +97,7 @@ static class SupertypeGraph
             // interface that merely EXTENDS the declaring one hands over none of its base's members to reflection.
             if (refs == null) continue;
             var refArgs = spec.Args ?? Array.Empty<TypeNode>();
-            foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec.Name))
+            foreach (var (parent, parentIsInterface) in refs.ReferencedSupertypes(spec))
                 if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
                     queue.Enqueue((constructed, parentIsInterface));
         }
@@ -106,29 +106,6 @@ static class SupertypeGraph
     // Is `owner` `from` itself, or one of its supertypes — through this compilation's declarations and through the
     // referenced graph alike? The bridge asks it to tie an override marker to the supertype spec it may answer for.
     // Bounded by a visited set, so cyclic or repeated metadata terminates.
-    public static bool Reaches(string from, string owner, IReadOnlyDictionary<string, Def> defs,
-        ReferenceMetadataIndex refs)
-    {
-        var queue = new Queue<string>();
-        queue.Enqueue(from);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        while (queue.Count > 0)
-        {
-            var n = queue.Dequeue();
-            if (!seen.Add(n)) continue;
-            if (n == owner) return true;
-            if (defs.TryGetValue(n, out var d))
-            {
-                foreach (var i in d.Interfaces) queue.Enqueue(i.Name);
-                if (d.Base != null) queue.Enqueue(d.Base.Name);
-                continue;
-            }
-            if (refs == null) continue;
-            foreach (var (parent, _) in refs.ReferencedSupertypes(n)) queue.Enqueue(parent.Name);
-        }
-        return false;
-    }
-
     // Constructed counterpart used when authorization depends on the exact direct-interface instance. A class may
     // inherit `I<string>` through its base while directly re-listing only `I<int>`; matching names there would grant
     // the new declaration a MethodImpl for the wrong constructed slot.
@@ -157,7 +134,7 @@ static class SupertypeGraph
             }
             if (refs == null) continue;
             var refArgs = spec.Args ?? Array.Empty<TypeNode>();
-            foreach (var (parent, _) in refs.ReferencedSupertypes(spec.Name))
+            foreach (var (parent, _) in refs.ReferencedSupertypes(spec))
                 if (SubstOwnerTvs(parent, refArgs) is TypeNode.Fqn constructed)
                     queue.Enqueue(constructed);
         }

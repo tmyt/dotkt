@@ -86,6 +86,24 @@ public sealed class SegmentCollisionOuter
     }
 }
 
+public interface SameStemShapeBase
+{
+    int Marker => 53;
+}
+
+public interface SameStemShape : SameStemShapeBase
+{
+}
+
+public interface SameStemShapeBase<T>
+{
+    T Echo(T value) => value;
+}
+
+public interface SameStemShape<T> : SameStemShapeBase<T>
+{
+}
+
 public sealed class NullableSlot<T> where T : struct
 {
     public T? Value { get; set; }
