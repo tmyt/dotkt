@@ -771,6 +771,12 @@ sealed class Pipeline
             ClrEventImplBinding.BindLocalSubscriptionsAll(staged.Select(s => s.Root));
         }
 
+        // Type-level #29 source truth must be captured at the last all-Kotlin boundary. Every source/inline type now
+        // exists, while inner applications, star projections, reference nullability, and captured type-parameter
+        // indexes still retain their Kotlin meaning. Those facts have no separate supertype-edge metadata channel.
+        if (attributeTopLevelOwner)
+            foreach (var stagedFile in staged) CollectionIdentityRecord.RecordTypeEdges(stagedFile.Root);
+
         // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
         // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);
@@ -901,7 +907,7 @@ sealed class Pipeline
         TypeOwnershipLowering.ApplyAll(staged.Select(s => s.Root).ToList());
         // Opaque raw-BIR carriers cross the assembly boundary after the representation decision above. Bind any local
         // nested type tokens to this producer's exact metadata identity now; readers never reconstruct that relation.
-        OpaqueCarrierTypeBinding.ApplyAll(staged.Select(s => s.Root).ToList());
+        OpaqueCarrierTypeBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
         // A synthesized closure/SAM class holds each capture in an INSTANCE FIELD, which the CLR refuses for a
         // byref-like (`ref struct`) type. ClosureSynthesis recorded those refusals rather than throwing, because the
         // cold suspend lowering above reconstructs a `suspendCoroutine { … }` block inline and PRUNES the class it
@@ -1134,7 +1140,7 @@ sealed class Pipeline
             // [KotlinCollectionIdentity]; type edges and bounds merge into [KotlinSupertypes]. dll2klib therefore
             // restores `List` vs `MutableList` cross-module in both channels. APP builds only (the collapse is
             // non-ref; only an app-emitted library is dll2klib-re-consumed). Runs on kotlin.* names before lowering.
-            if (attributeTopLevelOwner) CollectionIdentityRecord.Apply(substituted);
+            if (attributeTopLevelOwner) CollectionIdentityRecord.RecordMemberSlots(substituted);
             // The type transform: lower the Kotlin type vocabulary into ilemit's CLR-codegen vocabulary, emitting a
             // BIR-SHAPED CIR (same node shape; only type strings change). No verbatim/envelope track. The ref.dll
             // @ClrTypeAlias index lowers EVERY CLR-bound type (collections/StringBuilder/Regex/... not just the

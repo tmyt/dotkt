@@ -43,3 +43,17 @@ class CollectionBound<T : CollectionEdge<List<String>>>(val value: T)
 // collection producer must merge without overwriting that source truth with its already-erased view.
 open class MixedCollectionEdge<T>
 class MixedCollectionDerived<T> : MixedCollectionEdge<List<T?>>()
+
+class NullableCollectionBase : CollectionEdge<List<String?>>(listOf<String?>(null))
+class StarCollectionBase : CollectionEdge<List<*>>(listOf<Any?>("star edge"))
+
+interface NullableEdge<T>
+interface ReadonlyEdge<T>
+class MixedInterfaceEdges<T> : NullableEdge<T?>, ReadonlyEdge<List<T>>
+
+class CollectionOuter<A> {
+    inner class BoundInner<B : CollectionEdge<List<String>>>(val value: B)
+    open inner class ApplicationInner<B>(val value: B)
+}
+
+class InnerApplicationBound<T : CollectionOuter<List<String>>.ApplicationInner<Int>>(val value: T)

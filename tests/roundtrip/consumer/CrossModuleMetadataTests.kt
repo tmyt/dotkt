@@ -79,6 +79,13 @@ import nestedlist.ReadonlyCollectionInterface
 import nestedlist.CollectionBound
 import nestedlist.MixedCollectionEdge
 import nestedlist.MixedCollectionDerived
+import nestedlist.NullableCollectionBase
+import nestedlist.StarCollectionBase
+import nestedlist.NullableEdge
+import nestedlist.ReadonlyEdge
+import nestedlist.MixedInterfaceEdges
+import nestedlist.CollectionOuter
+import nestedlist.InnerApplicationBound
 import kotlinx.cell.makeCell
 import demo.hello
 import demo.Plain
@@ -349,6 +356,27 @@ class GenericMetadataRoundtripTests {
 
         val mixed: MixedCollectionEdge<List<Int?>> = MixedCollectionDerived<Int>()
         ClassicAssert.IsNotNull(mixed)
+
+        val nullable: CollectionEdge<List<String?>> = NullableCollectionBase()
+        ClassicAssert.IsNull(nullable.value[0])
+
+        val star: CollectionEdge<List<*>> = StarCollectionBase()
+        ClassicAssert.AreEqual("star edge", star.value[0])
+
+        val mixedInterfaces = MixedInterfaceEdges<Int>()
+        val nullableInterface: NullableEdge<Int?> = mixedInterfaces
+        val readonlyInterface: ReadonlyEdge<List<Int>> = mixedInterfaces
+        ClassicAssert.IsNotNull(nullableInterface)
+        ClassicAssert.IsNotNull(readonlyInterface)
+
+        val outer = CollectionOuter<String>()
+        val innerBound = outer.BoundInner(LocalReadonlyCollectionEdge())
+        ClassicAssert.AreEqual("bound edge", innerBound.value.value[0])
+
+        val applicationOuter = CollectionOuter<List<String>>()
+        val application = applicationOuter.ApplicationInner(7)
+        val applicationBound = InnerApplicationBound(application)
+        ClassicAssert.AreEqual(7, applicationBound.value.value)
     }
 
     // A bounded generic G<*> is represented in CLR by a compiler-generated existential interface. The referenced

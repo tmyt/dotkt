@@ -40,14 +40,32 @@ static class CollectionIdentityRecord
         "kotlin.collections.Collection",
     };
 
-    public static void Apply(JsonNode root)
+    // Type-level source truth must be captured before CLR inner-argument projection, F-bound star erasure, and the
+    // global reference-nullability strip. Unlike member signatures, supertype edges have no independent carrier for
+    // those facts. At this boundary every source/inline type exists and type-parameter indexes are still in the
+    // flattened Kotlin frame that ilemit and dll2klib publish.
+    public static void RecordTypeEdges(JsonNode root)
     {
-        if (root is JsonObject o) RecordDecls(o);
+        if (root is JsonObject o) RecordTypeEdges(o);
     }
 
-    static void RecordDecls(JsonObject o)
+    static void RecordTypeEdges(JsonObject o)
     {
         RecordSupertypes(o);
+        if (o["types"] is JsonArray types)
+            foreach (var t in types) if (t is JsonObject to) RecordTypeEdges(to);
+    }
+
+    // Member carriers are captured at the existing final semantic-signature boundary, after every pass that can
+    // synthesize or reshape a declaration slot and immediately before BirTypeLowering performs the collection
+    // collapse. Their reference nullability rides the declaration NRT channel independently.
+    public static void RecordMemberSlots(JsonNode root)
+    {
+        if (root is JsonObject o) RecordMemberSlots(o);
+    }
+
+    static void RecordMemberSlots(JsonObject o)
+    {
         if (o["methods"] is JsonArray methods)
             foreach (var m in methods) if (m is JsonObject mo) RecordMethod(mo);
         if (o["ctors"] is JsonArray ctors)
@@ -55,7 +73,7 @@ static class CollectionIdentityRecord
         RecordSimpleDecls(o["properties"]);
         RecordSimpleDecls(o["fields"]);
         if (o["types"] is JsonArray types)
-            foreach (var t in types) if (t is JsonObject to) RecordDecls(to);
+            foreach (var t in types) if (t is JsonObject to) RecordMemberSlots(to);
     }
 
     static void RecordSupertypes(JsonObject declaration)

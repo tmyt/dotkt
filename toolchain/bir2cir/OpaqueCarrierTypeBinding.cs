@@ -4,17 +4,18 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// Raw inline/default bodies are deliberately opaque while ordinary lowering runs, but they still cross an assembly
-// boundary. Once TypeOwnershipLowering has selected every local TypeDef's nestedIn representation, bind type identities
-// inside those carriers to that exact producer metadata identity. This is authored from the current BIR declarations;
-// a consumer never guesses an owner from a generated name and there is intentionally no legacy-DLL fallback.
+// Raw inline/default bodies and early KotlinSupertypes snapshots are deliberately opaque while ordinary lowering
+// runs, but they still cross an assembly boundary. Once TypeOwnershipLowering has selected every local TypeDef's
+// nestedIn representation, bind type identities inside those carriers to that exact producer metadata identity. This
+// is authored from current declarations/reference facts; a consumer never guesses an owner from a generated name and
+// there is intentionally no legacy-DLL fallback.
 static class OpaqueCarrierTypeBinding
 {
     const string KotlinDefault = "kotlin.clr.KotlinDefault";
 
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         var declarations = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var fileClasses = new HashSet<string>(StringComparer.Ordinal);
@@ -68,8 +69,53 @@ static class OpaqueCarrierTypeBinding
         foreach (var (name, declaration) in declarations)
             if (declaration["nestedIn"] != null) _ = Physical(name);
 
-        if (physicalBySemantic.Count == 0) return;
-        foreach (var root in roots) RewriteCarrierSlots(root, physicalBySemantic);
+        foreach (var root in roots)
+        {
+            if (physicalBySemantic.Count > 0) RewriteCarrierSlots(root, physicalBySemantic);
+            BindSupertypeRecords(root, physicalBySemantic, refs);
+        }
+    }
+
+    // KotlinSupertypes is captured before ownership lowering so it retains source nullability, stars, Kotlin inner
+    // argument order, and the flattened Kotlin type-parameter frame. Once ownership has selected exact local and
+    // referenced TypeDefs, bind only classifier names inside that opaque snapshot. Arguments deliberately remain in
+    // Kotlin metadata order; dll2klib consumes the exact '+' path as a nested classifier without rotating them again.
+    static void BindSupertypeRecords(JsonNode node, IReadOnlyDictionary<string, string> localPhysical,
+        ReferenceMetadataIndex refs)
+    {
+        if (node is JsonObject obj)
+        {
+            if ((obj[KotlinSupertypesRecord.PreKey] as JsonValue)?.TryGetValue<string>(out var encoded) == true)
+            {
+                var payload = JsonNode.Parse(encoded)
+                    ?? throw new InvalidOperationException("KotlinSupertypes pass-local payload decoded to null");
+                Rewrite(payload);
+                obj[KotlinSupertypesRecord.PreKey] = payload.ToJsonString();
+            }
+            foreach (var child in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
+                BindSupertypeRecords(child, localPhysical, refs);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array.Where(value => value != null).ToList())
+                BindSupertypeRecords(child, localPhysical, refs);
+
+        void Rewrite(JsonNode current)
+        {
+            if (current is JsonObject type)
+            {
+                if (Str(type["t"]) == "fqn" && Str(type["name"]) is string name)
+                {
+                    var arity = type["args"] is JsonArray args ? args.Count : 0;
+                    if (localPhysical.TryGetValue(name, out var local)) type["name"] = local;
+                    else if (refs.TryExactPhysicalTypeName(name, arity, out var exact) && exact != null)
+                        type["name"] = exact;
+                }
+                foreach (var child in type.Select(kv => kv.Value).Where(value => value != null).ToList())
+                    Rewrite(child);
+            }
+            else if (current is JsonArray array)
+                foreach (var child in array.Where(value => value != null).ToList()) Rewrite(child);
+        }
     }
 
     static void RewriteCarrierSlots(JsonNode node, IReadOnlyDictionary<string, string> physicalBySemantic)

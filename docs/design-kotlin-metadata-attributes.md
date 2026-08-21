@@ -185,6 +185,12 @@ the attribute is authored: when both transforms touch one edge, the earlier prod
 unrelated moved edges and bounds are appended. Thus `class B : Box<List<String>>` re-imports with that Kotlin edge,
 not the physical `Box<IList<string>>`, without teaching dll2klib which transform produced the correction.
 
+Collection-bearing type edges are captured at the last all-Kotlin boundary, before inner applications rotate to CLR
+argument order, F-bound stars become existential views, or reference nullability is stripped. Their classifier names
+are bound later to exact nested metadata paths without changing the captured Kotlin argument order. A `bounds` key is
+the parameter's flattened publication index, including captured outer parameters of an `inner` class; that is the
+same frame ilemit emits and dll2klib assigns to `TypeParameter.Id`.
+
 `dll2klib` restores the edges by HEAD, not by position, and that is load-bearing: the projected supertype list is not
 a transcription of the metadata's interface list — it drops the non-generic shadows, collapses the `IComparable`
 bridge and synthesizes `kotlin.Throwable`/`kotlin.Any` edges — so an index would line up with nothing. Replacing an

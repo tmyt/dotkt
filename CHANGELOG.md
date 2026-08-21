@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Read-only collection identity now survives on cross-module supertypes and class bounds (#350).** bir2cir records
+  collection-bearing base edges, interface edges, and type-parameter constraints in the shared Kotlin supertype
+  carrier before CLR inner-type, star-projection, and nullability transforms erase their source meaning. dll2klib
+  therefore restores nested collections, including nullable/star elements and inner-class applications, without
+  confusing them with mutable collection aliases.
+
 - **Projected CLR owners now retain each nested generic segment's exact arity (#505).** `dll2klib` records both the
   Kotlin-facing owner and its exact ECMA TypeDef identity, so legal declarations such as ``Outer`1+Leaf`1`` and
   ``Outer+Leaf`2`` no longer collapse to the same flattened BIR owner before bir2cir resolves their members.
