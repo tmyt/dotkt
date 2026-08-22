@@ -456,7 +456,7 @@ public static class IrSanity
             if (other == null || StampAgrees(sty, other)) continue;
             throw new IrSanityException(decl,
                 $"'{kind}' carries a stale 'sty': the stamp names {TypeNode.ToJson(sty)} while its '{slot}' names "
-                + $"{TypeNode.ToJson(other)} — a pass that changes a node's result type must rewrite or delete its 'sty' (spec §2.7)");
+                + $"{TypeNode.ToJson(other)} — a pass that changes a node's result type must rewrite or delete its 'sty'");
         }
     }
 

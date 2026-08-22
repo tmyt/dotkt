@@ -25,10 +25,10 @@ static partial class ClrMemberResolution
     static void ResolveProp(JsonObject node, bool write)
     {
         if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn)
-            throw new InvalidOperationException($"bir2cir: clrProp{(write ? "Set" : "Get")} owner is not a .NET FQN slot ({TypeNode.ToJson(ReadOwnerNode(node["type"]))}) — #46 W1-S3");
+            throw new InvalidOperationException($"bir2cir: clrProp{(write ? "Set" : "Get")} owner is not a .NET FQN slot ({TypeNode.ToJson(ReadOwnerNode(node["type"]))})");
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
-            throw new InvalidOperationException($"bir2cir: clrProp{(write ? "Set" : "Get")} owner '{ownerFqn.Name}' does not resolve to a .NET type (#46 W1-S3 memberRef carry)");
+            throw new InvalidOperationException($"bir2cir: clrProp{(write ? "Set" : "Get")} owner '{ownerFqn.Name}' does not resolve to a .NET type");
         var name = (node["name"] as JsonValue)?.GetValue<string>();
         var isStatic = (node["static"] as JsonValue)?.GetValue<bool>() ?? false;
         var superCall = (node["super"] as JsonValue)?.GetValue<bool>() ?? false;
@@ -65,7 +65,7 @@ static partial class ClrMemberResolution
                 SubstOwnerParams(fld.FieldType, ownerFqn.Args ?? Array.Empty<TypeNode>()));
             return;
         }
-        throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")} — #46 W1-S3)");
+        throw new InvalidOperationException($"bir2cir: no readable/writable property, accessor method, or field '{name}' on .NET type '{open}' (clrProp{(write ? "Set" : "Get")})");
     }
 
     // A WRITE's value node fills the storage it is written into, exactly as an argument fills a parameter. A
@@ -139,7 +139,7 @@ static partial class ClrMemberResolution
     static MethodInfo UniqueAccessor(List<MethodInfo> hits, Type open, string accName)
     {
         if (hits.Count == 1) return hits[0];
-        throw new InvalidOperationException($"bir2cir: accessor '{accName}' on '{open}' is AMBIGUOUS — {hits.Count} members match (malformed): {string.Join("; ", hits.Select(m => m.ToString()))} (#46 W1-S3)");
+        throw new InvalidOperationException($"bir2cir: accessor '{accName}' on '{open}' is AMBIGUOUS — {hits.Count} members match (malformed): {string.Join("; ", hits.Select(m => m.ToString()))}");
     }
 
     // A public property surfaced as a FIELD (a .NET public/static/const field, or a Kotlin backing-field property).
@@ -229,20 +229,20 @@ static partial class ClrMemberResolution
             return;
         }
         if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn)
-            throw new InvalidOperationException($"bir2cir: clrEvent owner is not a .NET FQN slot ({TypeNode.ToJson(ReadOwnerNode(node["type"]))}) — #46 W1-S3");
+            throw new InvalidOperationException($"bir2cir: clrEvent owner is not a .NET FQN slot ({TypeNode.ToJson(ReadOwnerNode(node["type"]))})");
         if (_localTypes.Contains(ownerFqn.Name))
             throw new InvalidOperationException(
                 $"bir2cir: local clrEvent '{ownerFqn.Name}' reached final member resolution without an exact accessor binding");
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
-            throw new InvalidOperationException($"bir2cir: clrEvent owner '{ownerFqn.Name}' does not resolve to a .NET type (#46 W1-S3)");
+            throw new InvalidOperationException($"bir2cir: clrEvent owner '{ownerFqn.Name}' does not resolve to a .NET type");
         var name = (node["event"] as JsonValue)?.GetValue<string>();
         var isStatic = (node["static"] as JsonValue)?.GetValue<bool>() ?? false;
         var add = (node["k"] as JsonValue)?.GetValue<string>() == "clrEventAdd";
         var flags = BindingFlags.Public | BindingFlags.FlattenHierarchy | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
         var acc = FindEventAccessor(open, name, add, flags);
         if (acc == null)
-            throw new InvalidOperationException($"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")} — #46 W1-S3)");
+            throw new InvalidOperationException($"bir2cir: no event '{name}' on .NET type '{open}' (clrEvent{(add ? "Add" : "Remove")})");
         RetargetToBaseInterface(node, "type", open, acc, ownerFqn);
         // A stored Kotlin function value is re-wrapped in the event's own delegate type.  The accessor declaration
         // fixes that target type; carry its constructor here so ilemit does not rediscover a member from the delegate

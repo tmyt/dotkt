@@ -57,7 +57,7 @@ static partial class ClrMemberResolution
             var open = ResolveOwnerType(new TypeNode.Fqn(owner))
                 ?? throw new InvalidOperationException(
                     $"bir2cir: the fixed-member table needs '{owner}' for role '{role}', which does not resolve "
-                    + "to a .NET type (#370)");
+                    + "to a .NET type");
             var wanted = parameters.Select(ParseWellKnownParam).ToList();
             var cands = open.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
                 .Where(m => m.Name == name && m.GetParameters().Length == wanted.Count
@@ -68,7 +68,7 @@ static partial class ClrMemberResolution
             var win = TryPickUnique(cands, wanted, Array.Empty<TypeNode>())
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}.{name}({string.Join(", ", parameters)})' does not resolve to one "
-                    + $"declaration for role '{role}' (#370)");
+                    + $"declaration for role '{role}'");
             table[role] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, OwnParameters(open));
         }
         foreach (var (role, owner, parameters) in WellKnownCtors)
@@ -77,7 +77,7 @@ static partial class ClrMemberResolution
             // beside it, and the bare name resolves to the wrong one.
             var open = OwnerOfSpec(owner)
                 ?? throw new InvalidOperationException(
-                    $"bir2cir: the fixed-member table needs '{owner}' for role '{role}' (#370)");
+                    $"bir2cir: the fixed-member table needs '{owner}' for role '{role}'");
             var wanted = parameters.Select(ParseWellKnownParam).ToList();
             var ownerArgs = OwnParameters(open);
             var cands = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
@@ -85,7 +85,7 @@ static partial class ClrMemberResolution
             var win = TryPickUniqueCtor(cands, wanted, Array.Empty<TypeNode>())
                 ?? throw new InvalidOperationException(
                     $"bir2cir: '{owner}..ctor({string.Join(", ", parameters)})' does not resolve to one "
-                    + $"declaration for role '{role}' (#370)");
+                    + $"declaration for role '{role}'");
             table[role] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open, ownerArgs);
         }
         document["wellKnownRefs"] = table;
@@ -396,7 +396,7 @@ static partial class ClrMemberResolution
             var assembly = open.Assembly.GetName().Name;
             if (string.IsNullOrEmpty(assembly))
                 throw new InvalidOperationException(
-                    $"bir2cir: external interface '{iface.Name}' has no assembly identity (#370)");
+                    $"bir2cir: external interface '{iface.Name}' has no assembly identity");
             slotSets.Add(new JsonObject
             {
                 ["owner"] = TypeJson.Write(iface),

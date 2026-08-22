@@ -604,7 +604,7 @@ static partial class ClrMemberResolution
         if (ReadOwnerNode(node["type"]) is not TypeNode.Fqn ownerFqn) return;
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
-            throw new InvalidOperationException($"bir2cir: newClr owner '{ownerFqn.Name}' does not resolve to a .NET type (#46 memberRef carry)");
+            throw new InvalidOperationException($"bir2cir: newClr owner '{ownerFqn.Name}' does not resolve to a .NET type");
         // A physical constructor descriptor may use CIR primitive shorthand or the equivalent BCL FQN, including
         // below arrays and other constructed slots. Reflection exposes the BCL spelling, so compare in the one
         // canonical physical vocabulary instead of making nested shorthand depend on which pass authored the node.
@@ -669,7 +669,7 @@ static partial class ClrMemberResolution
         if (instance && ownerNode is TypeNode.Array)
         {
             open = SystemArrayMlc();
-            if (open == null) throw new InvalidOperationException("bir2cir: clrInstance array-owner method could not resolve System.Array (#46)");
+            if (open == null) throw new InvalidOperationException("bir2cir: clrInstance array-owner method could not resolve System.Array");
             ownerFqn = new TypeNode.Fqn("System.Array");
             node["type"] = TypeJson.Write(ownerFqn);
         }
@@ -678,7 +678,7 @@ static partial class ClrMemberResolution
             ownerFqn = f;
             open = ResolveOwnerType(f);
             if (open == null)
-                throw new InvalidOperationException($"bir2cir: {(instance ? "clrInstance" : "clrStatic")} owner '{ownerFqn.Name}' does not resolve to a .NET type (#46 memberRef carry)");
+                throw new InvalidOperationException($"bir2cir: {(instance ? "clrInstance" : "clrStatic")} owner '{ownerFqn.Name}' does not resolve to a .NET type");
         }
         else return;
         var name = (node["method"] as JsonValue)?.GetValue<string>();
@@ -842,7 +842,7 @@ static partial class ClrMemberResolution
         if (ReadOwnerNode(node["clrType"]) is not TypeNode.Fqn ownerFqn) return;
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
-            throw new InvalidOperationException($"bir2cir: newBoundClrDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type (#46/#183 resolvedMemberParams carry)");
+            throw new InvalidOperationException($"bir2cir: newBoundClrDelegate owner '{ownerFqn.Name}' does not resolve to a .NET type");
         var name = (node["method"] as JsonValue)?.GetValue<string>();
         var argNodes = ReadArgTypes(node);
         var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;

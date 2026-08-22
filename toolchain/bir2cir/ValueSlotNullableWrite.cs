@@ -96,7 +96,7 @@ static class ValueSlotNullableWrite
         // A genuine Nullable<V> slot remains null-capable and is deliberately excluded.
         if (IsNullSource(value, src) && IsBareValueSlot(slotType, ownerFqn.Args))
             throw new InvalidOperationException(
-                $"bir2cir (#11): cannot assign `null` to the value-type platform slot `{ownerFqn.Name}.{name}` — a CLR "
+                $"bir2cir: cannot assign `null` to the value-type platform slot `{ownerFqn.Name}.{name}` — a CLR "
                 + "value type has no null representation. Use an explicit Kotlin `Int?`-typed property for nullable value storage.");
         var target = ConcreteValueSlot(slotType, ownerFqn.Args, src);
         if (target == null) return;

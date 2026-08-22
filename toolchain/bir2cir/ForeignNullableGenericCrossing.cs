@@ -464,7 +464,7 @@ static class ForeignNullableGenericCrossing
         => new(
             $"bir2cir: {file}: '{type}' derives from '{owner}', whose member '{member}' declares '{Render(t)}' at its "
             + $"{slot} — a slot NO Kotlin expression inhabits. A nullable value type inside a generic argument, an "
-            + "array element or a delegate return is System.Object in Kotlin (#86), so the Kotlin method filling "
+            + "array element or a delegate return is System.Object in Kotlin, so the Kotlin method filling "
             + "this slot would receive a 'List<object>' where the declaration says 'List<Nullable<Int32>>' — "
             + "unrelated invariant reified generics that no conversion relates. Emitting the declaration's own "
             + "signature would not help: no Kotlin type states that position, so the body could not name the value "
@@ -560,7 +560,7 @@ static class ForeignNullableGenericCrossing
         => new(
             $"bir2cir: {file}: the .NET member '{owner}.{member}' declares '{Render(t)}' at its {slot}, which NO "
             + "Kotlin expression inhabits. A nullable value type inside a generic argument, an array element or a "
-            + "delegate return is System.Object in Kotlin (#86), so a Kotlin 'List<Int?>' is an "
+            + "delegate return is System.Object in Kotlin, so a Kotlin 'List<Int?>' is an "
             + "IReadOnlyList<object> and is not a List<Nullable<Int32>> — unrelated invariant reified generics that "
             + "no conversion relates, and constructing the .NET type from Kotlin erases its argument the same way. "
             + "Change the .NET surface (an overload whose argument is object-typed, or whose element is not a "

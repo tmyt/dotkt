@@ -227,7 +227,7 @@ sealed partial class Emitter
         if (PrimaryFromRef(e, carrier) is ConstructorInfo referenced) return referenced;
         throw new InvalidOperationException(
             $"ilemit: construction of {type?.FullName} carries no resolved `{carrier}`. Every external member "
-            + "arrives named; a node without one is an earlier-layer drop (#370)");
+            + "arrives named; a node without one is an earlier-layer drop");
     }
 
     // The scalar reference supplies the complete declaration identity. This helper only projects that identity into
@@ -247,7 +247,7 @@ sealed partial class Emitter
         }
         throw new InvalidOperationException(
             $"ilemit: clr{(instance ? "Instance" : "Static")} call to {type?.FullName}.{name} carries no resolved "
-            + "member reference. Every external member arrives named; a node without one is an earlier-layer drop (#370)");
+            + "member reference. Every external member arrives named; a node without one is an earlier-layer drop");
     }
 
     static bool IsPublicOrProtected(MethodBase member) =>
@@ -270,7 +270,7 @@ sealed partial class Emitter
         if (PrimaryFromRef(m, "clrOverrideRef") is MethodInfo referenced) return referenced;
         throw new InvalidOperationException(
             $"ilemit: override of {baseT?.FullName}.{name} carries no resolved `clrOverrideRef`. Every external "
-            + "member arrives named; a node without one is an earlier-layer drop (#370)");
+            + "member arrives named; a node without one is an earlier-layer drop");
     }
 
     // The bir2cir clrInstance `dispatch` decision (call | callvirt | constrained) -> the IL opcode. bir2cir computed it
@@ -283,7 +283,7 @@ sealed partial class Emitter
             case "call": EmitMethod(_il, OpCodes.Call, mi); break;
             case "callvirt": EmitMethod(_il, OpCodes.Callvirt, mi); break;
             case "constrained": _il.Emit(OpCodes.Constrained, recvType); EmitMethod(_il, OpCodes.Callvirt, mi); break;
-            default: throw new NotSupportedException($"ilemit: unknown clrInstance dispatch '{dispatch}' on {mi.DeclaringType}.{mi.Name} (bir2cir must emit call|callvirt|constrained — W1-S2 #46)");
+            default: throw new NotSupportedException($"ilemit: unknown clrInstance dispatch '{dispatch}' on {mi.DeclaringType}.{mi.Name}; bir2cir must emit call, callvirt, or constrained");
         }
     }
 
@@ -318,7 +318,7 @@ sealed partial class Emitter
             // `dispatch` is a REQUIRED bir2cir decision — a missing one is a producer defect, NOT a silent `callvirt`
             // default (which on a value-type owner is unverifiable CallVirtOnValueType). Fail loud (consume-only doctrine).
             if (!e.TryGetProperty("dispatch", out var dEl) || dEl.ValueKind != JsonValueKind.String)
-                throw new InvalidOperationException($"ilemit: clrInstance {type?.FullName}.{name} is missing its `dispatch` decision (bir2cir must carry call|callvirt|constrained — W1-S2 #46)");
+                throw new InvalidOperationException($"ilemit: clrInstance {type?.FullName}.{name} is missing its `dispatch` decision; bir2cir must carry call, callvirt, or constrained");
             EmitClrDispatch(mi, dEl.GetString(), type);
         }
         else
@@ -424,13 +424,13 @@ sealed partial class Emitter
     static string ClrMemberKind(JsonElement e)
     {
         if (e.TryGetProperty("member", out var m) && m.ValueKind == JsonValueKind.String) return m.GetString();
-        throw new InvalidOperationException($"ilemit: clr property/field node is missing its `member` discriminator (bir2cir ClrMemberResolution must carry accessor|field — W1-S3 #46/#121)");
+        throw new InvalidOperationException($"ilemit: clr property/field node is missing its `member` discriminator; bir2cir ClrMemberResolution must carry accessor or field");
     }
 
     static string RequireDispatch(JsonElement e, Type type, string what)
     {
         if (e.TryGetProperty("dispatch", out var d) && d.ValueKind == JsonValueKind.String) return d.GetString();
-        throw new InvalidOperationException($"ilemit: {what} on {type?.FullName} is missing its `dispatch` decision (bir2cir must carry call|callvirt|constrained — W1-S3 #46)");
+        throw new InvalidOperationException($"ilemit: {what} on {type?.FullName} is missing its `dispatch` decision; bir2cir must carry call, callvirt, or constrained");
     }
 
     // `.NET event +=/-=` -> call the event's add/remove accessor with the handler bound as the event's OWN
@@ -515,7 +515,7 @@ sealed partial class Emitter
         var d = MapType(e.GetProperty("delegateType"));
         // S5 (#113): a missing backing field is a bir2cir/kotc synthesis defect — a legible breadcrumb, not an opaque miss.
         if (_curTi == null || !_curTi.Fields.TryGetValue(fieldName, out var field))
-            throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}' (bir2cir ClrEventImplBinding must insert `<E>$delegate` — #187/#113)");
+            throw new InvalidOperationException($"ilemit: clrEventAccessorImpl backing field '{fieldName}' is absent on '{_curTi?.TB?.Name}'; bir2cir ClrEventImplBinding must insert `<E>$delegate`");
         if (kind == "raise")
         {
             EmitClrEventRaise(field, d,

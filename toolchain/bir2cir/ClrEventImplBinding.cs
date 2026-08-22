@@ -307,7 +307,7 @@ static class ClrEventImplBinding
             var remM = FindAccessor(methods, "remove_" + name, "remove");
             var raiseM = FindAccessor(methods, "raise_" + name, "raise");
             if (addM == null || remM == null || raiseM == null)
-                throw new InvalidOperationException($"bir2cir: clrEvent '{name}' is missing a synthesized accessor (add/remove/raise) — kotc synthesis defect (§4.2)");
+                throw new InvalidOperationException($"bir2cir: clrEvent '{name}' is missing a synthesized add/remove/raise accessor — kotc synthesis defect");
 
             // The concrete delegate `D` + its Invoke param nodes (raise's signature).
             var (delegateNode, invokeParamNodes) = ResolveDelegate(name, addM, backing["handlerType"], refs);
@@ -328,7 +328,7 @@ static class ClrEventImplBinding
             var addM = FindAccessor(methods, "add_" + name, "add");
             var remM = FindAccessor(methods, "remove_" + name, "remove");
             if (addM == null || remM == null)
-                throw new InvalidOperationException($"bir2cir: delegated clrEvent '{name}' is missing a synthesized add/remove forwarder — kotc synthesis defect (#186)");
+                throw new InvalidOperationException($"bir2cir: delegated clrEvent '{name}' is missing a synthesized add/remove forwarder — kotc synthesis defect");
             var (delegateNode, _) = ResolveDelegate(name, addM, null, refs, forwarder["ownerType"]);
             RewriteForwarder(addM, "add", forwarder, delegateNode);
             RewriteForwarder(remM, "remove", forwarder, delegateNode);
@@ -387,11 +387,11 @@ static class ClrEventImplBinding
         {
             ["k"] = kind == "add" ? "clrEventAdd" : "clrEventRemove",
             ["type"] = forwarder["ownerType"]?.DeepClone()
-                ?? throw new InvalidOperationException("bir2cir: delegated clrEvent forwarder is missing its delegate owner type (#186)"),
+                ?? throw new InvalidOperationException("bir2cir: delegated clrEvent forwarder is missing its delegate owner type"),
             ["event"] = forwarder["name"]?.DeepClone(),
             ["static"] = false,
             ["recv"] = forwarder["recv"]?.DeepClone()
-                ?? throw new InvalidOperationException("bir2cir: delegated clrEvent forwarder is missing its delegate receiver (#186)"),
+                ?? throw new InvalidOperationException("bir2cir: delegated clrEvent forwarder is missing its delegate receiver"),
             ["handler"] = new JsonObject
             {
                 ["sty"] = delegateNode.DeepClone(), ["k"] = "local", ["name"] = "value",
@@ -461,7 +461,7 @@ static class ClrEventImplBinding
 
         throw new InvalidOperationException(
             $"bir2cir: cannot resolve the delegate type for event '{name}' — it neither overrides a resolvable .NET interface "
-            + "event nor carries an inferable handler function type (#187 / §4.2)");
+            + "event nor carries an inferable handler function type");
     }
 
     // Follow a constructed delegated interface (for example IChild<T>) to the interface that actually declares the
@@ -632,7 +632,7 @@ static class ClrEventImplBinding
                     && refs.ResolveNetType(ReferenceMetadataIndex.ReflectedOwnerFqn(ownerName)) != null)
                     throw new InvalidOperationException(
                         $"bir2cir: cannot raise the .NET event '{Str(obj["event"])}' on '{ownerName}' — you can only raise an "
-                        + "event you DECLARE in Kotlin (`override val E by clrEvent()`), not a consumed foreign .NET event (§6/#187)");
+                        + "event you DECLARE in Kotlin (`override val E by clrEvent()`), not a consumed foreign .NET event");
                 var raiseName = "raise_" + Str(obj["event"]);
                 var localOwner = TypeJson.OwnerName(owner)
                     ?? throw new InvalidOperationException($"bir2cir: event raise '{raiseName}' has no owner type");

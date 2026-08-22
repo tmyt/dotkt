@@ -76,7 +76,7 @@ sealed partial class Emitter
     // Resolve a field by name on an already-RESOLVED (referenced .NET / baked) type, walking its base-class chain
     // (reflection's GetField already includes inherited members). Pure CLR resolution; null if absent.
     static FieldInfo FindReflectedField(Type t, string name) =>
-        // #370-residual: the local axis: a field of a type this compilation is emitting (#395)
+        // member-lookup-residual: the local axis: a field of a type this compilation is emitting (#395)
         t.GetField(name, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
 
     // Resolve a method for emit; out-param gives the substituted (concrete) return type for boxing decisions.
@@ -160,7 +160,7 @@ sealed partial class Emitter
         // expressed in the caller frame and needs mapping before comparing it with the declaration on this owner.
         var wanted = sig.Select(MapType).ToArray();
         var ownerArgs = constructed.GetGenericArguments();
-        // #370-residual: local axis — lookup in the MethodBuilder table of the assembly being emitted.
+        // member-lookup-residual: local axis — lookup in the MethodBuilder table of the assembly being emitted.
         var candidates = ti.MethodsBySig
             .Where(entry => entry.Key.Name == name && entry.Key.GenericArity == methodArity)
             .Select(entry => entry.Value)
@@ -342,7 +342,7 @@ sealed partial class Emitter
                 ifaceDef = iface.IsGenericTypeDefinition ? iface : iface.GetGenericTypeDefinition();
             }
             catch { return false; }
-            // #370-residual: TYPE identity comparison, not member lookup.
+            // member-lookup-residual: TYPE identity comparison, not member lookup.
             if (!ReferenceEquals(bodyDef, ifaceDef) && bodyDef != ifaceDef
                 && (bodyDef.Name != ifaceDef.Name || (bodyDef.Namespace ?? "") != (ifaceDef.Namespace ?? "")))
                 return false;
@@ -351,7 +351,7 @@ sealed partial class Emitter
             return bodyArgs.Length == ifaceArgs.Length
                    && bodyArgs.Zip(ifaceArgs, SlotParamMatches).All(match => match);
         }
-        // #370-residual: TYPE identity comparison, not member lookup.
+        // member-lookup-residual: TYPE identity comparison, not member lookup.
         return body.Name == iface.Name && (body.Namespace ?? "") == (iface.Namespace ?? "");
     }
 
@@ -801,7 +801,7 @@ sealed partial class Emitter
         // equivalence here. Belt-and-suspenders: if an unsigned owner still arrives, bir2cir missed a node kind — fail
         // loud (a diagnosable producer bug) rather than resolve against the absent unsigned type and throw an opaque miss.
         if (typeName is "kotlin.UByteArray" or "kotlin.UShortArray" or "kotlin.UIntArray" or "kotlin.ULongArray")
-            throw new NotSupportedException($"unsigned-array owner '{typeName}' reached ilemit FindMethod — bir2cir MemberCallSubstitution should have rewritten it to the signed-array FQN (#139 site-2)");
+            throw new NotSupportedException($"unsigned-array owner '{typeName}' reached ilemit FindMethod — bir2cir MemberCallSubstitution should have rewritten it to the signed-array FQN");
         var seenIfaces = new HashSet<string>();
         MethodInfo FindInInterfaces(TypeInfo ti)
         {
@@ -841,7 +841,7 @@ sealed partial class Emitter
             // There is no descriptor fallback on the external axis. Every legitimate external call reaches the caller
             // through PrimaryFromRef before FindMethod is entered; arriving here means the CIR dropped that identity.
             throw new InvalidOperationException(
-                $"ilemit: referenced call {typeName}.{name} reached the local resolver without a resolved memberRef (#370)");
+                $"ilemit: referenced call {typeName}.{name} reached the local resolver without a resolved memberRef");
         }
         // Walk this type's own members, then its EMITTED base/interface chain. If the base is NOT emitted here (an
         // external .NET base, e.g. an emitted class extending a BCL type), fall through to a reflected lookup on the
@@ -956,7 +956,7 @@ sealed partial class Emitter
                 if (!p.IsGenericType)
                     return retVoid && dparams.Length == 0
                         && expectedNs == "System" && expectedName == "Action"
-                        // #370-residual: a TYPE-shape predicate, not a member lookup
+                        // member-lookup-residual: a TYPE-shape predicate, not a member lookup
                         && p.Namespace == "System" && p.Name == "Action";
                 Type delegateDef;
                 try { delegateDef = p.GetGenericTypeDefinition(); } catch { return false; }
@@ -1028,12 +1028,12 @@ sealed partial class Emitter
         // a `Tv` discriminates the method-generic overload (`maxOrNull<T>(IEnumerable<T>)`) from a concrete
         // sibling (`maxOrNull(IEnumerable<Double>)`), so it must require a genuine generic-parameter arg.
         _sigConstructedOwner = ext.IsConstructedGenericType;
-        // #370-residual: local-axis inherited/interface binding. External operands bypass this through memberRef;
+        // member-lookup-residual: local-axis inherited/interface binding. External operands bypass this through memberRef;
         // AuditExternal refuses any unsanctioned result that could otherwise escape this helper.
-        MethodInfo match = null; // #370-residual: local inherited/interface binding
+        MethodInfo match = null; // member-lookup-residual: local inherited/interface binding
         foreach (var m in ext.GetMethods(bf))
         {
-            // #370-residual: local inherited/interface binding; external operands use memberRef.
+            // member-lookup-residual: local inherited/interface binding; external operands use memberRef.
             if (m.Name != name) continue;
             if (m.GetGenericArguments().Length != methodArity) continue;
             var ps = m.GetParameters();
@@ -1122,14 +1122,14 @@ sealed partial class Emitter
     // skips generated types by attribute rather than by `dotkt$` name-sniffing.
     internal void StampCompilerGenerated(TypeBuilder tb) =>
         SetAttribute(tb.SetCustomAttribute,
-            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
+            // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
 
     // #68: same stamp for an ilemit-authored generated METHOD (the covar/dim* variance-bridge synthetics, the reverse-
     // enumerator adapter's own methods) — one consistent `dotkt$` + [CompilerGenerated] marking for every synthetic member.
     internal void StampCompilerGenerated(MethodBuilder mb) =>
         SetAttribute(mb.SetCustomAttribute,
-            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
+            // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
 
     // True when `name` is defined by the exact target compile-reference universe. The module under construction is a
@@ -1164,7 +1164,7 @@ sealed partial class Emitter
         if (PrimaryFromRef(e, "memberRef") is MethodInfo definition) return ConstructedMethod(definition, typeArgs);
         throw new InvalidOperationException(
             $"ilemit: generic call to {type?.FullName}.{name}<{typeArgs.Length}> carries no resolved member "
-            + "reference. Every external member arrives named; a node without one is an earlier-layer drop (#370)");
+            + "reference. Every external member arrives named; a node without one is an earlier-layer drop");
     }
 
     // True iff a structured TypeNode mentions a type variable anywhere — the split between a fully-CONCRETE declared
@@ -1258,7 +1258,7 @@ sealed partial class Emitter
         // The NON-generic `System.Action` (0-arg, void) — a `()->Unit` lambda param (`column(setup, content: ()->Unit)`).
         if (!p.IsGenericType)
             return isVoid && dp.Length == 0 && expectedNs == "System" && expectedName == "Action"
-                   // #370-residual: a TYPE-shape predicate, not a member lookup
+                   // member-lookup-residual: a TYPE-shape predicate, not a member lookup
                    && p.Name == "Action" && p.Namespace == "System";
         var dn = p.GetGenericTypeDefinition().Name;
         var dns = p.GetGenericTypeDefinition().Namespace;

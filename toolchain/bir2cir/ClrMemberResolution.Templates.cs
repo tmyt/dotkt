@@ -51,18 +51,18 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException(
                 $"bir2cir: {kind} states no readable "
                 + (kind == "newMap" ? "keyType/valType" : "elem")
-                + " and so names no constructed type (#400)");
+                + " and so names no constructed type");
         var ownerFqn = new TypeNode.Fqn(template.Owner, args);
         var open = ResolveOwnerType(ownerFqn);
         if (open == null)
             throw new InvalidOperationException(
-                $"bir2cir: {kind} constructs '{template.Owner}', which does not resolve to a .NET type (#370)");
+                $"bir2cir: {kind} constructs '{template.Owner}', which does not resolve to a .NET type");
 
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == 0).ToList();
         var ctor = TryPickUniqueCtor(ctors, new List<TypeNode>(), args)
             ?? throw new InvalidOperationException(
-                $"bir2cir: '{template.Owner}' has no unique parameterless constructor for {kind} (#370)");
+                $"bir2cir: '{template.Owner}' has no unique parameterless constructor for {kind}");
         node["ctorRef"] = MemberRefJson(ctor, MemberRefNode.Kinds.Ctor, open, args);
 
         // The accumulator takes the construction's own type parameters, positionally — `Add(!0)` for a list,
@@ -74,7 +74,7 @@ static partial class ClrMemberResolution
             .Where(m => m.Name == template.Accumulator && m.GetParameters().Length == accumulatorSig.Count).ToList();
         var accumulator = TryPickUnique(accumulators, accumulatorSig, args)
             ?? throw new InvalidOperationException(
-                $"bir2cir: '{template.Owner}.{template.Accumulator}' does not resolve to one declaration for {kind} (#370)");
+                $"bir2cir: '{template.Owner}.{template.Accumulator}' does not resolve to one declaration for {kind}");
         node[template.RefKey] = MemberRefJson(accumulator, MemberRefNode.Kinds.Method, open, args);
     }
 
@@ -87,11 +87,11 @@ static partial class ClrMemberResolution
         if (node.ContainsKey("ctorRef")) return;
         if (TypeJson.Read(node["elem"]) is not TypeNode elem)
             throw new InvalidOperationException(
-                "bir2cir: spreadConcat states no readable elem and so names no accumulator type (#400)");
+                "bir2cir: spreadConcat states no readable elem and so names no accumulator type");
         var args = new[] { elem };
         var open = ResolveOwnerType(new TypeNode.Fqn(SpreadOwner, args))
             ?? throw new InvalidOperationException(
-                $"bir2cir: spreadConcat accumulates into '{SpreadOwner}', which does not resolve to a .NET type (#370)");
+                $"bir2cir: spreadConcat accumulates into '{SpreadOwner}', which does not resolve to a .NET type");
 
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == 0).ToList();
@@ -123,7 +123,7 @@ static partial class ClrMemberResolution
     }
 
     static InvalidOperationException Missing(string owner, string member) =>
-        new($"bir2cir: '{owner}.{member}' does not resolve to one declaration for spreadConcat (#370)");
+        new($"bir2cir: '{owner}.{member}' does not resolve to one declaration for spreadConcat");
 
     /// <summary>
     /// The enumerator protocol an inlined `for` walks. Both arms are named, and WHICH arm the emitter takes is
@@ -139,7 +139,7 @@ static partial class ClrMemberResolution
         if (node.ContainsKey("moveNextRef")) return;
         if (TypeJson.Read(node["elem"]) is not TypeNode elem)
             throw new InvalidOperationException(
-                "bir2cir: forEachInline states no readable elem and so names no enumerator protocol (#400)");
+                "bir2cir: forEachInline states no readable elem and so names no enumerator protocol");
         var element = new TypeNode.Tv("type", 0);
 
         StampProtocolMember(node, "enumerableGetRef", "System.Collections.Generic.IEnumerable",
@@ -163,12 +163,12 @@ static partial class ClrMemberResolution
         var ownerNode = args.Length == 0 ? new TypeNode.Fqn(ownerFqn) : new TypeNode.Fqn(ownerFqn, args);
         var open = ResolveOwnerType(ownerNode)
             ?? throw new InvalidOperationException(
-                $"bir2cir: forEachInline walks '{ownerFqn}', which does not resolve to a .NET type (#370)");
+                $"bir2cir: forEachInline walks '{ownerFqn}', which does not resolve to a .NET type");
         var candidates = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.Name == name && m.GetParameters().Length == signature.Count).ToList();
         var win = TryPickUnique(candidates, signature, args)
             ?? throw new InvalidOperationException(
-                $"bir2cir: '{ownerFqn}.{name}' does not resolve to one declaration for forEachInline (#370)");
+                $"bir2cir: '{ownerFqn}.{name}' does not resolve to one declaration for forEachInline");
         node[refKey] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, args);
     }
 
@@ -222,7 +222,7 @@ static partial class ClrMemberResolution
         if (field != null && !(field.IsPublic || field.IsFamily || field.IsFamilyOrAssembly)) field = null;
         if (field == null)
             throw new InvalidOperationException(
-                $"bir2cir: external lateinit storage '{owner.Name}.{name}' does not resolve to a field (#370)");
+                $"bir2cir: external lateinit storage '{owner.Name}.{name}' does not resolve to a field");
         node["fieldRef"] = FieldRefJson(field, open, owner.Args ?? Array.Empty<TypeNode>());
     }
 
@@ -251,7 +251,7 @@ static partial class ClrMemberResolution
 
         var delegateFqn = new TypeNode.Fqn("System.Delegate");
         var del = ResolveOwnerType(delegateFqn)
-            ?? throw new InvalidOperationException("bir2cir: 'System.Delegate' does not resolve to a .NET type (#370)");
+            ?? throw new InvalidOperationException("bir2cir: 'System.Delegate' does not resolve to a .NET type");
         var pair = new List<TypeNode> { delegateFqn, delegateFqn };
         foreach (var name in new[] { "Combine", "Remove" })
         {
@@ -259,7 +259,7 @@ static partial class ClrMemberResolution
                 .Where(m => m.Name == name && m.GetParameters().Length == 2).ToList();
             var win = TryPickUnique(cands, pair, Array.Empty<TypeNode>())
                 ?? throw new InvalidOperationException(
-                    $"bir2cir: 'System.Delegate.{name}(Delegate, Delegate)' does not resolve to one declaration (#370)");
+                    $"bir2cir: 'System.Delegate.{name}(Delegate, Delegate)' does not resolve to one declaration");
             node[name == "Combine" ? "combineRef" : "removeRef"] =
                 MemberRefJson(win, MemberRefNode.Kinds.Method, del, Array.Empty<TypeNode>());
         }
@@ -267,13 +267,13 @@ static partial class ClrMemberResolution
         // `CompareExchange<T>(ref T, T, T)` — the ONE generic overload; the non-generic siblings take concrete
         // slots and are a different member entirely.
         var interlocked = ResolveOwnerType(new TypeNode.Fqn("System.Threading.Interlocked"))
-            ?? throw new InvalidOperationException("bir2cir: 'System.Threading.Interlocked' does not resolve (#370)");
+            ?? throw new InvalidOperationException("bir2cir: 'System.Threading.Interlocked' does not resolve");
         var cas = interlocked.GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Where(m => m.Name == "CompareExchange" && m.IsGenericMethodDefinition
                 && m.GetGenericArguments().Length == 1 && m.GetParameters().Length == 3).ToList();
         if (cas.Count != 1)
             throw new InvalidOperationException(
-                $"bir2cir: 'Interlocked.CompareExchange<T>' resolves to {cas.Count} declarations, not one (#370)");
+                $"bir2cir: 'Interlocked.CompareExchange<T>' resolves to {cas.Count} declarations, not one");
         node["compareExchangeRef"] = MemberRefJson(cas[0], MemberRefNode.Kinds.Method, interlocked, Array.Empty<TypeNode>());
         _ = delegateType;
     }
@@ -294,7 +294,7 @@ static partial class ClrMemberResolution
         var args = new[] { elem };
         var open = ResolveOwnerType(new TypeNode.Fqn(NullableFqn, args))
             ?? throw new InvalidOperationException(
-                $"bir2cir: {kind} wraps '{NullableFqn}', which does not resolve to a .NET type (#370)");
+                $"bir2cir: {kind} wraps '{NullableFqn}', which does not resolve to a .NET type");
         var element = new TypeNode.Tv("type", 0);
 
         if (kind is "nullableNull" or "nullableWrap")
@@ -304,7 +304,7 @@ static partial class ClrMemberResolution
             node["ctorRef"] = MemberRefJson(
                 TryPickUniqueCtor(ctors, new List<TypeNode> { element }, args)
                     ?? throw new InvalidOperationException(
-                        $"bir2cir: '{NullableFqn}' has no unique one-argument constructor for {kind} (#370)"),
+                        $"bir2cir: '{NullableFqn}' has no unique one-argument constructor for {kind}"),
                 MemberRefNode.Kinds.Ctor, open, args);
             return;
         }
@@ -314,7 +314,7 @@ static partial class ClrMemberResolution
         node[kind == "nullableHasValue" ? "hasValueRef" : "valueRef"] = MemberRefJson(
             TryPickUnique(cands, new List<TypeNode>(), args)
                 ?? throw new InvalidOperationException(
-                    $"bir2cir: '{NullableFqn}.{accessor}' does not resolve to one declaration for {kind} (#370)"),
+                    $"bir2cir: '{NullableFqn}.{accessor}' does not resolve to one declaration for {kind}"),
             MemberRefNode.Kinds.PropertyAccessor, open, args);
     }
 
@@ -340,7 +340,7 @@ static partial class ClrMemberResolution
             ?? TypeJson.Read(node[typeKey]);
         if (stated == null)
             throw new InvalidOperationException(
-                $"bir2cir: a function-type call states no type under funcType/clrType/{typeKey} (#370)");
+                $"bir2cir: a function-type call states no type under funcType/clrType/{typeKey}");
         ResolveDelegateInvoke(node, stated);
     }
 
@@ -354,7 +354,7 @@ static partial class ClrMemberResolution
         _refs = refs ?? throw new ArgumentNullException(nameof(refs));
         _localTypes = localTypes ?? new HashSet<string>();
         ResolveDelegateInvoke(node, TypeJson.Read(stated)
-            ?? throw new InvalidOperationException("bir2cir: a delegate invocation has no readable handler type (#370)"));
+            ?? throw new InvalidOperationException("bir2cir: a delegate invocation has no readable handler type"));
     }
 
     static void ResolveDelegateInvoke(JsonObject node, TypeNode stated)
@@ -368,15 +368,15 @@ static partial class ClrMemberResolution
                 (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
         if (physical is not TypeNode.Fqn delegateFqn)
             throw new InvalidOperationException(
-                $"bir2cir: a function-type call lowers to {TypeNode.ToJson(physical)}, which is not a named type (#370)");
+                $"bir2cir: a function-type call lowers to {TypeNode.ToJson(physical)}, which is not a named type");
         var open = ResolveOwnerType(delegateFqn)
             ?? throw new InvalidOperationException(
-                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type (#370)");
+                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type");
         var invoke = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.Name == "Invoke").ToList();
         if (invoke.Count != 1)
             throw new InvalidOperationException(
-                $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one (#370)");
+                $"bir2cir: '{delegateFqn.Name}' has {invoke.Count} Invoke declarations, not one");
         node["invokeRef"] = MemberRefJson(invoke[0], MemberRefNode.Kinds.Method, open, delegateFqn.Args,
             ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
@@ -396,7 +396,7 @@ static partial class ClrMemberResolution
         var stated = TypeJson.Read(node["funcType"]) ?? TypeJson.Read(node["clrType"]) ?? TypeJson.Read(node[typeKey]);
         if (stated == null)
             throw new InvalidOperationException(
-                $"bir2cir: a delegate construction states no function type under funcType/clrType/{typeKey} (#370)");
+                $"bir2cir: a delegate construction states no function type under funcType/clrType/{typeKey}");
         ResolveDelegateCtor(node, stated);
     }
 
@@ -411,10 +411,10 @@ static partial class ClrMemberResolution
                 (TypeNode.Fn)BirTypeLowering.LowerFnDelegate(fnNode, refBuild: false, force: false));
         if (physical is not TypeNode.Fqn delegateFqn)
             throw new InvalidOperationException(
-                $"bir2cir: a delegate construction lowers to {TypeNode.ToJson(physical)}, which is not a named type (#370)");
+                $"bir2cir: a delegate construction lowers to {TypeNode.ToJson(physical)}, which is not a named type");
         var open = ResolveOwnerType(delegateFqn)
             ?? throw new InvalidOperationException(
-                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type (#370)");
+                $"bir2cir: the delegate '{delegateFqn.Name}' does not resolve to a .NET type");
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == 2).ToList();
         var win = TryPickUniqueCtor(ctors,
@@ -422,7 +422,7 @@ static partial class ClrMemberResolution
             delegateFqn.Args ?? Array.Empty<TypeNode>())
             ?? throw new InvalidOperationException(
                 $"bir2cir: '{delegateFqn.Name}' has no unique (object, native int) constructor — "
-                + $"{ctors.Count} two-argument candidate(s) (#370)");
+                + $"{ctors.Count} two-argument candidate(s)");
         node[carrier] = MemberRefJson(win, MemberRefNode.Kinds.Ctor, open,
             delegateFqn.Args ?? Array.Empty<TypeNode>(), ownerArgumentsAreMethodSlots: IsFunctionShape(stated));
     }
@@ -468,7 +468,7 @@ static partial class ClrMemberResolution
             : TryPickUnique(cands, sig, iface.Args ?? Array.Empty<TypeNode>());
         if (win == null)
             throw new InvalidOperationException(
-                $"bir2cir: constrained call '{iface.Name}.{name}' does not resolve to one declared signature (#370)");
+                $"bir2cir: constrained call '{iface.Name}.{name}' does not resolve to one declared signature");
         node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open,
             iface.Args ?? Array.Empty<TypeNode>());
         StampResolvedMethodTypeParameters(node, win);

@@ -122,7 +122,7 @@ sealed partial class Emitter
             var flagAbstract = m.TryGetProperty("abstract", out var af) && af.GetBoolean();
             if (hasBody || !flagAbstract)
                 Console.Error.WriteLine($"ilemit: WARNING: abstract-slot body invariant — '{ti.TB?.Name}.{mname}' is declared "
-                    + $"abstract but its CIR def {(hasBody ? "carries a body" : "lacks the abstract flag")}; skipping body emission (upstream bir2cir/kotc defect, #92).");
+                    + $"abstract but its CIR def {(hasBody ? "carries a body" : "lacks the abstract flag")}; skipping body emission because of an upstream bir2cir/kotc defect.");
             return;
         }
         _methodRetType = mb.ReturnType;
@@ -494,7 +494,7 @@ sealed partial class Emitter
     {
         if (sig == null)
             throw new InvalidOperationException($"ilemit: interface call {owner}.{name} is missing its resolved `sig` descriptor");
-        // #370-residual: local axis — this resolves a slot on an interface/type being wired into this assembly.
+        // member-lookup-residual: local axis — this resolves a slot on an interface/type being wired into this assembly.
         var byName = owner.GetMethods().Where(m => m.Name == name).ToList();
         var candidates = byName
             .Where(m => (methodArity == 0 ? !m.IsGenericMethodDefinition

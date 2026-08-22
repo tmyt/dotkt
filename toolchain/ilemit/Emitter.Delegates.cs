@@ -24,7 +24,7 @@ sealed partial class Emitter
             TypeAttributes.NotPublic | TypeAttributes.Sealed | TypeAttributes.Abstract | TypeAttributes.Class,
             Bcl("System.Object"));
         SetAttribute(_delegateInvokeAdapterTB.SetCustomAttribute,
-            // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
+            // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
             Bcl("System.Runtime.CompilerServices.CompilerGeneratedAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
         return _delegateInvokeAdapterTB;
     }
@@ -57,7 +57,7 @@ sealed partial class Emitter
             mb = DelegateInvokeAdapterHolder().DefineMethod(
                 (returnsValue ? "InvokeFunc" : "InvokeAction") + actual.Length,
                 MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
-            // #400-residual: the ENCODING workaround's own frame — a MethodSpec that moves the composite type off the
+            // delegate-frame-residual: the ENCODING workaround's own frame — a MethodSpec that moves the composite type off the
             // TypeSpec PersistedAssemblyBuilder cannot encode. It stands for no CIR declaration and decides nothing.
             var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
                 .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
@@ -67,7 +67,7 @@ sealed partial class Emitter
             mb.SetParameters(new[] { delegateType }.Concat(invokeParams).ToArray());
             var il = mb.GetILGenerator();
             for (int i = 0; i <= invokeParams.Length; i++) il.Emit(OpCodes.Ldarg, i);
-            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
+            // member-lookup-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             EmitMethod(il, OpCodes.Callvirt, AnchorOn(delegateType, openInvoke));
             il.Emit(OpCodes.Ret);
             _delegateInvokeAdapters[key] = mb;
@@ -106,7 +106,7 @@ sealed partial class Emitter
             mb = DelegateInvokeAdapterHolder().DefineMethod(
                 (returnsValue ? "NewFunc" : "NewAction") + actual.Length,
                 MethodAttributes.Public | MethodAttributes.Static | MethodAttributes.HideBySig);
-            // #400-residual: the ENCODING workaround's own frame — the constructor twin of the Invoke helper above,
+            // delegate-frame-residual: the ENCODING workaround's own frame — the constructor twin of the Invoke helper above,
             // for the same PersistedAssemblyBuilder limitation. It stands for no CIR declaration and decides nothing.
             var gps = mb.DefineGenericParameters(Enumerable.Range(1, actual.Length)
                 .Select(i => returnsValue && i == actual.Length ? "TResult" : "T" + i).ToArray());
@@ -152,9 +152,9 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateCtors.TryGetValue(dtb, out var dctor))
             return AnchorConstructor(ft, dctor);
         return (IsGenericInst(ft) && ContainsTypeBuilder(ft))
-            // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
+            // member-lookup-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
             ? AnchorConstructor(ft, ft.GetGenericTypeDefinition().GetConstructor(sig))
-            // #370-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
+            // member-lookup-residual: a delegate has exactly one .ctor(object, native int) (ECMA-335 II.14.6) — no candidate set to choose from
             : ft.GetConstructor(sig);
     }
 
@@ -171,9 +171,9 @@ sealed partial class Emitter
         if (IsGenericInst(ft) && ft.GetGenericTypeDefinition() is TypeBuilder dtb && _declaredDelegateInvokes.TryGetValue(dtb, out var invoke))
             return AnchorMethod(ft, invoke);
         if (IsGenericInst(ft) && ContainsTypeBuilder(ft))
-            // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
+            // member-lookup-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
             return AnchorMethod(ft, ft.GetGenericTypeDefinition().GetMethod("Invoke"));
-        // #370-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
+        // member-lookup-residual: a delegate has exactly one Invoke (ECMA-335 II.14.6) — no candidate set to choose from
         return ft.GetMethod("Invoke");
     }
 
