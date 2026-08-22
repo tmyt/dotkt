@@ -1,6 +1,7 @@
 import InheritedOptionalDefaults.BaseWriter
 import InheritedOptionalDefaults.DerivedWriter
 import InheritedOptionalDefaults.EnumDefaults
+import InheritedOptionalDefaults.EnumWidthDefaults
 import InheritedOptionalDefaults.GenericDerivedWriter
 import InheritedOptionalDefaults.HidingDerivedWriter
 import InheritedOptionalDefaults.IDerivedWriter
@@ -55,6 +56,10 @@ class InheritedOptionalArgumentTests {
         assertEquals("2:5", defaults.Move())
         assertEquals("2:5", StaticEnumDefaults.Move())
         assertEquals("0:4", defaults.Move(NavigationMethod.Unspecified, KeyModifiers.Shift))
+        assertEquals(
+            "-128:255:-32768:65535:-2147483648:4294967295:-9223372036854775808:18446744073709551615",
+            EnumWidthDefaults().Read(),
+        )
     }
 
     private fun nullableBase(value: BaseWriter): BaseWriter? = value

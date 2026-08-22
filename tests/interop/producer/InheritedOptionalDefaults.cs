@@ -80,3 +80,26 @@ public static class StaticEnumDefaults
         NavigationMethod method = NavigationMethod.Directional,
         KeyModifiers modifiers = KeyModifiers.Alt | KeyModifiers.Shift) => $"{(int)method}:{(int)modifiers}";
 }
+
+public enum SByteDefault : sbyte { Value = sbyte.MinValue }
+public enum ByteDefault : byte { Value = byte.MaxValue }
+public enum Int16Default : short { Value = short.MinValue }
+public enum UInt16Default : ushort { Value = ushort.MaxValue }
+public enum Int32Default : int { Value = int.MinValue }
+public enum UInt32Default : uint { Value = uint.MaxValue }
+public enum Int64Default : long { Value = long.MinValue }
+public enum UInt64Default : ulong { Value = ulong.MaxValue }
+
+public sealed class EnumWidthDefaults
+{
+    public string Read(
+        SByteDefault i8 = SByteDefault.Value,
+        ByteDefault u8 = ByteDefault.Value,
+        Int16Default i16 = Int16Default.Value,
+        UInt16Default u16 = UInt16Default.Value,
+        Int32Default i32 = Int32Default.Value,
+        UInt32Default u32 = UInt32Default.Value,
+        Int64Default i64 = Int64Default.Value,
+        UInt64Default u64 = UInt64Default.Value) =>
+        $"{(sbyte)i8}:{(byte)u8}:{(short)i16}:{(ushort)u16}:{(int)i32}:{(uint)u32}:{(long)i64}:{(ulong)u64}";
+}

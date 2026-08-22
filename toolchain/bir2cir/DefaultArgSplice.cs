@@ -590,6 +590,29 @@ static class DefaultArgSplice
         if (node is JsonObject obj)
         {
             var here = DeclarationContext(obj, context);
+            // A constructor delegation has no call node: its plan rides the constructor declaration. Its containing
+            // type nevertheless supplies the exact base/self target and the source declaration context, while the
+            // binding retains the omitted parameter role.
+            if (obj["ctors"] is JsonArray ctors && Str(obj["name"]) is string self)
+            {
+                foreach (var item in ctors)
+                {
+                    if (item is not JsonObject ctor || ctor["delegationBindings"] is not JsonArray delegationBindings) continue;
+                    for (var index = 0; index < delegationBindings.Count; index++)
+                    {
+                        if (delegationBindings[index] is not JsonObject binding || !IsPlaceholder(binding["expr"])) continue;
+                        var role = Str(binding["role"]) ?? $"argument binding {index}";
+                        var target = ctor["baseArgs"] is JsonArray
+                            ? TypeJson.OwnerName(obj["base"]) ?? "unknown"
+                            : self;
+                        throw new InvalidOperationException(
+                            DiagnosticPrefix(here) +
+                            $"cannot fill an omitted default argument for '{target} constructor' ({role}) from the " +
+                            "selected referenced declaration: its optional value could not be obtained or represented. " +
+                            "The reference may be stale or the value may not be carryable. Pass the argument explicitly.");
+                    }
+                }
+            }
             // A planned omission keeps both sides of the diagnostic together: the binding names the source parameter,
             // while the call names the exact selected declaration. Report it here before descending into the binding's
             // placeholder so an unrepresentable metadata value is not misreported as a missing KotlinDefault carrier.
@@ -604,14 +627,16 @@ static class DefaultArgSplice
                     throw new InvalidOperationException(
                         DiagnosticPrefix(here) +
                         $"cannot fill an omitted default argument for '{callee}' ({role}) from the selected referenced " +
-                        "declaration: its optional value is absent or cannot be represented. Pass the argument explicitly.");
+                        "declaration: its optional value could not be obtained or represented. The reference may be " +
+                        "stale or the value may not be carryable. Pass the argument explicitly.");
                 }
             }
             if (Str(obj["k"]) == "defaultArg")
                 throw new InvalidOperationException(
                     DiagnosticPrefix(here) +
-                    "an omitted cross-module default argument was not filled because its selected referenced " +
-                    "declaration carries no representable value. Pass the argument explicitly.");
+                    "an omitted cross-module default argument was not filled because its optional value could not be " +
+                    "obtained or represented from the selected referenced declaration. The reference may be stale or " +
+                    "the value may not be carryable. Pass the argument explicitly.");
             foreach (var kv in obj) if (kv.Value != null) AssertNoPlaceholder(kv.Value, here);
         }
         else if (node is JsonArray arr) foreach (var it in arr) if (it != null) AssertNoPlaceholder(it, context);
@@ -619,7 +644,8 @@ static class DefaultArgSplice
 
     static string DeclarationContext(JsonObject node, string fallback)
     {
-        if (node["body"] is not JsonArray || Str(node["name"]) is not string name) return fallback;
+        if ((node["body"] is not JsonArray && node["ctors"] is not JsonArray)
+            || Str(node["name"]) is not string name) return fallback;
         if (node["pos"] is JsonObject pos && Str(pos["f"]) is string source)
         {
             var location = Path.GetFileName(source);
@@ -631,7 +657,9 @@ static class DefaultArgSplice
             }
             return $"{location}: {name}";
         }
-        return name;
+        // Nested synthesized shapes such as a closure class also have name/body but no source position. Keep the
+        // enclosing source declaration instead of replacing it with an implementation-only name.
+        return fallback ?? name;
     }
 
     static string CallLabel(JsonObject call)
@@ -644,7 +672,7 @@ static class DefaultArgSplice
         return owner == null ? method : owner + "." + method;
     }
 
-    static string DiagnosticPrefix(string context) => context == null ? "bir2cir: " : context + ": ";
+    static string DiagnosticPrefix(string context) => context == null ? "bir2cir: " : context + ": bir2cir: ";
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 }
