@@ -139,6 +139,7 @@ static class ForeignNullableGenericCrossing
                     groups[key] = slot = new Slot
                     {
                         Name = m.Name, Owner = m.Owner ?? spec.Name, Arity = m.Arity, Params = ps, Ret = ret,
+                        PhysicalOwner = m.PhysicalOwner,
                     };
                 if (m.Implemented) slot.Implemented = true;
             }
@@ -163,6 +164,7 @@ static class ForeignNullableGenericCrossing
     {
         public string Name;
         public string Owner;
+        public string PhysicalOwner;
         public int Arity;
         public TypeNode[] Params;
         public TypeNode Ret;
@@ -209,6 +211,7 @@ static class ForeignNullableGenericCrossing
                 {
                     Name = m.Name,
                     Owner = DeclaringName(m) ?? spec.Name,
+                    PhysicalOwner = ClrMemberResolution.DeclaringTypeIdentity(m),
                     Arity = m.IsGenericMethodDefinition ? m.GetGenericArguments().Length : 0,
                     Params = m.GetParameters().Select(p => ClrMemberResolution.MemberSigOf(p.ParameterType)).ToArray(),
                     Ret = m.ReturnType == typeof(void) ? null : ClrMemberResolution.MemberSigOf(m.ReturnType),
@@ -222,7 +225,7 @@ static class ForeignNullableGenericCrossing
                     result.Add(new Slot
                     {
                         Name = slot.Name[(dot + 1)..], Owner = slot.Owner, Arity = slot.Arity,
-                        Params = slot.Params, Ret = slot.Ret, Implemented = true,
+                        PhysicalOwner = slot.PhysicalOwner, Params = slot.Params, Ret = slot.Ret, Implemented = true,
                     });
             }
             catch (Exception e) when (e is NotSupportedException or TypeLoadException or FileNotFoundException) { }
@@ -306,8 +309,13 @@ static class ForeignNullableGenericCrossing
         var moved = slot.Params.Select(NullableGenericErasure.ErasureWouldMove).ToArray();
         foreach (var m in methods.OfType<JsonObject>())
         {
-            if (Bool(m["static"]) || Bool(m["abstract"]) || Str(m["name"]) != slot.Name) continue;
+            if (Bool(m["static"]) || Bool(m["abstract"])) continue;
             if (m["body"] is not JsonArray body || body.Count == 0) continue;
+            // Property/accessor allocation may replace the source name with an internal collision-free name before
+            // this check. Its exact MethodImpl target is then the authoritative declaration relation; compare that
+            // full reference rather than trying to reverse the allocated name back into Kotlin vocabulary.
+            if (ExplicitlyOverrides(m["clrOverrideRef"] as JsonObject, slot, refs)) return true;
+            if (Str(m["name"]) != slot.Name) continue;
             if (((m["typeParams"] as JsonArray)?.Count ?? 0) != slot.Arity) continue;
             if (m["params"] is not JsonArray ps || ps.Count != want.Length) continue;
             var ok = true;
@@ -320,6 +328,24 @@ static class ForeignNullableGenericCrossing
             if (ok) return true;
         }
         return false;
+    }
+
+    static bool ExplicitlyOverrides(JsonObject reference, Slot slot, ReferenceMetadataIndex refs)
+    {
+        if (reference == null || Str(reference["name"]) != slot.Name
+            || reference["genericArity"]?.GetValue<int>() != slot.Arity
+            || TypeJson.Read(reference["declaringType"]) is not TypeNode.Fqn owner
+            || refs.ExactReflectedOwner(owner.Name, owner.Args?.Length ?? 0) != slot.PhysicalOwner
+            || reference["parameterTypes"] is not JsonArray parameters || parameters.Count != slot.Params.Length)
+            return false;
+        for (var i = 0; i < parameters.Count; i++)
+            if (TypeJson.Read(parameters[i]) is not TypeNode parameter
+                || PhysicalNorm(AsDocumentNullable(parameter), refs) != PhysicalNorm(slot.Params[i], refs))
+                return false;
+        var referencedReturn = AsDocumentNullable(TypeJson.Read(reference["returnType"]));
+        return slot.Ret == null ? referencedReturn is TypeNode.Fqn { Name: "void" or "System.Void" }
+            : referencedReturn != null
+              && PhysicalNorm(referencedReturn, refs) == PhysicalNorm(slot.Ret, refs);
     }
 
     // Does this declaration slot record THIS crossing's pre-erasure type? The erasure says what it moved on the

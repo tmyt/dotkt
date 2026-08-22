@@ -858,6 +858,23 @@ sealed partial class ReferenceMetadataIndex
     public Dictionary<int, string> KotlinDefaultsForDeclarationIdentity(string id) =>
         id != null ? _kotlinDefaultsByDeclarationId.GetValueOrDefault(id) : null;
 
+    // Resolve the declaration exactly as the later scalar-member binding does, then read optional/default metadata
+    // from that MethodDef. A call through a derived receiver names the derived type but can select a base declaration;
+    // looking up defaults by the call owner would either miss that declaration or, when the derived type declares a
+    // same-name/same-arity overload, attach the sibling overload's value. `true` means a declaration was selected even
+    // when it has no representable defaults, so callers must not fall through to a different declaration search.
+    public bool TryKotlinDefaultsForSelectedMethod(
+        TypeNode.Fqn owner, string method, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
+        out Dictionary<int, string> defaults)
+    {
+        defaults = null;
+        if (!ClrMemberResolution.TryResolveExternalMethodForDefaults(
+                this, owner, method, methodArity, isStatic, callSignature, out var declaration))
+            return false;
+        defaults = CallableDefaultsOf(declaration);
+        return true;
+    }
+
     // A dll2klib surface declaration can be inherited from a public interface even though the CLR class satisfies
     // that slot only through a private explicit MethodImpl body. The call then names the CLASS (Kotlin's inherited
     // member owner), while the authoritative optional/default metadata lives on the interface MethodDef that
@@ -2670,7 +2687,7 @@ sealed partial class ReferenceMetadataIndex
         if (type.IsConstructedGenericType)
         {
             var def = type.GetGenericTypeDefinition();
-            if (def == typeof(Nullable<>))
+            if (IsNullableDefinition(def))
             {
                 var inner = type.GetGenericArguments()[0];
                 if (relaxed && !IsValueKey(ParamKey(inner, false))) return ParamKey(inner, true);
@@ -2701,7 +2718,7 @@ sealed partial class ReferenceMetadataIndex
 
     static TypeKey ReceiverParamKey(Type type)
     {
-        if (type.IsConstructedGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>))
+        if (type.IsConstructedGenericType && IsNullableDefinition(type.GetGenericTypeDefinition()))
             type = type.GetGenericArguments()[0];
         return ParamKey(type, relaxed: false);
     }
@@ -2935,6 +2952,16 @@ sealed partial class ReferenceMetadataIndex
             return DeclarationDescribesCall(dOb.Of, call);
         if (call is TypeNode.Oblivious cOb)
             return DeclarationDescribesCall(declaration, cOb.Of);
+        // Reflection's declaration vocabulary can retain Nullable<T> as an ordinary constructed FQN while the
+        // frontend descriptor uses BIR's structural nullable wrapper. They are one CLR value-type slot. Normalize
+        // this seam before the reference-nullability rules below; otherwise a derived same-arity overload can become
+        // the sole fallback candidate even though the frontend selected an inherited declaration.
+        if (declaration is TypeNode.Fqn { Name: "System.Nullable", Args.Length: 1 } physicalNullable
+            && call is TypeNode.Nullable callNullable)
+            return DeclarationDescribesCall(physicalNullable.Args[0], callNullable.Of);
+        if (declaration is TypeNode.Nullable declarationNullable
+            && call is TypeNode.Fqn { Name: "System.Nullable", Args.Length: 1 } physicalCallNullable)
+            return DeclarationDescribesCall(declarationNullable.Of, physicalCallNullable.Args[0]);
         // A method variable may already be erased to object in the reflected MethodDef, at the head or recursively
         // inside another physical type (Result<object> versus the selected Kotlin Result<T>, for example). Recognize
         // that stated physical boundary before nullable recursion. Identity has already selected this MethodDef, so
@@ -6062,7 +6089,7 @@ sealed partial class ReferenceMetadataIndex
         {
             var def = type.GetGenericTypeDefinition();
             var args = type.GetGenericArguments().Select(TypeNodeOf).ToArray();
-            if (def == typeof(Nullable<>)) return args[0] is TypeNode nv ? new TypeNode.Nullable(nv) : null;
+            if (IsNullableDefinition(def)) return args[0] is TypeNode nv ? new TypeNode.Nullable(nv) : null;
             if (IsFunc(def) || IsAction(def)) return null;
             if (args.Any(a => a == null)) return new TypeNode.Fqn(StripGenericArity(def.FullName ?? def.Name));
             return new TypeNode.Fqn(StripGenericArity(def.FullName ?? def.Name), args);
@@ -6096,7 +6123,7 @@ sealed partial class ReferenceMetadataIndex
         {
             var def = type.GetGenericTypeDefinition();
             var args = type.GetGenericArguments().Select(DeclarationTypeNode).ToArray();
-            if (def == typeof(Nullable<>)) return new TypeNode.Nullable(args[0]);
+            if (IsNullableDefinition(def)) return new TypeNode.Nullable(args[0]);
             return new TypeNode.Fqn(DottedFqn(StripGenericArity(def.FullName ?? def.Name)), args);
         }
         var prim = PrimitiveBirName(type);
@@ -6105,6 +6132,11 @@ sealed partial class ReferenceMetadataIndex
 
     static bool IsFunc(Type type) =>
         type.Namespace == "System" && type.Name.StartsWith("Func`", StringComparison.Ordinal);
+
+    // Reference types live in a MetadataLoadContext and are not reference-equal to runtime typeof(...) values.
+    // Nullable is a metadata identity, so recognize its generic definition by that identity at the reflection edge.
+    static bool IsNullableDefinition(Type type) =>
+        type?.IsGenericTypeDefinition == true && type.FullName == "System.Nullable`1";
 
     static bool IsAction(Type type) =>
         type.Namespace == "System" && type.Name.StartsWith("Action`", StringComparison.Ordinal);
