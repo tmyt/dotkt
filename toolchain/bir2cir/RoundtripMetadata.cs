@@ -53,6 +53,7 @@ static class RoundtripMetadata
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
     internal const string AKExtensionCore = Ns + "KotlinExtensionCoreAttribute";
     const string AKStaticCarrier = Ns + "KotlinStaticCarrierAttribute";
+    const string AKSuspendResult = Ns + "KotlinSuspendResultAttribute";
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
@@ -91,6 +92,48 @@ static class RoundtripMetadata
             MaterializeCompanionCarriers(types);
             foreach (var t in types) if (t is JsonObject to) StampType(to);
         }
+    }
+
+    // Freeze the logical result at the pristine Kotlin declaration boundary. Representation passes may subsequently
+    // erase nested nullable/value generic arguments in `suspendRet`; this opaque fact is the source-owned result and
+    // must be copied explicitly by any pass that synthesizes another suspend declaration.
+    public static void FreezeSuspendResults(IEnumerable<JsonNode> roots)
+    {
+        foreach (var root in roots) FreezeSuspendResults(root);
+    }
+
+    static void FreezeSuspendResults(JsonNode node)
+    {
+        if (node is not JsonObject obj) return;
+        if (obj["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+            {
+                if (method.ContainsKey("suspendResult") || !ModFlag(method, "suspend")) continue;
+                var logical = method["suspendRet"]?.ToJsonString()
+                    ?? throw new InvalidOperationException(
+                        $"bir2cir: suspend declaration '{method["name"]}' carries no `suspendRet` slot");
+                method["suspendResult"] = logical;
+            }
+        if (obj["types"] is JsonArray types)
+            foreach (var type in types) FreezeSuspendResults(type);
+    }
+
+    public static void RequireSuspendResults(IEnumerable<JsonNode> roots)
+    {
+        foreach (var root in roots) RequireSuspendResults(root);
+    }
+
+    static void RequireSuspendResults(JsonNode node)
+    {
+        if (node is not JsonObject obj) return;
+        if (obj["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+                if (ModFlag(method, "suspend") &&
+                    (method["suspendResult"] as JsonValue)?.TryGetValue<string>(out _) != true)
+                    throw new InvalidOperationException(
+                        $"suspend declaration '{method["name"]}' did not preserve its logical result");
+        if (obj["types"] is JsonArray types)
+            foreach (var type in types) RequireSuspendResults(type);
     }
 
     // CompanionRepresentationLowering has already selected and materialized the physical representation. Metadata
@@ -242,6 +285,14 @@ static class RoundtripMetadata
         if (ModFlag(mo, "suspend")) flags |= 4;
         if ((mo["suspendBridge"] as JsonValue)?.GetValue<bool>() == true) flags |= 4;
         if (flags != 0) Append(mo, Marker(AKFunction, IntArg(flags)));
+        // [KotlinSuspendResult(version, bytes)] — the frontend-selected logical result of a suspend declaration.
+        // The public CLR MethodDef returns Task/Task<T>; consumers must not reconstruct Kotlin meaning from that
+        // physical shape. SuspendColdLowering freezes the pre-CLR TypeNode into this opaque hand-off string.
+        if ((mo["suspendResult"] as JsonValue)?.TryGetValue<string>(out var suspendResult) == true)
+        {
+            Append(mo, JsonCarrierAttr(AKSuspendResult, JsonNode.Parse(suspendResult)));
+            mo.Remove("suspendResult");
+        }
         // [KotlinInline(version, bytes)] — the S1 raw-BIR carrier, stamped verbatim (inlineBir is already the base64
         // of BirCarrier.EncodeBody). Only for an inline fn that actually stashed a carrier.
         if (ModFlag(mo, "inline") && (mo["inlineBir"] as JsonValue)?.GetValue<string>() is string ib)
@@ -492,6 +543,7 @@ static class RoundtripMetadata
         {
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
+            po.Remove("suspendResult");
             // A method-generic Kotlin property has no representable CLR Property signature. Metadata-bearing builds
             // consume this exact association into [KotlinPropertyAccessor]; the runtime twin emits no round-trip
             // metadata, so discard the same pass-local hand-off before CIR reaches ilemit.
@@ -712,6 +764,7 @@ static class RoundtripMetadata
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts
             AttrClass(AKExtensionCore, Ctor(Param("System.String"), Param(ByteArrayType()))), // generic C# wrapper -> Kotlin semantic core
             AttrClass(AKStaticCarrier, Ctor(Param("System.String"), Param(ByteArrayType()))), // one physical static surface for a generic Kotlin owner
+            AttrClass(AKSuspendResult, Ctor(Param("System.String"), Param(ByteArrayType()))), // logical result of a physical Task suspend MethodDef
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKCtxParam, Ctor()),  // bare marker: a Kotlin `context(...)` parameter (physically positional)
