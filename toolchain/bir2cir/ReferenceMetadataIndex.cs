@@ -1252,10 +1252,9 @@ sealed partial class ReferenceMetadataIndex
             return ForeignStarDeclarationDescribesCall(da.Elem, ca.Elem, ownerArgs);
         if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
             return ForeignStarDeclarationDescribesCall(db.Of, cb.Of, ownerArgs);
-        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn
-            && dfn.Params.Length == cfn.Params.Length)
-            return ForeignStarDeclarationDescribesCall(dfn.Ret, cfn.Ret, ownerArgs)
-                && dfn.Params.Select((arg, i) => ForeignStarDeclarationDescribesCall(arg, cfn.Params[i], ownerArgs)).All(x => x);
+        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
+            return FunctionDeclarationDescribesCall(dfn, cfn,
+                (declared, supplied) => ForeignStarDeclarationDescribesCall(declared, supplied, ownerArgs));
         return DeclarationDescribesCall(declaration, call);
     }
 
@@ -2848,16 +2847,26 @@ sealed partial class ReferenceMetadataIndex
         if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
             return DeclarationDescribesCall(db.Of, cb.Of);
         if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
-        {
-            if (dfn.Suspend != cfn.Suspend || dfn.Params.Length != cfn.Params.Length) return false;
-            if (dfn.Clr != null && cfn.Clr != null && dfn.Clr != cfn.Clr) return false;
-            return DeclarationDescribesCall(dfn.Ret, cfn.Ret)
-                && dfn.Params.Select((p, i) => DeclarationDescribesCall(p, cfn.Params[i])).All(x => x)
-                && (dfn.Recv == null
-                    ? cfn.Recv == null
-                    : cfn.Recv != null && DeclarationDescribesCall(dfn.Recv, cfn.Recv));
-        }
+            return FunctionDeclarationDescribesCall(dfn, cfn, DeclarationDescribesCall);
         return false;
+    }
+
+    // A function type's Recv/Params split is Kotlin vocabulary, not part of its CLR delegate identity. The reference
+    // assembly can state only Action<P>/Func<P,R>, so reflection reconstructs P as an ordinary parameter even when
+    // the frontend-selected Kotlin declaration stated P.() -> R. Compare the one physical argument sequence shared
+    // by both representations; keeping the source-level split here makes a selected overload unmatchable whenever a
+    // sibling overload leaves more than one same-name candidate standing.
+    static bool FunctionDeclarationDescribesCall(TypeNode.Fn declaration, TypeNode.Fn call,
+        Func<TypeNode, TypeNode, bool> describes)
+    {
+        if (declaration.Suspend != call.Suspend) return false;
+        if (declaration.Clr != null && call.Clr != null && declaration.Clr != call.Clr) return false;
+        var declarationParameters = declaration.DelegateParams;
+        var callParameters = call.DelegateParams;
+        return declarationParameters.Length == callParameters.Length
+            && describes(declaration.Ret, call.Ret)
+            && declarationParameters.Select((parameter, index) =>
+                describes(parameter, callParameters[index])).All(matches => matches);
     }
 
     public bool TryResolveTopLevelStatic(string funName, string recvKey, TypeKey firstParamKey, out string owner)
@@ -3550,13 +3559,8 @@ sealed partial class ReferenceMetadataIndex
             return AccessorDeclarationDescribesCall(da.Elem, ca.Elem);
         if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
             return AccessorDeclarationDescribesCall(db.Of, cb.Of);
-        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn
-            && dfn.Suspend == cfn.Suspend && dfn.Params.Length == cfn.Params.Length)
-            return AccessorDeclarationDescribesCall(dfn.Ret, cfn.Ret)
-                && dfn.Params.Select((arg, i) => AccessorDeclarationDescribesCall(arg, cfn.Params[i])).All(x => x)
-                && (dfn.Recv == null
-                    ? cfn.Recv == null
-                    : cfn.Recv != null && AccessorDeclarationDescribesCall(dfn.Recv, cfn.Recv));
+        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
+            return FunctionDeclarationDescribesCall(dfn, cfn, AccessorDeclarationDescribesCall);
         return DeclarationDescribesCall(declaration, call);
     }
 

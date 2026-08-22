@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Cross-module overload binding now recognizes extension-receiver function slots (#523).** bir2cir compares the
+  frontend-selected Kotlin function type with reference metadata through their shared CLR delegate parameter sequence,
+  so a `P.() -> R` parameter binds the same declaration as its reflected `Action<P>`/`Func<P,R>` representation even
+  when same-name overloads are present.
+
 - **Suspend captures now retain explicit ownership across inline-spliced anonymous methods (#520).** kotc carries the
   exact suspend-frame slot identity on movable inline-lambda carriers, while bir2cir threads method- and type-scoped
   reified-nullability witnesses through synthesized generic state-machine frames. Transported, nested, shadowed,

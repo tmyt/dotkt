@@ -69,6 +69,9 @@ import roundtrip.receiverfunctions.PanelBuilder
 import roundtrip.receiverfunctions.applyPanel
 import roundtrip.receiverfunctions.column
 import roundtrip.receiverfunctions.defaultPanel
+import roundtrip.receiverfunctions.overloadedPlain
+import roundtrip.receiverfunctions.overloadedReceiver
+import roundtrip.receiverfunctions.singleReceiver
 import roundtrip.suspendvalues.BlockHolder
 import roundtrip.suspendvalues.invokeWideSuspend23
 import roundtrip.suspendvalues.makeBlock
@@ -243,6 +246,28 @@ class RoundtripSurfaceTests {
         val member = Panel()
         PanelBuilder(0).preset.invoke(member)
         ClassicAssert.AreEqual(8, member.margin)
+    }
+
+    @TestAttribute
+    fun receiverFunctionOverloadsRetainTheirSelectedCrossModuleMember() {
+        var callbacks = 0
+
+        val receiver = overloadedReceiver("abc", configure = { margin = 4 }) { callbacks += 1 }
+        ClassicAssert.AreEqual(4, receiver.margin)
+        ClassicAssert.AreEqual(3, receiver.padding)
+
+        val receiverSibling = overloadedReceiver({ "xy" }, configure = { margin = 5 }) { callbacks += 2 }
+        ClassicAssert.AreEqual(5, receiverSibling.margin)
+        ClassicAssert.AreEqual(2, receiverSibling.padding)
+
+        val single = singleReceiver("z", configure = { margin = 6 }) { callbacks += 4 }
+        ClassicAssert.AreEqual(6, single.margin)
+        ClassicAssert.AreEqual(1, single.padding)
+
+        val plain = overloadedPlain("plain", configure = { panel -> panel.margin = 7 }) { callbacks += 8 }
+        ClassicAssert.AreEqual(7, plain.margin)
+        ClassicAssert.AreEqual(5, plain.padding)
+        ClassicAssert.AreEqual(15, callbacks)
     }
 
     @TestAttribute
