@@ -94,9 +94,6 @@ static class CovariantInterfaceReturnBridge
                 var slotRet0 = TypeJson.Read(slotSuspend ? slot["suspendRet"] : slot["ret"]);
                 var slotRet = slotRet0 == null ? null : SubstOwnerTvs(slotRet0, ifaceArgs);
                 if (slotParams.Any(p => p == null) || slotRet == null) continue;
-                var logicalSuspendResult = slotSuspend
-                    ? SubstOwnerTvs(ReadSuspendResult(slot), ifaceArgs)
-                    : null;
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
 
                 var candidates = methods.OfType<JsonObject>().Where(m =>
@@ -135,6 +132,9 @@ static class CovariantInterfaceReturnBridge
                           + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
+                    var logicalSuspendResult = slotSuspend
+                        ? SubstOwnerTvs(ReadSuspendResult(slot), ifaceArgs)
+                        : null;
                     bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
                         $"dotkt$covar${SafeName(name)}${bridgeOrdinal++}");
                     bridges[key] = bridge;

@@ -5551,8 +5551,7 @@ internal sealed class AssemblyScanner
             names,
             signatures,
             context,
-            flowContract: true,
-            nullabilityOffset: 0);
+            flowContract: true);
     }
 
     // RESTORE THE PRE-ERASURE SUPERTYPE EDGES (#86). A supertype argument is a reified argument and erases with the
@@ -5636,8 +5635,7 @@ internal sealed class AssemblyScanner
         NameTable names,
         SignatureDecoder signatures,
         GenericContext context,
-        bool flowContract = false,
-        int nullabilityOffset = 0)
+        bool flowContract = false)
     {
         TypeNode? exact = null;
         string? carrierName = null;
@@ -5665,8 +5663,6 @@ internal sealed class AssemblyScanner
         if (_attrs.Int32(slot, MetadataAttributes.DotKtNs + "KotlinContextFunctionTypeAttribute") is int contextCount)
             result = signatures.AsContextFunction(result, contextCount);
         var bytes = _attrs.Nullability(slot);
-        if (nullabilityOffset != 0 && bytes is { Length: > 0 })
-            bytes = bytes.Skip(Math.Min(nullabilityOffset, bytes.Length)).ToArray();
         var contextByte = NullableContext(contextOwner);
         // DotKt signatures are non-null by Kotlin default. Unlike Roslyn,
         // ilemit need not emit a NullableContext(1) row for every declaration;

@@ -594,7 +594,8 @@ class KotlinApiShapeRoundtripTests {
 
         val reimportedImplementation = ReferencedSuspendCovariantImplementation()
         ClassicAssert.AreEqual(66, runCrossModuleSuspend {
-            reimportedImplementation.loadCovariant().value
+            val narrow: ReferencedNarrowCovariantValue = reimportedImplementation.loadCovariant()
+            narrow.value
         })
         val reimportedSlot: ReferencedSuspendCovariantSlot = reimportedImplementation
         ClassicAssert.AreEqual(66, runCrossModuleSuspend { reimportedSlot.loadCovariant().value })

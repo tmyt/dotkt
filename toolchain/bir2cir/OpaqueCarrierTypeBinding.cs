@@ -130,6 +130,15 @@ static class OpaqueCarrierTypeBinding
                 obj["inlineBir"] = Convert.ToBase64String(BirCarrier.EncodeBody(BirCarrier.JsonV1, payload));
             }
 
+            if ((obj["suspendResult"] as JsonValue)?.TryGetValue<string>(out var suspendResult) == true
+                && !string.IsNullOrEmpty(suspendResult))
+            {
+                var payload = JsonNode.Parse(suspendResult)
+                    ?? throw new InvalidOperationException("suspend-result carrier decoded to null");
+                BindPayload(payload, physicalBySemantic, preserveInlineParameterSignature: false);
+                obj["suspendResult"] = payload.ToJsonString();
+            }
+
             if (TypeJson.OwnerName(obj["attr"]) == KotlinDefault
                 && obj["args"] is JsonArray args && args.Count >= 2
                 && args[1] is JsonObject carrierArg

@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **Covariant suspend overrides now retain their exact Kotlin result across DLL-to-KLIB projection (#511).** Logical
+  suspend results are carried independently of their erased `Task<T>` representation, including nested nullable
+  generic types and nested classifiers. Re-import omits compiler-generated hot/cold MethodImpl machinery.
+
 ## 0.9.10-beta1 (2026-08-22)
 
 ### Fixed

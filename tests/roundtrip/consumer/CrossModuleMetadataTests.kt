@@ -110,6 +110,8 @@ import suspendnullable.nullableTopLevelBlock
 import suspendnullable.nullableSuspendStep
 import suspendnullable.nestedNullableSuspendResult
 import suspendnullable.nestedGenericNullableSuspendResult
+import suspendnullable.nestedClassifierSuspendResult
+import suspendnullable.SuspendResultOwner
 import suspendref.SuspendRefService
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
@@ -459,10 +461,13 @@ class SuspendMetadataRoundtripTests {
     // checks: a re-imported List<Any> cannot satisfy either declaration.
     @TestAttribute
     fun nestedNullableSuspendResultsRoundTripExactly() {
-        ClassicAssert.AreEqual(42, runCrossModuleSuspend {
+        ClassicAssert.AreEqual(43, runCrossModuleSuspend {
             val concrete: List<Int?> = nestedNullableSuspendResult(41)
             val generic: List<String?> = nestedGenericNullableSuspendResult("kept")
-            (concrete[1] ?: 0) + if (generic[0] == null && generic[1] == "kept") 1 else 0
+            val classifiers: List<SuspendResultOwner.Nested?> = nestedClassifierSuspendResult(43)
+            (concrete[1] ?: 0) +
+                (if (generic[0] == null && generic[1] == "kept") 1 else 0) +
+                (if (classifiers[0] == null && classifiers[1]?.value == 43) 1 else 0)
         })
     }
 

@@ -19,6 +19,13 @@ suspend fun nestedNullableSuspendResult(value: Int): List<Int?> = listOf(null, v
 
 suspend fun <T> nestedGenericNullableSuspendResult(value: T): List<T?> = listOf(null, value)
 
+class SuspendResultOwner {
+    class Nested(val value: Int)
+}
+
+suspend fun nestedClassifierSuspendResult(value: Int): List<SuspendResultOwner.Nested?> =
+    listOf(null, SuspendResultOwner.Nested(value))
+
 private fun suspendBlock(value: Int): suspend () -> Int =
     { nullableSuspendStep(value) }
 
