@@ -81,8 +81,9 @@ linker, generated-binary, or runtime result for the undefined forms.
   working tree.
 - Open a draft pull request once the focused tests for the changed behavior are
   green. State every outstanding review and validation step in its description.
-- Run the independent Claude review with network access enabled. Keep the
-  reviewer read-only and follow the review budget below.
+- Run the independent Claude review read-only with network access outside the
+  sandbox. Do not impose a short API timeout or force a model override; allow
+  20--30 minutes for a long review, and follow the review budget below.
 - Mark the draft pull request ready for review only after the independent
   reviews and the canonical full gate (`make verify` for behavior-affecting
   changes) have completed successfully.
