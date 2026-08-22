@@ -1852,9 +1852,10 @@ static class InlineSplice
             if (Str(o["t"]) == "tv") keys.Add((Str(o["scope"]) ?? "method", Int(o["i"])));
             // Skip a nested closure's `synthClass`: its typeParams live in that frame's OWN 0-based space and its body's
             // `tv{…}` resolve positionally against them — collecting/renumbering them into the outer frame would corrupt
-            // the nested class. Its `captures`/`funcType`/`typeArgs` (outer-frame tv refs) ARE descended (#22). A nested
-            // `newSuspendLambda` is the SAME kind of tv scope boundary — shield its own frame, descend its outer refs.
-            bool nestedSm = Str(o["k"]) == "newSuspendLambda";
+            // the nested class. Its `captures`/`funcType`/`typeArgs` (outer-frame tv refs) ARE descended (#22). Only a
+            // synthesized dense `newSuspendLambda` owns its body frame already; a source lambda still uses the lexical
+            // caller frame and must be renumbered together with it.
+            bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
                 if (kv.Value != null && kv.Key is not ("sig" or "paramSig" or "overrides") && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
@@ -1875,8 +1876,9 @@ static class InlineSplice
                 && remap.TryGetValue((Str(o["scope"]) ?? "method", i), out var ni)) o["i"] = ni;
             // Skip a nested closure's `synthClass` (its tvs are its own frame — see CollectTvKeys); its outer-frame tv
             // refs on `captures`/`funcType`/`typeArgs` ARE renumbered into the materialized closure's param space (#22).
-            // A nested `newSuspendLambda`'s own frame is shielded identically — only its outer-frame refs are renumbered.
-            bool nestedSm = Str(o["k"]) == "newSuspendLambda";
+            // A nested dense `newSuspendLambda`'s own frame is shielded identically — only its outer-frame refs are
+            // renumbered. A source lambda remains lexical and is rewritten throughout.
+            bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
                 if (kv.Value != null && kv.Key is not ("sig" or "paramSig" or "overrides") && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))

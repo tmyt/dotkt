@@ -492,6 +492,10 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// Captured outer values inside a capturing object literal -> `this.<field>`. Keyed by value-declaration
 	// IDENTITY (not name): the anon's own `<this>` and a captured outer `<this>` share the name "<this>".
 	internal val captureSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	// When captureSubst deliberately names a bare local slot, retain that slot as an identity fact. Consumers that emit
+	// movable carriers can reuse it without parsing JSON or guessing from a source name; field/other expression
+	// substitutions intentionally have no entry here.
+	internal val captureLocalName = java.util.IdentityHashMap<IrValueDeclaration, String>()
 	// An extension-function `__self` receiver -> the `__self` arg. Keyed by IDENTITY: in a MEMBER extension
 	// (`class C { fun T.f() }`) the extension receiver and the dispatch receiver BOTH have name "<this>", so a
 	// name-keyed map can't tell them apart (it would capture C's `this` too). The dispatch `<this>` then falls

@@ -448,6 +448,39 @@ internal fun BirEmitter.paramSigOf(callee: IrSimpleFunction, includeExtensionRec
 internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): String {
 	val fn = lambda.function
 	val extParam = extensionReceiverParam(fn)
+	val captured = capturedVars(fn, includeThis = true)
+	// A carrier is a movable lexical value. Reuse an identity-known local slot when the enclosing frame provides one;
+	// otherwise alpha-name a non-local construction expression and preserve that expression through the explicit value
+	// channel. Its descriptor and body therefore agree without bir2cir reconstructing ownership from coincidental names.
+	// The genuine enclosing dispatch receiver keeps the established outer:true/this channel.
+	data class CarrierCapture(
+		val declaration: IrValueDeclaration,
+		val name: String,
+		val value: String? = null,
+		val outer: Boolean = false,
+	)
+	val carrierCaptures = captured.map { d ->
+		val knownLocal = captureLocalName[d]
+		val selfRef = selfSubst[d]
+		when {
+			knownLocal != null -> CarrierCapture(d, knownLocal)
+			captureSubst[d] == null && selfRef != null -> {
+				val name = selfRef.substringAfter(""""name":"""").substringBefore('"')
+				CarrierCapture(d, name)
+			}
+			d.name.asString() == "<this>" && captureSubst[d] == null ->
+				CarrierCapture(d, "__outer", outer = true)
+			captureSubst[d] == null && selfRef == null && valSubst[d.name.asString()] == null ->
+				CarrierCapture(d, localSlotName(d))
+			else -> CarrierCapture(d, freshFrameName("dotkt\$inlineCapture\$", fn), capValueExpr(d))
+		}
+	}
+	val savedCaptureSubst = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+	for ((d, name, value) in carrierCaptures) {
+		if (value == null) continue
+		savedCaptureSubst[d] = captureSubst[d]
+		captureSubst[d] = """{"k":"local","name":${str(name)}}"""
+	}
 	// Allocated against the lambda's own frame, like every other minted frame name — the carrier's params sit in the
 	// same flat by-name namespace as the lambda's own, so an unchecked `__recvN` could alias one of them.
 	val freshRecv = extParam?.let { freshFrameName("__recv", fn) }
@@ -475,6 +508,11 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 	// The `selfSubst[extParam]` binding above (restored just below) is the guarantee that the receiver's `this`/
 	// implicit-member refs resolve to `freshRecv`, not a dangling `{"k":"this"}` — no post-hoc string guard needed.
 	val result = spliceBodyWithReturns(fn, fn.returnType.isUnit(), body)
+	for ((d, _, value) in carrierCaptures) {
+		if (value == null) continue
+		val previous = savedCaptureSubst[d]
+		if (previous != null) captureSubst[d] = previous else captureSubst.remove(d)
+	}
 	shadowed.forEach { (name, prev) -> if (prev != null) valSubst[name] = prev else valSubst.remove(name) }
 	if (extParam != null) { if (hadSelf) selfSubst[extParam] = savedSelf!! else selfSubst.remove(extParam) }
 	// CAPTURES (bir2cir §4.4ii MaterializeCarrier): the free vars the carrier body references, computed by REUSING
@@ -488,24 +526,18 @@ internal fun BirEmitter.emitInlineLambdaCarrier(lambda: IrFunctionExpression): S
 	//    `{name:"__outer",outer:true}` capture (bir2cir rewrites `{k:this}`->`this.__outer`). Its `type` is
 	//    `birType(enclosingClass.type)` = the enclosing class WITH its own type args (e.g. DeepRecursiveScopeImpl<T,R> as
 	//    fqn args:[tv T, tv R]), so bir2cir types the `__outer` field correctly on a generic enclosing class.
-	//  - any other captured local/param -> {name:<var>,type} (its own name, matching the bare `{k:local}` body ref).
+	//  - another captured local/param uses its identity-known slot; a field or other expression receives a carrier-owned
+	//    descriptor plus an explicit construction `value` while the body is shadowed to the descriptor.
 	// A member EXTENSION inline fn capturing BOTH emits two entries (one `__self` regular, one `__outer`). The lambda's
 	// OWN params/ext-receiver are `declared` (excluded). Emitted on EVERY carrier (cheap); bir2cir consumes it only when
 	// it must materialize the carrier into a closure (the common invoke-and-splice path ignores it).
-	val capturesJson = capturedVars(fn, includeThis = true).joinToString(",") { d ->
-		val selfRef = selfSubst[d]
-		when {
-			// Enclosing extension receiver: name it EXACTLY as the body's `selfSubst` local ref (`{"k":"local","name":<n>}`).
-			selfRef != null -> {
-				val nm = selfRef.substringAfter(""""name":"""").substringBefore('"')
-				"""{"name":${str(nm)},"type":${captureFieldType(d).toJson()}}"""
-			}
-			d.name.asString() == "<this>" ->
-				"""{"name":"__outer","type":${captureFieldType(d).toJson()},"outer":true}"""
-			else ->
-				// Match the identity-allocated enclosing-frame slot used by the carrier body.
-				"""{"name":${str(localSlotName(d))},"type":${captureFieldType(d).toJson()}}"""
-		}
+	val capturesJson = carrierCaptures.joinToString(",") { (d, name, value, outer) ->
+		if (outer)
+			"""{"name":"__outer","type":${captureFieldType(d).toJson()},"outer":true}"""
+		else if (value == null)
+			"""{"name":${str(name)},"type":${captureFieldType(d).toJson()}}"""
+		else
+			"""{"name":${str(name)},"type":${captureFieldType(d).toJson()},"value":$value}"""
 	}
 	return """{"k":"inlineLambda","params":[$paramsJson],"captures":[$capturesJson],"body":[${body.joinToString(",")}],"result":$result}"""
 }

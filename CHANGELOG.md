@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Suspend captures now retain explicit ownership across inline-spliced anonymous methods (#520).** kotc carries the
+  exact suspend-frame slot identity on movable inline-lambda carriers, while bir2cir threads method- and type-scoped
+  reified-nullability witnesses through synthesized generic state-machine frames. Transported, nested, shadowed,
+  mutable ref-cell, and nullable witness captures therefore survive a real resume without becoming unspilled locals.
+
 - **Covariant suspend overrides now retain their exact Kotlin result across DLL-to-KLIB projection (#511).** Logical
   suspend results are carried independently of their erased `Task<T>` representation, including nested nullable
   generic types and nested classifiers. Re-import omits compiler-generated hot/cold MethodImpl machinery.
