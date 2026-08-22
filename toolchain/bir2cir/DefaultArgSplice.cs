@@ -158,6 +158,10 @@ static class DefaultArgSplice
         if (kind == "enumValue")
             return value["type"] != null && Str(value["underlying"]) != null
                 && Str(value["physicalValue"]) != null;
+        if (kind == "nullableWrap" && TypeJson.Read(value["elem"]) is TypeNode elem
+            && value["e"] is JsonObject wrapped && IsMetadataConstant(wrapped)
+            && TypeJson.Read(wrapped["type"]) is TypeNode wrappedType)
+            return elem.Equals(wrappedType);
 
         // CLR decimal and DateTime metadata constants have no literal opcode. ReferenceMetadataIndex materializes
         // their exact public value-type constructors. Admit only those closed, all-constant shapes here so a shorter

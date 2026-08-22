@@ -123,6 +123,21 @@ public class ValueTypeDefaults
 
 public sealed class DerivedValueTypeDefaults : ValueTypeDefaults { }
 
+public sealed class NullableValueDefaults
+{
+    public string Instance(int? count = -7, NavigationMethod? method = NavigationMethod.Directional) =>
+        $"{count}:{(int?)method}";
+
+    public static string Static(int? count = 42, NavigationMethod? method = NavigationMethod.Unspecified) =>
+        $"{count}:{(int?)method}";
+
+    public static string ReferenceNull(string value = null) => value ?? "null";
+
+    public static bool NonFinite(float? single = float.NaN, double? number = double.PositiveInfinity) =>
+        single.HasValue && float.IsNaN(single.Value)
+            && number.HasValue && double.IsPositiveInfinity(number.Value);
+}
+
 public sealed class ValueTypeDefaultConstructor
 {
     const decimal ExpectedDecimal = -12345678901234567890.1234m;

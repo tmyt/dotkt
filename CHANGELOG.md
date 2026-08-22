@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Non-null CLR optional constants now inhabit `Nullable<T>` slots as real values (#535).** bir2cir types primitive
+  and enum metadata constants as the nullable element and constructs the `Nullable<T>` wrapper explicitly instead of
+  emitting `ldnull`. Null remains `default(Nullable<T>)`, while a value that cannot inhabit the element is rejected
+  with source, callee, and parameter context.
+
 - **CLR decimal and value-type optional arguments now materialize as valid values (#527).** bir2cir reconstructs
   `DecimalConstantAttribute` and `DateTimeConstantAttribute` values through their exact public value-type constructors
   and lowers a reflected null for a value-type slot to `default(T)` rather than `ldnull`. Static, instance, inherited,

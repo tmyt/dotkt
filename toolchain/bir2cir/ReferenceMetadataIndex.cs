@@ -5926,30 +5926,6 @@ sealed partial class ReferenceMetadataIndex
         if (ReferenceEquals(value, DBNull.Value) || ReferenceEquals(value, Missing.Value)) return null;
 
         var type = parameter.ParameterType;
-        if (type.IsEnum)
-        {
-            Type underlying;
-            try
-            {
-                underlying = Enum.GetUnderlyingType(type);
-            }
-            catch { return null; }
-            var declaredEnum = DeclarationTypeNode(type);
-            var physical = EnumConstantText(value, underlying);
-            if (declaredEnum == null || physical == null) return null;
-            // An ECMA-335 enum constant is the underlying bits interpreted in the DECLARED enum slot. It need not name
-            // an entry (flags combinations commonly do not), so carry the exact physical value instead of recovering
-            // an entry identity. EnumValueLowering uses this same CIR form for named external enum entries, and ilemit
-            // emits it one-to-one while returning the declared enum stack type.
-            return new JsonObject
-            {
-                ["k"] = "enumValue",
-                ["type"] = TypeJson.Write(declaredEnum),
-                ["underlying"] = underlying.FullName ?? underlying.Name,
-                ["physicalValue"] = physical,
-            }.ToJsonString();
-        }
-
         var declaredType = DeclarationTypeNode(type);
         if (declaredType is null) return null;
 
@@ -5978,6 +5954,76 @@ sealed partial class ReferenceMetadataIndex
                 }.ToJsonString();
         }
 
+        // A non-null Constant row on Nullable<V> describes a V value, not a literal whose stack type is the
+        // constructed Nullable<V>. Emit the exact V constant and construct the wrapper explicitly. Typing the leaf as
+        // Nullable<V> bypasses later coercion (source and target already appear equal) and makes ilemit fall through to
+        // ldnull because no literal opcode exists for the structured slot.
+        Type nullableElement = null;
+        try
+        {
+            if (type.IsConstructedGenericType && IsNullableDefinition(type.GetGenericTypeDefinition()))
+                nullableElement = type.GetGenericArguments().SingleOrDefault();
+        }
+        catch { return null; }
+        if (nullableElement != null)
+        {
+            var elementType = DeclarationTypeNode(nullableElement);
+            var elementValue = MetadataConstantNode(nullableElement, elementType, value, requireExactLiteralType: true);
+            if (elementType == null || elementValue == null) return null;
+            return new JsonObject
+            {
+                ["k"] = "nullableWrap",
+                ["elem"] = TypeJson.Write(elementType),
+                ["e"] = elementValue,
+            }.ToJsonString();
+        }
+
+        return MetadataConstantNode(type, declaredType, value, requireExactLiteralType: false)?.ToJsonString();
+    }
+
+    static JsonObject MetadataConstantNode(Type type, TypeNode declaredType, object value,
+        bool requireExactLiteralType)
+    {
+        if (type == null || declaredType == null) return null;
+        // Null reaches this helper only for a reference-typed slot. Value-type null/defaults are handled above, and a
+        // nullable element carrier is required to be a concrete V value before Nullable<V> can be constructed.
+        if (value == null)
+            return requireExactLiteralType ? null : new JsonObject
+            {
+                ["k"] = "const",
+                ["type"] = TypeJson.Write(declaredType),
+                ["value"] = null,
+            };
+
+        bool isEnum;
+        try { isEnum = type.IsEnum; }
+        catch { return null; }
+        if (isEnum)
+        {
+            Type underlying;
+            try
+            {
+                underlying = Enum.GetUnderlyingType(type);
+            }
+            catch { return null; }
+            // A Nullable<E> Constant row must contain the exact ECMA-335 carrier for E's underlying type. Do not let
+            // Convert.ToInt* reinterpret an unrelated custom-constant value merely because it happens to be numeric.
+            if (requireExactLiteralType && !LiteralValueInhabits(underlying, value)) return null;
+            var physical = EnumConstantText(value, underlying);
+            if (physical == null) return null;
+            // An ECMA-335 enum constant is the underlying bits interpreted in the DECLARED enum slot. It need not name
+            // an entry (flags combinations commonly do not), so carry the exact physical value instead of recovering
+            // an entry identity. EnumValueLowering uses this same CIR form for named external enum entries, and ilemit
+            // emits it one-to-one while returning the declared enum stack type.
+            return new JsonObject
+            {
+                ["k"] = "enumValue",
+                ["type"] = TypeJson.Write(declaredType),
+                ["underlying"] = underlying.FullName ?? underlying.Name,
+                ["physicalValue"] = physical,
+            };
+        }
+
         // DecimalConstantAttribute is surfaced by both runtime reflection and MetadataLoadContext as an actual
         // System.Decimal. Decimal has no ECMA-335 literal opcode, so materialize the exact 96-bit coefficient, sign,
         // and scale through its public (int lo, int mid, int hi, bool isNegative, byte scale) constructor. Keep this
@@ -6003,7 +6049,7 @@ sealed partial class ReferenceMetadataIndex
                     MetadataConst("System.Boolean", (bits[3] & unchecked((int)0x80000000)) != 0),
                     MetadataConst("System.Byte", (bits[3] >> 16) & 0xff),
                 },
-            }.ToJsonString();
+            };
         }
 
         // DateTimeConstantAttribute likewise surfaces an actual DateTime. Its metadata contract carries ticks (and
@@ -6016,7 +6062,9 @@ sealed partial class ReferenceMetadataIndex
                 ["type"] = TypeJson.Write(declaredType),
                 ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int64") },
                 ["args"] = new JsonArray { MetadataConst("System.Int64", dateTimeValue.Ticks) },
-            }.ToJsonString();
+            };
+
+        if (requireExactLiteralType && !LiteralValueInhabits(type, value)) return null;
 
         JsonNode jsonValue = value switch
         {
@@ -6032,6 +6080,10 @@ sealed partial class ReferenceMetadataIndex
             uint v => JsonValue.Create(unchecked((int)v)),
             long v => JsonValue.Create(v),
             ulong v => JsonValue.Create(unchecked((long)v)),
+            float v when float.IsNaN(v) || float.IsInfinity(v) =>
+                JsonValue.Create(v.ToString("R", CultureInfo.InvariantCulture)),
+            double v when double.IsNaN(v) || double.IsInfinity(v) =>
+                JsonValue.Create(v.ToString("R", CultureInfo.InvariantCulture)),
             float v => JsonValue.Create(v),
             double v => JsonValue.Create(v),
             _ => null,
@@ -6042,8 +6094,25 @@ sealed partial class ReferenceMetadataIndex
             ["k"] = "const",
             ["type"] = TypeJson.Write(declaredType),
             ["value"] = jsonValue,
-        }.ToJsonString();
+        };
     }
+
+    static bool LiteralValueInhabits(Type type, object value) => type.FullName switch
+    {
+        "System.Boolean" => value is bool,
+        "System.Char" => value is char,
+        "System.SByte" => value is sbyte,
+        "System.Byte" => value is byte,
+        "System.Int16" => value is short,
+        "System.UInt16" => value is ushort,
+        "System.Int32" => value is int,
+        "System.UInt32" => value is uint,
+        "System.Int64" => value is long,
+        "System.UInt64" => value is ulong,
+        "System.Single" => value is float,
+        "System.Double" => value is double,
+        _ => false,
+    };
 
     static JsonObject MetadataConst(string type, object value) => new()
     {

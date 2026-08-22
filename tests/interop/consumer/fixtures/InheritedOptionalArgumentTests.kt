@@ -9,6 +9,7 @@ import InheritedOptionalDefaults.IDerivedWriter
 import InheritedOptionalDefaults.InterfaceWriter
 import InheritedOptionalDefaults.KeyModifiers
 import InheritedOptionalDefaults.NavigationMethod
+import InheritedOptionalDefaults.NullableValueDefaults
 import InheritedOptionalDefaults.StaticEnumDefaults
 import InheritedOptionalDefaults.ValueBaseWriter
 import InheritedOptionalDefaults.ValueTypeDefaultConstructor
@@ -77,6 +78,11 @@ class InheritedOptionalArgumentTests {
         assertEquals(null, ValueTypeDefaults.GenericDefault<String>())
         assertEquals(true, ValueTypeDefaultConstructor().ValuesMatch)
         assertEquals(638000000000000000L, direct.DateTimeConstant())
+        assertEquals("7:99", DerivedWriter().Save(7))
+        assertEquals("-7:2", NullableValueDefaults().Instance())
+        assertEquals("42:0", NullableValueDefaults.Static())
+        assertEquals("null", NullableValueDefaults.ReferenceNull())
+        assertEquals(true, NullableValueDefaults.NonFinite())
     }
 
     private fun nullableBase(value: BaseWriter): BaseWriter? = value
