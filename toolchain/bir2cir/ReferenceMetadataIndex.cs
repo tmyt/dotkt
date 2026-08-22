@@ -190,6 +190,12 @@ sealed partial class ReferenceMetadataIndex
     // allocation for a trusted accessor bridge. No hierarchy/default-body inference is performed here.
     readonly Dictionary<(string Owner, int BodyToken), List<MethodImplBinding>> _methodImplsByBody = new();
     readonly Dictionary<string, MemberBinding> _declarationById = new(StringComparer.Ordinal);
+    readonly Dictionary<(string Owner, string SourceName, int MethodArity, bool IsStatic, int ParamCount), int>
+        _declarationFamilyCounts = new();
+
+    static (string Owner, string SourceName, int MethodArity, bool IsStatic, int ParamCount)
+        DeclarationFamilyOf(MemberBinding binding) =>
+        (binding.Owner, binding.DeclarationSourceName, binding.MethodArity, binding.IsStatic, binding.ParamCount);
 
     public bool TryDeclarationIdentity(
         string id,
@@ -290,13 +296,8 @@ sealed partial class ReferenceMetadataIndex
         // is the boundary at which falling back to structural overload selection could bind the wrong MethodDef.
         // Requiring semantic reconstruction for every sole declaration would reject intentional physical erasures
         // such as a suspend-function value represented by object.
-        var requiresParameterValidation = _declarationById.Values.Any(candidate =>
-            candidate.DeclarationId != binding.DeclarationId
-            && candidate.DeclarationSourceName == binding.DeclarationSourceName
-            && candidate.Owner == binding.Owner
-            && candidate.MethodArity == binding.MethodArity
-            && candidate.IsStatic == binding.IsStatic
-            && candidate.ParamCount == binding.ParamCount);
+        var requiresParameterValidation = _declarationFamilyCounts.TryGetValue(
+            DeclarationFamilyOf(binding), out var familyCount) && familyCount > 1;
         var physicalMatches = selectedSignature.All(type => type != null)
             && selectedSignature.Select((type, index) =>
                 DeclarationDescribesCall(type, completedCallSignature[index])).All(matchesCall => matchesCall);
@@ -621,18 +622,23 @@ sealed partial class ReferenceMetadataIndex
             foreach (var s in asm.DotKt.RestrictsSuspensionTypes) _restrictsSuspension.Add(s);
             foreach (var m in asm.DotKt.MemberBindings)
             {
-                if (m.DeclarationId is string declarationId
-                    && !_declarationById.TryAdd(declarationId, m))
+                if (m.DeclarationId is string declarationId)
                 {
-                    var prior = _declarationById[declarationId];
-                    // The same Kotlin module can be present through runtime/reference twins or repeated project
-                    // references. Identity-derived physical names are identical; accepting that exact duplicate does
-                    // not select between overloads or infer source meaning.
-                    if (SameDeclarationBinding(prior, m))
-                        continue;
-                    throw new InvalidOperationException(
-                        $"conflicting Kotlin declaration identity '{declarationId}': "
-                        + $"'{prior.Owner}.{prior.Name}' and '{m.Owner}.{m.Name}'");
+                    if (!_declarationById.TryAdd(declarationId, m))
+                    {
+                        var prior = _declarationById[declarationId];
+                        // The same Kotlin module can be present through runtime/reference twins or repeated project
+                        // references. Identity-derived physical names are identical; accepting that exact duplicate
+                        // does not select between overloads or infer source meaning.
+                        if (SameDeclarationBinding(prior, m))
+                            continue;
+                        throw new InvalidOperationException(
+                            $"conflicting Kotlin declaration identity '{declarationId}': "
+                            + $"'{prior.Owner}.{prior.Name}' and '{m.Owner}.{m.Name}'");
+                    }
+                    var family = DeclarationFamilyOf(m);
+                    _declarationFamilyCounts[family] = _declarationFamilyCounts.TryGetValue(family, out var count)
+                        ? count + 1 : 1;
                 }
                 if (!_membersByOwner.TryGetValue(m.Owner, out var list))
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
