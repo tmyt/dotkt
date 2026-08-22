@@ -5984,9 +5984,21 @@ sealed partial class ReferenceMetadataIndex
     static JsonObject MetadataConstantNode(Type type, TypeNode declaredType, object value,
         bool requireExactLiteralType)
     {
-        if (type == null || declaredType == null || value == null) return null;
+        if (type == null || declaredType == null) return null;
+        // Null reaches this helper only for a reference-typed slot. Value-type null/defaults are handled above, and a
+        // nullable element carrier is required to be a concrete V value before Nullable<V> can be constructed.
+        if (value == null)
+            return requireExactLiteralType ? null : new JsonObject
+            {
+                ["k"] = "const",
+                ["type"] = TypeJson.Write(declaredType),
+                ["value"] = null,
+            };
 
-        if (type.IsEnum)
+        bool isEnum;
+        try { isEnum = type.IsEnum; }
+        catch { return null; }
+        if (isEnum)
         {
             Type underlying;
             try
@@ -5994,6 +6006,9 @@ sealed partial class ReferenceMetadataIndex
                 underlying = Enum.GetUnderlyingType(type);
             }
             catch { return null; }
+            // A Nullable<E> Constant row must contain the exact ECMA-335 carrier for E's underlying type. Do not let
+            // Convert.ToInt* reinterpret an unrelated custom-constant value merely because it happens to be numeric.
+            if (requireExactLiteralType && !LiteralValueInhabits(underlying, value)) return null;
             var physical = EnumConstantText(value, underlying);
             if (physical == null) return null;
             // An ECMA-335 enum constant is the underlying bits interpreted in the DECLARED enum slot. It need not name
@@ -6065,6 +6080,10 @@ sealed partial class ReferenceMetadataIndex
             uint v => JsonValue.Create(unchecked((int)v)),
             long v => JsonValue.Create(v),
             ulong v => JsonValue.Create(unchecked((long)v)),
+            float v when float.IsNaN(v) || float.IsInfinity(v) =>
+                JsonValue.Create(v.ToString("R", CultureInfo.InvariantCulture)),
+            double v when double.IsNaN(v) || double.IsInfinity(v) =>
+                JsonValue.Create(v.ToString("R", CultureInfo.InvariantCulture)),
             float v => JsonValue.Create(v),
             double v => JsonValue.Create(v),
             _ => null,

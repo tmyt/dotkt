@@ -130,6 +130,12 @@ public sealed class NullableValueDefaults
 
     public static string Static(int? count = 42, NavigationMethod? method = NavigationMethod.Unspecified) =>
         $"{count}:{(int?)method}";
+
+    public static string ReferenceNull(string value = null) => value ?? "null";
+
+    public static bool NonFinite(float? single = float.NaN, double? number = double.PositiveInfinity) =>
+        single.HasValue && float.IsNaN(single.Value)
+            && number.HasValue && double.IsPositiveInfinity(number.Value);
 }
 
 public sealed class ValueTypeDefaultConstructor
