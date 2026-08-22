@@ -111,7 +111,7 @@ static class RoundtripMetadata
                 if (method.ContainsKey("suspendResult") || !ModFlag(method, "suspend")) continue;
                 var logical = method["suspendRet"]?.ToJsonString()
                     ?? throw new InvalidOperationException(
-                        $"suspend declaration '{method["name"]}' has no logical result");
+                        $"bir2cir: suspend declaration '{method["name"]}' carries no `suspendRet` slot");
                 method["suspendResult"] = logical;
             }
         if (obj["types"] is JsonArray types)
