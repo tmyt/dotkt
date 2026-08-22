@@ -141,6 +141,11 @@ static class ReifiedNullabilityWitnessLowering
                         MaterializeReifiedSuspendLambda(obj, witnesses, Walk);
                         return;
                     }
+                    if (Str(obj["k"]) == "newSuspendLambda" && Str(obj["typeFrame"]) == "dense")
+                    {
+                        MaterializeDenseSuspendFrameWitnesses(obj, witnesses, Walk);
+                        return;
+                    }
                     if (Str(obj["k"]) == "newDelegate"
                         && Str(obj["method"]) is string targetName
                         && generatedTargets.TryGetValue(targetName, out var target))
@@ -447,6 +452,57 @@ static class ReifiedNullabilityWitnessLowering
             walk(body, new WitnessFrame(methodWitnesses, typeWitnesses));
     }
 
+    // InlineSplice gives every materialized suspend carrier an explicit dense generic frame: body method-tv i is bound
+    // by typeArgs[i] in the enclosing frame. Reified witnesses are values too, so a witness belonging to such a type
+    // argument must cross each synthesized frame through the ordinary positional capture/capValue contract. Passing the
+    // caller WitnessFrame straight into the body conflates two distinct method-tv index spaces and leaves the caller's
+    // local dangling once the carrier becomes a state-machine method.
+    static void MaterializeDenseSuspendFrameWitnesses(
+        JsonObject node,
+        WitnessFrame callerWitnesses,
+        Action<JsonNode, WitnessFrame> walk)
+    {
+        var typeParameters = node["typeParams"] as JsonArray ?? new JsonArray();
+        var typeArguments = node["typeArgs"] as JsonArray;
+        if (typeArguments == null && typeParameters.Count == 0)
+        {
+            if (node["capValues"] is JsonArray nongenericValues)
+                foreach (var value in nongenericValues.ToList())
+                    if (value != null) walk(value, callerWitnesses);
+            if (node["body"] is JsonNode nongenericBody)
+                walk(nongenericBody, new WitnessFrame(null, null));
+            return;
+        }
+        if (typeArguments == null)
+            throw new InvalidOperationException("bir2cir: generic dense suspend frame has no type arguments");
+        if (typeParameters.Count != typeArguments.Count)
+            throw new InvalidOperationException("bir2cir: dense suspend frame has inconsistent type parameter bindings");
+
+        var captures = node["captures"] as JsonArray ?? new JsonArray();
+        node["captures"] = captures;
+        var capValues = node["capValues"] as JsonArray ?? new JsonArray();
+        node["capValues"] = capValues;
+        foreach (var value in capValues.ToList())
+            if (value != null) walk(value, callerWitnesses);
+        while (capValues.Count < captures.Count) capValues.Add(null);
+
+        var methodWitnesses = new Dictionary<int, JsonNode>();
+        var usedNames = captures.OfType<JsonObject>().Select(capture => Str(capture["name"]))
+            .Where(name => name != null).ToHashSet(StringComparer.Ordinal);
+        for (var index = 0; index < typeArguments.Count; index++)
+        {
+            if (!TryWitnessForExisting(typeArguments[index], callerWitnesses, out var value)) continue;
+            var name = Prefix + index;
+            while (!usedNames.Add(name)) name += "$";
+            captures.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Boolean") });
+            capValues.Add(value);
+            methodWitnesses[index] = new JsonObject { ["k"] = "local", ["name"] = name };
+        }
+
+        if (node["body"] is JsonNode body)
+            walk(body, new WitnessFrame(methodWitnesses, null));
+    }
+
     static IReadOnlyDictionary<int, JsonNode> MaterializeGeneratedType(JsonObject type, int[] indices)
     {
         var className = Str(type["name"])
@@ -642,6 +698,24 @@ static class ReifiedNullabilityWitnessLowering
             TypeNode.Tv { Scope: "type" } => ConstBool(false),
             _ => ConstBool(false),
         };
+    }
+
+    static bool TryWitnessForExisting(JsonNode type, WitnessFrame callerWitnesses, out JsonNode witness)
+    {
+        switch (TypeJson.Read(type))
+        {
+            case TypeNode.Tv { Scope: "method" } tv when callerWitnesses?.Method != null
+                && callerWitnesses.Method.TryGetValue(tv.I, out var methodWitness):
+                witness = methodWitness.DeepClone();
+                return true;
+            case TypeNode.Tv { Scope: "type" } tv when callerWitnesses?.Type != null
+                && callerWitnesses.Type.TryGetValue(tv.I, out var typeWitness):
+                witness = typeWitness.DeepClone();
+                return true;
+            default:
+                witness = null;
+                return false;
+        }
     }
 
     static void AppendBooleanType(JsonObject call, string key)

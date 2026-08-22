@@ -39,6 +39,9 @@ inline fun <T> FlowTransformationFlow<T>.flowTransformationFilter(crossinline pr
     if (predicate(value)) emit(value)
 }
 
+inline fun <reified R> FlowTransformationFlow<Any?>.flowTransformationFilterIsInstance(): FlowTransformationFlow<R> =
+    flowTransformationTransform<Any?, R> { value -> if (value is R) emit(value) }
+
 inline fun <T, R> FlowTransformationFlow<T>.flowTransformationMap(crossinline mapper: suspend (T) -> R): FlowTransformationFlow<R> = flowTransformationTransform { value ->
     emit(mapper(value))
 }
@@ -53,12 +56,22 @@ fun flowTransformationFlowOf(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int): Fl
     emit(a); emit(b); emit(c); emit(d); emit(e); emit(f)
 }
 
+fun <T> flowTransformationFlowOf3(a: T, b: T, c: T): FlowTransformationFlow<T> = flowTransformationUnsafeFlow {
+    emit(a); emit(b); emit(c)
+}
+
 suspend fun flowTransformationCollectSum(flow: FlowTransformationFlow<Int>): Int {
     val items = ArrayList<Int>()
     flow.flowTransformationCollect { items.add(it) }
     var sum = 0
     for (x in items) sum += x
     return sum
+}
+
+suspend fun <T> flowTransformationCollectCount(flow: FlowTransformationFlow<T>): Int {
+    var count = 0
+    flow.flowTransformationCollect { count++ }
+    return count
 }
 
 class FlowTransformationTests {
@@ -68,5 +81,9 @@ class FlowTransformationTests {
         assertEquals(12, blockOn { flowTransformationCollectSum(base.flowTransformationFilter { it % 2 == 0 }) })                    // 2+4+6 = 12
         assertEquals(210, blockOn { flowTransformationCollectSum(base.flowTransformationMap { it * 10 }) })                         // 210
         assertEquals(9, blockOn { flowTransformationCollectSum(base.flowTransformationFilterDivisibleBy(FlowTransformationDivisor(3))) })        // 3+6 = 9
+        val mixed: FlowTransformationFlow<Any?> = flowTransformationFlowOf3(1, "skip", 2)
+        assertEquals(3, blockOn { flowTransformationCollectSum(mixed.flowTransformationFilterIsInstance<Int>()) })
+        val nullableMixed: FlowTransformationFlow<Any?> = flowTransformationFlowOf3(null, "keep", 1)
+        assertEquals(2, blockOn { flowTransformationCollectCount(nullableMixed.flowTransformationFilterIsInstance<String?>()) })
     }
 }
