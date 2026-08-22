@@ -967,6 +967,36 @@ static partial class ClrMemberResolution
     static List<TypeNode> ReadArgTypes(JsonObject node) =>
         (node["argTypes"] as JsonArray)?.Where(x => x != null).Select(TypeJson.Read).ToList() ?? new List<TypeNode>();
 
+    // DefaultArgSplice runs before NetInteropBinding, but it must read defaults from the exact MethodDef this pass will
+    // later put in memberRef. Share this resolver, including constructed-owner substitution, interface traversal,
+    // accessibility and overload ranking; a second approximation here can materialize a sibling's value irreversibly.
+    internal static bool TryResolveExternalMethodForDefaults(ReferenceMetadataIndex refs, TypeNode.Fqn ownerFqn,
+        string name, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
+        out MethodInfo declaration)
+    {
+        declaration = null;
+        if (refs == null || ownerFqn == null || name == null || callSignature == null) return false;
+        _refs = refs;
+        var open = ResolveOwnerType(ownerFqn);
+        if (open == null) return false;
+        TypeNode Physical(TypeNode type, bool typeArg) => BirTypeLowering.CanonicalPhysicalSlotType(
+            BirTypeLowering.LowerPhysicalType(
+                type, refs.Aliases, refs.IsValueType, refs.PhysicalTypeNames, typeArg));
+        var argNodes = callSignature.Select(type => Physical(type, typeArg: false)).ToList();
+        var ownerArgs = ownerFqn.Args?.Select(type => Physical(type, typeArg: true)).ToArray();
+        var flags = BindingFlags.Public | BindingFlags.NonPublic
+            | (isStatic ? BindingFlags.Static : BindingFlags.Instance);
+        var candidates = Candidates(open, name, argNodes, ownerArgs, flags)
+            .Where(IsPublicOrProtected)
+            .Where(method => method.IsGenericMethodDefinition
+                ? method.GetGenericArguments().Length == methodArity
+                : methodArity == 0)
+            .ToList();
+        declaration = PickUnique(candidates, method => method.GetParameters(), argNodes, ownerArgs,
+            $"default argument owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
+        return true;
+    }
+
     // Pick the UNIQUE member whose declared params match `argNodes`: Tier 1 all-exact; Tier 2 all-applicable (def-level
     // assignability, shallow — mirrors ilemit PickOpenCtor.ParamAccepts); Tier 3 fewest-`object` strict-min-unique.
     // 0 = hard ABI error, >1 = malformed. NEVER a first-pick.

@@ -109,14 +109,7 @@ static class DefaultArgSplice
         var owner = TypeJson.OwnerName(ownerNode);
         var method = Str(node["method"]);
         if (owner == null || method == null) return;
-        var sigKey = ReferenceMetadataIndex.SignatureKeyOf(sig);
-        var relaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(sig, relaxed: true);
-        var declarationId = Str(node[DeclarationIdentityBinding.Key]);
-        var defaults = declarationId != null
-            ? refs.KotlinDefaultsForDeclarationIdentity(declarationId)
-            : refs.KotlinDefaultsFor(owner, method, sig.Count, sigKey, relaxedSigKey);
-        defaults ??= refs.KotlinDefaultsForImplementedInterface(
-            owner, TypeArgsOf(ownerNode)?.Count ?? 0, method, sig.Count, sigKey, relaxedSigKey);
+        var defaults = DefaultsForCall(node, ownerNode, owner, method, sig, refs);
         if (defaults == null) return;
 
         // Parse the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
@@ -216,20 +209,17 @@ static class DefaultArgSplice
             // `sig`/`shapeTypes` IS the callee's declared parameter vector, so it identifies the exact OVERLOAD — two
             // same-arity declarations of one name (an extension `String.tagged(t = this)` beside a
             // `tagged(name, items = emptyList())`) carry different defaults and must not be told apart by arity alone.
-            sigKey = ReferenceMetadataIndex.SignatureKeyOf(sig);
-            relaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(sig, relaxed: true);
             method = Str(node["method"]);
             if (method == null) return;
             owner = TypeJson.OwnerName(node["ownerType"] ?? node["calleeOwner"] ?? node["owner"]);
         }
         // The callee as a DIAGNOSTIC names itself: `.ctor` is a key component, not something to show a reader.
         var label = isNew ? owner + " constructor" : method;
-        var declarationId = !isNew ? Str(node[DeclarationIdentityBinding.Key]) : null;
-        var defaults = declarationId != null
-            ? refs.KotlinDefaultsForDeclarationIdentity(declarationId)
-            : refs.KotlinDefaultsFor(owner, method, sigCount, sigKey, relaxedSigKey);
-        defaults ??= refs.KotlinDefaultsForImplementedInterface(
-            owner, TypeArgsOf(node["ownerType"])?.Count ?? 0, method, sigCount, sigKey, relaxedSigKey);
+        var defaults = isNew
+            ? refs.KotlinDefaultsFor(owner, method, sigCount, sigKey, relaxedSigKey)
+            : DefaultsForCall(
+                node, node["ownerType"] ?? node["calleeOwner"] ?? node["owner"], owner, method,
+                node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray, refs);
         if (defaults == null)
         {
             if (refs.KotlinDefaultsAmbiguous(owner, method, sigCount))
@@ -254,6 +244,31 @@ static class DefaultArgSplice
 
     // The type ARGUMENTS of a `{t:fqn}` type reference, or null.
     static JsonArray TypeArgsOf(JsonNode type) => (type as JsonObject)?["args"] as JsonArray;
+
+    // Resolve defaults from the exact MethodDef the scalar member binder selects. The declaration-identity path is
+    // already exact for compiler-produced methods; plain CLR calls use the shared structural resolver. The existing
+    // owner/signature indexes remain only for call shapes that resolver cannot yet represent, never after it selected
+    // a MethodDef with no default (which would incorrectly fall through to a sibling declaration).
+    static Dictionary<int, string> DefaultsForCall(JsonObject node, JsonNode ownerNode, string owner, string method,
+        JsonArray signature, ReferenceMetadataIndex refs)
+    {
+        if (Str(node[DeclarationIdentityBinding.Key]) is string declarationId)
+            return refs.KotlinDefaultsForDeclarationIdentity(declarationId);
+        if (signature == null) return null;
+        var callSignature = signature.Select(TypeJson.Read).ToArray();
+        if (TypeJson.Read(ownerNode) is TypeNode.Fqn ownerType
+            && callSignature.All(type => type != null)
+            && refs.TryKotlinDefaultsForSelectedMethod(
+                ownerType, method, (node["typeArgs"] as JsonArray)?.Count ?? 0, Str(node["k"]) == "callStatic",
+                callSignature, out var selectedDefaults))
+            return selectedDefaults;
+
+        var sigKey = ReferenceMetadataIndex.SignatureKeyOf(signature);
+        var relaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true);
+        var defaults = refs.KotlinDefaultsFor(owner, method, signature.Count, sigKey, relaxedSigKey);
+        return defaults ?? refs.KotlinDefaultsForImplementedInterface(
+            owner, TypeArgsOf(ownerNode)?.Count ?? 0, method, signature.Count, sigKey, relaxedSigKey);
+    }
 
     /// Materialise every omitted default of `args` from `defaults` and write it into the binding the slot READS.
     /// Nothing is hoisted and nothing is wrapped: the values a carrier binds are already bindings, so a

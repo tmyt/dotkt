@@ -1,4 +1,4 @@
 # The exact selected base accessor cannot be represented with the lowered return. The sibling `Tag` is untouched.
-no .NET member matches the resolved descriptor
-override base=plainnet.PropBase.get_Items()
-ABI mismatch
+'CConcreteProp' derives from 'plainnet.PropBase'
+member 'get_Items' declares 'System.Collections.Generic.List<System.Nullable<System.Int32>>' at its return
+slot NO Kotlin expression inhabits
