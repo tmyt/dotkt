@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.10-beta1 (2026-08-22)
+
 ### Fixed
 
 - **Covariant overrides now fill interface slots declared in referenced Kotlin assemblies (#320).** bir2cir joins
