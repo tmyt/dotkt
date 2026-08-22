@@ -1,9 +1,13 @@
 import InheritedOptionalDefaults.BaseWriter
 import InheritedOptionalDefaults.DerivedWriter
+import InheritedOptionalDefaults.EnumDefaults
 import InheritedOptionalDefaults.GenericDerivedWriter
 import InheritedOptionalDefaults.HidingDerivedWriter
 import InheritedOptionalDefaults.IDerivedWriter
 import InheritedOptionalDefaults.InterfaceWriter
+import InheritedOptionalDefaults.KeyModifiers
+import InheritedOptionalDefaults.NavigationMethod
+import InheritedOptionalDefaults.StaticEnumDefaults
 import InheritedOptionalDefaults.ValueBaseWriter
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
@@ -42,6 +46,15 @@ class InheritedOptionalArgumentTests {
         assertEquals("interface:1", iface.Save("interface"))
         assertEquals("base-value:5", base.Save("base-value"))
         assertEquals("derived-value:7", hiding.Save("derived-value"))
+    }
+
+    @TestAttribute
+    fun enumOptionalValuesPreserveTheDeclaredEnumSlotAndPhysicalBits() {
+        val defaults = EnumDefaults()
+        assertEquals("0:0", defaults.Focus())
+        assertEquals("2:5", defaults.Move())
+        assertEquals("2:5", StaticEnumDefaults.Move())
+        assertEquals("0:4", defaults.Move(NavigationMethod.Unspecified, KeyModifiers.Shift))
     }
 
     private fun nullableBase(value: BaseWriter): BaseWriter? = value
