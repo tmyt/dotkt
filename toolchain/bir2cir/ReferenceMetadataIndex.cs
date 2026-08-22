@@ -5529,7 +5529,8 @@ sealed partial class ReferenceMetadataIndex
                     .ToArray();
                 semanticReturn = TypeNode.Parse(returnType.ToJsonString());
             }
-            catch (Exception ex) when (ex is FormatException or InvalidOperationException)
+            catch (Exception ex) when (ex is FormatException or InvalidOperationException
+                or KeyNotFoundException or JsonException)
             {
                 throw new InvalidDataException(
                     $"malformed [KotlinDeclarationIdentity] semantic signature: {semanticSignature.ToJsonString()}", ex);
