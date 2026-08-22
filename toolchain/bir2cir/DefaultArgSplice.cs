@@ -129,9 +129,37 @@ static class DefaultArgSplice
         foreach (var fill in fills) args.Add(fill);
     }
 
-    static bool IsMetadataConstant(JsonObject value) => Str(value["k"]) == "const"
-        || (Str(value["k"]) == "enumValue"
-            && value["type"] != null && Str(value["underlying"]) != null && Str(value["physicalValue"]) != null);
+    static bool IsMetadataConstant(JsonObject value)
+    {
+        var kind = Str(value["k"]);
+        if (kind == "const") return true;
+        if (kind == "default") return value["type"] != null;
+        if (kind == "enumValue")
+            return value["type"] != null && Str(value["underlying"]) != null
+                && Str(value["physicalValue"]) != null;
+
+        // CLR decimal and DateTime metadata constants have no literal opcode. ReferenceMetadataIndex materializes
+        // their exact public value-type constructors. Admit only those closed, all-constant shapes here so a shorter
+        // static call can receive them; an arbitrary KotlinDefault `new` must still use a call-evaluation plan.
+        if (kind != "new" || value["argTypes"] is not JsonArray argTypes || value["args"] is not JsonArray args
+            || argTypes.Count != args.Count) return false;
+        var owner = TypeJson.OwnerName(value["type"]);
+        string[] expected = owner switch
+        {
+            "System.Decimal" => new[]
+            {
+                "System.Int32", "System.Int32", "System.Int32", "System.Boolean", "System.Byte",
+            },
+            "System.DateTime" => new[] { "System.Int64" },
+            _ => null,
+        };
+        if (expected == null || expected.Length != args.Count) return false;
+        for (var i = 0; i < expected.Length; i++)
+            if (TypeJson.OwnerName(argTypes[i]) != expected[i]
+                || args[i] is not JsonObject arg || Str(arg["k"]) != "const"
+                || TypeJson.OwnerName(arg["type"]) != expected[i]) return false;
+        return true;
+    }
 
     // The binding an argument slot READS, or null when the slot is not a plan read.
     static JsonObject BindingOf(JsonNode slot, JsonArray bindings)

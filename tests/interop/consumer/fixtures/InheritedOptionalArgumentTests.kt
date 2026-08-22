@@ -1,5 +1,6 @@
 import InheritedOptionalDefaults.BaseWriter
 import InheritedOptionalDefaults.DerivedWriter
+import InheritedOptionalDefaults.DerivedValueTypeDefaults
 import InheritedOptionalDefaults.EnumDefaults
 import InheritedOptionalDefaults.EnumWidthDefaults
 import InheritedOptionalDefaults.GenericDerivedWriter
@@ -10,6 +11,8 @@ import InheritedOptionalDefaults.KeyModifiers
 import InheritedOptionalDefaults.NavigationMethod
 import InheritedOptionalDefaults.StaticEnumDefaults
 import InheritedOptionalDefaults.ValueBaseWriter
+import InheritedOptionalDefaults.ValueTypeDefaultConstructor
+import InheritedOptionalDefaults.ValueTypeDefaults
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
@@ -60,6 +63,18 @@ class InheritedOptionalArgumentTests {
             "-128:255:-32768:65535:-2147483648:4294967295:-9223372036854775808:18446744073709551615",
             EnumWidthDefaults().Read(),
         )
+    }
+
+    @TestAttribute
+    fun valueTypeOptionalValuesAreMaterializedForEveryCallShape() {
+        val direct = ValueTypeDefaults()
+        val inherited = DerivedValueTypeDefaults()
+
+        assertEquals(true, direct.Instance())
+        assertEquals(true, inherited.Instance())
+        assertEquals(true, ValueTypeDefaults.Static())
+        assertEquals(true, ValueTypeDefaultConstructor().ValuesMatch)
+        assertEquals(638000000000000000L, direct.DateTimeConstant())
     }
 
     private fun nullableBase(value: BaseWriter): BaseWriter? = value
