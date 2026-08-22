@@ -16,8 +16,11 @@ the real thing) and replaces only the backend, lowering Kotlin IR → CIL that r
 
 ## Getting started
 
+Pin the version to the one shown on this page: an unpinned `dotnet new install` resolves the newest
+*stable* release, so it skips pre-releases.
+
 ```
-dotnet new install DotKt.Templates
+dotnet new install DotKt.Templates::<version>
 dotnet new dotkt-cli -o hello
 cd hello
 dotnet run

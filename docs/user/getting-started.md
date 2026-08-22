@@ -29,7 +29,8 @@ DotKt ships as four NuGet packages:
 | `DotKt.Templates` | `dotnet new` project templates |
 
 Install the templates once. **Pin the version** for reproducible builds — DotKt is pre-1.0; the feed's
-current release is `0.9.10-beta1` (a pre-release), and pinning keeps a project on a known toolchain across feed updates:
+newest version is `0.9.10-beta1`, a pre-release, and pinning keeps a project on a known toolchain
+across feed updates:
 
 ```bash
 dotnet new install DotKt.Templates::0.9.10-beta1
