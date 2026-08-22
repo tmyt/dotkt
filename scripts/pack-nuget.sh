@@ -42,7 +42,7 @@ KOTLINVER="$(grep -oE '<DotKtKotlinVersion>[^<]+' "$ROOT/packaging/DotKt.Version
 COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 for sp in packaging/DotKt.Sdk/Sdk/Sdk.props packaging/DotKt.Sdk.Mpp/Sdk/Sdk.props; do
 	sv="$(grep -oE "<DotKtVersion Condition[^>]*>[^<]+" "$ROOT/$sp" | sed 's/.*>//')"
-	[[ "$sv" == "$VERCORE" ]] || die "$sp DotKtVersion default ($sv) != release version core ($VERCORE) — bump it (else the SDK ships pulling a stale toolchain, GitHub #131)"
+	[[ "$sv" == "$VERCORE" ]] || die "$sp DotKtVersion default ($sv) != release version core ($VERCORE) — bump it, or the SDK will ship with a stale toolchain"
 done
 # The shipped Toolchain.props is copied verbatim, so its public Kotlin-version property cannot consume the
 # pack project's DotKt.Versions.props. Guard the duplicated literal exactly like the SDK's embedded package version.
@@ -61,21 +61,21 @@ done
 # the substitution tokens survive and the un-substitutable DOC fragments are current.)
 # (a) The `dotnet new` template project files must keep the DOTKT_SDK_VERSION placeholder (substituted at pack time).
 TPL_CSPROJ="packaging/DotKt.Templates/content/dotkt-cli/DotKtApp.csproj"
-grep -q 'DotKt\.Sdk/DOTKT_SDK_VERSION' "$ROOT/$TPL_CSPROJ" || die "$TPL_CSPROJ lost its 'DotKt.Sdk/DOTKT_SDK_VERSION' placeholder — restore it (it is substituted to the release version at pack time, GitHub #53)"
+grep -q 'DotKt\.Sdk/DOTKT_SDK_VERSION' "$ROOT/$TPL_CSPROJ" || die "$TPL_CSPROJ lost its 'DotKt.Sdk/DOTKT_SDK_VERSION' placeholder — restore it; pack substitutes the release version there"
 # The MPP template (#133) ships a global.json pinning BOTH DotKt.Sdk.Mpp and its nested DotKt.Sdk — the only place the
 # NuGet nested-SDK resolver reads the base version from, so the scaffolded project builds without hand-writing one.
 TPL_MPP_GJ="packaging/DotKt.Templates/content/dotkt-mpp/global.json"
-grep -q 'DOTKT_SDK_VERSION' "$ROOT/$TPL_MPP_GJ" || die "$TPL_MPP_GJ lost its 'DOTKT_SDK_VERSION' placeholder — restore it (both SDK pins are substituted to the release version at pack time, GitHub #133)"
+grep -q 'DOTKT_SDK_VERSION' "$ROOT/$TPL_MPP_GJ" || die "$TPL_MPP_GJ lost its 'DOTKT_SDK_VERSION' placeholder — restore it; pack substitutes both SDK pins there"
 # (b) The nuspec kotlin tag must be the substitution token, never a hardcoded kotlin-<ver>.
 for ns in packaging/DotKt.Toolchain/DotKt.Toolchain.nuspec packaging/DotKt.Stdlib/DotKt.Stdlib.nuspec packaging/DotKt.Sdk/DotKt.Sdk.nuspec packaging/DotKt.Sdk.Mpp/DotKt.Sdk.Mpp.nuspec; do
-	grep -q 'kotlin-\$kotlinVersion\$' "$ROOT/$ns" || die "$ns: kotlin tag must be 'kotlin-\$kotlinVersion\$' (nuspec-substituted from DotKtKotlinVersion), not a hardcoded version (GitHub #53)"
-	if grep -qE 'kotlin-[0-9]' "$ROOT/$ns"; then die "$ns: hardcoded 'kotlin-<ver>' tag — use 'kotlin-\$kotlinVersion\$' (GitHub #53)"; fi
+	grep -q 'kotlin-\$kotlinVersion\$' "$ROOT/$ns" || die "$ns: kotlin tag must be 'kotlin-\$kotlinVersion\$' (nuspec-substituted from DotKtKotlinVersion), not a hardcoded version"
+	if grep -qE 'kotlin-[0-9]' "$ROOT/$ns"; then die "$ns: hardcoded 'kotlin-<ver>' tag — use 'kotlin-\$kotlinVersion\$'"; fi
 done
 # (c) The doc `DotKt.Sdk/<ver>` examples cannot be substituted (docs are not packed) — they must match VERCORE.
 for doc in README.md docs/user/getting-started.md; do
-	grep -q "DotKt\.Sdk/$VERCORE" "$ROOT/$doc" || die "$doc: no 'DotKt.Sdk/$VERCORE' example — its SDK-version fragment drifted from the release core ($VERCORE); bump it (GitHub #53)"
+	grep -q "DotKt\.Sdk/$VERCORE" "$ROOT/$doc" || die "$doc: no 'DotKt.Sdk/$VERCORE' example — its SDK-version fragment drifted from the release core ($VERCORE); bump it"
 	stale="$(grep -oE "DotKt\.Sdk/[0-9][^\"< )]*" "$ROOT/$doc" | grep -vFx "DotKt.Sdk/$VERCORE" || true)"
-	[[ -z "$stale" ]] || die "$doc: stale SDK-version fragment(s) [$stale] — expected DotKt.Sdk/$VERCORE (GitHub #53)"
+	[[ -z "$stale" ]] || die "$doc: stale SDK-version fragment(s) [$stale] — expected DotKt.Sdk/$VERCORE"
 done
 
 info "build compiler (installDist) + tools"

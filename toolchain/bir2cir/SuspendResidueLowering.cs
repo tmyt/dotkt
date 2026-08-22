@@ -73,7 +73,7 @@ static class SuspendResidueLowering
                 throw new NotSupportedException(
                     $"bir2cir: suspend-lowering: '{owner}.{name}' reached CIR still carrying the `suspend` modifier. "
                     + "Every suspend declaration in an application build is transformed into its cold Continuation "
-                    + "shape (state machine + `$dotkt_suspend` cold entry + public Task bridge), and a shape the v1 "
+                    + "shape (state machine + `$dotkt_suspend` cold entry + public Task bridge), and a shape the "
                     + "classifier refuses gets a call-time-throw COLD ENTRY rather than a retained original — so this "
                     + "is a cold-lowering MISS, not a supported residue.");
             // An ABSTRACT declaration declares a slot and no body — there is nothing to author, and authoring one
@@ -81,8 +81,7 @@ static class SuspendResidueLowering
             if (Bool(method["abstract"]) || method["body"] is not JsonArray) continue;
             method["body"] = ThrowStubBody(
                 $"{owner}.{name}: this suspend declaration has no state-machine body — bir2cir's cold-core coroutine "
-                + "lowering leaves it un-lowered in a standard-library build (docs/design-coroutine-cold-core-task-"
-                + "bridge.md §11). It is compile-time surface only and cannot be invoked.");
+                + "lowering leaves it un-lowered in a standard-library build. It is compile-time surface only and cannot be invoked.");
             method["bodyTerminates"] = true;
         }
     }

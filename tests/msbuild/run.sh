@@ -49,7 +49,7 @@ KTPROJ
 	ktproj_run "$d/app.ktproj" "$d/run.err" >/dev/null || rc=$?
 	rm -rf "$d"
 	if (( rc == 0 )); then
-		echo "KTPROJ GATE RED — #163 self-test FAILED: a print-then-crash .ktproj was accepted (exit-code hole open)"; exit 1
+		echo "KTPROJ GATE RED — exit-status self-test FAILED: a print-then-crash .ktproj was accepted"; exit 1
 	fi
 	echo "SELFTEST ktproj (print-then-crash correctly REJECTED, run exit $rc)"
 }

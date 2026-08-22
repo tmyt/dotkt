@@ -92,7 +92,7 @@ static class NullableGenericOverloadCollision
                 }
                 throw new InvalidOperationException(
                     $"bir2cir: {file}: {ownerName}: two declarations of '{name}' erase to one CLR signature. "
-                    + $"A nullable generic 'T?' is emitted as System.Object (#86), so '{Render(prior, name, ownerTps)}' "
+                    + $"A nullable generic 'T?' is emitted as System.Object, so '{Render(prior, name, ownerTps)}' "
                     + $"and '{Render(mo, name, ownerTps)}' both become '{name}({ErasedVector(mo)})' and only one can be "
                     + "called. Give one of them a different name or a different parameter count.");
             }
@@ -116,7 +116,7 @@ static class NullableGenericOverloadCollision
                 if (SourceKey(prior) == SourceKey(co)) continue;
                 throw new InvalidOperationException(
                     $"bir2cir: {file}: {ownerName}: two constructors erase to one CLR signature. "
-                    + $"A nullable generic argument is emitted as System.Object (#86), so "
+                    + $"A nullable generic argument is emitted as System.Object, so "
                     + $"'{ownerName}({SourceVector(prior, ownerTps)})' and '{ownerName}({SourceVector(co, ownerTps)})' "
                     + $"both become '.ctor({key})' and only one can be called. "
                     + "Give one of them a different parameter count, or route it through a named factory function.");

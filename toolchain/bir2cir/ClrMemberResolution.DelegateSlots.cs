@@ -275,7 +275,7 @@ static partial class ClrMemberResolution
             .Where(m => m.Name == "Invoke").ToList();
         if (invoke.Count != 1)
             throw new InvalidOperationException(
-                $"bir2cir: the delegate '{slot.Name}' has {invoke.Count} Invoke declarations, not one (#400)");
+                $"bir2cir: the delegate '{slot.Name}' has {invoke.Count} Invoke declarations, not one");
         return SubstOwnerParams(invoke[0].ReturnType, slot.Args ?? Array.Empty<TypeNode>());
     }
 
@@ -295,7 +295,7 @@ static partial class ClrMemberResolution
             || (returnName.Name != UnitFqn && returnName.Name != "object" && returnName.Name != "System.Object"))
             throw new InvalidOperationException(
                 $"bir2cir: a Unit lambda fills '{slot.Name}', whose Invoke returns "
-                + $"{TypeNode.ToJson(slotReturn)} — no Unit value can be produced for that slot (#400)");
+                + $"{TypeNode.ToJson(slotReturn)} — no Unit value can be produced for that slot");
 
         var parameters = naturalFn.DelegateParams;
         var frame = new TypeNode.Fn(false, new TypeNode.Fqn("void"),

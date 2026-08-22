@@ -123,11 +123,11 @@ run_selftest_lane tests/ir/selftest .bir.json
 run_selftest_lane tests/ir/selftest-schema .cir.json
 if [ $self_rc -ne 0 ]; then echo "SCHEMA GATE: RED (self-test)"; exit 1; fi
 
-echo "== verify-schema: validating freshly-emitted BIR/CIR against the frozen #37 contract =="
+echo "== verify-schema: validating freshly-emitted BIR/CIR against the frozen schema contract =="
 "$PY" scripts/verify-schema.py "${globs[@]}"
 rc=$?
 if [ $rc -eq 0 ]; then
-  echo "== verify-schema: enforcing the #397 one-way property-accessor identity boundary =="
+  echo "== verify-schema: enforcing the one-way property-accessor identity boundary =="
   "$PY" scripts/verify-property-accessor-identity.py "${property_globs[@]}"
   rc=$?
 fi

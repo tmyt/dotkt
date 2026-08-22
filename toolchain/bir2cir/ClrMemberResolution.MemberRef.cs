@@ -126,7 +126,7 @@ static partial class ClrMemberResolution
         var ctor = member as ConstructorInfo;
         var method = shipped as MethodInfo ?? member as MethodInfo;
         if (ctor == null && member as MethodInfo == null)
-            throw new InvalidOperationException($"bir2cir: cannot reference '{member}' — neither a method nor a constructor (#370)");
+            throw new InvalidOperationException($"bir2cir: cannot reference '{member}' — neither a method nor a constructor");
         var node = new MemberRefNode(
             Kind: kind,
             Assembly: PhysicalAssemblyOf(member),
@@ -157,14 +157,14 @@ static partial class ClrMemberResolution
         _refs = refs ?? throw new ArgumentNullException(nameof(refs));
         var owner = new TypeNode.Fqn(ownerFqn);
         var open = ResolveOwnerType(owner)
-            ?? throw new InvalidOperationException($"bir2cir: synthesized base owner '{ownerFqn}' does not resolve to a .NET type (#370)");
+            ?? throw new InvalidOperationException($"bir2cir: synthesized base owner '{ownerFqn}' does not resolve to a .NET type");
         // Protected is the usual shape for an abstract base's constructor (System.Attribute's is), so the probe
         // must see non-public declarations; the parameter count is what selects, and one match is required.
         var ctors = open.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .Where(c => c.GetParameters().Length == 0 && IsPublicOrProtected(c)).ToList();
         if (ctors.Count != 1)
             throw new InvalidOperationException(
-                $"bir2cir: '{ownerFqn}' has {ctors.Count} parameterless constructors; a synthesized delegation needs exactly one (#370)");
+                $"bir2cir: '{ownerFqn}' has {ctors.Count} parameterless constructors; a synthesized delegation needs exactly one");
         return MemberRefJson(ctors[0], MemberRefNode.Kinds.Ctor, open, Array.Empty<TypeNode>());
     }
 
@@ -196,7 +196,7 @@ static partial class ClrMemberResolution
         if (expected != actual)
             throw new InvalidOperationException(
                 $"bir2cir: declaring type '{f.Name}' of '{DescribeMember(member)}' has {expected} metadata "
-                + $"parameter(s), but its memberRef carries {actual} argument(s) (#370)");
+                + $"parameter(s), but its memberRef carries {actual} argument(s)");
     }
 
     static TypeNode ShippedFieldType(FieldInfo field)
@@ -233,13 +233,13 @@ static partial class ClrMemberResolution
         var name = declaring.Assembly?.GetName()?.Name;
         if (string.IsNullOrEmpty(name))
             throw new InvalidOperationException(
-                $"bir2cir: declaring type '{declaring}' of '{DescribeMember(member)}' has no assembly identity (#370)");
+                $"bir2cir: declaring type '{declaring}' of '{DescribeMember(member)}' has no assembly identity");
         return ManagedReferenceCatalog.PhysicalAssemblyName(name);
     }
 
     static Type DeclaringTypeOf(MemberInfo member) =>
         member.DeclaringType ?? throw new InvalidOperationException(
-            $"bir2cir: resolved member '{DescribeMember(member)}' has no declaring type (#370)");
+            $"bir2cir: resolved member '{DescribeMember(member)}' has no declaring type");
 
     // The declaring type, instantiated as the USE SITE sees it. The receiver's arguments are projected along
     // the declaration edge, so `List<string>.Add` is declared on `List`1<string>` while an accessor the
@@ -256,7 +256,7 @@ static partial class ClrMemberResolution
             _refs.PhysicalTypeNames, typeArg, _localTypes);
         return lowered is TypeNode.Fn fn
             ? BirTypeLowering.DelegateFqnOf(fn)
-                ?? throw new InvalidOperationException("bir2cir: a lowered owner function argument has no CLR delegate family (#370)")
+                ?? throw new InvalidOperationException("bir2cir: a lowered owner function argument has no CLR delegate family")
             : lowered;
     }
 

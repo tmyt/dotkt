@@ -97,7 +97,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return method;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
+        // member-lookup-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetMethods(flags)
             .Single(candidate => candidate.Module == method.Module && candidate.MetadataToken == method.MetadataToken);
     }
@@ -108,7 +108,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return constructor;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
+        // member-lookup-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetConstructors(flags)
             .Single(candidate => candidate.Module == constructor.Module && candidate.MetadataToken == constructor.MetadataToken);
     }
@@ -119,7 +119,7 @@ sealed partial class Emitter
         if (owner is not { IsConstructedGenericType: true }) return field;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic
             | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
-        // #370-residual: mechanical declaration recovery by module+metadata token, never member selection.
+        // member-lookup-residual: mechanical declaration recovery by module+metadata token, never member selection.
         return owner.GetGenericTypeDefinition().GetFields(flags)
             .Single(candidate => candidate.Module == field.Module && candidate.MetadataToken == field.MetadataToken);
     }
@@ -128,7 +128,7 @@ sealed partial class Emitter
     {
         var anchored = IsTargetSignatureInstantiation(type)
             ? new SignatureMethod(type, method)
-            // #370-residual: Reflection.Emit's re-anchoring API: it takes the MemberInfo, not a name
+            // member-lookup-residual: Reflection.Emit's re-anchoring API: it takes the MemberInfo, not a name
             : TypeBuilder.GetMethod(type, method);
         _anchoredMethodDefinitions[anchored] = method;
         return anchored;
@@ -137,13 +137,13 @@ sealed partial class Emitter
     static ConstructorInfo AnchorConstructor(Type type, ConstructorInfo constructor) =>
         IsTargetSignatureInstantiation(type)
             ? new SignatureConstructor(type, constructor)
-            // #370-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
+            // member-lookup-residual: anchoring an ALREADY-resolved member onto a constructed owner, not choosing one
             : TypeBuilder.GetConstructor(type, constructor);
 
     static FieldInfo AnchorField(Type type, FieldInfo field) =>
         IsTargetSignatureInstantiation(type)
             ? new SignatureField(type, field)
-            // #370-residual: Reflection.Emit's re-anchoring API: it takes the MemberInfo, not a name
+            // member-lookup-residual: Reflection.Emit's re-anchoring API: it takes the MemberInfo, not a name
             : TypeBuilder.GetField(type, field);
 
     // PersistedAssemblyBuilder reads the public reflection surface below to encode a MemberRef. ECMA-335 requires

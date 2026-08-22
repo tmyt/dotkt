@@ -99,7 +99,7 @@ sealed partial class Emitter
             if (PrimaryFromRef(a, "memberRef") is not ConstructorInfo nctor)
                 throw new InvalidOperationException(
                     $"ilemit: applied attribute [{attr}] carries no resolved member reference. Every external "
-                    + "member arrives named; a node without one is an earlier-layer drop (#370)");
+                    + "member arrives named; a node without one is an earlier-layer drop");
             return TryAttribute(nctor, argTypes, args, namedArgs, attr);
         }
         // The attribute type must be emitted in THIS assembly (present in _types). A stdlib-only annotation that the app
@@ -353,7 +353,7 @@ sealed partial class Emitter
             var pb = defineParam(i, attrs, name.Length > 0 ? name : null);
             // `vararg xs: T` -> [ParamArray] so the .NET signature is a params array (a C# OR Kotlin consumer can spread).
             if (vararg) SetAttribute(pb.SetCustomAttribute,
-                // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
+                // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 Bcl("System.ParamArrayAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
             if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
             // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an

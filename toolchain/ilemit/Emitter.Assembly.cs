@@ -28,7 +28,7 @@ sealed partial class Emitter
         // signal together with compiler-generated embedded metadata carriers before applying Kotlin-only reverse maps.
         const string dotKtMarkerKey = "DotKt.Compiler";
         const string dotKtMarkerValue = "metadata-v1";
-        // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
+        // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
         var assemblyMetadataCtor = Bcl("System.Reflection.AssemblyMetadataAttribute").GetConstructor(new[] { Bcl("System.String"), Bcl("System.String") });
         SetAttribute(ab.SetCustomAttribute, assemblyMetadataCtor,
             new[] { Bcl("System.String"), Bcl("System.String") }, dotKtMarkerKey, dotKtMarkerValue);
@@ -37,7 +37,7 @@ sealed partial class Emitter
         if (_targetFrameworkMoniker != null)
         {
             var targetFrameworkCtor = Bcl("System.Runtime.Versioning.TargetFrameworkAttribute")
-                // #370-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
+                // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 .GetConstructor(new[] { Bcl("System.String") });
             SetAttribute(ab.SetCustomAttribute, targetFrameworkCtor,
                 new[] { Bcl("System.String") }, _targetFrameworkMoniker);
@@ -477,14 +477,14 @@ sealed partial class Emitter
                         // OR a generic STDLIB interface instantiated even with a concrete arg) is a TypeBuilderInstantiation
                         // whose .GetMethods() throws. Try GetMethods; on failure, enumerate the OPEN definition's methods
                         // and re-anchor each to the instantiation via TypeBuilder.GetMethod.
-                        // #370-residual: enumerate only to choose the TypeBuilder anchoring face; NamedInterfaceSlots
+                        // member-lookup-residual: enumerate only to choose the TypeBuilder anchoring face; NamedInterfaceSlots
                         // replaces the external set with bir2cir's resolved references before any operand is emitted.
-                        MethodInfo[] ifaceMs; bool reanchor; Type slotOwner; // #370-residual: anchoring-face probe
+                        MethodInfo[] ifaceMs; bool reanchor; Type slotOwner; // member-lookup-residual: anchoring-face probe
                         try { ifaceMs = itype.GetMethods(); reanchor = false; slotOwner = itype; }
                         catch (NotSupportedException)
                         {
                             slotOwner = itype.GetGenericTypeDefinition();
-                            // #370-residual: anchoring-face probe; carried slots replace this external set.
+                            // member-lookup-residual: anchoring-face probe; carried slots replace this external set.
                             ifaceMs = slotOwner.GetMethods(); reanchor = true;
                         }
                         // The slots are named on the type that implements them. Only the member SET is replaced:
@@ -497,7 +497,7 @@ sealed partial class Emitter
                         // here as well would wire the same MethodImpl twice when the declaring owner is later visited.
                         foreach (var im in ifaceMs)
                         {
-                            // #370-residual: the local axis: wiring a MethodImpl on a type being built (#395)
+                            // member-lookup-residual: the local axis: wiring a MethodImpl on a type being built (#395)
                             // OVERLOADED body methods (e.g. the generic CompareTo(V) + the non-generic IComparable bridge
                             // CompareTo(object)) collide in the name-keyed ti.Methods — wiring the wrong one to the slot
                             // is a TypeLoad "signature ... do not match". Disambiguate by the interface method's
@@ -520,7 +520,7 @@ sealed partial class Emitter
                                 WireMethodOverride(ti.TB, directiveBridge, reanchor ? AnchorOn(itype, im) : im);
                                 continue;
                             }
-                            // #370-residual: local axis — match MethodBuilders emitted in this assembly to a named slot.
+                            // member-lookup-residual: local axis — match MethodBuilders emitted in this assembly to a named slot.
                             var cands = ti.MethodsBySig
                                 .Where(kv => kv.Key.Name == im.Name && kv.Key.GenericArity == methodArity)
                                 .Select(kv => kv.Value)
@@ -630,7 +630,7 @@ sealed partial class Emitter
                             // Detect it from _methodTypeParams (IsGenericMethodDefinition is unreliable on an un-baked
                             // builder) before interpreting the non-generic return comparison.
                             var bodyIsGeneric = bodyMethod is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
-                            // #370-residual: TYPE-shape comparison deciding whether a local adapter is required.
+                            // member-lookup-residual: TYPE-shape comparison deciding whether a local adapter is required.
                             if (!bodyIsGeneric && ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
                                 ((bodyMethod.ReturnType.Name != ifaceRet.Name && !IsValueType(bodyMethod.ReturnType) && !IsValueType(ifaceRet))   // covariant reference narrowing
                                  || (ifaceRet == Bcl("System.Void") && bodyMethod.ReturnType != Bcl("System.Void"))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
@@ -679,13 +679,13 @@ sealed partial class Emitter
                 var itype = MapType(ibF);
                 // A generic instantiation over an EMITTED TypeBuilder arg can't GetMethods() — enumerate the OPEN
                 // definition and re-anchor each slot onto the instantiation (same pattern as the class wiring).
-                // #370-residual: enumerate only to choose the TypeBuilder anchoring face; NamedInterfaceSlots
+                // member-lookup-residual: enumerate only to choose the TypeBuilder anchoring face; NamedInterfaceSlots
                 // replaces the external set with bir2cir's resolved references before any operand is emitted.
-                MethodInfo[] ifaceMs; bool reanchor; // #370-residual: anchoring-face probe
+                MethodInfo[] ifaceMs; bool reanchor; // member-lookup-residual: anchoring-face probe
                 try { ifaceMs = itype.GetMethods(); reanchor = false; }
                 catch (NotSupportedException)
                 {
-                    // #370-residual: anchoring-face probe; carried slots replace this external set.
+                    // member-lookup-residual: anchoring-face probe; carried slots replace this external set.
                     ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true;
                 }
                 // The same resolved slot set drives MethodImpls authored ON an emitted interface as drives class

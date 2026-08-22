@@ -153,7 +153,7 @@ static class DefaultArgSplice
                 throw new InvalidOperationException(
                     "bir2cir: an omitted cross-module default argument reached the splice outside a call-evaluation " +
                     "plan. Its carrier binds this call's own receiver and arguments, so without bindings to read they " +
-                    "would each be evaluated a second time; the call site must emit a plan (docs/bir-cir-spec.md §2.7).");
+                    "would each be evaluated a second time; the call site must emit an evaluation plan.");
             var isBinding = o["id"] != null && o["phase"] != null && o.ContainsKey("expr");
             foreach (var kv in o) if (kv.Value != null) AssertPlaceholdersPlanned(kv.Value, isBinding && kv.Key == "expr");
         }

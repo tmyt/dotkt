@@ -233,7 +233,7 @@ class Sanity:
                     if isinstance(other, dict) and not _stamps_agree(o["sty"], other):
                         self.err(_f, _dl, f"'{k}' carries a stale 'sty': the stamp names {_compact(o['sty'])} "
                                           f"while its '{slot}' names {_compact(other)} — a pass that changes a node's "
-                                          "result type must rewrite or delete its 'sty' (spec §2.7)")
+                                          "result type must rewrite or delete its 'sty'")
             if k in ("local", "setLocal"):
                 n = o.get("name")
                 if isinstance(n, str) and n not in declared:

@@ -22,7 +22,7 @@
 # Usage: tests/run-ilverify.sh [--audit-baseline] <emitted-test-assembly.dll> [<more.dll> ...]
 set -euo pipefail
 
-# Known runtime-safe compiler defects (substring -> tracking issue + reason). Keys are narrow fixture/method or
+# Known runtime-safe compiler defects (substring -> reason). Keys are narrow fixture/method or
 # emitted-type identifiers so they only mask the documented shape.
 declare -A ILVERIFY_XFAIL=(
 	# The LAST remaining position split of #86, and a REFERENCE one: `Array<T?>` erases to `object[]`
@@ -37,7 +37,7 @@ declare -A ILVERIFY_XFAIL=(
 	# reified argument is `object` for a reference `X` too — which would make `List<String?>` an `IReadOnlyList<object>`
 	# and cost every C# consumer the element type — or whether an open `Array<T?>`/`List<T?>` should instead keep the
 	# type variable and box only at the value instantiations. Both are ABI decisions, neither is this fix's.
-	["ArrayTests::copyOfGrowsWithNullTail()"]='#86: an open Array<T?> is object[] T-independently while a concrete Array<String?> keeps string[], so copyOf().toList() yields an IReadOnlyList<object> where the slot is an IReadOnlyCollection<string> — runtime-safe (the array really is a string[]; RUN green); closing it needs the REFERENCE half of the carrier-argument decision'
+	["ArrayTests::copyOfGrowsWithNullTail()"]='an open Array<T?> is object[] T-independently while a concrete Array<String?> keeps string[], so copyOf().toList() yields an IReadOnlyList<object> where the slot is an IReadOnlyCollection<string> — runtime-safe (the array really is a string[]; RUN green); closing it needs the REFERENCE half of the carrier-argument decision'
 )
 
 # Intentionally unverifiable ECMA-335 IL (substring -> reason). These are not failed tests and not compiler defects:

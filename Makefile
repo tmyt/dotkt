@@ -110,11 +110,11 @@ verify-tests: pack ## canonical compiler behavior gate (categorized NUnit suites
 	bash tests/run-nunit-tests.sh
 	bash tests/compile-fail/run.sh
 
-verify-schema: ## the #37 BIR/CIR freeze enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-tests
+verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-tests
 	bash tests/ir/run-schema.sh
 	bash tests/ir/check-emitter-residual.sh
 
-verify-sanity: ## the offline IR-sanity gate (#112 P4 — semantic invariants over fresh BIR/CIR); run AFTER verify-tests
+verify-sanity: ## offline IR-sanity gate (semantic invariants over fresh BIR/CIR); run AFTER verify-tests
 	bash tests/ir/run-sanity.sh
 
 verify-lowering: ## lowering self-tests (synthetic BIR -> bir2cir -> CIR assertions, for rules the corpus no longer witnesses)
@@ -126,10 +126,10 @@ verify-msbuild: ## stateful MSBuild integration (same obj/ across source mutatio
 verify-packaged-sdk: ## packaged nupkg-resolution + cross-module async coroutine gate
 	bash tests/packaged-sdk/run.sh
 
-verify-target-universe: ## host-vs-target metadata scope calibration for the #335-#337 migration
+verify-target-universe: ## host-vs-target metadata scope calibration
 	bash tests/target-universe/run.sh
 
-verify-csharp14-extension-abi: ## released C# 14 static extension-member metadata oracle for #389
+verify-csharp14-extension-abi: ## released C# 14 static extension-member metadata oracle
 	bash tests/special/csharp14-static-extensions/run.sh
 
 verify-xfail-policy: ## self-test the shared NEW/FIXED baseline verdict without building the toolchain

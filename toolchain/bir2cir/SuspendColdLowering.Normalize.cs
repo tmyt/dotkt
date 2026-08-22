@@ -155,10 +155,10 @@ static partial class SuspendColdLowering
                 var cmp = Str(o["cmp"]);
                 if (cmp is not ("<=" or "<" or ">="))
                     throw new System.NotSupportedException(
-                        $"suspend-lowering (#98): counted for in '{(_ownerClass ?? _fileClass)}.{_name}' carries unsupported cmp '{cmp}'.");
+                        $"suspend-lowering: counted for in '{(_ownerClass ?? _fileClass)}.{_name}' carries unsupported cmp '{cmp}'.");
                 if (o["step"] is not JsonValue stepValue || !stepValue.TryGetValue<int>(out var step))
                     throw new System.NotSupportedException(
-                        $"suspend-lowering (#98): counted for in '{(_ownerClass ?? _fileClass)}.{_name}' carries no integer step.");
+                        $"suspend-lowering: counted for in '{(_ownerClass ?? _fileClass)}.{_name}' carries no integer step.");
 
                 // Match ilemit's structured counted-loop semantics exactly: evaluate `from` once, evaluate `to` at
                 // each header visit, execute the body while cmp(i,to), and route continue through the increment.
@@ -182,7 +182,7 @@ static partial class SuspendColdLowering
                 var elemTn = TypeJson.Read(o["elem"]);
                 if (elemTn == null)
                     throw new System.NotSupportedException(
-                        $"suspend-lowering (#82): forArray in '{(_ownerClass ?? _fileClass)}.{_name}' carries no `elem` — cannot flatten "
+                        $"suspend-lowering: forArray in '{(_ownerClass ?? _fileClass)}.{_name}' carries no `elem` — cannot flatten "
                         + "(ArrayConstructionLowering should have stamped it before the cold pass).");
                 var arrName = "__arr$" + kc;
                 var idxName = "__i$" + kc;
@@ -673,7 +673,7 @@ static partial class SuspendColdLowering
             foreach (var u in used)
                 if (!declared.Contains(u))
                     throw new System.InvalidOperationException(
-                        $"bir2cir suspend-lowering (#82): SM '{_smType}' invokeSuspend for '{(_ownerClass ?? _fileClass)}.{_name}' "
+                        $"bir2cir suspend-lowering: SM '{_smType}' invokeSuspend for '{(_ownerClass ?? _fileClass)}.{_name}' "
                         + $"references unspilled local '{u}' (neither the `result` param, an SM `var`, nor a catch/loop var). "
                         + "A splice-generated local crossing a resume point was not spilled into an SM field — it would reach "
                         + "ilemit as `load unknown var`.");

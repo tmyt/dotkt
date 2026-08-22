@@ -1306,7 +1306,7 @@ static partial class SuspendColdLowering
             if (!_memberAbstract)
             {
                 if (_typeParams.Count > 0 && _ownerTypeParams.Count > 0 && !_staticMember)
-                    _stubReason = "a generic suspend method on a generic class (v1)";
+                    _stubReason = "a generic suspend method on a generic class";
                 else if ((m["body"] as JsonArray) is JsonArray b0)
                     _stubReason = SuspensionRefusalReason(b0, inHandler: false, tryDepth: 0);
             }
@@ -1461,7 +1461,7 @@ static partial class SuspendColdLowering
                 {
                     Console.Error.WriteLine(
                         $"bir2cir: WARNING suspend-lowering: suspend lambda '{_smType}' is not segmentable "
-                        + $"({reason}) — emitting a call-time-throw SuspendLambda state machine (v1 limitation). "
+                        + $"({reason}) — emitting a call-time-throw SuspendLambda state machine. "
                         + "The lambda COMPILES; invoking it throws NotSupportedException.");
                     // SmTypeLambda's ctor/create protocol still needs capture + lambda-param fields even though the
                     // stub invokeSuspend never reads them — the fields are REAL on the emitted class, so they face
@@ -1469,14 +1469,13 @@ static partial class SuspendColdLowering
                     foreach (var (n, t) in _captures) FieldStorage(n, t, RoleCapture, lives: true, across: null);
                     foreach (var p in _params)
                         FieldStorage(Str(p["name"]), TypeJson.Read(p["type"]), RoleParam, lives: true, across: null);
-                    var msg = $"{_smType}: {reason} — this suspend lambda is not supported by bir2cir's v1 "
-                        + "cold-lowering (docs/design-coroutine-cold-core-task-bridge.md §11/§14).";
+                    var msg = $"{_smType}: {reason} — this suspend lambda is not supported by bir2cir's cold-lowering.";
                     newTypes.Add(SmTypeLambda(UnsupportedThrowBody(msg)));
                     return;
                 }
                 Console.Error.WriteLine(
                     $"bir2cir: WARNING suspend-lowering: '{(_ownerClass ?? _fileClass)}.{_name}' is not segmentable "
-                    + $"({reason}) — emitting a call-time-throw cold entry (v1 limitation). The suspend fun COMPILES; "
+                    + $"({reason}) — emitting a call-time-throw cold entry. The suspend fun COMPILES; "
                     + "invoking it throws NotSupportedException.");
                 newMethods.Add(ColdEntryStub(reason));
                 if (_name == "main" && _ownerClass == null) newMethods.Add(DrainMain());
@@ -3835,8 +3834,7 @@ static partial class SuspendColdLowering
         // concrete base whose override IS segmentable keeps virtual dispatch — only the stubbed slot throws.
         JsonObject ColdEntryStub(string reason)
         {
-            var msg = $"{(_ownerClass ?? _fileClass)}.{_name}: {reason} — this suspend fun is not supported by "
-                + "bir2cir's v1 cold-lowering (docs/design-coroutine-cold-core-task-bridge.md §11/§14).";
+            var msg = $"{(_ownerClass ?? _fileClass)}.{_name}: {reason} — this suspend fun is not supported by bir2cir's cold-lowering.";
             return ColdMethod(UnsupportedThrowBody(msg));
         }
 

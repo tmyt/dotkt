@@ -714,7 +714,7 @@ class V:
             if o.get("k") == "bindRef":
                 if o.get("id") not in bound:
                     self.err(f, path, f"bindRef id={o.get('id')!r} resolves to no enclosing call-evaluation plan "
-                                      "(§2.7 nesting rule: a bindRef reads a binding of an ancestor plan)")
+                                      "(a bindRef reads a binding of an ancestor plan)")
                 return
             for key, val in o.items():
                 self.plan_scope(f, val, path + "/" + key, bound)

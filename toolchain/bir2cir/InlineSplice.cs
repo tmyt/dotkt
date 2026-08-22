@@ -275,7 +275,7 @@ static class InlineSplice
         bool payloadDispatch = Str(payload["recv"]) == "dispatch";
         bool payloadStatic = Bool(payload["static"]);
         if (SuspendCaptureHazard(pBody, refuseOuter: !(payloadExt || payloadDispatch)) is string suspHazard)
-        { FailLoud(o, owner, name, pc, ga, $"payload newSuspendLambda capture '{suspHazard}' cannot be splice-rewritten (captured enclosing receiver, or a name colliding with the SM's own scope) — #75 Batch B"); return; }
+        { FailLoud(o, owner, name, pc, ga, $"payload newSuspendLambda capture '{suspHazard}' cannot be splice-rewritten: it captures an enclosing receiver or collides with the SM's own scope"); return; }
 
         // #23 (W2): a member-EXTENSION payload classifies `recv==extensionParam` (InlineBirStash's single-valued `recv` —
         // the extension `__self` SHADOWS dispatch), so STEP 5 binds only the extension. A payload-frame `{k:this}` here is a
@@ -295,8 +295,8 @@ static class InlineSplice
         bool coBindDispatch = payloadExt && !payloadStatic && hasDispatchRecv && payloadReadsDispatch;
         if (payloadExt && !coBindDispatch && payloadReadsDispatch)
         { FailLoud(o, owner, name, pc, ga, payloadStatic
-              ? "a static extension inline payload retained an enclosing `this` after representation lowering — cannot co-bind (#23)"
-              : "member-extension inline whose body reads the dispatch (enclosing-class) receiver but no recvs.dispatch was carried — cannot co-bind (#23)"); return; }
+              ? "a static extension inline payload retained an enclosing `this` after representation lowering — cannot co-bind"
+              : "member-extension inline whose body reads the dispatch (enclosing-class) receiver but no recvs.dispatch was carried — cannot co-bind"); return; }
 
         var pRet = payload["ret"]?.DeepClone();
 
@@ -578,7 +578,7 @@ static class InlineSplice
         // loud one is the point.) Subtract each typeDef method's OWN scope so a coincidental same-named local is not a
         // false positive. The D3 remainder (below) only catches PREFIXED names, which never reach inside a typeDef.
         if (origLambdaParams.Count > 0 && TypeDefLambdaParamRef(pBody, origLambdaParams) is string dangling)
-        { FailLoud(o, owner, name, pc, ga, $"a payload local class (object literal) references lambda param '{dangling}' directly — a lambda-param captured inside a typeDef is not splice-bound (#75 Batch B3)"); return; }
+        { FailLoud(o, owner, name, pc, ga, $"a payload local class (object literal) references lambda param '{dangling}' directly — a lambda-param captured inside a typeDef is not splice-bound"); return; }
 
         // STEP 6 — splice each lambda-param `invoke` with the carried caller-scope lambda body (fresh per invocation).
         SpliceLambdaInvokes(pBody, lambdaMap);
@@ -617,7 +617,7 @@ static class InlineSplice
             if (matTemp == null)
                 // Un-materializable (a NON-LOCAL-return carrier can't be a delegate; or a `{k:local}` capture kotc did not
                 // list on the carrier) — fail loud (no fallback under #95; never a silent miscompile).
-                { FailLoud(o, owner, name, pc, ga, $"lambda param '{lname}' in a non-invoke position could not be materialized (§4.4ii) — non-local-return or unlisted-capture carrier [reason={_matReason}]"); return; }
+                { FailLoud(o, owner, name, pc, ga, $"lambda param '{lname}' in a non-invoke position could not be materialized — non-local-return or unlisted-capture carrier [reason={_matReason}]"); return; }
             var rebind = new Dictionary<string, JsonNode>(StringComparer.Ordinal) { [lname] = new JsonObject { ["k"] = "local", ["name"] = matTemp } };
             RewriteLocalRefs(pBody, rebind);
             RewriteLocalRefs(result, rebind);
@@ -625,12 +625,12 @@ static class InlineSplice
 
         // D3 remainder: any lambda-param ref STILL present after §4.4ii materialization is a dangling local — fail loud.
         if (HasLocalIn(pBody, lambdaMap.Keys) || HasLocalIn(result, lambdaMap.Keys))
-        { FailLoud(o, owner, name, pc, ga, "lambda param aliased to a non-invoke position (not directly invoked) — not materialized (§4.4ii remainder)"); return; }
+        { FailLoud(o, owner, name, pc, ga, "lambda param aliased to a non-invoke position (not directly invoked) could not be materialized"); return; }
         // §4.4(iii) tripwire: a lambda-param surviving ONLY as a nested carrier's capture DESCRIPTOR after the retire +
         // §4.4ii rebind is an un-consumed hole (the prune's CarrierStillReferences kept it, yet §4.4ii found no `{k:local}`
         // to materialize) — convert to a loud splice-site diagnosis rather than a downstream dangling-capture fault.
         if (lambdaMap.Keys.Any(k => HasCaptureDescIn(pBody, k) || HasCaptureDescIn(result, k)))
-        { FailLoud(o, owner, name, pc, ga, "lambda param survives only as a nested carrier's capture descriptor after §4.4(iii) retire + §4.4(ii) rebind"); return; }
+        { FailLoud(o, owner, name, pc, ga, "lambda param survives only as a nested carrier's capture descriptor after its invoke sites were consumed and its captures rebound"); return; }
 
         // STEP 7 — assemble the value-producing valueBlock, swap it in-place.
         //
@@ -1017,7 +1017,7 @@ static class InlineSplice
             if (existing != null)
             {
                 if (!outer && !JsonNode.DeepEquals(existing["type"], c["type"]))
-                    throw new NotSupportedException($"inline splice: spliced carrier capture '{cn}' type-conflicts with the host carrier's same-named capture (E7)");
+                    throw new NotSupportedException($"inline splice: spliced carrier capture '{cn}' type-conflicts with the host carrier's same-named capture");
                 continue;   // same enclosing entity in the flattened frame — already listed
             }
             if (!outer)
@@ -1030,7 +1030,7 @@ static class InlineSplice
                     if (HasSetLocalIn(lam["body"], cn) || HasSetLocalIn(lam["result"], cn))
                         throw new NotSupportedException(
                             $"inline splice: a spliced carrier capture '{cn}' that is WRITTEN name-collides with a host binding — "
-                            + "alpha-converting a mutable capture is unsound (the ref-cell box keys the enclosing scope by name) (#126)");
+                            + "alpha-converting a mutable capture is unsound because the ref-cell box keys the enclosing scope by name");
                     string fresh = "__inlhyg" + Interlocked.Increment(ref _counter) + "$" + cn;
                     // Preserve the ORIGINAL construction source across repeated propagation (a former-alpha-converted `c`
                     // already carries a `value`; ride it forward rather than re-aliasing to the intermediate fresh name).
@@ -1073,7 +1073,7 @@ static class InlineSplice
         // body ref stay aligned. Only a capture colliding with the SM's own inner scope stays unsound (FunGen name-
         // conflation); `__outer` is SOUND here (the carrier's captured `this` IS the caller's receiver) -> refuseOuter:false.
         if ((SuspendCaptureHazard(lamBody, refuseOuter: false) ?? (lamResult != null ? SuspendCaptureHazard(lamResult, refuseOuter: false) : null)) is string badDesc)
-            throw new NotSupportedException($"inline splice: a carrier newSuspendLambda capture '{badDesc}' collides with the SM's own inner scope (FunGen name-conflation) — #75 Batch B");
+            throw new NotSupportedException($"inline splice: a carrier newSuspendLambda capture '{badDesc}' collides with the SM's own inner scope");
 
         // D5: hygiene the carrier's `body` + `result` JOINTLY — the spliceBodyWithReturns carrier's `result` (a value-
         // producing `return@f`) is `{k:local,name:__inlRetN}` whose `var` decl + end-label live in `body`, so an
@@ -2243,7 +2243,7 @@ static class InlineSplice
                     foreach (var c in caps.OfType<JsonObject>())
                         if (Str(c["name"]) is string cn && !inner.Contains(cn) && subst.TryGetValue(cn, out var cb))
                             c["name"] = DescriptorName(cn, cb, pin, repin,
-                                "a payload newSuspendLambda captures", "(#75 Batch B)");
+                                "a payload newSuspendLambda captures", "");
                 if (o["body"] is JsonNode nb)
                 {
                     var bodySubst = inner.Count == 0 && repin.Count == 0 ? subst
@@ -3045,7 +3045,7 @@ static class InlineSplice
                     // Name-based in-method rewrite is safe only when X binds ONE way and no OTHER capturer expects the plain
                     // element type. Refuse the pathological shapes loud (beats a silent type-skew miscompile).
                     if (BoxUnsafeReason(body, varName, refName, elem) is string reason)
-                        throw new NotSupportedException($"inline splice §4.4ii: cannot ref-cell-box captured var '{varName}' — {reason}");
+                        throw new NotSupportedException($"inline splice: cannot ref-cell-box captured var '{varName}' — {reason}");
                     BoxVarInBody(body, varName, refName, elem);
                 }
     }

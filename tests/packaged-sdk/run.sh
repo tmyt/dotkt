@@ -529,7 +529,7 @@ import mylib.Doubler
 fun compute(): Int = libValue() + Doubler().twice(10)
 EOF
 	if ! (cd "$con" && dotnet build -v q --nologo >"$con/build.log" 2>&1); then
-		fail library "consumer Library build failed (the #132-general gap)" "$(tail -25 "$con/build.log")"; return
+		fail library "consumer Library build failed" "$(tail -25 "$con/build.log")"; return
 	fi
 	local condll; condll="$(find "$con/bin" -name 'Consumer.dll' | head -1)"
 	[[ -f "$condll" ]] || { fail library "consumer dll not emitted"; return; }
@@ -1002,7 +1002,7 @@ EOF
 	local rc=0
 	run_project "$d" "$d/run.err" >/dev/null || rc=$?
 	if (( rc == 0 )); then
-		echo "PACKAGED-SDK GATE RED — #163 self-test FAILED: a print-then-crash packaged exe was accepted (exit-code hole open)"; exit 1
+		echo "PACKAGED-SDK GATE RED — exit-status self-test FAILED: a print-then-crash packaged exe was accepted"; exit 1
 	fi
 	info "self-test OK: a print-then-crash packaged exe is REJECTED (run exit $rc)"
 }

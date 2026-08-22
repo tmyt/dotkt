@@ -41,12 +41,12 @@ static partial class ClrMemberResolution
             throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' is missing the exact base return descriptor");
         var open = ResolveOwnerType(ownerSpec);
         if (open == null)
-            throw new InvalidOperationException($"bir2cir: override base owner '{owner}' does not resolve to a .NET type (#46/#183 pendingOverrideOwner carry)");
+            throw new InvalidOperationException($"bir2cir: override base owner '{owner}' does not resolve to a .NET type");
         // Read EVERY param type — a null-drop would shrink the arity and could bind a wrong-arity base overload
         // (BaseContinuationImpl's create(completion)/create(value,completion)/create(args[],completion) family), so an
         // unreadable node is a hard error, not silently skipped.
         var argNodes = (node["params"] as JsonArray).Select((p, i) => TypeJson.Read((p as JsonObject)?["type"])
-            ?? throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' param #{i} has an unreadable type node (#46/#183 pendingOverrideOwner carry)")).ToList();
+            ?? throw new InvalidOperationException($"bir2cir: override '{owner}.{slotName}' param #{i} has an unreadable type node")).ToList();
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
         var cands = new List<MethodInfo>();
         try { cands.AddRange(open.GetMethods(flags).Where(m => m.Name == slotName && m.IsVirtual && m.GetParameters().Length == argNodes.Count)); } catch { }
