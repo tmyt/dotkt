@@ -114,6 +114,8 @@ public class ValueTypeDefaults
     public static bool Static(decimal value = ExpectedDecimal, System.DateTime when = default) =>
         value == ExpectedDecimal && when == default;
 
+    public static T GenericDefault<T>(T value = default) => value;
+
     public long DateTimeConstant(
         [System.Runtime.InteropServices.Optional]
         [System.Runtime.CompilerServices.DateTimeConstant(638000000000000000)] System.DateTime when) => when.Ticks;

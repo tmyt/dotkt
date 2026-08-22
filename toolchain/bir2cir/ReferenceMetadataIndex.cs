@@ -865,12 +865,16 @@ sealed partial class ReferenceMetadataIndex
     // when it has no representable defaults, so callers must not fall through to a different declaration search.
     public bool TryKotlinDefaultsForSelectedMethod(
         TypeNode.Fqn owner, string method, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
-        out Dictionary<int, string> defaults)
+        out Dictionary<int, string> defaults, out string[] parameterNames)
     {
         defaults = null;
+        parameterNames = null;
         if (!ClrMemberResolution.TryResolveExternalMethodForDefaults(
                 this, owner, method, methodArity, isStatic, callSignature, out var declaration))
             return false;
+        parameterNames = declaration.GetParameters()
+            .Select(parameter => string.IsNullOrEmpty(parameter.Name) ? $"arg{parameter.Position}" : parameter.Name)
+            .ToArray();
         defaults = CallableDefaultsOf(declaration);
         return true;
     }
@@ -5954,12 +5958,25 @@ sealed partial class ReferenceMetadataIndex
         // expression: ilemit uses initobj for a value type / generic parameter and ldnull only for a reference type.
         // Nullable<T> is a value type too, so this also realizes its null/default representation directly rather than
         // relying on a boxed-null round trip at the call boundary.
-        if (value is null && (SafeIsValueType(type) || type.IsGenericParameter))
-            return new JsonObject
+        if (value is null)
+        {
+            bool isValueType;
+            if (type.IsGenericParameter) isValueType = true;
+            else
             {
-                ["k"] = "default",
-                ["type"] = TypeJson.Write(declaredType),
-            }.ToJsonString();
+                // MetadataLoadContext can need the base-type chain to classify a nominal type. An incomplete reference
+                // universe must make this default unrepresentable, not silently reinterpret an unknown slot as a
+                // reference and recreate the invalid ldnull emission this path exists to prevent.
+                try { isValueType = type.IsValueType; }
+                catch { return null; }
+            }
+            if (isValueType)
+                return new JsonObject
+                {
+                    ["k"] = "default",
+                    ["type"] = TypeJson.Write(declaredType),
+                }.ToJsonString();
+        }
 
         // DecimalConstantAttribute is surfaced by both runtime reflection and MetadataLoadContext as an actual
         // System.Decimal. Decimal has no ECMA-335 literal opcode, so materialize the exact 96-bit coefficient, sign,
@@ -6034,12 +6051,6 @@ sealed partial class ReferenceMetadataIndex
         ["type"] = TypeJson.Fqn(type),
         ["value"] = JsonValue.Create(value),
     };
-
-    static bool SafeIsValueType(Type type)
-    {
-        try { return type.IsValueType; }
-        catch { return false; }
-    }
 
     // MetadataLoadContext types are metadata-only and cannot be passed to Convert.ChangeType as a runtime Type.
     // Normalize through the exact legal enum-underlying identity instead; this also makes signedness and width

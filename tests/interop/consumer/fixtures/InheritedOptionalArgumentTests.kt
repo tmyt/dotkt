@@ -73,6 +73,8 @@ class InheritedOptionalArgumentTests {
         assertEquals(true, direct.Instance())
         assertEquals(true, inherited.Instance())
         assertEquals(true, ValueTypeDefaults.Static())
+        assertEquals(0, ValueTypeDefaults.GenericDefault<Int>())
+        assertEquals(null, ValueTypeDefaults.GenericDefault<String>())
         assertEquals(true, ValueTypeDefaultConstructor().ValuesMatch)
         assertEquals(638000000000000000L, direct.DateTimeConstant())
     }
