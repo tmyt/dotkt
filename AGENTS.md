@@ -75,6 +75,27 @@ requirement. Tests may exercise the supported forms and the compiler-provided
 stdlib's use of these mechanisms, but must not assert a particular compiler,
 linker, generated-binary, or runtime result for the undefined forms.
 
+# Pull Request Workflow
+
+- Begin each issue in a dedicated Git worktree rather than changing the primary
+  working tree.
+- Open a draft pull request once the focused tests for the changed behavior are
+  green. State every outstanding review and validation step in its description.
+- Run the independent Claude review with network access enabled. Keep the
+  reviewer read-only and follow the review budget below.
+- Mark the draft pull request ready for review only after the independent
+  reviews and the canonical full gate (`make verify` for behavior-affecting
+  changes) have completed successfully.
+- Treat CI failures and Copilot review findings as work to investigate and
+  resolve before merge. Validate a finding before changing the implementation.
+- Copilot automatically reviews the initial ready-for-review revision, but a
+  later push does not itself request another review. Request every subsequent
+  Copilot review explicitly when one is required.
+- Request another Copilot review after a push when the preceding Copilot review
+  reported anything other than no comments, or when the new work crosses a
+  semantic milestone. Do not request it for an ordinary push that satisfies
+  neither condition.
+
 # Implementation Review
 
 During implementation, use the narrowest focused checks that exercise the
