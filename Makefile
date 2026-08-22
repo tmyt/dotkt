@@ -39,7 +39,8 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # Aggregate targets
 # ==================================================================================================
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
-        verify verify-core verify-tests verify-schema verify-sanity verify-lowering verify-msbuild verify-packaged-sdk \
+        verify verify-core verify-tests verify-nunit verify-compile-fail verify-test-corpus verify-integration \
+        verify-schema verify-sanity verify-lowering verify-msbuild verify-packaged-sdk \
         verify-target-universe verify-csharp14-extension-abi verify-xfail-policy \
         dev dll2klib-e2e clean clean-tools clean-stdlib clean-pack help
 
@@ -99,22 +100,46 @@ pack: toolchain stdlib ## the 5 NuGet packages (Sdk/Sdk.Mpp/Toolchain/Stdlib/Tem
 # ==================================================================================================
 # Verification gates (test suite entry points live beside their tests under tests/)
 # ==================================================================================================
-verify: verify-core verify-packaged-sdk ## run ALL gates (the canonical set + the packaged-SDK release gate)
+verify: ## run ALL gates (the canonical set + the packaged-SDK release gate)
+	+$(MAKE) verify-core
+	+$(MAKE) verify-packaged-sdk
 
-# The canonical gate set EXCEPT the packaged-SDK gate. CI runs verify-core in the main job and
-# verify-packaged-sdk as a DISTINCT release-blocking job (GitHub #160), so the split lives here — not
-# copied into the workflow YAML. `make verify` still runs the complete set (verify-core + packaged-sdk).
-verify-core: verify-tests verify-schema verify-sanity verify-lowering verify-msbuild verify-target-universe verify-csharp14-extension-abi verify-xfail-policy ## every gate except the packaged-SDK release gate
+# The canonical gate set EXCEPT the packaged-SDK gate. CI invokes the independently-runnable shard
+# aggregates below. `verify-test-corpus` deliberately keeps schema/sanity after NUnit because those gates
+# inspect the fresh BIR/CIR corpus emitted by that run. `make verify` remains the complete local set.
+verify-core: ## every gate except the packaged-SDK release gate
+	+$(MAKE) verify-tests
+	+$(MAKE) verify-schema verify-sanity
+	+$(MAKE) verify-lowering
+	+$(MAKE) verify-integration
 
-verify-tests: pack ## canonical compiler behavior gate (categorized NUnit suites + ILVerify + the negative compile lane)
+# Stable developer/gate.sh alias. The leaf gates themselves are owned by the CI shard targets below;
+# keep this as composition only so adding behavior cannot create a second, CI-invisible gate definition.
+verify-tests: ## canonical compiler behavior gate (categorized NUnit suites + ILVerify + the negative compile lane)
+	+$(MAKE) verify-nunit
+	+$(MAKE) verify-compile-fail
+
+verify-nunit: pack ## categorized NUnit suites + ILVerify; emits the fresh corpus consumed by schema/sanity
 	bash tests/run-nunit-tests.sh
+
+verify-compile-fail: toolchain stdlib ## isolated negative-compilation diagnostic lane
 	bash tests/compile-fail/run.sh
 
-verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-tests
+# CI shard: preserve the producer -> consumer ordering even if the outer make was invoked with -j.
+verify-test-corpus: verify-nunit ## NUnit/ILVerify followed by schema + sanity over its freshly-emitted BIR/CIR
+	$(MAKE) verify-schema verify-sanity
+
+verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy gates
+	+$(MAKE) verify-msbuild
+	+$(MAKE) verify-target-universe
+	+$(MAKE) verify-csharp14-extension-abi
+	+$(MAKE) verify-xfail-policy
+
+verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-nunit
 	bash tests/ir/run-schema.sh
 	bash tests/ir/check-emitter-residual.sh
 
-verify-sanity: ## offline IR-sanity gate (semantic invariants over fresh BIR/CIR); run AFTER verify-tests
+verify-sanity: ## offline IR-sanity gate (semantic invariants over fresh BIR/CIR); run AFTER verify-nunit
 	bash tests/ir/run-sanity.sh
 
 verify-lowering: ## lowering self-tests (synthetic BIR -> bir2cir -> CIR assertions, for rules the corpus no longer witnesses)
