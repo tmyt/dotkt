@@ -1442,6 +1442,9 @@ internal sealed class AssemblyScanner
             MetadataAttributes.DotKtNs + "KotlinDeclarationIdentityAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinSuspendResultAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinExtensionCoreAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
@@ -2104,6 +2107,12 @@ internal sealed class AssemblyScanner
                 var modalityForMethod = (method.Attributes & MethodAttributes.Abstract) != 0 ? 2
                     : (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0 ? 1 : 0;
                 var kotlinFlags = _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
+                var suspendResult = (kotlinFlags & 4) != 0
+                    ? _attrs.CarrierType(methodHandle,
+                        MetadataAttributes.DotKtNs + "KotlinSuspendResultAttribute")
+                        ?? throw new InvalidDataException(
+                            $"suspend MethodDef '{_md.GetString(method.Name)}' has no trusted logical-result carrier")
+                    : null;
                 var sourceMethodName = KotlinSourceMethodName(methodHandle);
                 var isComparableSlot = _attrs.IsDotKtAssembly &&
                     name == "CompareTo" &&
@@ -2116,7 +2125,9 @@ internal sealed class AssemblyScanner
                     Flags = Flags.Callable(method.Attributes, modalityForMethod,
                         kotlinFlags,
                         isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")),
-                    ReturnType = declarationIdentity?.ReturnType is TypeNode semanticReturn
+                    ReturnType = suspendResult is TypeNode logicalSuspendReturn
+                        ? signatures.FromTypeNode(logicalSuspendReturn)
+                        : declarationIdentity?.ReturnType is TypeNode semanticReturn
                         ? signatures.FromTypeNode(semanticReturn)
                         : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
                     ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
@@ -5489,15 +5500,23 @@ internal sealed class AssemblyScanner
         if (signatures.ByRefElement(physical) is { } element)
             physical = element;
         var suspend = ((_attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0) & 4) != 0;
+        if (suspend)
+        {
+            var logical = _attrs.CarrierType(
+                methodHandle, MetadataAttributes.DotKtNs + "KotlinSuspendResultAttribute")
+                ?? throw new InvalidDataException(
+                    $"suspend MethodDef '{_md.GetString(method.Name)}' has no trusted logical-result carrier");
+            return signatures.FromTypeNode(logical);
+        }
         return ProjectType(
             returnHandle,
-            suspend ? signatures.SuspendResult(physical) : physical,
+            physical,
             methodHandle,
             names,
             signatures,
             context,
             flowContract: true,
-            nullabilityOffset: suspend ? 1 : 0);
+            nullabilityOffset: 0);
     }
 
     // RESTORE THE PRE-ERASURE SUPERTYPE EDGES (#86). A supertype argument is a reified argument and erases with the
@@ -6630,18 +6649,6 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     public bool IsCompilerOwnedSlotCarrier(KType type) =>
         type.HasClassName && _names.ClassName(type.ClassName) is string fqn
         && fqn.StartsWith(MetadataAttributes.DotKtNs, System.StringComparison.Ordinal);
-
-    public KType SuspendResult(KType physical)
-    {
-        if (physical.HasClassName &&
-            _names.ClassName(physical.ClassName) is "System.Threading.Tasks.Task" or "System.Threading.Tasks.Task1")
-        {
-            if (physical.Argument.Count == 1 && physical.Argument[0].Type is { } result)
-                return result.Clone();
-            return Named("kotlin.Unit");
-        }
-        return physical;
-    }
 
     public KType? ArrayElement(KType array)
     {

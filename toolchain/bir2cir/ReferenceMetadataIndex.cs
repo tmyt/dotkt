@@ -88,6 +88,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinFunctionAttr = "DotKt.Runtime.CompilerServices.KotlinFunctionAttribute";
     const string KotlinInlineAttr = "DotKt.Runtime.CompilerServices.KotlinInlineAttribute";
     const string KotlinTypeAttr = "DotKt.Runtime.CompilerServices.KotlinTypeAttribute";
+    const string KotlinSuspendResultAttr = "DotKt.Runtime.CompilerServices.KotlinSuspendResultAttribute";
     const string KotlinCompanionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionAttribute";
     const string KotlinCompanionExtensionAttr = "DotKt.Runtime.CompilerServices.KotlinCompanionExtensionAttribute";
     const string KotlinPropertyAccessorAttr = "DotKt.Runtime.CompilerServices.KotlinPropertyAccessorAttribute";
@@ -2453,7 +2454,8 @@ sealed partial class ReferenceMetadataIndex
                     member.MethodTypeParams, selectedTypeParams,
                     ownerTypeArguments, implementationOwnerTypeArguments)
                 && AccessorSignatureMatches(member, signature, ownerTypeArguments)
-                && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
+                && member.ParamTypeNodes != null && member.ReturnTypeNode != null
+                && (!selectedSuspend || member.SuspendReturnType != null))
             .ToList();
         if (matches.Count != 1) return false;
         var match = matches[0];
@@ -2463,7 +2465,9 @@ sealed partial class ReferenceMetadataIndex
                 match.NullableGenericParams is { } carriers && index < carriers.Length && carriers[index] != null
                     ? carriers[index]
                     : type).ToArray(),
-            match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
+            selectedSuspend
+                ? match.SuspendReturnType
+                : match.NullableGenericRet ?? match.KotlinReturnType ?? match.ReturnTypeNode,
             match.MethodTypeParams);
         return true;
     }
@@ -4179,6 +4183,12 @@ sealed partial class ReferenceMetadataIndex
                         // the flag word ilemit stamps; the dead Assembly.LoadFrom scan read it, this live scan didn't).
                         // Channelled into MemberBinding.Suspend for the coroutine bundle (bundle 6) — no consumer yet.
                         var suspend = (KotlinFunctionFlags(method.GetCustomAttributesData()) & KotlinFunctionSuspendFlag) != 0;
+                        var suspendReturn = dotKtAuthored && suspend
+                            ? CarrierTypeOf(method.GetCustomAttributesData(), method.DeclaringType?.Assembly,
+                                KotlinSuspendResultAttr)
+                                ?? throw new InvalidDataException(
+                                    $"trusted suspend MethodDef '{method.DeclaringType?.FullName}.{method.Name}' has no logical-result carrier")
+                            : null;
                         if (suspend && Environment.GetEnvironmentVariable("DOTKT_BIR2CIR_DEBUG_SUSPEND") == "1")
                             Console.Error.WriteLine($"bir2cir: ref-scan suspend member {ownerFqn}.{method.Name}/{method.GetParameters().Length} (Suspend=true)");
                         metadata.MemberBindings.Add(new MemberBinding(
@@ -4199,6 +4209,7 @@ sealed partial class ReferenceMetadataIndex
                             method.GetParameters().Select(p => DeclarationTypeNode(p.ParameterType)).ToArray(),
                             method.IsVirtual,
                             dotKtAuthored ? KotlinTypeOf(method.ReturnParameter.GetCustomAttributesData(), method.DeclaringType?.Assembly) : null,
+                            suspendReturn,
                             // #86 D1 — the positional pre-erasure carrier, per slot. Only a DotKt-authored assembly can
                             // carry it, and only the erasure records it, so a slot without one is simply absent here and
                             // the consumer falls back to the physical declaration (which IS `Erase(decl)` by construction).
@@ -4415,6 +4426,9 @@ sealed partial class ReferenceMetadataIndex
             HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(
             KotlinDeclarationIdentityAttr,
+            HandleKind.MethodDefinition);
+        attrs.ValidateCarrierTargets(
+            KotlinSuspendResultAttr,
             HandleKind.MethodDefinition);
         attrs.ValidateCarrierTargets(
             KotlinStaticCarrierAttr,
@@ -6218,7 +6232,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);

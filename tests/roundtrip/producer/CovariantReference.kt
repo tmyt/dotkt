@@ -30,3 +30,7 @@ interface ReferencedConstrainedCovariantRoot<T, U> {
 interface ReferencedSuspendCovariantControl {
     suspend fun load(): ReferencedCovariantValue
 }
+
+interface ReferencedSuspendCovariantSlot {
+    suspend fun loadCovariant(): ReferencedCovariantValue
+}

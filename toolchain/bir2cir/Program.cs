@@ -875,6 +875,11 @@ sealed class Pipeline
             SuspendResidueLowering.ApplyAll(
                 staged.Select(s => s.Root).ToList(), _options.StdlibMode == BuildStdlibMode.App);
 
+        // The public Task bridges above already carry their exact logical suspend result. Freeze the same fact for the
+        // compiler-provided residual suspend declarations before CLR type lowering; downstream readers never unwrap
+        // Task or otherwise reconstruct this Kotlin-owned meaning from a physical signature.
+        RoundtripMetadata.FreezeSuspendResults(staged.Select(s => s.Root));
+
         // KOTLIN ERASURE-NARROWED OVERRIDE -> FINAL CLR METHODIMPL (#344 / #86 D3). The declaration-move half ran
         // early, but the bridge half must see the FINAL declarations: one logical suspend override becomes a public
         // Task member AND a continuation cold entry, and each is a distinct CLR slot. SuspendColdLowering carries the
