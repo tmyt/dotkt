@@ -68,6 +68,10 @@ import roundtrip.covariantreference.ReferencedRedeclaredCovariantRoot
 import roundtrip.covariantreference.ReferencedRedeclaredCovariantSlot
 import roundtrip.covariantreference.ReferencedConstrainedCovariantRoot
 import roundtrip.covariantreference.ReferencedSuspendCovariantControl
+import roundtrip.covariantreference.ReferencedSuspendCovariantSlot
+import roundtrip.covariantreference.ReferencedSuspendCovariantImplementation
+import System.Type
+import System.Threading.Tasks.Task1
 import roundtrip.pkg.Vec
 import roundtrip.pkg.Dir
 import roundtrip.pkg.greet as pkgGreet
@@ -237,6 +241,11 @@ private class CrossModuleConstrainedCovariantImplementation<A, B : ReferencedCov
 
 private class CrossModuleReferencedSuspendControl : ReferencedSuspendCovariantControl {
     override suspend fun load(): ReferencedCovariantValue = ReferencedCovariantValue(57)
+}
+
+private class CrossModuleReferencedSuspendCovariant : ReferencedSuspendCovariantSlot {
+    override suspend fun loadCovariant(): ReferencedNarrowCovariantValue =
+        ReferencedNarrowCovariantValue(65)
 }
 
 class KotlinApiShapeRoundtripTests {
@@ -565,7 +574,31 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual(59,
             constrainedSlot.makeConstrained(ReferencedNarrowCovariantValue(58)).value)
 
-        ClassicAssert.IsNotNull(CrossModuleReferencedSuspendControl())
+        ClassicAssert.AreEqual(57, runCrossModuleSuspend {
+            val control: ReferencedSuspendCovariantControl = CrossModuleReferencedSuspendControl()
+            control.load().value
+        })
+        val suspendImplementation = CrossModuleReferencedSuspendCovariant()
+        ClassicAssert.AreEqual(65, runCrossModuleSuspend {
+            val slot: ReferencedSuspendCovariantSlot = suspendImplementation
+            slot.loadCovariant().value
+        })
+        ClassicAssert.AreEqual(65, runCrossModuleSuspend {
+            suspendImplementation.loadCovariant().value
+        })
+        val physicalTask = Type.GetType(
+            "roundtrip.covariantreference.ReferencedSuspendCovariantSlot, RoundtripProducer")!!
+            .GetMethod("loadCovariant")!!
+            .Invoke(suspendImplementation, null) as Task1<ReferencedCovariantValue>
+        ClassicAssert.AreEqual(65, physicalTask.Result.value)
+
+        val reimportedImplementation = ReferencedSuspendCovariantImplementation()
+        ClassicAssert.AreEqual(66, runCrossModuleSuspend {
+            val narrow: ReferencedNarrowCovariantValue = reimportedImplementation.loadCovariant()
+            narrow.value
+        })
+        val reimportedSlot: ReferencedSuspendCovariantSlot = reimportedImplementation
+        ClassicAssert.AreEqual(66, runCrossModuleSuspend { reimportedSlot.loadCovariant().value })
 
         val nothing: ReferencedCovariantRoot<ReferencedCovariantValue> =
             CrossModuleNothingCovariantImplementation()

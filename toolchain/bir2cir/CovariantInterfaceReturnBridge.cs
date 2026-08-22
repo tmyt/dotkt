@@ -86,11 +86,12 @@ static class CovariantInterfaceReturnBridge
                 if (Bool(slot["static"]) || KotlinPropertyAccessors.IsPhysicalSlotBridge(slot)
                     || Str(slot["name"]) is not string name
                     || slot["params"] is not JsonArray slotParamNodes) continue;
+                var slotSuspend = IsSuspend(slot);
                 var methodArity = (slot["typeParams"] as JsonArray)?.Count ?? 0;
                 var slotParams = slotParamNodes.OfType<JsonObject>()
                     .Select(p => TypeJson.Read(p["type"]))
                     .Select(t => t == null ? null : SubstOwnerTvs(t, ifaceArgs)).ToArray();
-                var slotRet0 = TypeJson.Read(slot["ret"]);
+                var slotRet0 = TypeJson.Read(slotSuspend ? slot["suspendRet"] : slot["ret"]);
                 var slotRet = slotRet0 == null ? null : SubstOwnerTvs(slotRet0, ifaceArgs);
                 if (slotParams.Any(p => p == null) || slotRet == null) continue;
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
@@ -98,6 +99,7 @@ static class CovariantInterfaceReturnBridge
                 var candidates = methods.OfType<JsonObject>().Where(m =>
                     !Bool(m["static"]) && !(cls.Kind == "interface" && Bool(m["abstract"]))
                     && !KotlinPropertyAccessors.IsPhysicalSlotBridge(m)
+                    && IsSuspend(m) == slotSuspend
                     && SameIdentity(m, name, propertyName, accessorKind)
                     && ((m["typeParams"] as JsonArray)?.Count ?? 0) == methodArity
                     && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
@@ -108,7 +110,8 @@ static class CovariantInterfaceReturnBridge
                         accessorKind switch { "get" => "getter", "set" => "setter", _ => "method" })).ToList();
                 if (candidates.Count != 1) continue;
                 var implementation = candidates[0];
-                var implementationRet0 = TypeJson.Read(implementation["ret"]);
+                var implementationRet0 = TypeJson.Read(
+                    slotSuspend ? implementation["suspendRet"] : implementation["ret"]);
                 if (implementationRet0 == null) continue;
                 var implementationRet = SubstOwnerTvs(implementationRet0, ClassOwnArgs(cls));
                 if (implementationRet == slotRet) continue;
@@ -129,7 +132,10 @@ static class CovariantInterfaceReturnBridge
                           + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
-                    bridge = BuildBridge(cls, implementation, slotParams, slotRet,
+                    var logicalSuspendResult = slotSuspend
+                        ? SubstOwnerTvs(ReadSuspendResult(slot), ifaceArgs)
+                        : null;
+                    bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
                         $"dotkt$covar${SafeName(name)}${bridgeOrdinal++}");
                     bridges[key] = bridge;
                     methods.Add(bridge);
@@ -171,17 +177,14 @@ static class CovariantInterfaceReturnBridge
         var ownArgs = ClassOwnArgs(cls);
         foreach (var implementation in methods.OfType<JsonObject>().ToList())
         {
-            // A referenced suspend MethodDef exposes the physical Task ABI but not its logical Kotlin result. Until
-            // that fact is carried explicitly (#511), leave suspend declarations to suspend lowering; never infer the
-            // missing semantic result from Task<T> and accidentally classify an ordinary override as covariance.
             if (Bool(implementation["static"])
                 || (cls.Kind == "interface" && Bool(implementation["abstract"]))
-                || IsSuspend(implementation)
                 || KotlinPropertyAccessors.IsPhysicalSlotBridge(implementation)
                 || Str(implementation["name"]) is not string implementationName
                 || implementation["params"] is not JsonArray implementationParamNodes
                 || implementation["overrides"] is not JsonArray overrides
-                || TypeJson.Read(implementation["ret"]) is not TypeNode implementationRet0)
+                || TypeJson.Read(IsSuspend(implementation)
+                    ? implementation["suspendRet"] : implementation["ret"]) is not TypeNode implementationRet0)
                 continue;
             var implementationParams = implementationParamNodes.OfType<JsonObject>()
                 .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
@@ -209,7 +212,7 @@ static class CovariantInterfaceReturnBridge
                 if (!refs.TrySelectedOverrideDeclaration(semanticOwner.Name, sourceMember, accessorKind,
                         methodArity, implementationParams, ownerArgs,
                         implementation["typeParams"] as JsonArray, ownArgs,
-                        selectedSuspend: false, out var declaration))
+                        selectedSuspend: IsSuspend(implementation), out var declaration))
                     continue;
 
                 var slotParams = declaration.Parameters
@@ -218,6 +221,9 @@ static class CovariantInterfaceReturnBridge
                     .ToArray();
                 var slotRet = SupertypeGraph.SubstOwnerTvs(
                     NullableGenericErasure.EraseNullableTv(declaration.Return, isValue), ownerArgs);
+                var logicalSuspendResult = IsSuspend(implementation)
+                    ? SupertypeGraph.SubstOwnerTvs(declaration.Return, ownerArgs)
+                    : null;
                 if (slotParams.Any(type => type == null) || slotRet == null
                     || !ParamsPhysicallyEqual(implementation, slotParams, ownArgs, refs, isValue))
                     continue;
@@ -244,7 +250,7 @@ static class CovariantInterfaceReturnBridge
                           + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
-                    bridge = BuildBridge(cls, implementation, slotParams, slotRet,
+                    bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
                         $"dotkt$covar${SafeName(implementationName)}${bridgeOrdinal++}");
                     bridges[key] = bridge;
                     methods.Add(bridge);
@@ -294,7 +300,7 @@ static class CovariantInterfaceReturnBridge
             refs.PhysicalTypeNames, typeArg: false));
 
     static JsonObject BuildBridge(Def cls, JsonObject implementation, TypeNode[] slotParams, TypeNode slotRet,
-        string bridgeName)
+        TypeNode logicalSuspendResult, string bridgeName)
     {
         var sourceParams = implementation["params"] as JsonArray ?? new JsonArray();
         var bridgeParams = new JsonArray();
@@ -332,6 +338,7 @@ static class CovariantInterfaceReturnBridge
             ["ret"] = TypeJson.Write(implementationRet),
             ["args"] = callArgs,
         };
+        if (IsSuspend(implementation)) call["suspendCall"] = true;
         if (implementation["typeParams"] is JsonArray methodTps)
         {
             var typeArgs = new JsonArray();
@@ -357,6 +364,13 @@ static class CovariantInterfaceReturnBridge
         };
         if (cls.Kind == "interface")
             bridge[KotlinPropertyAccessors.ClrInterfaceSlotBridgeKey] = true;
+        if (IsSuspend(implementation))
+        {
+            bridge["mods"] = new JsonObject { ["suspend"] = true };
+            bridge["suspendRet"] = TypeJson.Write(slotRet);
+            bridge["suspendResult"] = TypeNode.ToJson(logicalSuspendResult
+                ?? throw new InvalidOperationException("suspend covariant bridge has no logical slot result"));
+        }
         if (implementation["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
         return bridge;
     }
@@ -462,5 +476,11 @@ static class CovariantInterfaceReturnBridge
     static bool Bool(JsonNode node) => node is JsonValue v && v.TryGetValue<bool>(out var b) && b;
     static bool IsSuspend(JsonObject method) =>
         method["mods"] is JsonObject mods && Bool(mods["suspend"]);
+
+    static TypeNode ReadSuspendResult(JsonObject method) =>
+        Str(method["suspendResult"]) is string encoded
+            ? TypeNode.Parse(encoded)
+            : throw new InvalidOperationException(
+                $"suspend declaration '{method["name"]}' has no preserved logical result");
     static string Str(JsonNode node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }

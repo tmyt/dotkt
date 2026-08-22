@@ -14,6 +14,8 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.Threading.Tasks.Task
+import System.Threading.Tasks.Task1
+import System.Type
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -54,6 +56,23 @@ class SuspendMemberInheritedChannelImpl : SuspendMemberInheritedChannelBase() {
 }
 suspend fun suspendMemberInheritedPing(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPong(n - 1) }  // mutual recursion
 suspend fun suspendMemberInheritedPong(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPing(n - 1) }
+
+open class SuspendMemberCovariantValue(val value: Int)
+class SuspendMemberNarrowCovariantValue(value: Int) : SuspendMemberCovariantValue(value)
+interface SuspendMemberCovariantSlot {
+    suspend fun loadCovariant(): SuspendMemberCovariantValue
+}
+class SuspendMemberCovariantImplementation : SuspendMemberCovariantSlot {
+    override suspend fun loadCovariant(): SuspendMemberNarrowCovariantValue =
+        SuspendMemberNarrowCovariantValue(46)
+}
+
+private fun invokeSuspendMemberCovariantTask(
+    implementation: SuspendMemberCovariantImplementation
+): Task1<SuspendMemberCovariantValue> =
+    Type.GetType("SuspendMemberCovariantSlot")!!
+        .GetMethod("loadCovariant")!!
+        .Invoke(implementation, null) as Task1<SuspendMemberCovariantValue>
 
 // ---- il-coldvirt: a suspending instance member of a GENERIC class (P5 A1b) -----------------------------------
 suspend fun <T> suspendMemberGenericEcho(x: T): T = x
@@ -108,6 +127,13 @@ class SuspendMemberTests {
         assertEquals(11, blockOn { SuspendMemberInheritedDerived().await() })         // 11
         assertEquals(42, blockOn { SuspendMemberInheritedChannelImpl().consume() })   // 42
         assertEquals(5, blockOn { suspendMemberInheritedPing(5) })                    // 5
+        val implementation = SuspendMemberCovariantImplementation()
+        assertEquals(46, blockOn {
+            val slot: SuspendMemberCovariantSlot = implementation
+            slot.loadCovariant().value
+        })
+        assertEquals(46, blockOn { implementation.loadCovariant().value })
+        assertEquals(46, invokeSuspendMemberCovariantTask(implementation).Result.value)
     }
 
     @TestAttribute

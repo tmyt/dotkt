@@ -1185,6 +1185,7 @@ static partial class SuspendColdLowering
         readonly string _coldName;
         readonly TypeNode _resultType;           // Kotlin resultType, OUTER `?` stripped (VoidTn for Unit)
         readonly TypeNode _taskResultType;       // explicitly selected physical Task<T> result, else _resultType
+        readonly string _logicalSuspendResult;  // exact pre-CLR TypeNode payload for the public Task MethodDef
         readonly bool _resultNullable;           // the suspend fn's result had an outer `?` (#37/#48: read off the type node)
         readonly string _resultNullableGeneric;  // #86: the PRE-erasure `T?` result, for the bridge's carrier (else null)
         readonly List<JsonObject> _params;       // original params (extension: leading __self)
@@ -1273,8 +1274,12 @@ static partial class SuspendColdLowering
             // by NullableGenericErasure; it restores BOTH channels the bridge return needs — the NRT byte (below,
             // via `_resultNullable`) and the Kotlin type itself (the carrier). Without them the bridge's `Task<object>`
             // return re-imports as a non-null `Any` and a cross-module consumer stops compiling.
-            _resultNullableGeneric = (m["nullableGenericSuspendRet"] as JsonValue)?.GetValue<string>();
-            _resultNullable = suspendRetRaw is TypeNode.Nullable || _resultNullableGeneric != null;
+            _resultNullableGeneric = (m["nullableGenericSuspendRet"] as JsonValue)?.GetValue<string>()
+                ?? (m["nullableGenericRet"] as JsonValue)?.GetValue<string>();
+            _logicalSuspendResult = (m["suspendResult"] as JsonValue)?.GetValue<string>()
+                ?? throw new InvalidOperationException("suspend declaration has no logical result");
+            _resultNullable = suspendRetRaw is TypeNode.Nullable
+                || TypeNode.Parse(_logicalSuspendResult) is TypeNode.Nullable;
             _resultType = (suspendRetRaw is TypeNode.Nullable srn ? srn.Of : suspendRetRaw) ?? VoidTn;
             _taskResultType = TypeJson.Read(m[KotlinPropertyAccessors.SuspendTaskResultKey]) ?? _resultType;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
@@ -3183,6 +3188,7 @@ static partial class SuspendColdLowering
                     ["args"] = args,
                     ["ret"] = Tw(AnyTn),
                 };
+                if (Bool(callNode["clrOwnerResolved"])) call["clrOwnerResolved"] = true;
                 CarryLocalSuper(call);
             }
             else
@@ -4043,6 +4049,7 @@ static partial class SuspendColdLowering
                     ["abstract"] = true,
                     ["objectOverride"] = false,
                     ["suspendBridge"] = true,
+                    ["suspendResult"] = _logicalSuspendResult,
                     ["vis"] = _physicalSlotBridge ? _physicalSlotVisibility ?? "private" : "public",
                     ["params"] = aps,
                     ["ret"] = Tw(taskRetType),
@@ -4157,6 +4164,7 @@ static partial class SuspendColdLowering
                 ["abstract"] = false,
                 ["objectOverride"] = false,
                 ["suspendBridge"] = true,
+                ["suspendResult"] = _logicalSuspendResult,
                 ["vis"] = _physicalSlotBridge ? _physicalSlotVisibility ?? "private" : "public",
                 ["params"] = ps,
                 ["ret"] = Tw(taskRetType),

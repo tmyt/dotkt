@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **Covariant suspend overrides now retain their exact Kotlin result across DLL-to-KLIB projection (#511).** Logical
+  suspend results are carried independently of their erased `Task<T>` representation, including nested nullable
+  generic types and nested classifiers. Re-import omits compiler-generated hot/cold MethodImpl machinery.
+
 - **Compiler and gate diagnostics now describe the violated invariant without stale tracker or design-document
   coordinates.** User-facing bir2cir, ilemit, packaging, and verification failures no longer embed GitHub issue
   numbers, historical batch labels, or section references whose targets can close, move, or describe only an older
