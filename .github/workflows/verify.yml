@@ -16,11 +16,11 @@
 #   verify-core/* (ubuntu)  — four independent shards consuming those outputs in parallel.
 #   verify        (ubuntu)  — aggregate shard result; preserves the existing required-check name.
 #   packaged-sdk  (ubuntu)  — the packaged-nupkg release gate, on its own so a packaging break is
-#                             attributed and blocks independently of the functional gates. It consumes the
-#                             same-SHA prerequisites, then still repacks and runs its idempotency check itself.
+#                             attributed and blocks independently of the functional gates. It starts at t=0,
+#                             builds independently, and still runs its pack-idempotency check itself.
 #
-# Green semantics: ILVerify / round-trip / packaged-SDK carry explicit XFAIL baselines
-# (ILVERIFY_XFAIL / RT_XFAIL / XFAIL_PKG in their test runners) — they exit 0 iff every fail is a
+# Green semantics: ILVerify and packaged-SDK carry explicit XFAIL baselines
+# (ILVERIFY_XFAIL / XFAIL_PKG in their test runners) — they exit 0 iff every fail is a
 # listed, reasoned expected-fail and every listed entry still fails. NEW failures and stale FIXED entries are red.
 name: verify
 
@@ -58,21 +58,25 @@ jobs:
           key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
       # Build once rather than making every shard spend 4-6 minutes reproducing identical outputs.
-      # The archive preserves executable bits; extraction in consumers refreshes mtimes because their
-      # later checkout timestamps would otherwise make Make rebuild these same-SHA artifacts.
+      # Include Gradle's task state and the complete kotc build outputs: pack-nuget.sh and the MSBuild
+      # gate deliberately invoke installDist again, and that invocation must remain UP-TO-DATE rather
+      # than rebuilding a timestamp-bearing jar and invalidating the stdlib content fingerprints.
+      # The archive preserves executable bits; extraction in consumers refreshes output mtimes because
+      # their later checkout timestamps would otherwise make Make rebuild these same-SHA artifacts.
       - name: Build toolchain + CLR stdlib
         run: make toolchain stdlib
 
       - name: Archive prerequisites
         run: >-
           tar -czf build/ci-prerequisites.tar.gz
-          toolchain/kotc/build/install/kotc
+          .gradle
+          toolchain/kotc/build
           build/ilemit-bin
           build/bir2cir-bin
           build/dll2klib-bin
           build/clr-stdlib-frontend-klib
           build/clr-stdlib
-          build/clr-stdlib-rt
+          build/clr-stdlib-rt/dll
 
       - uses: actions/upload-artifact@v4
         with:
@@ -138,21 +142,23 @@ jobs:
 
   # Keep the historical `verify` required-check name while exposing each shard's own failure.
   verify:
-    needs: verify_core
-    if: always()
+    needs: [verify_core, packaged-sdk]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every verify-core shard
+      - name: Require every release-blocking gate
         env:
           SHARD_RESULT: ${{ needs.verify_core.result }}
+          PACKAGED_SDK_RESULT: ${{ needs['packaged-sdk'].result }}
         run: |
           echo "verify-core shards: $SHARD_RESULT"
+          echo "packaged-sdk: $PACKAGED_SDK_RESULT"
           test "$SHARD_RESULT" = success
+          test "$PACKAGED_SDK_RESULT" = success
 
   # ---- the packaged-nupkg release gate (Linux), distinct + release-blocking (GitHub #160) ---------
   packaged-sdk:
-    needs: prerequisites
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -179,14 +185,6 @@ jobs:
 
       - name: Install ilverify
         run: dotnet tool install -g dotnet-ilverify
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ci-prerequisites
-          path: build/ci
-
-      - name: Restore same-SHA prerequisites
-        run: tar --touch -xzf build/ci/ci-prerequisites.tar.gz
 
       # Packs the 5 nupkgs fresh from source and drives exe / library / cross-module async coroutine / mpp /
       # template scenarios that resolve them from a local feed only (isolated globalPackagesFolder — no cache

@@ -104,16 +104,17 @@ verify: ## run ALL gates (the canonical set + the packaged-SDK release gate)
 	+$(MAKE) verify-core
 	+$(MAKE) verify-packaged-sdk
 
-# The canonical gate set EXCEPT the packaged-SDK gate. The CI shard membership lives in these aggregate
-# targets rather than workflow YAML. `verify-test-corpus` deliberately keeps schema/sanity after NUnit:
-# those gates inspect the fresh BIR/CIR corpus emitted by that run. The other groups own independent work.
-# `make verify` remains the complete local set (verify-core + packaged-sdk).
+# The canonical gate set EXCEPT the packaged-SDK gate. CI invokes the independently-runnable shard
+# aggregates below. `verify-test-corpus` deliberately keeps schema/sanity after NUnit because those gates
+# inspect the fresh BIR/CIR corpus emitted by that run. `make verify` remains the complete local set.
 verify-core: ## every gate except the packaged-SDK release gate
-	+$(MAKE) verify-test-corpus
-	+$(MAKE) verify-compile-fail
+	+$(MAKE) verify-tests
+	+$(MAKE) verify-schema verify-sanity
 	+$(MAKE) verify-lowering
 	+$(MAKE) verify-integration
 
+# Stable developer/gate.sh alias. The leaf gates themselves are owned by the CI shard targets below;
+# keep this as composition only so adding behavior cannot create a second, CI-invisible gate definition.
 verify-tests: ## canonical compiler behavior gate (categorized NUnit suites + ILVerify + the negative compile lane)
 	+$(MAKE) verify-nunit
 	+$(MAKE) verify-compile-fail
