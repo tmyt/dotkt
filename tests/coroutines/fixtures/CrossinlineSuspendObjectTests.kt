@@ -48,6 +48,32 @@ fun crossinlineObjectTwoLevelWrap(
     crossinlineObjectCaptureForward { value -> transform(value) }
 }
 
+inline fun crossinlineObjectTransportedWrap(
+    crossinline transform: suspend (Int) -> Boolean
+): suspend () -> Boolean = {
+    crossinlineObjectCaptureAndDrive { value -> transform(value) }
+}
+
+fun crossinlineObjectUseTransported(
+    transform: suspend (Int) -> Boolean
+): suspend () -> Boolean = crossinlineObjectTransportedWrap(transform)
+
+fun crossinlineObjectClosureFieldWrap(expected: Int): suspend () -> Boolean {
+    val factory: () -> suspend () -> Boolean = {
+        { crossinlineObjectCaptureAndDrive { value -> value == expected } }
+    }
+    return factory()
+}
+
+suspend inline fun crossinlineObjectShadowForward(
+    x: Int,
+    crossinline predicate: suspend (Int) -> Boolean
+): Boolean = crossinlineObjectCaptureAndDrive { x -> predicate(x) }
+
+fun crossinlineObjectShadowWrap(x: Int): suspend () -> Boolean = {
+    crossinlineObjectShadowForward(1) { inner -> inner == 1 && x == 7 }
+}
+
 fun crossinlineObjectMutableWrap(): suspend () -> Int {
     var state = 1
     val accepted = crossinlineObjectCaptureWrap { value ->
@@ -71,6 +97,9 @@ class CrossinlineSuspendObjectTests {
         assertEquals(true, crossinlineObjectMakeAndDrive(0) { crossinlineObjectIsBelow(it, 42) })    // True
         assertEquals(true, blockOn { crossinlineObjectCaptureWrap { it == 1 }() })
         assertEquals(true, blockOn { crossinlineObjectTwoLevelWrap { it == 1 }() })
+        assertEquals(true, blockOn { crossinlineObjectUseTransported { it == 1 }() })
+        assertEquals(true, blockOn { crossinlineObjectClosureFieldWrap(1)() })
+        assertEquals(true, blockOn { crossinlineObjectShadowWrap(7)() })
         assertEquals(14, blockOn { crossinlineObjectMutableWrap()() })
     }
 }

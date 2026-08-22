@@ -271,12 +271,15 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// computed so an enclosing carrier/closure substitution remains solely a CONSTRUCTION value and cannot leak a
 	// caller-frame token/local into the lambda body.
 	val shadowCap = java.util.IdentityHashMap<IrValueDeclaration, String?>()
+	val shadowCapLocalName = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 	for ((d, name) in capturePairs) {
 		shadowCap[d] = captureSubst[d]
+		shadowCapLocalName[d] = captureLocalName[d]
 		captureSubst[d] = if (d.name.asString() == "<this>")
 			"""{"k":"this"}"""
 		else
 			"""{"k":"local","name":${str(name)}}"""
+		if (d.name.asString() == "<this>") captureLocalName.remove(d) else captureLocalName[d] = name
 	}
 	// A suspend extension lambda has two distinct `this` candidates: its own extension receiver and a captured
 	// enclosing dispatch receiver. Preserve that distinction in BIR instead of asking bir2cir to infer it from a bare
@@ -294,6 +297,7 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 		else selfSubst.remove(extensionReceiver)
 	}
 	shadowCap.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
+	shadowCapLocalName.forEach { (d, prev) -> if (prev != null) captureLocalName[d] = prev else captureLocalName.remove(d) }
 	return """{"k":"newSuspendLambda","arity":${ownParams.size},"captures":[$capturesJson]$capValuesJson,"params":[$paramsJson],"suspendRet":${str(resultType)},"typeParams":[$typeParamsBare]$typeParamDecls$typeArgsJson,"body":[$body],"funcType":${funcTypeOf(fn).toJson()}}"""
 }
 

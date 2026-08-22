@@ -452,11 +452,11 @@ static class ReifiedNullabilityWitnessLowering
             walk(body, new WitnessFrame(methodWitnesses, typeWitnesses));
     }
 
-    // InlineSplice gives every materialized suspend carrier an explicit dense generic frame: body method-tv i is bound
-    // by typeArgs[i] in the enclosing frame. Reified witnesses are values too, so a witness belonging to such a type
-    // argument must cross each synthesized frame through the ordinary positional capture/capValue contract. Passing the
-    // caller WitnessFrame straight into the body conflates two distinct method-tv index spaces and leaves the caller's
-    // local dangling once the carrier becomes a state-machine method.
+    // InlineSplice gives every materialized suspend carrier an explicit dense generic frame: body (scope, i) is bound
+    // by typeArgs[i] in the enclosing frame, preserving whether the slot belongs to method or type scope. Reified
+    // witnesses are values too, so a witness belonging to such a type argument must cross each synthesized frame through
+    // the ordinary positional capture/capValue contract. Passing the caller WitnessFrame straight into the body conflates
+    // distinct generic index spaces and leaves the caller's local dangling once the carrier becomes a state-machine method.
     static void MaterializeDenseSuspendFrameWitnesses(
         JsonObject node,
         WitnessFrame callerWitnesses,
@@ -487,6 +487,7 @@ static class ReifiedNullabilityWitnessLowering
         while (capValues.Count < captures.Count) capValues.Add(null);
 
         var methodWitnesses = new Dictionary<int, JsonNode>();
+        var typeWitnesses = new Dictionary<int, JsonNode>();
         var usedNames = captures.OfType<JsonObject>().Select(capture => Str(capture["name"]))
             .Where(name => name != null).ToHashSet(StringComparer.Ordinal);
         for (var index = 0; index < typeArguments.Count; index++)
@@ -496,11 +497,13 @@ static class ReifiedNullabilityWitnessLowering
             while (!usedNames.Add(name)) name += "$";
             captures.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Boolean") });
             capValues.Add(value);
-            methodWitnesses[index] = new JsonObject { ["k"] = "local", ["name"] = name };
+            var destination = TypeJson.Read(typeArguments[index]) is TypeNode.Tv { Scope: "type" }
+                ? typeWitnesses : methodWitnesses;
+            destination[index] = new JsonObject { ["k"] = "local", ["name"] = name };
         }
 
         if (node["body"] is JsonNode body)
-            walk(body, new WitnessFrame(methodWitnesses, null));
+            walk(body, new WitnessFrame(methodWitnesses, typeWitnesses));
     }
 
     static IReadOnlyDictionary<int, JsonNode> MaterializeGeneratedType(JsonObject type, int[] indices)

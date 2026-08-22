@@ -71,7 +71,6 @@ static class InlineSplice
         _appLocalMethods = new HashSet<string>(moduleWideAppLocalMethods, StringComparer.Ordinal);
         _refCellNames = new Dictionary<string, string>(StringComparer.Ordinal);
         _boxRequests = new List<(string, string, JsonNode)>();
-        CloseSuspendFrameCarrierCaptures(root);
         Walk(root, 0);
         // A closed carrier (`defaultCarrier`, or a cross-module [KotlinInline] payload) re-hoists its generated
         // delegate target into THIS file's file-class methods under a fresh name. Do it BEFORE the post-passes so they
@@ -111,73 +110,6 @@ static class InlineSplice
         // skipped by Rewrite at the `o.ContainsKey("pc")` gate) — would reach ilemit, which cannot emit a callInline
         // (it fails opaquely there). Fail loud HERE with the callee so the un-spliced site is identifiable.
         AssertNoUnsplicedInline(root);
-    }
-
-    // An inlineLambda nested in a suspend-lambda body is authored in the lexical source frame, while its body has
-    // already been rebound to the enclosing state-machine capture names. If that carrier later escapes an inline call
-    // and is materialized, its descriptor and body must name the same value in the CURRENT frame. Derive that ownership
-    // solely from the enclosing newSuspendLambda's positional captures/capValues contract, then close each nested carrier
-    // before any splice can move it into a synthesized method. This composes across arbitrarily many suspend frames and
-    // preserves an explicit capture value (including a shared mutable ref cell) instead of snapshotting or re-evaluating
-    // it. No generated-name spelling participates in the decision.
-    static void CloseSuspendFrameCarrierCaptures(JsonNode node) =>
-        CloseSuspendFrameCarrierCaptures(node, new Dictionary<string, string>(StringComparer.Ordinal));
-
-    static void CloseSuspendFrameCarrierCaptures(JsonNode node, IReadOnlyDictionary<string, string> frameAliases)
-    {
-        if (node is JsonArray array)
-        {
-            foreach (var child in array)
-                if (child != null) CloseSuspendFrameCarrierCaptures(child, frameAliases);
-            return;
-        }
-        if (node is not JsonObject obj) return;
-
-        var kind = Str(obj["k"]);
-        if (kind == "typeDef") return;
-
-        if (kind == "newSuspendLambda")
-        {
-            // capValues are evaluated in the enclosing frame, so close any carriers in those expressions against the
-            // enclosing aliases before establishing the child method's own frame.
-            if (obj["capValues"] is JsonNode capValues)
-                CloseSuspendFrameCarrierCaptures(capValues, frameAliases);
-
-            var childAliases = new Dictionary<string, string>(StringComparer.Ordinal);
-            var captures = obj["captures"] as JsonArray;
-            var values = obj["capValues"] as JsonArray;
-            if (captures != null)
-                for (var i = 0; i < captures.Count; i++)
-                {
-                    if (captures[i] is not JsonObject capture || Str(capture["name"]) is not string owned) continue;
-                    childAliases[owned] = owned;
-                    var source = values != null && i < values.Count && values[i] is JsonObject value
-                        && Str(value["k"]) == "local" ? Str(value["name"]) : owned;
-                    if (source == null) continue;
-                    childAliases[source] = owned;
-                    foreach (var alias in frameAliases)
-                        if (alias.Value == source) childAliases[alias.Key] = owned;
-                }
-
-            if (obj["body"] is JsonNode body)
-                CloseSuspendFrameCarrierCaptures(body, childAliases);
-            return;
-        }
-
-        if (kind == "inlineLambda")
-        {
-            var substitutions = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
-            if (obj["captures"] is JsonArray captures)
-                foreach (var capture in captures.OfType<JsonObject>())
-                    if (Str(capture["name"]) is string source
-                        && frameAliases.TryGetValue(source, out var owned) && source != owned)
-                        substitutions[source] = new JsonObject { ["k"] = "local", ["name"] = owned };
-            if (substitutions.Count > 0) RewriteLocalRefs(obj, substitutions);
-        }
-
-        foreach (var pair in obj)
-            if (pair.Value != null && pair.Key != "synthClass")
-                CloseSuspendFrameCarrierCaptures(pair.Value, frameAliases);
     }
 
     // #43/#63: the FILE-CLASS method names a `newDelegate` target `ldftn`-resolves against — collected MODULE-WIDE across
@@ -1920,9 +1852,10 @@ static class InlineSplice
             if (Str(o["t"]) == "tv") keys.Add((Str(o["scope"]) ?? "method", Int(o["i"])));
             // Skip a nested closure's `synthClass`: its typeParams live in that frame's OWN 0-based space and its body's
             // `tv{…}` resolve positionally against them — collecting/renumbering them into the outer frame would corrupt
-            // the nested class. Its `captures`/`funcType`/`typeArgs` (outer-frame tv refs) ARE descended (#22). A nested
-            // `newSuspendLambda` is the SAME kind of tv scope boundary — shield its own frame, descend its outer refs.
-            bool nestedSm = Str(o["k"]) == "newSuspendLambda";
+            // the nested class. Its `captures`/`funcType`/`typeArgs` (outer-frame tv refs) ARE descended (#22). Only a
+            // synthesized dense `newSuspendLambda` owns its body frame already; a source lambda still uses the lexical
+            // caller frame and must be renumbered together with it.
+            bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
                 if (kv.Value != null && kv.Key is not ("sig" or "paramSig" or "overrides") && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
@@ -1943,8 +1876,9 @@ static class InlineSplice
                 && remap.TryGetValue((Str(o["scope"]) ?? "method", i), out var ni)) o["i"] = ni;
             // Skip a nested closure's `synthClass` (its tvs are its own frame — see CollectTvKeys); its outer-frame tv
             // refs on `captures`/`funcType`/`typeArgs` ARE renumbered into the materialized closure's param space (#22).
-            // A nested `newSuspendLambda`'s own frame is shielded identically — only its outer-frame refs are renumbered.
-            bool nestedSm = Str(o["k"]) == "newSuspendLambda";
+            // A nested dense `newSuspendLambda`'s own frame is shielded identically — only its outer-frame refs are
+            // renumbered. A source lambda remains lexical and is rewritten throughout.
+            bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
                 if (kv.Value != null && kv.Key is not ("sig" or "paramSig" or "overrides") && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
