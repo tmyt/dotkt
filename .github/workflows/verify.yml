@@ -1,19 +1,23 @@
 # CI: the regression harnesses that lock kotlin/clr.
 #
-# Gate wiring lives in the Makefile, NOT here — this workflow invokes the aggregate targets so the
-# canonical gate LIST is single-sourced (adding a gate to `make verify-core` / `make verify` reaches CI
-# with no YAML edit). The targets:
-#   make verify-core       : NUnit (+ ILVerify), emitted-IR validation, stateful MSBuild, irreducible
-#                            round-trip scenarios, and wide-delegate synthesis.
+# Gate wiring lives in the Makefile, NOT here — this workflow invokes the aggregate shard targets so
+# each gate belongs to one canonical group there rather than being copied into this YAML. The targets:
+#   make verify-test-corpus : NUnit (+ ILVerify), then schema/sanity over the BIR/CIR it just emitted.
+#   make verify-compile-fail: the isolated negative-compilation diagnostic lane.
+#   make verify-lowering    : synthetic BIR -> CIR lowering contract tests.
+#   make verify-integration : stateful MSBuild, target-universe, C# ABI, and XFAIL-policy gates.
 #   make verify-packaged-sdk : the ONLY gate that restores + consumes the 5 real .nupkgs from a feed
 #                            (exe / library / cross-module async coroutine / mpp / template scenarios). Two releases
 #                            shipped broken on packaging-only defects this gate catches — so it is a DISTINCT,
 #                            release-blocking job here, not folded into the big job (GitHub #160).
 #
 # Jobs:
-#   verify        (ubuntu)  — build toolchain + CLR stdlib, then `make verify-core`.
+#   prerequisites (ubuntu)  — build toolchain + CLR stdlib once and upload the exact same-SHA outputs.
+#   verify-core/* (ubuntu)  — four independent shards consuming those outputs in parallel.
+#   verify        (ubuntu)  — aggregate shard result; preserves the existing required-check name.
 #   packaged-sdk  (ubuntu)  — the packaged-nupkg release gate, on its own so a packaging break is
-#                             attributed and blocks independently of the functional gates.
+#                             attributed and blocks independently of the functional gates. It consumes the
+#                             same-SHA prerequisites, then still repacks and runs its idempotency check itself.
 #
 # Green semantics: ILVerify / round-trip / packaged-SDK carry explicit XFAIL baselines
 # (ILVERIFY_XFAIL / RT_XFAIL / XFAIL_PKG in their test runners) — they exit 0 iff every fail is a
@@ -27,12 +31,75 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ---- the canonical functional gate set (Linux) --------------------------------------------------
-  verify:
+  # ---- shared same-SHA build ----------------------------------------------------------------------
+  prerequisites:
     runs-on: ubuntu-latest
-    # 60, not 30: the canonical gate set has outgrown a 2-core hosted runner's 30-minute box —
-    # the #86 stack's suite growth pushed verify-core past it (job cancelled at exactly 30:00).
-    timeout-minutes: 60
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      # Build once rather than making every shard spend 4-6 minutes reproducing identical outputs.
+      # The archive preserves executable bits; extraction in consumers refreshes mtimes because their
+      # later checkout timestamps would otherwise make Make rebuild these same-SHA artifacts.
+      - name: Build toolchain + CLR stdlib
+        run: make toolchain stdlib
+
+      - name: Archive prerequisites
+        run: >-
+          tar -czf build/ci-prerequisites.tar.gz
+          toolchain/kotc/build/install/kotc
+          build/ilemit-bin
+          build/bir2cir-bin
+          build/dll2klib-bin
+          build/clr-stdlib-frontend-klib
+          build/clr-stdlib
+          build/clr-stdlib-rt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-prerequisites
+          path: build/ci-prerequisites.tar.gz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---- canonical functional gates, split at independent semantic boundaries ----------------------
+  verify_core:
+    name: verify-core / ${{ matrix.name }}
+    needs: prerequisites
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: test-corpus
+            target: verify-test-corpus
+          - name: compile-fail
+            target: verify-compile-fail
+          - name: lowering
+            target: verify-lowering
+          - name: integration
+            target: verify-integration
     steps:
       - uses: actions/checkout@v4
 
@@ -58,18 +125,34 @@ jobs:
       - name: Install ilverify
         run: dotnet tool install -g dotnet-ilverify
 
-      # Build the tools + the CLR stdlib (klib + ref + rt) up front so a build failure is attributed
-      # HERE, not inside a lazy need_*() call in the first verify script that happens to want it.
-      - name: Build toolchain + CLR stdlib
-        run: make toolchain stdlib
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-prerequisites
+          path: build/ci
 
-      # The complete canonical set EXCEPT the packaged-SDK gate (that is the `packaged-sdk` job below).
-      # The gate list is single-sourced in the Makefile — see `verify-core`.
-      - name: make verify-core (canonical gate set)
-        run: make verify-core
+      - name: Restore same-SHA prerequisites
+        run: tar --touch -xzf build/ci/ci-prerequisites.tar.gz
+
+      - name: make ${{ matrix.target }}
+        run: make ${{ matrix.target }}
+
+  # Keep the historical `verify` required-check name while exposing each shard's own failure.
+  verify:
+    needs: verify_core
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every verify-core shard
+        env:
+          SHARD_RESULT: ${{ needs.verify_core.result }}
+        run: |
+          echo "verify-core shards: $SHARD_RESULT"
+          test "$SHARD_RESULT" = success
 
   # ---- the packaged-nupkg release gate (Linux), distinct + release-blocking (GitHub #160) ---------
   packaged-sdk:
+    needs: prerequisites
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -96,6 +179,14 @@ jobs:
 
       - name: Install ilverify
         run: dotnet tool install -g dotnet-ilverify
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-prerequisites
+          path: build/ci
+
+      - name: Restore same-SHA prerequisites
+        run: tar --touch -xzf build/ci/ci-prerequisites.tar.gz
 
       # Packs the 5 nupkgs fresh from source and drives exe / library / cross-module async coroutine / mpp /
       # template scenarios that resolve them from a local feed only (isolated globalPackagesFolder — no cache
