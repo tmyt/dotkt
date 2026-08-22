@@ -5924,9 +5924,26 @@ sealed partial class ReferenceMetadataIndex
         var type = parameter.ParameterType;
         if (type.IsEnum)
         {
-            type = Enum.GetUnderlyingType(type);
-            try { value = Convert.ChangeType(value, type, System.Globalization.CultureInfo.InvariantCulture); }
+            Type underlying;
+            try
+            {
+                underlying = Enum.GetUnderlyingType(type);
+            }
             catch { return null; }
+            var declaredEnum = DeclarationTypeNode(type);
+            var physical = EnumConstantText(value, underlying);
+            if (declaredEnum == null || physical == null) return null;
+            // An ECMA-335 enum constant is the underlying bits interpreted in the DECLARED enum slot. It need not name
+            // an entry (flags combinations commonly do not), so carry the exact physical value instead of recovering
+            // an entry identity. EnumValueLowering uses this same CIR form for named external enum entries, and ilemit
+            // emits it one-to-one while returning the declared enum stack type.
+            return new JsonObject
+            {
+                ["k"] = "enumValue",
+                ["type"] = TypeJson.Write(declaredEnum),
+                ["underlying"] = underlying.FullName ?? underlying.Name,
+                ["physicalValue"] = physical,
+            }.ToJsonString();
         }
 
         JsonNode jsonValue = value switch
@@ -5956,6 +5973,30 @@ sealed partial class ReferenceMetadataIndex
             ["type"] = TypeJson.Write(declaredType),
             ["value"] = jsonValue,
         }.ToJsonString();
+    }
+
+    // MetadataLoadContext types are metadata-only and cannot be passed to Convert.ChangeType as a runtime Type.
+    // Normalize through the exact legal enum-underlying identity instead; this also makes signedness and width
+    // explicit before the bit pattern becomes the invariant-culture CIR string.
+    static string EnumConstantText(object value, Type underlying)
+    {
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        try
+        {
+            return underlying.FullName switch
+            {
+                "System.SByte" => Convert.ToSByte(value, culture).ToString(culture),
+                "System.Byte" => Convert.ToByte(value, culture).ToString(culture),
+                "System.Int16" => Convert.ToInt16(value, culture).ToString(culture),
+                "System.UInt16" => Convert.ToUInt16(value, culture).ToString(culture),
+                "System.Int32" => Convert.ToInt32(value, culture).ToString(culture),
+                "System.UInt32" => Convert.ToUInt32(value, culture).ToString(culture),
+                "System.Int64" => Convert.ToInt64(value, culture).ToString(culture),
+                "System.UInt64" => Convert.ToUInt64(value, culture).ToString(culture),
+                _ => null,
+            };
+        }
+        catch { return null; }
     }
 
     // The member-level PROPERTY-accessor binding: @ClrProperty(access, name). `access` is the READ(1)/WRITE(2) flag word;

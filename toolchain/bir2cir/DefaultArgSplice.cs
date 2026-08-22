@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Text.Json.Nodes;
@@ -76,7 +77,7 @@ static class DefaultArgSplice
         }
         // CHOKEPOINT: kotc uses `defaultArg` only to preserve an omitted positional slot. CIR and ilemit require the
         // complete physical argument vector, so a survivor is a bir2cir fill failure.
-        AssertNoPlaceholder(root);
+        AssertNoPlaceholder(root, null);
     }
 
     static void Walk(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
@@ -113,8 +114,8 @@ static class DefaultArgSplice
         if (defaults == null) return;
 
         // Parse the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
-        // or an earlier parameter and therefore needs callEval bindings; accepting only `const` is both the complete
-        // ECMA-335 optional-constant surface indexed by ReferenceMetadataIndex and safe to append in evaluation order.
+        // or an earlier parameter and therefore needs callEval bindings; accept only leaf metadata constants. An enum
+        // constant is the same leaf with an explicit declared enum slot plus underlying bits, not an entry-name lookup.
         var fills = new List<JsonNode>();
         for (var pos = args.Count; pos < sig.Count; pos++)
         {
@@ -122,11 +123,15 @@ static class DefaultArgSplice
             JsonNode parsed;
             try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); }
             catch { return; }
-            if (parsed is not JsonObject o || Str(o["k"]) != "const") return;
+            if (parsed is not JsonObject o || !IsMetadataConstant(o)) return;
             fills.Add(parsed);
         }
         foreach (var fill in fills) args.Add(fill);
     }
+
+    static bool IsMetadataConstant(JsonObject value) => Str(value["k"]) == "const"
+        || (Str(value["k"]) == "enumValue"
+            && value["type"] != null && Str(value["underlying"]) != null && Str(value["physicalValue"]) != null);
 
     // The binding an argument slot READS, or null when the slot is not a plan read.
     static JsonObject BindingOf(JsonNode slot, JsonArray bindings)
@@ -580,19 +585,94 @@ static class DefaultArgSplice
         return null;
     }
 
-    static void AssertNoPlaceholder(JsonNode node)
+    static void AssertNoPlaceholder(JsonNode node, string context)
     {
         if (node is JsonObject obj)
         {
+            var here = DeclarationContext(obj, context);
+            // A constructor delegation has no call node: its plan rides the constructor declaration. Its containing
+            // type nevertheless supplies the exact base/self target and the source declaration context, while the
+            // binding retains the omitted parameter role.
+            if (obj["ctors"] is JsonArray ctors && Str(obj["name"]) is string self)
+            {
+                foreach (var item in ctors)
+                {
+                    if (item is not JsonObject ctor || ctor["delegationBindings"] is not JsonArray delegationBindings) continue;
+                    for (var index = 0; index < delegationBindings.Count; index++)
+                    {
+                        if (delegationBindings[index] is not JsonObject binding || !IsPlaceholder(binding["expr"])) continue;
+                        var role = Str(binding["role"]) ?? $"argument binding {index}";
+                        var target = ctor["baseArgs"] is JsonArray
+                            ? TypeJson.OwnerName(obj["base"]) ?? "unknown"
+                            : self;
+                        throw new InvalidOperationException(
+                            DiagnosticPrefix(here) +
+                            $"cannot fill an omitted default argument for '{target} constructor' ({role}) from the " +
+                            "selected referenced declaration: its optional value could not be obtained or represented. " +
+                            "The reference may be stale or the value may not be carryable. Pass the argument explicitly.");
+                    }
+                }
+            }
+            // A planned omission keeps both sides of the diagnostic together: the binding names the source parameter,
+            // while the call names the exact selected declaration. Report it here before descending into the binding's
+            // placeholder so an unrepresentable metadata value is not misreported as a missing KotlinDefault carrier.
+            if (Str(obj["k"]) == "callEval" && obj["expr"] is JsonObject call
+                && obj["bindings"] is JsonArray bindings)
+            {
+                for (var index = 0; index < bindings.Count; index++)
+                {
+                    if (bindings[index] is not JsonObject binding || !IsPlaceholder(binding["expr"])) continue;
+                    var role = Str(binding["role"]) ?? $"argument binding {index}";
+                    var callee = CallLabel(call);
+                    throw new InvalidOperationException(
+                        DiagnosticPrefix(here) +
+                        $"cannot fill an omitted default argument for '{callee}' ({role}) from the selected referenced " +
+                        "declaration: its optional value could not be obtained or represented. The reference may be " +
+                        "stale or the value may not be carryable. Pass the argument explicitly.");
+                }
+            }
             if (Str(obj["k"]) == "defaultArg")
                 throw new InvalidOperationException(
-                    "bir2cir: an omitted cross-module default argument was not filled — no [kotlin.clr.KotlinDefault] " +
-                    "carrier was found for its callee on the referenced assembly; the reference may be stale or the " +
-                    "default not carryable. Pass the argument explicitly.");
-            foreach (var kv in obj) if (kv.Value != null) AssertNoPlaceholder(kv.Value);
+                    DiagnosticPrefix(here) +
+                    "an omitted cross-module default argument was not filled because its optional value could not be " +
+                    "obtained or represented from the selected referenced declaration. The reference may be stale or " +
+                    "the value may not be carryable. Pass the argument explicitly.");
+            foreach (var kv in obj) if (kv.Value != null) AssertNoPlaceholder(kv.Value, here);
         }
-        else if (node is JsonArray arr) foreach (var it in arr) if (it != null) AssertNoPlaceholder(it);
+        else if (node is JsonArray arr) foreach (var it in arr) if (it != null) AssertNoPlaceholder(it, context);
     }
+
+    static string DeclarationContext(JsonObject node, string fallback)
+    {
+        if ((node["body"] is not JsonArray && node["ctors"] is not JsonArray)
+            || Str(node["name"]) is not string name) return fallback;
+        if (node["pos"] is JsonObject pos && Str(pos["f"]) is string source)
+        {
+            var location = Path.GetFileName(source);
+            if ((pos["l"] as JsonValue)?.TryGetValue<int>(out var line) == true)
+            {
+                location += ":" + line;
+                if ((pos["c"] as JsonValue)?.TryGetValue<int>(out var column) == true)
+                    location += ":" + column;
+            }
+            return $"{location}: {name}";
+        }
+        // Nested synthesized shapes such as a closure class also have name/body but no source position. Keep the
+        // enclosing source declaration instead of replacing it with an implementation-only name.
+        return fallback ?? name;
+    }
+
+    static string CallLabel(JsonObject call)
+    {
+        var kind = Str(call["k"]);
+        if (kind == "new")
+            return (TypeJson.OwnerName(call["type"]) ?? "unknown") + " constructor";
+        var owner = TypeJson.OwnerName(call["ownerType"] ?? call["calleeOwner"] ?? call["owner"]);
+        var method = Str(call["method"]) ?? kind ?? "unknown call";
+        return owner == null ? method : owner + "." + method;
+    }
+
+    static string DiagnosticPrefix(string context) => context == null ? "bir2cir: " : context + ": bir2cir: ";
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
 }

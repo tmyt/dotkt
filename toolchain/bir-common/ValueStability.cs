@@ -76,8 +76,15 @@ public static class ValueStability
     /// are not in competition: kotc's IR-precise answer is recorded on the binding and consumed as-is, and this
     /// one is only reached where kotc had nothing to judge yet.
     /// </remarks>
-    public static bool IsReReadable(JsonNode? n) =>
-        n is JsonObject o && Str(o["k"]) is "const" or "this" or "bindRef";
+    public static bool IsReReadable(JsonNode? n)
+    {
+        if (n is not JsonObject o) return false;
+        var kind = Str(o["k"]);
+        return kind is "const" or "this" or "bindRef"
+            // The physical CIR enum form is an underlying literal in a declared enum slot. Do not classify a semantic
+            // BIR enum entry here: a referenced rich enum may still lower to a static singleton-field read.
+            || (kind == "enumValue" && Str(o["underlying"]) != null && Str(o["physicalValue"]) != null);
+    }
 
     /// <summary>
     /// Q2 — is EVALUATING this value unobservable, so a binding NOTHING reads may be dropped instead of evaluated

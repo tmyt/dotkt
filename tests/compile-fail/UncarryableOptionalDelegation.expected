@@ -1,0 +1,6 @@
+UncarryableOptionalDelegation.kt:3
+Derived
+UncarryableOptionalDelegation.Base constructor
+default of parameter 'value'
+optional value could not be obtained or represented
+Pass the argument explicitly

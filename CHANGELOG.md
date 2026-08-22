@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **CLR enum-valued optional arguments now retain their declared enum slot and exact underlying value (#525).**
+  bir2cir materializes zero, non-zero, flags-composite, signed, and unsigned ECMA-335 constants from the selected
+  referenced declaration. An uncarryable omitted value now reports its source declaration, exact callee and parameter
+  role, and explains that either a stale reference or an unrepresentable value may be responsible.
+
 - **Cross-module overload binding now recognizes extension-receiver function slots (#523).** bir2cir selects the
   referenced MethodDef by the frontend declaration identity, then validates its function slots through the shared CLR
   delegate parameter sequence. A `P.() -> R` parameter therefore agrees with its reflected
