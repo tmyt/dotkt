@@ -167,6 +167,13 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  COMPANION METADATA NEGATIVE FAIL — see build/nunit-$name.metadata-negative.log"
 			tail -25 "$ROOT/build/nunit-$name.metadata-negative.log"; rc=1
 		fi
+		if bash "$ROOT/tests/roundtrip/run-declaration-identity-negative.sh" \
+			>"$ROOT/build/nunit-$name.declaration-identity-negative.log" 2>&1; then
+			echo "  mismatched cross-module declaration identity rejected with call-site context"
+		else
+			echo "  DECLARATION IDENTITY NEGATIVE FAIL — see build/nunit-$name.declaration-identity-negative.log"
+			tail -25 "$ROOT/build/nunit-$name.declaration-identity-negative.log"; rc=1
+		fi
 	fi
 	if [[ "$proj" == "tests/coroutines" ]]; then
 		coroutine_cir="$dir/obj/$CONFIGURATION/net10.0/cir/SuspendDispatchTests.cir.json"

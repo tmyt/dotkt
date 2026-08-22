@@ -69,6 +69,7 @@ import roundtrip.receiverfunctions.PanelBuilder
 import roundtrip.receiverfunctions.applyPanel
 import roundtrip.receiverfunctions.column
 import roundtrip.receiverfunctions.defaultPanel
+import roundtrip.receiverfunctions.genericReceiver
 import roundtrip.receiverfunctions.overloadedPlain
 import roundtrip.receiverfunctions.overloadedReceiver
 import roundtrip.receiverfunctions.singleReceiver
@@ -267,7 +268,12 @@ class RoundtripSurfaceTests {
         val plain = overloadedPlain("plain", configure = { panel -> panel.margin = 7 }) { callbacks += 8 }
         ClassicAssert.AreEqual(7, plain.margin)
         ClassicAssert.AreEqual(5, plain.padding)
-        ClassicAssert.AreEqual(15, callbacks)
+
+        val generic = genericReceiver("generic", Panel(), configure = { margin = 8 }) { callbacks += 16 }
+        ClassicAssert.AreEqual(8, generic.margin)
+        val genericSibling = genericReceiver({ "sibling" }, Panel(), configure = { margin = 9 }) { callbacks += 32 }
+        ClassicAssert.AreEqual(9, genericSibling.margin)
+        ClassicAssert.AreEqual(63, callbacks)
     }
 
     @TestAttribute
