@@ -603,6 +603,10 @@ static class FBoundStarProjectionErasure
         if (TypeJson.Read(source["suspendRet"]) is TypeNode suspendRet)
             target["suspendRet"] = TypeJson.Write(EraseOwnerTv(suspendRet, owners, refs));
 
+        if (Str(source["suspendResult"]) is string logicalSuspendResult)
+            target["suspendResult"] = TypeNode.ToJson(
+                EraseOwnerTv(TypeNode.Parse(logicalSuspendResult), owners, refs));
+
         foreach (var key in new[]
                  {
                      "nullableGenericRet", "nullableGenericSuspendRet",

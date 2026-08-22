@@ -15,6 +15,10 @@ private class NullableSuspendSink : Continuation<Int> {
 
 suspend fun nullableSuspendStep(value: Int): Int = value + 1
 
+suspend fun nestedNullableSuspendResult(value: Int): List<Int?> = listOf(null, value)
+
+suspend fun <T> nestedGenericNullableSuspendResult(value: T): List<T?> = listOf(null, value)
+
 private fun suspendBlock(value: Int): suspend () -> Int =
     { nullableSuspendStep(value) }
 

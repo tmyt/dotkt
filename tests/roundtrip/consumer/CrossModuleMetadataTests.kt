@@ -108,6 +108,8 @@ import suspendnullable.makeNullableSuspend
 import suspendnullable.nullTopLevelBlock
 import suspendnullable.nullableTopLevelBlock
 import suspendnullable.nullableSuspendStep
+import suspendnullable.nestedNullableSuspendResult
+import suspendnullable.nestedGenericNullableSuspendResult
 import suspendref.SuspendRefService
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert
@@ -453,6 +455,17 @@ class MultiplatformMetadataTests {
 }
 
 class SuspendMetadataRoundtripTests {
+    // The logical suspend result is frozen before CLR representation erasure. Both assignments are invariant type
+    // checks: a re-imported List<Any> cannot satisfy either declaration.
+    @TestAttribute
+    fun nestedNullableSuspendResultsRoundTripExactly() {
+        ClassicAssert.AreEqual(42, runCrossModuleSuspend {
+            val concrete: List<Int?> = nestedNullableSuspendResult(41)
+            val generic: List<String?> = nestedGenericNullableSuspendResult("kept")
+            (concrete[1] ?: 0) + if (generic[0] == null && generic[1] == "kept") 1 else 0
+        })
+    }
+
     // #148: a suspend member on a companion crosses the DLL boundary through dll2klib metadata, is invoked from a
     // consumer-side suspend lambda, and completes through the Kotlin Continuation ABI (not merely declaration emit).
     @TestAttribute

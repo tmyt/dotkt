@@ -69,6 +69,7 @@ import roundtrip.covariantreference.ReferencedRedeclaredCovariantSlot
 import roundtrip.covariantreference.ReferencedConstrainedCovariantRoot
 import roundtrip.covariantreference.ReferencedSuspendCovariantControl
 import roundtrip.covariantreference.ReferencedSuspendCovariantSlot
+import roundtrip.covariantreference.ReferencedSuspendCovariantImplementation
 import System.Type
 import System.Threading.Tasks.Task1
 import roundtrip.pkg.Vec
@@ -590,6 +591,13 @@ class KotlinApiShapeRoundtripTests {
             .GetMethod("loadCovariant")!!
             .Invoke(suspendImplementation, null) as Task1<ReferencedCovariantValue>
         ClassicAssert.AreEqual(65, physicalTask.Result.value)
+
+        val reimportedImplementation = ReferencedSuspendCovariantImplementation()
+        ClassicAssert.AreEqual(66, runCrossModuleSuspend {
+            reimportedImplementation.loadCovariant().value
+        })
+        val reimportedSlot: ReferencedSuspendCovariantSlot = reimportedImplementation
+        ClassicAssert.AreEqual(66, runCrossModuleSuspend { reimportedSlot.loadCovariant().value })
 
         val nothing: ReferencedCovariantRoot<ReferencedCovariantValue> =
             CrossModuleNothingCovariantImplementation()

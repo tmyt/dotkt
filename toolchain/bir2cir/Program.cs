@@ -578,6 +578,11 @@ sealed class Pipeline
             // records the pre-erasure Kotlin type — plus, at an erased HEAD, its NRT byte — for the
             // [KotlinNullableGeneric] round-trip. Runs BEFORE the rest so type-lowering/substitution see it.
             if (attributeTopLevelOwner) ClrMemberResolution.CaptureReferencedStaticCallSignatures(bir.Root);
+            // A suspend result is Kotlin declaration meaning. Freeze it while the frontend TypeNode is still pristine;
+            // NullableGenericErasure below is allowed to change the declaration's physical CLR representation but not
+            // the cross-module fact. Later synthesis must copy this explicit fact rather than reconstructing it from an
+            // already-erased `suspendRet`.
+            RoundtripMetadata.FreezeSuspendResults(new[] { bir.Root });
             NullableGenericErasure.Apply(bir.Root, isValueFqn);
             // GENERIC-BOUNDARY nullable-Tv USE realignment — THE USE AXIS of #86's erasure invariant (#4;
             // #113/#117/#120/#142). The DEF-side erasure above turns a member's `T?`/`…Ref<T?>…` into
@@ -875,10 +880,10 @@ sealed class Pipeline
             SuspendResidueLowering.ApplyAll(
                 staged.Select(s => s.Root).ToList(), _options.StdlibMode == BuildStdlibMode.App);
 
-        // The public Task bridges above already carry their exact logical suspend result. Freeze the same fact for the
-        // compiler-provided residual suspend declarations before CLR type lowering; downstream readers never unwrap
-        // Task or otherwise reconstruct this Kotlin-owned meaning from a physical signature.
-        RoundtripMetadata.FreezeSuspendResults(staged.Select(s => s.Root));
+        // Every source declaration was frozen before representation erasure, and every synthesized suspend declaration
+        // must have copied that fact from its semantic source. Refuse an incomplete current BIR here; do not reconstruct
+        // Kotlin meaning from the now-physical `suspendRet`.
+        RoundtripMetadata.RequireSuspendResults(staged.Select(s => s.Root));
 
         // KOTLIN ERASURE-NARROWED OVERRIDE -> FINAL CLR METHODIMPL (#344 / #86 D3). The declaration-move half ran
         // early, but the bridge half must see the FINAL declarations: one logical suspend override becomes a public

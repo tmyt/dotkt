@@ -94,10 +94,9 @@ static class RoundtripMetadata
         }
     }
 
-    // Freeze the logical result while declarations still use Kotlin TypeNodes. Most suspend declarations are replaced
-    // by SuspendColdLowering, which authors this fact on their Task bridge directly. Compiler-provided residual
-    // declarations (notably inline coroutine intrinsics) retain `mods.suspend`; they need the same current-format fact
-    // before BirTypeLowering turns `suspendRet` into CLR vocabulary.
+    // Freeze the logical result at the pristine Kotlin declaration boundary. Representation passes may subsequently
+    // erase nested nullable/value generic arguments in `suspendRet`; this opaque fact is the source-owned result and
+    // must be copied explicitly by any pass that synthesizes another suspend declaration.
     public static void FreezeSuspendResults(IEnumerable<JsonNode> roots)
     {
         foreach (var root in roots) FreezeSuspendResults(root);
@@ -110,14 +109,31 @@ static class RoundtripMetadata
             foreach (var method in methods.OfType<JsonObject>())
             {
                 if (method.ContainsKey("suspendResult") || !ModFlag(method, "suspend")) continue;
-                var logical = (method["nullableGenericSuspendRet"] as JsonValue)?.GetValue<string>()
-                    ?? method["suspendRet"]?.ToJsonString()
+                var logical = method["suspendRet"]?.ToJsonString()
                     ?? throw new InvalidOperationException(
                         $"suspend declaration '{method["name"]}' has no logical result");
                 method["suspendResult"] = logical;
             }
         if (obj["types"] is JsonArray types)
             foreach (var type in types) FreezeSuspendResults(type);
+    }
+
+    public static void RequireSuspendResults(IEnumerable<JsonNode> roots)
+    {
+        foreach (var root in roots) RequireSuspendResults(root);
+    }
+
+    static void RequireSuspendResults(JsonNode node)
+    {
+        if (node is not JsonObject obj) return;
+        if (obj["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+                if (ModFlag(method, "suspend") &&
+                    (method["suspendResult"] as JsonValue)?.TryGetValue<string>(out _) != true)
+                    throw new InvalidOperationException(
+                        $"suspend declaration '{method["name"]}' did not preserve its logical result");
+        if (obj["types"] is JsonArray types)
+            foreach (var type in types) RequireSuspendResults(type);
     }
 
     // CompanionRepresentationLowering has already selected and materialized the physical representation. Metadata
@@ -527,6 +543,7 @@ static class RoundtripMetadata
         {
             po.Remove("kotlinType");
             po.Remove("retKotlinType");
+            po.Remove("suspendResult");
             // A method-generic Kotlin property has no representable CLR Property signature. Metadata-bearing builds
             // consume this exact association into [KotlinPropertyAccessor]; the runtime twin emits no round-trip
             // metadata, so discard the same pass-local hand-off before CIR reaches ilemit.

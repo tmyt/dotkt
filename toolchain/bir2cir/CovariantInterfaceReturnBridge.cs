@@ -94,6 +94,9 @@ static class CovariantInterfaceReturnBridge
                 var slotRet0 = TypeJson.Read(slotSuspend ? slot["suspendRet"] : slot["ret"]);
                 var slotRet = slotRet0 == null ? null : SubstOwnerTvs(slotRet0, ifaceArgs);
                 if (slotParams.Any(p => p == null) || slotRet == null) continue;
+                var logicalSuspendResult = slotSuspend
+                    ? SubstOwnerTvs(ReadSuspendResult(slot), ifaceArgs)
+                    : null;
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
 
                 var candidates = methods.OfType<JsonObject>().Where(m =>
@@ -132,7 +135,7 @@ static class CovariantInterfaceReturnBridge
                           + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
-                    bridge = BuildBridge(cls, implementation, slotParams, slotRet,
+                    bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
                         $"dotkt$covar${SafeName(name)}${bridgeOrdinal++}");
                     bridges[key] = bridge;
                     methods.Add(bridge);
@@ -218,6 +221,9 @@ static class CovariantInterfaceReturnBridge
                     .ToArray();
                 var slotRet = SupertypeGraph.SubstOwnerTvs(
                     NullableGenericErasure.EraseNullableTv(declaration.Return, isValue), ownerArgs);
+                var logicalSuspendResult = IsSuspend(implementation)
+                    ? SupertypeGraph.SubstOwnerTvs(declaration.Return, ownerArgs)
+                    : null;
                 if (slotParams.Any(type => type == null) || slotRet == null
                     || !ParamsPhysicallyEqual(implementation, slotParams, ownArgs, refs, isValue))
                     continue;
@@ -244,7 +250,7 @@ static class CovariantInterfaceReturnBridge
                           + ReferencedPhysicalTypeKey(slotRet, refs, isValue);
                 if (!bridges.TryGetValue(key, out var bridge))
                 {
-                    bridge = BuildBridge(cls, implementation, slotParams, slotRet,
+                    bridge = BuildBridge(cls, implementation, slotParams, slotRet, logicalSuspendResult,
                         $"dotkt$covar${SafeName(implementationName)}${bridgeOrdinal++}");
                     bridges[key] = bridge;
                     methods.Add(bridge);
@@ -294,7 +300,7 @@ static class CovariantInterfaceReturnBridge
             refs.PhysicalTypeNames, typeArg: false));
 
     static JsonObject BuildBridge(Def cls, JsonObject implementation, TypeNode[] slotParams, TypeNode slotRet,
-        string bridgeName)
+        TypeNode logicalSuspendResult, string bridgeName)
     {
         var sourceParams = implementation["params"] as JsonArray ?? new JsonArray();
         var bridgeParams = new JsonArray();
@@ -362,6 +368,8 @@ static class CovariantInterfaceReturnBridge
         {
             bridge["mods"] = new JsonObject { ["suspend"] = true };
             bridge["suspendRet"] = TypeJson.Write(slotRet);
+            bridge["suspendResult"] = TypeNode.ToJson(logicalSuspendResult
+                ?? throw new InvalidOperationException("suspend covariant bridge has no logical slot result"));
         }
         if (implementation["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
         return bridge;
@@ -468,5 +476,11 @@ static class CovariantInterfaceReturnBridge
     static bool Bool(JsonNode node) => node is JsonValue v && v.TryGetValue<bool>(out var b) && b;
     static bool IsSuspend(JsonObject method) =>
         method["mods"] is JsonObject mods && Bool(mods["suspend"]);
+
+    static TypeNode ReadSuspendResult(JsonObject method) =>
+        Str(method["suspendResult"]) is string encoded
+            ? TypeNode.Parse(encoded)
+            : throw new InvalidOperationException(
+                $"suspend declaration '{method["name"]}' has no preserved logical result");
     static string Str(JsonNode node) => node is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 }

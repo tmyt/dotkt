@@ -34,3 +34,8 @@ interface ReferencedSuspendCovariantControl {
 interface ReferencedSuspendCovariantSlot {
     suspend fun loadCovariant(): ReferencedCovariantValue
 }
+
+class ReferencedSuspendCovariantImplementation : ReferencedSuspendCovariantSlot {
+    override suspend fun loadCovariant(): ReferencedNarrowCovariantValue =
+        ReferencedNarrowCovariantValue(66)
+}

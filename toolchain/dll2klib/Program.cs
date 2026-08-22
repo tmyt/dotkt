@@ -2294,6 +2294,23 @@ internal sealed class AssemblyScanner
                     out var declarationSignatures))
             {
                 var declaration = declarationReader.GetMethodDefinition(declarationHandle);
+                var declarationAttrs = IsCurrentAssembly(declarationReader)
+                    ? _attrs
+                    : new MetadataAttributes(declarationReader);
+                // A compiler-generated interface MethodDef is a physical slot (for example a suspend cold entry), not
+                // another Kotlin declaration. Likewise, a private suspend MethodImpl body carrying the logical suspend
+                // metadata is the exact-return bridge for an already-projected public override. The ordinary non-suspend
+                // private MethodImpl path remains intact for interfaces whose hidden implementation must be surfaced as
+                // a fake override (#451).
+                if (declarationAttrs.IsDotKtAssembly && declarationAttrs.Has(
+                        declarationHandle,
+                        "System.Runtime.CompilerServices.CompilerGeneratedAttribute",
+                        requireTrust: false))
+                    continue;
+                var bodyKotlinFlags = _attrs.Int32(
+                    bodyHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
+                if (!IsPublicOrProtected(body.Attributes) && (bodyKotlinFlags & 4) != 0)
+                    continue;
                 var accessor = InheritedAccessor(declarationReader, declarationHandle);
                 // Operators and other special-name slots do not become ordinary Kotlin functions. Property/indexer
                 // and event accessors are carried by their authoritative MethodSemantics association instead.
@@ -3171,6 +3188,15 @@ internal sealed class AssemblyScanner
         var context = InheritedContext(reader, declarationHandle, declaration);
         var signature = declaration.DecodeSignature(inherited.Signatures, context);
         var returnType = SubstituteTypeParameters(signature.ReturnType, inherited.InterfaceArguments);
+        var attrs = new MetadataAttributes(reader);
+        kotlinFlags |= attrs.Int32(
+            declarationHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
+        var logicalSuspendReturn = (kotlinFlags & 4) != 0
+            ? attrs.CarrierType(
+                declarationHandle, MetadataAttributes.DotKtNs + "KotlinSuspendResultAttribute")
+                ?? throw new InvalidDataException(
+                    $"suspend MethodDef '{reader.GetString(declaration.Name)}' has no trusted logical-result carrier")
+            : null;
         var parameterTypes = signature.ParameterTypes
             .Select(type => SubstituteTypeParameters(type, inherited.InterfaceArguments))
             .ToImmutableArray();
@@ -3182,8 +3208,11 @@ internal sealed class AssemblyScanner
                 modality: inherited.IsAbstract ? 2 : inherited.IsExplicit ? 1 : 0,
                 kotlinFlags,
                 memberKind: inherited.IsExplicit ? Flags.FakeOverride : Flags.DeclarationMember),
-            ReturnType = ProjectInheritedReturn(
-                reader, declarationHandle, declaration, returnType, inherited.Signatures),
+            ReturnType = logicalSuspendReturn is TypeNode suspendReturn
+                ? SubstituteTypeParameters(
+                    inherited.Signatures.FromTypeNode(suspendReturn), inherited.InterfaceArguments)
+                : ProjectInheritedReturn(
+                    reader, declarationHandle, declaration, returnType, inherited.Signatures),
             ValueParameter = {
                 InheritedParameters(
                     reader,
@@ -4244,10 +4273,13 @@ internal sealed class AssemblyScanner
                         entry.KotlinImplementation,
                         MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18)) |
                     (1 << 18),
-                ReturnType = declarationIdentity?.ReturnType is TypeNode semanticReturn
-                    ? signatures.FromTypeNode(semanticReturn)
-                    : ProjectReturn(
-                        entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
+                ReturnType = (kotlinFlags & 4) != 0
+                    ? ProjectReturn(
+                        entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context)
+                    : declarationIdentity?.ReturnType is TypeNode semanticReturn
+                        ? signatures.FromTypeNode(semanticReturn)
+                        : ProjectReturn(
+                            entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
                 ValueParameter = {
                     Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context,
                         declarationIdentity?.Parameters, declarationIdentity?.ReifiedTypeParameterIndices.Count ?? 0)
@@ -4567,15 +4599,19 @@ internal sealed class AssemblyScanner
                 : (method.Attributes & MethodAttributes.Virtual) != 0 && (method.Attributes & MethodAttributes.Final) == 0 ? 1 : 0;
             var companion = CompanionExtension(methodHandle, signatures, "function");
             var sourceMethodName = KotlinSourceMethodName(methodHandle);
+            var kotlinFlags = _attrs.Int32(
+                methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0;
             var function = new Function
             {
                 Name = names.String(companion?.Name ?? sourceMethodName ?? name),
                 Flags = Flags.Callable(method.Attributes, modality,
-                    _attrs.Int32(methodHandle, MetadataAttributes.DotKtNs + "KotlinFunctionAttribute") ?? 0,
+                    kotlinFlags,
                     isInline: _attrs.Has(methodHandle, MetadataAttributes.DotKtNs + "KotlinInlineAttribute")) & ~(1 << 18),
-                ReturnType = declarationIdentity?.ReturnType is TypeNode semanticReturn
-                    ? signatures.FromTypeNode(semanticReturn)
-                    : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
+                ReturnType = (kotlinFlags & 4) != 0
+                    ? ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context)
+                    : declarationIdentity?.ReturnType is TypeNode semanticReturn
+                        ? signatures.FromTypeNode(semanticReturn)
+                        : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
                 ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
                     declarationIdentity?.Parameters, declarationIdentity?.ReifiedTypeParameterIndices.Count ?? 0) },
             };
