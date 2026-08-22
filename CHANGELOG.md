@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Malformed CLR optional constants now stop at the bir2cir metadata boundary (#538).** The reflected Constant or
+  custom-constant carrier must exactly inhabit the declared primitive, string, or enum slot before CIR is produced;
+  incompatible metadata receives the existing source, callee, and parameter diagnostic instead of reaching ilemit.
+
 - **Non-null CLR optional constants now inhabit `Nullable<T>` slots as real values (#535).** bir2cir types primitive
   and enum metadata constants as the nullable element and constructs the `Nullable<T>` wrapper explicitly instead of
   emitting `ldnull`. Null remains `default(Nullable<T>)`, while a value that cannot inhabit the element is rejected

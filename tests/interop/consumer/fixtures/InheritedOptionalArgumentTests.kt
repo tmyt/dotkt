@@ -10,6 +10,7 @@ import InheritedOptionalDefaults.InterfaceWriter
 import InheritedOptionalDefaults.KeyModifiers
 import InheritedOptionalDefaults.NavigationMethod
 import InheritedOptionalDefaults.NullableValueDefaults
+import InheritedOptionalDefaults.PrimitiveOptionalDefaults
 import InheritedOptionalDefaults.StaticEnumDefaults
 import InheritedOptionalDefaults.ValueBaseWriter
 import InheritedOptionalDefaults.ValueTypeDefaultConstructor
@@ -83,6 +84,7 @@ class InheritedOptionalArgumentTests {
         assertEquals("42:0", NullableValueDefaults.Static())
         assertEquals("null", NullableValueDefaults.ReferenceNull())
         assertEquals(true, NullableValueDefaults.NonFinite())
+        assertEquals(true, PrimitiveOptionalDefaults.Scalars())
     }
 
     private fun nullableBase(value: BaseWriter): BaseWriter? = value

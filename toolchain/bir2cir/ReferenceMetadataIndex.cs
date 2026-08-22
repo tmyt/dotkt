@@ -5968,7 +5968,7 @@ sealed partial class ReferenceMetadataIndex
         if (nullableElement != null)
         {
             var elementType = DeclarationTypeNode(nullableElement);
-            var elementValue = MetadataConstantNode(nullableElement, elementType, value, requireExactLiteralType: true);
+            var elementValue = MetadataConstantNode(nullableElement, elementType, value);
             if (elementType == null || elementValue == null) return null;
             return new JsonObject
             {
@@ -5978,17 +5978,15 @@ sealed partial class ReferenceMetadataIndex
             }.ToJsonString();
         }
 
-        return MetadataConstantNode(type, declaredType, value, requireExactLiteralType: false)?.ToJsonString();
+        return MetadataConstantNode(type, declaredType, value)?.ToJsonString();
     }
 
-    static JsonObject MetadataConstantNode(Type type, TypeNode declaredType, object value,
-        bool requireExactLiteralType)
+    static JsonObject MetadataConstantNode(Type type, TypeNode declaredType, object value)
     {
         if (type == null || declaredType == null) return null;
-        // Null reaches this helper only for a reference-typed slot. Value-type null/defaults are handled above, and a
-        // nullable element carrier is required to be a concrete V value before Nullable<V> can be constructed.
+        // Null reaches this helper only for a reference-typed slot: value-type null/defaults are handled above.
         if (value == null)
-            return requireExactLiteralType ? null : new JsonObject
+            return new JsonObject
             {
                 ["k"] = "const",
                 ["type"] = TypeJson.Write(declaredType),
@@ -6006,9 +6004,9 @@ sealed partial class ReferenceMetadataIndex
                 underlying = Enum.GetUnderlyingType(type);
             }
             catch { return null; }
-            // A Nullable<E> Constant row must contain the exact ECMA-335 carrier for E's underlying type. Do not let
+            // An enum Constant row must contain the exact ECMA-335 carrier for its underlying type. Do not let
             // Convert.ToInt* reinterpret an unrelated custom-constant value merely because it happens to be numeric.
-            if (requireExactLiteralType && !LiteralValueInhabits(underlying, value)) return null;
+            if (!LiteralValueInhabits(underlying, value)) return null;
             var physical = EnumConstantText(value, underlying);
             if (physical == null) return null;
             // An ECMA-335 enum constant is the underlying bits interpreted in the DECLARED enum slot. It need not name
@@ -6064,7 +6062,9 @@ sealed partial class ReferenceMetadataIndex
                 ["args"] = new JsonArray { MetadataConst("System.Int64", dateTimeValue.Ticks) },
             };
 
-        if (requireExactLiteralType && !LiteralValueInhabits(type, value)) return null;
+        // ilemit emits a const from its declared CIR type and must not reinterpret the JSON value. Validate the exact
+        // reflection carrier here, where the CLR parameter declaration and its Constant/custom-constant row coexist.
+        if (!LiteralValueInhabits(type, value)) return null;
 
         JsonNode jsonValue = value switch
         {
@@ -6111,6 +6111,7 @@ sealed partial class ReferenceMetadataIndex
         "System.UInt64" => value is ulong,
         "System.Single" => value is float,
         "System.Double" => value is double,
+        "System.String" => value is string,
         _ => false,
     };
 
