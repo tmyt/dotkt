@@ -127,7 +127,8 @@ static class DeclarationIdentityBinding
         JsonNode root,
         ReferenceMetadataIndex refs,
         IReadOnlySet<string> localIds,
-        bool deferUnknown = false)
+        bool deferUnknown = false,
+        bool preserveForScalarResolution = false)
     {
         void Walk(JsonNode node)
         {
@@ -217,7 +218,9 @@ static class DeclarationIdentityBinding
                 // the producer's independently allocated cold-entry identity (`id|cold`) from it; the ordinary late
                 // bind then replaces the provisional hot/cold spelling and consumes the fact. Removing it here made
                 // cross-module suspend calls append `$dotkt_suspend` to an already-suffixed hot MethodDef name.
-                if (!deferUnknown) obj.Remove(Key);
+                if (!deferUnknown
+                    && (!preserveForScalarResolution || id.EndsWith("|cold", StringComparison.Ordinal)))
+                    obj.Remove(Key);
             }
             else if (node is JsonArray array)
                 foreach (var child in array.ToList()) if (child != null) Walk(child);
@@ -293,6 +296,22 @@ static class DeclarationIdentityBinding
         foreach (var group in declarations.GroupBy(d => (d.Owner, d.Name, d.Sig)))
         {
             var ids = group.Select(d => d.Id).Distinct(StringComparer.Ordinal).ToArray();
+            if (ids.Length > 1)
+                foreach (var id in ids) carrierIds.Add(id);
+        }
+        // An identity-selected call is validated against the selected declaration, never structurally rebound. Keep
+        // the Kotlin signature for every same-source-name family whose members have the same callable scalar shape,
+        // even when their final CLR parameter types remain distinct. The reflected spelling alone cannot validate
+        // Kotlin/CLR projections such as List<T> -> IReadOnlyList<T>, and this is precisely the family in which a
+        // shape-only fallback could otherwise select a sibling overload.
+        foreach (var group in declarations.GroupBy(declaration => (
+                     declaration.Owner,
+                     declaration.SourceName,
+                     MethodArity: (declaration.Method["typeParams"] as JsonArray)?.Count ?? 0,
+                     ParamCount: (declaration.Method["params"] as JsonArray)?.Count ?? 0,
+                     IsStatic: Bool(declaration.Method["static"]))))
+        {
+            var ids = group.Select(declaration => declaration.Id).Distinct(StringComparer.Ordinal).ToArray();
             if (ids.Length > 1)
                 foreach (var id in ids) carrierIds.Add(id);
         }

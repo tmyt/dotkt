@@ -1112,10 +1112,12 @@ sealed class Pipeline
             ReifiedNullabilityWitnessLowering.FinalizeCallSignatures(substituted);
             // Fail closed if a late materialization introduced an identity-bearing external call after the early
             // binding boundary; the same authoritative ID lookup applies and no erased overload search is permitted.
-            DeclarationIdentityBinding.BindReferenced(substituted, refs, finalLocalDeclarationIds);
+            DeclarationIdentityBinding.BindReferenced(substituted, refs, finalLocalDeclarationIds,
+                preserveForScalarResolution: attributeTopLevelOwner);
             if (attributeTopLevelOwner)
                 ClrMemberResolution.ResolveReferencedStaticCalls(
-                    substituted, refs, emittedLocalTypes, externalCanonicalTypes);
+                    substituted, refs, emittedLocalTypes, externalCanonicalTypes,
+                    finalLocalDeclarationIds, outputName);
             // DECL-position NRT byte collection (#37/#48): stamp `nullableFlags`/`retNullableFlags` from the SEMANTIC
             // `{t:nullable}` reference wrappers BEFORE BirTypeLowering strips them to bare types. Runs in ALL builds so
             // the ref.dll + rt.dll + app views of a signature's nullability agree (the scalar decl flags are retired).
@@ -1201,9 +1203,10 @@ sealed class Pipeline
         // Some lowering stages synthesize or physically reshape calls after the early semantic-signature pass.
         // Re-run the same exact external binding on the final physical descriptors; the explicit local-type set
         // keeps every declaration emitted by this compilation on the local axis.
-        foreach (var (lowered, _) in loweredRoots)
+        foreach (var (lowered, outputName) in loweredRoots)
             ClrMemberResolution.ResolveReferencedStaticCalls(
-                lowered, refs, emittedLocalTypes, externalCanonicalTypes);
+                lowered, refs, emittedLocalTypes, externalCanonicalTypes,
+                finalLocalDeclarationIds, outputName);
 
         // PHASE 3A — complete every representation synthesis module-wide before any pass snapshots the final type
         // graph. A derived type can precede its base in another file; resolving interface manifests inside this loop
@@ -1259,9 +1262,10 @@ sealed class Pipeline
         // Late synthesis above authors ordinary calls as part of new bridge bodies. Bind those calls only after every
         // root has reached its final representation, then resolve local-owner calls inherited from external bases.
         ClrMemberResolution.ResolveInheritedExternalCalls(loweredRoots.Select(s => s.Root), refs);
-        foreach (var (lowered, _) in loweredRoots)
+        foreach (var (lowered, outputName) in loweredRoots)
             ClrMemberResolution.ResolveReferencedStaticCalls(
-                lowered, refs, emittedLocalTypes, externalCanonicalTypes);
+                lowered, refs, emittedLocalTypes, externalCanonicalTypes,
+                finalLocalDeclarationIds, outputName);
 
         // Declaration inheritance and MethodImpl ownership are physical CLR edges. Put their final TypeSpecs on the
         // same exact reflected identity so ilemit cannot visit one slot twice through an arity-free alias and an exact

@@ -28,3 +28,63 @@ class PanelBuilder(private val base: Int) {
 }
 
 val defaultPanel: Panel.() -> Unit = { margin = 9 }
+
+fun overloadedReceiver(
+    label: String,
+    configure: Panel.() -> Unit = {},
+    onClick: () -> Unit,
+): Panel {
+    val panel = Panel()
+    panel.configure()
+    onClick()
+    panel.padding = label.length
+    return panel
+}
+
+fun overloadedReceiver(
+    label: () -> String,
+    configure: Panel.() -> Unit = {},
+    onClick: () -> Unit,
+): Panel = overloadedReceiver(label(), configure, onClick)
+
+fun singleReceiver(
+    label: String,
+    configure: Panel.() -> Unit = {},
+    onClick: () -> Unit,
+): Panel = overloadedReceiver(label, configure, onClick)
+
+fun overloadedPlain(
+    label: String,
+    configure: (Panel) -> Unit = {},
+    onClick: () -> Unit,
+): Panel {
+    val panel = Panel()
+    configure(panel)
+    onClick()
+    panel.padding = label.length
+    return panel
+}
+
+fun overloadedPlain(
+    label: () -> String,
+    configure: (Panel) -> Unit = {},
+    onClick: () -> Unit,
+): Panel = overloadedPlain(label(), configure, onClick)
+
+fun <T> genericReceiver(
+    label: String,
+    value: T,
+    configure: T.() -> Unit,
+    onClick: () -> Unit,
+): T {
+    value.configure()
+    if (label.isNotEmpty()) onClick()
+    return value
+}
+
+fun <T> genericReceiver(
+    label: () -> String,
+    value: T,
+    configure: T.() -> Unit,
+    onClick: () -> Unit,
+): T = genericReceiver(label(), value, configure, onClick)

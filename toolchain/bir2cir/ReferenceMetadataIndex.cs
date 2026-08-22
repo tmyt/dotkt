@@ -190,6 +190,12 @@ sealed partial class ReferenceMetadataIndex
     // allocation for a trusted accessor bridge. No hierarchy/default-body inference is performed here.
     readonly Dictionary<(string Owner, int BodyToken), List<MethodImplBinding>> _methodImplsByBody = new();
     readonly Dictionary<string, MemberBinding> _declarationById = new(StringComparer.Ordinal);
+    readonly Dictionary<(string Owner, string SourceName, int MethodArity, bool IsStatic, int ParamCount), int>
+        _declarationFamilyCounts = new();
+
+    static (string Owner, string SourceName, int MethodArity, bool IsStatic, int ParamCount)
+        DeclarationFamilyOf(MemberBinding binding) =>
+        (binding.Owner, binding.DeclarationSourceName, binding.MethodArity, binding.IsStatic, binding.ParamCount);
 
     public bool TryDeclarationIdentity(
         string id,
@@ -207,6 +213,115 @@ sealed partial class ReferenceMetadataIndex
         owner = binding.DeclarationPhysicalOwner ?? binding.Owner;
         intrinsic = binding.Intrinsic;
         byrefPositions = binding.ByrefPositions;
+        return true;
+    }
+
+    // Resolve the exact MethodDef named by the frontend-selected Kotlin declaration identity. The identity selects;
+    // the semantic call signature only validates that the selected declaration still has the physical ABI this use
+    // expects after every representation pass. A failed validation is not permission to search sibling overloads.
+    public bool TryDeclarationIdentityMethod(
+        string id,
+        int methodArity,
+        bool isStatic,
+        IReadOnlyList<TypeNode> callSignature,
+        out TypeNode[] declarationSignature,
+        out MethodInfo declaration,
+        out Type declaringOwner,
+        out string failure)
+    {
+        declarationSignature = null;
+        declaration = null;
+        declaringOwner = null;
+        failure = null;
+        if (id == null || !_declarationById.TryGetValue(id, out var binding))
+        {
+            failure = "has no trusted physical binding";
+            return false;
+        }
+        var reifiedWitnessCount = binding.ReifiedTypeParameterIndices?.Length ?? 0;
+        var missingReifiedWitnesses = binding.ParamCount - callSignature.Count;
+        var completesWithReifiedWitnesses = missingReifiedWitnesses == reifiedWitnessCount
+            && missingReifiedWitnesses > 0;
+        if (binding.MethodArity != methodArity || binding.IsStatic != isStatic
+            || (binding.ParamCount != callSignature.Count && !completesWithReifiedWitnesses))
+        {
+            failure = $"selects {binding.Owner}.{binding.Name}`{binding.MethodArity} "
+                + $"({(binding.IsStatic ? "static" : "instance")}, {binding.ParamCount} parameter(s)), but the call "
+                + $"states arity {methodArity}, {(isStatic ? "static" : "instance")}, "
+                + $"{callSignature.Count} parameter(s)";
+            return false;
+        }
+        var completedCallSignature = completesWithReifiedWitnesses
+            ? callSignature.Concat(Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Boolean"),
+                missingReifiedWitnesses)).ToArray()
+            : callSignature.ToArray();
+        var physicalOwner = binding.DeclarationPhysicalOwner ?? binding.Owner;
+        var ownerArity = _ownerArity.TryGetValue(BareOwnerFqn(binding.Owner), out var arity) ? arity : 0;
+        var owner = ResolveRefType(physicalOwner, ownerArity)
+            ?? ResolveRefType(binding.Owner, ownerArity)
+            ?? PhysicalTypeNamed(physicalOwner, ownerArity);
+        if (owner == null)
+        {
+            failure = $"selects physical owner '{physicalOwner}', which is absent from the compile-reference universe";
+            return false;
+        }
+        if (owner.IsConstructedGenericType && !owner.IsGenericTypeDefinition)
+            owner = owner.GetGenericTypeDefinition();
+
+        List<MethodInfo> matches;
+        try
+        {
+            matches = owner.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static
+                    | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Where(method => method.MetadataToken == binding.MetadataToken)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            failure = $"cannot inspect selected physical owner '{physicalOwner}': {ex.GetType().Name}: {ex.Message}";
+            return false;
+        }
+        if (matches.Count != 1)
+        {
+            failure = $"selects metadata token 0x{binding.MetadataToken:x8} on '{physicalOwner}', but that token "
+                + $"resolved to {matches.Count} MethodDef(s)";
+            return false;
+        }
+
+        var selected = matches[0];
+        var selectedSignature = selected.GetParameters()
+            .Select(parameter => DeclarationTypeNode(parameter.ParameterType)).ToArray();
+        // A scalar identity already resolves a sole declaration completely. Parameter-shape validation is needed
+        // only where a same-source-name declaration family actually has a sibling of the same callable shape; that
+        // is the boundary at which falling back to structural overload selection could bind the wrong MethodDef.
+        // Requiring semantic reconstruction for every sole declaration would reject intentional physical erasures
+        // such as a suspend-function value represented by object.
+        var requiresParameterValidation = _declarationFamilyCounts.TryGetValue(
+            DeclarationFamilyOf(binding), out var familyCount) && familyCount > 1;
+        var physicalMatches = selectedSignature.All(type => type != null)
+            && selectedSignature.Select((type, index) =>
+                DeclarationDescribesCall(type, completedCallSignature[index])).All(matchesCall => matchesCall);
+        // Reified declarations may have compiler-owned physical parameters that are intentionally absent from the
+        // Kotlin semantic signature. Such a carrier can still identify the declaration, but it is not a complete
+        // validator for this physical call shape.
+        var semanticMatches = binding.DeclarationSemanticParams?.Length == callSignature.Count
+            && binding.DeclarationSemanticParams.Select((type, index) =>
+                SemanticDeclarationDescribesCall(type, callSignature[index])).All(matchesCall => matchesCall);
+        var signatureMatches = !requiresParameterValidation || semanticMatches || physicalMatches;
+        if (selectedSignature.Any(type => type == null) || !signatureMatches)
+        {
+            var semanticText = binding.DeclarationSemanticParams == null ? "absent"
+                : $"({string.Join(",", binding.DeclarationSemanticParams.Select(TypeNode.ToJson))})";
+            failure = $"selects '{physicalOwner}.{selected.Name}' but neither its semantic parameter signature "
+                + $"{semanticText} nor its physical parameter signature "
+                + $"({string.Join(",", selectedSignature.Select(type => type == null ? "<unresolved>" : TypeNode.ToJson(type)))}) "
+                + $"validates the call signature ({string.Join(",", callSignature.Select(TypeNode.ToJson))})";
+            return false;
+        }
+
+        declarationSignature = selectedSignature;
+        declaration = selected;
+        declaringOwner = owner;
         return true;
     }
     public int[] ReifiedTypeParameterIndices(string id) =>
@@ -507,18 +622,23 @@ sealed partial class ReferenceMetadataIndex
             foreach (var s in asm.DotKt.RestrictsSuspensionTypes) _restrictsSuspension.Add(s);
             foreach (var m in asm.DotKt.MemberBindings)
             {
-                if (m.DeclarationId is string declarationId
-                    && !_declarationById.TryAdd(declarationId, m))
+                if (m.DeclarationId is string declarationId)
                 {
-                    var prior = _declarationById[declarationId];
-                    // The same Kotlin module can be present through runtime/reference twins or repeated project
-                    // references. Identity-derived physical names are identical; accepting that exact duplicate does
-                    // not select between overloads or infer source meaning.
-                    if (SameDeclarationBinding(prior, m))
-                        continue;
-                    throw new InvalidOperationException(
-                        $"conflicting Kotlin declaration identity '{declarationId}': "
-                        + $"'{prior.Owner}.{prior.Name}' and '{m.Owner}.{m.Name}'");
+                    if (!_declarationById.TryAdd(declarationId, m))
+                    {
+                        var prior = _declarationById[declarationId];
+                        // The same Kotlin module can be present through runtime/reference twins or repeated project
+                        // references. Identity-derived physical names are identical; accepting that exact duplicate
+                        // does not select between overloads or infer source meaning.
+                        if (SameDeclarationBinding(prior, m))
+                            continue;
+                        throw new InvalidOperationException(
+                            $"conflicting Kotlin declaration identity '{declarationId}': "
+                            + $"'{prior.Owner}.{prior.Name}' and '{m.Owner}.{m.Name}'");
+                    }
+                    var family = DeclarationFamilyOf(m);
+                    _declarationFamilyCounts[family] = _declarationFamilyCounts.TryGetValue(family, out var count)
+                        ? count + 1 : 1;
                 }
                 if (!_membersByOwner.TryGetValue(m.Owner, out var list))
                     _membersByOwner[m.Owner] = list = new List<MemberBinding>();
@@ -841,6 +961,8 @@ sealed partial class ReferenceMetadataIndex
         && a.IsPropertyBridge == b.IsPropertyBridge && a.DeclarationId == b.DeclarationId
         && a.DeclarationSourceName == b.DeclarationSourceName
         && a.DeclarationPhysicalOwner == b.DeclarationPhysicalOwner
+        && Same(a.DeclarationSemanticParams, b.DeclarationSemanticParams)
+        && Same(a.DeclarationSemanticReturn, b.DeclarationSemanticReturn)
         && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
         && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint
         && Same(a.ReifiedTypeParameterIndices, b.ReifiedTypeParameterIndices);
@@ -1252,10 +1374,9 @@ sealed partial class ReferenceMetadataIndex
             return ForeignStarDeclarationDescribesCall(da.Elem, ca.Elem, ownerArgs);
         if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
             return ForeignStarDeclarationDescribesCall(db.Of, cb.Of, ownerArgs);
-        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn
-            && dfn.Params.Length == cfn.Params.Length)
-            return ForeignStarDeclarationDescribesCall(dfn.Ret, cfn.Ret, ownerArgs)
-                && dfn.Params.Select((arg, i) => ForeignStarDeclarationDescribesCall(arg, cfn.Params[i], ownerArgs)).All(x => x);
+        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
+            return FunctionDeclarationDescribesCall(dfn, cfn,
+                (declared, supplied) => ForeignStarDeclarationDescribesCall(declared, supplied, ownerArgs));
         return DeclarationDescribesCall(declaration, call);
     }
 
@@ -2814,6 +2935,14 @@ sealed partial class ReferenceMetadataIndex
             return DeclarationDescribesCall(dOb.Of, call);
         if (call is TypeNode.Oblivious cOb)
             return DeclarationDescribesCall(declaration, cOb.Of);
+        // A method variable may already be erased to object in the reflected MethodDef, at the head or recursively
+        // inside another physical type (Result<object> versus the selected Kotlin Result<T>, for example). Recognize
+        // that stated physical boundary before nullable recursion. Identity has already selected this MethodDef, so
+        // this validates its erasure rather than admitting the object slot as an overload-selection wildcard.
+        if (declaration is TypeNode.Fqn { Args: null } tvErasure
+            && ParamKey(tvErasure).Kind == TypeKeyKind.Object
+            && call is TypeNode.Tv or TypeNode.Nullable { Of: TypeNode.Tv })
+            return true;
         if (call is TypeNode.Nullable cNull)
         {
             // Nullability of a REFERENCE slot is not part of CLR identity, so a call stating T? still describes a
@@ -2824,10 +2953,6 @@ sealed partial class ReferenceMetadataIndex
             if (declaration is not TypeNode.Nullable && !IsValueKey(ParamKey(cNull.Of)))
                 return DeclarationDescribesCall(declaration, cNull.Of);
         }
-        if (declaration is TypeNode.Fqn { Args: null } erased
-            && ParamKey(erased).Kind == TypeKeyKind.Object
-            && call is TypeNode.Nullable { Of: TypeNode.Tv })
-            return true;
         // A Kotlin primitive-array CLASS and the CLR array it IS are one type under two spellings, and which one
         // arrives here depends only on how far the call has been lowered — a call still stating kotlin.IntArray
         // meets a declaration the reference twin reflects as int[]. The kinds differ, so no same-kind arm below
@@ -2848,15 +2973,61 @@ sealed partial class ReferenceMetadataIndex
         if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
             return DeclarationDescribesCall(db.Of, cb.Of);
         if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
-        {
-            if (dfn.Suspend != cfn.Suspend || dfn.Params.Length != cfn.Params.Length) return false;
-            if (dfn.Clr != null && cfn.Clr != null && dfn.Clr != cfn.Clr) return false;
-            return DeclarationDescribesCall(dfn.Ret, cfn.Ret)
-                && dfn.Params.Select((p, i) => DeclarationDescribesCall(p, cfn.Params[i])).All(x => x)
-                && (dfn.Recv == null
-                    ? cfn.Recv == null
-                    : cfn.Recv != null && DeclarationDescribesCall(dfn.Recv, cfn.Recv));
-        }
+            return FunctionDeclarationDescribesCall(dfn, cfn, DeclarationDescribesCall);
+        return false;
+    }
+
+    // A function type's Recv/Params split is Kotlin vocabulary, not part of its CLR delegate identity. The reference
+    // assembly can state only Action<P>/Func<P,R>, so reflection reconstructs P as an ordinary parameter even when
+    // the frontend-selected Kotlin declaration stated P.() -> R. Compare the one physical argument sequence shared
+    // by both representations; keeping the source-level split here makes a selected overload unmatchable whenever a
+    // sibling overload leaves more than one same-name candidate standing.
+    static bool FunctionDeclarationDescribesCall(TypeNode.Fn declaration, TypeNode.Fn call,
+        Func<TypeNode, TypeNode, bool> describes)
+    {
+        if (declaration.Suspend != call.Suspend) return false;
+        if (declaration.Clr != null && call.Clr != null && declaration.Clr != call.Clr) return false;
+        var declarationParameters = declaration.DelegateParams;
+        var callParameters = call.DelegateParams;
+        return declarationParameters.Length == callParameters.Length
+            && describes(declaration.Ret, call.Ret)
+            && declarationParameters.Select((parameter, index) =>
+                describes(parameter, callParameters[index])).All(matches => matches);
+    }
+
+    // A declaration-identity carrier preserves Kotlin's pre-representation signature. Keep that contract exact,
+    // except for a function type's receiver/parameter partition: both spellings denote the same CLR delegate ABI and
+    // dll2klib may restore either one. Apply that normalization recursively so nested generic/function slots validate
+    // without turning the validation into a second overload-selection pass.
+    static bool SemanticDeclarationDescribesCall(TypeNode declaration, TypeNode call)
+    {
+        if (declaration == call) return true;
+        // Either side may already have crossed a representation pass (for example kotlin.CharSequence versus its
+        // dotkt$CharSequence CLR view). Identity has already selected the MethodDef, so this is an ABI-equivalence
+        // validation rather than candidate matching; accept the established equivalence in either direction.
+        if (DeclarationDescribesCall(declaration, call) || DeclarationDescribesCall(call, declaration)) return true;
+        if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
+            return df.Name == cf.Name && df.Args != null && cf.Args != null
+                && df.Args.Length == cf.Args.Length
+                && df.Args.Select((type, index) =>
+                    SemanticDeclarationDescribesCall(type, cf.Args[index])).All(matches => matches);
+        if (declaration is TypeNode.Nullable dn && call is TypeNode.Nullable cn)
+            return SemanticDeclarationDescribesCall(dn.Of, cn.Of);
+        if (declaration is TypeNode.Oblivious dob && call is TypeNode.Oblivious cob)
+            return SemanticDeclarationDescribesCall(dob.Of, cob.Of);
+        if (declaration is TypeNode.Array da && call is TypeNode.Array ca)
+            return da.Rank == ca.Rank && da.SzArray == ca.SzArray
+                && SemanticDeclarationDescribesCall(da.Elem, ca.Elem);
+        if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
+            return SemanticDeclarationDescribesCall(db.Of, cb.Of);
+        if (declaration is TypeNode.Ptr dp && call is TypeNode.Ptr cp)
+            return SemanticDeclarationDescribesCall(dp.Of, cp.Of);
+        if (declaration is TypeNode.Mod dm && call is TypeNode.Mod cm)
+            return dm.Req == cm.Req
+                && SemanticDeclarationDescribesCall(dm.M, cm.M)
+                && SemanticDeclarationDescribesCall(dm.Of, cm.Of);
+        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
+            return FunctionDeclarationDescribesCall(dfn, cfn, SemanticDeclarationDescribesCall);
         return false;
     }
 
@@ -3550,13 +3721,8 @@ sealed partial class ReferenceMetadataIndex
             return AccessorDeclarationDescribesCall(da.Elem, ca.Elem);
         if (declaration is TypeNode.ByRef db && call is TypeNode.ByRef cb)
             return AccessorDeclarationDescribesCall(db.Of, cb.Of);
-        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn
-            && dfn.Suspend == cfn.Suspend && dfn.Params.Length == cfn.Params.Length)
-            return AccessorDeclarationDescribesCall(dfn.Ret, cfn.Ret)
-                && dfn.Params.Select((arg, i) => AccessorDeclarationDescribesCall(arg, cfn.Params[i])).All(x => x)
-                && (dfn.Recv == null
-                    ? cfn.Recv == null
-                    : cfn.Recv != null && AccessorDeclarationDescribesCall(dfn.Recv, cfn.Recv));
+        if (declaration is TypeNode.Fn dfn && call is TypeNode.Fn cfn)
+            return FunctionDeclarationDescribesCall(dfn, cfn, AccessorDeclarationDescribesCall);
         return DeclarationDescribesCall(declaration, call);
     }
 
@@ -4232,6 +4398,8 @@ sealed partial class ReferenceMetadataIndex
                             declarationIdentity?.Id,
                             declarationIdentity?.Name,
                             exactPhysicalOwner,
+                            declarationIdentity?.SemanticParams,
+                            declarationIdentity?.SemanticReturn,
                             collectionFactoryKind,
                             arrayFactoryKind,
                             arrayFactoryElementHint,
@@ -5316,7 +5484,8 @@ sealed partial class ReferenceMetadataIndex
     sealed record CompanionExtensionPayloadInfo(string ReceiverJson, string Name, string Kind);
     sealed record PropertyAccessorPayloadInfo(string Name, string Kind, string Association,
         string SourceAssociation);
-    sealed record DeclarationIdentityPayloadInfo(string Id, string Name, int[] ReifiedTypeParameterIndices);
+    sealed record DeclarationIdentityPayloadInfo(string Id, string Name, TypeNode[] SemanticParams,
+        TypeNode SemanticReturn, int[] ReifiedTypeParameterIndices);
 
     static DeclarationIdentityPayloadInfo KotlinDeclarationIdentityPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly, int methodGenericArity = int.MaxValue)
@@ -5342,7 +5511,32 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException("duplicate [KotlinDeclarationIdentity] reified index");
         if (reified.Any(index => index >= methodGenericArity))
             throw new InvalidDataException("[KotlinDeclarationIdentity] reified index exceeds method generic arity");
-        return new DeclarationIdentityPayloadInfo(id, name, reified);
+        TypeNode[] semanticParams = null;
+        TypeNode semanticReturn = null;
+        if (payload["signature"] is JsonObject semanticSignature)
+        {
+            if (semanticSignature.Count != 2
+                || semanticSignature.Any(kv => kv.Key is not ("params" or "ret"))
+                || semanticSignature["params"] is not JsonArray parameters
+                || semanticSignature["ret"] is not JsonNode returnType)
+                throw new InvalidDataException(
+                    $"malformed [KotlinDeclarationIdentity] semantic signature: {semanticSignature.ToJsonString()}");
+            try
+            {
+                semanticParams = parameters.Select(parameter => parameter == null
+                        ? throw new FormatException("null parameter type")
+                        : TypeNode.Parse(parameter.ToJsonString()))
+                    .ToArray();
+                semanticReturn = TypeNode.Parse(returnType.ToJsonString());
+            }
+            catch (Exception ex) when (ex is FormatException or InvalidOperationException
+                or KeyNotFoundException or JsonException)
+            {
+                throw new InvalidDataException(
+                    $"malformed [KotlinDeclarationIdentity] semantic signature: {semanticSignature.ToJsonString()}", ex);
+            }
+        }
+        return new DeclarationIdentityPayloadInfo(id, name, semanticParams, semanticReturn, reified);
     }
 
     static PropertyAccessorPayloadInfo KotlinPropertyAccessorPayload(
@@ -6232,7 +6426,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);

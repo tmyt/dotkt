@@ -30,6 +30,7 @@ static partial class ClrMemberResolution
     static IReadOnlySet<string> _localEnums = new HashSet<string>();
     static IReadOnlySet<string> _localTypes = new HashSet<string>();
     static IReadOnlySet<string> _externalCanonicalTypes = new HashSet<string>();
+    static IReadOnlySet<string> _localDeclarationIds = new HashSet<string>();
 
     // `localEnums` = every LOCAL `kind:"enum"` FQN in this compilation (the self-build's own enums — in an APP build a
     // stdlib enum like RegexOption is in the ref.dll and resolves concretely, never via the enum-reinterpret fallback).
@@ -419,7 +420,8 @@ static partial class ClrMemberResolution
     // counterpart of bir2cir's internal `resolvedMemberParams` on clr* nodes. Local same-assembly calls are absent from the
     // reference index and remain unchanged.
     public static void ResolveReferencedStaticCalls(JsonNode root, ReferenceMetadataIndex refs,
-        IReadOnlySet<string> localTypes, IReadOnlySet<string> externalCanonicalTypes)
+        IReadOnlySet<string> localTypes, IReadOnlySet<string> externalCanonicalTypes,
+        IReadOnlySet<string> localDeclarationIds, string file = null)
     {
         _refs = refs;
         // This pass runs before Apply, which normally initializes the local/external boundary. Set it here as an
@@ -427,7 +429,8 @@ static partial class ClrMemberResolution
         // type emitted by this compilation to a stale copy from its compile references.
         _localTypes = localTypes ?? new HashSet<string>();
         _externalCanonicalTypes = externalCanonicalTypes ?? new HashSet<string>();
-        WalkReferencedStaticCalls(root);
+        _localDeclarationIds = localDeclarationIds ?? new HashSet<string>();
+        WalkReferencedStaticCalls(root, file ?? "<unknown>");
         DropKotlinSigSnapshots(root);
     }
 
@@ -498,23 +501,39 @@ static partial class ClrMemberResolution
             target[KotlinSigSnapshotId] = snapshotId;
     }
 
-    static void WalkReferencedStaticCalls(JsonNode node)
+    static void WalkReferencedStaticCalls(JsonNode node, string context)
     {
         if (node is JsonObject obj)
         {
+            var childContext = DeclarationContext(obj, context);
             foreach (var kv in obj.ToList())
-                if (kv.Value != null) WalkReferencedStaticCalls(kv.Value);
+                if (kv.Value != null) WalkReferencedStaticCalls(kv.Value, childContext);
             if ((obj["k"] as JsonValue)?.GetValue<string>() is "callStatic" or "callInstance" or "newDelegate" or "newBoundDelegate")
-                ResolveReferencedStaticCall(obj);
+                ResolveReferencedStaticCall(obj, context);
         }
         else if (node is JsonArray arr)
         {
             foreach (var item in arr.ToList())
-                if (item != null) WalkReferencedStaticCalls(item);
+                if (item != null) WalkReferencedStaticCalls(item, context);
         }
     }
 
-    static void ResolveReferencedStaticCall(JsonObject node)
+    static string DeclarationContext(JsonObject node, string fallback)
+    {
+        if (node["body"] is not JsonArray
+            || (node["name"] as JsonValue)?.TryGetValue<string>(out var name) != true) return fallback;
+        if (node["pos"] is JsonObject pos
+            && (pos["f"] as JsonValue)?.TryGetValue<string>(out var source) == true
+            && (pos["l"] as JsonValue)?.TryGetValue<int>(out var line) == true)
+        {
+            var column = (pos["c"] as JsonValue)?.TryGetValue<int>(out var parsedColumn) == true
+                ? $":{parsedColumn}" : "";
+            return $"{source}:{line}{column}: {name}";
+        }
+        return $"{fallback}: {name}";
+    }
+
+    static void ResolveReferencedStaticCall(JsonObject node, string context)
     {
         // An instance call states its owner as `ownerType`; a static one as `owner`, or `calleeOwner` when a
         // lowering rebuilt the node. All three name the same thing — the type that declares the member.
@@ -531,6 +550,18 @@ static partial class ClrMemberResolution
         // that duplicate declaration and ilemit links the shipped TypeDef, so its calls belong to the external axis.
         // Every other locally-authored type keeps source-wins precedence, generated or not.
         if (_localTypes.Contains(ownerFqn.Name) && !_externalCanonicalTypes.Contains(ownerFqn.Name))
+        {
+            // An inline/member-extension reshape can temporarily put a referenced declaration identity on a call
+            // through a local wrapper owner. That call remains on the established local substitution path; retaining
+            // the external identity past this boundary would make ApplyLocal treat it as an unallocated local
+            // MethodDef. Preserve only identities that actually belong to this emission unit.
+            if ((node[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var localAxisIdentity) == true
+                && !_localDeclarationIds.Contains(localAxisIdentity))
+                node.Remove(DeclarationIdentityBinding.Key);
+            return;
+        }
+        if ((node[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var carriedIdentity) == true
+            && _localDeclarationIds.Contains(carriedIdentity))
             return;
         var selectionSig = sig;
         if ((node[KotlinSigSnapshotId] as JsonValue)?.TryGetValue<int>(out var snapshotId) == true
@@ -539,24 +570,47 @@ static partial class ClrMemberResolution
         var callSig = selectionSig.Select(TypeJson.Read).Where(t => t != null).ToArray();
         if (callSig.Length != selectionSig.Count) return;
         var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
-        // A PROPERTY read still carrying its Kotlin name. The nodes MemberCallSubstitution reshaped were
-        // renamed to the physical accessor there, but a call synthesized after that pass — a suspension
-        // sentinel, say — arrives with the source property name and a `prop` role, and no metadata declares a
-        // member by that name. Ask the reference index for the accessor's physical name, exactly as the
-        // reshape does; without it the search is for a member that does not exist under that spelling.
-        var accessorKind = (node["prop"] as JsonValue)?.GetValue<string>();
+        // A referenced extension-property accessor can still arrive here with its preserved source-property identity
+        // (or, before preservation, the Kotlin name plus `prop` role). Ask the reference index for the accessor's
+        // physical name, exactly as the reshape does; without it the search is for a member that does not exist under
+        // that spelling.
+        KotlinPropertyAccessors.TryCallIdentity(node, out var sourcePropertyName, out var accessorKind);
+        var propertyAccessorResolved = false;
         if (accessorKind is "get" or "set")
         {
-            if (!_refs.TryKotlinPropertyAccessor(ownerFqn.Name, name, accessorKind, callSig.Length, methodArity,
+            if (!_refs.TryKotlinPropertyAccessor(ownerFqn.Name, sourcePropertyName, accessorKind, callSig.Length, methodArity,
                     callSig, ownerFqn.Args ?? Array.Empty<TypeNode>(), out var physicalAccessor, out var accessorVirtual))
                 return;
-            KotlinPropertyAccessors.PreserveCallIdentity(node, name, accessorKind);
+            KotlinPropertyAccessors.PreserveCallIdentity(node, sourcePropertyName, accessorKind);
             node.Remove("prop");
             node["method"] = physicalAccessor;
             if (accessorVirtual) node["virtual"] = true;
             name = physicalAccessor;
+            propertyAccessorResolved = true;
         }
         var isStatic = node["k"]?.GetValue<string>() is "callStatic" or "newDelegate";
+        // Property accessors already crossed their dedicated PropertyInfo/MethodSemantics association above. Keep
+        // their established accessor-signature path: it also owns compiler-added parameters such as reified
+        // nullability witnesses, which are not part of the Kotlin property-call vector at this point.
+        if (!propertyAccessorResolved
+            && (node[DeclarationIdentityBinding.Key] as JsonValue)?.TryGetValue<string>(out var declarationId) == true)
+        {
+            if (!_refs.TryDeclarationIdentityMethod(
+                    declarationId, methodArity, isStatic, callSig, out var selectedSignature,
+                    out var selectedDeclaration, out var selectedOwner, out var failure))
+                throw new InvalidOperationException(
+                    $"bir2cir: {context} [{node["k"]?.GetValue<string>()} {ownerFqn.Name}.{name}]: "
+                    + $"frontend declaration identity '{declarationId}' {failure}");
+            node["sig"] = new JsonArray(selectedSignature.Select(TypeJson.Write).ToArray());
+            node["memberRef"] = MemberRefJson(selectedDeclaration, MemberRefNode.Kinds.Method,
+                selectedOwner, ownerFqn.Args);
+            StampResolvedMethodTypeParameters(node, selectedDeclaration);
+            StampDelegateArgumentTargets(node, selectedDeclaration, ownerFqn.Args ?? Array.Empty<TypeNode>());
+            node.Remove(DeclarationIdentityBinding.Key);
+            return;
+        }
+        if (propertyAccessorResolved)
+            node.Remove(DeclarationIdentityBinding.Key);
         if (!_refs.TryResolveStaticMemberSignature(
                 ownerFqn.Name, name, methodArity, isStatic, callSig, out var declarationSig,
                 out var declaration, out var declaringOwner))
