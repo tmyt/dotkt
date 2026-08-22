@@ -865,12 +865,16 @@ sealed partial class ReferenceMetadataIndex
     // when it has no representable defaults, so callers must not fall through to a different declaration search.
     public bool TryKotlinDefaultsForSelectedMethod(
         TypeNode.Fqn owner, string method, int methodArity, bool isStatic, IReadOnlyList<TypeNode> callSignature,
-        out Dictionary<int, string> defaults)
+        out Dictionary<int, string> defaults, out string[] parameterNames)
     {
         defaults = null;
+        parameterNames = null;
         if (!ClrMemberResolution.TryResolveExternalMethodForDefaults(
                 this, owner, method, methodArity, isStatic, callSignature, out var declaration))
             return false;
+        parameterNames = declaration.GetParameters()
+            .Select(parameter => string.IsNullOrEmpty(parameter.Name) ? $"arg{parameter.Position}" : parameter.Name)
+            .ToArray();
         defaults = CallableDefaultsOf(declaration);
         return true;
     }
@@ -5946,6 +5950,74 @@ sealed partial class ReferenceMetadataIndex
             }.ToJsonString();
         }
 
+        var declaredType = DeclarationTypeNode(type);
+        if (declaredType is null) return null;
+
+        // A Constant row may carry CLASS(null) for a value-type parameter. Reflection consequently reports null for
+        // C#'s `DateTime value = default`, but ldnull does not inhabit that slot. `default` is CIR's general zero-value
+        // expression: ilemit uses initobj for a value type / generic parameter and ldnull only for a reference type.
+        // Nullable<T> is a value type too, so this also realizes its null/default representation directly rather than
+        // relying on a boxed-null round trip at the call boundary.
+        if (value is null)
+        {
+            bool isValueType;
+            if (type.IsGenericParameter) isValueType = true;
+            else
+            {
+                // MetadataLoadContext can need the base-type chain to classify a nominal type. An incomplete reference
+                // universe must make this default unrepresentable, not silently reinterpret an unknown slot as a
+                // reference and recreate the invalid ldnull emission this path exists to prevent.
+                try { isValueType = type.IsValueType; }
+                catch { return null; }
+            }
+            if (isValueType)
+                return new JsonObject
+                {
+                    ["k"] = "default",
+                    ["type"] = TypeJson.Write(declaredType),
+                }.ToJsonString();
+        }
+
+        // DecimalConstantAttribute is surfaced by both runtime reflection and MetadataLoadContext as an actual
+        // System.Decimal. Decimal has no ECMA-335 literal opcode, so materialize the exact 96-bit coefficient, sign,
+        // and scale through its public (int lo, int mid, int hi, bool isNegative, byte scale) constructor. Keep this
+        // conditioned on the declared slot: a custom constant of the same runtime value attached to another slot is
+        // malformed/unrepresentable metadata, not permission to change that slot's type.
+        if (type.FullName == "System.Decimal" && value is decimal decimalValue)
+        {
+            var bits = decimal.GetBits(decimalValue);
+            return new JsonObject
+            {
+                ["k"] = "new",
+                ["type"] = TypeJson.Write(declaredType),
+                ["argTypes"] = new JsonArray
+                {
+                    TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Int32"), TypeJson.Fqn("System.Int32"),
+                    TypeJson.Fqn("System.Boolean"), TypeJson.Fqn("System.Byte"),
+                },
+                ["args"] = new JsonArray
+                {
+                    MetadataConst("System.Int32", bits[0]),
+                    MetadataConst("System.Int32", bits[1]),
+                    MetadataConst("System.Int32", bits[2]),
+                    MetadataConst("System.Boolean", (bits[3] & unchecked((int)0x80000000)) != 0),
+                    MetadataConst("System.Byte", (bits[3] >> 16) & 0xff),
+                },
+            }.ToJsonString();
+        }
+
+        // DateTimeConstantAttribute likewise surfaces an actual DateTime. Its metadata contract carries ticks (and
+        // therefore an Unspecified kind), exactly the public DateTime(long ticks) construction below. A zero/default
+        // DateTime took the generic null/value-type path above, which intentionally emits initobj instead.
+        if (type.FullName == "System.DateTime" && value is DateTime dateTimeValue)
+            return new JsonObject
+            {
+                ["k"] = "new",
+                ["type"] = TypeJson.Write(declaredType),
+                ["argTypes"] = new JsonArray { TypeJson.Fqn("System.Int64") },
+                ["args"] = new JsonArray { MetadataConst("System.Int64", dateTimeValue.Ticks) },
+            }.ToJsonString();
+
         JsonNode jsonValue = value switch
         {
             null => null,
@@ -5965,8 +6037,6 @@ sealed partial class ReferenceMetadataIndex
             _ => null,
         };
         if (value is not null && jsonValue is null) return null;
-        var declaredType = DeclarationTypeNode(type);
-        if (declaredType is null) return null;
         return new JsonObject
         {
             ["k"] = "const",
@@ -5974,6 +6044,13 @@ sealed partial class ReferenceMetadataIndex
             ["value"] = jsonValue,
         }.ToJsonString();
     }
+
+    static JsonObject MetadataConst(string type, object value) => new()
+    {
+        ["k"] = "const",
+        ["type"] = TypeJson.Fqn(type),
+        ["value"] = JsonValue.Create(value),
+    };
 
     // MetadataLoadContext types are metadata-only and cannot be passed to Convert.ChangeType as a runtime Type.
     // Normalize through the exact legal enum-underlying identity instead; this also makes signedness and width

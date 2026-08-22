@@ -64,7 +64,7 @@ static class DefaultArgSplice
         // before the plan existed — so refuse it here rather than fill it into a call nothing bound.
         AssertPlaceholdersPlanned(root, inBindingExpr: false);
         var localOwner = root is JsonObject ro && Str(ro["fileClass"]) is string fc ? TypeJson.Fqn(fc) : null;
-        Walk(root, refs, hoist, localOwner);
+        Walk(root, refs, hoist, localOwner, null);
         // A constructor delegation's args are not a call node, so `Walk` never reaches them as one.
         if (root is JsonObject rt) SpliceCtorDelegations(rt["types"], refs, hoist, localOwner);
         if (hoist.Count > 0)
@@ -80,11 +80,13 @@ static class DefaultArgSplice
         AssertNoPlaceholder(root, null);
     }
 
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner)
+    static void Walk(JsonNode node, ReferenceMetadataIndex refs, JsonArray hoist, JsonNode localOwner,
+        string context = null)
     {
         if (node is JsonObject obj)
         {
-            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, refs, hoist, localOwner);
+            var here = DeclarationContext(obj, context);
+            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, refs, hoist, localOwner, here);
             // A placeholder only ever lives in a plan binding, so the PLAN is the splice site: it names both the call
             // whose callee identifies the carriers and the bindings the fill is written into and reads from.
             if (Str(obj["k"]) == "callEval" && obj["expr"] is JsonObject call && obj["bindings"] is JsonArray bindings)
@@ -94,12 +96,13 @@ static class DefaultArgSplice
             // its IR stub carries no default expression, so kotc can only emit the shorter argument vector. Resolve the
             // selected owner+declaration signature here and append only metadata-representable constants. Anything
             // needing a receiver/earlier-parameter binding still requires the ordinary planned placeholder path.
-            TrySpliceTrailingConstants(obj, refs);
+            TrySpliceTrailingConstants(obj, refs, here);
         }
-        else if (node is JsonArray arr) foreach (var it in arr.ToList()) if (it != null) Walk(it, refs, hoist, localOwner);
+        else if (node is JsonArray arr)
+            foreach (var it in arr.ToList()) if (it != null) Walk(it, refs, hoist, localOwner, context);
     }
 
-    static void TrySpliceTrailingConstants(JsonObject node, ReferenceMetadataIndex refs)
+    static void TrySpliceTrailingConstants(JsonObject node, ReferenceMetadataIndex refs, string context)
     {
         var k = Str(node["k"]);
         if (k != "callStatic" && k != "callInstance") return;
@@ -110,8 +113,8 @@ static class DefaultArgSplice
         var owner = TypeJson.OwnerName(ownerNode);
         var method = Str(node["method"]);
         if (owner == null || method == null) return;
-        var defaults = DefaultsForCall(node, ownerNode, owner, method, sig, refs);
-        if (defaults == null) return;
+        var defaults = DefaultsForCall(node, ownerNode, owner, method, sig, refs, out var parameterNames);
+        if (defaults == null) ThrowUnrepresentable(args.Count);
 
         // Parse the complete tail before mutating the call. A non-constant KotlinDefault carrier may read the receiver
         // or an earlier parameter and therefore needs callEval bindings; accept only leaf metadata constants. An enum
@@ -119,19 +122,65 @@ static class DefaultArgSplice
         var fills = new List<JsonNode>();
         for (var pos = args.Count; pos < sig.Count; pos++)
         {
-            if (!defaults.TryGetValue(pos, out var bir)) return;
+            if (!defaults.TryGetValue(pos, out var bir)) ThrowUnrepresentable(pos);
             JsonNode parsed;
             try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); }
-            catch { return; }
-            if (parsed is not JsonObject o || !IsMetadataConstant(o)) return;
+            catch { ThrowUnrepresentable(pos); return; }
+            // The metadata expression is authored in the selected declaration's method/type frame. Close it exactly
+            // as the planned splice path does before admitting it into this caller; otherwise default(T) from a CLR
+            // generic method can bind the caller's unrelated !!0 or remain unresolved in a non-generic caller.
+            var methodTypeArgs = node["typeArgs"] as JsonArray;
+            InlineSplice.SubstTvIn(parsed, methodTypeArgs ?? new JsonArray(), methodTypeArgs?.Count ?? 0,
+                TypeArgsOf(ownerNode));
+            if (parsed is not JsonObject o || !IsMetadataConstant(o)) ThrowUnrepresentable(pos);
             fills.Add(parsed);
         }
         foreach (var fill in fills) args.Add(fill);
+
+        void ThrowUnrepresentable(int pos)
+        {
+            var parameter = parameterNames != null && pos >= 0 && pos < parameterNames.Length
+                ? $"default of parameter '{parameterNames[pos]}'"
+                : $"default of parameter at position {pos}";
+            throw new InvalidOperationException(
+                DiagnosticPrefix(context) +
+                $"cannot fill an omitted default argument for '{CallLabel(node)}' ({parameter}) from the selected " +
+                "referenced declaration: its optional value could not be obtained or represented. The reference may " +
+                "be stale or the value may not be carryable. Pass the argument explicitly.");
+        }
     }
 
-    static bool IsMetadataConstant(JsonObject value) => Str(value["k"]) == "const"
-        || (Str(value["k"]) == "enumValue"
-            && value["type"] != null && Str(value["underlying"]) != null && Str(value["physicalValue"]) != null);
+    static bool IsMetadataConstant(JsonObject value)
+    {
+        var kind = Str(value["k"]);
+        if (kind == "const") return true;
+        if (kind == "default") return value["type"] != null;
+        if (kind == "enumValue")
+            return value["type"] != null && Str(value["underlying"]) != null
+                && Str(value["physicalValue"]) != null;
+
+        // CLR decimal and DateTime metadata constants have no literal opcode. ReferenceMetadataIndex materializes
+        // their exact public value-type constructors. Admit only those closed, all-constant shapes here so a shorter
+        // static call can receive them; an arbitrary KotlinDefault `new` must still use a call-evaluation plan.
+        if (kind != "new" || value["argTypes"] is not JsonArray argTypes || value["args"] is not JsonArray args
+            || argTypes.Count != args.Count) return false;
+        var owner = TypeJson.OwnerName(value["type"]);
+        string[] expected = owner switch
+        {
+            "System.Decimal" => new[]
+            {
+                "System.Int32", "System.Int32", "System.Int32", "System.Boolean", "System.Byte",
+            },
+            "System.DateTime" => new[] { "System.Int64" },
+            _ => null,
+        };
+        if (expected == null || expected.Length != args.Count) return false;
+        for (var i = 0; i < expected.Length; i++)
+            if (TypeJson.OwnerName(argTypes[i]) != expected[i]
+                || args[i] is not JsonObject arg || Str(arg["k"]) != "const"
+                || TypeJson.OwnerName(arg["type"]) != expected[i]) return false;
+        return true;
+    }
 
     // The binding an argument slot READS, or null when the slot is not a plan read.
     static JsonObject BindingOf(JsonNode slot, JsonArray bindings)
@@ -224,7 +273,7 @@ static class DefaultArgSplice
             ? refs.KotlinDefaultsFor(owner, method, sigCount, sigKey, relaxedSigKey)
             : DefaultsForCall(
                 node, node["ownerType"] ?? node["calleeOwner"] ?? node["owner"], owner, method,
-                node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray, refs);
+                node["sig"] as JsonArray ?? node["shapeTypes"] as JsonArray, refs, out _);
         if (defaults == null)
         {
             if (refs.KotlinDefaultsAmbiguous(owner, method, sigCount))
@@ -255,8 +304,9 @@ static class DefaultArgSplice
     // owner/signature indexes remain only for call shapes that resolver cannot yet represent, never after it selected
     // a MethodDef with no default (which would incorrectly fall through to a sibling declaration).
     static Dictionary<int, string> DefaultsForCall(JsonObject node, JsonNode ownerNode, string owner, string method,
-        JsonArray signature, ReferenceMetadataIndex refs)
+        JsonArray signature, ReferenceMetadataIndex refs, out string[] parameterNames)
     {
+        parameterNames = null;
         if (Str(node[DeclarationIdentityBinding.Key]) is string declarationId)
             return refs.KotlinDefaultsForDeclarationIdentity(declarationId);
         if (signature == null) return null;
@@ -265,7 +315,7 @@ static class DefaultArgSplice
             && callSignature.All(type => type != null)
             && refs.TryKotlinDefaultsForSelectedMethod(
                 ownerType, method, (node["typeArgs"] as JsonArray)?.Count ?? 0, Str(node["k"]) == "callStatic",
-                callSignature, out var selectedDefaults))
+                callSignature, out var selectedDefaults, out parameterNames))
             return selectedDefaults;
 
         var sigKey = ReferenceMetadataIndex.SignatureKeyOf(signature);

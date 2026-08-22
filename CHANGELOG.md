@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **CLR decimal and value-type optional arguments now materialize as valid values (#527).** bir2cir reconstructs
+  `DecimalConstantAttribute` and `DateTimeConstantAttribute` values through their exact public value-type constructors
+  and lowers a reflected null for a value-type slot to `default(T)` rather than `ldnull`. Static, instance, inherited,
+  and constructor omissions share the rule; unsupported metadata is rejected with source and parameter context.
+
 - **CLR enum-valued optional arguments now retain their declared enum slot and exact underlying value (#525).**
   bir2cir materializes zero, non-zero, flags-composite, signed, and unsigned ECMA-335 constants from the selected
   referenced declaration. An uncarryable omitted value now reports its source declaration, exact callee and parameter

@@ -103,3 +103,32 @@ public sealed class EnumWidthDefaults
         UInt64Default u64 = UInt64Default.Value) =>
         $"{(sbyte)i8}:{(byte)u8}:{(short)i16}:{(ushort)u16}:{(int)i32}:{(uint)u32}:{(long)i64}:{(ulong)u64}";
 }
+
+public class ValueTypeDefaults
+{
+    const decimal ExpectedDecimal = -12345678901234567890.1234m;
+
+    public bool Instance(decimal value = ExpectedDecimal, System.DateTime when = default) =>
+        value == ExpectedDecimal && when == default;
+
+    public static bool Static(decimal value = ExpectedDecimal, System.DateTime when = default) =>
+        value == ExpectedDecimal && when == default;
+
+    public static T GenericDefault<T>(T value = default) => value;
+
+    public long DateTimeConstant(
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.CompilerServices.DateTimeConstant(638000000000000000)] System.DateTime when) => when.Ticks;
+}
+
+public sealed class DerivedValueTypeDefaults : ValueTypeDefaults { }
+
+public sealed class ValueTypeDefaultConstructor
+{
+    const decimal ExpectedDecimal = -12345678901234567890.1234m;
+
+    public ValueTypeDefaultConstructor(decimal value = ExpectedDecimal, System.DateTime when = default) =>
+        ValuesMatch = value == ExpectedDecimal && when == default;
+
+    public bool ValuesMatch { get; }
+}
