@@ -115,13 +115,29 @@ internal fun <T> BirEmitter.withDefaultTypeScope(
 	emit: () -> T,
 ): T {
 	val saved = defaultTypeSubst
-	val here = callSiteSubstitutor(call, callee)
+	val savedArgs = defaultTypeArgSubst
+	val savedStars = defaultStarTypeParams
+	val captured = linkedSetOf<org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol>()
+	val here = callSiteSubstitutor(call, callee,
+		allowCapturedArguments = true, capturedTypeParameters = captured)
+	val hereArgs = if (captured.isEmpty()) here else callSiteSubstitutor(call, callee,
+		allowCapturedArguments = true, preserveCapturedArguments = true)
 	defaultTypeSubst = when {
 		here == null -> saved
 		saved == null -> { t: IrType -> here.substitute(t) }
 		else -> { t: IrType -> saved(here.substitute(t)) }
 	}
-	try { return emit() } finally { defaultTypeSubst = saved }
+	defaultTypeArgSubst = when {
+		hereArgs == null -> savedArgs
+		savedArgs == null -> { t: IrType -> hereArgs.substitute(t) }
+		else -> { t: IrType -> savedArgs(hereArgs.substitute(t)) }
+	}
+	defaultStarTypeParams = savedStars + captured
+	try { return emit() } finally {
+		defaultTypeSubst = saved
+		defaultTypeArgSubst = savedArgs
+		defaultStarTypeParams = savedStars
+	}
 }
 
 /** The plan of the call currently being emitted. Every path that fills arguments runs inside a plan scope, so a

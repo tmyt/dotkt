@@ -535,6 +535,12 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// level COMPOSES (inner applied first, then whatever was already installed), so at any depth every open type
 	// variable ends up closed against the outermost call site rather than against its immediate parent.
 	internal var defaultTypeSubst: ((IrType) -> IrType)? = null
+	// A captured/star owner argument has two faithful views while a default is spliced: as a VALUE type it erases to
+	// its upper bound, but as a TYPE ARGUMENT it remains Kotlin's existential `star`. Keep the second substitution and
+	// the captured source slots separately so birType can preserve that distinction without manufacturing an IR type.
+	internal var defaultTypeArgSubst: ((IrType) -> IrType)? = null
+	internal var defaultStarTypeParams: Set<org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol> = emptySet()
+	internal var defaultTypeArgumentDepth: Int = 0
 	// Function-local classes lifted to top-level synthetic types: the outer locals they capture (prepended to the
 	// ctor at construction sites). Keyed by the IrClass.
 	internal val localClassCaptures = java.util.IdentityHashMap<IrClass, List<IrValueDeclaration>>()

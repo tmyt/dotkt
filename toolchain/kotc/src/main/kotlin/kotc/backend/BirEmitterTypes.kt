@@ -92,7 +92,10 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 	// caller's frame does not have. Closing them against THIS call site's instantiation is the type-level half of the
 	// same substitution, and it belongs at this one chokepoint: every rendered type reaches the emitted JSON through
 	// here, so no reader of a spliced default has to remember to ask. Identity outside a default (the field is null).
-	val t = defaultTypeSubst?.invoke(t0) ?: t0
+	val t = (if (defaultTypeArgumentDepth > 0) defaultTypeArgSubst else defaultTypeSubst)?.invoke(t0) ?: t0
+	if (defaultTypeArgumentDepth > 0 &&
+		(t.classifierOrNull as? org.jetbrains.kotlin.ir.symbols.IrTypeParameterSymbol) in defaultStarTypeParams)
+		return TypeNode.Star
 	// UNIFORM nullability: any `T?` -> `{t:nullable,of:<non-null core>}`, for VALUE, REFERENCE, and type-variable
 	// types alike (spec §1). kotc stays CLR-free — it does NOT distinguish struct from ref; nullability rides the
 	// type node only, and the decl-level `nullable`/`retNullable` flags are RETIRED. bir2cir DERIVES the CLR form
@@ -234,7 +237,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		val simple = t as? IrSimpleType
 		val args = simple?.arguments?.map { arg ->
 			if (simple.hasRawType()) TypeNode.Star
-			else (arg as? IrTypeProjection)?.type?.let { argElemNullable(it) } ?: TypeNode.Star
+			else (arg as? IrTypeProjection)?.type?.let { birTypeArgument(it) } ?: TypeNode.Star
 		}
 		return when {
 			!args.isNullOrEmpty() -> TypeNode.Fqn(netName, args)
@@ -272,7 +275,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 						// A `Unit` TYPE-ARG stays the real Unit identity (a generic arg of System.Void is invalid).
 						at.isUnit() -> TypeNode.Fqn("kotlin.Unit")
 						// A NULLABLE type-parameter arg keeps its `nullable(tv)` marker (bir2cir erases it).
-						else -> argElemNullable(at)
+						else -> birTypeArgument(at)
 					}
 				}
 				// Preserve Kotlin's inner-class argument order [own..., outer...] in BIR. Some self types expose only
@@ -298,7 +301,14 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 
 /** birType of a type-argument at index [i], or null if absent/non-projection. */
 private fun BirEmitter.argType(t: IrType, i: Int): TypeNode? =
-	(t as? IrSimpleType)?.arguments?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birType) }
+	(t as? IrSimpleType)?.arguments?.getOrNull(i)?.let { (it as? IrTypeProjection)?.type?.let(::birTypeArgument) }
+
+/** Render a generic argument under a spliced default's existential view. A captured owner slot is `star` here while
+ * the same slot used as a value/parameter type remains its upper-bound erasure. */
+internal fun BirEmitter.birTypeArgument(type: IrType): TypeNode {
+	defaultTypeArgumentDepth++
+	try { return birType(type) } finally { defaultTypeArgumentDepth-- }
+}
 
 /**
  * A type parameter -> a POSITIONAL, scope-tagged `tv` (spec §1). scope="method" (CLR `!!i`) when declared on
@@ -485,7 +495,7 @@ internal fun BirEmitter.ownerSpec(klass: IrClass?, recvType: IrType?): TypeNode 
 			when {
 				at == null -> TypeNode.Star
 				at.isUnit() -> TypeNode.Fqn("kotlin.Unit")
-				else -> birType(at)
+				else -> birTypeArgument(at)
 			}
 		}
 	}

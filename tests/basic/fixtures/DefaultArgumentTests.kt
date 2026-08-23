@@ -279,19 +279,43 @@ class DefaultArgFrameControls<T>(val v: T) {
     fun prior(q: Int, a: Int = q * 2): String = "$v$q$a"
 }
 
-// #542: a member inherited through a frontend fake override has two simultaneous views. The derived view owns the
-// call-site shape, while the base declaration owns Kotlin's default expressions and the symbols those expressions
-// read. The generic owner makes the distinction observable: the default is authored in Base<T>'s frame but called
-// through a non-generic Derived whose corresponding supertype is Base<String>.
+// #542: an inherited member has two simultaneous views. The selected override owns the call-site shape, while the
+// base declaration owns Kotlin's default expressions and the symbols those expressions read. The generic owner makes
+// the distinction observable: the default is authored in Base<T>'s frame but called through a derived receiver.
 open class DefaultArgInheritedBase<T>(private val seed: T) {
     fun inheritedValue(): T = seed
-    fun describe(value: T = inheritedValue(), count: Int = 7): String = "$value/$count"
+    open fun describe(
+        value: T = inheritedValue(),
+        count: Int = 7,
+        tail: String = "$value:$count",
+    ): String = "base:$value/$count/$tail"
 }
 class DefaultArgInheritedDerived(seed: String) : DefaultArgInheritedBase<String>(seed) {
     fun omittedThroughDerived(): String = describe()
     fun constantThroughDerived(): String = describe(count = 9)
-    fun explicitThroughDerived(): String = describe("explicit", 2)
+    fun explicitThroughDerived(): String = describe("explicit", 2, "tail")
 }
+
+open class DefaultArgInheritedMiddle<T>(seed: T) : DefaultArgInheritedBase<T>(seed) {
+    override fun describe(value: T, count: Int, tail: String): String = "middle:$value/$count/$tail"
+}
+class DefaultArgInheritedLeaf(seed: String) : DefaultArgInheritedMiddle<String>(seed) {
+    fun omittedAfterExplicitOverride(): String = describe()
+}
+
+interface DefaultArgInheritedContract<T> {
+    fun inheritedValue(): T
+    fun describe(value: T = inheritedValue(), tail: String = "$value!"): String
+}
+abstract class DefaultArgInheritedPartial(private val seed: String) : DefaultArgInheritedContract<String> {
+    override fun inheritedValue(): String = seed
+}
+class DefaultArgInheritedConcrete(seed: String) : DefaultArgInheritedPartial(seed) {
+    override fun describe(value: String, tail: String): String = "contract:$value/$tail"
+}
+
+class DefaultArgInheritedGeneric<T>(seed: T) : DefaultArgInheritedBase<T>(seed)
+
 // ...and the same rule at any NESTING DEPTH. A default may itself be a call that fills a default of its own, and each
 // frame closes against the one it is spliced into, not against the call site directly — so the substitutions have to
 // COMPOSE. Closing `DefaultArgNestB.X` against `DefaultArgNestC.T` and stopping leaves `DefaultArgNestC.T` open in a caller that has no such
@@ -490,12 +514,23 @@ class DefaultArgumentTests {
     @TestAttribute
     fun inheritedDefaultArgumentsUseDeclaringKotlinSemantics() {
         val derived = DefaultArgInheritedDerived("receiver")
-        assertEquals("receiver/7", derived.omittedThroughDerived())
-        assertEquals("receiver/9", derived.constantThroughDerived())
-        assertEquals("explicit/2", derived.explicitThroughDerived())
+        assertEquals("base:receiver/7/receiver:7", derived.omittedThroughDerived())
+        assertEquals("base:receiver/9/receiver:9", derived.constantThroughDerived())
+        assertEquals("base:explicit/2/tail", derived.explicitThroughDerived())
 
         val base: DefaultArgInheritedBase<String> = derived
-        assertEquals("receiver/7", base.describe())
+        assertEquals("base:receiver/7/receiver:7", base.describe())
+
+        val middle = DefaultArgInheritedMiddle("override")
+        assertEquals("middle:override/7/override:7", middle.describe())
+        assertEquals("middle:explicit/7/explicit:7", middle.describe(value = "explicit"))
+        assertEquals("middle:leaf/7/leaf:7", DefaultArgInheritedLeaf("leaf").omittedAfterExplicitOverride())
+
+        val partial: DefaultArgInheritedPartial = DefaultArgInheritedConcrete("abstract")
+        assertEquals("contract:abstract/abstract!", partial.describe())
+
+        val star: DefaultArgInheritedGeneric<*> = DefaultArgInheritedGeneric("star")
+        assertEquals("base:star/7/star:7", star.describe())
     }
 
     // #235: a constructor default that reads an earlier constructor parameter is filled at the omitting `new`,

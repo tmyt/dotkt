@@ -44,6 +44,9 @@ import roundtrip.defaultarguments.box
 import roundtrip.defaultarguments.flags
 import roundtrip.defaultarguments.kinds
 import roundtrip.defaultarguments.Pt
+import roundtrip.defaultarguments.InheritedMiddle
+import roundtrip.defaultarguments.InheritedLeaf
+import roundtrip.defaultarguments.InheritedMappedLeaf
 import roundtrip.nrt.retNonNull
 import roundtrip.nrt.takeNonNull
 import roundtrip.nrt.retNullable
@@ -406,6 +409,9 @@ class KotlinApiShapeRoundtripTests {
         ClassicAssert.AreEqual("c/5/1.5/z/hi", kinds("c", note = "hi"))    // c/5/1.5/z/hi     NAMED-MIDDLE omit filling the null slot
         ClassicAssert.AreEqual("(0,4)", Pt(y = 4).toString())              // (0,4)    ctor named middle omission
         ClassicAssert.AreEqual("(7,0)", Pt(x = 7).toString())              // (7,0)    ctor named
+        ClassicAssert.AreEqual("middle:middle/middle!", InheritedMiddle("middle").describe())
+        ClassicAssert.AreEqual("middle:leaf/leaf!", InheritedLeaf("leaf").describe())
+        ClassicAssert.AreEqual("mapped:mapped/[mapped]!", InheritedMappedLeaf("mapped").describe())
     }
 
     // roundtrip-nrt (#48): tri-state nullability — non-null (byte 1) + nullable (byte 2) reference via

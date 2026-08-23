@@ -319,8 +319,14 @@ internal fun BirEmitter.inlineReceiverParts(
  *  `Base<E>`, the supertype `Base<Int>` (substitution-aware + TRANSITIVE via AbstractTypeChecker.findCorrespondingSuper-
  *  types). F2A uses it to carry an INHERITED member inline fn's owning-class type args (#88). Null when [recvType] is not
  *  a simple type, has no corresponding supertype for [ownerClass], or [irBuiltIns] is unavailable (bare-constructed
- *  emitter) — the caller then omits `dispatchTypeArgs`, preserving the pre-#88 status quo. */
-internal fun BirEmitter.correspondingSupertypeInstantiation(recvType: IrType, ownerClass: IrClass): IrType? {
+ *  emitter) — the caller then omits `dispatchTypeArgs`, preserving the pre-#88 status quo. Captured top-level owner
+ *  arguments remain rejected by default because F2A would turn an existential dispatch temp into an invariant CLR
+ *  instantiation; callers that consume only the semantic type frame may opt in and erase the returned captures. */
+internal fun BirEmitter.correspondingSupertypeInstantiation(
+	recvType: IrType,
+	ownerClass: IrClass,
+	allowCapturedArguments: Boolean = false,
+): IrType? {
 	val recvSimple = recvType as? IrSimpleType ?: return null
 	val builtIns = irBuiltIns ?: return null
 	val ctx = IrTypeSystemContextImpl(builtIns)
@@ -336,7 +342,8 @@ internal fun BirEmitter.correspondingSupertypeInstantiation(recvType: IrType, ow
 	// the owner's OWN top-level args are checked; a concrete arg CONTAINING a nested capture (`Base<List<*>>`) is fine
 	// (birType renders the concrete `List<Any>`). Port-relevant shape: kotlinx.coroutines `AbstractSharedFlow<S :
 	// AbstractSharedFlowSlot<*>>`.
-	if (superType.arguments.any { it !is IrTypeProjection || it.type is IrCapturedType }) return null
+	if (!allowCapturedArguments &&
+		superType.arguments.any { it !is IrTypeProjection || it.type is IrCapturedType }) return null
 	return superType
 }
 
