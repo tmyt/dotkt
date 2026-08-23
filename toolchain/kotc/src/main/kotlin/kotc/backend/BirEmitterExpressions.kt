@@ -207,8 +207,9 @@ private val styNodePrefixes = listOf(
 /**
  * The compiler-authored leading parameter of a Kotlin inner constructor is the selected inner class's immediate
  * enclosing owner. The value supplied for that slot may have a derived static type, but that value type is not the
- * constructor declaration type. Project an inherited receiver through the frontend type graph so both the same-unit
- * declaration signature and a referenced constructor descriptor retain the exact selected slot.
+ * constructor declaration type. The constructed inner type already carries Kotlin's selected semantic application as
+ * [own..., enclosing...]; derive the immediate outer application from that same fact bir2cir uses to close the inner
+ * owner, rather than independently re-walking the receiver's supertype graph.
  */
 private fun BirEmitter.innerConstructorOuterSlotJson(
 	node: IrConstructorCall,
@@ -217,13 +218,19 @@ private fun BirEmitter.innerConstructorOuterSlotJson(
 	if (innerClass?.isInner != true) return null
 	val outerClass = innerClass.parent as? IrClass
 		?: return invariantBroken(node, "an inner constructor's class has no enclosing class")
-	val receiver = dispatchReceiver(node)
-		?: return invariantBroken(node, "an inner constructor call has no enclosing-instance receiver")
-	val outerType = if (receiver.type.classifierOrNull?.owner === outerClass) receiver.type
-		else correspondingSupertypeInstantiation(receiver.type, outerClass)
-			?: return invariantBroken(node,
-				"an inner constructor receiver has no denotable corresponding enclosing-owner instantiation")
-	return birType(outerType).toJson()
+	if (dispatchReceiver(node) == null)
+		return invariantBroken(node, "an inner constructor call has no enclosing-instance receiver")
+	val innerApplication = ownerSpec(innerClass, node.type)
+	val arguments = (innerApplication as? TypeNode.Fqn)?.args.orEmpty()
+	val ownCount = innerClass.typeParameters.size
+	val outerCount = innerSemanticEnclosingTypeParams(innerClass).size
+	if (arguments.size != ownCount + outerCount)
+		return invariantBroken(node,
+			"an inner constructor result does not carry its complete own and enclosing type application")
+	val outerArguments = arguments.drop(ownCount)
+	val outerName = clrName(outerClass) ?: typeName(outerClass)
+	return if (outerArguments.isEmpty()) TypeNode.Fqn(outerName).toJson()
+	else TypeNode.Fqn(outerName, outerArguments).toJson()
 }
 
 internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {

@@ -223,6 +223,12 @@ open class ReferencedInnerBase<T>(private val outer: T) {
         constructor(value: String) { inner = "s$value" }
         fun render(): String = outer.toString() + ":" + inner
     }
+    inner class GenericEntry<E>(private val value: E) {
+        fun render(): String = outer.toString() + ":g" + value.toString()
+    }
+    inner class DefaultEntry(private val value: String = "default") {
+        fun render(): String = outer.toString() + ":" + value
+    }
 }
 
 class MultiLevelInnerOwner<A>(private val outer: A) {

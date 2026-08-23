@@ -48,7 +48,17 @@ private open class ReferencedInnerMiddle<T>(outer: T) : ReferencedInnerBase<T>(o
 private class ReferencedInnerLeaf<T>(outer: T) : ReferencedInnerMiddle<T>(outer) {
     fun makeInt(value: Int): Entry = Entry(value)
     fun makeString(value: String): Entry = Entry(value)
+    fun <E> makeGeneric(value: E): GenericEntry<E> = GenericEntry(value)
+    fun makeDefault(): DefaultEntry = DefaultEntry()
 }
+private class ReferencedNestedOuter<E>(private val label: String) {
+    override fun toString(): String = label
+}
+private class ReferencedNestedLeaf<E>(outer: ReferencedNestedOuter<E>) :
+    ReferencedInnerBase<ReferencedNestedOuter<E>>(outer) {
+    fun make(value: Int): Entry = Entry(value)
+}
+private fun makeReferencedFromOutside(value: ReferencedInnerLeaf<String>): String = value.Entry(64).render()
 
 class NestedOwnershipRoundtripTests {
     @TestAttribute
@@ -127,5 +137,9 @@ class NestedOwnershipRoundtripTests {
         val referencedInner = ReferencedInnerLeaf("referenced")
         ClassicAssert.AreEqual("referenced:i63", referencedInner.makeInt(63).render())
         ClassicAssert.AreEqual("referenced:svalue", referencedInner.makeString("value").render())
+        ClassicAssert.AreEqual("referenced:g66", referencedInner.makeGeneric(66).render())
+        ClassicAssert.AreEqual("referenced:default", referencedInner.makeDefault().render())
+        ClassicAssert.AreEqual("referenced:i64", makeReferencedFromOutside(referencedInner))
+        ClassicAssert.AreEqual("nested:i65", ReferencedNestedLeaf(ReferencedNestedOuter<String>("nested")).make(65).render())
     }
 }

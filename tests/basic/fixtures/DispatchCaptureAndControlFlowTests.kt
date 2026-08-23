@@ -60,15 +60,31 @@ open class DispatchCaptureInnerBase<T>(private val outer: T) {
         constructor(value: String) { inner = "s$value" }
         fun render(): String = outer.toString() + ":" + inner
     }
+    inner class GenericEntry<E>(private val value: E) {
+        fun render(): String = outer.toString() + ":g" + value.toString()
+    }
+    inner class DefaultEntry(private val value: String = "default") {
+        fun render(): String = outer.toString() + ":" + value
+    }
 }
 open class DispatchCaptureInnerMiddle<T>(outer: T) : DispatchCaptureInnerBase<T>(outer)
 class DispatchCaptureInnerLeaf<T>(outer: T) : DispatchCaptureInnerMiddle<T>(outer) {
     fun makeInt(value: Int): Entry = Entry(value)
     fun makeString(value: String): Entry = Entry(value)
+    fun <E> makeGeneric(value: E): GenericEntry<E> = GenericEntry(value)
+    fun makeDefault(): DefaultEntry = DefaultEntry()
 }
 class DispatchCaptureConcreteInnerLeaf : DispatchCaptureInnerBase<Int>(7) {
     fun make(value: Int): Entry = Entry(value)
 }
+class DispatchCaptureNestedOuter<E>(private val label: String) {
+    override fun toString(): String = label
+}
+class DispatchCaptureNestedLeaf<E>(outer: DispatchCaptureNestedOuter<E>) :
+    DispatchCaptureInnerBase<DispatchCaptureNestedOuter<E>>(outer) {
+    fun make(value: Int): Entry = Entry(value)
+}
+fun dispatchCaptureMakeFromOutside(value: DispatchCaptureInnerLeaf<String>): String = value.Entry(9).render()
 
 // ---- il-langfeat : anon fun / infix / tailrec / try-finally / abstract virtual dispatch -------------------------
 val dispatchCaptureAdd = fun(a: Int, b: Int): Int = a + b
@@ -129,7 +145,11 @@ class NestedAndLocalClassTests {
         val inherited = DispatchCaptureInnerLeaf("outer")
         assertEquals("outer:i42", inherited.makeInt(42).render())
         assertEquals("outer:svalue", inherited.makeString("value").render())
+        assertEquals("outer:g11", inherited.makeGeneric(11).render())
+        assertEquals("outer:default", inherited.makeDefault().render())
         assertEquals("7:i8", DispatchCaptureConcreteInnerLeaf().make(8).render())
+        assertEquals("outer:i9", dispatchCaptureMakeFromOutside(inherited))
+        assertEquals("nested:i10", DispatchCaptureNestedLeaf(DispatchCaptureNestedOuter<String>("nested")).make(10).render())
     }
 
 }
