@@ -67,6 +67,19 @@ class SuspendMemberExplicitDefaultInherited : SuspendMemberExplicitDefaultSource
 class SuspendMemberExplicitDefaultOverride : SuspendMemberExplicitDefaultSource {
     override suspend fun loadSource(): Int = suspendMemberInheritedEcho(43)
 }
+
+interface SuspendMemberExplicitOverloadSource<T> {
+    @Suppress("INAPPLICABLE_JVM_NAME")
+    @kotlin.jvm.JvmName("loadSpecificDefault")
+    suspend fun load(value: T?): Int = suspendMemberInheritedEcho(44)
+
+    @Suppress("INAPPLICABLE_JVM_NAME")
+    @kotlin.jvm.JvmName("loadAnyDefault")
+    suspend fun load(value: Any?): Int = suspendMemberInheritedEcho(45)
+}
+class SuspendMemberExplicitOverloadOverride : SuspendMemberExplicitOverloadSource<Int> {
+    override suspend fun load(value: Any?): Int = suspendMemberInheritedEcho(46)
+}
 suspend fun suspendMemberInheritedPing(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPong(n - 1) }  // mutual recursion
 suspend fun suspendMemberInheritedPong(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPing(n - 1) }
 
@@ -144,6 +157,12 @@ class SuspendMemberTests {
         val overriddenDefault: SuspendMemberExplicitDefaultSource = SuspendMemberExplicitDefaultOverride()
         assertEquals(43, blockOn { overriddenDefault.loadSource() })
         assertEquals(43, blockOn { SuspendMemberExplicitDefaultOverride().loadSource() })
+        val explicitDefaultType = Type.GetType("SuspendMemberExplicitDefaultSource")!!
+        assertEquals(true, explicitDefaultType.GetMethod("loadExplicitDefault") != null)
+        assertEquals(null, explicitDefaultType.GetMethod("loadSource"))
+        val overloaded: SuspendMemberExplicitOverloadSource<Int> = SuspendMemberExplicitOverloadOverride()
+        assertEquals(44, blockOn { overloaded.load(7) })
+        assertEquals(46, blockOn { overloaded.load("override") })
         assertEquals(5, blockOn { suspendMemberInheritedPing(5) })                    // 5
         val implementation = SuspendMemberCovariantImplementation()
         assertEquals(46, blockOn {
