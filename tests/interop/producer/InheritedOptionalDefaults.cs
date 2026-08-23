@@ -138,6 +138,45 @@ public sealed class NullableValueDefaults
             && number.HasValue && double.IsPositiveInfinity(number.Value);
 }
 
+public static class PrimitiveOptionalDefaults
+{
+    public static bool Scalars(
+        bool boolean = true,
+        char character = '\u263a',
+        sbyte i8 = sbyte.MinValue,
+        byte u8 = byte.MaxValue,
+        short i16 = short.MinValue,
+        ushort u16 = ushort.MaxValue,
+        int i32 = int.MinValue,
+        uint u32 = uint.MaxValue,
+        long i64 = long.MinValue,
+        ulong u64 = ulong.MaxValue,
+        float single = float.NegativeInfinity,
+        double number = double.NaN,
+        string text = "ok") =>
+        boolean && character == '\u263a'
+            && i8 == sbyte.MinValue && u8 == byte.MaxValue
+            && i16 == short.MinValue && u16 == ushort.MaxValue
+            && i32 == int.MinValue && u32 == uint.MaxValue
+            && i64 == long.MinValue && u64 == ulong.MaxValue
+            && float.IsNegativeInfinity(single) && double.IsNaN(number)
+            && text == "ok";
+
+    public static bool ReferenceSlots(
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.InteropServices.DefaultParameterValue("boxed")] object text,
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.InteropServices.DefaultParameterValue(7)] System.IComparable number,
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.CompilerServices.DecimalConstant(0, 0, 0, 0, 2)] object decimalValue,
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.CompilerServices.DateTimeConstant(638000000000000000)] object when) =>
+        text is string textValue && textValue == "boxed"
+            && number is int numberValue && numberValue == 7
+            && decimalValue is decimal decimalNumber && decimalNumber == 2m
+            && when is System.DateTime dateTime && dateTime.Ticks == 638000000000000000;
+}
+
 public sealed class ValueTypeDefaultConstructor
 {
     const decimal ExpectedDecimal = -12345678901234567890.1234m;
