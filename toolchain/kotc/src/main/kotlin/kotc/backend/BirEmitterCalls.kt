@@ -383,23 +383,37 @@ internal fun BirEmitter.callSiteSubstitutor(
 ): org.jetbrains.kotlin.ir.types.IrTypeSubstitutor? {
 	val params = ArrayList<IrTypeParameterSymbol>()
 	val args = ArrayList<org.jetbrains.kotlin.ir.types.IrTypeArgument>()
-	val ownerTps = (callee.parent as? IrClass)?.typeParameters.orEmpty()
+	val ownerClass = callee.parent as? IrClass
+	val ownerTps = ownerClass?.typeParameters.orEmpty()
+	val enclosingTps = ownerClass?.let { innerSemanticEnclosingTypeParams(it) }.orEmpty()
+	val semanticOwnerTps = ownerTps + enclosingTps
 	if (callee is IrConstructor) {
-		// A Kotlin constructor declares no type parameters of its own, so the call's type ARGUMENTS are exactly its
-		// class's — and they ride the call node for EVERY constructor shape. `call.type` would only work for a `new`:
-		// a `: super(…)` delegation and an enum-entry call are statements whose type is `Unit`, and reading the owner
-		// frame from there left the base class's type variables unsubstituted in the DERIVED class's frame.
+		// A constructed inner type carries Kotlin's semantic argument order [own..., enclosing...]. The enclosing
+		// parameters are re-declared on the emitted inner CLR type, so they belong to the constructor's type frame just
+		// as much as its own parameters do. Closing only ownerTps left an outer T open inside a default such as
+		// `class O<T>(val v:T) { inner class I(val x:T = v) }`, even though the call's type was already I<Int>.
+		// Delegating/enum constructor calls have Unit type and continue through the established typeArguments path below.
+		val constructedArgs = (call.type as? IrSimpleType)?.arguments
+		if (enclosingTps.isNotEmpty() && constructedArgs?.size == semanticOwnerTps.size) {
+			semanticOwnerTps.forEach { params.add(it.symbol) }
+			args.addAll(constructedArgs)
+		}
+		// For the remaining constructor shapes, the call's type arguments close the class's own parameters. They ride
+		// the call node for EVERY shape, whereas `call.type` only names the construction for a `new`: a `: super(…)`
+		// delegation and an enum-entry call are statements whose type is `Unit`, and reading the owner frame from there
+		// left the base class's type variables unsubstituted in the DERIVED class's frame.
 		val ta = ownerTps.indices.map { call.typeArguments.getOrNull(it) }
-		if (ownerTps.isNotEmpty() && ta.all { it != null }) {
+		if (params.isEmpty() && ownerTps.isNotEmpty() && ta.all { it != null }) {
 			ownerTps.forEach { params.add(it.symbol) }
 			ta.forEach { args.add(it!!) }
 		}
 	} else {
-		if (ownerTps.isNotEmpty()) {
-			// A member's owner frame is instantiated by its receiver.
+		if (semanticOwnerTps.isNotEmpty()) {
+			// A member's whole Kotlin owner frame is instantiated by its receiver. An inner receiver carries its own
+			// arguments followed by the immediate owner's frame and each owner moving outward.
 			((dispatchReceiver(call) ?: extensionReceiver(call))?.type as? IrSimpleType)
-				?.arguments?.takeIf { it.size == ownerTps.size }?.let { a ->
-					ownerTps.forEach { params.add(it.symbol) }
+				?.arguments?.takeIf { it.size == semanticOwnerTps.size }?.let { a ->
+					semanticOwnerTps.forEach { params.add(it.symbol) }
 					args.addAll(a)
 				}
 		}

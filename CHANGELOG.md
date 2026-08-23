@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Generic inner defaults now close their complete enclosing type frame (#277).** When an inner constructor or member's
+  omitted argument reads a generic outer instance, kotc maps the inner declaration's own parameters and each enclosing
+  frame in Kotlin's semantic order before carrying the default into BIR.
+
 - **Malformed CLR optional constants now stop at the bir2cir metadata boundary (#538).** A reflected Constant or
   custom-constant carrier must exactly inhabit a declared primitive, string, or enum slot; a reference slot accepts
   only an assignable carrier and receives an explicit boxing/upcast. Incompatible metadata gets the existing source,
