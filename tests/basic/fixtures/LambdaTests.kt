@@ -96,7 +96,13 @@ class FunctionReferenceNullableHandler(private val prefix: String) {
 class FunctionReferenceCompanionHandler {
     companion object {
         fun handle(value: Int?): String = "companion=${value ?: -1}"
+        fun marker(): String = "companion-marker"
     }
+}
+var functionReferenceCompanionReceiverEvaluations: Int = 0
+fun functionReferenceMakeCompanionHandler(): FunctionReferenceCompanionHandler.Companion {
+    functionReferenceCompanionReceiverEvaluations += 1
+    return FunctionReferenceCompanionHandler.Companion
 }
 class FunctionReferenceGenericMethodHandler {
     fun <T> render(value: T): String = "bound-generic=$value"
@@ -263,6 +269,11 @@ class LambdaTests {
         val nullableHandler = FunctionReferenceNullableHandler("bound")
         assertEquals("bound=4", functionReferenceInvokeNullable<Int>(4, nullableHandler::handle))
         assertEquals("companion=5", functionReferenceInvokeNullable<Int>(5, FunctionReferenceCompanionHandler.Companion::handle))
+        functionReferenceCompanionReceiverEvaluations = 0
+        val companionHandler = functionReferenceMakeCompanionHandler()::marker
+        assertEquals(1, functionReferenceCompanionReceiverEvaluations)
+        assertEquals("companion-marker", companionHandler())
+        assertEquals(1, functionReferenceCompanionReceiverEvaluations)
         functionReferenceReceiverEvaluations = 0
         val evaluatedOnce = functionReferenceMakeNullableHandler()::handle
         assertEquals(1, functionReferenceReceiverEvaluations)

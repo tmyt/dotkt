@@ -771,6 +771,10 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		// and the member association together. The adapter, unlike the authored member, may safely follow an open delegate
 		// slot when nullable type-variable erasure changes its physical parameter representation.
 		if (ownerClass.isCompanion) {
+			val companionOwner = ownerClass.parent as? IrClass
+				?: return unsupported(node, "this companion function reference",
+					"its companion owner is not a class")
+			val adapterReceiver = """{"k":"companionValue","ownerType":${fqnJson(typeName(companionOwner))},"companionType":${fqnJson(typeName(ownerClass))},"name":${str(ownerClass.name.asString())}}"""
 			val lname = freshLiftedMethodName("fnref")
 			val freeTps = freeTypeParams(listOf(node.type))
 			val adapterTypeArgs = liftedTypeArgsJson(freeTps)
@@ -783,14 +787,27 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val liftedOwner = ownerSpec(ownerClass, boundRecv.type).toJson()
 				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 					?: error("validated companion function reference lost its type arguments in its lifted method frame")
-				val rawCall = """{"k":"callInstance","ownerType":$liftedOwner,"virtual":$virtual,"recv":${expr(boundRecv)},"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag}"""
+				val rawCall = """{"k":"callInstance","ownerType":$liftedOwner,"virtual":$virtual,"recv":$adapterReceiver,"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag}"""
 				val call = memberVisibilityStamped(fn, rawCall)
 				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
 					else """{"k":"return","value":$call}"""
 				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
 			liftedMethods.add(declaration)
-			return """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
+			val delegate = """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
+			// A direct `Companion::member` receiver is already the pure singleton-value fact. Keep the delegate at the
+			// expression root so a surrounding open function slot can align its physical signature.
+			if (boundRecv is IrGetObjectValue) return delegate
+			// Bound-reference creation evaluates its receiver eagerly exactly once. The companion value is a singleton and
+			// is not used by the adapter, but an arbitrary expression producing that value can still have observable side
+			// effects. Bind the result to a local rather than emitting a value-returning expression statement: ilemit emits
+			// expression statements one-to-one and therefore does not synthesize a pop for the unused companion value.
+			val evaluatedReceiverName = "__companionReceiver${scopeCounter++}"
+			return valueBlockJson(
+				type = resolvedFuncType.toJson(),
+				stmts = """{"k":"var","name":${str(evaluatedReceiverName)},"type":${TypeNode.Fqn("kotlin.Any").toJson()},"init":${expr(boundRecv)}}""",
+				result = delegate,
+			)
 		}
 		val selfT = birType(boundRecv.type)
 		// State the capture slot explicitly. The receiver expression may carry a broader physical representation than
