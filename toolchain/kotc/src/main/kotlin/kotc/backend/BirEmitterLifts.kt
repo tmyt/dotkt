@@ -453,10 +453,10 @@ internal fun BirEmitter.samConversion(node: IrTypeOperatorCall): String {
 }
 
 /**
- * A callable reference `::foo` -> a delegate bound to the referenced function. Handled: a top-level/static
- * function reference (no receiver — reuses the lambda `newDelegate` path over the static file-class method), a
+ * A callable reference `::foo` -> a delegate bound to a compiler-owned adapter for the referenced function. Handled:
+ * a top-level/static function reference (no receiver — a lifted static forwarder), a
  * constructor reference (`::Ctor`/`::NetType` -> a lifted static factory), a bound-instance reference
- * (`obj::method` -> `newBoundDelegate`), an UNBOUND member reference (`Class::method` -> a lifted static
+ * (`obj::method` -> a receiver-capturing closure), an UNBOUND member reference (`Class::method` -> a lifted static
  * `__mref(self, args)`), a .NET method reference (bound/unbound), and — G8 — an UNBOUND top-level
  * EXTENSION-function reference (`String::isNotBlank`, `Type::extFn`): a lifted static forwarder whose BODY is the
  * faithful extension call (the `callStatic owner:null` shape the direct top-level ext-call path emits in `call()`),
@@ -659,23 +659,18 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		// association to choose the physical extension container, then uses the FIR-selected declaration identity to
 		// bind the exact MethodDef when two overloads erase to the same CLR signature.
 		val declarationIdentityTag = declarationIdField(fn)
-		// A generic top-level callable reference has already been instantiated by FIR at this use site. Preserve those
-		// type arguments just like an ordinary call and an extension reference do; the declared `sig` alone selects the
-		// generic definition but cannot close it for ldftn (`::handle<T>` otherwise reaches ilemit as an open method).
-		val refTps = fn.typeParameters
-		val refTaArgs = refTps.indices.map { node.typeArguments.getOrNull(it) }
-		val refTa = if (refTps.isEmpty() || refTaArgs.any { it == null }) "" else
-			""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
 		val refFuncType = birType(node.type) as? TypeNode.Fn
 			?: return unsupported(node, "this top-level function reference",
 				"its FIR-resolved use-site type was not a function type")
-		if (refTps.isNotEmpty() && refTa.isNotEmpty()) {
-			// A MethodSpec is a valid call operand, but a generic method definition is not a closed ldftn target on
-			// every CLR. Materialize the ordinary Kotlin adapter the reference denotes: a non-generic delegate target
-			// (or one generic only over its enclosing free parameters) whose body makes the explicit generic call.
+		if (companionExtensionTag.isEmpty() || fn.typeParameters.isNotEmpty()) {
+			// Bind an ordinary top-level reference through a compiler-owned adapter. The reference may later flow into an
+			// open function slot whose nullable type variable is physically `object`; bir2cir can move this generated
+			// target with the delegate without rewriting the referenced declaration. The same adapter closes a generic
+			// target through an explicit MethodSpec on its inner call. A non-generic companion-associated reference keeps
+			// the direct form below because CompanionRepresentationLowering owns that physical association.
 			val valueParams = regularParams(fn)
 			if (valueParams.size != refFuncType.params.size)
-				return unsupported(node, "this generic top-level function reference",
+				return unsupported(node, "this top-level function reference",
 					"its use-site function arity does not match the resolved declaration")
 			val lname = freshLiftedMethodName("fnref")
 			val freeTps = freeTypeParams(listOf(node.type))
@@ -686,16 +681,17 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 					"""{"name":${str(p.name.asString())},"type":${t.toJson()}}"""
 				}
 				val argsJson = valueParams.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
-				val liftedRefTa = ""","typeArgs":[${refTaArgs.joinToString(",") { birType(it!!).toJson() }}]"""
+				val liftedRefTa = functionReferenceTypeArgs(node, fn)
+					?: error("validated top-level function reference lost its type arguments in its lifted method frame")
 				val call = """{"k":"callStatic","owner":null,"method":${str(targetName)}${overloadSigField(fn)}$liftedRefTa,"args":[$argsJson],"ret":${liftedFuncType.ret.toJson()}${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
-				val body = if (fn.returnType.isUnit()) """{"k":"exprStmt","expr":$call}"""
+				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
 					else """{"k":"return","value":$call}"""
 				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
 			}
 			liftedMethods.add(declaration)
 			return """{"k":"newDelegate","method":${str(lname)},"funcType":${refFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
 		}
-		return """{"k":"newDelegate","method":${str(targetName)}${overloadSigField(fn)},"funcType":${refFuncType.toJson()}$refTa${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
+		return """{"k":"newDelegate","method":${str(targetName)}${overloadSigField(fn)},"funcType":${refFuncType.toJson()}${calleeOwnerTag(fn)}$companionExtensionTag$declarationIdentityTag}"""
 	}
 	// `Type::extFn` — an EXTENSION-function reference (G8). The delegate's target is a lifted static forwarder whose
 	// BODY is the faithful extension CALL — the SAME shape a DIRECT call to this callee would emit (`owner:null` for a
@@ -759,21 +755,98 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		liftedMethods.add(declaration)
 		return """{"k":"newDelegate","method":${str(lname)},"funcType":${fnType.toJson()}$typeArgs${localCalleeOwnerTag()}}"""
 	}
-	// `obj::method` — a bound instance reference: a delegate whose target is the bound receiver. Only USER
-	// classes (the method resolves via FindMethod); .NET-method / extension / unbound refs are deferred. `ownerType` is
-	// already the exact declaring-class identity (the member analogue of calleeOwner); `sig` disambiguates overloads
-	// within it and survives bir2cir's name-only declaration/slot rewrites unchanged.
+	// `obj::method` captures its eagerly evaluated receiver in a compiler-owned closure. If this reference later
+	// enters an open nullable function slot, bir2cir can move the generated `invoke` slots with the delegate without
+	// rewriting the public signature of the selected member.
 	val boundRecv = if (dispatchIdx >= 0 && !hasExt) node.arguments.getOrNull(dispatchIdx) else null
-	if (boundRecv != null && ownerClass != null && !isExternalNetType(ownerClass)) {
+	if (boundRecv != null && ownerClass != null) {
+		val regs = regularParams(fn)
+		if (regs.size != resolvedFuncType.params.size)
+			return unsupported(node, "this bound member function reference",
+				"its use-site function arity does not match the resolved declaration")
 		val virtual = fn.modality != Modality.FINAL || fn.overriddenSymbols.isNotEmpty()
 		val owner = ownerSpec(ownerClass, boundRecv.type).toJson()
-		// A star-projected receiver changes the later CLR owner to the existential carrier, but it does not erase
-		// which Kotlin declaration FIR selected. bir2cir consumes this source identity while choosing the exact slot.
-		val effectiveIdentityTag = memberDeclarationIdentityTag
-		val base = """{"k":"newBoundDelegate","ownerType":$owner,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"virtual":$virtual,"recv":${expr(boundRecv)},"funcType":${resolvedFuncType.toJson()}${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""},"calleeOwner":$owner}"""
-		val rendered = if (effectiveIdentityTag.isEmpty()) base
-			else base.dropLast(1) + effectiveIdentityTag + "}"
-		return memberVisibilityStamped(fn, rendered)
+		// A companion value is compiler representation vocabulary rather than an ordinary capturable CLR value. Use a
+		// compiler-owned static adapter whose body retains the semantic companion receiver; bir2cir resolves that receiver
+		// and the member association together. The adapter, unlike the authored member, may safely follow an open delegate
+		// slot when nullable type-variable erasure changes its physical parameter representation.
+		if (ownerClass.isCompanion) {
+			val companionOwner = ownerClass.parent as? IrClass
+				?: return unsupported(node, "this companion function reference",
+					"its companion owner is not a class")
+			val adapterReceiver = """{"k":"companionValue","ownerType":${fqnJson(typeName(companionOwner))},"companionType":${fqnJson(typeName(ownerClass))},"name":${str(ownerClass.name.asString())}}"""
+			val lname = freshLiftedMethodName("fnref")
+			val freeTps = freeTypeParams(listOf(node.type))
+			val adapterTypeArgs = liftedTypeArgsJson(freeTps)
+			val declaration = withLiftedMethodFrame(freeTps) {
+				val liftedFuncType = birType(node.type) as TypeNode.Fn
+				val paramsJson = regs.zip(liftedFuncType.params).joinToString(",") { (parameter, type) ->
+					"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
+				}
+				val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+				val liftedOwner = ownerSpec(ownerClass, boundRecv.type).toJson()
+				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
+					?: error("validated companion function reference lost its type arguments in its lifted method frame")
+				val rawCall = """{"k":"callInstance","ownerType":$liftedOwner,"virtual":$virtual,"recv":$adapterReceiver,"method":${str(fn.name.asString())}${overloadSigField(fn)}$liftedReferenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag}"""
+				val call = memberVisibilityStamped(fn, rawCall)
+				val body = if (liftedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
+					else """{"k":"return","value":$call}"""
+				"""{"name":${str(lname)},"generated":true,"static":true,"override":false,"virtual":false${typeParamsJson(freeTps)},"params":[$paramsJson],"ret":${liftedFuncType.ret.toJson()},"body":[$body]}"""
+			}
+			liftedMethods.add(declaration)
+			val delegate = """{"k":"newDelegate","method":${str(lname)},"funcType":${resolvedFuncType.toJson()}$adapterTypeArgs${localCalleeOwnerTag()}}"""
+			// A direct `Companion::member` receiver is already the pure singleton-value fact. Keep the delegate at the
+			// expression root so a surrounding open function slot can align its physical signature.
+			if (boundRecv is IrGetObjectValue) return delegate
+			// Bound-reference creation evaluates its receiver eagerly exactly once. The companion value is a singleton and
+			// is not used by the adapter, but an arbitrary expression producing that value can still have observable side
+			// effects. Bind the result to a local rather than emitting a value-returning expression statement: ilemit emits
+			// expression statements one-to-one and therefore does not synthesize a pop for the unused companion value.
+			val evaluatedReceiverName = "__companionReceiver${scopeCounter++}"
+			return valueBlockJson(
+				type = resolvedFuncType.toJson(),
+				stmts = """{"k":"var","name":${str(evaluatedReceiverName)},"type":${TypeNode.Fqn("kotlin.Any").toJson()},"init":${expr(boundRecv)}}""",
+				result = delegate,
+			)
+		}
+		val selfT = birType(boundRecv.type)
+		// State the capture slot explicitly. The receiver expression may carry a broader physical representation than
+		// its FIR result type (notably `nullableStruct!!`: the check expression still contains Nullable<V> internally,
+		// while the captured receiver is V). bir2cir owns whether that stated write requires Nullable.Value, unboxing,
+		// or no conversion; kotc supplies only the semantic source expression and destination type.
+		val captureName = "__recvCapture${scopeCounter++}"
+		val captureValue = valueBlockJson(
+			type = selfT.toJson(),
+			stmts = """{"k":"var","name":${str(captureName)},"type":${selfT.toJson()},"init":${expr(boundRecv)}}""",
+			result = """{"k":"local","name":${str(captureName)}}""",
+		)
+		val cname = "dotkt\$${synthScope}\$Closure${closureCounter++}"
+		val invokeParams = regs.zip(resolvedFuncType.params).joinToString(",") { (parameter, type) ->
+			"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
+		}
+		val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
+		val recv = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
+		val rawCall = if (!isExternalNetType(ownerClass) || memberDeclarationIdentityTag.isNotEmpty())
+			"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag}"""
+		else {
+			// A projected CLR member without a DotKt declaration identity still needs the adapter. Emit the same neutral
+			// external-call facts as an ordinary invocation; bir2cir resolves their physical member representation.
+			val argTypes = regs.joinToString(",") { birType(it.type).toJson() }
+			val physicalName = clrName(ownerClass)
+				?: error("validated external bound reference lost its physical owner")
+			val physicalOwner = (selfT as? TypeNode.Fqn)?.let { TypeNode.Fqn(physicalName, it.args) }
+				?: TypeNode.Fqn(physicalName)
+			"""{"k":"callInstance","ownerType":${physicalOwner.toJson()},"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
+		}
+		val call = memberVisibilityStamped(fn, rawCall)
+		val body = if (resolvedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
+			else """{"k":"return","value":$call}"""
+		val nodeTypeArgs = (node.type as? IrSimpleType)?.arguments
+			?.mapNotNull { (it as? IrTypeProjection)?.type }.orEmpty()
+		val freeTps = freeTypeParams(listOf(boundRecv.type) + nodeTypeArgs)
+		val typeArgs = liftedTypeArgsJson(freeTps)
+		val synthClass = """{"name":${str(cname)},"fields":[{"name":"__recv","type":${selfT.toJson()}}],"params":[$invokeParams],"ret":${resolvedFuncType.ret.toJson()},"body":[$body]${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()}}"""
+		return """{"k":"newClosure","closureType":${fqnJson(cname)},"captures":[$captureValue],"method":"invoke","funcType":${resolvedFuncType.toJson()}$typeArgs,"synthClass":$synthClass}"""
 	}
 	// `Class::method` (UNbound) -> a lifted static `__mref(self, args) = self.method(args)`; the receiver
 	// becomes the delegate's first parameter. User classes only (`Func<UserType,…>` resolves via DelegateCtor).

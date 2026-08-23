@@ -6,11 +6,12 @@ using DotKt.Bir;
 
 // THE DELEGATE-TARGET HALF OF THE CARRIER-ARGUMENT ERASURE (#86).
 //
-// A delegate's parameters and return are ARGUMENTS of a reified construction (`Func`2<…>`), so
-// NullableGenericErasure gives them the same `object` a type argument gets: `(Int?) -> String` is
-// `Func<object, string>` and `(Int) -> Int?` is `Func<int32, object>`. The value BOUND into that delegate is a
-// lifted method — a `newDelegate`'s named static, or a `newClosure`'s class `invoke` — whose own slots the erasure
-// did NOT touch, because they are ordinary declaration slots and a direct `Int?` slot is a `Nullable<int32>`.
+// A delegate's parameters and return are ARGUMENTS of a reified construction (`Func`2<…>`). When those arguments
+// contain an OPEN nullable type variable, NullableGenericErasure gives them the same `object` carrier used by any
+// other generic argument: `(T?) -> String` is `Func<object, string>`. A concrete `(Int?) -> String` deliberately
+// remains `Func<Nullable<int32>, string>`. The value BOUND into an erased delegate is a lifted method — a
+// `newDelegate`'s named static, or a `newClosure`'s class `invoke` — whose own slots the erasure did NOT touch,
+// because they are ordinary declaration slots.
 //
 // The two must agree or there is no delegate at all. ECMA-335 II.14.6 makes a `ldftn` target compatible with a
 // delegate only when each of its parameters is assignable FROM the delegate's and its return assignable TO the
@@ -21,14 +22,11 @@ using DotKt.Bir;
 // A target slot FOLLOWS the delegate slot it fills wherever the funcType component is the bare `object` the erasure
 // produced.
 //
-// A `::fn` reference reaches this pass too, and moves with the same rule — it names a declaration the author wrote,
-// so this is the one place a declared signature is decided by a USE. That is inherited behaviour, not a new choice:
-// the pass this one replaces did exactly the same on the RETURN, and the alternative is worse, because a
-// `Func<…, object>` over a target returning `Nullable<int32>` reads the struct's bits as a reference at run time.
-// Closing it properly means synthesizing a forwarder at the reference instead of moving the referenced declaration,
-// which is the same missing piece the delegate PARAMETER is scoped out for (see NullableGenericErasure's header);
-// the two land together. Which target slots that reaches differs by position, because delegate compatibility is not
-// symmetric: a PARAMETER is contravariant and only `object` is assignable from `object`, so every non-`object`
+// Callable references reach this pass through targets kotc synthesized at the use site: a static forwarder for
+// `::fn`, an instance closure for `expr::member`. The authored declaration remains behind an ordinary call in that
+// target's body, so this pass moves only compiler-owned slots. Which target slots that reaches differs by position,
+// because delegate compatibility is not symmetric: a PARAMETER is contravariant and only `object` is assignable
+// from `object`, so every non-`object`
 // parameter follows; a RETURN is covariant and a reference already reaches `object`, so only a value / `Nullable<V>`
 // / type-variable return follows. Rewriting a reference RETURN is what broke the concrete-delegate ctor in #189
 // (`object` is not assignable TO a `Func<string>` slot). See `Align`.
@@ -49,18 +47,15 @@ static class DelegateTargetSlotAlignment
     {
         _isValue = isValue ?? (_ => false);
         if (root is not JsonObject o) return false;
-        // Target identity -> which of its slots the delegate states as `object`. A `newDelegate` names a lifted
-        // static by `method` AND, where the target is a declaration the AUTHOR wrote, by the frontend-resolved `sig`
-        // that selected it out of its overload set; a `newClosure` names its synthetic class by `closureType` and
-        // its body is always that class's `invoke`.
+        // Target identity -> which of its slots the delegate states as `object`. A `newDelegate` normally names a
+        // compiler-owned lifted static by `method`; the signature component keeps the identity complete if that BIR
+        // form also carries a resolved descriptor. A `newClosure` names its synthetic class by `closureType`, and its
+        // body is always that class's `invoke`.
         //
-        // THE NAME ALONE IS NOT AN IDENTITY, and keying on it moved every same-name declaration in the file. A
-        // `::handle` bound into a `(T?) -> String` slot rewrote the parameter of an unrelated
-        // `fun handle(x: CharSequence)` to `object` — a PUBLIC Kotlin signature changed by a use that has nothing to
-        // do with it, with no round-trip carrier, and then `ilemit: method …Kt.handle not found` at the ordinary
-        // call to it. `sig` is the same frontend fact every overload-bearing node in BIR carries, it has been
-        // through the same erasure sweep as the declarations by the time this pass runs, and it lays out
-        // `[ext receiver?] + contexts + regulars` exactly as `params` does — so the two compare directly.
+        // THE NAME ALONE IS NOT AN IDENTITY: generated targets and schema-valid direct forms may share a name. `sig`
+        // is the same frontend fact every overload-bearing node in BIR carries, it has been through the same erasure
+        // sweep as declarations by the time this pass runs, and it lays out `[ext receiver?] + contexts + regulars`
+        // exactly as `params` does — so the two compare directly.
         var statics = new Dictionary<string, Demand>(StringComparer.Ordinal);
         var closures = new Dictionary<string, Demand>(StringComparer.Ordinal);
         Collect(o, statics, closures);

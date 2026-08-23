@@ -1,7 +1,7 @@
 // CLR value-type / intrinsic interop battery (feature fixture), resolved through reference KLIBs.
 //
 // Coverage preserved (old case -> method):
-//   il-vtboundref  -> boundRefOverStruct        #149 a bound callable-ref over a VALUE-TYPE (.NET struct, System.TimeSpan) receiver — the struct is BOXED before the delegate ctor (ilemit newBoundClrDelegate); covers non-virtual (ldftn) AND virtual (ldvirtftn) targets
+//   il-vtboundref  -> boundRefOverStruct        #149 a bound callable-ref over a VALUE-TYPE (.NET struct, System.TimeSpan) receiver — a compiler-owned closure captures the value, including a nullable receiver unwrapped by bir2cir
 //   il-inlonlyintr -> stringBuilderIndexerSet   #40 a cross-module @InlineOnly + @ClrIntrinsic("set_Chars") stdlib member (StringBuilder.set) keeps its BCL binding across the assembly boundary — kotc carries the annotation as OPAQUE ref.dll metadata, bir2cir's MemberCallSubstitution binds the plain call
 //
 // PARTIAL DUP — il-inlonlyintr's Char-predicate lines (isLetter/isDigit/isLetterOrDigit) already live in
@@ -14,14 +14,15 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import System.TimeSpan
 
 class BclValueTypeInteropTests {
-    // il-vtboundref: a bound callable-reference over a value-type receiver — the struct is boxed before binding.
+    // il-vtboundref: a bound callable-reference over a value-type receiver captured by the generated adapter.
     @TestAttribute
     fun boundRefOverStruct() {
         val a = TimeSpan(0, 0, 5)
         val b = TimeSpan(0, 0, 9)
-        val cmp: (TimeSpan) -> Int = a::CompareTo   // non-virtual struct method -> box + ldftn
+        assertEquals("00:00:05", a.ToString())
+        val cmp: (TimeSpan) -> Int = a::CompareTo   // non-virtual struct call through the captured receiver
         assertEquals(-1, cmp(b))                    // -1
-        val g: () -> String = a::ToString           // virtual (Object.ToString override) -> box + dup + ldvirtftn
+        val g: () -> String = a::ToString           // constrained Object.ToString slot over the captured TimeSpan
         assertEquals("00:00:05", g())               // 00:00:05
         val nullable: TimeSpan? = a
         val fromNullable: () -> String = nullable!!::ToString

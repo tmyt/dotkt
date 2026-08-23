@@ -34,6 +34,20 @@ class FunctionSlots<T>(initial: (T?) -> String) {
 }
 
 fun <T> invokeNullable(block: (T?) -> String): String = block(null)
+fun <T> invokeNullableValue(value: T?, block: (T?) -> String): String = block(value)
+fun renderNullableInt(value: Int?): String = "top=${value ?: -1}"
+open class NullableIntRenderer(private val prefix: String) {
+    open fun render(value: Int?): String = "$prefix=${value ?: -1}"
+}
+class OverridingNullableIntRenderer : NullableIntRenderer("base") {
+    override fun render(value: Int?): String = "override=${value ?: -1}"
+}
+interface NullableIntRenderContract {
+    fun render(value: Int?): String
+}
+class NullableIntRenderImplementation : NullableIntRenderContract {
+    override fun render(value: Int?): String = "interface=${value ?: -1}"
+}
 
 // #147 late-synthesis regression: this hierarchy makes bir2cir materialize a public forwarding slot on SlotDerived.
 // The bridge is created after nullable-generic erasure and must inherit the interface parameter's pre-erasure carrier.

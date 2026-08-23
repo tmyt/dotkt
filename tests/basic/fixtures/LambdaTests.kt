@@ -86,6 +86,39 @@ class FunctionReferenceCalc(val base: Int) {
 }
 fun functionReferenceApply2(f: (Int) -> Int, v: Int): Int = f(v)
 fun functionReferenceApplyTo(f: (FunctionReferenceCalc, Int) -> Int, c: FunctionReferenceCalc, v: Int): Int = f(c, v)
+fun <T> functionReferenceInvokeNullable(value: T?, f: (T?) -> String): String = f(value)
+fun <T, R> functionReferenceInvokeNullableUnbound(receiver: R, value: T?, f: (R, T?) -> String): String =
+    f(receiver, value)
+fun functionReferenceHandleNullable(value: Int?): String = "nullable=${value ?: -1}"
+class FunctionReferenceNullableHandler(private val prefix: String) {
+    fun handle(value: Int?): String = "$prefix=${value ?: -1}"
+}
+class FunctionReferenceCompanionHandler {
+    companion object {
+        fun handle(value: Int?): String = "companion=${value ?: -1}"
+        fun marker(): String = "companion-marker"
+    }
+}
+var functionReferenceCompanionReceiverEvaluations: Int = 0
+fun functionReferenceMakeCompanionHandler(): FunctionReferenceCompanionHandler.Companion {
+    functionReferenceCompanionReceiverEvaluations += 1
+    return FunctionReferenceCompanionHandler.Companion
+}
+class FunctionReferenceGenericMethodHandler {
+    fun <T> render(value: T): String = "bound-generic=$value"
+    fun <T> renderNullable(value: T?): String = "bound-generic-nullable=${value ?: "null"}"
+}
+var functionReferenceReceiverEvaluations: Int = 0
+fun functionReferenceMakeNullableHandler(): FunctionReferenceNullableHandler {
+    functionReferenceReceiverEvaluations += 1
+    return FunctionReferenceNullableHandler("once")
+}
+fun functionReferenceMakeNullableHandler(prefix: () -> String): FunctionReferenceNullableHandler =
+    FunctionReferenceNullableHandler(prefix())
+fun <T> functionReferenceKeepGeneric(value: T, f: (T) -> String): String = f(value)
+fun <T> functionReferenceGenericTarget(value: T): String = "generic=$value"
+fun <T> functionReferenceGenericNullableTarget(value: T?): String = "generic-nullable=${value ?: "null"}"
+fun <T> functionReferenceIdentity(value: T): T = value
 
 // ---- il-extfunref : unbound `Type::extensionReferenceFn` refs (stdlib `isNotBlank` + same-module) -> static forwarder ----------
 fun String.extensionReferenceShout(): String = uppercase() + "!"
@@ -224,6 +257,52 @@ class LambdaTests {
         assertEquals("v=1,v=2,v=3", listOf(1, 2, 3).joinToString(",", transform = render))
         assertEquals("n=4,n=5", listOf(4, 5).joinToString(",", transform = ::functionReferenceRender))
         assertEquals("g=6,g=7", functionReferenceJoinRendered(listOf(6, 7)) { n -> "g=$n" })
+    }
+
+    @TestAttribute
+    fun callableReferenceNullableTopLevelSlot() {
+        assertEquals("nullable=3", functionReferenceInvokeNullable<Int>(3, ::functionReferenceHandleNullable))
+    }
+
+    @TestAttribute
+    fun callableReferenceNullableBoundSlot() {
+        val nullableHandler = FunctionReferenceNullableHandler("bound")
+        assertEquals("bound=4", functionReferenceInvokeNullable<Int>(4, nullableHandler::handle))
+        assertEquals("companion=5", functionReferenceInvokeNullable<Int>(5, FunctionReferenceCompanionHandler.Companion::handle))
+        functionReferenceCompanionReceiverEvaluations = 0
+        val companionHandler = functionReferenceMakeCompanionHandler()::marker
+        assertEquals(1, functionReferenceCompanionReceiverEvaluations)
+        assertEquals("companion-marker", companionHandler())
+        assertEquals(1, functionReferenceCompanionReceiverEvaluations)
+        functionReferenceReceiverEvaluations = 0
+        val evaluatedOnce = functionReferenceMakeNullableHandler()::handle
+        assertEquals(1, functionReferenceReceiverEvaluations)
+        assertEquals("once=6", evaluatedOnce(6))
+        assertEquals(1, functionReferenceReceiverEvaluations)
+        val nestedCapture = functionReferenceMakeNullableHandler { "nested" }::handle
+        assertEquals("nested=7", nestedCapture(7))
+    }
+
+    @TestAttribute
+    fun callableReferenceNullableUnboundSlot() {
+        assertEquals("unbound=5", functionReferenceInvokeNullableUnbound(
+            FunctionReferenceNullableHandler("unbound"), 5, FunctionReferenceNullableHandler::handle,
+        ))
+    }
+
+    @TestAttribute
+    fun callableReferenceGenericTarget() {
+        assertEquals("generic=6", functionReferenceKeepGeneric(6, ::functionReferenceGenericTarget))
+        val genericHandler = FunctionReferenceGenericMethodHandler()
+        assertEquals("bound-generic=7", functionReferenceKeepGeneric(7, genericHandler::render))
+        assertEquals("generic-nullable=8",
+            functionReferenceInvokeNullable<Int>(8, ::functionReferenceGenericNullableTarget))
+        assertEquals("bound-generic-nullable=9",
+            functionReferenceInvokeNullable<Int>(9, genericHandler::renderNullable))
+        val unitIdentity: (Unit) -> Unit = ::functionReferenceIdentity
+        unitIdentity(Unit)
+        val unitRead: () -> Unit = FunctionReferenceGenericOwner(Unit)::read
+        unitRead()
     }
 
     @TestAttribute
