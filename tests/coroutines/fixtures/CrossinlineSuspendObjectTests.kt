@@ -119,12 +119,18 @@ inline fun <T> crossinlineGenericUnsafeFlow(
     }
 }
 
-fun <T> CrossinlineGenericFlow<T>.crossinlineGenericWrap(
+fun <A, T> CrossinlineGenericFlow<T>.crossinlineGenericWrap(
+    unused: A,
     action: suspend CrossinlineGenericCollector<T>.() -> Unit
 ): CrossinlineGenericFlow<T> = crossinlineGenericUnsafeFlow {
     val safe = CrossinlineGenericSafeCollector<T>(this)
     safe.collector.action()
     this@crossinlineGenericWrap.collect(this)
+}
+
+fun crossinlineLocalGenericFrame(): CrossinlineGenericFlow<Int> = crossinlineGenericUnsafeFlow {
+    fun <U> localIdentity(value: U): U = value
+    emit(localIdentity(11))
 }
 
 class CrossinlineSuspendObjectTests {
@@ -144,8 +150,12 @@ class CrossinlineSuspendObjectTests {
     @TestAttribute
     fun inlineSuspendCarrierIgnoresConstructorDeclarationFrame() {
         val values = mutableListOf<Int>()
-        val flow = CrossinlineGenericSource(3).crossinlineGenericWrap { emit(7) }
+        val flow = CrossinlineGenericSource(3).crossinlineGenericWrap(Unit) { emit(7) }
         blockOn { flow.collect(CrossinlineGenericListCollector(values)) }
         assertEquals("7,3", values.joinToString(","))
+
+        val localValues = mutableListOf<Int>()
+        blockOn { crossinlineLocalGenericFrame().collect(CrossinlineGenericListCollector(localValues)) }
+        assertEquals("11", localValues.joinToString(","))
     }
 }

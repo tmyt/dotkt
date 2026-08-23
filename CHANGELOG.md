@@ -5,6 +5,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Fixed
+
+- **Inline-spliced suspend carriers now capture only the caller's generic frame (#557).** bir2cir keeps constructor and
+  local-function declaration descriptors in their own frames while densely remapping caller-owned construction types.
+
 ## 0.9.10-beta2 (2026-08-23)
 
 ### Fixed

@@ -1820,8 +1820,12 @@ static class InlineSplice
 
     // `new.argTypes` is the constructor APPLICATION vector and therefore belongs to the caller; other call shapes use
     // `argTypes` as the selected declaration vector until a later resolver renames it to `resolvedMemberParams`.
-    static bool IsForeignDeclarationFrameField(JsonObject owner, string key)
-        => IsForeignDeclarationFrameKey(key) || (key == "argTypes" && Str(owner["k"]) != "new");
+    static bool IsIndependentDeclarationFrameField(JsonObject owner, string key)
+        => IsForeignDeclarationFrameKey(key)
+            || (key == "argTypes" && Str(owner["k"]) != "new")
+            // A local function declaration owns a separate dense method frame. Its use-site application remains on
+            // the sibling callLocal/localFunRef.typeArgs, which is deliberately still traversed.
+            || (Str(owner["k"]) == "localFun" && key == "decl");
 
     // The TOP-MOST `newSuspendLambda` nodes in the subtree — descent STOPS at each one (a doubly-nested NSL rides under a
     // first-level NSL's shielded body, so the outer remap never touches it). Used by the nested-SM invariant guard.
@@ -1871,7 +1875,7 @@ static class InlineSplice
             // caller frame and must be renumbered together with it.
             bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
-                if (kv.Value != null && !IsForeignDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
+                if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     CollectTvKeys(kv.Value, keys);
         }
@@ -1893,7 +1897,7 @@ static class InlineSplice
             // renumbered. A source lambda remains lexical and is rewritten throughout.
             bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
-                if (kv.Value != null && !IsForeignDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
+                if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     RenumberTvs(kv.Value, remap);
         }
@@ -2407,8 +2411,7 @@ static class InlineSplice
                 // A lexical localFun declaration owns an independent dense METHOD frame. Its enclosing application is
                 // carried by callLocal/localFunRef.typeArgs; substituting this outer inline method's frame into the
                 // declaration would reinterpret both its own TVs and its authored _syntheticTypeArgs correspondence.
-                if (kv.Value != null && !IsForeignDeclarationFrameField(o, kv.Key)
-                    && !(Str(o["k"]) == "localFun" && kv.Key == "decl"))
+                if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key))
                     SubstTvIn(kv.Value, typeArgs, ga, dispatchTypeArgs, typeScope && !ownBoundary && kv.Key != "synthClass");
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) SubstTvIn(c, typeArgs, ga, dispatchTypeArgs, typeScope);

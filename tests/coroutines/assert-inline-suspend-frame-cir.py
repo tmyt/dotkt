@@ -50,8 +50,46 @@ if len(constructions) != 1:
     raise SystemExit(f"CIR: found {len(constructions)} constructions of {state_machine['name']}, expected 1")
 
 type_args = constructions[0]["type"].get("args", [])
-expected = [{"t": "tv", "scope": "method", "i": 0}]
+expected = [{"t": "tv", "scope": "method", "i": 1}]
 if type_args != expected:
     raise SystemExit(f"CIR: {state_machine['name']} construction has wrong enclosing frame: {type_args!r}")
+
+helper_constructions = [
+    item
+    for item in objects(state_machine)
+    if item.get("k") == "new"
+    and isinstance(item.get("type"), dict)
+    and item["type"].get("name") == "CrossinlineGenericSafeCollector"
+]
+if len(helper_constructions) != 1:
+    raise SystemExit(f"CIR: found {len(helper_constructions)} generic helper constructions in the carrier, expected 1")
+
+carrier_t = {"t": "tv", "scope": "type", "i": 0}
+helper = helper_constructions[0]
+if helper["type"].get("args") != [carrier_t]:
+    raise SystemExit(f"CIR: helper construction type did not renumber caller method#1 to carrier type#0: {helper['type']!r}")
+expected_arg_types = [{"t": "fqn", "name": "CrossinlineGenericCollector", "args": [carrier_t]}]
+if helper.get("argTypes") != expected_arg_types:
+    raise SystemExit(f"CIR: helper constructor application did not renumber with the carrier: {helper.get('argTypes')!r}")
+
+local_frame_state_machines = [
+    item
+    for item in root.get("types", [])
+    if isinstance(item, dict)
+    and isinstance(item.get("name"), str)
+    and item["name"].startswith("CrossinlineSuspendObjectTestsKt_crossinlineLocalGenericFrame_lambda")
+    and item["name"].endswith("$sm")
+]
+if len(local_frame_state_machines) != 1:
+    raise SystemExit(
+        f"CIR: found {len(local_frame_state_machines)} local-generic-function carriers, expected exactly 1"
+    )
+
+local_frame_state_machine = local_frame_state_machines[0]
+if local_frame_state_machine.get("typeParams"):
+    raise SystemExit(
+        f"CIR: local function declaration frame leaked into {local_frame_state_machine['name']}: "
+        f"{local_frame_state_machine['typeParams']!r}"
+    )
 
 print("inline suspend carrier generic frame OK")
