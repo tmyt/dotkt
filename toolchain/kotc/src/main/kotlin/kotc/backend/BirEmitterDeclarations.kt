@@ -401,7 +401,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// search: fail at the Kotlin-semantics boundary that owns this decision.
 		if (!abstract && !hasDefault && inheritedImplementation.isEmpty())
 			error("concrete interface member '${iface.name}.${fn.name}' has neither a body nor a frontend-selected inherited implementation")
-		return """{"name":${str(name)}${explicitClrNameField(fn)}$accessorFact,"static":false,"override":false,"virtual":true,"abstract":$abstract$fakeOverride$inheritedImplementation${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${retCtxFnTypeField(fn)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
+		return """{"name":${str(name)}${declarationIdField(fn)}${explicitClrNameField(fn)}$accessorFact,"static":false,"override":false,"virtual":true,"abstract":$abstract$fakeOverride$inheritedImplementation${typeParamsJson(fn.typeParameters)},"params":[$params],"ret":${str(ret)}${retCtxFnTypeField(fn)}${funModsJson(fn)}${resultTypeJson(fn)},"body":[$body],"attrs":[$memberAttrs]${overridesJson(fn)}}"""
 	}
 	val funMethods = iface.declarations.filterIsInstance<IrSimpleFunction>()
 		// equals/hashCode/toString are inherited from Any into every Kotlin interface (fake overrides). On the CLR
@@ -1198,13 +1198,14 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
 		// setter 1, exactly as the emitted accessors have.
 		val accArity = emittedParamCount(fn)
 		ordered.mapNotNull { p -> (p.parent as? IrClass)?.let { owner ->
-			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":$accArity}""" } }
+			val targetAccessor = if (kind == "getter") p.getter else p.setter
+			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(p.name.asString())},"kind":${str(kind)},"arity":$accArity${targetAccessor?.let { declarationIdField(it) }.orEmpty()}}""" } }
 	} else {
 		val ordered = LinkedHashSet<IrSimpleFunction>()
 		fun walk(f: IrSimpleFunction) { for (ov in f.overriddenSymbols) { val o = ov.owner; if (ordered.add(o)) walk(o) } }
 		walk(fn)
 		ordered.mapNotNull { m -> (m.parent as? IrClass)?.let { owner ->
-			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(m.name.asString())},"kind":"method","arity":${emittedParamCount(m)}}""" } }
+			"""{"owner":${overrideOwnerJson(fn, owner)},"member":${str(m.name.asString())},"kind":"method","arity":${emittedParamCount(m)}${declarationIdField(m)}}""" } }
 	}
 	return if (items.isEmpty()) "" else ""","overrides":[${items.joinToString(",")}]"""
 }

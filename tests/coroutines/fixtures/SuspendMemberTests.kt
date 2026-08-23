@@ -54,6 +54,32 @@ open class SuspendMemberInheritedChannelBase : SuspendMemberInheritedSource {
 class SuspendMemberInheritedChannelImpl : SuspendMemberInheritedChannelBase() {
     suspend fun consume(): Int = receiveOrNull() + 1                   // decl on ChannelBase/Source
 }
+
+// A concrete interface declaration owns a real CLR default-interface MethodDef. Its explicit JVM/CLR compatibility
+// name applies to that declaration, while a Kotlin override keeps its own source-facing name and fills the renamed
+// interface slot through an exact MethodImpl. This is the shape used by ChannelIterator.next0 in kotlinx.coroutines.
+interface SuspendMemberExplicitDefaultSource {
+    @Suppress("INAPPLICABLE_JVM_NAME")
+    @kotlin.jvm.JvmName("loadExplicitDefault")
+    suspend fun loadSource(): Int = suspendMemberInheritedEcho(42)
+}
+class SuspendMemberExplicitDefaultInherited : SuspendMemberExplicitDefaultSource
+class SuspendMemberExplicitDefaultOverride : SuspendMemberExplicitDefaultSource {
+    override suspend fun loadSource(): Int = suspendMemberInheritedEcho(43)
+}
+
+interface SuspendMemberExplicitOverloadSource<T> {
+    @Suppress("INAPPLICABLE_JVM_NAME")
+    @kotlin.jvm.JvmName("loadSpecificDefault")
+    suspend fun load(value: T?): Int = suspendMemberInheritedEcho(44)
+
+    @Suppress("INAPPLICABLE_JVM_NAME")
+    @kotlin.jvm.JvmName("loadAnyDefault")
+    suspend fun load(value: Any?): Int = suspendMemberInheritedEcho(45)
+}
+class SuspendMemberExplicitOverloadOverride : SuspendMemberExplicitOverloadSource<Int> {
+    override suspend fun load(value: Any?): Int = suspendMemberInheritedEcho(46)
+}
 suspend fun suspendMemberInheritedPing(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPong(n - 1) }  // mutual recursion
 suspend fun suspendMemberInheritedPong(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPing(n - 1) }
 
@@ -126,6 +152,17 @@ class SuspendMemberTests {
     fun inheritedSuspendMemberDispatch() {
         assertEquals(11, blockOn { SuspendMemberInheritedDerived().await() })         // 11
         assertEquals(42, blockOn { SuspendMemberInheritedChannelImpl().consume() })   // 42
+        val inheritedDefault: SuspendMemberExplicitDefaultSource = SuspendMemberExplicitDefaultInherited()
+        assertEquals(42, blockOn { inheritedDefault.loadSource() })
+        val overriddenDefault: SuspendMemberExplicitDefaultSource = SuspendMemberExplicitDefaultOverride()
+        assertEquals(43, blockOn { overriddenDefault.loadSource() })
+        assertEquals(43, blockOn { SuspendMemberExplicitDefaultOverride().loadSource() })
+        val explicitDefaultType = Type.GetType("SuspendMemberExplicitDefaultSource")!!
+        assertEquals(true, explicitDefaultType.GetMethod("loadExplicitDefault") != null)
+        assertEquals(null, explicitDefaultType.GetMethod("loadSource"))
+        val overloaded: SuspendMemberExplicitOverloadSource<Int> = SuspendMemberExplicitOverloadOverride()
+        assertEquals(44, blockOn { overloaded.load(7) })
+        assertEquals(46, blockOn { overloaded.load("override") })
         assertEquals(5, blockOn { suspendMemberInheritedPing(5) })                    // 5
         val implementation = SuspendMemberCovariantImplementation()
         assertEquals(46, blockOn {

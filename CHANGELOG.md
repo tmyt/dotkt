@@ -10,6 +10,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Inline-spliced suspend carriers now capture only the caller's generic frame (#557).** bir2cir keeps constructor and
   local-function declaration descriptors in their own frames while densely remapping caller-owned construction types.
 
+- **Explicit CLR names now work on concrete default-interface members (#553).** kotc gives independently allocated
+  interface bodies and their override edges exact declaration identities, while bir2cir preserves the chosen physical
+  name through suspend, inherited-DIM collision, and generic existential-slot MethodImpl synthesis.
+
 ## 0.9.10-beta2 (2026-08-23)
 
 ### Fixed

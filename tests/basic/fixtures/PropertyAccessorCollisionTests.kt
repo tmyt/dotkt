@@ -96,6 +96,25 @@ private open class GenericDefaultMethodPhysicalCollisionBase<T> {
 private class GenericDefaultMethodPhysicalCollision<T> :
     GenericDefaultMethodPhysicalCollisionBase<T>(), GenericRenamedDefaultMethodSlot<List<T>>
 
+private interface ExplicitNamedDefaultMethodSlot {
+    @kotlin.clr.ClrName("explicitNamedDefaultMethod")
+    fun sourceNamedDefaultMethod(): Int = 86
+}
+
+private open class ExplicitNamedDefaultMethodCollisionBase {
+    fun explicitNamedDefaultMethod(): Int = 87
+}
+
+private class ExplicitNamedDefaultMethodCollision :
+    ExplicitNamedDefaultMethodCollisionBase(), ExplicitNamedDefaultMethodSlot
+
+private interface ExplicitNamedGenericDefaultSlot<T> {
+    @kotlin.clr.ClrName("explicitNamedGenericDefault")
+    fun sourceNamedGenericDefault(): Int = 88
+}
+
+private class ExplicitNamedGenericDefault : ExplicitNamedGenericDefaultSlot<String>
+
 private interface NullableGenericInheritedDefault<T> {
     var value: T?
         get() = null
@@ -171,6 +190,12 @@ class PropertyAccessorCollisionTests {
         assertEquals(83, (genericDefaultCollision as GenericRenamedDefaultMethodSlot<List<String>>)
             .compareTo(genericDefaultCollision))
         assertEquals(84, genericDefaultCollision.CompareTo(genericDefaultCollision))
+
+        val explicitDefaultCollision = ExplicitNamedDefaultMethodCollision()
+        assertEquals(86, (explicitDefaultCollision as ExplicitNamedDefaultMethodSlot).sourceNamedDefaultMethod())
+        assertEquals(87, explicitDefaultCollision.explicitNamedDefaultMethod())
+        val explicitGenericDefault: ExplicitNamedGenericDefaultSlot<*> = ExplicitNamedGenericDefault()
+        assertEquals(88, explicitGenericDefault.sourceNamedGenericDefault())
 
         val nullableInt: NullableGenericInheritedDefault<Int> = NullableGenericInheritedDefaultInt()
         nullableInt.value = 1

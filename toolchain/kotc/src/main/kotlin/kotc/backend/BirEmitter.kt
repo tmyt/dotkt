@@ -144,11 +144,13 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 	/** Declaration families for which #395 owns a complete CLR allocation rule.
 	 *
 	 * Top-level/file-facade callables are always covered. A final, non-overriding class member is also an independent
-	 * MethodDef identity: renaming it cannot disturb an override slot. Open/abstract/override members need a slot-wide
-	 * allocation shared by the whole override chain; until that exists, duplicate CIR signatures fail closed in
-	 * ilemit. Imported Kotlin members from the compiler-owned frontend KLIB use the same semantic fingerprint as their
-	 * reference-DLL MethodDef. A projected CLR member participates only when dll2klib carried an identity, leaving
-	 * arbitrary CLR alias members on their existing bir2cir representation path. */
+	 * MethodDef identity: renaming it cannot disturb an override slot. A concrete interface declaration likewise owns
+	 * its default-interface MethodDef and can be named independently while MethodImpl binds derived implementations.
+	 * Open/abstract/override class members need a slot-wide allocation shared by the whole override chain; until that
+	 * exists, duplicate CIR signatures fail closed in ilemit. Imported Kotlin members from the compiler-owned frontend
+	 * KLIB use the same semantic fingerprint as their reference-DLL MethodDef. A projected CLR member participates only
+	 * when dll2klib carried an identity, leaving arbitrary CLR alias members on their existing bir2cir representation
+	 * path. */
 	internal fun declarationIdForPhysicalAllocation(
 		fn: org.jetbrains.kotlin.ir.declarations.IrFunction,
 	): String? {
@@ -179,6 +181,13 @@ class BirEmitter(internal val messageCollector: MessageCollector? = null, intern
 		// yet received a shared physical allocation.
 		val carried = carriedDeclarationId(fn)
 		if (carried != null) return carried
+		// A concrete interface member owns a real default-interface MethodDef even though Kotlin models the declaration
+		// as open. An explicit source name can therefore be allocated on that declaration independently: derived
+		// implementations keep their own Kotlin declaration identities and bir2cir binds them to this renamed slot with
+		// an exact MethodImpl. This is not the unsupported class-virtual case, where changing one MethodDef name would
+		// require a shared naming decision across the CLR override chain.
+		if (owner.kind == ClassKind.INTERFACE && simple.body != null && simple.modality != Modality.ABSTRACT
+			&& hasExplicitClrNameAnnotation(simple)) return declarationId(fn)
 		if (simple.modality != Modality.FINAL || simple.overriddenSymbols.isNotEmpty()) return null
 		if (projectedClrOwner != null) return null
 		return declarationId(fn)
