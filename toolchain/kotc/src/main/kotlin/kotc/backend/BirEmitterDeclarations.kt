@@ -939,11 +939,27 @@ internal fun BirEmitter.innerClasses(c: IrClass): List<IrClass> {
 	return out
 }
 
+/** Enclosing parameters in emitted CLR type-frame order: outermost owner first. */
 internal fun BirEmitter.innerEnclosingTypeParams(klass: IrClass): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
 	if (!klass.isInner) return emptyList()
 	val result = mutableListOf<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
 	var p = klass.parent as? IrClass
 	while (p != null) { result.addAll(0, p.typeParameters); p = if (p.isInner) p.parent as? IrClass else null }
+	return result
+}
+
+/** Enclosing parameters in Kotlin inner-application order: immediate owner first, then each owner moving outward. */
+internal fun BirEmitter.innerSemanticEnclosingTypeParams(
+	klass: IrClass,
+): List<org.jetbrains.kotlin.ir.declarations.IrTypeParameter> {
+	if (!klass.isInner) return emptyList()
+	val result = mutableListOf<org.jetbrains.kotlin.ir.declarations.IrTypeParameter>()
+	var child = klass
+	while (child.isInner) {
+		val parent = child.parent as? IrClass ?: break
+		result.addAll(parent.typeParameters)
+		child = parent
+	}
 	return result
 }
 

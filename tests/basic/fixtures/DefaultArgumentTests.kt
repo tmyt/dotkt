@@ -68,6 +68,22 @@ enum class DefaultArgOp(val arity: Int, val label: String = "op") {
 class DefaultArgEncl(val k: Int) {
     inner class DefaultArgEIn(val x: Int = k * 4)
 }
+class DefaultArgGenericEncl<T>(val value: T) {
+    inner class DefaultArgGenericEIn(val x: T = value)
+    inner class DefaultArgGenericPair<U>(val outerValue: T = value, val ownValue: U)
+    inner class DefaultArgGenericMember<U>(val ownValue: U) {
+        fun defaults(ownDefault: U = ownValue, outerDefault: T = value): String = "$ownDefault:$outerDefault"
+    }
+}
+class DefaultArgGenericDeep<T>(val outerValue: T) {
+    inner class DefaultArgGenericMid<U>(val middleValue: U) {
+        inner class DefaultArgGenericLeaf<V>(
+            val ownValue: V,
+            val outerDefault: T = outerValue,
+            val middleDefault: U = middleValue,
+        )
+    }
+}
 class DefaultArgDeep(val q: Int) {
     inner class DefaultArgDMid {
         inner class DefaultArgDIn(val x: Int = q + 1)
@@ -252,10 +268,6 @@ class DefaultArgGenDerived<X, Y>(y: Y) : DefaultArgGenBase<Y>(y) { fun probe(): 
 // walks what a default is allowed to read: the RECEIVER's property, a member CALL on the receiver, the receiver inside
 // a generic CONSTRUCTOR's default, a receiver read chained into a later default, an EXTENSION receiver, and the
 // callee's OWN type parameter standing beside the owner's. The last two are controls that were already correct.
-//   NOT here, and not a type-frame question: a GENERIC inner class reading its outer instance
-// (`class O<T>(val v: T) { inner class In(val x: T = v) }`) NullReferenceExceptions — its `__outer` capture is null,
-// identically at `3fedd238` and with no default argument involved. Its non-generic twin is covered by
-// `defaultArgumentsEnclosingReadAtAMemberExtension`.
 class DefaultArgFrameOwnerProp<T>(val v: T) { fun one(a: T = v): String = "$a" }
 class DefaultArgFrameOwnerCall<T>(val v: T) { fun tag(): String = "t$v"; fun one(a: String = tag()): String = a }
 class DefaultArgFrameOwnerCtor<T>(val v: T, val w: T = v, val x: T = w)
@@ -504,6 +516,16 @@ class DefaultArgumentTests {
     fun defaultArgumentsCtorEnclosingInstance() {
         assertEquals(20, DefaultArgEncl(5).DefaultArgEIn().x)                           // k * 4, k from the enclosing instance
         assertEquals(1, DefaultArgEncl(5).DefaultArgEIn(1).x)                           // provided
+        assertEquals(7, DefaultArgGenericEncl(7).DefaultArgGenericEIn().x)              // generic enclosing capture (#277)
+        assertEquals("v", DefaultArgGenericEncl("v").DefaultArgGenericEIn().x)        // reference instantiation too
+        val genericPair = DefaultArgGenericEncl(7).DefaultArgGenericPair(ownValue = "u")
+        assertEquals(7, genericPair.outerValue)                                         // own U + enclosing T keep their order
+        assertEquals("u", genericPair.ownValue)
+        assertEquals("u:7", DefaultArgGenericEncl(7).DefaultArgGenericMember("u").defaults())
+        val genericDeep = DefaultArgGenericDeep(7).DefaultArgGenericMid("m").DefaultArgGenericLeaf(1L)
+        assertEquals(1L, genericDeep.ownValue)                                           // V + immediate U + outer T keep their order
+        assertEquals(7, genericDeep.outerDefault)
+        assertEquals("m", genericDeep.middleDefault)
         assertEquals(2, DefaultArgDeep(1).DefaultArgDMid().DefaultArgDIn().x)                   // q + 1, two levels up (via `__outer`)
         assertEquals(9, DefaultArgDeep(1).DefaultArgDMid().DefaultArgDIn(9).x)                  // provided
         assertEquals(6, defaultArgRec(3))                                       // 3 + (2 + (1 + 0))
