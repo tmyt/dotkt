@@ -384,7 +384,12 @@ static class KotlinOverrideSlotBridge
                 // interface. Its Kotlin accessor keeps the dedicated property name, while the MethodImpl descriptor
                 // must name the exact external Property/MethodSemantics accessor (Collection.size -> get_Count).
                 // Resolve that allocation from metadata here; never infer it from either accessor spelling.
-                var descriptorMember = name;
+                // Explicit naming of a concrete default-interface declaration is allocated later, after physical
+                // type lowering. Its identity makes that MethodDef independently allocatable, while this exact
+                // descriptor lets an overriding declaration keep its own Kotlin/CLR name. Consume the stated target
+                // here; recovering it after allocation from the rewritten MethodDef spelling would be too late.
+                // Suspend cold entries already carry their final role-suffixed name and no explicitClrName field.
+                var descriptorMember = Str(slot[DeclarationIdentityBinding.ExplicitNameKey]) ?? name;
                 var descriptorOwner = spec;
                 if (propertyName != null && refs != null
                     && refs.TryExternalPropertyAccessor(spec.Name, propertyName, accessorKind,
@@ -1140,7 +1145,13 @@ static class KotlinOverrideSlotBridge
                 if (!KotlinPropertyAccessors.TryIdentity(m, out var candidateProperty, out var candidateKind)
                     || candidateProperty != propertyName || candidateKind != accessorKind) continue;
             }
-            else if (Str(m["name"]) != physicalName || KotlinPropertyAccessors.TryIdentity(m, out _, out _)) continue;
+            // Suspend lowering has already split one declaration into hot/cold MethodDefs. An explicitly named DIM
+            // gives the base projection its final explicit spelling, while the overriding projection keeps its own
+            // physical name; `kotlinSourceMember` is the carried frontend identity that relates those two projections.
+            // The override closure below remains the independent proof that this candidate actually fills this slot.
+            else if ((Str(m["name"]) != physicalName
+                      && Str(m[DeclarationRename.SourceMemberKey]) != semanticName)
+                     || KotlinPropertyAccessors.TryIdentity(m, out _, out _)) continue;
             if (((m["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) continue;
             // Generic constraints are part of a CLR MethodDef's implementation contract even when name, arity,
             // parameters, and return are otherwise identical. Kotlin's frontend has already selected the override;

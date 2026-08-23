@@ -54,6 +54,19 @@ open class SuspendMemberInheritedChannelBase : SuspendMemberInheritedSource {
 class SuspendMemberInheritedChannelImpl : SuspendMemberInheritedChannelBase() {
     suspend fun consume(): Int = receiveOrNull() + 1                   // decl on ChannelBase/Source
 }
+
+// A concrete interface declaration owns a real CLR default-interface MethodDef. Its explicit JVM/CLR compatibility
+// name applies to that declaration, while a Kotlin override keeps its own source-facing name and fills the renamed
+// interface slot through an exact MethodImpl. This is the shape used by ChannelIterator.next0 in kotlinx.coroutines.
+interface SuspendMemberExplicitDefaultSource {
+    @Suppress("INAPPLICABLE_JVM_NAME")
+    @kotlin.jvm.JvmName("loadExplicitDefault")
+    suspend fun loadSource(): Int = suspendMemberInheritedEcho(42)
+}
+class SuspendMemberExplicitDefaultInherited : SuspendMemberExplicitDefaultSource
+class SuspendMemberExplicitDefaultOverride : SuspendMemberExplicitDefaultSource {
+    override suspend fun loadSource(): Int = suspendMemberInheritedEcho(43)
+}
 suspend fun suspendMemberInheritedPing(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPong(n - 1) }  // mutual recursion
 suspend fun suspendMemberInheritedPong(n: Int): Int { if (n <= 0) return 0; return 1 + suspendMemberInheritedPing(n - 1) }
 
@@ -126,6 +139,11 @@ class SuspendMemberTests {
     fun inheritedSuspendMemberDispatch() {
         assertEquals(11, blockOn { SuspendMemberInheritedDerived().await() })         // 11
         assertEquals(42, blockOn { SuspendMemberInheritedChannelImpl().consume() })   // 42
+        val inheritedDefault: SuspendMemberExplicitDefaultSource = SuspendMemberExplicitDefaultInherited()
+        assertEquals(42, blockOn { inheritedDefault.loadSource() })
+        val overriddenDefault: SuspendMemberExplicitDefaultSource = SuspendMemberExplicitDefaultOverride()
+        assertEquals(43, blockOn { overriddenDefault.loadSource() })
+        assertEquals(43, blockOn { SuspendMemberExplicitDefaultOverride().loadSource() })
         assertEquals(5, blockOn { suspendMemberInheritedPing(5) })                    // 5
         val implementation = SuspendMemberCovariantImplementation()
         assertEquals(46, blockOn {
