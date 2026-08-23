@@ -133,7 +133,16 @@ static class ExistentialReceiverBinding
         var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
             out var sourcePropertyName, out var accessorKind);
         var sourceMethod = propertyCall ? sourcePropertyName : authoredMethod;
-        var receiverType = ReceiverType(call["recv"], vars) as TypeNode.Fqn;
+        // Inline substitution replaces a parameter local with the concrete argument type, but the selected call owner
+        // remains the existential interface whose slot must be invoked. Prefer that explicit declaration carrier when
+        // it is already physical; receiver inference remains the path for casts and realigned locals whose authored
+        // owner still uses the semantic generic surface.
+        var authoredOwner = TypeJson.Read(call["ownerType"]) as TypeNode.Fqn;
+        var receiverType = authoredOwner != null
+            && (index.SemanticOwnerByPhysical.ContainsKey(authoredOwner.Name)
+                || refs.IsExistentialPhysicalOwner(authoredOwner.Name))
+            ? authoredOwner
+            : ReceiverType(call["recv"], vars) as TypeNode.Fqn;
         if (receiverType == null || (!index.SemanticOwnerByPhysical.ContainsKey(receiverType.Name)
             && !refs.IsExistentialPhysicalOwner(receiverType.Name))) return;
 

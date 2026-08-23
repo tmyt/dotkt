@@ -22,6 +22,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import kotlin.coroutines.suspendCoroutine
 import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import kotlin.coroutines.resume
@@ -82,6 +83,28 @@ class ContinuationBlockHolder(private val value: Int) {
 }
 
 fun continuationBlock(value: Int): (Continuation<Int>) -> Unit = { continuation -> continuation.resume(value) }
+
+fun starContinuationDeliverFailure(continuation: Continuation<*>, failure: Throwable) {
+    continuation.resumeWith(Result.failure(failure))
+}
+
+inline fun starContinuationDeliverFailureInline(
+    continuation: Continuation<*>,
+    failure: Throwable,
+    beforeResume: () -> Unit,
+) {
+    beforeResume()
+    continuation.resumeWith(Result.failure(failure))
+}
+
+class StarContinuationProbe : Continuation<Any?> {
+    override val context = EmptyCoroutineContext
+    var outcome: String = "pending"
+
+    override fun resumeWith(result: Result<Any?>) {
+        outcome = result.exceptionOrNull()?.message ?: "success"
+    }
+}
 
 suspend fun callResultContinuationResume(): Int = suspendCoroutine(continuationBlock(50))
 
@@ -182,6 +205,17 @@ class ContinuationBridgeTests {
     @TestAttribute
     fun contravariantBlockResume() {
         assertEquals(53, blockOn { contravariantContinuationBlockResume() })
+    }
+
+    @TestAttribute
+    fun starProjectedMemberCallUsesExistentialSlot() {
+        val direct = StarContinuationProbe()
+        starContinuationDeliverFailure(direct, IllegalStateException("direct"))
+        assertEquals("direct", direct.outcome)
+
+        val inlined = StarContinuationProbe()
+        starContinuationDeliverFailureInline(inlined, IllegalStateException("inline")) {}
+        assertEquals("inline", inlined.outcome)
     }
 
     @TestAttribute

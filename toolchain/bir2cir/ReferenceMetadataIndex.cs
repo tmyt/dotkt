@@ -2220,15 +2220,48 @@ sealed partial class ReferenceMetadataIndex
         // is already the final physical link target; neither the source declaration's allocated name nor an ordinal is
         // sufficient to derive it. In particular, an explicit @ClrName changes the source MethodDef but not the
         // compiler-owned dependent-slot spelling.
-        var candidates = members.Where(m => !m.IsStatic && m.ParamCount == paramCount
-            && m.MethodArity == methodArity
-            && (accessorKind is "get" or "set"
-                ? !m.IsPropertyBridge && m.SourcePropertyName == sourceMember && m.AccessorKind == accessorKind
-                : m.SourcePropertyName == null && (m.SourceMethodName ?? m.Name) == sourceMember)
-            && (declarations[0].ParamTypeNodes == null || m.ParamTypeNodes is { } physical
-                && physical.Length == declarations[0].ParamTypeNodes.Length
-                && physical.Select((p, i) => DeclarationDescribesCall(declarations[0].ParamTypeNodes[i], p)).All(x => x)))
-            .ToList();
+        var selectedSourceMember = accessorKind is "get" or "set"
+            ? declarations[0].SourcePropertyName ?? sourceMember
+            : declarations[0].DeclarationSourceName ?? declarations[0].SourceMethodName ?? sourceMember;
+        // Earlier physical lowering may deliberately give the ordinary declaration and its existential slot distinct
+        // CLR descriptors. Compare their preserved Kotlin descriptors instead: EraseParams copied that exact source
+        // fact onto every synthesized slot before changing its physical type. This remains exact for same-name overloads
+        // without reconstructing the representation change from a generated name or accepting a merely unique sibling.
+        var declarationParameters = declarations[0].DeclarationSemanticParams
+            ?? declarations[0].KotlinParameterTypes
+            ?? declarations[0].ParamTypeNodes;
+        bool DescribesSelectedDeclaration(MemberBinding candidate) => declarationParameters == null
+            || (candidate.KotlinParameterTypes ?? candidate.ParamTypeNodes) is { } candidateParameters
+                && candidateParameters.Length == declarationParameters.Length
+                && candidateParameters.Select((p, i) => DeclarationDescribesCall(
+                    declarationParameters[i], p)).All(x => x);
+        bool DescribesSelectedPhysicalDeclaration(MemberBinding candidate) => declarations[0].ParamTypeNodes is { } declarationPhysical
+            && candidate.ParamTypeNodes is { } candidatePhysical
+            && candidatePhysical.Length == declarationPhysical.Length
+            && candidatePhysical.SequenceEqual(declarationPhysical);
+
+        var shapedCandidates = members.Where(m => !m.IsStatic && m.ParamCount == paramCount
+            && m.MethodArity == methodArity).ToList();
+        List<MemberBinding> candidates;
+        if (accessorKind is "get" or "set")
+        {
+            candidates = shapedCandidates.Where(m => !m.IsPropertyBridge
+                && m.SourcePropertyName == selectedSourceMember && m.AccessorKind == accessorKind
+                && DescribesSelectedDeclaration(m)).ToList();
+        }
+        else
+        {
+            // Owner-dependent slots carry their Kotlin source-method identity. Prefer that authoritative identity over
+            // an ordinary sibling whose physical @ClrName happens to equal it. Owner-independent slots intentionally
+            // retain the selected declaration's MethodDef name and need no source carrier, so use that exact physical
+            // identity only when no semantically matching carried slot exists.
+            var carriedCandidates = shapedCandidates.Where(m => m.SourcePropertyName == null
+                && m.SourceMethodName == selectedSourceMember && DescribesSelectedDeclaration(m)).ToList();
+            candidates = carriedCandidates.Count != 0
+                ? carriedCandidates
+                : shapedCandidates.Where(m => m.SourcePropertyName == null && m.SourceMethodName == null
+                    && m.Name == declarations[0].Name && DescribesSelectedPhysicalDeclaration(m)).ToList();
+        }
         if (candidates.Count != 1) return false;
         erasedOwner = candidateOwner;
         erasedMember = candidates[0].Name;
@@ -4436,7 +4469,12 @@ sealed partial class ReferenceMetadataIndex
                             arrayFactoryElementHint,
                             countRange?.Start ?? -1,
                             countRange?.End ?? -1,
-                            declarationIdentity?.ReifiedTypeParameterIndices));
+                            declarationIdentity?.ReifiedTypeParameterIndices,
+                            dotKtAuthored
+                                ? method.GetParameters().Select(p =>
+                                    KotlinTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly)
+                                    ?? DeclarationTypeNode(p.ParameterType)).ToArray()
+                                : null));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -6675,7 +6713,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);

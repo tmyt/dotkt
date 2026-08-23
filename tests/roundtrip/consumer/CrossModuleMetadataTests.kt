@@ -103,8 +103,13 @@ import starprojection.FirstUseBox
 import starprojection.firstUseBox
 import starprojection.MixedBox
 import starprojection.mixedBox
+import starprojection.ExplicitNameStarCollision
+import starprojection.explicitNameStarCollision
+import starprojection.OverloadedStarSink
+import starprojection.overloadedStarSink
 import starprojection.CollisionHost
 import starprojection.collisionHost
+import starprojection.deliverStarContinuationFailure
 import starprojection.isConcreteStarKey
 import starprojection.ReferencedStarBase
 import suspendcompanion.CompanionSuspendApi
@@ -148,6 +153,15 @@ private class InvariantTypeProbe<T>(val value: T)
 
 private class CrossModuleInheritedIntSlot : InheritedNullableMiddle<Int>() {
     override fun take(value: Int?): String = value?.toString() ?: "inherited-null"
+}
+
+private class CrossModuleStarContinuationProbe : Continuation<Any?> {
+    override val context: CoroutineContext get() = EmptyCoroutineContext
+    var outcome: String = "pending"
+
+    override fun resumeWith(result: Result<Any?>) {
+        outcome = result.exceptionOrNull()?.message ?: "success"
+    }
 }
 
 private interface LocalStarDerived<T> : ReferencedStarBase<T>
@@ -419,11 +433,21 @@ class GenericMetadataRoundtripTests {
         // choose(A) and choose(String) and is insufficient after the A slot becomes star-input Nothing.
         ClassicAssert.AreEqual("string:ok", mixed.choose("ok"))
 
+        val explicitCollision: ExplicitNameStarCollision<*> = explicitNameStarCollision()
+        ClassicAssert.AreEqual("chosen:7", explicitCollision.chosen(7))
+
+        val overloadedSink: OverloadedStarSink<*> = overloadedStarSink()
+        ClassicAssert.AreEqual("int:7", overloadedSink.accept(7))
+
         val inherited: LocalStarDerived<*> = LocalStarDerivedImpl()
         ClassicAssert.AreEqual("referenced-base", inherited.inherited())
 
         val collision: CollisionHost<*> = collisionHost()
         ClassicAssert.AreEqual("collision-safe", collision.value())
+
+        val continuation = CrossModuleStarContinuationProbe()
+        deliverStarContinuationFailure(continuation, System.Exception("cross-module-inline")) {}
+        ClassicAssert.AreEqual("cross-module-inline", continuation.outcome)
     }
 
     // ktproj-reprop (#17): a direct property get/set on a `kotlinx.`-packaged re-imported type lowers to the
