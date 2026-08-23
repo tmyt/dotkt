@@ -1474,8 +1474,9 @@ internal sealed class AssemblyScanner
                 Arity: md.GetTypeDefinition(handle).GetGenericParameters().Count))
             .ToArray();
         // Awaitable/enumerable pattern discovery repeatedly resolves Kotlin-facing local names. Build that identity
-        // once instead of reconstructing every TypeDef path for every projected class. TryAdd deliberately preserves
-        // the previous table-order first match when malformed metadata contains duplicate Kotlin-facing names.
+        // once instead of reconstructing every TypeDef path for every projected class. Multiple definitions can share
+        // one projected name (for example, a non-public generic-arity family); preserve the previous table-order first
+        // match deliberately.
         _localDefinitions = new Dictionary<string, TypeDefinitionHandle>(StringComparer.Ordinal);
         foreach (var row in semanticTypeRows)
             _localDefinitions.TryAdd(row.Name, row.Handle);
