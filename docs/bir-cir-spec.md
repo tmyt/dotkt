@@ -266,12 +266,13 @@ string as BIR-only `explicitClrName`. Identical values coalesce; malformed argum
 declaration are errors. bir2cir applies that fact only after CLR type lowering and consumes it before CIR. An explicit
 name always applies, even without a collision. Open/override class families are rejected until the frontend can
 supply one slot-wide naming decision rather than letting bir2cir infer propagation from hierarchy or names. A
-concrete interface member is independently allocatable because it owns a default-interface MethodDef; kotc gives
-that declaration an identity, and bir2cir binds each separately named derived implementation to the exact renamed
-interface slot with a MethodImpl rather than propagating the name by inference. Each BIR `overrides` edge to such a
-declaration carries its exact `declarationId`; synthesized cold and existential slots retain derived physical-only
-identities which bir2cir normalizes back to that source ID before accepting an implementation. Owner, source member,
-kind, and arity remain semantic routing facts, not a substitute for the exact identity.
+concrete interface member carrying an explicit name is independently allocatable because it owns a default-interface
+MethodDef; kotc gives that explicitly named declaration an identity, and bir2cir binds each separately named derived
+implementation to the exact renamed interface slot with a MethodImpl rather than propagating the name by inference.
+Each BIR `overrides` edge to such a declaration carries its exact `declarationId`; synthesized cold and existential
+slots retain derived physical-only identities which bir2cir normalizes back to that source ID before accepting an
+implementation. Owner, source member, kind, and arity remain semantic routing facts, not a substitute for the exact
+identity.
 For an ordinary field-backed top-level property, an explicit accessor name makes that accessor a MethodDef-backed
 surface even when its Kotlin body is default. A field-backed companion extension remains a bir2cir-owned physical
 representation: kotc carries the getter/setter name and declaration identity as paired BIR field facts, and bir2cir
