@@ -200,9 +200,10 @@ static class ConstrainedTypeParameterReceiverBinding
                         else
                             CastResolvedPropertyReceiver(call, closedPropertyOwner);
                     }
+                    var clrCall = kind is "clrInstance" or "clrGenericInstance";
                     var genericClrCall = kind == "clrGenericInstance";
-                    var ownerKey = genericClrCall ? "type" : "ownerType";
-                    if (!resolvedPropertiesOnly && (kind == "callInstance" || kind == "clrGenericInstance")
+                    var ownerKey = clrCall ? "type" : "ownerType";
+                    if (!resolvedPropertiesOnly && (kind == "callInstance" || clrCall)
                         && TypeJson.Read(call[ownerKey]) is TypeNode.Fqn owner
                         && call["recv"] is JsonObject recv
                         && ReceiverTypeVariable(recv, scope, locals) is TypeNode.Tv tv)

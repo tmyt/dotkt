@@ -56,12 +56,6 @@
 // inside a suspend call's argument list used to be a compile-time refusal, because the cold-call builder was
 // already half-way through assembling a suspension point it then had no way to elide.
 //
-// THE KNOWN HOLE, PRESERVED DELIBERATELY. `HasOwnSuspension` does not descend into a `forEachInline` body
-// (`LambdaKinds`), so a suspension lifted out of an inline collection loop by `FlattenSuspendingLoops` is invisible
-// to L. An operand of an enclosing node is therefore not ordered against it. That is pre-existing and is NOT
-// widened here: making `HasOwnSuspension` loop-aware changes the try-nesting and refusal accounting that reads the
-// same predicate, which is a separate change with its own gate.
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -77,13 +71,37 @@ static partial class SuspendColdLowering
     // receiver/argument split of the call it is rewriting; `SuspendedCalleeIn` asks it which operand a diagnostic
     // should name first.
 
-    // Where an ordered-eval node's operands go back: a binary node's `lhs`/`rhs`, a call/new node's `recv`/`args`,
-    // or a string concatenation's `parts`.
-    internal enum EvalOrderShape { Binary, Call, Parts }
+    // One value-bearing slot of an ordered-eval node. A slot is either a direct property (`array`), an element of a
+    // value list (`elems[2]`), or a member of an element object (`entries[1].value`). Keeping the slot beside the
+    // operand makes extraction and reassembly the SAME description: widening the kind roster cannot add an operand
+    // to the planner while forgetting where its replacement belongs.
+    internal readonly record struct EvalOrderSlot(string Key, int Index = -1, string Member = null,
+                                                   bool PreserveLocation = false)
+    {
+        public JsonNode Read(JsonObject o)
+        {
+            if (Index < 0) return o[Key];
+            if (o[Key] is not JsonArray a || Index >= a.Count) return null;
+            if (Member == null) return a[Index];
+            return a[Index] is JsonObject item ? item[Member] : null;
+        }
 
-    // A node's operands in EVALUATION ORDER, plus whether the first of them is the receiver and how the node is
-    // reassembled around a rewritten list.
-    internal readonly record struct EvalOrder(List<JsonNode> Operands, bool HasReceiver, EvalOrderShape Shape)
+        public void Write(JsonObject o, JsonNode value)
+        {
+            if (Index < 0) { o[Key] = value; return; }
+            var a = o[Key] as JsonArray
+                ?? throw new InvalidOperationException($"ordered operand list `{Key}` disappeared while rebuilding a node");
+            if (Member == null) { a[Index] = value; return; }
+            var item = a[Index] as JsonObject
+                ?? throw new InvalidOperationException($"ordered operand container `{Key}[{Index}]` disappeared while rebuilding a node");
+            item[Member] = value;
+        }
+    }
+
+    // A node's operands in EVALUATION ORDER, the exact slots they came from, and whether the first is a dispatch
+    // receiver. `ArgumentStart` remains the call-cold-lowering split; non-call descriptors use it only for the
+    // diagnostic phrase "receiver" versus "argument N".
+    internal readonly record struct EvalOrder(List<JsonNode> Operands, List<EvalOrderSlot> Slots, bool HasReceiver)
     {
         public int ArgumentStart => HasReceiver ? 1 : 0;
     }
@@ -109,70 +127,145 @@ static partial class SuspendColdLowering
     internal static EvalOrder? EvalOrderOf(JsonObject o)
     {
         var k = Str(o["k"]);
-        if (k == "binOp")
-            return new EvalOrder(new List<JsonNode> { o["lhs"], o["rhs"] }, HasReceiver: false, EvalOrderShape.Binary);
+        if (k is "binOp" or "objEq") return Direct(o, hasReceiver: false, "lhs", "rhs");
         // A string concatenation evaluates its parts left to right exactly like any other operand list, and it is
         // where `a + b` LANDS whenever either side is a String: PrimitiveOperatorLowering re-emits
         // `kotlin.String.plus` as a `concat`, and a `"…$a…$b…"` template is one from the start. Both run before this
         // pass, so `f().toString() + g()` is a `concat` here, not a `callInstance` — the sibling spelling of the
         // reorder that made the binary form wrong.
-        if (k == "concat")
-            return new EvalOrder(
-                (o["parts"] as JsonArray)?.ToList() ?? new List<JsonNode>(), HasReceiver: false, EvalOrderShape.Parts);
-        if (k == null || !OrderedEvalKinds.Contains(k)) return null;
-        var kids = new List<JsonNode>();
-        if (Bool(o["suspendCall"]))
+        if (k == "concat") return List(o, "parts");
+
+        if (k != null && OrderedEvalKinds.Contains(k))
         {
-            if (IsAwaitMarkerCall(o)) return null;
-            var coldInstance = InstanceCallKinds.Contains(k);
-            if (coldInstance) kids.Add(o["recv"]);
-            if (o["args"] is JsonArray sa) foreach (var a in sa) kids.Add(a);
-            return new EvalOrder(kids, coldInstance, EvalOrderShape.Call);
+            if (Bool(o["suspendCall"]))
+            {
+                if (IsAwaitMarkerCall(o)) return null;
+                return Call(o, InstanceCallKinds.Contains(k));
+            }
+            return Call(o, o["recv"] != null);
         }
-        var hasRecv = o["recv"] != null;
-        if (hasRecv) kids.Add(o["recv"]);
-        if (o["args"] is JsonArray args) foreach (var a in args) kids.Add(a);
-        return new EvalOrder(kids, hasRecv, EvalOrderShape.Call);
+
+        return k switch
+        {
+            "arrayGet" => Direct(o, false, "array", "index"),
+            "arraySet" => Direct(o, false, "array", "index", "value"),
+            "setField" or "setFieldExpr" => ReceiverThen(o, "value"),
+            "clrPropSet" => ReceiverThen(o, "value"),
+            "delegateInvoke" => Call(o, hasReceiver: true),
+            "objMethod" => o["arg"] != null
+                ? Direct(o, true, "recv", "arg")
+                : Direct(o, true, "recv"),
+            "constrainedCall" => Call(o, hasReceiver: true),
+            "newArray" or "newList" or "newSet" => List(o, "elems"),
+            "newArraySized" => Direct(o, false, "size"),
+            "newArrayInit" => Direct(o, false, "size", "init"),
+            "spreadConcat" => ListMember(o, "parts", "e"),
+            "newMap" => MapEntries(o),
+            _ => null,
+        };
+    }
+
+    static EvalOrder FromSlots(JsonObject o, bool hasReceiver, List<EvalOrderSlot> slots) =>
+        new(slots.Select(s => s.Read(o)).ToList(), slots, hasReceiver);
+
+    static EvalOrder Direct(JsonObject o, bool hasReceiver, params string[] keys) =>
+        FromSlots(o, hasReceiver, keys.Select(k => new EvalOrderSlot(k)).ToList());
+
+    static EvalOrder ReceiverThen(JsonObject o, params string[] keys)
+    {
+        var hasReceiver = o["recv"] != null;
+        var slots = new List<EvalOrderSlot>();
+        if (hasReceiver) slots.Add(new EvalOrderSlot("recv", PreserveLocation: ReceiverNeedsAddress(o)));
+        slots.AddRange(keys.Select(k => new EvalOrderSlot(k)));
+        return FromSlots(o, hasReceiver, slots);
+    }
+
+    static EvalOrder List(JsonObject o, string key)
+    {
+        var count = (o[key] as JsonArray)?.Count ?? 0;
+        return FromSlots(o, false, Enumerable.Range(0, count).Select(i => new EvalOrderSlot(key, i)).ToList());
+    }
+
+    static EvalOrder ListMember(JsonObject o, string key, string member)
+    {
+        var count = (o[key] as JsonArray)?.Count ?? 0;
+        return FromSlots(o, false,
+            Enumerable.Range(0, count).Select(i => new EvalOrderSlot(key, i, member)).ToList());
+    }
+
+    static EvalOrder MapEntries(JsonObject o)
+    {
+        var slots = new List<EvalOrderSlot>();
+        if (o["entries"] is JsonArray entries)
+            for (var i = 0; i < entries.Count; i++)
+            {
+                slots.Add(new EvalOrderSlot("entries", i, "key"));
+                slots.Add(new EvalOrderSlot("entries", i, "value"));
+            }
+        return FromSlots(o, false, slots);
+    }
+
+    static EvalOrder Call(JsonObject o, bool hasReceiver)
+    {
+        var slots = new List<EvalOrderSlot>();
+        if (hasReceiver) slots.Add(new EvalOrderSlot("recv", PreserveLocation: ReceiverNeedsAddress(o)));
+        if (o["args"] is JsonArray args)
+            for (var i = 0; i < args.Count; i++) slots.Add(new EvalOrderSlot("args", i));
+        return FromSlots(o, hasReceiver, slots);
+    }
+
+    // The receiver form the CIR emitter consumes is part of the physical representation this layer owns. A
+    // value-type member write/call and a constrained generic dispatch consume the receiver's ADDRESS, so moving
+    // the receiver VALUE into a temporary would change the target storage. Reference receivers remain values: their
+    // object identity must be frozen before a later suspension, not the variable that happened to hold the object.
+    static bool ReceiverNeedsAddress(JsonObject o)
+    {
+        var k = Str(o["k"]);
+        if (k == "constrainedCall") return true;
+        // ConstrainedTypeParameterReceiverBinding runs after suspend synthesis, because only then are inherited
+        // member owners and synthesized state-machine frames final. Preserve the receiver's LOCATION here while its
+        // frontend static type still states the decisive fact. Spilling a `T` value into a second field would make a
+        // later value-type instantiation dispatch on a copy; it would also hide the original state slot from the
+        // constrained-call rewrite. Platform/nullable wrappers do not change that the stack value is still `!!T`.
+        static bool IsTypeVariable(TypeNode type) => type switch
+        {
+            TypeNode.Tv => true,
+            TypeNode.Oblivious p => IsTypeVariable(p.Of),
+            TypeNode.Nullable n => IsTypeVariable(n.Of),
+            _ => false,
+        };
+        if (o["recv"] is JsonObject recv && IsTypeVariable(NodeType.Stamp(recv))) return true;
+        var owner = k switch
+        {
+            "setField" or "setFieldExpr" => TypeJson.Read(o["ownerType"]),
+            "clrPropSet" or "clrInstance" or "clrGenericInstance" => TypeJson.Read(o["type"]),
+            _ => null,
+        };
+        return owner is TypeNode.Fqn f && _refs.IsValueType(f);
     }
 
     // The position of the LAST operand that carries a suspension; -1 when none does. Everything to its left is
-    // evaluated before that suspension, and everything to its right after the resume.
+    // evaluated before that suspension, and everything to its right after the resume. A `forEachInline` body is this
+    // frame's code and FlattenSuspendingLoops later lifts it into this frame's CFG, so it is deliberately visible
+    // here through the loop-aware predicate. Genuine nested lambda frames remain opaque to that predicate.
     static int LastSuspending(IReadOnlyList<JsonNode> kids)
     {
         var last = -1;
         for (var i = 0; i < kids.Count; i++)
-            if (kids[i] != null && HasOwnSuspension(kids[i])) last = i;
+            if (kids[i] != null && HasLoopBorneSuspension(kids[i])) last = i;
         return last;
     }
 
-    /// Rebuild `o` with `ops` in its operand slots, by the shape the descriptor names. One reassembly for a binary
-    /// node's `lhs`/`rhs` and a call/new node's `recv`/`args`, so there is no per-shape operand list to keep in step.
+    /// Rebuild `o` with `ops` in the exact slots the descriptor read. The slots, rather than a second kind/shape
+    /// switch, are the reassembly contract; map key/value streams and construction value lists therefore use the
+    /// same path as calls and direct named operands.
     static JsonObject Reassemble(JsonObject o, EvalOrder order, IReadOnlyList<JsonNode> ops)
     {
-        var copy = new JsonObject();
-        if (order.Shape == EvalOrderShape.Binary)
-        {
-            foreach (var kv in o) copy[kv.Key] = kv.Value?.DeepClone();
-            copy["lhs"] = ops[0];
-            copy["rhs"] = ops[1];
-            return copy;
-        }
-        if (order.Shape == EvalOrderShape.Parts)
-        {
-            var parts = new JsonArray();
-            foreach (var p in ops) parts.Add(p);
-            foreach (var kv in o) copy[kv.Key] = kv.Key == "parts" ? parts : kv.Value?.DeepClone();
-            return copy;
-        }
-        var recv = order.HasReceiver ? ops[0] : null;
-        var args = new JsonArray();
-        for (var i = order.ArgumentStart; i < ops.Count; i++) args.Add(ops[i]);
-        foreach (var kv in o)
-        {
-            if (kv.Key == "recv" && order.HasReceiver) copy["recv"] = recv;
-            else if (kv.Key == "args") copy["args"] = args;
-            else copy[kv.Key] = kv.Value?.DeepClone();
-        }
+        var copy = o.DeepClone() as JsonObject
+            ?? throw new InvalidOperationException("ordered expression did not clone as an object");
+        if (ops.Count != order.Slots.Count)
+            throw new InvalidOperationException("ordered operand count changed while rebuilding a node");
+        for (var i = 0; i < ops.Count; i++) order.Slots[i].Write(copy, ops[i]);
         return copy;
     }
 
@@ -405,7 +498,7 @@ static partial class SuspendColdLowering
                 ["id"] = id,
                 // Documentation and diagnostics only: the array order already carries the evaluation order.
                 ["phase"] = order.HasReceiver && i == 0 ? "recv" : "arg",
-                ["kind"] = "value",
+                ["kind"] = order.Slots[i].PreserveLocation ? "address" : "value",
                 ["stable"] = stable,
                 // The role a storage refusal names this value by — INHERITED when the operand is a read of a value
                 // an earlier plan already materialised. It is the same value, so it keeps the phrase kotc's plan gave
@@ -447,12 +540,17 @@ static partial class SuspendColdLowering
 
     /// The source-level phrase a storage refusal names a bound operand by — it travels onto the materialised local,
     /// so a refusal says "the operand of the call to `corAdd`" rather than the minted `cir$b7`.
-    static string OperandRole(JsonObject o) =>
-        Str(o["method"]) is string m ? $"operand of the call to `{m}`"
-        : Str(o["op"]) is string op ? $"operand of the `{op}` operator"
-        : Str(o["k"]) == "concat" ? "operand of a string concatenation"
-        : TypeJson.OwnerName(o["type"]) is string t ? $"operand of the construction of `{t}`"
-        : "operand of an expression";
+    static string OperandRole(JsonObject o)
+    {
+        var k = Str(o["k"]);
+        if (k is "setField" or "setFieldExpr" or "clrPropSet") return "operand of a member write";
+        if (k is "arrayGet" or "arraySet") return "operand of an array access";
+        if (Str(o["method"]) is string m) return $"operand of the call to `{m}`";
+        if (Str(o["op"]) is string op) return $"operand of the `{op}` operator";
+        if (k == "concat") return "operand of a string concatenation";
+        if (TypeJson.OwnerName(o["type"]) is string t) return $"operand of the construction of `{t}`";
+        return "operand of an expression";
+    }
 
     // --- the chokepoint --------------------------------------------------------------------------------
 
@@ -515,7 +613,10 @@ static partial class SuspendColdLowering
                                 + "after the operand plans were materialised. The state machine would write the "
                                 + "outer resume label and then have the inner suspension overwrite it.");
                         for (var i = 0; i < last; i++)
-                            if (order.Operands[i] != null && !Settled(order.Operands[i]))
+                            if (order.Operands[i] != null
+                                && !(order.Slots[i].PreserveLocation
+                                    ? CallEvalLowering.IsPinnedLocation(order.Operands[i], Settled)
+                                    : Settled(order.Operands[i])))
                                 throw new InvalidOperationException(
                                     $"bir2cir: suspend-lowering: in `{where}`, operand {i} of a "
                                     + $"`{Str(o["k"])}` node is neither re-readable nor materialised, yet a later "

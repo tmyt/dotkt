@@ -563,7 +563,7 @@ A binding is a plain object (not a `{k}` node):
 |---|---|
 | `id` | the binding's name, and the `bindRef` key. NOT the name of the local it may lower to — see *Id namespaces* below |
 | `phase` | `recv` \| `arg` \| `default` — where the value comes from (documentation and diagnostics; the array order already carries the evaluation order) |
-| `kind` | `value` \| `address`. An `address` is a byref / `@ClrRefArgument` slot's addressable lvalue: an ordering marker, never storage |
+| `kind` | `value` \| `address`. An `address` is a slot the physical operation consumes as an addressable location (a byref argument or a value-type/constrained receiver): an ordering marker, never pointer storage |
 | `stable` | may this value be READ more than once (a literal, an immutable local/parameter read)? Judged ONCE by the producer and consumed downstream, never re-derived |
 | `type` | the CALLER-instantiated semantic type of the value |
 | `role` | the source-level phrase a storage refusal names the value by (`receiver of 'copy'`); travels onto the lowered `var` |
@@ -661,7 +661,7 @@ that can add a reader has finished — and is the ONLY consumer of the vocabular
   position, and a binding that emits ANY pre-call statement forces every earlier non-stable binding to emit one too.*
   Every binding is handled at its own position in ONE stream, so this holds whatever mix of kinds a plan carries — it
   is about pre-call WORK, not about which bindings happen to become `var`s;
-- an `address` binding never becomes a `var` — no storage holds a managed pointer — and splits by what its location's
+- an `address` binding never becomes a value-copy `var` — no storage holds a managed pointer — and splits by what its location's
   ROOT is. An lvalue FORMER (`local`/`field`/`arrayGet`/…) designates storage without evaluating anything itself, so
   only the impure VALUES it is computed from move, in the location's own operand order, leaving a pure location in the
   slot: `byref(mk().f)` pins `mk()`, `byref(a[i()])` pins `i()`, `byref(x)` pins nothing. Any other root IS an
@@ -670,7 +670,9 @@ that can add a reader has finished — and is the ONLY consumer of the vocabular
   taking the address of an rvalue means. The decision is by declared type, never by node shape: storing a `T` into a
   `T&` slot is unverifiable IL, and the frontend accepts `byref(<rvalue call>)`. Every pinned local is TYPED — an
   untyped local is unverifiable IL, so a node the shared deriver (`bir-common/NodeType.cs`) cannot type is a hole in
-  the deriver and says so, never a `kotlin.Any` fallback;
+  the deriver and says so, never a `kotlin.Any` fallback. Stage 0 uses this same form for a value-type member receiver
+  or constrained generic receiver left of a suspension: preserving only the receiver value would redirect the later
+  setter/call to a temporary struct copy instead of the source location;
 - a delegation's plan becomes the constructor's `preStmts`, which ilemit emits ahead of the `this`/`base` call.
 
 It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may
@@ -684,22 +686,23 @@ and therefore ~300 passes after `CallEvalLowering`) wraps a node whose operands 
 every operand in array order, and lowers it on the spot through the same `Materialise`, supplying the ordering itself:
 every operand LEFT of the last suspension-bearing one is forced to a `var`, and so is that operand when the node is
 itself a suspend call — which is what lifts a nested suspension out of a suspending call's own argument list, where the
-state machine would otherwise write the outer resume label and let the inner suspension overwrite it. Operands to the
-RIGHT are left in their slots, because Kotlin evaluates them after the resume; forcing one would be the very reorder the
+state machine would otherwise write the outer resume label and let the inner suspension overwrite it. The last-position
+scan is loop-aware for `forEachInline`: its body is this frame's code and is flattened into this frame's CFG, so a
+suspension there is an operand boundary just like a directly nested call; genuine nested lambda frames stay opaque.
+Operands to the RIGHT are left in their slots, because Kotlin evaluates them after the resume; forcing one would be the very reorder the
 plan prevents. So the plan's `force` input, when present, IS the ordering answer and the two general order rules above
 are skipped — they would only re-derive it, or contradict it.
 
-**WHICH nodes, exactly — this is coverage, not a universal rule.** Stage 0 acts on the kinds its operand descriptor
-(`EvalOrderOf`) names: `binOp`, `concat`, and the call/new set (`callStatic`/`callInstance`, the four `clr*` call forms,
-`new`/`newClr`). Every other multi-operand kind is NOT normalized, so a suspension in a later operand of one still
-reorders an earlier operand — `arrayGet`/`arraySet`, `setField`/`clrPropSet`, `delegateInvoke`, `objMethod`,
-`constrainedCall`, `dynCall`, `newArray*`, the collection literals, the event add/remove forms. `makeArray()[susp()]` is
-the shortest example. That gap is PRE-EXISTING (the retired eval-order rewrite named the same call/new set) and is
-recorded here rather than in a comment because a later change must not assume otherwise: **nothing downstream may treat
-"a descriptor-bearing node" and "any node" as the same set** — in particular the storage/liveness analysis stays
-conservative about operands generally (`SuspendLiveness.ReReadOperands` re-reads every operand it finds) precisely
-because the un-normalized kinds are still out there. Stage 0's own chokepoint shares `EvalOrderOf`, so it cannot see
-them either; widening the descriptor is a behavioral change with its own gate.
+**WHICH nodes, exactly — this is coverage, not a universal rule.** Stage 0 acts on the kinds and exact value-bearing
+slots its operand descriptor (`EvalOrderOf`) names. These are binary operations and object equality (`lhs`, `rhs`),
+concatenation (`parts`), calls and constructions (`recv` when present, then `args`), array reads and writes (`array`,
+`index`, then `value`), field and CLR-property writes (`recv` when present, then `value`), delegate/Object/constrained
+calls, array and collection construction (`size`/`init` or `elems`), and maps (each entry's `key`, then `value`). The
+descriptor also walks the expression of each spread-vararg part. It records both extraction order and the source slot,
+so reassembly cannot silently omit a newly covered
+operand. This remains a kind-specific contract rather than generic schema recursion: **nothing downstream may treat
+"a descriptor-bearing node" and "any node" as the same set**. In particular, storage/liveness analysis stays
+conservative about operands generally (`SuspendLiveness.ReReadOperands` re-reads every operand it finds).
 
 Nothing else changes: the bindings are ordinary `cir$b…` bindings in bir2cir's own id namespace, `stable` is the
 same Q1 answer (`ValueStability.IsReReadable`), and the vocabulary still does not survive its own lowering. A stage-0
