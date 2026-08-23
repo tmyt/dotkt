@@ -134,8 +134,8 @@ static partial class NullableTvErasureCallRealign
             // instantiations); DelegateTargetSlotAlignment then makes the lifted target's own slots follow.
             // Only a construction whose TARGET the compiler synthesized: a lifted `newDelegate` and a `newClosure`'s
             // synthetic `invoke` both follow the retyped `funcType` (DelegateTargetSlotAlignment). Ordinary Kotlin
-            // callable references use those adapter forms too. A direct delegate carrying a `sig` is a reserved
-            // companion/foreign representation whose declaration is not ours to move, so retyping it would state a
+            // callable references use those adapter forms too. A remaining direct delegate carrying a `sig` is a
+            // reserved representation whose declaration is not ours to move, so retyping it would state a
             // shape no target can fill and turn a formal mismatch into an invalid program.
             if (target is TypeNode.Fn && args[i] is JsonObject dl
                 && Str(dl["k"]) is "newDelegate" or "newClosure" && dl["sig"] is not JsonArray

@@ -2105,16 +2105,17 @@ return. A REFERENCE return stays as declared, because it already reaches `object
 `Func<Nullable<int32>, string>` — a deliberate, recorded exception to the rule above rather than an oversight. The
 exception is concrete because no open type variable needs a representation that is stable across instantiations.
 A callable reference never makes the authored declaration itself the movable delegate target. kotc synthesizes a
-static forwarder for `::fn` and a receiver-capturing closure for `expr::member`; each calls the selected declaration
-with its frontend identity and declared signature intact.
+static forwarder for `::fn` (including an explicit companion receiver) and a receiver-capturing closure for an
+ordinary `expr::member`; each calls the selected declaration with its frontend identity and declared signature
+intact. A member projected from a foreign CLR assembly uses the same compiler-owned closure; bir2cir resolves its
+physical owner, overload, value-type capture conversion, and dispatch slot from the selected CLR declaration.
 
 An OPEN slot still demands
 `object` at every instantiation — `fun <T> invokeNullable(block: (T?) -> String)` is a `Func<object, string>` whatever
 `T` is. When a callable reference enters one (`invokeNullable<Int>(3, ::handleQ)`), bir2cir retypes the synthesized
 target to accept `object` and inserts the narrowing conversion inside its forwarding body. The authored
 `handleQ(Nullable<int32>)` remains unchanged. The same rule works across a DLL/KLIB boundary because the restored
-declaration identity stays on the inner call; a genuine foreign CLR member without that identity keeps the direct
-CLR delegate representation. A lambda follows the same compiler-owned target rule.
+declaration identity stays on the inner call. A lambda follows the same compiler-owned target rule.
 
 ### An override that narrows a `T?` slot keeps its own signature and gets a bridge
 

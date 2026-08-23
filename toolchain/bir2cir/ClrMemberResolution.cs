@@ -763,13 +763,22 @@ static partial class ClrMemberResolution
         // routing gap, not something to resolve at run time; PickUnique's hard error propagates.
         var win = PickUnique(cands, m => m.GetParameters(), argNodes, ownerFqn.Args,
             $"{(instance ? "clrInstance" : "clrStatic")} owner={TypeNode.ToJson(ownerFqn)} .{name}({DescArgs(argNodes)})");
-        node["memberRef"] = MemberRefJson(win, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
+        var dispatch = instance
+            ? Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false)
+            : null;
+        // `constrained. V; callvirt Slot` names the virtual SLOT, not V's override body. For example, the valid
+        // unboxed TimeSpan.ToString form names System.Object.ToString; pairing `constrained. TimeSpan` with a
+        // TimeSpan.ToString token makes the runtime consume the receiver incorrectly. Preserve the selected override
+        // for signature/crossing facts below, but carry its base-definition token as the physical dispatch target.
+        MethodInfo dispatchTarget = win;
+        if (dispatch == "constrained")
+            dispatchTarget = ConstrainedSlot(win, open);
+        node["memberRef"] = MemberRefJson(dispatchTarget, MemberRefNode.Kinds.Method, open, ownerFqn.Args);
         StampResolvedMethodTypeParameters(node, win);
         StampDelegateArgumentTargets(node, win, ownerFqn.Args ?? Array.Empty<TypeNode>());
         StampResolvedMemberReturn(node, win.ReturnType);
         node.Remove("argTypes");
-        if (instance)
-            node["dispatch"] = Dispatch(win, open, (node["super"] as JsonValue)?.GetValue<bool>() ?? false);
+        if (instance) node["dispatch"] = dispatch;
     }
 
     // THE DECLARED RETURN OF A GENERIC .NET METHOD. Everything else about these nodes was already resolved
@@ -1401,7 +1410,8 @@ static partial class ClrMemberResolution
     // INVARIANT: IsVirtual/IsFinal are read off the REF.dll member while ilemit links the RT member (same-source builds
     // keep them identical); an rt-side `sealed`/virtuality change therefore requires a matching ref rebuild.
     //   super (non-virtual base slot, ref receiver) -> call ; non-virtual -> call ; virtual ref receiver -> callvirt ;
-    //   virtual FINAL on a value type -> call ; virtual non-final inherited by a value type -> constrained.callvirt.
+    //   virtual FINAL on a value type -> call ; virtual non-final inherited/overridden by a value type ->
+    //   constrained.callvirt through the method's base-definition slot.
     static string Dispatch(MethodInfo mi, Type owner, bool superCall)
     {
         bool valueOwner; try { valueOwner = owner.IsValueType; } catch { valueOwner = false; }
@@ -1412,6 +1422,38 @@ static partial class ClrMemberResolution
         if (!valueOwner) return "callvirt";
         if (isFinal) return "call";
         return "constrained";
+    }
+
+    // MetadataLoadContext does not reliably connect an override in a reference assembly to GetBaseDefinition().
+    // Recover the root virtual slot from the value type's base chain using the CLR method-signature identity. A
+    // constrained callvirt must name that slot (Object.ToString, for example), while the constraint selects the
+    // concrete value-type implementation without boxing.
+    static MethodInfo ConstrainedSlot(MethodInfo method, Type owner)
+    {
+        MethodInfo result = method;
+        try
+        {
+            var reflected = method.GetBaseDefinition();
+            if (reflected != null) result = reflected;
+        }
+        catch { }
+        try
+        {
+            var wanted = method.GetParameters().Select(p => p.ParameterType).ToArray();
+            var genericArity = method.IsGenericMethod ? method.GetGenericArguments().Length : 0;
+            for (var type = owner.BaseType; type != null; type = type.BaseType)
+            {
+                const BindingFlags declaredInstance = BindingFlags.Public | BindingFlags.NonPublic |
+                    BindingFlags.Instance | BindingFlags.DeclaredOnly;
+                var matches = type.GetMethods(declaredInstance).Where(candidate =>
+                    candidate.Name == method.Name && candidate.IsVirtual &&
+                    (candidate.IsGenericMethod ? candidate.GetGenericArguments().Length : 0) == genericArity &&
+                    candidate.GetParameters().Select(p => p.ParameterType).SequenceEqual(wanted)).ToList();
+                if (matches.Count == 1) result = matches[0];
+            }
+        }
+        catch { }
+        return result;
     }
 
     // ---- resolvedMemberParams (winning member params -> lowered TypeNode array) ---------------------------
