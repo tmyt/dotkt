@@ -28,7 +28,11 @@
 //      left inline, so it observed the state the suspending callee had already mutated. They are covered now
 //      because position, not kind, decides.
 //
-//   5. A TERMINAL OPERAND LEFT OF A SUSPENSION — `sum(run { throw … }, relay())` was a COMPILE-TIME REFUSAL
+//   5. THE ORDERED-NODE ROSTER — array reads/writes, field/property writes, delegate/Object/constrained calls,
+//      arrays, spread varargs, and collection literals each carry their own operand layout rather than `recv` +
+//      `args`. A later suspension used to leave an earlier operand in that node, so it ran after the resume.
+//
+//   6. A TERMINAL OPERAND LEFT OF A SUSPENSION — `sum(run { throw … }, relay())` was a COMPILE-TIME REFUSAL
 //      (tests/compile-fail/SuspendTerminalArgumentBeforeSuspension). The plan is made before any state machine
 //      exists, so the unreachable remainder is simply dropped and the throw propagates, with nothing to the
 //      right of it ever evaluated.
@@ -190,7 +194,115 @@ class SuspendOperandTag : SuspendOperandTagged {
 
 suspend fun <T : SuspendOperandTagged> suspendOperandConstrainedBeforeSuspension(t: T): Int = t.tag() + suspendOperandG()
 
-// ---- 5. a terminal operand left of a suspension --------------------------------------------------------------
+// ---- 5. every current multi-operand layout stage 0 owns -------------------------------------------------------
+fun <T> suspendOperandMark(tag: String, value: T): T {
+    suspendOperandLog.add(tag)
+    return value
+}
+
+suspend fun <T> suspendOperandPause(tag: String, value: T): T {
+    Task.Delay(1).await()
+    suspendOperandLog.add(tag)
+    return value
+}
+
+suspend fun suspendOperandArrayGetSlots(): Int =
+    suspendOperandMark("A", intArrayOf(11))[suspendOperandPause("I", 0)]
+
+suspend fun suspendOperandArraySetSlots(): Int {
+    val a = intArrayOf(0)
+    suspendOperandMark("A", a)[suspendOperandMark("I", 0)] = suspendOperandPause("V", 12)
+    return a[0]
+}
+
+class SuspendOperandFieldBox {
+    @ClrField var value: Int = 0
+}
+
+suspend fun suspendOperandFieldSetSlots(): Int {
+    val box = SuspendOperandFieldBox()
+    suspendOperandMark("B", box).value = suspendOperandPause("V", 13)
+    return box.value
+}
+
+suspend fun suspendOperandClrPropertySetSlots(): Int {
+    val sb = StringBuilder()
+    suspendOperandMark("B", sb).Length = suspendOperandPause("V", 3)
+    return sb.Length
+}
+
+suspend fun suspendOperandDelegateInvokeSlots(): Int {
+    val f: (Int) -> Int = { n -> suspendOperandLog.add("D"); n + 1 }
+    return suspendOperandMark("F", f).invoke(suspendOperandPause("A", 4))
+}
+
+class SuspendOperandEqual(val value: Int) {
+    override fun equals(other: Any?): Boolean {
+        suspendOperandLog.add("E")
+        return other is SuspendOperandEqual && other.value == value
+    }
+
+    override fun hashCode(): Int = value
+}
+
+suspend fun suspendOperandObjMethodSlots(): Boolean =
+    suspendOperandMark<Any>("O", SuspendOperandEqual(1)).equals(
+        suspendOperandPause<Any>("A", SuspendOperandEqual(1))
+    )
+
+suspend fun suspendOperandObjEqSlots(): Boolean =
+    suspendOperandMark<Any>("O", SuspendOperandEqual(1)) ==
+        suspendOperandPause<Any>("A", SuspendOperandEqual(1))
+
+suspend fun <T : Comparable<T>> suspendOperandConstrainedSlots(a: T, b: T): Int =
+    suspendOperandMark("C", a).compareTo(suspendOperandPause("A", b))
+
+suspend fun suspendOperandNewArraySlots(): Int {
+    val a = intArrayOf(suspendOperandMark("E1", 1), suspendOperandPause("E2", 2))
+    return a[0] * 10 + a[1]
+}
+
+suspend fun suspendOperandArrayInitializer(): (Int) -> Int {
+    Task.Delay(1).await()
+    suspendOperandLog.add("F")
+    return { i -> i + 1 }
+}
+
+suspend fun suspendOperandNewArrayInitSlots(): Int {
+    val a = IntArray(suspendOperandMark("N", 2), suspendOperandArrayInitializer())
+    return a[0] * 10 + a[1]
+}
+
+suspend fun suspendOperandNewListSlots(): Int {
+    val xs = listOf(suspendOperandMark("L1", 1), suspendOperandPause("L2", 2))
+    return xs[0] * 10 + xs[1]
+}
+
+suspend fun suspendOperandNewSetSlots(): Boolean {
+    val xs = setOf(suspendOperandMark("S1", 1), suspendOperandPause("S2", 2))
+    return xs.contains(1) && xs.contains(2)
+}
+
+suspend fun suspendOperandNewMapSlots(): Int {
+    val xs = mapOf(
+        suspendOperandMark("K1", 1) to suspendOperandMark("V1", 10),
+        suspendOperandPause("K2", 2) to suspendOperandMark("V2", 20),
+    )
+    return xs[1]!! + xs[2]!!
+}
+
+fun suspendOperandVarargSum(vararg values: Int): Int = values.sum()
+
+suspend fun suspendOperandSpreadConcatSlots(): Int {
+    val middle = intArrayOf(2)
+    return suspendOperandVarargSum(
+        suspendOperandMark("P1", 1),
+        *suspendOperandPause("P2", middle),
+        suspendOperandMark("P3", 3),
+    )
+}
+
+// ---- 6. a terminal operand left of a suspension --------------------------------------------------------------
 suspend fun suspendOperandRelay(): Int {
     suspendOperandLog.add("R")
     return 5
@@ -347,6 +459,105 @@ class SuspendOperandOrderTests {
     }
 
     // ---- 5 ----
+    @TestAttribute
+    fun arrayGetOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(11, blockOn { suspendOperandArrayGetSlots() })
+        assertEquals("A,I", order())
+    }
+
+    @TestAttribute
+    fun arraySetOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(12, blockOn { suspendOperandArraySetSlots() })
+        assertEquals("A,I,V", order())
+    }
+
+    @TestAttribute
+    fun fieldSetOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(13, blockOn { suspendOperandFieldSetSlots() })
+        assertEquals("B,V", order())
+    }
+
+    @TestAttribute
+    fun clrPropertySetOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(3, blockOn { suspendOperandClrPropertySetSlots() })
+        assertEquals("B,V", order())
+    }
+
+    @TestAttribute
+    fun delegateInvokeOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(5, blockOn { suspendOperandDelegateInvokeSlots() })
+        assertEquals("F,A,D", order())
+    }
+
+    @TestAttribute
+    fun objMethodOperandSlots() {
+        suspendOperandLog.clear()
+        assertTrue(blockOn { suspendOperandObjMethodSlots() })
+        assertEquals("O,A,E", order())
+    }
+
+    @TestAttribute
+    fun objEqOperandSlots() {
+        suspendOperandLog.clear()
+        assertTrue(blockOn { suspendOperandObjEqSlots() })
+        assertEquals("O,A,E", order())
+    }
+
+    @TestAttribute
+    fun constrainedCallOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(-1, blockOn { suspendOperandConstrainedSlots("a", "b") })
+        assertEquals("C,A", order())
+    }
+
+    @TestAttribute
+    fun newArrayOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(12, blockOn { suspendOperandNewArraySlots() })
+        assertEquals("E1,E2", order())
+    }
+
+    @TestAttribute
+    fun newArrayInitOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(12, blockOn { suspendOperandNewArrayInitSlots() })
+        assertEquals("N,F", order())
+    }
+
+    @TestAttribute
+    fun newListOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(12, blockOn { suspendOperandNewListSlots() })
+        assertEquals("L1,L2", order())
+    }
+
+    @TestAttribute
+    fun newSetOperandSlots() {
+        suspendOperandLog.clear()
+        assertTrue(blockOn { suspendOperandNewSetSlots() })
+        assertEquals("S1,S2", order())
+    }
+
+    @TestAttribute
+    fun newMapOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(30, blockOn { suspendOperandNewMapSlots() })
+        assertEquals("K1,V1,K2,V2", order())
+    }
+
+    @TestAttribute
+    fun spreadConcatOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(6, blockOn { suspendOperandSpreadConcatSlots() })
+        assertEquals("P1,P2,P3", order())
+    }
+
+    // ---- 6 ----
     @TestAttribute
     fun terminalOperandBeforeSuspensionThrows() {
         suspendOperandLog.clear()

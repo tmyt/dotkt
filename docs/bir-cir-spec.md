@@ -689,17 +689,16 @@ RIGHT are left in their slots, because Kotlin evaluates them after the resume; f
 plan prevents. So the plan's `force` input, when present, IS the ordering answer and the two general order rules above
 are skipped — they would only re-derive it, or contradict it.
 
-**WHICH nodes, exactly — this is coverage, not a universal rule.** Stage 0 acts on the kinds its operand descriptor
-(`EvalOrderOf`) names: `binOp`, `concat`, and the call/new set (`callStatic`/`callInstance`, the four `clr*` call forms,
-`new`/`newClr`). Every other multi-operand kind is NOT normalized, so a suspension in a later operand of one still
-reorders an earlier operand — `arrayGet`/`arraySet`, `setField`/`clrPropSet`, `delegateInvoke`, `objMethod`,
-`constrainedCall`, `dynCall`, `newArray*`, the collection literals, the event add/remove forms. `makeArray()[susp()]` is
-the shortest example. That gap is PRE-EXISTING (the retired eval-order rewrite named the same call/new set) and is
-recorded here rather than in a comment because a later change must not assume otherwise: **nothing downstream may treat
-"a descriptor-bearing node" and "any node" as the same set** — in particular the storage/liveness analysis stays
-conservative about operands generally (`SuspendLiveness.ReReadOperands` re-reads every operand it finds) precisely
-because the un-normalized kinds are still out there. Stage 0's own chokepoint shares `EvalOrderOf`, so it cannot see
-them either; widening the descriptor is a behavioral change with its own gate.
+**WHICH nodes, exactly — this is coverage, not a universal rule.** Stage 0 acts on the kinds and exact value-bearing
+slots its operand descriptor (`EvalOrderOf`) names. These are binary operations and object equality (`lhs`, `rhs`),
+concatenation (`parts`), calls and constructions (`recv` when present, then `args`), array reads and writes (`array`,
+`index`, then `value`), field and CLR-property writes (`recv` when present, then `value`), delegate/Object/constrained
+calls, array and collection construction (`size`/`init` or `elems`), and maps (each entry's `key`, then `value`). The
+descriptor also walks the expression of each spread-vararg part. It records both extraction order and the source slot,
+so reassembly cannot silently omit a newly covered
+operand. This remains a kind-specific contract rather than generic schema recursion: **nothing downstream may treat
+"a descriptor-bearing node" and "any node" as the same set**. In particular, storage/liveness analysis stays
+conservative about operands generally (`SuspendLiveness.ReReadOperands` re-reads every operand it finds).
 
 Nothing else changes: the bindings are ordinary `cir$b…` bindings in bir2cir's own id namespace, `stable` is the
 same Q1 answer (`ValueStability.IsReReadable`), and the vocabulary still does not survive its own lowering. A stage-0
