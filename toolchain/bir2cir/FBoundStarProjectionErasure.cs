@@ -343,7 +343,8 @@ static class FBoundStarProjectionErasure
                     // methods are valid virtual call targets and are supplied by the eventual implementing class.
                     // The slot keeps its public source name, while the body name is deliberately unspeakable.
                     declared.Add(BridgeMethod(owner, method, owners, refs,
-                        StarMethodName(owner, method), slotMemberName: Str(slot["name"]),
+                        StarMethodName(owner, method),
+                        slotMemberName: Str(slot[DeclarationIdentityBinding.ExplicitNameKey]) ?? Str(slot["name"]),
                         slotTypeParams: slot["typeParams"] as JsonArray));
             }
 
@@ -436,6 +437,13 @@ static class FBoundStarProjectionErasure
         };
         if (method["typeParams"] is JsonArray tps && tps.Count > 0)
             slot["typeParams"] = EraseOwnerTypeParamConstraints(tps, owners, refs);
+        // An owner-independent existential slot is the same physical contract as the source MethodDef. Preserve an
+        // explicit source allocation while it is still a stated BIR fact so the forwarding MethodImpl descriptor is
+        // authored with that name before module-wide declaration allocation runs. A dependent slot has its own
+        // compiler-generated name and must remain in that separate naming domain.
+        if (replacementName == null && method[DeclarationIdentityBinding.ExplicitNameKey] != null)
+            slot[DeclarationIdentityBinding.ExplicitNameKey] =
+                method[DeclarationIdentityBinding.ExplicitNameKey].DeepClone();
         if (ExistentialSlotIdentity(method, semanticCarrierOwner) is string physicalIdentity)
         {
             slot[DeclarationIdentityBinding.Key] = physicalIdentity;

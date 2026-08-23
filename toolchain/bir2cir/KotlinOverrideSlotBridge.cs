@@ -377,14 +377,20 @@ static class KotlinOverrideSlotBridge
                 KotlinPropertyAccessors.TryIdentity(slot, out var propertyName, out var accessorKind);
                 var semanticName = propertyName ?? Str(slot[DeclarationRename.SourceMemberKey])
                     ?? Str(slot[FBoundStarProjectionErasure.SourceMemberKey]) ?? name;
-                if (Implementer(cls, defs, methods, spec.Name, name, semanticName, propertyName, accessorKind,
+                if (Implementer(cls, defs, methods, spec.Name, name, semanticName,
+                    Str(slot[DeclarationIdentityBinding.Key]), propertyName, accessorKind,
                     methodArity, slotParams, slot["typeParams"] as JsonArray, supArgs, ownArgs) is not JsonObject impl)
                     continue;
                 // A locally-emitted Kotlin interface may itself be @ClrTypeAlias-bound to a referenced CLR
                 // interface. Its Kotlin accessor keeps the dedicated property name, while the MethodImpl descriptor
                 // must name the exact external Property/MethodSemantics accessor (Collection.size -> get_Count).
                 // Resolve that allocation from metadata here; never infer it from either accessor spelling.
-                var descriptorMember = name;
+                // Explicit naming of a concrete default-interface declaration is allocated later, after physical
+                // type lowering. Its identity makes that MethodDef independently allocatable, while this exact
+                // descriptor lets an overriding declaration keep its own Kotlin/CLR name. Consume the stated target
+                // here; recovering it after allocation from the rewritten MethodDef spelling would be too late.
+                // Suspend cold entries already carry their final role-suffixed name and no explicitClrName field.
+                var descriptorMember = Str(slot[DeclarationIdentityBinding.ExplicitNameKey]) ?? name;
                 var descriptorOwner = spec;
                 if (propertyName != null && refs != null
                     && refs.TryExternalPropertyAccessor(spec.Name, propertyName, accessorKind,
@@ -465,7 +471,9 @@ static class KotlinOverrideSlotBridge
                                 TypeJson.Read(parameter["type"]), supArgs))
                             .ToArray();
                         var slotRet = SupertypeGraph.SubstOwnerTvs(TypeJson.Read(source["ret"]), supArgs);
-                        var descriptors = new JsonArray(ImplDescriptor(spec, Str(source["name"]), methodArity,
+                        var sourcePhysicalMember = Str(source[DeclarationIdentityBinding.ExplicitNameKey])
+                            ?? Str(source["name"]);
+                        var descriptors = new JsonArray(ImplDescriptor(spec, sourcePhysicalMember, methodArity,
                             slotParams, slotRet, SubstituteOwnerTypeParameterConstraints(
                                 source["typeParams"] as JsonArray, supArgs)));
                         AddInheritedDefaultBridge(cls, defs, methods, ownArgs, refs, isValue, bridges, ref ordinal,
@@ -752,7 +760,7 @@ static class KotlinOverrideSlotBridge
         var sourceRet = SupertypeGraph.SubstOwnerTvs(sourceRet0, sourceOwnerArgs);
         var sourceTypeParams = SubstituteOwnerTypeParameterConstraints(
             source["typeParams"] as JsonArray, sourceOwnerArgs);
-        var callMember = Str(source["name"]);
+        var callMember = Str(source[DeclarationIdentityBinding.ExplicitNameKey]) ?? Str(source["name"]);
         if (defs.TryGetValue(callOwner.Name, out var callDef)
             && callDef.Node["methods"] is JsonArray callMethods)
         {
@@ -1128,7 +1136,8 @@ static class KotlinOverrideSlotBridge
     // a synthesized existential view of `Sink`), so an ANCESTOR of an overridden owner counts too. An
     // unrelated same-name overload proves neither and is left alone — mis-wiring a MethodImpl fails type LOAD.
     static JsonObject Implementer(Def cls, IReadOnlyDictionary<string, Def> defs, JsonArray methods, string supName,
-        string physicalName, string semanticName, string propertyName, string accessorKind, int methodArity,
+        string physicalName, string semanticName, string slotDeclarationId,
+        string propertyName, string accessorKind, int methodArity,
         TypeNode[] slotParams, JsonArray slotTypeParams, TypeNode[] slotOwnerArgs, TypeNode[] ownArgs)
     {
         JsonObject found = null;
@@ -1140,7 +1149,14 @@ static class KotlinOverrideSlotBridge
                 if (!KotlinPropertyAccessors.TryIdentity(m, out var candidateProperty, out var candidateKind)
                     || candidateProperty != propertyName || candidateKind != accessorKind) continue;
             }
-            else if (Str(m["name"]) != physicalName || KotlinPropertyAccessors.TryIdentity(m, out _, out _)) continue;
+            // Suspend lowering has already split one declaration into hot/cold MethodDefs. An explicitly named DIM
+            // gives the base projection its final explicit spelling, while the overriding projection keeps its own
+            // physical name; `kotlinSourceMember` is the carried frontend identity that relates those two projections.
+            // The override closure below remains the independent proof that this candidate actually fills this slot.
+            else if ((Str(m["name"]) != physicalName
+                      && (slotDeclarationId == null
+                          || Str(m[DeclarationRename.SourceMemberKey]) != semanticName))
+                     || KotlinPropertyAccessors.TryIdentity(m, out _, out _)) continue;
             if (((m["typeParams"] as JsonArray)?.Count ?? 0) != methodArity) continue;
             // Generic constraints are part of a CLR MethodDef's implementation contract even when name, arity,
             // parameters, and return are otherwise identical. Kotlin's frontend has already selected the override;
@@ -1151,7 +1167,8 @@ static class KotlinOverrideSlotBridge
             if (m["params"] is not JsonArray ps || ps.Count != slotParams.Length) continue;
             if (Str(m["vis"]) is not (null or "public" or "protected")) continue;
             if (!OverridesInto(m, defs, supName, propertyName ?? semanticName,
-                accessorKind switch { "get" => "getter", "set" => "setter", _ => "method" })) continue;
+                accessorKind switch { "get" => "getter", "set" => "setter", _ => "method" },
+                slotDeclarationId)) continue;
             // Every position must either already BE the slot or differ from it exactly where the slot was erased —
             // the only positions an override is free to narrow, and so the only ones whose types legitimately differ.
             var ok = true;
@@ -1195,16 +1212,35 @@ static class KotlinOverrideSlotBridge
     // True iff this method declares itself an override of `supName`'s member — directly, or of some owner that
     // `supName` is a supertype of (a redeclared slot on a base interface is a DISTINCT CLR slot with the same shape).
     static bool OverridesInto(JsonObject method, IReadOnlyDictionary<string, Def> defs, string supName, string member,
-        string memberKind)
+        string memberKind, string slotDeclarationId)
     {
+        var sourceDeclarationId = SourceDeclarationId(slotDeclarationId);
         if (method["overrides"] is not JsonArray overrides) return false;
         foreach (var o in overrides.OfType<JsonObject>())
         {
             if (TypeJson.OwnerName(o["owner"]) is not string owner) continue;
             if (Str(o["member"]) != member || Str(o["kind"]) != memberKind) continue;
+            // A concrete default-interface MethodDef can be named independently. The frontend therefore carries the
+            // exact overridden declaration identity on the override edge; owner/member/arity alone cannot distinguish
+            // same-name declarations after nullable-generic erasure or suspend projection. Physical-only existential
+            // slots and cold entries normalize back to that same source declaration.
+            if (sourceDeclarationId != null
+                && Str(o[DeclarationIdentityBinding.Key]) != sourceDeclarationId) continue;
             if (owner == supName || IsAncestor(defs, supName, owner)) return true;
         }
         return false;
+    }
+
+    static string SourceDeclarationId(string declarationId)
+    {
+        if (declarationId == null) return null;
+        var physicalOnly = declarationId.IndexOf(
+            DeclarationIdentityBinding.PhysicalOnlySuffix, StringComparison.Ordinal);
+        if (physicalOnly >= 0) return declarationId[..physicalOnly];
+        const string coldSuffix = "|cold";
+        return declarationId.EndsWith(coldSuffix, StringComparison.Ordinal)
+            ? declarationId[..^coldSuffix.Length]
+            : declarationId;
     }
 
     static bool IsAncestor(IReadOnlyDictionary<string, Def> defs, string ancestor, string of)
