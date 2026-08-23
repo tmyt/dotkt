@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Captured array receivers now retain their element type through suspending inline iteration (#558).** kotc carries
+  the captured receiver's exact static type on its BIR body spelling so inline-spliced array loops and accesses retain
+  generic and specialized element facts through lowering.
+
 - **Inherited inner-class construction now retains the selected enclosing-owner slot (#555).** kotc projects a
   derived enclosing-instance receiver through the frontend-selected inner application before describing same-module
   and referenced constructors, preserving generic substitutions and exact same-arity overload selection.
