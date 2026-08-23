@@ -276,7 +276,10 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 		shadowCap[d] = captureSubst[d]
 		shadowCapLocalName[d] = captureLocalName[d]
 		captureSubst[d] = if (d.name.asString() == "<this>")
-			"""{"k":"this"}"""
+			// The body spelling is owner-relative, but its exact static type is already known here. Carry that frontend
+			// fact on the value node so a later inline splice can move it into an array operation without asking
+			// bir2cir to reconstruct which receiver frame the bare `this` originally denoted (#558).
+			"""{"k":"this","sty":${birType(d.type).toJson()}}"""
 		else
 			"""{"k":"local","name":${str(name)}}"""
 		if (d.name.asString() == "<this>") captureLocalName.remove(d) else captureLocalName[d] = name
