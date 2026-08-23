@@ -266,23 +266,26 @@ private fun BirEmitter.suspendLambda(node: IrFunctionExpression): String? {
 	// `captureSubst` by declaration identity, so the body names the capture EXACTLY as the descriptor declares it (the
 	// name bir2cir's spill rewrite keys on). This deliberately does NOT touch name-keyed `valSubst`: a same-spelled
 	// declaration is not the captured declaration. Saved + restored around the emission, mirroring samConversion.
-	// `<this>` is the one descriptor with an established body spelling: ordinary `{k:this}`. In the lambda's OWN
-	// frame bir2cir rewrites that spelling to its `__outer` capture field. Force that spelling after capValues was
-	// computed so an enclosing carrier/closure substitution remains solely a CONSTRUCTION value and cannot leak a
-	// caller-frame token/local into the lambda body.
+	// `__outer` is the one descriptor with an established body spelling: ordinary `{k:this}`. In the lambda's OWN
+	// frame bir2cir rewrites that spelling to its `__outer` capture field. A member extension can capture a SECOND
+	// `<this>` declaration; its descriptor is independently named (for example `cap$__outer`) and must stay an exact
+	// local spelling so the spill rewrite selects that field rather than collapsing both receivers to `__outer` (#563).
+	// Force these spellings after capValues was computed so an enclosing carrier/closure substitution remains solely a
+	// CONSTRUCTION value and cannot leak a caller-frame token/local into the lambda body.
 	val shadowCap = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 	val shadowCapLocalName = java.util.IdentityHashMap<IrValueDeclaration, String?>()
 	for ((d, name) in capturePairs) {
 		shadowCap[d] = captureSubst[d]
 		shadowCapLocalName[d] = captureLocalName[d]
-		captureSubst[d] = if (d.name.asString() == "<this>")
+		val isOuterReceiver = name == "__outer"
+		captureSubst[d] = if (isOuterReceiver)
 			// The body spelling is owner-relative, but its exact static type is already known here. Carry that frontend
 			// fact on the value node so a later inline splice can move it into an array operation without asking
 			// bir2cir to reconstruct which receiver frame the bare `this` originally denoted (#558).
 			"""{"k":"this","sty":${birType(d.type).toJson()}}"""
 		else
 			"""{"k":"local","name":${str(name)}}"""
-		if (d.name.asString() == "<this>") captureLocalName.remove(d) else captureLocalName[d] = name
+		if (isOuterReceiver) captureLocalName.remove(d) else captureLocalName[d] = name
 	}
 	// A suspend extension lambda has two distinct `this` candidates: its own extension receiver and a captured
 	// enclosing dispatch receiver. Preserve that distinction in BIR instead of asking bir2cir to infer it from a bare

@@ -268,9 +268,8 @@ static class InlineSplice
         // SM's own inner scope), and a captured lambda-param is materialized into a real suspend SM value (§4.4ii suspend
         // arm). The broad fail-loud guard is NARROWED to a capture-name that collides with the SM's own inner scope, PLUS
         // a captured `__outer` ONLY when the payload is NEITHER an extension NOR a dispatch member — i.e. a genuinely
-        // unbindable enclosing `this`. For an extension/dispatch payload the enclosing receiver IS bound to a splice temp
-        // (STEP 5 `__self` / §4.3 dispatch `this`), so 2B rebinds each payload `newSuspendLambda`'s `__outer` construction
-        // value to that temp (BindOuterCapValues) instead of refusing.
+        // unbindable enclosing `this`. For an extension/dispatch payload the exact positional `capValues` are enclosing-
+        // frame expressions; STEP 5 rewrites their `__self` locals and §4.3 rewrites their dispatch `this` values.
         bool payloadExt = Str(payload["recv"]) == "extensionParam";
         bool payloadDispatch = Str(payload["recv"]) == "dispatch";
         bool payloadStatic = Bool(payload["static"]);
@@ -287,11 +286,11 @@ static class InlineSplice
         // What counts as a DISPATCH read in an extension payload:
         //  - a bare payload-frame `{k:this}` (HasPayloadFrameThis) is ALWAYS the dispatch receiver — the extension `this`
         //    renders as `__self` (selfSubst), so a bare `{k:this}` can only be the enclosing-class receiver;
-        //  - a suspend-lambda `__outer` capture (HasPayloadOuterSuspendCapture) is the dispatch ONLY for a member-extension
-        //    (recvs.dispatch carried); for a TOP-LEVEL extension `__outer` IS the extension receiver, bound by 2B's
-        //    else-if(ext) — so it must NOT be read as a dispatch here (D1: else a top-level `flow { this@ext }` fails loud).
+        //  - a suspend lambda's positional construction values say which enclosing receiver it captured. Descriptor
+        //    names do NOT: capture encounter order may assign `__outer` to either receiver. A `capValues` expression
+        //    containing payload-frame `this` is a dispatch use; `local __self` is the extension and is not.
         bool hasDispatchRecv = (o["recvs"] as JsonObject)?["dispatch"] != null;
-        bool payloadReadsDispatch = HasPayloadFrameThis(pBody) || (hasDispatchRecv && HasPayloadOuterSuspendCapture(pBody));
+        bool payloadReadsDispatch = HasPayloadFrameThis(pBody) || HasPayloadDispatchSuspendCapture(pBody);
         bool coBindDispatch = payloadExt && !payloadStatic && hasDispatchRecv && payloadReadsDispatch;
         if (payloadExt && !coBindDispatch && payloadReadsDispatch)
         { FailLoud(o, owner, name, pc, ga, payloadStatic
@@ -432,11 +431,12 @@ static class InlineSplice
 
         // §4.3 — DISPATCH RECEIVER: the payload's `this` refs are the callee's dispatch (enclosing-class) receiver, not
         // the CALLER's `this`. Bind kotc's carried `recvs.dispatch` and rewrite the payload body's own `{k:this}` (not
-        // descending into nested closures/type-defs — their `this` is their own). Runs for a plain member inline
+        // descending into nested bodies/type-defs — their `this` is their own, while their enclosing-frame construction
+        // values are still rewritten). Runs for a plain member inline
         // (`recv==dispatch`) AND for a CO-BOUND real-instance member-extension (#23: `recv==extensionParam`, !static,
         // body reads `{k:this}`) — in the latter STEP 5 additionally binds the extension `__self` below.
-        // The dispatch receiver keeps a NAMED temp: `{k:this}` is not a local reference, so the payload's nested
-        // closures capture it under the `__outer` descriptor whose construction value 2B rebinds to this name.
+        // The dispatch receiver keeps a NAMED temp: `{k:this}` is not a local reference, so construction values that
+        // capture it must be rewritten to this stable name.
         if (payloadDispatch || coBindDispatch)
         {
             if (recvs?["dispatch"] is not JsonNode disp)
@@ -545,31 +545,6 @@ static class InlineSplice
                 subst[pn] = Pin(pn, bound);
         RewriteLocalRefs(pBody, subst, Pin);
         RewriteLocalRefs(result, subst, Pin);   // D2: a tail-folded `result` (`= action(x)`) keeps raw param refs otherwise
-
-        // 2B (#75 Batch B) — a PAYLOAD `newSuspendLambda` that captured `__outer` (the enclosing dispatch/extension
-        // receiver of the inline fn being spliced, e.g. `flow { … this@transform … }` in an extension `transform`) has
-        // its construction value synthesized LATER by SuspendLambdaLowering from the descriptor NAME `__outer`, which its
-        // fallback resolves to the CALLER's `this`/`__self` — the wrong receiver. Rebind each payload-frame `__outer`
-        // construction value to what the splice bound the receiver to: the extension receiver's own binding (STEP 5),
-        // or the dispatch temp (§4.3). A capValue is a VALUE evaluated in the ENCLOSING frame, so reading it through
-        // the call's plan binding is exactly right — the receiver keeps its single evaluation.
-        // SuspendLambdaLowering consumes the `capValues` override verbatim.
-        // A CO-BOUND member-extension's `__outer` is the enclosing CLASS instance (bound to `<prefix>this` by §4.3), not
-        // the extension `__self` — so the dispatch branch wins over the plain-extension one when both receivers are live.
-        if (payloadDispatch || coBindDispatch)
-            { var ov = new JsonObject { ["k"] = "local", ["name"] = prefix + "this" }; BindOuterCapValues(pBody, ov); BindOuterCapValues(result, ov); }
-        else if (ext)
-        {
-            // The extension receiver is payload param[0], and the loop above binds every param or fails loud — so an
-            // unbound one here is an internal break, not a shape. Say so: falling through would leave `__outer` to
-            // SuspendLambdaLowering's name fallback, which resolves it to the CALLER's receiver — a silently wrong
-            // `this` inside the lambda, which is exactly the fault this rebind exists to prevent.
-            if (pParams.FirstOrDefault() is not JsonObject selfParam
-                || !subst.TryGetValue(Str(selfParam["name"]) ?? "", out var selfBound))
-            { FailLoud(o, owner, name, pc, ga, "extension receiver param[0] was never bound, so a payload newSuspendLambda's `__outer` cannot be rebound"); return; }
-            BindOuterCapValues(pBody, selfBound);
-            BindOuterCapValues(result, selfBound);
-        }
 
         // B3 (#75 holistic) — a `{k:typeDef}` (a named local class in the payload — an `object :` literal) is a SCOPE
         // BOUNDARY that RewriteLocalRefs/PrefixLocals skip WHOLE, so an ORIGINAL (unprefixed) lambda-param `{k:local}` ref
@@ -733,15 +708,20 @@ static class InlineSplice
         return (null, false, "owner-less callInline: no file class (same-module stash or ref.dll) hosts this inline fn");
     }
 
-    // §4.3 — rewrite a member-inline payload's own `{k:this}` to a bound dispatch-receiver temp. A `typeDef`/`newSuspendLambda`
-    // (its body + `this` are its OWN scope) is skipped WHOLE; a `newClosure`/`newSam`'s SAM/invoke body lives in `synthClass`
-    // (its `this` is the closure's own) so only the `synthClass` KEY is skipped — the node's `captures` are STILL descended,
-    // so a capture VALUE `{k:this}` (a lambda that captured the ENCLOSING receiver) is correctly rebound to the dispatch temp.
+    // §4.3 — rewrite a member-inline payload's own `{k:this}` to a bound dispatch-receiver temp. A `typeDef` is skipped
+    // whole. A `newSuspendLambda`'s BODY is its own frame, but its positional `capValues` are construction expressions
+    // evaluated in THIS payload frame, so rewrite only that channel and preserve the lambda body. A `newClosure`/`newSam`'s
+    // SAM/invoke body lives in `synthClass`, so only that KEY is skipped while its outer-frame capture values are visited.
     static void RewriteThis(JsonNode node, string thisTemp)
     {
         if (node is JsonObject o)
         {
-            if (Str(o["k"]) is "typeDef" or "newSuspendLambda") return;
+            if (Str(o["k"]) == "typeDef") return;
+            if (Str(o["k"]) == "newSuspendLambda")
+            {
+                if (o["capValues"] is JsonNode capValues) RewriteThis(capValues, thisTemp);
+                return;
+            }
             if (Str(o["k"]) == "this")
             {
                 foreach (var key in new List<string>(((IDictionary<string, JsonNode>)o).Keys)) o.Remove(key);
@@ -1622,12 +1602,13 @@ static class InlineSplice
         if (nsl["params"] is JsonArray ps)
             foreach (var p in ps.OfType<JsonObject>()) if (Str(p["name"]) is string pn) inner.Add(pn);
         if (nsl["body"] is JsonNode b) CollectDeclaredLocals(b, inner);
-        // BATCH B (#75) 2B — kotc names a suspend lambda's captured enclosing extension receiver `__outer` in the
+        // BATCH B (#75) — kotc names a suspend lambda's captured enclosing extension receiver `__outer` in the
         // capture DESCRIPTOR, yet references it in the BODY as a plain `local __self` (SuspendColdLowering maps that
         // body `__self` -> the `__outer` field). So `__self` is a CAPTURE-LINKED inner name, NOT a frame local — the
         // splice's frame renamers (subst/prefix) must SKIP it, leaving it literal for the SM lowering; its construction
-        // value is rebound to the splice receiver temp via BindOuterCapValues. Only when an `__outer` descriptor is
-        // present AND there is no real `__self` descriptor (which would be an ordinary joint-renamed capture).
+        // value is carried explicitly in `capValues` and rewritten in the enclosing splice frame. Only when an
+        // `__outer` descriptor is present AND there is no real `__self` descriptor (which would be an ordinary
+        // joint-renamed capture).
         if (nsl["captures"] is JsonArray caps)
         {
             var names = caps.OfType<JsonObject>().Select(c => Str(c["name"])).Where(n => n != null).ToHashSet(StringComparer.Ordinal);
@@ -1679,40 +1660,6 @@ static class InlineSplice
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null && SuspendCaptureHazard(c, refuseOuter) is string h) return h;
         return null;
-    }
-
-    // BATCH B (#75) 2B — set a `capValues` override for the `__outer` slot on every PAYLOAD-FRAME `newSuspendLambda`
-    // (the enclosing dispatch/extension receiver, rebound to the splice's receiver temp `outerVal`). A `newSuspendLambda`
-    // is a SCOPE BOUNDARY: its `captures` construction values evaluate in THIS (payload) frame, but a `__outer` NESTED
-    // INSIDE its body denotes ITS OWN enclosing (this lambda's instance), NOT the payload receiver — so we rebind at this
-    // frame and do NOT descend into the lambda's body. Leaves other capture slots null so their fallback (a prefixed
-    // local) applies. Skips a `typeDef` (its own scope).
-    static void BindOuterCapValues(JsonNode node, JsonNode outerVal)
-    {
-        if (node is JsonObject o)
-        {
-            if (Str(o["k"]) == "typeDef") return;
-            if (Str(o["k"]) == "newSuspendLambda")
-            {
-                if (o["captures"] is JsonArray caps)
-                {
-                    int idx = -1;
-                    for (int i = 0; i < caps.Count; i++)
-                        if (caps[i] is JsonObject c && Str(c["name"]) == "__outer") { idx = i; break; }
-                    if (idx >= 0)
-                    {
-                        if (o["capValues"] is not JsonArray cv) { cv = new JsonArray(); o["capValues"] = cv; }
-                        while (cv.Count < caps.Count) cv.Add(null);
-                        cv[idx] = outerVal.DeepClone();
-                    }
-                }
-                return;   // its body is its OWN frame — a nested __outer belongs to it, not this payload
-            }
-            // Skip a nested closure/SAM `synthClass` (its own frame; never prefixed, so a `<prefix>__self`/`<prefix>this`
-            // stamp there would name a non-existent local) — symmetric with RewriteThis/RewriteLocalRefs/ApplyPrefix.
-            foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null) BindOuterCapValues(kv.Value, outerVal);
-        }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null) BindOuterCapValues(c, outerVal);
     }
 
     // BATCH B (#75) B3 — the first ORIGINAL (unprefixed) lambda-param `{k:local}` ref that dangles INSIDE a payload
@@ -3241,25 +3188,24 @@ static class InlineSplice
         return false;
     }
 
-    // #23 (D1): a payload-frame `newSuspendLambda` that CAPTURED the enclosing receiver — its descriptor `{name:"__outer"}`.
-    // `HasPayloadFrameThis` skips a newSuspendLambda WHOLE (its `{k:this}` is the SM's own), so a member-extension whose ONLY
-    // dispatch use lives inside a suspend lambda (`class C { inline fun T.f(){ flow { …this@C… } } }`) is invisible to it —
-    // yet that `__outer` IS the DISPATCH receiver (for a member-extension the extension `this` rides `__self`, never
-    // `__outer`; selfSubst), so its splice MUST co-bind dispatch (2B then rebinds the `__outer` capValue to `<prefix>this`).
-    // Scanned alongside HasPayloadFrameThis in the coBindDispatch gate. Skips typeDef/synthClass (a nested local class's own
-    // `this`). Checks each NSL's own `captures` for `__outer`; nested NSLs recurse through the generic descent.
-    static bool HasPayloadOuterSuspendCapture(JsonNode node)
+    // #23/#563: a payload-frame `newSuspendLambda` whose construction values capture dispatch. `HasPayloadFrameThis`
+    // skips a newSuspendLambda body because its `this` is the SM's own, but `capValues` are evaluated in the enclosing
+    // payload frame. Inspect those exact expressions: a payload-frame `this` (possibly below a field chain) means the
+    // dispatch receiver is live; `local __self` means the extension receiver. Descriptor names carry slot identity,
+    // not receiver role, and therefore must not participate in this decision. Skips typeDef/synthClass boundaries.
+    static bool HasPayloadDispatchSuspendCapture(JsonNode node)
     {
         if (node is JsonObject o)
         {
             if (Str(o["k"]) == "typeDef") return false;
-            if (Str(o["k"]) == "newSuspendLambda" && o["captures"] is JsonArray caps
-                && caps.OfType<JsonObject>().Any(c => Str(c["name"]) == "__outer"
-                    || (c["outer"] is JsonValue ov && ov.TryGetValue<bool>(out var ob) && ob)))
-                return true;
-            foreach (var kv in o) if (kv.Key != "synthClass" && kv.Value != null && HasPayloadOuterSuspendCapture(kv.Value)) return true;
+            if (Str(o["k"]) == "newSuspendLambda")
+                return o["capValues"] is JsonArray values
+                    && values.Any(value => value != null && HasPayloadFrameThis(value));
+            foreach (var kv in o)
+                if (kv.Key != "synthClass" && kv.Value != null && HasPayloadDispatchSuspendCapture(kv.Value)) return true;
         }
-        else if (node is JsonArray a) foreach (var c in a) if (c != null && HasPayloadOuterSuspendCapture(c)) return true;
+        else if (node is JsonArray a)
+            foreach (var c in a) if (c != null && HasPayloadDispatchSuspendCapture(c)) return true;
         return false;
     }
 

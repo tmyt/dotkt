@@ -3021,8 +3021,8 @@ static partial class SuspendColdLowering
         JsonObject RewriteSuspendLambdaNew(JsonObject o)
         {
             var copy = (JsonObject)o.DeepClone();
-            // A pre-stamped `capValues` override (kotc E1 "one value channel", or InlineSplice 2B — a spliced payload
-            // lambda's `__outer` rebound to the splice's receiver TEMP) is the capture's construction VALUE in the
+            // A pre-stamped `capValues` entry (kotc E1 "one value channel", possibly rewritten while an inline payload
+            // is spliced) is the capture's construction VALUE in the
             // ENCLOSING frame's vocabulary: a `{k:local,name:X}` naming an enclosing local (a selfSubst inline-receiver
             // rename `__recv40`, a spilled temp), a `{k:field,recv:{k:this},…}` naming an enclosing SAM/closure field
             // (`second`), or `{k:this}`. GAP 2 must RESOLVE it into THIS cold SM's vocabulary — a spilled local -> its SM
