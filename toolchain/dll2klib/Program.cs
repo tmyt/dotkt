@@ -1412,6 +1412,7 @@ internal sealed class AssemblyScanner
     private readonly HashSet<FieldDefinitionHandle> _singletonInstanceFields = new();
     private readonly Dictionary<TypeDefinitionHandle, string> _semanticOwnerNames = new();
     private readonly HashSet<TypeDefinitionHandle> _validatedCompanionOwners = new();
+    private readonly Dictionary<string, TypeDefinitionHandle> _localDefinitions;
     private readonly CSharp14ExtensionCatalog _csharp14Extensions;
 
     public AssemblyScanner(
@@ -1466,11 +1467,20 @@ internal sealed class AssemblyScanner
                 Arity: md.GetTypeDefinition(handle).GetGenericParameters().Count))
             .GroupBy(x => (x.Name, x.Arity))
             .ToDictionary(g => g.Key, g => g.Select(x => x.Handle).ToArray());
-        var semanticTypes = md.TypeDefinitions
+        var semanticTypeRows = md.TypeDefinitions
             .Select(handle => (
                 Handle: handle,
                 Name: KotlinFullName(handle),
                 Arity: md.GetTypeDefinition(handle).GetGenericParameters().Count))
+            .ToArray();
+        // Awaitable/enumerable pattern discovery repeatedly resolves Kotlin-facing local names. Build that identity
+        // once instead of reconstructing every TypeDef path for every projected class. Multiple definitions can share
+        // one projected name (for example, a non-public generic-arity family); preserve the previous table-order first
+        // match deliberately.
+        _localDefinitions = new Dictionary<string, TypeDefinitionHandle>(StringComparer.Ordinal);
+        foreach (var row in semanticTypeRows)
+            _localDefinitions.TryAdd(row.Name, row.Handle);
+        var semanticTypes = semanticTypeRows
             .GroupBy(x => (x.Name, x.Arity))
             .ToDictionary(g => g.Key, g => g.Select(x => x.Handle).ToArray());
         if (_attrs.IsDotKtAssembly)
@@ -3614,10 +3624,7 @@ internal sealed class AssemblyScanner
     {
         if (!type.HasClassName || names.ClassName(type.ClassName) is not string name)
             return null;
-        foreach (var handle in _md.TypeDefinitions)
-            if (KotlinFullName(handle) == name)
-                return handle;
-        return null;
+        return _localDefinitions.TryGetValue(name, out var handle) ? handle : null;
     }
 
     private static KType SubstituteTypeParameters(

@@ -42,7 +42,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
         verify verify-core verify-tests verify-nunit verify-compile-fail verify-test-corpus verify-integration \
         verify-schema verify-sanity verify-lowering verify-msbuild verify-packaged-sdk \
         verify-target-universe verify-csharp14-extension-abi verify-xfail-policy \
-        dev dll2klib-e2e clean clean-tools clean-stdlib clean-pack help
+        dev dll2klib-e2e dll2klib-index-benchmark clean clean-tools clean-stdlib clean-pack help
 
 all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
 
@@ -171,6 +171,9 @@ dev: ## compile (and run) one .kt: make dev SRC=Foo.kt [RUN=1 EXE=1 REF=x.dll NO
 
 dll2klib-e2e: ## CLR reference DLL -> standard metadata-only KLIB end-to-end regression
 	bash tests/special/dll2klib-e2e/run.sh
+
+dll2klib-index-benchmark: ## repeatable synthetic benchmark for dll2klib local TypeDef lookup
+	bash tests/special/dll2klib-local-index-benchmark/run.sh
 
 # ==================================================================================================
 # Cleaning

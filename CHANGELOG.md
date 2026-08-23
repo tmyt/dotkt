@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **CLR reference projection now indexes local type identities instead of rescanning every TypeDef (#543).** dll2klib
+  resolves awaitable and enumerable pattern edges through one per-assembly Kotlin-facing name index while preserving
+  the existing metadata-order selection, reducing large Windows SDK projections from minutes to tens of seconds.
+
 - **Inherited Kotlin default arguments now retain their declaring semantics through override chains (#542).** kotc
   keeps the selected call-site shape while sourcing omitted expressions and their receiver/parameter symbols from the
   base declaration that owns the defaults, including abstract and generic bases.
