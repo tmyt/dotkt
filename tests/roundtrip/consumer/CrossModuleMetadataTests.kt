@@ -45,6 +45,9 @@ import genq.InheritedNullableMiddle
 import genq.SlotDerived
 import genq.holderOf
 import genq.invokeNullable
+import genq.invokeNullableValue
+import genq.renderNullableInt
+import genq.NullableIntRenderer
 import genq.unwrapSlot
 import genarr.boxedTriple
 import genarr.sumPresent
@@ -217,6 +220,9 @@ class GenericMetadataRoundtripTests {
         // carrier. The explicitly nullable lambda parameter makes T infer as String rather than degrading to Any?.
         val invoked = invokeNullable { value: String? -> value ?: "fn-null" }
         ClassicAssert.AreEqual("fn-null", invoked)
+        ClassicAssert.AreEqual("top=7", invokeNullableValue<Int>(7, ::renderNullableInt))
+        val nullableRenderer = NullableIntRenderer("bound")
+        ClassicAssert.AreEqual("bound=8", invokeNullableValue<Int>(8, nullableRenderer::render))
         val functionSlots = FunctionSlots<String> { value -> value ?: "property-null" }
         val functionProperty: (String?) -> String = functionSlots.functionProperty
         ClassicAssert.AreEqual("property-null", functionProperty(null))

@@ -86,6 +86,15 @@ class FunctionReferenceCalc(val base: Int) {
 }
 fun functionReferenceApply2(f: (Int) -> Int, v: Int): Int = f(v)
 fun functionReferenceApplyTo(f: (FunctionReferenceCalc, Int) -> Int, c: FunctionReferenceCalc, v: Int): Int = f(c, v)
+fun <T> functionReferenceInvokeNullable(value: T?, f: (T?) -> String): String = f(value)
+fun <T, R> functionReferenceInvokeNullableUnbound(receiver: R, value: T?, f: (R, T?) -> String): String =
+    f(receiver, value)
+fun functionReferenceHandleNullable(value: Int?): String = "nullable=${value ?: -1}"
+class FunctionReferenceNullableHandler(private val prefix: String) {
+    fun handle(value: Int?): String = "$prefix=${value ?: -1}"
+}
+fun <T> functionReferenceKeepGeneric(value: T, f: (T) -> String): String = f(value)
+fun <T> functionReferenceGenericTarget(value: T): String = "generic=$value"
 
 // ---- il-extfunref : unbound `Type::extensionReferenceFn` refs (stdlib `isNotBlank` + same-module) -> static forwarder ----------
 fun String.extensionReferenceShout(): String = uppercase() + "!"
@@ -224,6 +233,29 @@ class LambdaTests {
         assertEquals("v=1,v=2,v=3", listOf(1, 2, 3).joinToString(",", transform = render))
         assertEquals("n=4,n=5", listOf(4, 5).joinToString(",", transform = ::functionReferenceRender))
         assertEquals("g=6,g=7", functionReferenceJoinRendered(listOf(6, 7)) { n -> "g=$n" })
+    }
+
+    @TestAttribute
+    fun callableReferenceNullableTopLevelSlot() {
+        assertEquals("nullable=3", functionReferenceInvokeNullable<Int>(3, ::functionReferenceHandleNullable))
+    }
+
+    @TestAttribute
+    fun callableReferenceNullableBoundSlot() {
+        val nullableHandler = FunctionReferenceNullableHandler("bound")
+        assertEquals("bound=4", functionReferenceInvokeNullable<Int>(4, nullableHandler::handle))
+    }
+
+    @TestAttribute
+    fun callableReferenceNullableUnboundSlot() {
+        assertEquals("unbound=5", functionReferenceInvokeNullableUnbound(
+            FunctionReferenceNullableHandler("unbound"), 5, FunctionReferenceNullableHandler::handle,
+        ))
+    }
+
+    @TestAttribute
+    fun callableReferenceGenericTarget() {
+        assertEquals("generic=6", functionReferenceKeepGeneric(6, ::functionReferenceGenericTarget))
     }
 
     @TestAttribute

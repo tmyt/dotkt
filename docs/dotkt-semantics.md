@@ -2103,27 +2103,18 @@ return. A REFERENCE return stays as declared, because it already reaches `object
 
 **A CONCRETE `V?` delegate PARAMETER keeps its `Nullable<V>`**, so `(Int?) -> String` is
 `Func<Nullable<int32>, string>` — a deliberate, recorded exception to the rule above rather than an oversight. The
-reason is that a delegate's target may be a member the author DECLARED — `::handle`, `expr::member` — whose slots are
-its Kotlin surface. Erasing the parameter leaves exactly two options and both are wrong: move `fun handle(x: Int?)`
-to `handle(object)`, which rewrites a public signature by a USE of it, or leave the target and emit a
-`Func<object, string>` no target can fill, which reads a struct's bits as a reference at run time.
+exception is concrete because no open type variable needs a representation that is stable across instantiations.
+A callable reference never makes the authored declaration itself the movable delegate target. kotc synthesizes a
+static forwarder for `::fn` and a receiver-capturing closure for `expr::member`; each calls the selected declaration
+with its frontend identity and declared signature intact.
 
-Where a target slot does move, it moves for **the one declaration the reference names** — identified by the
-frontend-resolved signature the reference resolved to, not by the target's name. A same-name sibling is a different
-declaration and keeps its own slots; moving it too changed a public Kotlin signature that the use never mentioned,
-with no round-trip carrier to state what it used to be.
-
-**The carve-out does not remove that hazard; it removes it from the CONCRETE slot only.** An OPEN slot still demands
+An OPEN slot still demands
 `object` at every instantiation — `fun <T> invokeNullable(block: (T?) -> String)` is a `Func<object, string>` whatever
-`T` is — so a callable REFERENCE passed into one (`invokeNullable<Int>(3, ::handleQ)`) still binds a target declaring
-`Nullable<int32>` to a slot demanding `object`, and reads the boxed reference's bits as a struct: a wrong value, not
-a diagnostic. That is pre-existing and unchanged here. A LAMBDA into the same slot is fine — the compiler owns the
-lifted target and moves it with the slot — so only the two reference forms are affected.
-
-Closing both means synthesizing a FORWARDER at the reference — a static one for `::fn`, a capture class for
-`expr::member` — after which the concrete parameter joins the rule with the rest. (The RETURN moves a referenced
-declaration for the same reason and is carried as inherited behaviour: the value it protects is real, and the same
-forwarder closes it.)
+`T` is. When a callable reference enters one (`invokeNullable<Int>(3, ::handleQ)`), bir2cir retypes the synthesized
+target to accept `object` and inserts the narrowing conversion inside its forwarding body. The authored
+`handleQ(Nullable<int32>)` remains unchanged. The same rule works across a DLL/KLIB boundary because the restored
+declaration identity stays on the inner call; a genuine foreign CLR member without that identity keeps the direct
+CLR delegate representation. A lambda follows the same compiler-owned target rule.
 
 ### An override that narrows a `T?` slot keeps its own signature and gets a bridge
 

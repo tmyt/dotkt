@@ -133,10 +133,10 @@ static partial class NullableTvErasureCallRealign
             // is BUILT at the slot's shape rather than built wrong and cast (no cast joins two delegate
             // instantiations); DelegateTargetSlotAlignment then makes the lifted target's own slots follow.
             // Only a construction whose TARGET the compiler synthesized: a lifted `newDelegate` and a `newClosure`'s
-            // synthetic `invoke` both follow the retyped `funcType` (DelegateTargetSlotAlignment). A delegate over a
-            // DECLARED member — `expr::member`, or a `::fn` whose `newDelegate` carries the overload `sig` kotc
-            // writes only for that form — points at a signature that is not ours to move, so retyping its delegate
-            // would state a shape no target can fill and turn a formal mismatch into an invalid program.
+            // synthetic `invoke` both follow the retyped `funcType` (DelegateTargetSlotAlignment). Ordinary Kotlin
+            // callable references use those adapter forms too. A direct delegate carrying a `sig` is a reserved
+            // companion/foreign representation whose declaration is not ours to move, so retyping it would state a
+            // shape no target can fill and turn a formal mismatch into an invalid program.
             if (target is TypeNode.Fn && args[i] is JsonObject dl
                 && Str(dl["k"]) is "newDelegate" or "newClosure" && dl["sig"] is not JsonArray
                 && TypeJson.Read(dl["funcType"]) is TypeNode.Fn dft

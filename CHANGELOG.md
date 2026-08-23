@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Callable references now adapt to open nullable function slots without rewriting their declarations (#348).**
+  kotc binds top-level references through generated static forwarders and bound Kotlin member references through
+  receiver-capturing closures. bir2cir may therefore align only the compiler-owned target with an erased
+  `Func<object, …>` slot and narrow inside its body, including when the selected declaration was restored from a
+  referenced DotKt assembly.
+
 - **Generic inner defaults now close their complete enclosing type frame (#277).** When an inner constructor or member's
   omitted argument reads a generic outer instance, kotc maps the inner declaration's own parameters and each enclosing
   frame in Kotlin's semantic order before carrying the default into BIR.
