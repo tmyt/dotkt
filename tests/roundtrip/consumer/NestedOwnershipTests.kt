@@ -15,6 +15,7 @@ import roundtrip.ownership.GenericInnerLocalOwner
 import roundtrip.ownership.GenericMemberDefaultOwner
 import roundtrip.ownership.PlainNestedEnum
 import roundtrip.ownership.ProtectedNestedOwner
+import roundtrip.ownership.ReferencedInnerBase
 import roundtrip.ownership.invokeTwice
 import roundtrip.ownership.inlineOwnedReader
 import roundtrip.ownership.localSuspendFunctionReference
@@ -41,6 +42,12 @@ private class GenericInlineOwnershipConsumer<A>(private val prefix: A) {
 private fun <T> invokeTwiceWithLocalFunction(value: T): Pair<T, T> = invokeTwice {
     fun read(): T = value
     read()
+}
+
+private open class ReferencedInnerMiddle<T>(outer: T) : ReferencedInnerBase<T>(outer)
+private class ReferencedInnerLeaf<T>(outer: T) : ReferencedInnerMiddle<T>(outer) {
+    fun makeInt(value: Int): Entry = Entry(value)
+    fun makeString(value: String): Entry = Entry(value)
 }
 
 class NestedOwnershipRoundtripTests {
@@ -117,5 +124,8 @@ class NestedOwnershipRoundtripTests {
         ClassicAssert.AreEqual(19, ProtectedNestedOwner().value())
         ClassicAssert.AreEqual("consumer", InlineOwnershipConsumer("consumer").read())
         ClassicAssert.AreEqual("generic:54", GenericInlineOwnershipConsumer("generic").read(54))
+        val referencedInner = ReferencedInnerLeaf("referenced")
+        ClassicAssert.AreEqual("referenced:i63", referencedInner.makeInt(63).render())
+        ClassicAssert.AreEqual("referenced:svalue", referencedInner.makeString("value").render())
     }
 }

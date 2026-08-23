@@ -204,6 +204,28 @@ private val styNodePrefixes = listOf(
 	"""{"k":"field"""", """{"k":"lateinitGet"""", """{"k":"staticField"""",
 )
 
+/**
+ * The compiler-authored leading parameter of a Kotlin inner constructor is the selected inner class's immediate
+ * enclosing owner. The value supplied for that slot may have a derived static type, but that value type is not the
+ * constructor declaration type. Project an inherited receiver through the frontend type graph so both the same-unit
+ * declaration signature and a referenced constructor descriptor retain the exact selected slot.
+ */
+private fun BirEmitter.innerConstructorOuterSlotJson(
+	node: IrConstructorCall,
+	innerClass: IrClass?,
+): String? {
+	if (innerClass?.isInner != true) return null
+	val outerClass = innerClass.parent as? IrClass
+		?: return invariantBroken(node, "an inner constructor's class has no enclosing class")
+	val receiver = dispatchReceiver(node)
+		?: return invariantBroken(node, "an inner constructor call has no enclosing-instance receiver")
+	val outerType = if (receiver.type.classifierOrNull?.owner === outerClass) receiver.type
+		else correspondingSupertypeInstantiation(receiver.type, outerClass)
+			?: return invariantBroken(node,
+				"an inner constructor receiver has no denotable corresponding enclosing-owner instantiation")
+	return birType(outerType).toJson()
+}
+
 internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	is IrConst -> """{"k":"const","type":${birType(node.type).toJson()},"value":${constJson(node)}}"""
 	is IrGetValue -> {
@@ -300,6 +322,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	}
 	is IrConstructorCall -> {
 		val klass = node.symbol.owner.parent as? IrClass
+		val innerOuterSlot = innerConstructorOuterSlotJson(node, klass)
 		// The generic Kotlin array constructor `Array<E>(size) { init }` is semantic BIR array construction. Carry the
 		// frontend element type exactly as supplied, whether concrete or a scoped `tv`; bir2cir owns its physical CLR
 		// representation. Without this node, the call falls through to a bogus `new kotlin.Array(...)` construction.
@@ -342,11 +365,9 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			// construction: the enclosing instance is a leading constructor argument in the CLR representation just as
 			// it is for a same-module declaration. A foreign CLR nested type is never `isInner`, so it keeps its ordinary
 			// declared constructor vector.
-			val outerType = if (klass?.isInner == true)
-				dispatchReceiver(node)?.let { birType(it.type).toJson() } else null
 			val externalArgs = (listOfNotNull(outerArg) + ctorArgs).joinToString(",")
 			val ctorSubst = callSiteSubstitutor(node, node.symbol.owner)
-			val externalTypes = (listOfNotNull(outerType) + node.symbol.owner.parameters
+			val externalTypes = (listOfNotNull(innerOuterSlot) + node.symbol.owner.parameters
 				.filter { it.kind == IrParameterKind.Regular }
 				.map { birType(ctorSubst?.substitute(it.type) ?: it.type).toJson() }).joinToString(",")
 			"""{"k":"new","type":${clr.toJson()},"argTypes":[$externalTypes],"args":[$externalArgs]}"""
@@ -357,8 +378,6 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val args = (listOfNotNull(outerArg) + capArgs + ctorArgs).joinToString(",")
 			// Carry the complete selected declaration shape, including kotc-authored enclosing/capture slots. These entries
 			// correspond index-for-index with `args`; bir2cir links the exact local constructor and never chooses by arity.
-			val outerType = if ((node.symbol.owner.parent as? IrClass)?.isInner == true)
-				dispatchReceiver(node)?.let { birType(it.type).toJson() } else null
 			val capTypes = klass?.let { localClassCaptures[it] }.orEmpty()
 				.map { str(captureFieldType(it)) }
 			// Constructor parameter declarations live in the constructed class's generic frame. Close that frame at
@@ -368,14 +387,15 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 			val ctorSubst = callSiteSubstitutor(node, node.symbol.owner)
 			val regularTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
 				.map { birType(ctorSubst?.substitute(it.type) ?: it.type).toJson() }
-			val ctorArgTypes = (listOfNotNull(outerType) + capTypes + regularTypes).joinToString(",")
-			// Preserve the frontend-selected OPEN declaration independently from the substituted use-site vector.
-			// Include the same compiler-authored leading slots as args/argTypes; this is what lets bir2cir bind an inner
-			// or capturing constructor without reconstructing them, and lets Root-V later close `X` to the invariant
-			// physical owner argument even when the supplied value retains its read-only head view.
+			val ctorArgTypes = (listOfNotNull(innerOuterSlot) + capTypes + regularTypes).joinToString(",")
+			// Preserve the frontend-selected OPEN regular-parameter declaration independently from the substituted use-site
+			// vector. The compiler-authored outer slot has no IrValueParameter, so its exact declaration application is the
+			// projected enclosing owner above. Include every leading slot index-for-index; this lets bir2cir bind an inner or
+			// capturing constructor without reconstructing them, and lets Root-V later close `X` to the invariant physical
+			// owner argument even when the supplied value retains its read-only head view.
 			val regularMemberTypes = node.symbol.owner.parameters.filter { it.kind == IrParameterKind.Regular }
 				.map { birType(it.type).toJson() }
-			val ctorMemberSignature = (listOfNotNull(outerType) + capTypes + regularMemberTypes).joinToString(",")
+			val ctorMemberSignature = (listOfNotNull(innerOuterSlot) + capTypes + regularMemberTypes).joinToString(",")
 			// `ownerSpec` names a lifted generic-capturing LOCAL CLASS as its CONSTRUCTED `L<T>` (own args from
 			// `node.type` + the enclosing captured params it recorded in `liftedTypeArgParams`), so a
 			// `fun <T> f(){ class L{ val x:T=t }; L() }` instantiates `L<T>` at each `new` site. A non-generic local
