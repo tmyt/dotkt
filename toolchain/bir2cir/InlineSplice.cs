@@ -1807,6 +1807,26 @@ static class InlineSplice
     // `typeArgs` (construction args), `funcType`, `capValues` — ARE descended.
     static readonly HashSet<string> SuspendLambdaOwnFrame = new(StringComparer.Ordinal) { "body", "params", "suspendRet", "typeParams", "arity", "k" };
 
+    // These fields describe a REFERENCED declaration in that declaration's own generic frame. They are identity/linkage
+    // facts, never lexical types consumed by the inline payload. In particular, `new.memberSignature` is the OPEN
+    // constructor signature (`type!N`) while the adjacent construction `type`/`argTypes` are instantiated in the caller
+    // frame. Letting a declaration descriptor participate in carrier dependency discovery invents generic parameters
+    // that the caller does not own (#557). Keep the boundary common to substitution, dependency collection, and frame
+    // renumbering so adding another descriptor cannot make those three walks disagree.
+    static bool IsForeignDeclarationFrameKey(string key) => key is
+        "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig" or "delegationSig" or "overrides"
+        or "memberOwnerTypeParams" or "memberMethodTypeParams" or "memberReturnType" or "memberSignature" or "memberType"
+        or ClrMemberResolution.ResolvedMethodTypeParamsKey or ClrMemberResolution.ResolvedMemberReturnKey;
+
+    // `new.argTypes` is the constructor APPLICATION vector and therefore belongs to the caller; other call shapes use
+    // `argTypes` as the selected declaration vector until a later resolver renames it to `resolvedMemberParams`.
+    static bool IsIndependentDeclarationFrameField(JsonObject owner, string key)
+        => IsForeignDeclarationFrameKey(key)
+            || (key == "argTypes" && Str(owner["k"]) != "new")
+            // A local function declaration owns a separate dense method frame. Its use-site application remains on
+            // the sibling callLocal/localFunRef.typeArgs, which is deliberately still traversed.
+            || (Str(owner["k"]) == "localFun" && key == "decl");
+
     // The TOP-MOST `newSuspendLambda` nodes in the subtree — descent STOPS at each one (a doubly-nested NSL rides under a
     // first-level NSL's shielded body, so the outer remap never touches it). Used by the nested-SM invariant guard.
     static IEnumerable<JsonObject> FirstLevelNestedSuspendLambdas(JsonNode node)
@@ -1840,11 +1860,9 @@ static class InlineSplice
     }
 
     // Collect the distinct CALLER-FRAME `{t:tv}` (scope, index) KEYS in the subtree. kotc numbers method type-params
-    // independently of type (class) type-params, so scope is part of a tv's identity. A call's `sig`/`paramSig` is a
-    // declaration-signature descriptor in the nested CALLEE'S frame, not a value/type in this caller's frame; it can
-    // never legitimately contribute a free tv to this synthesized closure. `overrides` is the same declaration-owned
-    // vocabulary: its owner/slot types describe the callee's inherited identity, not a type consumed by the caller
-    // (#74, same boundary as SubstTvIn).
+    // independently of type (class) type-params, so scope is part of a tv's identity. Referenced-declaration descriptors
+    // are in the nested CALLEE'S frame, not a value/type in this caller's frame, and can never legitimately contribute a
+    // free tv to this synthesized closure (#74/#557, same boundary as SubstTvIn).
     static void CollectTvKeys(JsonNode node, SortedSet<(string scope, int i)> keys)
     {
         if (node is JsonObject o)
@@ -1857,7 +1875,7 @@ static class InlineSplice
             // caller frame and must be renumbered together with it.
             bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
-                if (kv.Value != null && kv.Key is not ("sig" or "paramSig" or "overrides") && kv.Key != "synthClass"
+                if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     CollectTvKeys(kv.Value, keys);
         }
@@ -1866,8 +1884,7 @@ static class InlineSplice
 
     // Renumber every CALLER-FRAME `{t:tv}` index in place via `remap` keyed by (scope, index). Scope is PRESERVED on the
     // ref. ClosureSynthesis subsequently rebinds those references to the generated class's exact `type#i` frame.
-    // Declaration-relative `sig`/`paramSig`/`overrides` entries stay in their callee's frame and are never rewritten
-    // (#74).
+    // Referenced-declaration descriptors stay in their callee's frame and are never rewritten (#74/#557).
     static void RenumberTvs(JsonNode node, Dictionary<(string, int), int> remap)
     {
         if (node is JsonObject o)
@@ -1880,7 +1897,7 @@ static class InlineSplice
             // renumbered. A source lambda remains lexical and is rewritten throughout.
             bool nestedSm = Str(o["k"]) == "newSuspendLambda" && Str(o["typeFrame"]) == "dense";
             foreach (var kv in o)
-                if (kv.Value != null && kv.Key is not ("sig" or "paramSig" or "overrides") && kv.Key != "synthClass"
+                if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key) && kv.Key != "synthClass"
                     && !(nestedSm && SuspendLambdaOwnFrame.Contains(kv.Key)))
                     RenumberTvs(kv.Value, remap);
         }
@@ -2389,19 +2406,12 @@ static class InlineSplice
             // This node opens its OWN class-type-param scope -> the owner-class dispatchTypeArgs stop here.
             bool ownBoundary = Str(o["k"]) is "typeDef" or "newSuspendLambda";
             foreach (var kv in o)
-                // §4.2: a nested call's `sig`/`paramSig` is the NESTED callee's DECLARED type-param frame (its own tv{method,i}),
-                // NOT the outer method's — substituting the outer method's typeArgs into it corrupts the overload key the
-                // fixpoint (paramSig) / forwarding (sig) matches against. The nested call's ACTUAL type args ride `typeArgs`
-                // (a sibling key), which IS substituted. So skip these two keys; a callee's declared params can never
-                // legitimately reference the outer method's tvs.
+                // §4.2: referenced-declaration descriptors use the nested callee's own type-param frame, not the outer
+                // method's. The nested call's ACTUAL type args ride `typeArgs` (a sibling key), which IS substituted.
                 // A lexical localFun declaration owns an independent dense METHOD frame. Its enclosing application is
                 // carried by callLocal/localFunRef.typeArgs; substituting this outer inline method's frame into the
                 // declaration would reinterpret both its own TVs and its authored _syntheticTypeArgs correspondence.
-                if (kv.Value != null && kv.Key != "sig" && kv.Key != "paramSig"
-                    && kv.Key != "memberOwnerTypeParams" && kv.Key != "memberMethodTypeParams"
-                    && kv.Key != "memberReturnType"
-                    && kv.Key != "memberSignature" && kv.Key != "memberType"
-                    && !(Str(o["k"]) == "localFun" && kv.Key == "decl"))
+                if (kv.Value != null && !IsIndependentDeclarationFrameField(o, kv.Key))
                     SubstTvIn(kv.Value, typeArgs, ga, dispatchTypeArgs, typeScope && !ownBoundary && kv.Key != "synthClass");
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) SubstTvIn(c, typeArgs, ga, dispatchTypeArgs, typeScope);
