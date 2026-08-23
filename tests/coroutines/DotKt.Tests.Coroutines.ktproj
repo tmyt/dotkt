@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../support/coroutines/DotKt.Tests.CoroutineSupport.ktproj" />
+    <ProjectReference Include="../interop/producer/InteropProducer.csproj" />
   </ItemGroup>
 
   <ItemGroup>

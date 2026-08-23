@@ -470,6 +470,25 @@ static class CallEvalLowering
             return PinValue(child, into);
         });
 
+    /// Is a location in the post-materialisation form produced by [PinLocationOperands]? Kept beside the mutating
+    /// walk so the suspend planner's chokepoint validates the same storage-path rule rather than restating which
+    /// children belong to a location. `settled` identifies values the caller knows were pinned into locals.
+    internal static bool IsPinnedLocation(JsonNode location, Func<JsonNode, bool> settled)
+    {
+        if (!IsLvalueFormer(location)) return settled(location);
+        var ok = true;
+        WalkOperands(location as JsonObject, child =>
+        {
+            if (StaysInLocation(child))
+            {
+                if (IsLvalueFormer(child)) ok &= IsPinnedLocation(child, settled);
+            }
+            else ok &= settled(child);
+            return null;
+        });
+        return ok;
+    }
+
     /// Visit every OPERAND node of `o` in evaluation order, replacing it with whatever `visit` returns (null = keep).
     /// A type slot (`{t:…}`) and a descriptor are not operands; only a `{k:…}` node is a value.
     static void WalkOperands(JsonObject o, Func<JsonObject, JsonNode> visit)

@@ -48,8 +48,12 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.Text.StringBuilder
+import System.Collections.Generic.List as NetList
 import System.Threading.Tasks.Task
 import System.Threading.Tasks.TaskCompletionSource1
+import Probe.Box
+import Probe.GenericMutableBox
+import Probe.IMutableBox
 import dotkt.support.blockOn
 import dotkt.support.SuspendOperandCrossModuleBox
 import dotkt.support.suspendOperandCrossModuleAdd
@@ -231,6 +235,35 @@ suspend fun suspendOperandClrPropertySetSlots(): Int {
     return sb.Length
 }
 
+suspend fun suspendOperandValueTypePropertySetSlots(): Int {
+    val box = Box(3)
+    box.V = suspendOperandPause("V", 17)
+    return box.V
+}
+
+suspend fun suspendOperandValueTypeFieldSetSlots(): Int {
+    val box = Box(3)
+    box.F = suspendOperandPause("V", 19)
+    return box.F
+}
+
+suspend fun suspendOperandValueTypeArrayElementSetSlots(): Int {
+    val boxes = arrayOf(Box(3))
+    boxes[suspendOperandMark("I", 0)].V = suspendOperandPause("V", 21)
+    return boxes[0].V
+}
+
+suspend fun suspendOperandValueTypeInstanceCallSlots(): Int {
+    val box = Box(3)
+    box.SetBoth(suspendOperandPause("V", 23))
+    return box.Sum()
+}
+
+suspend fun <T : IMutableBox> suspendOperandGenericValueTypeCallSlots(box: T): Int {
+    box.SetValue(suspendOperandPause("V", 25))
+    return box.Value
+}
+
 suspend fun suspendOperandDelegateInvokeSlots(): Int {
     val f: (Int) -> Int = { n -> suspendOperandLog.add("D"); n + 1 }
     return suspendOperandMark("F", f).invoke(suspendOperandPause("A", 4))
@@ -300,6 +333,19 @@ suspend fun suspendOperandSpreadConcatSlots(): Int {
         *suspendOperandPause("P2", middle),
         suspendOperandMark("P3", 3),
     )
+}
+
+suspend fun suspendOperandInlineNetEnumerableSlots(): Int {
+    val values = intArrayOf(1)
+    val items = NetList<Int>()
+    items.Add(1)
+    return values[0] + run {
+        for (ignored in items) {
+            values[0] = 100
+            suspendOperandPause("F", Unit)
+        }
+        2
+    }
 }
 
 // ---- 6. a terminal operand left of a suspension --------------------------------------------------------------
@@ -488,6 +534,41 @@ class SuspendOperandOrderTests {
     }
 
     @TestAttribute
+    fun valueTypePropertySetOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(17, blockOn { suspendOperandValueTypePropertySetSlots() })
+        assertEquals("V", order())
+    }
+
+    @TestAttribute
+    fun valueTypeFieldSetOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(19, blockOn { suspendOperandValueTypeFieldSetSlots() })
+        assertEquals("V", order())
+    }
+
+    @TestAttribute
+    fun valueTypeArrayElementSetOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(21, blockOn { suspendOperandValueTypeArrayElementSetSlots() })
+        assertEquals("I,V", order())
+    }
+
+    @TestAttribute
+    fun valueTypeInstanceCallOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(46, blockOn { suspendOperandValueTypeInstanceCallSlots() })
+        assertEquals("V", order())
+    }
+
+    @TestAttribute
+    fun constrainedValueTypeReceiverOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(25, blockOn { suspendOperandGenericValueTypeCallSlots(GenericMutableBox(3)) })
+        assertEquals("V", order())
+    }
+
+    @TestAttribute
     fun delegateInvokeOperandSlots() {
         suspendOperandLog.clear()
         assertEquals(5, blockOn { suspendOperandDelegateInvokeSlots() })
@@ -555,6 +636,13 @@ class SuspendOperandOrderTests {
         suspendOperandLog.clear()
         assertEquals(6, blockOn { suspendOperandSpreadConcatSlots() })
         assertEquals("P1,P2,P3", order())
+    }
+
+    @TestAttribute
+    fun inlineNetEnumerableSuspensionIsAnOperandBoundary() {
+        suspendOperandLog.clear()
+        assertEquals(3, blockOn { suspendOperandInlineNetEnumerableSlots() })
+        assertEquals("F", order())
     }
 
     // ---- 6 ----

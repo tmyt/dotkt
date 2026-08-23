@@ -8,5 +8,17 @@ namespace Probe {
         public int F;                // public field        -> clrPropSet field-store branch
         public Box(int v) { V = v; F = v; }
         public int Sum() => V + F;
+        public void SetBoth(int v) { V = v; F = v; }
+    }
+
+    public interface IMutableBox {
+        int Value { get; }
+        void SetValue(int value);
+    }
+
+    public struct GenericMutableBox : IMutableBox {
+        public int Value { get; private set; }
+        public GenericMutableBox(int value) { Value = value; }
+        public void SetValue(int value) { Value = value; }
     }
 }

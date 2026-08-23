@@ -75,7 +75,8 @@ static partial class SuspendColdLowering
     // value list (`elems[2]`), or a member of an element object (`entries[1].value`). Keeping the slot beside the
     // operand makes extraction and reassembly the SAME description: widening the kind roster cannot add an operand
     // to the planner while forgetting where its replacement belongs.
-    internal readonly record struct EvalOrderSlot(string Key, int Index = -1, string Member = null)
+    internal readonly record struct EvalOrderSlot(string Key, int Index = -1, string Member = null,
+                                                   bool PreserveLocation = false)
     {
         public JsonNode Read(JsonObject o)
         {
@@ -154,9 +155,7 @@ static partial class SuspendColdLowering
             "objMethod" => o["arg"] != null
                 ? Direct(o, true, "recv", "arg")
                 : Direct(o, true, "recv"),
-            "constrainedCall" => o["args"] is JsonArray
-                ? Call(o, hasReceiver: true)
-                : Direct(o, true, "recv", "arg"),
+            "constrainedCall" => Call(o, hasReceiver: true),
             "newArray" or "newList" or "newSet" => List(o, "elems"),
             "newArraySized" => Direct(o, false, "size"),
             "newArrayInit" => Direct(o, false, "size", "init"),
@@ -176,7 +175,7 @@ static partial class SuspendColdLowering
     {
         var hasReceiver = o["recv"] != null;
         var slots = new List<EvalOrderSlot>();
-        if (hasReceiver) slots.Add(new EvalOrderSlot("recv"));
+        if (hasReceiver) slots.Add(new EvalOrderSlot("recv", PreserveLocation: ReceiverNeedsAddress(o)));
         slots.AddRange(keys.Select(k => new EvalOrderSlot(k)));
         return FromSlots(o, hasReceiver, slots);
     }
@@ -209,19 +208,51 @@ static partial class SuspendColdLowering
     static EvalOrder Call(JsonObject o, bool hasReceiver)
     {
         var slots = new List<EvalOrderSlot>();
-        if (hasReceiver) slots.Add(new EvalOrderSlot("recv"));
+        if (hasReceiver) slots.Add(new EvalOrderSlot("recv", PreserveLocation: ReceiverNeedsAddress(o)));
         if (o["args"] is JsonArray args)
             for (var i = 0; i < args.Count; i++) slots.Add(new EvalOrderSlot("args", i));
         return FromSlots(o, hasReceiver, slots);
     }
 
+    // The receiver form the CIR emitter consumes is part of the physical representation this layer owns. A
+    // value-type member write/call and a constrained generic dispatch consume the receiver's ADDRESS, so moving
+    // the receiver VALUE into a temporary would change the target storage. Reference receivers remain values: their
+    // object identity must be frozen before a later suspension, not the variable that happened to hold the object.
+    static bool ReceiverNeedsAddress(JsonObject o)
+    {
+        var k = Str(o["k"]);
+        if (k == "constrainedCall") return true;
+        // ConstrainedTypeParameterReceiverBinding runs after suspend synthesis, because only then are inherited
+        // member owners and synthesized state-machine frames final. Preserve the receiver's LOCATION here while its
+        // frontend static type still states the decisive fact. Spilling a `T` value into a second field would make a
+        // later value-type instantiation dispatch on a copy; it would also hide the original state slot from the
+        // constrained-call rewrite. Platform/nullable wrappers do not change that the stack value is still `!!T`.
+        static bool IsTypeVariable(TypeNode type) => type switch
+        {
+            TypeNode.Tv => true,
+            TypeNode.Oblivious p => IsTypeVariable(p.Of),
+            TypeNode.Nullable n => IsTypeVariable(n.Of),
+            _ => false,
+        };
+        if (o["recv"] is JsonObject recv && IsTypeVariable(NodeType.Stamp(recv))) return true;
+        var owner = k switch
+        {
+            "setField" or "setFieldExpr" => TypeJson.Read(o["ownerType"]),
+            "clrPropSet" or "clrInstance" or "clrGenericInstance" => TypeJson.Read(o["type"]),
+            _ => null,
+        };
+        return owner is TypeNode.Fqn f && _refs.IsValueType(f);
+    }
+
     // The position of the LAST operand that carries a suspension; -1 when none does. Everything to its left is
-    // evaluated before that suspension, and everything to its right after the resume.
+    // evaluated before that suspension, and everything to its right after the resume. A `forEachInline` body is this
+    // frame's code and FlattenSuspendingLoops later lifts it into this frame's CFG, so it is deliberately visible
+    // here through the loop-aware predicate. Genuine nested lambda frames remain opaque to that predicate.
     static int LastSuspending(IReadOnlyList<JsonNode> kids)
     {
         var last = -1;
         for (var i = 0; i < kids.Count; i++)
-            if (kids[i] != null && HasOwnSuspension(kids[i])) last = i;
+            if (kids[i] != null && HasLoopBorneSuspension(kids[i])) last = i;
         return last;
     }
 
@@ -467,7 +498,7 @@ static partial class SuspendColdLowering
                 ["id"] = id,
                 // Documentation and diagnostics only: the array order already carries the evaluation order.
                 ["phase"] = order.HasReceiver && i == 0 ? "recv" : "arg",
-                ["kind"] = "value",
+                ["kind"] = order.Slots[i].PreserveLocation ? "address" : "value",
                 ["stable"] = stable,
                 // The role a storage refusal names this value by — INHERITED when the operand is a read of a value
                 // an earlier plan already materialised. It is the same value, so it keeps the phrase kotc's plan gave
@@ -509,12 +540,17 @@ static partial class SuspendColdLowering
 
     /// The source-level phrase a storage refusal names a bound operand by — it travels onto the materialised local,
     /// so a refusal says "the operand of the call to `corAdd`" rather than the minted `cir$b7`.
-    static string OperandRole(JsonObject o) =>
-        Str(o["method"]) is string m ? $"operand of the call to `{m}`"
-        : Str(o["op"]) is string op ? $"operand of the `{op}` operator"
-        : Str(o["k"]) == "concat" ? "operand of a string concatenation"
-        : TypeJson.OwnerName(o["type"]) is string t ? $"operand of the construction of `{t}`"
-        : "operand of an expression";
+    static string OperandRole(JsonObject o)
+    {
+        var k = Str(o["k"]);
+        if (k is "setField" or "setFieldExpr" or "clrPropSet") return "operand of a member write";
+        if (k is "arrayGet" or "arraySet") return "operand of an array access";
+        if (Str(o["method"]) is string m) return $"operand of the call to `{m}`";
+        if (Str(o["op"]) is string op) return $"operand of the `{op}` operator";
+        if (k == "concat") return "operand of a string concatenation";
+        if (TypeJson.OwnerName(o["type"]) is string t) return $"operand of the construction of `{t}`";
+        return "operand of an expression";
+    }
 
     // --- the chokepoint --------------------------------------------------------------------------------
 
@@ -577,7 +613,10 @@ static partial class SuspendColdLowering
                                 + "after the operand plans were materialised. The state machine would write the "
                                 + "outer resume label and then have the inner suspension overwrite it.");
                         for (var i = 0; i < last; i++)
-                            if (order.Operands[i] != null && !Settled(order.Operands[i]))
+                            if (order.Operands[i] != null
+                                && !(order.Slots[i].PreserveLocation
+                                    ? CallEvalLowering.IsPinnedLocation(order.Operands[i], Settled)
+                                    : Settled(order.Operands[i])))
                                 throw new InvalidOperationException(
                                     $"bir2cir: suspend-lowering: in `{where}`, operand {i} of a "
                                     + $"`{Str(o["k"])}` node is neither re-readable nor materialised, yet a later "
