@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Suspend lambdas in member extensions now keep both captured receivers distinct (#563).** kotc preserves each
+  generated capture descriptor in the lambda body so dispatch-receiver and extension-receiver reads map to their own
+  state-machine fields instead of both resolving through `__outer`.
+
 - **Captured array receivers now retain their element type through suspending inline iteration (#558).** kotc carries
   the captured receiver's exact static type on its BIR body spelling so inline-spliced array loops and accesses retain
   generic and specialized element facts through lowering.
