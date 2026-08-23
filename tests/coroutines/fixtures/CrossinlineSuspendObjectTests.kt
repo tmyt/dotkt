@@ -89,6 +89,44 @@ fun crossinlineObjectMutableWrap(): suspend () -> Int {
     }
 }
 
+interface CrossinlineGenericCollector<T> {
+    suspend fun emit(value: T)
+}
+
+interface CrossinlineGenericFlow<T> {
+    suspend fun collect(collector: CrossinlineGenericCollector<T>)
+}
+
+class CrossinlineGenericSafeCollector<T>(val collector: CrossinlineGenericCollector<T>)
+
+class CrossinlineGenericSource<T>(private val value: T) : CrossinlineGenericFlow<T> {
+    override suspend fun collect(collector: CrossinlineGenericCollector<T>) {
+        collector.emit(value)
+    }
+}
+
+class CrossinlineGenericListCollector<T>(private val values: MutableList<T>) : CrossinlineGenericCollector<T> {
+    override suspend fun emit(value: T) {
+        values.add(value)
+    }
+}
+
+inline fun <T> crossinlineGenericUnsafeFlow(
+    crossinline block: suspend CrossinlineGenericCollector<T>.() -> Unit
+): CrossinlineGenericFlow<T> = object : CrossinlineGenericFlow<T> {
+    override suspend fun collect(collector: CrossinlineGenericCollector<T>) {
+        collector.block()
+    }
+}
+
+fun <T> CrossinlineGenericFlow<T>.crossinlineGenericWrap(
+    action: suspend CrossinlineGenericCollector<T>.() -> Unit
+): CrossinlineGenericFlow<T> = crossinlineGenericUnsafeFlow {
+    val safe = CrossinlineGenericSafeCollector<T>(this)
+    safe.collector.action()
+    this@crossinlineGenericWrap.collect(this)
+}
+
 class CrossinlineSuspendObjectTests {
     @TestAttribute
     fun crossinlineSuspendIntoObjectLiteral() {
@@ -101,5 +139,13 @@ class CrossinlineSuspendObjectTests {
         assertEquals(true, blockOn { crossinlineObjectClosureFieldWrap(1)() })
         assertEquals(true, blockOn { crossinlineObjectShadowWrap(7)() })
         assertEquals(14, blockOn { crossinlineObjectMutableWrap()() })
+    }
+
+    @TestAttribute
+    fun inlineSuspendCarrierIgnoresConstructorDeclarationFrame() {
+        val values = mutableListOf<Int>()
+        val flow = CrossinlineGenericSource(3).crossinlineGenericWrap { emit(7) }
+        blockOn { flow.collect(CrossinlineGenericListCollector(values)) }
+        assertEquals("7,3", values.joinToString(","))
     }
 }

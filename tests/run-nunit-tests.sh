@@ -51,7 +51,7 @@ PROJECTS=(
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=464
-	["tests/coroutines"]=193
+	["tests/coroutines"]=194
 	["tests/roundtrip/consumer"]=86
 	["tests/roundtrip/bidirectional/consumer"]=8
 	["tests/interop/consumer"]=163
@@ -183,6 +183,14 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  SUSPEND SUPER CIR FAIL — see build/nunit-$name.suspend-super-cir.log"
 			tail -25 "$ROOT/build/nunit-$name.suspend-super-cir.log"; rc=1
+		fi
+		inline_frame_cir="$dir/obj/$CONFIGURATION/net10.0/cir/CrossinlineSuspendObjectTests.cir.json"
+		if python3 "$ROOT/tests/coroutines/assert-inline-suspend-frame-cir.py" "$inline_frame_cir" \
+			>"$ROOT/build/nunit-$name.inline-suspend-frame-cir.log" 2>&1; then
+			echo "  inline suspend carrier generic frame OK"
+		else
+			echo "  INLINE SUSPEND FRAME CIR FAIL — see build/nunit-$name.inline-suspend-frame-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.inline-suspend-frame-cir.log"; rc=1
 		fi
 	fi
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
