@@ -161,6 +161,20 @@ public static class PrimitiveOptionalDefaults
             && i64 == long.MinValue && u64 == ulong.MaxValue
             && float.IsNegativeInfinity(single) && double.IsNaN(number)
             && text == "ok";
+
+    public static bool ReferenceSlots(
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.InteropServices.DefaultParameterValue("boxed")] object text,
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.InteropServices.DefaultParameterValue(7)] System.IComparable number,
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.CompilerServices.DecimalConstant(0, 0, 0, 0, 2)] object decimalValue,
+        [System.Runtime.InteropServices.Optional]
+        [System.Runtime.CompilerServices.DateTimeConstant(638000000000000000)] object when) =>
+        text is string textValue && textValue == "boxed"
+            && number is int numberValue && numberValue == 7
+            && decimalValue is decimal decimalNumber && decimalNumber == 2m
+            && when is System.DateTime dateTime && dateTime.Ticks == 638000000000000000;
 }
 
 public sealed class ValueTypeDefaultConstructor

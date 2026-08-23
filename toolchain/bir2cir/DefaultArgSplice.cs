@@ -162,6 +162,9 @@ static class DefaultArgSplice
             && value["e"] is JsonObject wrapped && IsMetadataConstant(wrapped)
             && TypeJson.Read(wrapped["type"]) is TypeNode wrappedType)
             return elem.Equals(wrappedType);
+        if (kind == "cast" && TypeJson.Read(value["type"]) != null
+            && value["e"] is JsonObject carrier && IsMetadataConstant(carrier))
+            return true;
 
         // CLR decimal and DateTime metadata constants have no literal opcode. ReferenceMetadataIndex materializes
         // their exact public value-type constructors. Admit only those closed, all-constant shapes here so a shorter

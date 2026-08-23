@@ -875,7 +875,7 @@ sealed partial class ReferenceMetadataIndex
         parameterNames = declaration.GetParameters()
             .Select(parameter => string.IsNullOrEmpty(parameter.Name) ? $"arg{parameter.Position}" : parameter.Name)
             .ToArray();
-        defaults = CallableDefaultsOf(declaration);
+        defaults = CallableDefaultsOf(declaration, _netMlc);
         return true;
     }
 
@@ -933,7 +933,7 @@ sealed partial class ReferenceMetadataIndex
         Dictionary<int, string> selected = null;
         foreach (var candidate in interfaces)
         {
-            var defaults = CallableDefaultsOf(candidate);
+            var defaults = CallableDefaultsOf(candidate, _netMlc);
             if (selected == null)
             {
                 selected = defaults;
@@ -945,7 +945,7 @@ sealed partial class ReferenceMetadataIndex
                     "several implemented interface declarations match that class surface but their defaults disagree; " +
                     "call through a specific interface or pass the argument explicitly");
         }
-        if (selected != null && interfaces.Any(candidate => CallableDefaultsOf(candidate) == null))
+        if (selected != null && interfaces.Any(candidate => CallableDefaultsOf(candidate, _netMlc) == null))
             throw new InvalidOperationException(
                 $"bir2cir: cannot fill an omitted default argument of '{owner}.{method}' (arity {paramCount}) — " +
                 "several implemented interface declarations match that class surface but do not all declare the " +
@@ -4367,7 +4367,7 @@ sealed partial class ReferenceMetadataIndex
                         // contributes its raw Kotlin-expression BIR; an ordinary ECMA-335 constant contributes a plain
                         // const expression. The reference KLIB carries only DECLARES_DEFAULT_VALUE for frontend
                         // resolution, never either payload.
-                        if (CallableDefaultsOf(method) is Dictionary<int, string> defaults)
+                        if (CallableDefaultsOf(method, mlc) is Dictionary<int, string> defaults)
                         {
                             AddKotlinDefaults(metadata, indexedOwnerFqn, method.Name, method.GetParameters(), defaults);
                             if (exactPhysicalOwner != indexedOwnerFqn)
@@ -4556,7 +4556,7 @@ sealed partial class ReferenceMetadataIndex
                     // the same ParamKey space, so same-arity ctor overloads resolve rather than collide.
                     foreach (var ctor in type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
                     {
-                        if (CallableDefaultsOf(ctor) is Dictionary<int, string> cdefaults)
+                        if (CallableDefaultsOf(ctor, mlc) is Dictionary<int, string> cdefaults)
                         {
                             AddKotlinDefaults(metadata, ownerFqn, CtorKeyName, ctor.GetParameters(), cdefaults);
                             if (exactPhysicalOwner != ownerFqn)
@@ -5906,19 +5906,19 @@ sealed partial class ReferenceMetadataIndex
     // The complete default-value map for an already selected declaration. KotlinDefault wins because it carries the
     // Kotlin expression (including reads of earlier parameters/receivers); otherwise use the ECMA-335 constant directly.
     // This is deliberately a reference-DLL scan. Neither dll2klib nor kotc materializes a default value.
-    static Dictionary<int, string> CallableDefaultsOf(MethodBase method)
+    static Dictionary<int, string> CallableDefaultsOf(MethodBase method, MetadataLoadContext mlc)
     {
         var map = KotlinDefaultsOf(method);
         foreach (var p in method.GetParameters())
         {
             if (map?.ContainsKey(p.Position) == true || !p.HasDefaultValue) continue;
-            if (ConstantDefaultBir(p) is not string bir) continue;
+            if (ConstantDefaultBir(p, mlc) is not string bir) continue;
             (map ??= new Dictionary<int, string>())[p.Position] = bir;
         }
         return map;
     }
 
-    static string ConstantDefaultBir(ParameterInfo parameter)
+    static string ConstantDefaultBir(ParameterInfo parameter, MetadataLoadContext mlc)
     {
         object value;
         try { value = parameter.RawDefaultValue; }
@@ -5968,7 +5968,7 @@ sealed partial class ReferenceMetadataIndex
         if (nullableElement != null)
         {
             var elementType = DeclarationTypeNode(nullableElement);
-            var elementValue = MetadataConstantNode(nullableElement, elementType, value);
+            var elementValue = MetadataConstantNode(nullableElement, elementType, value, mlc);
             if (elementType == null || elementValue == null) return null;
             return new JsonObject
             {
@@ -5978,10 +5978,10 @@ sealed partial class ReferenceMetadataIndex
             }.ToJsonString();
         }
 
-        return MetadataConstantNode(type, declaredType, value)?.ToJsonString();
+        return MetadataConstantNode(type, declaredType, value, mlc)?.ToJsonString();
     }
 
-    static JsonObject MetadataConstantNode(Type type, TypeNode declaredType, object value)
+    static JsonObject MetadataConstantNode(Type type, TypeNode declaredType, object value, MetadataLoadContext mlc)
     {
         if (type == null || declaredType == null) return null;
         // Null reaches this helper only for a reference-typed slot: value-type null/defaults are handled above.
@@ -6064,7 +6064,36 @@ sealed partial class ReferenceMetadataIndex
 
         // ilemit emits a const from its declared CIR type and must not reinterpret the JSON value. Validate the exact
         // reflection carrier here, where the CLR parameter declaration and its Constant/custom-constant row coexist.
-        if (!LiteralValueInhabits(type, value)) return null;
+        // A reference slot is the one legal exception to exact identity: CLR optional metadata can surface, for
+        // example, an Int32 or String carrier on an Object parameter. Resolve it in this same MetadataLoadContext,
+        // prove the declared slot accepts it, then make the required boxing/upcast explicit in CIR. A mismatched value-type,
+        // enum, or generic slot remains unrepresentable rather than being converted or reinterpreted.
+        if (!LiteralValueInhabits(type, value))
+        {
+            bool isValueType;
+            try { isValueType = type.IsValueType; }
+            catch { return null; }
+            if (isValueType || type.IsGenericParameter || value.GetType().FullName is not string carrierName)
+                return null;
+
+            Type carrierType;
+            try { carrierType = mlc?.CoreAssembly.GetType(carrierName, throwOnError: false, ignoreCase: false); }
+            catch { return null; }
+            bool acceptsCarrier;
+            try { acceptsCarrier = carrierType != null && type.IsAssignableFrom(carrierType); }
+            catch { return null; }
+            if (!acceptsCarrier) return null;
+
+            var carrierDeclaredType = DeclarationTypeNode(carrierType);
+            var carrierValue = MetadataConstantNode(carrierType, carrierDeclaredType, value, mlc);
+            if (carrierDeclaredType == null || carrierValue == null) return null;
+            return new JsonObject
+            {
+                ["k"] = "cast",
+                ["type"] = TypeJson.Write(declaredType),
+                ["e"] = carrierValue,
+            };
+        }
 
         JsonNode jsonValue = value switch
         {

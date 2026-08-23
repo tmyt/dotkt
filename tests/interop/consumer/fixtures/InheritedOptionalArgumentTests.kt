@@ -85,6 +85,7 @@ class InheritedOptionalArgumentTests {
         assertEquals("null", NullableValueDefaults.ReferenceNull())
         assertEquals(true, NullableValueDefaults.NonFinite())
         assertEquals(true, PrimitiveOptionalDefaults.Scalars())
+        assertEquals(true, PrimitiveOptionalDefaults.ReferenceSlots())
     }
 
     private fun nullableBase(value: BaseWriter): BaseWriter? = value
