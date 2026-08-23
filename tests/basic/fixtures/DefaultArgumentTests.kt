@@ -278,6 +278,20 @@ class DefaultArgFrameControls<T>(val v: T) {
     fun konst(a: Int = 5): String = "$v$a"
     fun prior(q: Int, a: Int = q * 2): String = "$v$q$a"
 }
+
+// #542: a member inherited through a frontend fake override has two simultaneous views. The derived view owns the
+// call-site shape, while the base declaration owns Kotlin's default expressions and the symbols those expressions
+// read. The generic owner makes the distinction observable: the default is authored in Base<T>'s frame but called
+// through a non-generic Derived whose corresponding supertype is Base<String>.
+open class DefaultArgInheritedBase<T>(private val seed: T) {
+    fun inheritedValue(): T = seed
+    fun describe(value: T = inheritedValue(), count: Int = 7): String = "$value/$count"
+}
+class DefaultArgInheritedDerived(seed: String) : DefaultArgInheritedBase<String>(seed) {
+    fun omittedThroughDerived(): String = describe()
+    fun constantThroughDerived(): String = describe(count = 9)
+    fun explicitThroughDerived(): String = describe("explicit", 2)
+}
 // ...and the same rule at any NESTING DEPTH. A default may itself be a call that fills a default of its own, and each
 // frame closes against the one it is spliced into, not against the call site directly — so the substitutions have to
 // COMPOSE. Closing `DefaultArgNestB.X` against `DefaultArgNestC.T` and stopping leaves `DefaultArgNestC.T` open in a caller that has no such
@@ -471,6 +485,17 @@ class DefaultArgumentTests {
         assertEquals(134, defaultArgH(1))       // 134
         assertEquals(156, defaultArgH(1, 5))    // 156
         assertEquals(159, defaultArgH(1, 5, 9)) // 159
+    }
+
+    @TestAttribute
+    fun inheritedDefaultArgumentsUseDeclaringKotlinSemantics() {
+        val derived = DefaultArgInheritedDerived("receiver")
+        assertEquals("receiver/7", derived.omittedThroughDerived())
+        assertEquals("receiver/9", derived.constantThroughDerived())
+        assertEquals("explicit/2", derived.explicitThroughDerived())
+
+        val base: DefaultArgInheritedBase<String> = derived
+        assertEquals("receiver/7", base.describe())
     }
 
     // #235: a constructor default that reads an earlier constructor parameter is filled at the omitting `new`,

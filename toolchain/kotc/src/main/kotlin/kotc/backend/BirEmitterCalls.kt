@@ -117,29 +117,42 @@ internal fun BirEmitter.filledArgs(
 	call: org.jetbrains.kotlin.ir.expressions.IrFunctionAccessExpression,
 ): List<String> {
 	val callee = (call.symbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction) ?: return emptyList()
-	val receiverParams = callee.parameters.filter {
+	// A frontend fake override owns the CALL-SITE shape (its parameter types are already substituted for the derived
+	// receiver), but it does not own the inherited Kotlin default expressions. Read those expressions and every symbol
+	// they mention from the resolved declaration. Keep the two parameter lists paired by their frontend-defined slot:
+	// supplied arguments are coerced to the selected view, while a default's parameter/receiver reads bind the symbols
+	// of the declaration that actually contains its IR.
+	val resolvedDefaultCallee = (callee as? IrSimpleFunction)?.takeIf { it.isFakeOverride }
+		?.resolveFakeOverride()
+	val defaultCallee = resolvedDefaultCallee?.takeIf { resolved ->
+		resolved.parameters.size == callee.parameters.size &&
+			resolved.parameters.indices.all { resolved.parameters[it].kind == callee.parameters[it].kind }
+	} ?: callee
+	val receiverParams = defaultCallee.parameters.filter {
 		it.kind == IrParameterKind.DispatchReceiver || it.kind == IrParameterKind.ExtensionReceiver
 	}
 	val receiverSyms = receiverParams.map { it.symbol }.toHashSet()
 	// Every POSITIONAL parameter ([isValueParameter]: contexts then regulars) — a default reading any of them is bound
 	// to this call's argument in that slot. A CONTEXT parameter belongs here for the same reason a regular one does: it
 	// is an ordinary argument of this call, so `b: Int = a + c.n` substitutes both `a` and `c` from the emitted args.
-	val valueSyms = callee.parameters.filter { isValueParameter(it) }.map { it.symbol }.toHashSet()
+	val valueSyms = defaultCallee.parameters.filter { isValueParameter(it) }.map { it.symbol }.toHashSet()
 	// A default may also read an ENCLOSING instance (`inner class In(val x: Int = outerProp)`, or a member of an inner
 	// class). That read is the enclosing class's own `thisReceiver` — NOT one of the callee's parameters — so it is
 	// bound separately (see [enclosingThisChain] / [enclosingThisSubst]).
-	val enclosingThis = enclosingThisChain(callee)
+	val enclosingThis = enclosingThisChain(defaultCallee)
 	val enclosingSyms = enclosingThis.map { it.first.symbol }.toHashSet()
 	// The callee's POSITIONAL parameters with their `call.arguments` index — contexts then regulars, the SAME sequence
 	// [paramsJsonList] emits as `params` and [overloadSigField] keys `sig` by, so the returned list is index-for-index
 	// the declaration's arg array (the caller prepends `__self` on both sides).
-	val vals = callee.parameters.mapIndexedNotNull { i, p -> if (isValueParameter(p)) i to p else null }
-	val provided = vals.map { (i, _) -> if (i < call.arguments.size) call.arguments[i] else null }
+	val vals = callee.parameters.mapIndexedNotNull { i, selected ->
+		if (isValueParameter(selected)) Triple(i, selected, defaultCallee.parameters[i]) else null
+	}
+	val provided = vals.map { (i, _, _) -> if (i < call.arguments.size) call.arguments[i] else null }
 	// The SAME-MODULE defaults this call actually fills. A CROSS-MODULE omission's value is an IrErrorExpression the
 	// frontend artifact dropped: nothing of this call is spliced into it HERE (bir2cir's carrier splice does that).
 	val filledDefaults = vals.mapIndexed { idx, pair ->
 		if (provided[idx] != null) null
-		else pair.second.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
+		else pair.third.defaultValue?.expression?.takeIf { it !is org.jetbrains.kotlin.ir.expressions.IrErrorExpression }
 	}
 	// GRANULARITY (§2.7): a plan is emitted only where the positional array below would NOT already be a faithful
 	// evaluation plan — i.e. where a value can acquire a SECOND reader, or where the array's ORDER is not Kotlin's:
@@ -163,9 +176,9 @@ internal fun BirEmitter.filledArgs(
 			d != null && (refsAny(d, valueSyms) || refsAny(d, receiverSyms) || refsAny(d, enclosingSyms))
 		} || vals.indices.any { idx ->
 			provided[idx] == null &&
-				vals[idx].second.defaultValue?.expression is org.jetbrains.kotlin.ir.expressions.IrErrorExpression
+				vals[idx].third.defaultValue?.expression is org.jetbrains.kotlin.ir.expressions.IrErrorExpression
 		} || vals.indices.any { idx ->
-			idx < lastSupplied && provided[idx] == null && vals[idx].second.defaultValue != null
+			idx < lastSupplied && provided[idx] == null && vals[idx].third.defaultValue != null
 		}
 	val plan = if (planNeeded) callPlan(call) else null
 	val label = calleeLabel(callee)
@@ -208,6 +221,7 @@ internal fun BirEmitter.filledArgs(
 	// them before ANY of the callee's defaults, which is why they are bound first and the defaults follow in phase 2.
 	vals.forEachIndexed { idx, pair ->
 		val p = pair.second
+		val defaultP = pair.third
 		val arg = provided[idx] ?: return@forEachIndexed
 		// A `byref(x)` / @ClrRefArgument slot takes an ADDRESSABLE lvalue, not a copied value. Under a plan it is an
 		// ADDRESS binding: it marks WHERE in the evaluation order the location is computed, and no storage is minted
@@ -226,7 +240,7 @@ internal fun BirEmitter.filledArgs(
 				argExpr(arg, p)   // the slot's own coercion (nullable unwrap / boxed-Any cast) wraps the bound read
 			}
 		slots[idx] = emitted
-		filledByParam[p] = emitted
+		filledByParam[defaultP] = emitted
 	}
 
 	// PHASE 2 — every OMITTED default this call FILLS, in the callee's DECLARATION order (the order the `$default`
@@ -234,24 +248,29 @@ internal fun BirEmitter.filledArgs(
 	vals.forEachIndexed { idx, pair ->
 		if (provided[idx] != null) return@forEachIndexed
 		val p = pair.second
+		val defaultP = pair.third
 		// An omitted VARARG is filled first: it has no default expression to reach the branch below (Kotlin forbids one),
 		// so leaving it to the default fill dropped the slot entirely — see [omittedVararg]. What lands in
 		// `filledByParam` is the BINDING's read, exactly like every other fill: a later default naming the vararg
 		// (`fun f(vararg xs: Int, y: IntArray = xs)`) splices what is recorded here, and splicing the raw `newArray`
 		// would allocate a second empty array for `y` — one Kotlin value, two identities.
-		omittedVararg(call, callee, p, plan)?.let { slots[idx] = it; filledByParam[p] = it; return@forEachIndexed }
-		val def = p.defaultValue?.expression ?: return@forEachIndexed
+		omittedVararg(call, callee, p, plan)?.let {
+			slots[idx] = it
+			filledByParam[defaultP] = it
+			return@forEachIndexed
+		}
+		val def = defaultP.defaultValue?.expression ?: return@forEachIndexed
 		// THE TYPE-FRAME SCOPE ([withDefaultTypeScope]), around EVERY rendering of this default AND the type its
 		// binding is declared with — not only the branch that reads the callee's own values. A default's EXPRESSION may
 		// read nothing at all and still mention the callee's type parameters in its TYPES
 		// (`fun <U> f(x: List<Pair<T, U>> = emptyList())` in a `class C<T>`), and those types belong to the callee's
 		// frame whatever the expression does.
-		val filled = withDefaultTypeScope(call, callee) {
-			fillOmitted(call, callee, plan, p, def,
+		val filled = withDefaultTypeScope(call, defaultCallee) {
+			fillOmitted(call, defaultCallee, plan, defaultP, def,
 				valueSyms, receiverSyms, enclosingSyms, receiverParams, enclosingThis, dispatchRecv, extRecv,
 				enclosingRecv, filledByParam, label)
 		}
-		if (filled != null) { slots[idx] = filled; filledByParam[p] = filled }
+		if (filled != null) { slots[idx] = filled; filledByParam[defaultP] = filled }
 	}
 	return slots.filterNotNull()
 }
@@ -410,8 +429,15 @@ internal fun BirEmitter.callSiteSubstitutor(
 	} else {
 		if (semanticOwnerTps.isNotEmpty()) {
 			// A member's whole Kotlin owner frame is instantiated by its receiver. An inner receiver carries its own
-			// arguments followed by the immediate owner's frame and each owner moving outward.
-			((dispatchReceiver(call) ?: extensionReceiver(call))?.type as? IrSimpleType)
+			// arguments followed by the immediate owner's frame and each owner moving outward. For an inherited member,
+			// close the declaration frame through the corresponding supertype (`Derived : Base<String>` ->
+			// `Base<String>`), not through the derived receiver's unrelated own argument vector.
+			val receiverType = (dispatchReceiver(call) ?: extensionReceiver(call))?.type
+			val ownerType = receiverType?.let { type -> ownerClass?.let { owner ->
+				if (type.classifierOrNull?.owner === owner) type
+				else correspondingSupertypeInstantiation(type, owner)
+			} }
+			(ownerType as? IrSimpleType)
 				?.arguments?.takeIf { it.size == semanticOwnerTps.size }?.let { a ->
 					semanticOwnerTps.forEach { params.add(it.symbol) }
 					args.addAll(a)
