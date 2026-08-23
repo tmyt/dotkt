@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.10-beta2 (2026-08-23)
+
 ### Fixed
 
 - **CLR reference projection now indexes local type identities instead of rescanning every TypeDef (#543).** dll2klib
