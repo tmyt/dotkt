@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Inherited Kotlin default arguments now retain their declaring semantics through override chains (#542).** kotc
+  keeps the selected call-site shape while sourcing omitted expressions and their receiver/parameter symbols from the
+  base declaration that owns the defaults, including abstract and generic bases.
+
 - **Callable references now adapt to open nullable function slots without rewriting their declarations (#348).**
   kotc binds top-level and companion references through generated static forwarders and ordinary bound member
   references through receiver-capturing closures, including members projected from CLR assemblies. bir2cir may

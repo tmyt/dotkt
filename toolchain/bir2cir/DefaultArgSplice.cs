@@ -131,7 +131,7 @@ static class DefaultArgSplice
             // generic method can bind the caller's unrelated !!0 or remain unresolved in a non-generic caller.
             var methodTypeArgs = node["typeArgs"] as JsonArray;
             InlineSplice.SubstTvIn(parsed, methodTypeArgs ?? new JsonArray(), methodTypeArgs?.Count ?? 0,
-                TypeArgsOf(ownerNode));
+                TypeArgsOf(node["defaultOwnerType"]) ?? TypeArgsOf(ownerNode));
             if (parsed is not JsonObject o || !IsMetadataConstant(o)) ThrowUnrepresentable(pos);
             fills.Add(parsed);
         }
@@ -292,7 +292,8 @@ static class DefaultArgSplice
         // The call site's TYPE arguments, for closing the carrier's own frame below: a generic callee's default is
         // carried as the callee wrote it, with its type parameters as positional `tv`s.
         var methodTypeArgs = node["typeArgs"] as JsonArray;
-        var ownerTypeArgs = TypeArgsOf(isNew ? node["type"] : node["ownerType"]);
+        var ownerTypeArgs = TypeArgsOf(node["defaultOwnerType"])
+            ?? TypeArgsOf(isNew ? node["type"] : node["ownerType"]);
         // Receiver identity comes from the CALL SHAPE, never from an argument-position guess. A member extension has
         // both: dispatch is callInstance.recv, extension is physical arg[0]. A constructor has no dispatch receiver,
         // but an inner constructor's hidden enclosing instance is physical arg[0].
@@ -301,6 +302,8 @@ static class DefaultArgSplice
         var enclosingReceiver = isNew && args.Count > 0 ? args[0] : null;
         Fill(args, slotBinding, sigCount, defaults, label, refs, hoist, localOwner, semanticOwner,
             methodTypeArgs, ownerTypeArgs, dispatchReceiver, extensionReceiver, enclosingReceiver);
+        node.Remove("defaultDeclarationId");
+        node.Remove("defaultOwnerType");
     }
 
     // The type ARGUMENTS of a `{t:fqn}` type reference, or null.
@@ -314,10 +317,32 @@ static class DefaultArgSplice
         JsonArray signature, ReferenceMetadataIndex refs, out string[] parameterNames)
     {
         parameterNames = null;
+        if (Str(node["defaultDeclarationId"]) is string defaultDeclarationId)
+            return refs.KotlinDefaultsForDeclarationIdentity(defaultDeclarationId);
         if (Str(node[DeclarationIdentityBinding.Key]) is string declarationId)
             return refs.KotlinDefaultsForDeclarationIdentity(declarationId);
         if (signature == null) return null;
         var callSignature = signature.Select(TypeJson.Read).ToArray();
+        // A projected reference-KLIB override need not carry a declaration identity of its own, and its base default
+        // owner may not carry one either. kotc still knows the exact base declaration and transports its constructed
+        // owner type. Resolve that MethodDef with the same scalar-member resolver used below; do not infer the base
+        // from the selected override's CLR hierarchy or fall through to a same-name sibling.
+        if (TypeJson.Read(node["defaultOwnerType"]) is TypeNode.Fqn defaultOwnerType
+            && callSignature.All(type => type != null))
+        {
+            if (refs.TryKotlinDefaultsForSelectedMethod(
+                    defaultOwnerType, method, (node["typeArgs"] as JsonArray)?.Count ?? 0,
+                    Str(node["k"]) == "callStatic", callSignature, out var inheritedDefaults, out parameterNames))
+                return inheritedDefaults;
+            var inheritedSigKey = ReferenceMetadataIndex.SignatureKeyOf(signature);
+            var inheritedRelaxedSigKey = ReferenceMetadataIndex.SignatureKeyOf(signature, relaxed: true);
+            var inheritedOwner = TypeJson.OwnerName(node["defaultOwnerType"]);
+            return refs.KotlinDefaultsFor(
+                    inheritedOwner, method, signature.Count, inheritedSigKey, inheritedRelaxedSigKey)
+                ?? refs.KotlinDefaultsForImplementedInterface(
+                    inheritedOwner, defaultOwnerType.Args?.Length ?? 0, method, signature.Count,
+                    inheritedSigKey, inheritedRelaxedSigKey);
+        }
         if (TypeJson.Read(ownerNode) is TypeNode.Fqn ownerType
             && callSignature.All(type => type != null)
             && refs.TryKotlinDefaultsForSelectedMethod(

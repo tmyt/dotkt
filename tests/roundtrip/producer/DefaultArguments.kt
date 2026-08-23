@@ -12,3 +12,17 @@ fun flags(on: Boolean = true, label: String = "x y"): String = "$on/$label"
 fun kinds(tag: String, n: Long = 5L, r: Double = 1.5, ch: Char = 'z', note: String? = null): String =
     "$tag/$n/$r/$ch/${note ?: "none"}"
 class Pt(val x: Int = 0, val y: Int = 0) { override fun toString(): String = "($x,$y)" }
+
+open class InheritedBase<T>(private val seed: T) {
+    fun inheritedValue(): T = seed
+    open fun describe(value: T = inheritedValue(), tail: String = "$value!"): String = "base:$value/$tail"
+}
+open class InheritedMiddle<T>(seed: T) : InheritedBase<T>(seed) {
+    override fun describe(value: T, tail: String): String = "middle:$value/$tail"
+}
+class InheritedLeaf(seed: String) : InheritedMiddle<String>(seed)
+
+open class InheritedMappedMiddle<T>(seed: T) : InheritedBase<List<T>>(listOf(seed)) {
+    override fun describe(value: List<T>, tail: String): String = "mapped:${value.first()}/$tail"
+}
+class InheritedMappedLeaf(seed: String) : InheritedMappedMiddle<String>(seed)
