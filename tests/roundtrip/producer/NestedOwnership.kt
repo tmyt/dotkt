@@ -214,6 +214,23 @@ class GenericInnerLocalOwner<T>(private val outer: T) {
     }
 }
 
+// #555: consumers may derive from this exported owner and construct its inherited inner class with their derived
+// `this`. The physical hidden parameter remains this immediate owner's constructed type, not the consumer subclass.
+open class ReferencedInnerBase<T>(private val outer: T) {
+    inner class Entry {
+        private val inner: String
+        constructor(value: Int) { inner = "i$value" }
+        constructor(value: String) { inner = "s$value" }
+        fun render(): String = outer.toString() + ":" + inner
+    }
+    inner class GenericEntry<E>(private val value: E) {
+        fun render(): String = outer.toString() + ":g" + value.toString()
+    }
+    inner class DefaultEntry(private val value: String = "default") {
+        fun render(): String = outer.toString() + ":" + value
+    }
+}
+
 class MultiLevelInnerOwner<A>(private val outer: A) {
     inner class Middle<B>(private val middle: B) {
         inner class Leaf<C>(private val leaf: C) {

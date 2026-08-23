@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Inherited inner-class construction now retains the selected enclosing-owner slot (#555).** kotc projects a
+  derived enclosing-instance receiver through the frontend-selected inner application before describing same-module
+  and referenced constructors, preserving generic substitutions and exact same-arity overload selection.
+
 - **Inline-spliced suspend carriers now capture only the caller's generic frame (#557).** bir2cir keeps constructor and
   local-function declaration descriptors in their own frames while densely remapping caller-owned construction types.
 

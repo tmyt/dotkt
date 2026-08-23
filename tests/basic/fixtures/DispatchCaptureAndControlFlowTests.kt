@@ -50,6 +50,42 @@ class DispatchCaptureOuter(val base: Int) {
     fun newCounter(step: Int): Counter = Counter(step)
 }
 
+// #555: an inherited inner constructor's hidden outer slot is declared as the immediate enclosing class, even when
+// the value supplied for it is a transitively-derived `this`. Keep overload selection exact while projecting a
+// generic derived receiver through the selected inner class's enclosing owner.
+open class DispatchCaptureInnerBase<T>(private val outer: T) {
+    inner class Entry {
+        private val inner: String
+        constructor(value: Int) { inner = "i$value" }
+        constructor(value: String) { inner = "s$value" }
+        fun render(): String = outer.toString() + ":" + inner
+    }
+    inner class GenericEntry<E>(private val value: E) {
+        fun render(): String = outer.toString() + ":g" + value.toString()
+    }
+    inner class DefaultEntry(private val value: String = "default") {
+        fun render(): String = outer.toString() + ":" + value
+    }
+}
+open class DispatchCaptureInnerMiddle<T>(outer: T) : DispatchCaptureInnerBase<T>(outer)
+class DispatchCaptureInnerLeaf<T>(outer: T) : DispatchCaptureInnerMiddle<T>(outer) {
+    fun makeInt(value: Int): Entry = Entry(value)
+    fun makeString(value: String): Entry = Entry(value)
+    fun <E> makeGeneric(value: E): GenericEntry<E> = GenericEntry(value)
+    fun makeDefault(): DefaultEntry = DefaultEntry()
+}
+class DispatchCaptureConcreteInnerLeaf : DispatchCaptureInnerBase<Int>(7) {
+    fun make(value: Int): Entry = Entry(value)
+}
+class DispatchCaptureNestedOuter<E>(private val label: String) {
+    override fun toString(): String = label
+}
+class DispatchCaptureNestedLeaf<E>(outer: DispatchCaptureNestedOuter<E>) :
+    DispatchCaptureInnerBase<DispatchCaptureNestedOuter<E>>(outer) {
+    fun make(value: Int): Entry = Entry(value)
+}
+fun dispatchCaptureMakeFromOutside(value: DispatchCaptureInnerLeaf<String>): String = value.Entry(9).render()
+
 // ---- il-langfeat : anon fun / infix / tailrec / try-finally / abstract virtual dispatch -------------------------
 val dispatchCaptureAdd = fun(a: Int, b: Int): Int = a + b
 infix fun Int.dispatchCapturePow(e: Int): Int { var r = 1; var i = 0; while (i < e) { r *= this; i++ }; return r }
@@ -106,6 +142,14 @@ class NestedAndLocalClassTests {
         assertEquals(120, c.tick())        // 120
         assertEquals("T2", c.label())      // T2
         assertEquals(5, DispatchCaptureOuter(0).Counter(5).tick())  // 5 (inner built off an Outer receiver)
+        val inherited = DispatchCaptureInnerLeaf("outer")
+        assertEquals("outer:i42", inherited.makeInt(42).render())
+        assertEquals("outer:svalue", inherited.makeString("value").render())
+        assertEquals("outer:g11", inherited.makeGeneric(11).render())
+        assertEquals("outer:default", inherited.makeDefault().render())
+        assertEquals("7:i8", DispatchCaptureConcreteInnerLeaf().make(8).render())
+        assertEquals("outer:i9", dispatchCaptureMakeFromOutside(inherited))
+        assertEquals("nested:i10", DispatchCaptureNestedLeaf(DispatchCaptureNestedOuter<String>("nested")).make(10).render())
     }
 
 }
