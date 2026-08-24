@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **External delegate decoding now indexes each referenced assembly once per projection (#582).** dll2klib keeps
+  referenced PE metadata and its arity, attribute, delegate, and value-type seeds at assembly-scanner scope while
+  retaining decoded `KType` shapes in each package's own name table. Multi-namespace consumers therefore avoid
+  reopening and rescanning the same external TypeDef table for every package without changing delegate or NRT
+  projection.
+
 - **DLL-to-KLIB signature decoding no longer rescans every local type for each namespace (#546).** dll2klib now
   discovers immutable local delegate and value-type seeds once per assembly, shares them across package decoders, and
   keeps only signature-derived value-type observations decoder-local. Large multi-namespace reference assemblies
