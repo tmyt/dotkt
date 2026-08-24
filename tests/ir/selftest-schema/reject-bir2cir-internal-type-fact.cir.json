@@ -1,0 +1,16 @@
+{
+  "types": [
+    {
+      "name": "Probe",
+      "kind": "class",
+      "typeParams": [
+        {
+          "name": "T",
+          "erasedInnerConstraints": [
+            { "t": "fqn", "name": "Marker" }
+          ]
+        }
+      ]
+    }
+  ]
+}

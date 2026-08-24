@@ -17,6 +17,10 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 
 // ---- il-iface : interface method dispatch -----------------------------------------------------------------------
 interface DispatchCaptureGreeter { fun greet(): String }
@@ -126,6 +130,59 @@ open class DispatchCaptureConstrainedInnerOuter<T>(private val label: String) {
     }
 }
 class DispatchCaptureConstrainedInnerLeaf<T>(label: String) : DispatchCaptureConstrainedInnerOuter<T>(label)
+interface DispatchCaptureLambdaMarker {
+    fun marked(): String
+}
+class DispatchCaptureLambdaValue(private val value: String) : DispatchCaptureLambdaMarker {
+    override fun marked(): String = value
+}
+private fun dispatchCaptureRunImmediate(block: suspend () -> String): String {
+    var outcome: Result<String>? = null
+    block.startCoroutine(object : Continuation<String> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+        override fun resumeWith(result: Result<String>) { outcome = result }
+    })
+    return outcome!!.getOrThrow()
+}
+class DispatchCaptureNestedLiftOwner<T : DispatchCaptureLambdaMarker>(private val value: T) {
+    fun render(): String {
+        class Caller<U>(private val suffix: U) {
+            fun call(): String {
+                val nested = object {
+                    fun run(): String = value.marked() + ":" + suffix.toString()
+                }
+                return nested.run()
+            }
+        }
+
+        return Caller(1).call()
+    }
+}
+class DispatchCaptureConstrainedLambdaOuter<T : DispatchCaptureLambdaMarker>(private val label: String) {
+    inner class Token<E : T>(private val value: E?) {
+        private val renderBlock: () -> String = {
+            label + ":" + (value?.marked() ?: "null")
+        }
+
+        fun render(): String = renderBlock()
+        fun suspendRender(): String {
+            val block: suspend () -> String = {
+                label + ":suspend:" + (value?.marked() ?: "null")
+            }
+            return dispatchCaptureRunImmediate(block)
+        }
+    }
+}
+fun dispatchCaptureConstrainedLambdaDirect(): String =
+    DispatchCaptureConstrainedLambdaOuter<DispatchCaptureLambdaMarker>("direct")
+        .Token<DispatchCaptureLambdaValue>(DispatchCaptureLambdaValue("value")).render()
+fun dispatchCaptureConstrainedSuspendLambdaDirect(): String =
+    DispatchCaptureConstrainedLambdaOuter<DispatchCaptureLambdaMarker>("direct")
+        .Token<DispatchCaptureLambdaValue>(DispatchCaptureLambdaValue("value")).suspendRender()
+fun dispatchCaptureConstrainedLambdaStar(value: DispatchCaptureConstrainedLambdaOuter<*>): String =
+    value.Token<Nothing>(null).render()
+fun dispatchCaptureConstrainedSuspendLambdaStar(value: DispatchCaptureConstrainedLambdaOuter<*>): String =
+    value.Token<Nothing>(null).suspendRender()
 fun dispatchCaptureConstrainedInner(value: DispatchCaptureConstrainedInnerOuter<*>): String =
     value.Token<Nothing>(null).render()
 fun dispatchCaptureConstrainedPair(value: DispatchCaptureConstrainedInnerOuter<*>): String =
@@ -270,6 +327,16 @@ class NestedAndLocalClassTests {
         val constrainedDerived: DispatchCaptureConstrainedInnerLeaf<*> =
             DispatchCaptureConstrainedInnerLeaf<Int>("derived-bound")
         assertEquals("derived-bound:null", dispatchCaptureConstrainedDerived(constrainedDerived))
+        assertEquals("direct:value", dispatchCaptureConstrainedLambdaDirect())
+        assertEquals("direct:suspend:value", dispatchCaptureConstrainedSuspendLambdaDirect())
+        assertEquals(
+            "nested:value:1",
+            DispatchCaptureNestedLiftOwner(DispatchCaptureLambdaValue("nested:value")).render(),
+        )
+        val constrainedLambda: DispatchCaptureConstrainedLambdaOuter<*> =
+            DispatchCaptureConstrainedLambdaOuter<DispatchCaptureLambdaMarker>("star-lambda")
+        assertEquals("star-lambda:null", dispatchCaptureConstrainedLambdaStar(constrainedLambda))
+        assertEquals("star-lambda:suspend:null", dispatchCaptureConstrainedSuspendLambdaStar(constrainedLambda))
     }
 
 }
