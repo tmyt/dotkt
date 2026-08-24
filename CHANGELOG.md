@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Packaging and version changes now select the packaged-SDK gate locally (#549).** The change-aware gate
+  recognizes package inputs, guarded documentation, and both sides of renamed paths while keeping ordinary
+  compiler-only FULL plans free of the release-package verification cost.
+
 - **Array factories now preserve spread arguments (#550).** Lone forwarded arrays and mixed `spreadConcat`
   operands flow through `arrayOf` and primitive array factories without being replaced by an empty allocation,
   including when a spread operand suspends or has side effects.

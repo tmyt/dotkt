@@ -17,11 +17,15 @@
 # and untracked paths. Override by passing explicit paths as arguments (e.g. `gate.sh toolchain/ilemit`).
 #
 # SELECTION RULES (each changed path contributes; the union is run; any UNMATCHED path forces --full):
-#   *.md / docs/** / CHANGELOG*        -> nothing  (schema doc -> verify-schema only)
+#   README/getting-started version guards,
+#     packaged *.md                    -> verify-packaged-sdk
+#   global.json / packaging/**         -> FULL + verify-packaged-sdk
+#   other *.md / docs/** / CHANGELOG*  -> nothing  (schema doc -> verify-schema only)
 #   tests/<suite>/**                   -> that suite
-#   scripts/gate.sh                    -> nothing (this wrapper itself, no pipeline effect)
+#   scripts/gate.sh                    -> verify-gate-selection
 #   scripts/{lib,build-stdlib*,dotkt,  -> FULL   (shared build machinery — affects every stage)
-#     gen-*,pack-nuget}.sh
+#     gen-*}.sh
+#   scripts/pack-nuget.sh              -> FULL + verify-packaged-sdk
 #   toolchain/bir2cir/** | ilemit/**   -> stdlib EMIT (clean) + compiler tests +
 #                                          verify-schema + verify-sanity + target-universe
 #                                          (kotc unchanged: no installDist cost)
@@ -71,9 +75,11 @@ collect_changes() {
 	local base
 	base="$(git -C "$ROOT" merge-base main HEAD 2>/dev/null || echo main)"
 	{
-		git -C "$ROOT" diff --name-only "$base"...HEAD 2>/dev/null || true   # committed since main
-		git -C "$ROOT" diff --name-only 2>/dev/null || true                  # unstaged
-		git -C "$ROOT" diff --name-only --cached 2>/dev/null || true         # staged
+		# Disable rename folding so both the removed producer path and the added consumer path are
+		# classified. A move out of packaging must not disappear behind its docs-only destination.
+		git -C "$ROOT" diff --no-renames --name-only "$base"...HEAD 2>/dev/null || true   # committed since main
+		git -C "$ROOT" diff --no-renames --name-only 2>/dev/null || true                  # unstaged
+		git -C "$ROOT" diff --no-renames --name-only --cached 2>/dev/null || true         # staged
 		git -C "$ROOT" ls-files --others --exclude-standard 2>/dev/null || true  # untracked
 	} | sed '/^$/d' | sort -u
 }
@@ -89,6 +95,16 @@ reason() { REASONS+=("$1"); }
 classify() { # <path>
 	local p="$1"
 	case "$p" in
+		# ---- release/package inputs --------------------------------------------------------------
+		README.md|docs/user/getting-started.md)
+			want packagedsdk; reason "$p -> verify-packaged-sdk (package-version guard input)" ;;
+		THIRD-PARTY-NOTICES.md|packaging/*.md)
+			want packagedsdk; reason "$p -> verify-packaged-sdk (packaged documentation)" ;;
+		# These still take the conservative FULL path, but FULL intentionally excludes the expensive
+		# packaged-SDK release gate for ordinary compiler changes. Select that gate explicitly only
+		# for inputs that can alter the SDK used to build or the nupkgs consumed by downstream projects.
+		global.json|packaging/*)
+			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (release/package input)" ;;
 		# ---- docs / changelog -------------------------------------------------------------------
 		docs/bir-cir-spec.md|docs/bir-cir.schema.json|docs/architecture.md)
 			want schema; reason "$p -> verify-schema (BIR/CIR schema doc)" ;;
@@ -96,10 +112,12 @@ classify() { # <path>
 			reason "$p -> (no gate: docs)" ;;
 		# ---- shared build/validation scripts ------------------------------------------------------
 		scripts/gate.sh)
-			reason "$p -> (no gate: the wrapper itself, no pipeline effect)" ;;
+			want gate_selection; reason "$p -> verify-gate-selection" ;;
 		scripts/verify-schema.py) want schema; reason "$p -> verify-schema" ;;
 		scripts/verify-sanity.py) want sanity; reason "$p -> verify-sanity" ;;
-		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/pack-nuget.sh|scripts/hooks/*)
+		scripts/pack-nuget.sh)
+			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (package assembly)" ;;
+		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/hooks/*)
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
 		toolchain/bir2cir/*|toolchain/ilemit/*)
@@ -116,6 +134,7 @@ classify() { # <path>
 		tests/ir/run-sanity.sh) want sanity; reason "$p -> verify-sanity" ;;
 		tests/msbuild/*) want msbuild; reason "$p -> stateful MSBuild tests" ;;
 		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
+		tests/gate-selection/*) want gate_selection; reason "$p -> gate selector policy tests" ;;
 		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
 		tests/target-universe/*)
@@ -129,14 +148,15 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests schema sanity msbuild targetuniverse packagedsdk)
+declare -a RUN_ORDER=(compiler_tests schema sanity msbuild targetuniverse gate_selection packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
 	[msbuild]=verify-msbuild
-	[targetuniverse]=verify-target-universe [packagedsdk]=verify-packaged-sdk
+	[targetuniverse]=verify-target-universe [gate_selection]=verify-gate-selection
+	[packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(compiler_tests schema sanity msbuild targetuniverse)
+FULL_SUITES=(compiler_tests schema sanity msbuild targetuniverse gate_selection)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)

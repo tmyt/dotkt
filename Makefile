@@ -40,7 +40,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 # ==================================================================================================
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
         verify verify-core verify-tests verify-nunit verify-compile-fail verify-test-corpus verify-integration \
-        verify-schema verify-sanity verify-lowering verify-msbuild verify-packaged-sdk \
+        verify-schema verify-sanity verify-lowering verify-msbuild verify-gate-selection verify-packaged-sdk \
         verify-target-universe verify-csharp14-extension-abi verify-xfail-policy \
         dev dll2klib-e2e dll2klib-index-benchmark clean clean-tools clean-stdlib clean-pack help
 
@@ -134,6 +134,7 @@ verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy ga
 	+$(MAKE) verify-target-universe
 	+$(MAKE) verify-csharp14-extension-abi
 	+$(MAKE) verify-xfail-policy
+	+$(MAKE) verify-gate-selection
 
 verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical k over fresh BIR/CIR); run AFTER verify-nunit
 	bash tests/ir/run-schema.sh
@@ -147,6 +148,9 @@ verify-lowering: ## lowering self-tests (synthetic BIR -> bir2cir -> CIR asserti
 
 verify-msbuild: ## stateful MSBuild integration (same obj/ across source mutation)
 	bash tests/msbuild/run.sh
+
+verify-gate-selection: ## change-aware gate selector policy self-test
+	bash tests/gate-selection/run.sh
 
 verify-packaged-sdk: ## packaged nupkg-resolution + cross-module async coroutine gate
 	bash tests/packaged-sdk/run.sh
