@@ -176,7 +176,7 @@ dev: ## compile (and run) one .kt: make dev SRC=Foo.kt [RUN=1 EXE=1 REF=x.dll NO
 dll2klib-e2e: ## CLR reference DLL -> standard metadata-only KLIB end-to-end regression
 	bash tests/special/dll2klib-e2e/run.sh
 
-dll2klib-index-benchmark: ## repeatable synthetic benchmark for dll2klib local TypeDef lookup
+dll2klib-index-benchmark: ## repeatable synthetic benchmark for dll2klib assembly indexes
 	bash tests/special/dll2klib-local-index-benchmark/run.sh
 
 # ==================================================================================================
