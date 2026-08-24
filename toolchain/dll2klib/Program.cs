@@ -1440,6 +1440,9 @@ internal sealed class AssemblyScanner
             MetadataAttributes.DotKtNs + "KotlinSourceMethodAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinInnerConstructorFactoryAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinDeclarationIdentityAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(

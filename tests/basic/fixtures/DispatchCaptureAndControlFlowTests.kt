@@ -84,7 +84,22 @@ class DispatchCaptureNestedLeaf<E>(outer: DispatchCaptureNestedOuter<E>) :
     DispatchCaptureInnerBase<DispatchCaptureNestedOuter<E>>(outer) {
     fun make(value: Int): Entry = Entry(value)
 }
+open class DispatchCaptureConstrainedInnerOuter<T>(private val label: String) {
+    inner class Token<E : T>(private val value: E?) {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+}
 fun dispatchCaptureMakeFromOutside(value: DispatchCaptureInnerLeaf<String>): String = value.Entry(9).render()
+fun dispatchCaptureMakeNestedStarFromOutside(value: DispatchCaptureNestedLeaf<*>): String = value.Entry(12).render()
+fun dispatchCaptureMakeNestedStarString(value: DispatchCaptureNestedLeaf<*>): String = value.Entry("value").render()
+fun dispatchCaptureMakeNestedStarGeneric(value: DispatchCaptureNestedLeaf<*>): String = value.GenericEntry("generic").render()
+fun dispatchCaptureMakeNestedStarDefault(value: DispatchCaptureNestedLeaf<*>): String = value.DefaultEntry().render()
+fun dispatchCaptureKeepNestedStar(value: DispatchCaptureNestedLeaf<*>): String {
+    val entry = value.Entry(13)
+    return entry.render()
+}
+fun <X, D : DispatchCaptureNestedLeaf<*>> dispatchCaptureMakeThroughBound(ignored: X, value: D): String =
+    value.Entry(14).render()
 
 // ---- il-langfeat : anon fun / infix / tailrec / try-finally / abstract virtual dispatch -------------------------
 val dispatchCaptureAdd = fun(a: Int, b: Int): Int = a + b
@@ -150,6 +165,13 @@ class NestedAndLocalClassTests {
         assertEquals("7:i8", DispatchCaptureConcreteInnerLeaf().make(8).render())
         assertEquals("outer:i9", dispatchCaptureMakeFromOutside(inherited))
         assertEquals("nested:i10", DispatchCaptureNestedLeaf(DispatchCaptureNestedOuter<String>("nested")).make(10).render())
+        val star = DispatchCaptureNestedLeaf(DispatchCaptureNestedOuter<String>("star"))
+        assertEquals("star:i12", dispatchCaptureMakeNestedStarFromOutside(star))
+        assertEquals("star:svalue", dispatchCaptureMakeNestedStarString(star))
+        assertEquals("star:ggeneric", dispatchCaptureMakeNestedStarGeneric(star))
+        assertEquals("star:default", dispatchCaptureMakeNestedStarDefault(star))
+        assertEquals("star:i13", dispatchCaptureKeepNestedStar(star))
+        assertEquals("star:i14", dispatchCaptureMakeThroughBound(Unit, star))
     }
 
 }
