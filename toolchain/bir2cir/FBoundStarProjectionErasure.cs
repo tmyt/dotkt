@@ -18,6 +18,7 @@ static class FBoundStarProjectionErasure
 {
     const string CarrierMark = "$star";
     internal const string SourceMemberKey = "existentialSourceMember";
+    internal const string InnerConstructorFactoryKey = "existentialInnerConstructorFactory";
 
     sealed class Owner
     {
@@ -71,7 +72,7 @@ static class FBoundStarProjectionErasure
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
-                    if (value == null || key == "name") continue;
+                    if (value == null || key == "name" || key == InnerConstructorFactoryKey) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
@@ -116,6 +117,14 @@ static class FBoundStarProjectionErasure
             var before = owners.Values.Count(o => o.Needed);
             MarkNeededAncestors(owners);
             foreach (var owner in owners.Values.Where(o => o.Needed).ToList())
+            {
+                // A star-typed outer receiver cannot be converted to one arbitrary invariant G<object> merely so an
+                // inner constructor can consume its hidden outer argument.  The existential outer instead exposes a
+                // factory whose result is the inner classifier's own existential view.  Keep that result carrier in
+                // the same reachability closure as ordinary owner-dependent member results.
+                foreach (var inner in owners.Values.Where(candidate =>
+                             Str(candidate.Def["semanticOwner"]) == owner.Name && IsInner(candidate.Def)))
+                    inner.Needed = true;
                 if (owner.Def["methods"] is JsonArray methods)
                     foreach (var method in methods.OfType<JsonObject>())
                     {
@@ -126,6 +135,7 @@ static class FBoundStarProjectionErasure
                                 if (TypeJson.Read(p["type"]) is TypeNode pt)
                                     MarkDependentResult(pt, owners);
                     }
+            }
             if (owners.Values.Count(o => o.Needed) == before) return;
         }
     }
@@ -364,6 +374,23 @@ static class FBoundStarProjectionErasure
                 declared.Add(BridgeMethod(owner, method, owners, refs, bridgeName,
                     new TypeNode.Fqn(declaringName), slotTypeParams: slot["typeParams"] as JsonArray));
             }
+
+            foreach (var inner in owners.Values.Where(candidate => candidate.Needed
+                         && Str(candidate.Def["semanticOwner"]) == owner.Name && IsInner(candidate.Def)))
+            {
+                if (inner.Def["ctors"] is not JsonArray constructors) continue;
+                var ordinal = 0;
+                foreach (var constructor in constructors.OfType<JsonObject>())
+                {
+                    var factory = InnerConstructorFactory(owner, inner, constructor, ordinal++, owners, refs);
+                    var key = MethodKey(factory.Slot);
+                    if (key == null || !seen.Add(key))
+                        throw new InvalidOperationException(
+                            $"duplicate existential inner-constructor factory for '{inner.Name}'");
+                    methods.Add(factory.Slot);
+                    declared.Add(factory.Bridge);
+                }
+            }
         }
 
         var erased = new JsonObject
@@ -595,6 +622,186 @@ static class FBoundStarProjectionErasure
         return bridge;
     }
 
+    static (JsonObject Slot, JsonObject Bridge) InnerConstructorFactory(
+        Owner outer, Owner inner, JsonObject constructor, int ordinal,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        var capturedCount = InnerCapturedCount(inner.Def);
+        if (capturedCount <= 0 || capturedCount > inner.Arity)
+            throw new InvalidOperationException(
+                $"inner type '{inner.Name}' has an invalid captured generic frame");
+        var constructorParams = constructor["params"] as JsonArray ?? new JsonArray();
+        if (constructorParams.Count == 0
+            || TypeJson.Read((constructorParams[0] as JsonObject)?["type"]) is not TypeNode.Fqn hiddenOuter
+            || hiddenOuter.Name != outer.Name)
+            throw new InvalidOperationException(
+                $"inner constructor '{inner.Name}/{constructorParams.Count}' has no exact '{outer.Name}' outer slot");
+
+        var name = InnerConstructorFactoryName(inner, ordinal);
+        var physicalParams = new JsonArray();
+        var exactParams = new List<TypeNode>();
+        foreach (var (parameter, index) in constructorParams.OfType<JsonObject>().Skip(1).Select((p, i) => (p, i)))
+        {
+            var source = RequiredParamType(parameter, index + 1, inner.Name + ".<init>");
+            var exact = ReframeInnerFactoryType(source, capturedCount);
+            var physical = EraseOwnerTv(exact, owners, refs);
+            var copy = parameter.DeepClone() as JsonObject;
+            copy["type"] = TypeJson.Write(physical);
+            if (!physical.Equals(exact)) copy["kotlinType"] ??= TypeNode.ToJson(exact);
+            physicalParams.Add(copy);
+            exactParams.Add(exact);
+        }
+
+        var ownTypeParams = InnerFactoryTypeParams(inner, capturedCount, owners, refs);
+        var result = new TypeNode.Fqn(inner.ErasedName);
+        var carrierParams = new JsonArray(constructorParams.OfType<JsonObject>().Skip(1)
+            .Select(parameter => TypeJson.Write(RequiredParamType(parameter, 0, inner.Name + ".<init>"))).ToArray());
+        var slot = new JsonObject
+        {
+            ["name"] = name,
+            ["static"] = false,
+            ["override"] = false,
+            ["virtual"] = true,
+            ["abstract"] = true,
+            ["objectOverride"] = false,
+            ["vis"] = "public",
+            ["params"] = physicalParams.DeepClone(),
+            ["ret"] = TypeJson.Write(result),
+            ["body"] = new JsonArray(),
+            ["attrs"] = new JsonArray(),
+            ["generated"] = true,
+            [InnerConstructorFactoryKey] = new JsonObject
+            {
+                ["inner"] = inner.Name,
+                ["params"] = carrierParams,
+            },
+        };
+        if (ownTypeParams.Count > 0) slot["typeParams"] = ownTypeParams.DeepClone();
+
+        var args = new JsonArray { new JsonObject { ["k"] = "this" } };
+        foreach (var (parameter, index) in physicalParams.OfType<JsonObject>().Select((p, i) => (p, i)))
+        {
+            var parameterName = Str(parameter["name"]) ?? "p" + index;
+            JsonNode value = new JsonObject { ["k"] = "local", ["name"] = parameterName };
+            var physical = TypeJson.Read(parameter["type"]);
+            var exact = exactParams[index];
+            if (!exact.Equals(physical))
+                value = new JsonObject
+                {
+                    ["k"] = "cast",
+                    ["type"] = TypeJson.Write(exact),
+                    ["e"] = value,
+                    ["_exactBridgeCast"] = true,
+                };
+            args.Add(value);
+        }
+
+        var constructedArgs = Enumerable.Range(0, capturedCount)
+            .Select(i => (TypeNode)new TypeNode.Tv("type", i))
+            .Concat(Enumerable.Range(0, inner.Arity - capturedCount)
+                .Select(i => (TypeNode)new TypeNode.Tv("method", i))).ToArray();
+        var exactSignature = new JsonArray(constructorParams.OfType<JsonObject>()
+            .Select(parameter => TypeJson.Write(ReframeInnerFactoryType(
+                RequiredParamType(parameter, 0, inner.Name + ".<init>"), capturedCount))).ToArray());
+        var construction = new JsonObject
+        {
+            ["k"] = "new",
+            ["type"] = TypeJson.Write(new TypeNode.Fqn(inner.Name, constructedArgs)),
+            ["argTypes"] = exactSignature.DeepClone(),
+            ["memberSignature"] = exactSignature,
+            ["args"] = args,
+        };
+        var implementation = new JsonObject
+        {
+            ["owner"] = TypeJson.Write(new TypeNode.Fqn(outer.ErasedName)),
+            ["member"] = name,
+            ["arity"] = ownTypeParams.Count,
+            ["params"] = new JsonArray(physicalParams.OfType<JsonObject>()
+                .Select(parameter => parameter["type"]?.DeepClone()).ToArray()),
+            ["ret"] = TypeJson.Write(result),
+        };
+        if (ownTypeParams.Count > 0) implementation["typeParams"] = ownTypeParams.DeepClone();
+        var bridge = new JsonObject
+        {
+            ["name"] = name,
+            ["static"] = false,
+            ["override"] = false,
+            ["virtual"] = true,
+            ["abstract"] = false,
+            ["objectOverride"] = false,
+            ["vis"] = "private",
+            ["params"] = physicalParams,
+            ["ret"] = TypeJson.Write(result),
+            ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = construction }),
+            ["attrs"] = new JsonArray(),
+            ["generated"] = true,
+            ["clrInterfaceImpls"] = new JsonArray(implementation),
+        };
+        if (ownTypeParams.Count > 0) bridge["typeParams"] = ownTypeParams;
+        return (slot, bridge);
+    }
+
+    static JsonArray InnerFactoryTypeParams(Owner inner, int capturedCount,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        var result = new JsonArray();
+        if (inner.Def["typeParams"] is not JsonArray typeParams) return result;
+        foreach (var parameter in typeParams.Skip(capturedCount))
+        {
+            if (parameter is not JsonObject declaration)
+            {
+                result.Add(parameter?.DeepClone());
+                continue;
+            }
+            var copy = declaration.DeepClone() as JsonObject;
+            if (copy["constraints"] is JsonArray constraints)
+            {
+                var rewritten = new JsonArray();
+                foreach (var constraint in constraints)
+                    if (TypeJson.Read(constraint) is TypeNode type)
+                    {
+                        var physical = EraseOwnerTv(
+                            ReframeInnerFactoryType(type, capturedCount), owners, refs);
+                        if (!IsObjectish(physical)) rewritten.Add(TypeJson.Write(physical));
+                    }
+                copy["constraints"] = rewritten;
+            }
+            result.Add(copy);
+        }
+        return result;
+    }
+
+    static TypeNode ReframeInnerFactoryType(TypeNode type, int capturedCount) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv when tv.I >= capturedCount
+            => new TypeNode.Tv("method", tv.I - capturedCount),
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
+            args.Select(arg => ReframeInnerFactoryType(arg, capturedCount)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(ReframeInnerFactoryType(n.Of, capturedCount)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(ReframeInnerFactoryType(o.Of, capturedCount)),
+        TypeNode.Array a => new TypeNode.Array(ReframeInnerFactoryType(a.Elem, capturedCount)),
+        TypeNode.ByRef b => new TypeNode.ByRef(ReframeInnerFactoryType(b.Of, capturedCount)),
+        TypeNode.Ptr p => new TypeNode.Ptr(ReframeInnerFactoryType(p.Of, capturedCount)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+            ReframeInnerFactoryType(fn.Ret, capturedCount),
+            fn.Params.Select(parameter => ReframeInnerFactoryType(parameter, capturedCount)).ToArray(),
+            fn.Recv == null ? null : ReframeInnerFactoryType(fn.Recv, capturedCount), fn.Clr,
+            fn.Ctx?.Select(context => ReframeInnerFactoryType(context, capturedCount)).ToArray()),
+        _ => type,
+    };
+
+    static string InnerConstructorFactoryName(Owner inner, int ordinal)
+    {
+        var token = new string(inner.Name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+        return "$star$new$" + token + "$" + ordinal;
+    }
+
+    static int InnerCapturedCount(JsonObject inner) =>
+        inner["outerTypeParamCount"] is JsonValue value && value.TryGetValue<int>(out var count) ? count : 0;
+
+    static bool IsInner(JsonObject type) =>
+        type["mods"] is JsonObject mods && Bool(mods["inner"]);
+
     static string ExistentialSlotIdentity(JsonObject declaration, string semanticCarrierOwner) =>
         Str(declaration[DeclarationIdentityBinding.Key]) is string declarationId
             ? DeclarationIdentityBinding.PhysicalOnlyId(
@@ -781,6 +988,7 @@ static class FBoundStarProjectionErasure
         switch (node)
         {
             case JsonObject obj:
+                BindStarInnerConstruction(obj, owners, defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
                 // A concrete `as G<X>`, however, remains the compiler's documented eager CLR cast semantics and its
@@ -796,12 +1004,16 @@ static class FBoundStarProjectionErasure
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
-                    if (value == null || key == "name") continue;
+                    if (value == null || key == "name" || key == InnerConstructorFactoryKey) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
                         Rewrite(value, owners, defs, refs);
                 }
+                // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
+                // result is the inner existential carrier, so bind the immediately-following member only after that
+                // receiver seam is visible.  The initial pass above is still required for ordinary star receivers.
+                BindInheritedStarMember(obj, owners, defs, refs);
                 if (Str(obj["k"]) == "callInstance"
                     && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn erasedOwner
                     && (owners.Values.Any(o => o.ErasedName == erasedOwner.Name)
@@ -820,6 +1032,125 @@ static class FBoundStarProjectionErasure
                 }
                 break;
         }
+    }
+
+    static void BindStarInnerConstruction(JsonObject construction,
+        IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs)
+    {
+        if (Str(construction["k"]) != "new"
+            || TypeJson.Read(construction["type"]) is not TypeNode.Fqn innerType
+            || construction["args"] is not JsonArray arguments || arguments.Count == 0
+            || (construction["memberSignature"] as JsonArray
+                ?? construction["argTypes"] as JsonArray) is not JsonArray signature || signature.Count == 0
+            || TypeJson.Read(signature[0]) is not TypeNode.Fqn selectedOuter
+            || ExpressionType(arguments[0]) is not TypeNode suppliedOuter
+            || !ContainsStar(suppliedOuter)) return;
+
+        // memberSignature remains declaration-relative for an inner classifier's own type parameters (for example
+        // GenericEntry<E>'s value slot is type#1), while argTypes is the frontend-selected constructor descriptor
+        // closed at this use (String).  The hidden outer slot was normalized by kotc #555 and is exact in both.
+        var selectedDescriptor = construction["argTypes"] as JsonArray ?? signature;
+        var authoredSignature = selectedDescriptor.Select(TypeJson.Read).ToArray();
+        if (authoredSignature.Any(type => type == null)) return;
+        string physicalOwner = null;
+        string physicalMethod = null;
+        TypeNode[] physicalParameters = null;
+        TypeNode physicalResult = null;
+        var methodArity = 0;
+
+        if (defs.TryGetValue(innerType.Name, out var innerDef) && IsInner(innerDef)
+            && Str(innerDef["semanticOwner"]) == selectedOuter.Name
+            && owners.TryGetValue(selectedOuter.Name, out var outer)
+            && owners.TryGetValue(innerType.Name, out var inner)
+            && outer.Needed && inner.Needed)
+        {
+            var capturedCount = InnerCapturedCount(innerDef);
+            var constructors = (innerDef["ctors"] as JsonArray)?.OfType<JsonObject>().ToList()
+                ?? new List<JsonObject>();
+            var matches = constructors.Select((ctor, ordinal) => (ctor, ordinal))
+                .Where(candidate => ConstructorDescribesUse(
+                    candidate.ctor, innerType.Args ?? Array.Empty<TypeNode>(), authoredSignature))
+                .ToList();
+            if (matches.Count != 1) return;
+            var factory = InnerConstructorFactory(outer, inner, matches[0].ctor,
+                matches[0].ordinal, owners, refs).Slot;
+            physicalOwner = outer.ErasedName;
+            physicalMethod = Str(factory["name"]);
+            physicalParameters = (factory["params"] as JsonArray)?.OfType<JsonObject>()
+                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
+            physicalResult = TypeJson.Read(factory["ret"]);
+            methodArity = (factory["typeParams"] as JsonArray)?.Count ?? 0;
+        }
+        else
+        {
+            var semanticOuter = refs.TryInnerSemanticOwner(innerType.Name, out var referencedOuter)
+                ? referencedOuter : selectedOuter.Name;
+            if (!refs.TryExistentialInnerConstructorFactory(
+                     semanticOuter, innerType, authoredSignature.Skip(1).ToArray(),
+                     out physicalOwner, out physicalMethod, out physicalParameters, out physicalResult,
+                     out methodArity))
+                return;
+        }
+
+        var replacement = new JsonObject
+        {
+            ["k"] = "callInstance",
+            ["ownerType"] = TypeJson.Write(new TypeNode.Fqn(physicalOwner)),
+            ["virtual"] = true,
+            ["recv"] = arguments[0]?.DeepClone(),
+            ["method"] = physicalMethod,
+            ["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray()),
+            ["ret"] = TypeJson.Write(physicalResult),
+            ["args"] = new JsonArray(arguments.Skip(1).Select(argument => argument?.DeepClone()).ToArray()),
+        };
+        if (methodArity > 0)
+        {
+            var capturedCount = innerType.Args?.Length - methodArity ?? 0;
+            if (capturedCount < 0) return;
+            replacement["typeArgs"] = new JsonArray(innerType.Args.Skip(capturedCount)
+                .Select(TypeJson.Write).ToArray());
+        }
+        if (construction["pos"] != null) replacement["pos"] = construction["pos"]?.DeepClone();
+        construction.Clear();
+        foreach (var pair in replacement) construction[pair.Key] = pair.Value?.DeepClone();
+    }
+
+    static bool ConstructorDescribesUse(JsonObject constructor, IReadOnlyList<TypeNode> innerArguments,
+        IReadOnlyList<TypeNode> authoredSignature)
+    {
+        var parameters = (constructor["params"] as JsonArray)?.OfType<JsonObject>()
+            .Select(parameter => TypeJson.Read(parameter["type"])).ToArray() ?? Array.Empty<TypeNode>();
+        if (parameters.Length != authoredSignature.Count) return false;
+        return parameters.Select((parameter, index) =>
+                CloseInnerConstructorType(parameter, innerArguments).Equals(authoredSignature[index]))
+            .All(equal => equal);
+    }
+
+    internal static TypeNode CloseInnerConstructorType(TypeNode type, IReadOnlyList<TypeNode> innerArguments) =>
+        type switch
+        {
+            TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < innerArguments.Count
+                => innerArguments[tv.I],
+            TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
+                args.Select(argument => CloseInnerConstructorType(argument, innerArguments)).ToArray()),
+            TypeNode.Nullable n => new TypeNode.Nullable(CloseInnerConstructorType(n.Of, innerArguments)),
+            TypeNode.Oblivious o => new TypeNode.Oblivious(CloseInnerConstructorType(o.Of, innerArguments)),
+            TypeNode.Array a => new TypeNode.Array(CloseInnerConstructorType(a.Elem, innerArguments)),
+            TypeNode.ByRef b => new TypeNode.ByRef(CloseInnerConstructorType(b.Of, innerArguments)),
+            TypeNode.Ptr p => new TypeNode.Ptr(CloseInnerConstructorType(p.Of, innerArguments)),
+            TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+                CloseInnerConstructorType(fn.Ret, innerArguments),
+                fn.Params.Select(parameter => CloseInnerConstructorType(parameter, innerArguments)).ToArray(),
+                fn.Recv == null ? null : CloseInnerConstructorType(fn.Recv, innerArguments), fn.Clr,
+                fn.Ctx?.Select(context => CloseInnerConstructorType(context, innerArguments)).ToArray()),
+            _ => type,
+        };
+
+    static TypeNode ExpressionType(JsonNode expression)
+    {
+        if (expression is not JsonObject obj) return null;
+        return TypeJson.Read(obj["sty"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["type"]);
     }
 
     // A star smart-cast keeps the receiver's most-derived Kotlin type (`ComparableRange<*>.isEmpty`) even when the
@@ -867,7 +1198,10 @@ static class FBoundStarProjectionErasure
             && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
             && castF.Name == f.Name
             && castArgs.Any(ContainsStarOrTypeVariable);
-        if (!starOwner && !erasedSmartCast) return;
+        var existentialReceiver = ExpressionType(call["recv"]) is TypeNode.Fqn receiverType
+            && (owners.Values.Any(owner => owner.ErasedName == receiverType.Name)
+                || refs.IsExistentialPhysicalOwner(receiverType.Name));
+        if (!starOwner && !erasedSmartCast && !existentialReceiver) return;
 
         var pc = (call["sig"] as JsonArray)?.Count
             ?? (call["argTypes"] as JsonArray)?.Count

@@ -112,6 +112,8 @@ import starprojection.collisionHost
 import starprojection.deliverStarContinuationFailure
 import starprojection.isConcreteStarKey
 import starprojection.ReferencedStarBase
+import starprojection.ReferencedInnerLeaf
+import starprojection.referencedInnerLeaf
 import suspendcompanion.CompanionSuspendApi
 import suspendnullable.NullableSuspendHolder
 import suspendnullable.invokeNullableSuspend
@@ -444,6 +446,12 @@ class GenericMetadataRoundtripTests {
 
         val collision: CollisionHost<*> = collisionHost()
         ClassicAssert.AreEqual("collision-safe", collision.value())
+
+        val inner: ReferencedInnerLeaf<*> = referencedInnerLeaf("cross")
+        ClassicAssert.AreEqual("cross:i7", inner.Entry(7).render())
+        ClassicAssert.AreEqual("cross:svalue", inner.Entry("value").render())
+        ClassicAssert.AreEqual("cross:ggeneric", inner.GenericEntry("generic").render())
+        ClassicAssert.AreEqual("cross:default", inner.DefaultEntry().render())
 
         val continuation = CrossModuleStarContinuationProbe()
         deliverStarContinuationFailure(continuation, System.Exception("cross-module-inline")) {}

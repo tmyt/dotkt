@@ -48,6 +48,7 @@ static class RoundtripMetadata
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
     const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
     const string AKSourceMethod = Ns + "KotlinSourceMethodAttribute";
+    const string AKInnerConstructorFactory = Ns + "KotlinInnerConstructorFactoryAttribute";
     const string AKDeclarationIdentity = Ns + "KotlinDeclarationIdentityAttribute";
     const string AKConstructorAdapter = Ns + "KotlinConstructorAdapterAttribute";
     internal const string AKPropertyStorage = Ns + "KotlinPropertyStorageAttribute";
@@ -252,6 +253,15 @@ static class RoundtripMetadata
 
     static void StampMethod(JsonObject mo)
     {
+        // A generated method on an existential interface is the physical construction seam for an inner class whose
+        // hidden outer slot cannot be named invariantly from G<*>.  The payload identifies the selected Kotlin inner
+        // classifier and constructor descriptor; downstream bir2cir consumes it, while dll2klib omits the generated
+        // MethodDef instead of projecting a fictitious Kotlin function.
+        if (mo[FBoundStarProjectionErasure.InnerConstructorFactoryKey] is JsonObject innerFactory)
+        {
+            Append(mo, JsonCarrierAttr(AKInnerConstructorFactory, innerFactory));
+            mo.Remove(FBoundStarProjectionErasure.InnerConstructorFactoryKey);
+        }
         // [KotlinDeclarationIdentity(version, bytes)] (#395) — the exact frontend declaration fingerprint and source spelling.
         // bir2cir may have assigned a different MethodDef name after CLR erasure; dll2klib restores `name`, while a
         // consuming bir2cir binds `id` directly to this physical method without structural overload resolution.
@@ -759,6 +769,7 @@ static class RoundtripMetadata
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association
             AttrClass(AKSourceMethod, Ctor(Param("System.String"), Param(ByteArrayType()))), // renamed CLR method -> Kotlin source identity
+            AttrClass(AKInnerConstructorFactory, Ctor(Param("System.String"), Param(ByteArrayType()))), // existential outer -> exact inner constructor
             AttrClass(AKDeclarationIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #395 — frontend callable identity + source name
             AttrClass(AKConstructorAdapter, Ctor(Param("System.String"), Param(ByteArrayType()))), // alias ctor declaration -> terminal physical delegation
             AttrClass(AKPropertyStorage, Ctor(Param("System.String"), Param(ByteArrayType()))), // C# 14 property getter -> Kotlin-only storage facts

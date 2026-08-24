@@ -96,6 +96,34 @@ private class CollisionHostImpl : CollisionHost<String> {
 
 fun collisionHost(): CollisionHost<*> = CollisionHostImpl()
 
+// A derived star receiver cannot be cast to one arbitrary invariant ReferencedInnerBase<ReferencedOuter<object>>
+// merely to satisfy an inner constructor's hidden outer slot. The producer publishes the existential factory ABI;
+// the consumer below sees only this emitted assembly/KLIB and selects the exact overload from trusted metadata.
+open class ReferencedInnerBase<T>(private val outer: T) {
+    inner class Entry {
+        private val value: String
+        constructor(value: Int) { this.value = "i$value" }
+        constructor(value: String) { this.value = "s$value" }
+        fun render(): String = outer.toString() + ":" + value
+    }
+    inner class GenericEntry<E>(private val value: E) {
+        fun render(): String = outer.toString() + ":g" + value.toString()
+    }
+    inner class DefaultEntry(private val value: String = "default") {
+        fun render(): String = outer.toString() + ":" + value
+    }
+}
+
+class ReferencedOuter<E>(private val label: String) {
+    override fun toString(): String = label
+}
+
+class ReferencedInnerLeaf<E>(outer: ReferencedOuter<E>) :
+    ReferencedInnerBase<ReferencedOuter<E>>(outer)
+
+fun referencedInnerLeaf(label: String): ReferencedInnerLeaf<String> =
+    ReferencedInnerLeaf(ReferencedOuter<String>(label))
+
 // The inline payload is consumed from the producer DLL. Its star-projected receiver must bind to the exact
 // existential slot again after the body is spliced into a downstream module.
 inline fun deliverStarContinuationFailure(
