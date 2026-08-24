@@ -55,6 +55,7 @@ static class FBoundStarProjectionErasure
         // Binding above consumes the complete Kotlin constraint graph. Only after every local call and generated
         // seam has been selected may the physical inner TypeDefs drop constraints that cannot name a star outer.
         WeakenOwnerDependentInnerConstraints(owners.Values.Where(owner => owner.Needed));
+        SynchronizeGeneratedOwnerConstraintPrefixes(defs);
         return owners.Values.Where(o => o.Needed)
             .ToDictionary(o => o.Name, o => o.ErasedName, StringComparer.Ordinal);
     }
@@ -949,6 +950,69 @@ static class FBoundStarProjectionErasure
             if (recorded.Count > 0)
                 KotlinSupertypesRecord.Merge(inner.Def, new JsonObject { ["bounds"] = recorded });
         }
+    }
+
+    // TypeOwnershipLowering prepares a compiler-generated nested type by copying its semantic owner's complete
+    // generic frame into the synthetic prefix. That happens while every constraint is still Kotlin-complete. If the
+    // existential inner ABI subsequently removes an owner constraint that cannot be expressed physically, leaving
+    // the old row on a closure/SAM prefix creates an impossible construction: the owner's now-unconstrained `E` is
+    // supplied to the nested copy that still requires `E : T`, and the CLR loader correctly rejects it.
+    //
+    // Synchronize only compiler-generated owner-prefix slots, from the already-selected physical owner declaration.
+    // The removed facts travel too: constrained receiver binding inside the generated body must cast a call through
+    // that erased bound just as it does in the owner body. The marker remains bir2cir-internal and is dropped before
+    // CIR. User declarations and a generated type's own parameters are untouched.
+    static void SynchronizeGeneratedOwnerConstraintPrefixes(IReadOnlyDictionary<string, JsonObject> defs)
+    {
+        var visiting = new HashSet<string>(StringComparer.Ordinal);
+        var completed = new HashSet<string>(StringComparer.Ordinal);
+
+        void Synchronize(string name, JsonObject generated)
+        {
+            if (!visiting.Add(name))
+                throw new InvalidOperationException($"cyclic semantic owner chain at generated type '{name}'");
+            try
+            {
+                if (Str(generated["semanticOwner"]) is not string ownerName
+                    || !defs.TryGetValue(ownerName, out var owner)) return;
+                if (Bool(owner["generated"]) && !completed.Contains(ownerName))
+                    Synchronize(ownerName, owner);
+                if (generated["outerTypeParamCount"] is not JsonValue countValue
+                    || !countValue.TryGetValue<int>(out var capturedCount) || capturedCount <= 0
+                    || generated["typeParams"] is not JsonArray generatedParams
+                    || owner["typeParams"] is not JsonArray ownerParams
+                    || capturedCount > generatedParams.Count || capturedCount > ownerParams.Count)
+                    return;
+
+                for (var index = 0; index < capturedCount; index++)
+                {
+                    if (ownerParams[index] is not JsonObject source) continue;
+                    var target = generatedParams[index] as JsonObject;
+                    if (target == null)
+                    {
+                        if (Str(generatedParams[index]) is not string parameterName) continue;
+                        target = new JsonObject { ["name"] = parameterName };
+                        generatedParams[index] = target;
+                    }
+                    if (source["constraints"] is JsonArray constraints)
+                        target["constraints"] = constraints.DeepClone();
+                    else
+                        target.Remove("constraints");
+                    if (source[ErasedInnerConstraintKey] is JsonArray removed)
+                        target[ErasedInnerConstraintKey] = removed.DeepClone();
+                    else
+                        target.Remove(ErasedInnerConstraintKey);
+                }
+            }
+            finally
+            {
+                visiting.Remove(name);
+                completed.Add(name);
+            }
+        }
+
+        foreach (var (name, definition) in defs)
+            if (Bool(definition["generated"])) Synchronize(name, definition);
     }
 
     static HashSet<int> OwnerDependentInnerParameters(Owner inner, int capturedCount)

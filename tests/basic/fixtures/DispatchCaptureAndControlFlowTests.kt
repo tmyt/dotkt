@@ -126,6 +126,26 @@ open class DispatchCaptureConstrainedInnerOuter<T>(private val label: String) {
     }
 }
 class DispatchCaptureConstrainedInnerLeaf<T>(label: String) : DispatchCaptureConstrainedInnerOuter<T>(label)
+interface DispatchCaptureLambdaMarker {
+    fun marked(): String
+}
+class DispatchCaptureLambdaValue(private val value: String) : DispatchCaptureLambdaMarker {
+    override fun marked(): String = value
+}
+class DispatchCaptureConstrainedLambdaOuter<T : DispatchCaptureLambdaMarker>(private val label: String) {
+    inner class Token<E : T>(private val value: E?) {
+        private val renderBlock: () -> String = {
+            label + ":" + (value?.marked() ?: "null")
+        }
+
+        fun render(): String = renderBlock()
+    }
+}
+fun dispatchCaptureConstrainedLambdaDirect(): String =
+    DispatchCaptureConstrainedLambdaOuter<DispatchCaptureLambdaMarker>("direct")
+        .Token<DispatchCaptureLambdaValue>(DispatchCaptureLambdaValue("value")).render()
+fun dispatchCaptureConstrainedLambdaStar(value: DispatchCaptureConstrainedLambdaOuter<*>): String =
+    value.Token<Nothing>(null).render()
 fun dispatchCaptureConstrainedInner(value: DispatchCaptureConstrainedInnerOuter<*>): String =
     value.Token<Nothing>(null).render()
 fun dispatchCaptureConstrainedPair(value: DispatchCaptureConstrainedInnerOuter<*>): String =
@@ -270,6 +290,10 @@ class NestedAndLocalClassTests {
         val constrainedDerived: DispatchCaptureConstrainedInnerLeaf<*> =
             DispatchCaptureConstrainedInnerLeaf<Int>("derived-bound")
         assertEquals("derived-bound:null", dispatchCaptureConstrainedDerived(constrainedDerived))
+        assertEquals("direct:value", dispatchCaptureConstrainedLambdaDirect())
+        val constrainedLambda: DispatchCaptureConstrainedLambdaOuter<*> =
+            DispatchCaptureConstrainedLambdaOuter<DispatchCaptureLambdaMarker>("star-lambda")
+        assertEquals("star-lambda:null", dispatchCaptureConstrainedLambdaStar(constrainedLambda))
     }
 
 }

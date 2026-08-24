@@ -438,10 +438,7 @@ static class ConstrainedTypeParameterReceiverBinding
         TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams, out bool erased)
     {
         erased = false;
-        var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
-        if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor)
-            return null;
-        var matches = ConstraintDeclarations(descriptor)
+        var matches = ConstraintDeclarations(tv, typeParams, methodParams)
             .Where(candidate => candidate.Constraint.Name == ownerName).ToList();
         if (matches.Count != 1) return null;
         erased = matches[0].Erased;
@@ -456,10 +453,7 @@ static class ConstrainedTypeParameterReceiverBinding
         ReferenceMetadataIndex refs, out bool erased)
     {
         erased = false;
-        var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
-        if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor)
-            return null;
-        var matches = ConstraintDeclarations(descriptor).Where(candidate =>
+        var matches = ConstraintDeclarations(tv, typeParams, methodParams).Where(candidate =>
         {
             if (candidate.Constraint.Name == ownerName) return true;
             return refs.TryResolveClrOwner(candidate.Constraint.Name, out var physical, out _)
@@ -473,22 +467,59 @@ static class ConstrainedTypeParameterReceiverBinding
     static bool ConstraintDispatchWasErased(
         TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams)
     {
-        var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
-        return source != null && tv.I >= 0 && tv.I < source.Count
-            && source[tv.I] is JsonObject descriptor
-            && descriptor[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is JsonArray erased
-            && erased.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
-                .Any(constraint => constraint.Name == ownerName);
+        var matches = ConstraintDeclarations(tv, typeParams, methodParams)
+            .Where(candidate => candidate.Constraint.Name == ownerName).ToList();
+        return matches.Count == 1 && matches[0].Erased;
     }
 
-    static IEnumerable<(TypeNode.Fqn Constraint, bool Erased)> ConstraintDeclarations(JsonObject descriptor)
+    // Constraint graphs may pass through another type variable (`E : T`, `T : Marker`). A physical bound removed
+    // from an existential inner frame can therefore be the first edge rather than the final FQN. Preserve that route
+    // provenance while walking the declaration-owned graph: any removed edge makes the selected FQN unprovable from
+    // the CLR GenericParam table and requires an explicit conversion. Cycles and ambiguous duplicate routes yield no
+    // unique selection at the callers, never a guessed dispatch.
+    static IEnumerable<(TypeNode.Fqn Constraint, bool Erased)> ConstraintDeclarations(
+        TypeNode.Tv start, JsonArray typeParams, JsonArray methodParams)
     {
-        if (descriptor["constraints"] is JsonArray retained)
-            foreach (var constraint in retained.Select(TypeJson.Read).OfType<TypeNode.Fqn>())
-                yield return (constraint, false);
-        if (descriptor[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is JsonArray erased)
-            foreach (var constraint in erased.Select(TypeJson.Read).OfType<TypeNode.Fqn>())
-                yield return (constraint, true);
+        var result = new List<(TypeNode.Fqn Constraint, bool Erased)>();
+        var path = new HashSet<(string Scope, int Index)>();
+
+        void Walk(TypeNode.Tv tv, bool routeErased)
+        {
+            var key = (tv.Scope, tv.I);
+            if (!path.Add(key)) return;
+            try
+            {
+                var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
+                if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor)
+                    return;
+
+                void Follow(JsonArray constraints, bool edgeErased)
+                {
+                    if (constraints == null) return;
+                    foreach (var constraint in constraints.Select(TypeJson.Read))
+                        switch (constraint)
+                        {
+                            case TypeNode.Fqn fqn:
+                                result.Add((fqn, routeErased || edgeErased));
+                                break;
+                            case TypeNode.Tv next:
+                                Walk(next, routeErased || edgeErased);
+                                break;
+                        }
+                }
+
+                Follow(descriptor["constraints"] as JsonArray, edgeErased: false);
+                Follow(descriptor[FBoundStarProjectionErasure.ErasedInnerConstraintKey] as JsonArray,
+                    edgeErased: true);
+            }
+            finally
+            {
+                path.Remove(key);
+            }
+        }
+
+        Walk(start, routeErased: false);
+        return result.Distinct();
     }
 
     static bool Bool(JsonNode node) =>

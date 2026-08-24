@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Lifted lambdas now share a constrained inner class's physical generic frame (#579).** When existential projection
+  removes an owner-dependent CLR constraint such as `E : T`, bir2cir synchronizes the copied owner prefix on
+  compiler-generated closures and follows transitive erased constraint edges when binding calls inside their bodies.
+  Concrete and star-outer construction therefore load and dispatch through the original Kotlin bound without leaving
+  an impossible constraint on the generated TypeDef.
+
 - **Transitive inner constraints now remain constructible through a star-projected outer (#575).** Existential inner
   factories keep indirect arguments such as `F : List<E>` in their own generic frame while fixing the directly
   owner-dependent `E : T` argument to Kotlin bottom. The physical inner type omits constraints that cannot name the
