@@ -14,7 +14,7 @@ using KType = DotKt.Klib.Metadata.Type;
 
 internal static class Program
 {
-    private const string ArityClashesEnvironment = "DOTKT_DLL2KLIB_ARITY_CLASHES";
+    internal const string ArityClashesEnvironment = "DOTKT_DLL2KLIB_ARITY_CLASHES";
     private const string DelegateCatalogEnvironment = "DOTKT_DLL2KLIB_DELEGATE_CATALOG";
     private const string CompanionCatalogEnvironment = "DOTKT_DLL2KLIB_COMPANION_CATALOG";
     private const string InnerCatalogEnvironment = "DOTKT_DLL2KLIB_INNER_CATALOG";
@@ -3096,7 +3096,7 @@ internal sealed class AssemblyScanner
     {
         if (IsCurrentAssembly(reader)) return currentSignatures;
         var arityNames = ArityNames.Create(
-            reader, Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES"));
+            reader, Environment.GetEnvironmentVariable(Program.ArityClashesEnvironment));
         return new SignatureDecoder(
             reader,
             names,
@@ -7318,7 +7318,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             throw new InvalidDataException(
                 $"delegate catalog contains an invalid TypeDef row for {entry.MetadataName}");
         var arityNames = ArityNames.Create(
-            md, Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES"));
+            md, Environment.GetEnvironmentVariable(Program.ArityClashesEnvironment));
         var decoder = new SignatureDecoder(
             md,
             _names,
