@@ -1,0 +1,27 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "currentConstrainedCallShape",
+      "params": [
+        { "name": "receiver", "type": { "t": "fqn", "name": "System.Object" } }
+      ],
+      "ret": { "t": "fqn", "name": "System.Int32" },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "constrainedCall",
+            "recv": { "k": "local", "name": "receiver" },
+            "recvType": { "t": "fqn", "name": "System.Object" },
+            "iface": { "t": "fqn", "name": "System.IComparable" },
+            "method": "CompareTo",
+            "sig": [{ "t": "fqn", "name": "System.Object" }],
+            "ret": { "t": "fqn", "name": "System.Int32" },
+            "args": [{ "k": "const", "type": { "t": "fqn", "name": "System.Object" }, "value": null }]
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -447,14 +447,12 @@ static partial class ClrMemberResolution
         if (node.ContainsKey("memberRef")) return;
         if (TypeJson.Read(node["iface"]) is not TypeNode.Fqn iface) return;
         if ((node["method"] as JsonValue)?.GetValue<string>() is not string name) return;
+        if (node["args"] is not JsonArray args)
+            throw new InvalidOperationException(
+                $"bir2cir: constrained call '{iface.Name}.{name}' requires an 'args' array");
         var open = ResolveOwnerType(iface);
         if (open == null) return;
-        // constrainedCall has two dialects: the historical compareTo form carries one `arg`, while the
-        // general form carries `args`.  Count the declaration operands from the carrier itself; treating every
-        // general-form call as parameterless silently left its member unresolved.
-        var argCount = node["args"] is JsonArray args
-            ? args.Count
-            : node["arg"] is JsonObject ? 1 : 0;
+        var argCount = args.Count;
         var methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
         var cands = open.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(m => m.Name == name && m.GetParameters().Length == argCount
