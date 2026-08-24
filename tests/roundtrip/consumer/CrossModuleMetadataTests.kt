@@ -171,6 +171,9 @@ private class LocalStarDerivedImpl : LocalStarDerived<String> {
     override fun inherited(): String = "referenced-base"
 }
 
+private fun <X, D : ReferencedInnerLeaf<*>> constructReferencedInnerThroughBound(ignored: X, value: D): String =
+    value.Entry(9).render()
+
 private fun requireNullableSuspendType(
     probe: InvariantTypeProbe<(suspend () -> Int)?>
 ): (suspend () -> Int)? = probe.value
@@ -449,6 +452,9 @@ class GenericMetadataRoundtripTests {
 
         val inner: ReferencedInnerLeaf<*> = referencedInnerLeaf("cross")
         ClassicAssert.AreEqual("cross:i7", inner.Entry(7).render())
+        val keptInner = inner.Entry(8)
+        ClassicAssert.AreEqual("cross:i8", keptInner.render())
+        ClassicAssert.AreEqual("cross:i9", constructReferencedInnerThroughBound(Unit, inner))
         ClassicAssert.AreEqual("cross:svalue", inner.Entry("value").render())
         ClassicAssert.AreEqual("cross:ggeneric", inner.GenericEntry("generic").render())
         ClassicAssert.AreEqual("cross:default", inner.DefaultEntry().render())

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -378,6 +379,11 @@ static class FBoundStarProjectionErasure
             foreach (var inner in owners.Values.Where(candidate => candidate.Needed
                          && Str(candidate.Def["semanticOwner"]) == owner.Name && IsInner(candidate.Def)))
             {
+                // A non-generic existential outer cannot state an inner method parameter constraint that mentions
+                // the captured outer frame (`E : T`).  Erasing that constraint produces a factory body which may
+                // instantiate an invalid closed CLR inner type.  Such a construction has no sound reified CLR
+                // spelling through Outer<*>; leave it out of the carrier and reject an actual use below.
+                if (HasOwnerDependentInnerConstraint(inner)) continue;
                 if (inner.Def["ctors"] is not JsonArray constructors) continue;
                 var ordinal = 0;
                 foreach (var constructor in constructors.OfType<JsonObject>())
@@ -735,6 +741,7 @@ static class FBoundStarProjectionErasure
             ["body"] = new JsonArray(new JsonObject { ["k"] = "return", ["value"] = construction }),
             ["attrs"] = new JsonArray(),
             ["generated"] = true,
+            [KotlinPropertyAccessors.PhysicalSlotBridgeKey] = true,
             ["clrInterfaceImpls"] = new JsonArray(implementation),
         };
         if (ownTypeParams.Count > 0) bridge["typeParams"] = ownTypeParams;
@@ -792,7 +799,9 @@ static class FBoundStarProjectionErasure
 
     static string InnerConstructorFactoryName(Owner inner, int ordinal)
     {
-        var token = new string(inner.Name.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
+        // The full UTF-8 classifier is encoded injectively. Replacing punctuation with '_' made distinct legal
+        // Kotlin names such as `A-B` and A_B compete for the same MethodDef name on one existential outer.
+        var token = Convert.ToHexString(Encoding.UTF8.GetBytes(inner.Name));
         return "$star$new$" + token + "$" + ordinal;
     }
 
@@ -982,13 +991,38 @@ static class FBoundStarProjectionErasure
         return false;
     }
 
+    static bool HasOwnerDependentInnerConstraint(Owner inner)
+    {
+        var capturedCount = InnerCapturedCount(inner.Def);
+        if (inner.Def["typeParams"] is not JsonArray parameters) return false;
+        foreach (var parameter in parameters.Skip(capturedCount).OfType<JsonObject>())
+            if (parameter["constraints"] is JsonArray constraints
+                && constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode type
+                    && ContainsOwnerTv(type)))
+                return true;
+        return false;
+    }
+
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
+        IReadOnlySet<int> existentialTypeParameters = null,
+        IReadOnlySet<int> existentialMethodParameters = null)
     {
         switch (node)
         {
             case JsonObject obj:
-                BindStarInnerConstruction(obj, owners, defs, refs);
+                var childTypeParameters = existentialTypeParameters;
+                var childMethodParameters = existentialMethodParameters;
+                if (Str(obj["kind"]) != null)
+                {
+                    childTypeParameters = ExistentialTypeParameters(obj["typeParams"] as JsonArray, "type");
+                    childMethodParameters = null;
+                }
+                else if (obj["body"] is JsonArray && obj["params"] is JsonArray)
+                    childMethodParameters = ExistentialTypeParameters(obj["typeParams"] as JsonArray, "method");
+
+                BindStarInnerConstruction(obj, owners, defs, refs,
+                    existentialTypeParameters, existentialMethodParameters);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
                 // A concrete `as G<X>`, however, remains the compiler's documented eager CLR cast semantics and its
@@ -1008,7 +1042,7 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
-                        Rewrite(value, owners, defs, refs);
+                        Rewrite(value, owners, defs, refs, childTypeParameters, childMethodParameters);
                 }
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
@@ -1019,6 +1053,8 @@ static class FBoundStarProjectionErasure
                     && (owners.Values.Any(o => o.ErasedName == erasedOwner.Name)
                         || refs.IsExistentialPhysicalOwner(erasedOwner.Name)))
                     obj["virtual"] = true;
+                if (obj["body"] is JsonArray && obj["params"] is JsonArray)
+                    NormalizeInnerFactoryLocals(obj, owners, defs, refs);
                 break;
             case JsonArray arr:
                 for (var i = 0; i < arr.Count; i++)
@@ -1028,7 +1064,8 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         arr[i] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
-                        Rewrite(value, owners, defs, refs);
+                        Rewrite(value, owners, defs, refs,
+                            existentialTypeParameters, existentialMethodParameters);
                 }
                 break;
         }
@@ -1036,7 +1073,9 @@ static class FBoundStarProjectionErasure
 
     static void BindStarInnerConstruction(JsonObject construction,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs,
+        IReadOnlySet<int> existentialTypeParameters,
+        IReadOnlySet<int> existentialMethodParameters)
     {
         if (Str(construction["k"]) != "new"
             || TypeJson.Read(construction["type"]) is not TypeNode.Fqn innerType
@@ -1045,34 +1084,50 @@ static class FBoundStarProjectionErasure
                 ?? construction["argTypes"] as JsonArray) is not JsonArray signature || signature.Count == 0
             || TypeJson.Read(signature[0]) is not TypeNode.Fqn selectedOuter
             || ExpressionType(arguments[0]) is not TypeNode suppliedOuter
-            || !ContainsStar(suppliedOuter)) return;
+            || !ContainsExistential(suppliedOuter,
+                existentialTypeParameters, existentialMethodParameters)) return;
 
         // memberSignature remains declaration-relative for an inner classifier's own type parameters (for example
         // GenericEntry<E>'s value slot is type#1), while argTypes is the frontend-selected constructor descriptor
         // closed at this use (String).  The hidden outer slot was normalized by kotc #555 and is exact in both.
+        var isLocalInner = defs.TryGetValue(innerType.Name, out var innerDef) && IsInner(innerDef);
+        var isReferencedInner = refs.TryInnerSemanticOwner(innerType.Name, out var referencedOuter);
+        // A regular constructor may simply take a star-projected value as its first source parameter. Only a local
+        // inner declaration or trusted referenced inner-owner fact proves that this slot is the hidden outer.
+        if (!isLocalInner && !isReferencedInner) return;
         var selectedDescriptor = construction["argTypes"] as JsonArray ?? signature;
         var authoredSignature = selectedDescriptor.Select(TypeJson.Read).ToArray();
-        if (authoredSignature.Any(type => type == null)) return;
+        if (authoredSignature.Any(type => type == null))
+            throw new InvalidOperationException(
+                $"bir2cir: star-projected inner construction '{innerType.Name}' has a malformed selected constructor descriptor");
         string physicalOwner = null;
         string physicalMethod = null;
         TypeNode[] physicalParameters = null;
         TypeNode physicalResult = null;
         var methodArity = 0;
 
-        if (defs.TryGetValue(innerType.Name, out var innerDef) && IsInner(innerDef)
-            && Str(innerDef["semanticOwner"]) == selectedOuter.Name
-            && owners.TryGetValue(selectedOuter.Name, out var outer)
-            && owners.TryGetValue(innerType.Name, out var inner)
-            && outer.Needed && inner.Needed)
+        if (isLocalInner)
         {
-            var capturedCount = InnerCapturedCount(innerDef);
+            if (Str(innerDef["semanticOwner"]) != selectedOuter.Name
+                || !owners.TryGetValue(selectedOuter.Name, out var outer)
+                || !owners.TryGetValue(innerType.Name, out var inner)
+                || !outer.Needed || !inner.Needed)
+                throw new InvalidOperationException(
+                    $"bir2cir: local inner construction '{innerType.Name}' has no exact existential owner '{selectedOuter.Name}<*>'");
+            if (HasOwnerDependentInnerConstraint(inner))
+                throw new NotSupportedException(
+                    $"bir2cir: inner construction '{inner.Name}' through star-projected outer '{outer.Name}<*>' " +
+                    "has an own type-parameter constraint depending on the captured outer frame; " +
+                    "the constraint has no sound reified CLR factory signature");
             var constructors = (innerDef["ctors"] as JsonArray)?.OfType<JsonObject>().ToList()
                 ?? new List<JsonObject>();
             var matches = constructors.Select((ctor, ordinal) => (ctor, ordinal))
                 .Where(candidate => ConstructorDescribesUse(
                     candidate.ctor, innerType.Args ?? Array.Empty<TypeNode>(), authoredSignature))
                 .ToList();
-            if (matches.Count != 1) return;
+            if (matches.Count != 1)
+                throw new InvalidOperationException(
+                    $"bir2cir: star-projected inner construction '{inner.Name}' resolves to {matches.Count} exact local constructors");
             var factory = InnerConstructorFactory(outer, inner, matches[0].ctor,
                 matches[0].ordinal, owners, refs).Slot;
             physicalOwner = outer.ErasedName;
@@ -1084,13 +1139,13 @@ static class FBoundStarProjectionErasure
         }
         else
         {
-            var semanticOuter = refs.TryInnerSemanticOwner(innerType.Name, out var referencedOuter)
-                ? referencedOuter : selectedOuter.Name;
             if (!refs.TryExistentialInnerConstructorFactory(
-                     semanticOuter, innerType, authoredSignature.Skip(1).ToArray(),
+                     referencedOuter, innerType, authoredSignature.Skip(1).ToArray(),
                      out physicalOwner, out physicalMethod, out physicalParameters, out physicalResult,
                      out methodArity))
-                return;
+                throw new InvalidOperationException(
+                    $"bir2cir: referenced inner construction '{innerType.Name}' through star-projected outer " +
+                    $"'{referencedOuter}<*>' has no exact existential constructor factory");
         }
 
         var replacement = new JsonObject
@@ -1107,13 +1162,107 @@ static class FBoundStarProjectionErasure
         if (methodArity > 0)
         {
             var capturedCount = innerType.Args?.Length - methodArity ?? 0;
-            if (capturedCount < 0) return;
+            if (capturedCount < 0)
+                throw new InvalidOperationException(
+                    $"bir2cir: existential inner factory '{physicalOwner}.{physicalMethod}' has an invalid generic frame");
             replacement["typeArgs"] = new JsonArray(innerType.Args.Skip(capturedCount)
                 .Select(TypeJson.Write).ToArray());
         }
         if (construction["pos"] != null) replacement["pos"] = construction["pos"]?.DeepClone();
         construction.Clear();
         foreach (var pair in replacement) construction[pair.Key] = pair.Value?.DeepClone();
+    }
+
+    static IReadOnlySet<int> ExistentialTypeParameters(JsonArray declarations, string scope)
+    {
+        if (declarations == null || declarations.Count == 0) return null;
+        var result = new HashSet<int>();
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var (declaration, index) in declarations.Select((parameter, i) => (parameter, i)))
+            {
+                if (declaration is not JsonObject parameter) continue;
+                if (result.Contains(index) || parameter["constraints"] is not JsonArray constraints) continue;
+                if (constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode type
+                        && ContainsExistential(type,
+                            scope == "type" ? result : null,
+                            scope == "method" ? result : null)))
+                    changed |= result.Add(index);
+            }
+        }
+        return result.Count == 0 ? null : result;
+    }
+
+    static bool ContainsExistential(TypeNode type,
+        IReadOnlySet<int> typeParameters, IReadOnlySet<int> methodParameters) => type switch
+    {
+        TypeNode.Star => true,
+        TypeNode.Tv { Scope: "type" } tv => typeParameters?.Contains(tv.I) == true,
+        TypeNode.Tv { Scope: "method" } tv => methodParameters?.Contains(tv.I) == true,
+        TypeNode.Fqn { Args: { } args } => args.Any(argument =>
+            ContainsExistential(argument, typeParameters, methodParameters)),
+        TypeNode.Nullable nullable => ContainsExistential(nullable.Of, typeParameters, methodParameters),
+        TypeNode.Oblivious oblivious => ContainsExistential(oblivious.Of, typeParameters, methodParameters),
+        TypeNode.Array array => ContainsExistential(array.Elem, typeParameters, methodParameters),
+        TypeNode.ByRef byRef => ContainsExistential(byRef.Of, typeParameters, methodParameters),
+        TypeNode.Ptr pointer => ContainsExistential(pointer.Of, typeParameters, methodParameters),
+        TypeNode.Fn function => ContainsExistential(function.Ret, typeParameters, methodParameters)
+            || function.Params.Any(parameter => ContainsExistential(parameter, typeParameters, methodParameters))
+            || function.Recv != null && ContainsExistential(function.Recv, typeParameters, methodParameters)
+            || function.Ctx?.Any(context => ContainsExistential(context, typeParameters, methodParameters)) == true,
+        _ => false,
+    };
+
+    static void NormalizeInnerFactoryLocals(JsonObject declaration,
+        IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs)
+    {
+        var locals = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
+        void Collect(JsonNode node)
+        {
+            switch (node)
+            {
+                case JsonObject obj:
+                    if (Str(obj["k"]) == "var" && Str(obj["name"]) is string name
+                        && ExpressionType(obj["init"]) is TypeNode.Fqn result
+                        && (owners.Values.Any(owner => owner.ErasedName == result.Name)
+                            || refs.IsExistentialPhysicalOwner(result.Name)))
+                        locals[name] = result;
+                    foreach (var value in obj.Select(pair => pair.Value))
+                        if (value != null) Collect(value);
+                    break;
+                case JsonArray array:
+                    foreach (var value in array)
+                        if (value != null) Collect(value);
+                    break;
+            }
+        }
+        Collect(declaration["body"]);
+        if (locals.Count == 0) return;
+
+        void Normalize(JsonNode node)
+        {
+            switch (node)
+            {
+                case JsonObject obj:
+                    if (Str(obj["name"]) is string name && locals.TryGetValue(name, out var carrier))
+                    {
+                        if (Str(obj["k"]) == "var") obj["type"] = TypeJson.Write(carrier);
+                        else if (Str(obj["k"]) == "local") obj["sty"] = TypeJson.Write(carrier);
+                    }
+                    foreach (var value in obj.Select(pair => pair.Value).ToList())
+                        if (value != null) Normalize(value);
+                    BindInheritedStarMember(obj, owners, defs, refs);
+                    break;
+                case JsonArray array:
+                    foreach (var value in array)
+                        if (value != null) Normalize(value);
+                    break;
+            }
+        }
+        Normalize(declaration["body"]);
     }
 
     static bool ConstructorDescribesUse(JsonObject constructor, IReadOnlyList<TypeNode> innerArguments,

@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Inherited inner construction through star-projected derived receivers now has a verifiable CLR path (#561).**
+  bir2cir exposes exact inner-constructor factories on the enclosing existential carrier, including overloaded,
+  generic, defaulted, stored-result, method-bound, and cross-module uses, without inventing an invariant closed outer
+  type. Inner generic constraints that depend on the unknown outer argument are rejected instead of producing an
+  invalid closed CLR type.
+
 - **Star-projected calls now bind their exact existential CLR slot (#556).** bir2cir follows the referenced existential
   interface's source-member metadata and preserved Kotlin parameter descriptors when an owner-dependent generic
   declaration and its physical slot have different CLR descriptors, including across overloads, explicit-name
