@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Star-outer inner construction now preserves owner-dependent constraints (#567).** Existential constructor
+  factories keep `E : T` on the real inner type while closing Kotlin's only universally constructible argument,
+  `Nothing`, to the captured outer bound inside the concrete bridge. Direct, derived, mixed-generic, stored-result,
+  and cross-module uses therefore produce verifiable CLR instantiations without guessing an outer argument.
+
 - **Packaging and version changes now select the packaged-SDK gate locally (#549).** The change-aware gate
   recognizes package inputs, guarded documentation, and both sides of renamed paths while keeping ordinary
   compiler-only FULL plans free of the release-package verification cost.

@@ -114,6 +114,8 @@ import starprojection.isConcreteStarKey
 import starprojection.ReferencedStarBase
 import starprojection.ReferencedInnerLeaf
 import starprojection.referencedInnerLeaf
+import starprojection.ReferencedConstrainedInnerLeaf
+import starprojection.referencedConstrainedInnerLeaf
 import suspendcompanion.CompanionSuspendApi
 import suspendnullable.NullableSuspendHolder
 import suspendnullable.invokeNullableSuspend
@@ -458,6 +460,23 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual("cross:svalue", inner.Entry("value").render())
         ClassicAssert.AreEqual("cross:ggeneric", inner.GenericEntry("generic").render())
         ClassicAssert.AreEqual("cross:default", inner.DefaultEntry().render())
+
+        val constrained: ReferencedConstrainedInnerLeaf<*> = referencedConstrainedInnerLeaf("cross-bound")
+        ClassicAssert.AreEqual("cross-bound:null", constrained.Token<Nothing>(null).render())
+        val keptConstrained = constrained.Token<Nothing>(null)
+        ClassicAssert.AreEqual("cross-bound:null", keptConstrained.render())
+        ClassicAssert.AreEqual(
+            "cross-bound:null:null",
+            constrained.PairToken<Nothing, Nothing>(null, null).render(),
+        )
+        ClassicAssert.AreEqual(
+            "cross-bound:null:mixed",
+            constrained.MixedToken<Nothing, String>(null, "mixed").render(),
+        )
+        ClassicAssert.AreEqual(
+            "cross-bound:null",
+            constrained.NestedToken<String, Nothing>(null).render(),
+        )
 
         val continuation = CrossModuleStarContinuationProbe()
         deliverStarContinuationFailure(continuation, System.Exception("cross-module-inline")) {}

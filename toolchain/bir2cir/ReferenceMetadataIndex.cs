@@ -2279,12 +2279,12 @@ sealed partial class ReferenceMetadataIndex
     public bool TryExistentialInnerConstructorFactory(string semanticOuter, TypeNode.Fqn innerType,
         IReadOnlyList<TypeNode> authoredParameters,
         out string physicalOwner, out string physicalMethod, out TypeNode[] physicalParameters,
-        out TypeNode physicalResult, out int methodArity)
+        out TypeNode physicalResult, out TypeNode[] physicalTypeArguments)
     {
         physicalOwner = physicalMethod = null;
         physicalParameters = null;
         physicalResult = null;
-        methodArity = 0;
+        physicalTypeArguments = null;
         if (semanticOuter == null || innerType == null || authoredParameters == null
             || !TryExistentialPhysicalOwner(semanticOuter, out var owner)
             || !TryMembersByBirOwner(owner, out var members)) return false;
@@ -2295,7 +2295,38 @@ sealed partial class ReferenceMetadataIndex
             return TryExactPhysicalTypeName(member.InnerConstructorOwner, arguments.Length, out var exact)
                 && exact == innerType.Name;
         }
-        var candidates = members.Where(member =>
+        bool TryFactoryTypeArguments(MemberBinding member, out TypeNode[] methodArguments)
+        {
+            methodArguments = null;
+            if (member.InnerConstructorTypeArguments is not { } pattern
+                || pattern.Length > arguments.Length) return false;
+            var capturedCount = arguments.Length - pattern.Length;
+            var result = new TypeNode[member.MethodArity];
+            var assigned = new bool[result.Length];
+            for (var i = 0; i < pattern.Length; i++)
+            {
+                var actual = arguments[capturedCount + i];
+                switch (pattern[i])
+                {
+                    case -1:
+                        if (actual is not TypeNode.Fqn { Args: null, Name: "kotlin.Nothing" }) return false;
+                        break;
+                    case var slot when slot >= 0 && slot < result.Length:
+                        if (assigned[slot] && result[slot] != actual) return false;
+                        result[slot] = actual;
+                        assigned[slot] = true;
+                        break;
+                    default:
+                        return false;
+                }
+            }
+            if (assigned.Any(value => !value)) return false;
+            methodArguments = result;
+            return true;
+        }
+
+        var candidates = new List<(MemberBinding Member, TypeNode[] TypeArguments)>();
+        foreach (var member in members.Where(member =>
                 !member.IsStatic
                 && member.InnerConstructorOwner != null && DescribesInnerClassifier(member)
                 && member.InnerConstructorParameters is { } semanticParameters
@@ -2305,15 +2336,16 @@ sealed partial class ReferenceMetadataIndex
                             FBoundStarProjectionErasure.CloseInnerConstructorType(parameter, arguments),
                             authoredParameters[index]))
                     .All(equal => equal)
-                && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
-            .ToList();
+                && member.ParamTypeNodes != null && member.ReturnTypeNode != null))
+            if (TryFactoryTypeArguments(member, out var typeArguments))
+                candidates.Add((member, typeArguments));
         if (candidates.Count != 1) return false;
-        var match = candidates[0];
+        var (match, selectedTypeArguments) = candidates[0];
         physicalOwner = owner;
         physicalMethod = match.Name;
         physicalParameters = match.ParamTypeNodes;
         physicalResult = match.ReturnTypeNode;
-        methodArity = match.MethodArity;
+        physicalTypeArguments = selectedTypeArguments;
         return true;
     }
 
@@ -4525,7 +4557,8 @@ sealed partial class ReferenceMetadataIndex
                                     ?? DeclarationTypeNode(p.ParameterType)).ToArray()
                                 : null,
                             innerConstructorFactory?.Inner,
-                            innerConstructorFactory?.Parameters));
+                            innerConstructorFactory?.Parameters,
+                            innerConstructorFactory?.TypeArguments));
                         // [KotlinInline] raw-BIR carrier (#71/#75 S1): decode the versioned carrier now (the codec is
                         // BirCarrier, shared) and key it owner|name|pc|ga so InlineSplice can splice this external inline
                         // fn's body at a cross-module call site. This carrier is compiler-internal ABI: an older or
@@ -5711,7 +5744,8 @@ sealed partial class ReferenceMetadataIndex
         return name;
     }
 
-    sealed record InnerConstructorFactoryPayloadInfo(string Inner, TypeNode[] Parameters);
+    sealed record InnerConstructorFactoryPayloadInfo(
+        string Inner, TypeNode[] Parameters, int[] TypeArguments);
 
     static InnerConstructorFactoryPayloadInfo KotlinInnerConstructorFactoryPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly)
@@ -5725,15 +5759,19 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException("expected exactly one trusted [KotlinInnerConstructorFactory]");
         var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinInnerConstructorFactoryAttr) as JsonObject
             ?? throw new InvalidDataException("malformed [KotlinInnerConstructorFactory] payload");
-        if (payload.Count != 2
+        if (payload.Count != 3
             || payload["inner"] is not JsonValue innerValue
             || !innerValue.TryGetValue<string>(out var inner) || string.IsNullOrEmpty(inner)
-            || payload["params"] is not JsonArray parameters)
+            || payload["params"] is not JsonArray parameters
+            || payload["typeArgs"] is not JsonArray typeArguments)
             throw new InvalidDataException("malformed [KotlinInnerConstructorFactory] payload");
         var parsed = parameters.Select(TypeJson.Read).ToArray();
-        if (parsed.Any(parameter => parameter == null))
+        var parsedTypeArguments = typeArguments.Select(argument =>
+            argument is JsonValue value && value.TryGetValue<int>(out var position) ? position : int.MinValue).ToArray();
+        if (parsed.Any(parameter => parameter == null)
+            || parsedTypeArguments.Any(position => position < -1))
             throw new InvalidDataException("malformed [KotlinInnerConstructorFactory] parameter descriptor");
-        return new InnerConstructorFactoryPayloadInfo(inner, parsed);
+        return new InnerConstructorFactoryPayloadInfo(inner, parsed, parsedTypeArguments);
     }
 
     static string KotlinExtensionCoreName(
@@ -6792,7 +6830,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);
