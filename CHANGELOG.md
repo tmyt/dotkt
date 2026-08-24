@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Constrained calls now have one current CIR operand shape (#552).** ilemit consumes only the `args` array emitted
+  by current bir2cir producers; the unsupported legacy single-`arg` fallback and its parallel resolver path are gone.
+  Malformed current `args` input is rejected by the ordinary BIR/CIR schema contract.
+
 - **Inherited inner construction through star-projected derived receivers now has a verifiable CLR path (#561).**
   bir2cir exposes exact inner-constructor factories on the enclosing existential carrier, including overloaded,
   generic, defaulted, stored-result, method-bound, and cross-module uses, without inventing an invariant closed outer

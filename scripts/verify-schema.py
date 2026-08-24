@@ -85,6 +85,7 @@ REQUIRED_OPERATION_REFS = {
 REQUIRED_NODE_FIELDS = {
     "conv": ("e", "to"),
     "new": ("type", "args"),
+    "constrainedCall": ("args",),
 }
 
 # The per-document table of fixed BCL members a Kotlin operation expands into (#370). Keyed by ROLE.
@@ -101,7 +102,7 @@ INTERFACE_SLOTS = "interfaceSlotRefs"
 WELL_KNOWN_ROLES = frozenset({
     "String.ConcatArray", "Type.FromHandle", "Object.GetType", "Object.ToString", "Object.GetHashCode",
     "Object.Equals", "Enum.GetValues", "Enum.Parse",
-    "Array.IndexOf", "Comparable.CompareTo",
+    "Array.IndexOf",
     "Object.ctor",
     "IndexOutOfRangeException.ctor",
     "NullableT.ctor", "SpanT.ctorPointer",
@@ -844,6 +845,8 @@ class V:
                     target = o["to"]
                     if not isinstance(target, dict) or not isinstance(target.get("t"), str):
                         self.err(f, path + "/to", "conv.to must be a structured Type node")
+                if k == "constrainedCall" and "args" in o and not isinstance(o["args"], list):
+                    self.err(f, path + "/args", "constrainedCall.args must be an array")
                 if k == "new":
                     # kotc BIR and same-unit CIR constructions retain the aligned use-site vector. External CIR
                     # constructions consume it into memberRef.parameterTypes, so requiring argTypes there would

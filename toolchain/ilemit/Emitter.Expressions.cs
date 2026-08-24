@@ -210,72 +210,41 @@ sealed partial class Emitter
             }
             case "constrainedCall":
             {
-                // General N-arg form: a CLR-aliased INTERFACE member invoked on a generic-parameter receiver
-                // (`destination.add(x)` where `destination: C` and `C : MutableCollection<R>`). A plain callvirt on the
-                // padded ICollection<object> owner mis-dispatches (the runtime List<R> implements ICollection<R>) and
-                // throws EntryPointNotFoundException; `constrained. !!C ; callvirt ICollection<R>::Add` dispatches on
-                // the receiver's actual type. Distinguished from the single-`arg` compareTo form by the `args` array.
-                if (e.TryGetProperty("args", out var ccArgs) && ccArgs.ValueKind == JsonValueKind.Array)
-                {
-                    var rt2 = MapType(e.GetProperty("recvType"));
-                    var if2 = MapType(e.GetProperty("iface"));
-                    // CIR already carries the exact constructed constraint owner. The only distinction here is token
-                    // mechanics: a type emitted in this module must be linked through its TypeBuilder registry, while
-                    // a referenced interface uses its reflected constructed MethodInfo. This does not re-select an
-                    // owner or overload; bir2cir has already made both decisions.
-                    var ifaceNode = e.GetProperty("iface");
-                    var ifaceSpec = ReadFqn(ifaceNode);
-                    var ccSig = SigNodes(e);
-                    var ccArity = CalledMethodArity(e);
-                    var mi20 = ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name)
-                        ? ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(), out _,
-                            ccSig, ccArity)
-                        : RequiredRef<MethodInfo>(e, "memberRef", "an external constrained-call interface slot");
-                    // The receiver being a type variable changes the DISPATCH, not the member: a generic member still
-                    // needs its `typeArgs` instantiation, exactly as the callInstance arm applies it. Without this a
-                    // `fun <R> pick(a: R, b: R): R` called on a `!!T` receiver emitted a callvirt on the generic
-                    // method DEFINITION.
-                    var mi2 = ApplyTypeArgs(mi20, e, out var ccRet, out var ccPs);
-                    EmitAddr(e.GetProperty("recv"));            // &C  (a managed pointer, required by `constrained.`)
-                    // The RECORDED parameter vector wins whenever there is one: `GetParameters()` on a MethodBuilder
-                    // whose declaring TypeBuilder is not baked yet is not answerable, and a constrained call whose
-                    // constraint is an EMITTED Kotlin interface resolves to exactly such a builder. Reflection is the
-                    // fallback, for a referenced owner that has no recorded vector.
-                    if (ccPs != null) EmitArgsTyped(ccArgs, ccPs, mi2); else EmitArgs(ccArgs, ParametersOf(mi2));
-                    _il.Emit(OpCodes.Constrained, rt2);
-                    EmitMethod(_il, OpCodes.Callvirt, mi2);
-                    // …and the declared call-RESULT view still has to be reconciled with the resolved return type —
-                    // the object-erasure unbox/castclass and the collapsed-variance collection seam are properties of
-                    // the CALL, not of how its receiver was addressed.
-                    return CoerceReturn(e, mi2 == mi20 ? ReturnTypeOf(mi2) : ccRet);
-                }
-                // `a.compareTo(b)` on a Comparable -> `constrained. recvType; callvirt IComparable::CompareTo`.
-                // The receiver must be a managed pointer; `constrained.` then dispatches for value/ref/generic T.
+                // An interface member invoked on a generic-parameter receiver: collection operations, CompareTo and
+                // property accessors all use this physical dispatch. A plain callvirt on a padded interface owner can
+                // mis-dispatch; `constrained. !!T; callvirt Interface::Member` dispatches on the receiver's actual
+                // type. `args` is the sole current CIR operand vector.
+                var ccArgs = e.GetProperty("args");
                 var recvType = MapType(e.GetProperty("recvType"));
-                var iface = MapType(e.GetProperty("iface"));
-                // IComparable`1<T> instantiated over an EMITTED value type (e.g. a SAM-shim's class type param bound to a
-                // Kotlin value class): re-anchoring CompareTo via TypeBuilder.GetMethod yields a metadata token the JIT
-                // REJECTS for that value-type instantiation (InvalidProgramException) -- the same family as the generic-
-                // enumerator fallback. Use the NON-generic System.IComparable.CompareTo(object) + box the arg; `constrained.`
-                // still dispatches to T's own impl (value types implement both IComparable and IComparable<T>).
-                //
-                // BUT when the receiver is a generic PARAMETER (`!!T` with `T : Comparable<T>` — gen3's maxOf2 / SortedPair),
-                // the instantiation `IComparable`1<!!T>` is over a type param, not an emitted value type: its token is a
-                // plain MethodSpec that is BOTH JIT-safe AND ilverify-clean (the exact `constrained. !!T; callvirt
-                // IComparable`1<!!T>::CompareTo(!0)` C# emits). The non-generic-IComparable workaround is UNVERIFIABLE there
-                // because the constraint only proves `IComparable<T>`, not the non-generic `IComparable` -> keep the generic
-                // path for a generic-parameter receiver; scope the workaround to genuinely-emitted value-type instantiations.
-                bool brokenGeneric = iface.IsGenericType && iface.GetGenericTypeDefinition() == Bcl("System.IComparable`1")
-                    && IsTbInstantiation(iface) && !recvType.IsGenericParameter;
-                var mi = brokenGeneric
-                    ? WellKnown<MethodInfo>("Comparable.CompareTo")
-                    : RequiredRef<MethodInfo>(e, "memberRef", "an external constrained CompareTo slot");
-                EmitAddr(e.GetProperty("recv"));
-                EmitExpr(e.GetProperty("arg"));
-                if (brokenGeneric) _il.Emit(OpCodes.Box, recvType);   // arg (type T) -> object for CompareTo(object)
+                // CIR already carries the exact constructed constraint owner. The only distinction here is token
+                // mechanics: a type emitted in this module must be linked through its TypeBuilder registry, while
+                // a referenced interface uses its reflected constructed MethodInfo. This does not re-select an
+                // owner or overload; bir2cir has already made both decisions.
+                var ifaceNode = e.GetProperty("iface");
+                var ifaceSpec = ReadFqn(ifaceNode);
+                var ccSig = SigNodes(e);
+                var ccArity = CalledMethodArity(e);
+                var mi0 = ifaceSpec != null && _types.ContainsKey(ifaceSpec.Name)
+                    ? ResolveMethod(ParseOwnerSlot(ifaceNode), e.GetProperty("method").GetString(), out _,
+                        ccSig, ccArity)
+                    : RequiredRef<MethodInfo>(e, "memberRef", "an external constrained-call interface slot");
+                // The receiver being a type variable changes the DISPATCH, not the member: a generic member still
+                // needs its `typeArgs` instantiation, exactly as the callInstance arm applies it. Without this a
+                // `fun <R> pick(a: R, b: R): R` called on a `!!T` receiver emitted a callvirt on the generic
+                // method DEFINITION.
+                var mi = ApplyTypeArgs(mi0, e, out var ccRet, out var ccPs);
+                EmitAddr(e.GetProperty("recv"));            // &C  (a managed pointer, required by `constrained.`)
+                // The RECORDED parameter vector wins whenever there is one: `GetParameters()` on a MethodBuilder
+                // whose declaring TypeBuilder is not baked yet is not answerable, and a constrained call whose
+                // constraint is an EMITTED Kotlin interface resolves to exactly such a builder. Reflection is the
+                // fallback, for a referenced owner that has no recorded vector.
+                if (ccPs != null) EmitArgsTyped(ccArgs, ccPs, mi); else EmitArgs(ccArgs, ParametersOf(mi));
                 _il.Emit(OpCodes.Constrained, recvType);
                 EmitMethod(_il, OpCodes.Callvirt, mi);
-                return ReturnTypeOf(mi);
+                // …and the declared call-RESULT view still has to be reconciled with the resolved return type —
+                // the object-erasure unbox/castclass and the collapsed-variance collection seam are properties of
+                // the CALL, not of how its receiver was addressed.
+                return CoerceReturn(e, mi == mi0 ? ReturnTypeOf(mi) : ccRet);
             }
             case "callStatic":
             {

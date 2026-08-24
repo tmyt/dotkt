@@ -38,6 +38,9 @@ head of `EmitAssembly`, ahead of any resolution.
 
 **Schema (`*.bir.json`).**
 
+- The current **`constrainedCall.args` operand vector** — `accept-constrained-call-args` carries the sole current
+  array shape, while `reject-constrained-call-args-not-array` corrupts that present-day field without preserving or
+  recognizing the retired single-`arg` dialect.
 - The §2.7 **nesting rule** (`plan_scope`) — `reject-dangling-bindref`, `reject-forward-bindref`,
   `reject-nested-plan-unknown-id`, `accept-nested-plans`.
 - The **CIR-only vocabulary that must not appear in kotc BIR** — `reject-cir-only-signature-carrier` (a

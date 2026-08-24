@@ -31,7 +31,6 @@ static partial class ClrMemberResolution
         ("Enum.GetValues",        "System.Enum",     "GetValues",         new[] { "System.Type" }),
         ("Enum.Parse",            "System.Enum",     "Parse",             new[] { "System.Type", "System.String" }),
         ("Array.IndexOf",         "System.Array",    "IndexOf",           new[] { "System.Array", "System.Object" }),
-        ("Comparable.CompareTo",  "System.IComparable", "CompareTo",      new[] { "System.Object" }),
     };
 
     // Constructors with a FIXED owner. `newobj` needs a token exactly as `call` does, so these are the same
