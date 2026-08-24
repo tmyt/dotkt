@@ -334,6 +334,13 @@ CLR delegates are exposed as Kotlin function types when their `Invoke`
 signature is known. This covers built-in `Func`/`Action`, delegates declared
 in the current assembly, and delegates declared in another resolved assembly.
 
+A recursive CLR delegate graph cannot be represented as a finite Kotlin
+function type. `dll2klib` therefore rejects self-recursive and mutually
+recursive `Invoke` signatures, including generic and cross-assembly cycles,
+instead of truncating the graph to an order-dependent Kotlin type. The active
+expansion path is keyed by module MVID and TypeDef row, so reopening a defining
+assembly through the resolved catalog cannot evade the cycle check.
+
 The batch coordinator builds a compact delegate catalog from the complete
 reference set. A worker consults the defining assembly metadata only when a
 referenced delegate requires it. Cross-assembly delegate definitions therefore
