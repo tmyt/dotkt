@@ -2038,7 +2038,12 @@ internal sealed class AssemblyScanner
             if (isKotlinRichEnum)
             {
                 AddProjectedInterfaces();
-                RestoreErasedSupertypes(handle, result, signatures, names);
+                RestoreErasedSupertypes(
+                    handle,
+                    result,
+                    signatures,
+                    names,
+                    capturedOuterTypeParameters.GetValueOrDefault());
             }
         }
         else if (isAnnotation)
@@ -2064,7 +2069,12 @@ internal sealed class AssemblyScanner
             AddProjectedInterfaces();
             if (result.Supertype.Count == 0)
                 result.Supertype.Add(new KType { ClassName = names.Class("kotlin.Any") });
-            RestoreErasedSupertypes(handle, result, signatures, names);
+            RestoreErasedSupertypes(
+                handle,
+                result,
+                signatures,
+                names,
+                capturedOuterTypeParameters.GetValueOrDefault());
         }
         if (isKotlinSealed)
         {
@@ -3374,7 +3384,14 @@ internal sealed class AssemblyScanner
     private static KType SubstituteTypeParameters(KType source, ImmutableArray<KType> arguments)
     {
         if (source.HasTypeParameter && source.TypeParameter >= 0 && source.TypeParameter < arguments.Length)
-            return arguments[source.TypeParameter].Clone();
+        {
+            var replacement = arguments[source.TypeParameter].Clone();
+            // Substitution replaces the classifier, not the use-site nullability. `T?` instantiated with a non-null
+            // owner argument remains nullable; returning the argument verbatim weakened restored method bounds such
+            // as `E : T?` to `E : String` on inherited interface declarations.
+            if (source.Nullable) replacement.Nullable = true;
+            return replacement;
+        }
         var copy = source.Clone();
         for (var i = 0; i < copy.Argument.Count; i++)
             if (copy.Argument[i].Type is { } argument)
@@ -3424,7 +3441,8 @@ internal sealed class AssemblyScanner
         if (document is null) return;
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 1
-            || !root.TryGetProperty("bounds", out var bounds) || bounds.ValueKind != JsonValueKind.Object)
+            || !root.TryGetProperty("bounds", out var bounds) || bounds.ValueKind != JsonValueKind.Object
+            || !bounds.EnumerateObject().Any())
             throw new InvalidDataException("malformed [KotlinTypeParameterBounds] payload");
 
         var seen = new HashSet<int>();
@@ -5643,7 +5661,7 @@ internal sealed class AssemblyScanner
     // unlike its supertype list — and restored as the complete source list. The CLR rows are an erased physical
     // approximation of that same list, so retaining any of them beside the carrier can publish a false stronger bound.
     private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
-        NameTable names)
+        NameTable names, int capturedOuterTypeParameterCount)
     {
         using var doc = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
         if (doc is null) return;
@@ -5654,7 +5672,7 @@ internal sealed class AssemblyScanner
             ifs.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var i in ifs.EnumerateArray())
                 if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
-        RestoreErasedBounds(doc, result, signatures);
+        RestoreErasedBounds(doc, result, signatures, capturedOuterTypeParameterCount);
         if (pre.Count == 0) return;
         for (var i = 0; i < result.Supertype.Count; i++)
         {
@@ -5669,10 +5687,10 @@ internal sealed class AssemblyScanner
     }
 
     private static void RestoreErasedBounds(System.Text.Json.JsonDocument doc, Class result,
-        SignatureDecoder signatures)
+        SignatureDecoder signatures, int capturedOuterTypeParameterCount)
     {
         if (!doc.RootElement.TryGetProperty("bounds", out var bounds)) return;
-        if (bounds.ValueKind != System.Text.Json.JsonValueKind.Object)
+        if (bounds.ValueKind != System.Text.Json.JsonValueKind.Object || !bounds.EnumerateObject().Any())
             throw new InvalidDataException("malformed [KotlinSupertypes] bounds");
         var seen = new HashSet<int>();
         foreach (var entry in bounds.EnumerateObject())
@@ -5680,19 +5698,23 @@ internal sealed class AssemblyScanner
             if (!int.TryParse(entry.Name, out var index) || index < 0 || !seen.Add(index)
                 || entry.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
                 throw new InvalidDataException("malformed [KotlinSupertypes] bound entry");
+            var restoredNodes = entry.Value.EnumerateArray().Select(TypeNode.Read).ToArray();
+            if (restoredNodes.Length == 0)
+                throw new InvalidDataException("empty [KotlinSupertypes] constraint list");
+            // A CLR nested TypeDef flattens its enclosing type parameters before its own. Kotlin metadata instead
+            // owns those declarations on the enclosing class and omits the captured prefix from the inner class.
+            // Their constraints therefore have no declaration to restore here; only the inner class's retained slots
+            // are indexed in `result.TypeParameter`.
+            if (index < capturedOuterTypeParameterCount) continue;
             var parameter = result.TypeParameter.FirstOrDefault(p => p.Id == index)
                 ?? throw new InvalidDataException("[KotlinSupertypes] bound index exceeds type generic arity");
-            var restored = new List<KType>();
-            foreach (var boundElement in entry.Value.EnumerateArray())
-                restored.Add(signatures.FromTypeNode(TypeNode.Read(boundElement)));
-            if (restored.Count == 0)
-                throw new InvalidDataException("empty [KotlinSupertypes] constraint list");
+            var restored = restoredNodes.Select(signatures.FromTypeNode).ToArray();
             // NullableGenericErasure records the parameter's WHOLE source constraint list when any constraint moves.
             // The CLR rows are only its physical approximation: merging leaves an erased `object` row beside a
             // restored `T?` and publishes the stronger, false Kotlin bound `E : Any, T?`. Replace the parameter as
             // one semantic unit so the KLIB surface is exactly the producer-authored list.
             parameter.UpperBound.Clear();
-            foreach (var bound in restored) parameter.UpperBound.Add(bound);
+            parameter.UpperBound.Add(restored);
         }
     }
 

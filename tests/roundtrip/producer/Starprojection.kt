@@ -154,6 +154,24 @@ fun referencedConstrainedInnerLeaf(label: String): ReferencedConstrainedInnerLea
 fun <T, E : T?> referencedNullableMethodBound(value: E): String =
     value?.toString() ?: "method-null"
 
+suspend fun <T, E : T?> referencedNullableSuspendMethodBound(value: E): Int =
+    if (value == null) 1 else 2
+
+open class ReferencedCapturedNullableOuter<T, U : T?> {
+    inner class Token<E>(private val value: E) {
+        fun render(): String = value.toString()
+    }
+}
+
+interface ReferencedNullableMethodContract<T> {
+    fun <E : T?> inheritedNullableMethodBound(value: E): String
+}
+
+class ReferencedNullableMethodImplementation<T> : ReferencedNullableMethodContract<T> {
+    override fun <E : T?> inheritedNullableMethodBound(value: E): String =
+        value?.toString() ?: "inherited-method-null"
+}
+
 // The inline payload is consumed from the producer DLL. Its star-projected receiver must bind to the exact
 // existential slot again after the body is spliced into a downstream module.
 inline fun deliverStarContinuationFailure(

@@ -3790,6 +3790,16 @@ static partial class SuspendColdLowering
             method[KotlinPropertyAccessors.SuspendSourceRetKey] = _m["ret"]?.DeepClone();
         }
 
+        // NullableGenericErasure records the complete source constraint list on the declaration that suspend
+        // lowering replaces. The public Task MethodDef is still that Kotlin declaration's metadata owner, so move
+        // the opaque pre-erasure fact with it; the generated cold entry and state machine are physical details and
+        // must not publish a second Kotlin declaration carrier.
+        void CarryMethodTypeParameterBounds(JsonObject method)
+        {
+            if (_m[NullableGenericErasure.MethodTypeParameterBoundsPre] is JsonNode bounds)
+                method[NullableGenericErasure.MethodTypeParameterBoundsPre] = bounds.DeepClone();
+        }
+
         // A resolved MethodImpl descriptor names the declaration signature, not merely its logical source method.
         // Transform it in lockstep with the suspend declaration: the cold slot appends the continuation and returns
         // object; the public bridge retains the member name and exposes Task/Task<R>. Owner and generic arity are
@@ -4060,6 +4070,7 @@ static partial class SuspendColdLowering
                     am["typeParams"] = _methodTypeParamDecls.DeepClone();
                 if (_generated) am["generated"] = true;
                 CarrySourceDeclaration(am);
+                CarryMethodTypeParameterBounds(am);
                 CarryOverrideMarkers(am);
                 CarryPhysicalSlotFacts(am, coldEntry: false);
                 if (TaskReturnNullableFlags() is JsonArray arnf) am["retNullableFlags"] = arnf;
@@ -4175,6 +4186,7 @@ static partial class SuspendColdLowering
                 method["typeParams"] = _methodTypeParamDecls.DeepClone();
             if (_generated) method["generated"] = true;
             CarrySourceDeclaration(method);
+            CarryMethodTypeParameterBounds(method);
             CarryOverrideMarkers(method);
             CarryPhysicalSlotFacts(method, coldEntry: false);
             // BUG 2 (nested return nullability): a `suspend fun f(): String?`'s bridge return `Task<string?>` needs the
