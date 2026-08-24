@@ -644,7 +644,10 @@ static class FBoundStarProjectionErasure
             if (parameters[i] is not JsonObject p) continue;
             var copy = p.DeepClone() as JsonObject;
             var pt = RequiredParamType(p, i, methodDisplay);
-            copy["type"] = TypeJson.Write(EraseOwnerTv(pt, owners, refs));
+            var erased = EraseOwnerTv(pt, owners, refs);
+            if (TypeNode.ToJson(erased) != TypeNode.ToJson(pt))
+                copy["kotlinType"] ??= TypeNode.ToJson(pt);
+            copy["type"] = TypeJson.Write(erased);
             result.Add(copy);
         }
         return result;

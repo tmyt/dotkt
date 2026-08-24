@@ -3,6 +3,9 @@
 // consumed as Kotlin. Without the carrier, StarOwner.key and isConcreteStarKey's parameter re-import as Any?.
 package starprojection
 
+import kotlin.coroutines.Continuation
+import kotlin.clr.ClrName
+
 interface StarElement
 interface StarKey<E : StarElement>
 
@@ -49,6 +52,33 @@ private class MixedValueBox : MixedBox<Int, String> {
 
 fun mixedBox(): MixedBox<*, String> = MixedValueBox()
 
+// A selected declaration's allocated physical name may equal a sibling's source name. Existential binding must follow
+// the declaration identity back to `chosen`, rather than treating the rewritten `other` spelling as source identity.
+interface ExplicitNameStarCollision<T> {
+    @Suppress("INAPPLICABLE_JVM_NAME")
+    @ClrName("other")
+    fun chosen(value: Int): T = other("chosen:$value")
+    fun other(value: String): T
+}
+
+private class ExplicitNameStarCollisionImpl : ExplicitNameStarCollision<String> {
+    override fun other(value: String): String = value
+}
+
+fun explicitNameStarCollision(): ExplicitNameStarCollision<String> = ExplicitNameStarCollisionImpl()
+
+interface OverloadedStarSink<T> {
+    fun accept(value: Int): T
+    fun accept(value: String): T
+}
+
+private class OverloadedStarSinkImpl : OverloadedStarSink<String> {
+    override fun accept(value: Int): String = "int:$value"
+    override fun accept(value: String): String = "string:$value"
+}
+
+fun overloadedStarSink(): OverloadedStarSink<*> = OverloadedStarSinkImpl()
+
 interface CollisionHost<T> {
     // Keep source classifiers adjacent to every word in the compiler's preferred physical suffix. Kotlin source
     // cannot spell '$' even in an escaped identifier, so the allocator's exact reserved spelling is unspeakable;
@@ -65,6 +95,17 @@ private class CollisionHostImpl : CollisionHost<String> {
 }
 
 fun collisionHost(): CollisionHost<*> = CollisionHostImpl()
+
+// The inline payload is consumed from the producer DLL. Its star-projected receiver must bind to the exact
+// existential slot again after the body is spliced into a downstream module.
+inline fun deliverStarContinuationFailure(
+    continuation: Continuation<*>,
+    failure: Throwable,
+    beforeResume: () -> Unit,
+) {
+    beforeResume()
+    continuation.resumeWith(Result.failure(failure))
+}
 
 interface ReferencedStarBase<T> {
     fun inherited(): T

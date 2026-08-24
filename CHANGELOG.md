@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Star-projected calls now bind their exact existential CLR slot (#556).** bir2cir follows the referenced existential
+  interface's source-member metadata and preserved Kotlin parameter descriptors when an owner-dependent generic
+  declaration and its physical slot have different CLR descriptors, including across overloads, explicit-name
+  collisions, and same-module or cross-module inline substitution of a concrete receiver.
+
 - **Suspend lambdas in member extensions now keep both captured receivers distinct (#563).** kotc preserves each
   generated capture descriptor in the lambda body so dispatch-receiver and extension-receiver reads map to their own
   state-machine fields instead of both resolving through `__outer`.
