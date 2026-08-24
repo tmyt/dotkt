@@ -6429,7 +6429,10 @@ internal sealed record SignatureDecoderSeeds(
     ImmutableDictionary<string, TypeDefinitionHandle> DelegateDefinitions,
     ImmutableHashSet<string> ValueTypeNames)
 {
-    private static readonly string[] PrimitiveValueTypeNames =
+    // The Kotlin primitives, plus `kotlin.Unit`: Unit is physically a CLR class, but it is also the name ECMA `void`
+    // decodes to, so it holds no NRT byte and takes no annotation. bir2cir's [NullableFlags] writer implements the
+    // same rule from the other side. This intentional DotKt deviation is recorded in docs/dotkt-semantics.md § 9.
+    private static readonly string[] BuiltInNoNrtTypeNames =
     [
         "kotlin.Unit", "kotlin.Boolean", "kotlin.Char", "kotlin.Byte", "kotlin.UByte",
         "kotlin.Short", "kotlin.UShort", "kotlin.Int", "kotlin.UInt",
@@ -6440,7 +6443,7 @@ internal sealed record SignatureDecoderSeeds(
     {
         var delegates = ImmutableDictionary.CreateBuilder<string, TypeDefinitionHandle>(StringComparer.Ordinal);
         var valueTypes = ImmutableHashSet.CreateBuilder<string>(StringComparer.Ordinal);
-        valueTypes.UnionWith(PrimitiveValueTypeNames);
+        valueTypes.UnionWith(BuiltInNoNrtTypeNames);
         foreach (var handle in md.TypeDefinitions)
         {
             var definition = md.GetTypeDefinition(handle);
@@ -6477,7 +6480,7 @@ internal sealed record SignatureDecoderSeeds(
         return (package, names);
     }
 
-    private static string DefinitionKotlinName(
+    internal static string DefinitionKotlinName(
         MetadataReader reader,
         ArityNames arityNames,
         TypeDefinitionHandle handle)
@@ -6656,10 +6659,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         SignatureDecoderSeeds.DefinitionKotlinPath(reader, _arityNames, handle);
 
     string DefinitionKotlinName(MetadataReader reader, TypeDefinitionHandle handle)
-    {
-        var (package, names) = DefinitionKotlinPath(reader, handle);
-        return string.Join(".", names.Prepend(package).Where(x => !string.IsNullOrEmpty(x)));
-    }
+        => SignatureDecoderSeeds.DefinitionKotlinName(reader, _arityNames, handle);
 
     int DefinitionKotlinClassName(MetadataReader reader, TypeDefinitionHandle handle)
     {
@@ -7359,16 +7359,4 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         return copy;
     }
 
-    private bool IsSystemType(EntityHandle handle, string ns, string name)
-    {
-        if (handle.IsNil) return false;
-        return handle.Kind switch
-        {
-            HandleKind.TypeReference => MatchReference(_md.GetTypeReference((TypeReferenceHandle)handle)),
-            HandleKind.TypeDefinition => MatchDefinition(_md.GetTypeDefinition((TypeDefinitionHandle)handle)),
-            _ => false,
-        };
-        bool MatchReference(TypeReference t) => _md.GetString(t.Namespace) == ns && _md.GetString(t.Name) == name;
-        bool MatchDefinition(TypeDefinition t) => _md.GetString(t.Namespace) == ns && _md.GetString(t.Name) == name;
-    }
 }
