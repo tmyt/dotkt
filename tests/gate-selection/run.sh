@@ -37,7 +37,7 @@ assert_suites unrelated-broad-change build-logic/unknown.input "$FULL_SUITES"
 assert_suites compiler-full toolchain/bir-common/TypeNode.cs "$FULL_SUITES"
 
 # Exercise the default Git collector, not only explicit path classification. With rename folding enabled,
-# Git reports only docs/moved.md and loses the removed packaging path, incorrectly selecting no gate.
+# Git reports only docs/moved.props and loses the removed packaging path, incorrectly selecting no gate.
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/scripts" "$work/packaging" "$work/docs"
