@@ -19,11 +19,12 @@ Next steps after this page:
 
 ## 2. Install
 
-DotKt ships as four NuGet packages:
+DotKt ships as five NuGet packages:
 
 | Package | What it is |
 |---|---|
 | `DotKt.Sdk` | the MSBuild project SDK — `<Project Sdk="DotKt.Sdk">` is all a project needs |
+| `DotKt.Sdk.Mpp` | the SDK for multiplatform projects using `expect`/`actual` in one CLR compilation |
 | `DotKt.Toolchain` | the compiler pipeline (build-time only; pulled in automatically by the Sdk) |
 | `DotKt.Stdlib` | the Kotlin standard library compiled for the CLR |
 | `DotKt.Templates` | `dotnet new` project templates |
