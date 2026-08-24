@@ -335,6 +335,21 @@ suspend fun suspendOperandSpreadConcatSlots(): Int {
     )
 }
 
+suspend fun suspendOperandArrayFactorySpread(): IntArray {
+    Task.Delay(1).await()
+    suspendOperandLog.add("AF")
+    return intArrayOf(2, 3)
+}
+
+suspend fun suspendOperandArrayFactorySpreadSlots(): Int {
+    val values = intArrayOf(
+        suspendOperandMark("P1", 1),
+        *suspendOperandArrayFactorySpread(),
+        suspendOperandMark("P3", 4),
+    )
+    return values[0] + values[1] + values[2] + values[3]
+}
+
 suspend fun suspendOperandInlineNetEnumerableSlots(): Int {
     val values = intArrayOf(1)
     val items = NetList<Int>()
@@ -636,6 +651,13 @@ class SuspendOperandOrderTests {
         suspendOperandLog.clear()
         assertEquals(6, blockOn { suspendOperandSpreadConcatSlots() })
         assertEquals("P1,P2,P3", order())
+    }
+
+    @TestAttribute
+    fun arrayFactorySpreadConcatOperandSlots() {
+        suspendOperandLog.clear()
+        assertEquals(10, blockOn { suspendOperandArrayFactorySpreadSlots() })
+        assertEquals("P1,AF,P3", order())
     }
 
     @TestAttribute

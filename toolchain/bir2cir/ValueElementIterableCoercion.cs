@@ -85,28 +85,32 @@ static class ValueElementIterableCoercion
             // Idempotence: never re-wrap an already-cast argument.
             if (args[i] is JsonObject ro && (ro["k"] as JsonValue)?.GetValue<string>() == "clrGenericStatic"
                 && (ro["method"] as JsonValue)?.GetValue<string>() == "Cast") continue;
-            args[i] = new JsonObject
-            {
-                ["k"] = "clrGenericStatic",
-                ["type"] = TypeJson.Fqn("System.Linq.Enumerable"),
-                ["method"] = "Cast",
-                // typeArgs is a document type slot (ilemit MapType-resolves it) -> a structured `{t:fqn}` node.
-                // `resolvedMemberParams` (W1-S1 #46) is the FIR-resolved member descriptor: `Enumerable.Cast<TResult>(this
-                // IEnumerable source)`'s DECLARED param is the non-generic `System.Collections.IEnumerable` — a
-                // structured TypeNode ilemit exact-matches.
-                ["typeArgs"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "object" } },
-                ["resolvedMemberParams"] = new JsonArray { new JsonObject { ["t"] = "fqn", ["name"] = "System.Collections.IEnumerable" } },
-                ["args"] = new JsonArray { args[i].DeepClone() },
-                // The wrap RETYPES the operand — `Cast<object>` turns a `List<Int>` into `IEnumerable<object>` — so
-                // the new node is stamped with what IT produces, not with what the value it wraps used to be (spec
-                // §2.7; the stamp is a claim about the value the node produces, and the two are unrelated invariant
-                // reified generics, so the wrapped node's stamp would be a LIE here rather than an imprecision).
-                // Unstamped, this node had no derivable static type at all — `bir-common/NodeType.cs` has no arm for
-                // a `clr*` kind — and an operand with no static type left of a suspension is a stage-0 refusal of
-                // source the frontend accepted (#304).
-                ["sty"] = TypeJson.Write(CastResultTn),
-            };
+            args[i] = CastElements(args[i], new TypeNode.Fqn("object"));
         }
+    }
+
+    // A fully stated Enumerable.Cast<T> physical adapter. Besides this pass's nullable-value Iterable seam, array
+    // factory spread normalization uses it to turn a differently reified source array into IEnumerable<TTarget>.
+    // The non-generic source slot is what makes value arrays legal: enumeration boxes each value before Cast<T>.
+    internal static JsonObject CastElements(JsonNode source, TypeNode target)
+    {
+        var result = target is TypeNode.Fqn { Args: null, Name: "object" }
+            ? CastResultTn
+            : new TypeNode.Fqn("System.Collections.Generic.IEnumerable", new[] { target });
+        return new JsonObject
+        {
+            ["k"] = "clrGenericStatic",
+            ["type"] = TypeJson.Fqn("System.Linq.Enumerable"),
+            ["method"] = "Cast",
+            // typeArgs is a document type slot (ilemit MapType-resolves it) -> a structured Type node.
+            // resolvedMemberParams is Enumerable.Cast<TResult>(IEnumerable)'s exact declared parameter.
+            ["typeArgs"] = new JsonArray { TypeJson.Write(target) },
+            ["resolvedMemberParams"] = new JsonArray { TypeJson.Fqn("System.Collections.IEnumerable") },
+            ["args"] = new JsonArray { source.DeepClone() },
+            // The adapter changes the operand's static type; stamp the exact value it produces so suspend planning
+            // and every later structural consumer see IEnumerable<TTarget>, not the input array.
+            ["sty"] = TypeJson.Write(result),
+        };
     }
 
     // Is this type argument a value type, per the struct-ness oracle, on the pre-lowering structured Type node? A

@@ -392,6 +392,40 @@ class ArrayTests {
     }
 
     @TestAttribute
+    fun arrayFactoriesPreserveSpreadArguments() {
+        val middle = intArrayOf(2, 3)
+        assertEquals("[2, 3]", intArrayOf(*middle).toList().toString())
+        assertEquals("[1, 2, 3, 4]", intArrayOf(1, *middle, 4).toList().toString())
+        val copied = intArrayOf(*middle)
+        copied[0] = 9
+        assertEquals(2, middle[0])
+
+        val words = arrayOf("b", "c")
+        assertEquals("[b, c]", arrayOf(*words).toList().toString())
+        assertEquals("[a, b, c, d]", arrayOf("a", *words, "d").toList().toString())
+        val widened = arrayOf<Any>(*words)
+        widened[0] = 42
+        assertEquals(42, widened[0])
+
+        val widenedMixed = arrayOf<Any>("a", *words)
+        widenedMixed[1] = 42
+        assertEquals(listOf("a", 42, "c"), widenedMixed.toList())
+
+        val numbers = arrayOf(1, 2)
+        val widenedValues = arrayOf<Any>(*numbers)
+        widenedValues[0] = "x"
+        assertEquals(listOf("x", 2), widenedValues.toList())
+        assertEquals(listOf(1, 2), numbers.toList())
+        assertEquals(listOf(1, "b", "c"), arrayOf<Any>(1, *words).toList())
+        assertEquals(listOf("a", 1, 2), arrayOf<Any>("a", *numbers).toList())
+
+        var spreadReads = 0
+        val withEffect = intArrayOf(1, *run { spreadReads = spreadReads + 1; middle }, 4)
+        assertEquals(1, spreadReads)
+        assertEquals("[1, 2, 3, 4]", withEffect.toList().toString())
+    }
+
+    @TestAttribute
     fun overlapSafe() {
         val a = arrayOf(1, 2, 3, 4, 5)
         a.copyInto(a, 1, 0, 4)                         // right shift (overlapping)
