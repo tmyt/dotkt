@@ -25,6 +25,11 @@ static class TypeOwnershipLowering
     static void NormalizeOwnerCapturePrefixes(IReadOnlyList<JsonNode> roots)
     {
         var permutations = new Dictionary<string, (int[] NewToOld, int[] OldToNew)>(StringComparer.Ordinal);
+        var types = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var root in roots.OfType<JsonObject>())
+            if (root["types"] is JsonArray declarations)
+                foreach (var type in declarations.OfType<JsonObject>())
+                    if (Str(type["name"]) is string name) types[name] = type;
 
         static TypeNode RemapTvs(TypeNode type, int[] oldToNew) => type switch
         {
@@ -107,6 +112,74 @@ static class TypeOwnershipLowering
                     permutations[name] = (newToOld, oldToNew);
             }
         }
+
+        // A lifted local/anonymous child copies its semantic owner's frame in the owner's original Kotlin order. If
+        // that owner is itself lifted, the direct permutation above moves the owner's captured segment to the CLR
+        // prefix, but the child's copied segment still has the old order. Propagate the owner's complete permutation
+        // through that prefix before any positional consumer sees it. This is declaration correspondence, not a name
+        // match: shadowed Kotlin type-parameter names remain legal and slot identity stays positional end-to-end.
+        var finalPermutations = new Dictionary<string, (int[] NewToOld, int[] OldToNew)>(StringComparer.Ordinal);
+        var visiting = new HashSet<string>(StringComparer.Ordinal);
+
+        (int[] NewToOld, int[] OldToNew) ResolvePermutation(string name, JsonObject type)
+        {
+            if (finalPermutations.TryGetValue(name, out var completed)) return completed;
+            if (!visiting.Add(name))
+                throw new InvalidOperationException($"cyclic semantic owner chain at Kotlin type '{name}'");
+            try
+            {
+                var count = (type["typeParams"] as JsonArray)?.Count ?? 0;
+                (int[] NewToOld, int[] OldToNew) direct = permutations.TryGetValue(name, out var own)
+                    ? own
+                    : (NewToOld: Enumerable.Range(0, count).ToArray(),
+                        OldToNew: Enumerable.Range(0, count).ToArray());
+                var newToOld = direct.NewToOld;
+
+                if (Str(type["semanticOwner"]) is string ownerName
+                    && types.TryGetValue(ownerName, out var owner)
+                    && type["outerTypeParamCount"] is JsonValue capturedValue
+                    && capturedValue.TryGetValue<int>(out var capturedCount) && capturedCount > 0)
+                {
+                    var ownerPermutation = ResolvePermutation(ownerName, owner);
+                    if (capturedCount != ownerPermutation.NewToOld.Length || capturedCount > count)
+                        throw new InvalidOperationException(
+                            $"Kotlin type '{name}' captures {capturedCount} owner slots but semantic owner " +
+                            $"'{ownerName}' declares {ownerPermutation.NewToOld.Length}");
+
+                    var prefixNewToOld = Enumerable.Range(0, count).ToArray();
+                    for (var index = 0; index < capturedCount; index++)
+                        prefixNewToOld[index] = ownerPermutation.NewToOld[index];
+                    if (prefixNewToOld.Where((old, current) => old != current).Any())
+                    {
+                        if (type["typeParams"] is not JsonArray currentParams)
+                            throw new InvalidOperationException(
+                                $"Kotlin type '{name}' captures a generic owner but has no type parameter declarations");
+                        type["typeParams"] = new JsonArray(prefixNewToOld
+                            .Select(index => currentParams[index]?.DeepClone()).ToArray());
+                        var prefixOldToNew = new int[count];
+                        for (var index = 0; index < count; index++)
+                            prefixOldToNew[prefixNewToOld[index]] = index;
+                        RewriteTypes(type, value => RemapTvs(value, prefixOldToNew),
+                            lexicalTypeVariablesOnly: true);
+                        newToOld = prefixNewToOld.Select(index => direct.NewToOld[index]).ToArray();
+                    }
+                }
+
+                var oldToNew = new int[newToOld.Length];
+                for (var index = 0; index < newToOld.Length; index++) oldToNew[newToOld[index]] = index;
+                return finalPermutations[name] = (newToOld, oldToNew);
+            }
+            finally
+            {
+                visiting.Remove(name);
+            }
+        }
+
+        foreach (var (name, type) in types) ResolvePermutation(name, type);
+        permutations.Clear();
+        foreach (var (name, permutation) in finalPermutations)
+            if (permutation.NewToOld.Where((old, current) => old != current).Any())
+                permutations[name] = permutation;
 
         if (permutations.Count == 0) return;
 

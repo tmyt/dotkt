@@ -115,6 +115,10 @@ BIR2CIR_INTERNAL_MEMBER_FACTS = (
     "pendingOverrideOwner", "pendingOverrideMember", "pendingOverrideReturn",
 )
 
+# Temporary facts used while bir2cir is reshaping generic declarations. They may be represented in the shared
+# in-memory codec, but neither serialized input BIR nor emitted CIR owns them.
+BIR2CIR_INTERNAL_TYPE_FACTS = ("erasedInnerConstraints",)
+
 
 def in_member_ref(path):
     """True when `path` points inside ANY member-reference carrier (derived, never a literal key name)."""
@@ -731,6 +735,12 @@ class V:
                     self.err(
                         f, path,
                         f"{internal} is a bir2cir pass-to-pass member-resolution fact and must not be serialized"
+                    )
+            for internal in BIR2CIR_INTERNAL_TYPE_FACTS:
+                if internal in o:
+                    self.err(
+                        f, path,
+                        f"{internal} is a bir2cir pass-to-pass generic-shape fact and must not be serialized"
                     )
             if o.get("kind") == "interface" and isinstance(o.get("methods"), list):
                 for i, method in enumerate(o["methods"]):

@@ -54,8 +54,9 @@ static class FBoundStarProjectionErasure
                 RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
         // Binding above consumes the complete Kotlin constraint graph. Only after every local call and generated
         // seam has been selected may the physical inner TypeDefs drop constraints that cannot name a star outer.
-        WeakenOwnerDependentInnerConstraints(owners.Values.Where(owner => owner.Needed));
-        SynchronizeGeneratedOwnerConstraintPrefixes(defs);
+        var weakenedOwnerSlots = WeakenOwnerDependentInnerConstraints(
+            owners.Values.Where(owner => owner.Needed));
+        SynchronizeGeneratedOwnerConstraintPrefixes(defs, weakenedOwnerSlots);
         return owners.Values.Where(o => o.Needed)
             .ToDictionary(o => o.Name, o => o.ErasedName, StringComparer.Ordinal);
     }
@@ -918,8 +919,9 @@ static class FBoundStarProjectionErasure
         return result;
     }
 
-    static void WeakenOwnerDependentInnerConstraints(IEnumerable<Owner> owners)
+    static IReadOnlyDictionary<string, HashSet<int>> WeakenOwnerDependentInnerConstraints(IEnumerable<Owner> owners)
     {
+        var result = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
         foreach (var inner in owners.Where(owner => IsInner(owner.Def)))
         {
             var capturedCount = InnerCapturedCount(inner.Def);
@@ -946,10 +948,14 @@ static class FBoundStarProjectionErasure
                 recorded[index.ToString()] = constraints.DeepClone();
                 parameter[ErasedInnerConstraintKey] = removed;
                 parameter["constraints"] = retained;
+                if (!result.TryGetValue(inner.Name, out var changed))
+                    result[inner.Name] = changed = new HashSet<int>();
+                changed.Add(index);
             }
             if (recorded.Count > 0)
                 KotlinSupertypesRecord.Merge(inner.Def, new JsonObject { ["bounds"] = recorded });
         }
+        return result;
     }
 
     // TypeOwnershipLowering prepares a compiler-generated nested type by copying its semantic owner's complete
@@ -962,35 +968,50 @@ static class FBoundStarProjectionErasure
     // The removed facts travel too: constrained receiver binding inside the generated body must cast a call through
     // that erased bound just as it does in the owner body. The marker remains bir2cir-internal and is dropped before
     // CIR. User declarations and a generated type's own parameters are untouched.
-    static void SynchronizeGeneratedOwnerConstraintPrefixes(IReadOnlyDictionary<string, JsonObject> defs)
+    static void SynchronizeGeneratedOwnerConstraintPrefixes(
+        IReadOnlyDictionary<string, JsonObject> defs,
+        IReadOnlyDictionary<string, HashSet<int>> weakenedOwnerSlots)
     {
         var visiting = new HashSet<string>(StringComparer.Ordinal);
-        var completed = new HashSet<string>(StringComparer.Ordinal);
+        var completed = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
 
-        void Synchronize(string name, JsonObject generated)
+        HashSet<int> Synchronize(string name, JsonObject generated)
         {
+            if (completed.TryGetValue(name, out var prior)) return prior;
             if (!visiting.Add(name))
                 throw new InvalidOperationException($"cyclic semantic owner chain at generated type '{name}'");
             try
             {
+                var changed = weakenedOwnerSlots.TryGetValue(name, out var directlyWeakened)
+                    ? new HashSet<int>(directlyWeakened)
+                    : new HashSet<int>();
                 if (Str(generated["semanticOwner"]) is not string ownerName
-                    || !defs.TryGetValue(ownerName, out var owner)) return;
-                if (Bool(owner["generated"]) && !completed.Contains(ownerName))
-                    Synchronize(ownerName, owner);
+                    || !defs.TryGetValue(ownerName, out var owner)) return completed[name] = changed;
+                var ownerChanges = Bool(owner["generated"])
+                    ? Synchronize(ownerName, owner)
+                    : weakenedOwnerSlots.TryGetValue(ownerName, out var weakened)
+                        ? weakened
+                        : new HashSet<int>();
+                if (ownerChanges.Count == 0) return completed[name] = changed;
                 if (generated["outerTypeParamCount"] is not JsonValue countValue
                     || !countValue.TryGetValue<int>(out var capturedCount) || capturedCount <= 0
                     || generated["typeParams"] is not JsonArray generatedParams
                     || owner["typeParams"] is not JsonArray ownerParams
-                    || capturedCount > generatedParams.Count || capturedCount > ownerParams.Count)
-                    return;
+                    || capturedCount > generatedParams.Count || capturedCount != ownerParams.Count)
+                    throw new InvalidOperationException(
+                        $"generated type '{name}' cannot synchronize its weakened semantic owner '{ownerName}' frame");
 
-                for (var index = 0; index < capturedCount; index++)
+                foreach (var index in ownerChanges.OrderBy(index => index))
                 {
-                    if (ownerParams[index] is not JsonObject source) continue;
+                    if (index < 0 || index >= capturedCount || ownerParams[index] is not JsonObject source)
+                        throw new InvalidOperationException(
+                            $"generated type '{name}' has no declaration for weakened owner slot {index}");
                     var target = generatedParams[index] as JsonObject;
                     if (target == null)
                     {
-                        if (Str(generatedParams[index]) is not string parameterName) continue;
+                        if (Str(generatedParams[index]) is not string parameterName)
+                            throw new InvalidOperationException(
+                                $"generated type '{name}' has a malformed owner slot {index}");
                         target = new JsonObject { ["name"] = parameterName };
                         generatedParams[index] = target;
                     }
@@ -1002,12 +1023,13 @@ static class FBoundStarProjectionErasure
                         target[ErasedInnerConstraintKey] = removed.DeepClone();
                     else
                         target.Remove(ErasedInnerConstraintKey);
+                    changed.Add(index);
                 }
+                return completed[name] = changed;
             }
             finally
             {
                 visiting.Remove(name);
-                completed.Add(name);
             }
         }
 
