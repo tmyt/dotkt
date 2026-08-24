@@ -591,10 +591,12 @@ static class MemberCallSubstitution
 
     // A `callStatic owner=null` to a @ClrCollectionFactory/@ClrArrayFactory top-level fun -> its construction node, or
     // null when the call is not a factory (or is a non-decomposable mapOf -> left as a plain call). The element/key/value
-    // TYPES come from the call's `typeArgs` (the canonical source: correct for empty factories, single-element overloads,
-    // and mapOf's [K,V]); the ELEMENTS from the vararg argument (kotc emits it as a `newArray`), the lone non-vararg
-    // element, or none. Mirrors the retired kotc factory recognition (BirEmitter.kt LIST/SET/MAP/ARRAY_FACTORY sites).
-    static JsonNode TryFactorySubst(JsonObject node, ReferenceMetadataIndex refs, string fn)
+    // Collection TYPES come from the call's `typeArgs` (the canonical source for empty/single-element factories and
+    // mapOf's [K,V]); an array factory additionally prefers its instantiated result stamp, which states the allocation
+    // element even when a spread input is narrower. ELEMENTS come from the vararg argument (a literal `newArray`, a
+    // forwarded array, or `spreadConcat`), the lone non-vararg element, or none. Mirrors the retired kotc factory
+    // recognition (BirEmitter.kt LIST/SET/MAP/ARRAY_FACTORY sites).
+    static JsonNode TryFactorySubst(JsonObject node, ReferenceMetadataIndex refs, string fn, SubstCtx ctx)
     {
         var args = node["args"] as JsonArray ?? new JsonArray();
         var typeArgs = node["typeArgs"] as JsonArray;
@@ -680,17 +682,41 @@ static class MemberCallSubstitution
             }
             // "vararg": arrayOf<T>(...) / intArrayOf(...) -> newArray. kotc emits the vararg as a single `newArray` arg
             // whenever it was written as a list of elements — INCLUDING an empty list, since an omitted vararg is
-            // filled with the empty array of the element type. The elem source, in precedence: typeArgs[0] (the
-            // generic arrayOf<T>) -> the vararg wrapper's own elem (a concrete primitive factory declares no type
+            // filled with the empty array of the element type. The elem source, in precedence: the instantiated result
+            // stamp -> typeArgs[0] -> the vararg wrapper's own elem (a concrete primitive factory declares no type
             // parameter, so `intArrayOf(1,2)` and `intArrayOf()` are both answered here) -> the ref.dll return-type
-            // hint, which is left for the shapes that reach this arm with NO wrapper at all: a lone spread
-            // (`intArrayOf(*xs)`, which kotc forwards as the existing array) and a mixed `spreadConcat`
-            // (`intArrayOf(1, *xs)`). NOTE that both of those shapes are mis-lowered today for a reason this lookup
-            // does not reach: with no wrapper there are no elements to copy, so the substitution builds an EMPTY array.
+            // hint. The result stamp comes first because earlier use-axis alignment may specialize a declaration type
+            // argument to its input while the factory result deliberately stays wider (`arrayOf<Any>(*strings)`).
             var wrapper = args.Count == 1 && args[0] is JsonObject w && (w["k"] as JsonValue)?.GetValue<string>() == "newArray" ? w : null;
-            var arrElem = TypeArgAt(typeArgs, 0) ?? wrapper?["elem"]
-                ?? (arrElemHint is string hint ? TypeJson.Fqn(hint) : null);
+            var arrElem = ArrayConstructionLowering.ArrayElementOf(TypeJson.Read(node["sty"])) is TypeNode resultElem
+                ? TypeJson.Write(resultElem)
+                : TypeArgAt(typeArgs, 0) ?? wrapper?["elem"]
+                    ?? (arrElemHint is string hint ? TypeJson.Fqn(hint) : null);
             if (arrElem == null) return null;                                   // no element source -> plain call
+            var canonicalElem = CanonicalArrayElem(TypeJson.Read(arrElem));
+            if (wrapper == null && args.Count == 1 && args[0] is JsonObject forwarded)
+            {
+                // A lone spread (`intArrayOf(*xs)`) and a mixed `spreadConcat` (`intArrayOf(1, *xs)`) are already the
+                // complete value supplied to the vararg parameter. Preserve one whose physical element is the
+                // factory's element. A lone covariantly widened reference spread is different: forwarding a
+                // `string[]` from `arrayOf<Any>(*strings)` would expose that reified array as `object[]`, and a later
+                // valid object store would throw ArrayTypeMismatchException. Materialize that case through the same
+                // target-element spreadConcat used by mixed spreads, which copies while preserving evaluation.
+                var sourceElem = ArrayConstructionLowering.ArrayElementOf(
+                    StaticType.Surface(forwarded, BirScope.FromVars(ctx.VarTypes)));
+                if (CanonicalArrayElem(sourceElem) is TypeNode canonicalSource
+                    && canonicalSource.Equals(canonicalElem))
+                    return forwarded.DeepClone();
+                return new JsonObject
+                {
+                    ["k"] = "spreadConcat",
+                    ["elem"] = TypeJson.Write(canonicalElem),
+                    ["parts"] = new JsonArray
+                    {
+                        new JsonObject { ["spread"] = true, ["e"] = forwarded.DeepClone() },
+                    },
+                };
+            }
             var arrElems = new JsonArray();
             foreach (var el in (wrapper?["elems"] as JsonArray) ?? new JsonArray()) arrElems.Add(el.DeepClone());
             // `arrayOf<Int?>(1, null)` names a NULLABLE value element in its own type argument, which is the same
@@ -698,7 +724,7 @@ static class MemberCallSubstitution
             return new JsonObject
             {
                 ["k"] = "newArray",
-                ["elem"] = TypeJson.Write(CanonicalArrayElem(TypeJson.Read(arrElem))),
+                ["elem"] = TypeJson.Write(canonicalElem),
                 ["elems"] = arrElems,
             };
         }
@@ -820,7 +846,7 @@ static class MemberCallSubstitution
             // null here and stays a plain call to the real factory body.
             var exactFactory = (node[DeclarationIdentityBinding.ReferencedFactoryKey] as JsonValue)?
                 .TryGetValue<bool>(out var selectedFactory) == true && selectedFactory;
-            if (TryFactorySubst(node, refs, fn) is JsonNode factoryNode) return factoryNode;
+            if (TryFactorySubst(node, refs, fn, ctx) is JsonNode factoryNode) return factoryNode;
             // A selected factory that cannot be represented as a construction (notably mapOf(pairVariable)) must call
             // that exact declaration's body. Keep its semantic node intact for the late identity binder instead of
             // falling through to any erased owner/name/signature resolver in this pass.

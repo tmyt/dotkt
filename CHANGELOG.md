@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Array factories now preserve spread arguments (#550).** Lone forwarded arrays and mixed `spreadConcat`
+  operands flow through `arrayOf` and primitive array factories without being replaced by an empty allocation,
+  including when a spread operand suspends or has side effects.
+
 - **Constrained calls now have one current CIR operand shape (#552).** ilemit consumes only the `args` array emitted
   by current bir2cir producers; the unsupported legacy single-`arg` fallback and its parallel resolver path are gone.
   Malformed current `args` input is rejected by the ordinary BIR/CIR schema contract.

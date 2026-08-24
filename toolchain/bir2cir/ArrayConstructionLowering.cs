@@ -140,7 +140,7 @@ static class ArrayConstructionLowering
     static TypeNode DeriveArrayElem(JsonNode arrayNode, BirScope scope) =>
         arrayNode is null ? null : ArrayElementOf(StaticType.Surface(arrayNode, scope));
 
-    static TypeNode ArrayElementOf(TypeNode t) => t switch
+    internal static TypeNode ArrayElementOf(TypeNode t) => t switch
     {
         TypeNode.Array a => a.Elem,
         TypeNode.Nullable n => ArrayElementOf(n.Of),
