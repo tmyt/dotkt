@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **DLL-to-KLIB signature decoding no longer rescans every local type for each namespace (#546).** dll2klib now
+  discovers immutable local delegate and value-type seeds once per assembly, shares them across package decoders, and
+  keeps only signature-derived value-type observations decoder-local. Large multi-namespace reference assemblies
+  therefore avoid the former namespace-count × TypeDef-count construction cost without changing delegate or NRT
+  projection.
+
 - **Lifted lambdas now share a constrained inner class's physical generic frame (#579).** When existential projection
   removes an owner-dependent CLR constraint such as `E : T`, bir2cir propagates owner-slot permutations through
   nested lifted types, synchronizes the weakened copied slots on compiler-generated closures and state machines, and

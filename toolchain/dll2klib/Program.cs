@@ -1414,6 +1414,7 @@ internal sealed class AssemblyScanner
     private readonly HashSet<TypeDefinitionHandle> _validatedCompanionOwners = new();
     private readonly Dictionary<string, TypeDefinitionHandle> _localDefinitions;
     private readonly CSharp14ExtensionCatalog _csharp14Extensions;
+    private readonly SignatureDecoderSeeds _signatureSeeds;
 
     public AssemblyScanner(
         PEReader pe,
@@ -1465,6 +1466,7 @@ internal sealed class AssemblyScanner
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
         _publicTypeCatalog = publicTypeCatalog;
+        _signatureSeeds = SignatureDecoderSeeds.Discover(md, arityNames);
         _csharp14Extensions = CSharp14ExtensionCatalog.Discover(pe, md, _attrs);
         var physicalTypes = md.TypeDefinitions
             .Select(handle => (
@@ -1616,6 +1618,7 @@ internal sealed class AssemblyScanner
             fragment.Package.PackageFqName = names.Package(package.Key);
             var signatures = new SignatureDecoder(
                 _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
+                _signatureSeeds,
                 SemanticCompanionTypeNames(names));
             var projectedBySemanticName = new Dictionary<string, Class>(StringComparer.Ordinal);
 
@@ -3089,16 +3092,21 @@ internal sealed class AssemblyScanner
     private SignatureDecoder DecoderFor(
         MetadataReader reader,
         NameTable names,
-        SignatureDecoder currentSignatures) => IsCurrentAssembly(reader)
-        ? currentSignatures
-        : new SignatureDecoder(
+        SignatureDecoder currentSignatures)
+    {
+        if (IsCurrentAssembly(reader)) return currentSignatures;
+        var arityNames = ArityNames.Create(
+            reader, Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES"));
+        return new SignatureDecoder(
             reader,
             names,
             new MetadataAttributes(reader),
-            ArityNames.Create(reader, Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES")),
+            arityNames,
             _delegateCatalog,
             _companionCatalog,
-            _innerCatalog);
+            _innerCatalog,
+            SignatureDecoderSeeds.Discover(reader, arityNames));
+    }
 
     private static GenericContext InheritedContext(
         MetadataReader reader,
@@ -6414,6 +6422,86 @@ internal sealed class RawSignatureTypeProvider : ISignatureTypeProvider<string, 
     }
 }
 
+// SignatureDecoder is package-local because every KLIB package owns a distinct NameTable and mutable observations
+// made while decoding that package. The facts discoverable solely from this assembly's TypeDef table are different:
+// they are immutable assembly input. Discover them once and give each decoder its own mutable value-type overlay.
+internal sealed record SignatureDecoderSeeds(
+    ImmutableDictionary<string, TypeDefinitionHandle> DelegateDefinitions,
+    ImmutableHashSet<string> ValueTypeNames)
+{
+    private static readonly string[] PrimitiveValueTypeNames =
+    [
+        "kotlin.Unit", "kotlin.Boolean", "kotlin.Char", "kotlin.Byte", "kotlin.UByte",
+        "kotlin.Short", "kotlin.UShort", "kotlin.Int", "kotlin.UInt",
+        "kotlin.Long", "kotlin.ULong", "kotlin.Float", "kotlin.Double",
+    ];
+
+    internal static SignatureDecoderSeeds Discover(MetadataReader md, ArityNames arityNames)
+    {
+        var delegates = ImmutableDictionary.CreateBuilder<string, TypeDefinitionHandle>(StringComparer.Ordinal);
+        var valueTypes = ImmutableHashSet.CreateBuilder<string>(StringComparer.Ordinal);
+        valueTypes.UnionWith(PrimitiveValueTypeNames);
+        foreach (var handle in md.TypeDefinitions)
+        {
+            var definition = md.GetTypeDefinition(handle);
+            if (IsSystemType(md, definition.BaseType, "System", "MulticastDelegate"))
+                delegates[DefinitionKotlinName(md, arityNames, handle)] = handle;
+            else if (IsSystemType(md, definition.BaseType, "System", "ValueType") ||
+                     IsSystemType(md, definition.BaseType, "System", "Enum"))
+                valueTypes.Add(arityNames.Full(
+                    md.GetString(definition.Namespace), md.GetString(definition.Name)));
+        }
+        return new SignatureDecoderSeeds(delegates.ToImmutable(), valueTypes.ToImmutable());
+    }
+
+    internal static (string Package, IReadOnlyList<string> Names) DefinitionKotlinPath(
+        MetadataReader reader,
+        ArityNames arityNames,
+        TypeDefinitionHandle handle)
+    {
+        var handles = new Stack<TypeDefinitionHandle>();
+        for (var current = handle; !current.IsNil;)
+        {
+            handles.Push(current);
+            current = reader.GetTypeDefinition(current).GetDeclaringType();
+        }
+        var package = reader.GetString(reader.GetTypeDefinition(handles.Peek()).Namespace);
+        var rawScope = package;
+        var names = new List<string>();
+        foreach (var current in handles)
+        {
+            var metadataName = reader.GetString(reader.GetTypeDefinition(current).Name);
+            names.Add(arityNames.Simple(rawScope, metadataName));
+            rawScope = string.IsNullOrEmpty(rawScope) ? metadataName : rawScope + "." + metadataName;
+        }
+        return (package, names);
+    }
+
+    private static string DefinitionKotlinName(
+        MetadataReader reader,
+        ArityNames arityNames,
+        TypeDefinitionHandle handle)
+    {
+        var (package, names) = DefinitionKotlinPath(reader, arityNames, handle);
+        return string.Join(".", names.Prepend(package).Where(x => !string.IsNullOrEmpty(x)));
+    }
+
+    private static bool IsSystemType(MetadataReader md, EntityHandle handle, string ns, string name)
+    {
+        if (handle.IsNil) return false;
+        return handle.Kind switch
+        {
+            HandleKind.TypeReference => MatchReference(md.GetTypeReference((TypeReferenceHandle)handle)),
+            HandleKind.TypeDefinition => MatchDefinition(md.GetTypeDefinition((TypeDefinitionHandle)handle)),
+            _ => false,
+        };
+        bool MatchReference(TypeReference type) =>
+            md.GetString(type.Namespace) == ns && md.GetString(type.Name) == name;
+        bool MatchDefinition(TypeDefinition type) =>
+            md.GetString(type.Namespace) == ns && md.GetString(type.Name) == name;
+    }
+}
+
 internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericContext>
 {
     private readonly MetadataReader _md;
@@ -6425,7 +6513,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly InnerReferenceCatalog _innerCatalog;
     private readonly IReadOnlyDictionary<TypeDefinitionHandle, int> _semanticTypeNames;
     private readonly bool _restoreKotlinCollections;
-    private readonly Dictionary<string, TypeDefinitionHandle> _delegateDefinitions = new(StringComparer.Ordinal);
+    private readonly IReadOnlyDictionary<string, TypeDefinitionHandle> _delegateDefinitions;
     private readonly Dictionary<KType, DelegateCatalogEntry> _externalDelegateTypes =
         new(ReferenceEqualityComparer.Instance);
     // A physical nested companion under a generic CLR owner repeats the owner's type slots on its TypeDef, but its
@@ -6442,7 +6530,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // provider callbacks receive), so no cross-assembly resolution is needed: a name observed once as a value type is
     // one everywhere. Seeded with this assembly's own struct/enum definitions and with the Kotlin primitives, so a
     // carrier-built type (which never passes a rawTypeKind) is answered too.
-    private readonly HashSet<string> _valueTypeNames = new(StringComparer.Ordinal);
+    private readonly IReadOnlySet<string> _seedValueTypeNames;
+    private readonly HashSet<string> _observedValueTypeNames = new(StringComparer.Ordinal);
 
     public SignatureDecoder(
         MetadataReader md,
@@ -6452,6 +6541,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         DelegateReferenceCatalog delegateCatalog,
         CompanionReferenceCatalog companionCatalog,
         InnerReferenceCatalog innerCatalog,
+        SignatureDecoderSeeds seeds,
         IReadOnlyDictionary<TypeDefinitionHandle, int>? semanticTypeNames = null)
     {
         _md = md;
@@ -6461,25 +6551,10 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _delegateCatalog = delegateCatalog;
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
+        _delegateDefinitions = seeds.DelegateDefinitions;
+        _seedValueTypeNames = seeds.ValueTypeNames;
         _semanticTypeNames = semanticTypeNames ?? new Dictionary<TypeDefinitionHandle, int>();
         _restoreKotlinCollections = attrs.IsDotKtAssembly;
-        // The Kotlin primitives, plus `kotlin.Unit`: it is the name ECMA `void` decodes to, so it holds no NRT byte and
-        // takes no annotation — a rule bir2cir's writer implements from the other side ([NullableFlags]), which is what
-        // keeps the two ends counting the same positions. (csc would give the `Unit` CLASS a byte like any reference;
-        // this is a stated DotKt deviation, recorded in docs/dotkt-semantics.md § 9.)
-        foreach (var name in new[] {
-            "kotlin.Unit", "kotlin.Boolean", "kotlin.Char", "kotlin.Byte", "kotlin.UByte",
-            "kotlin.Short", "kotlin.UShort", "kotlin.Int", "kotlin.UInt",
-            "kotlin.Long", "kotlin.ULong", "kotlin.Float", "kotlin.Double",
-        }) _valueTypeNames.Add(name);
-        foreach (var handle in md.TypeDefinitions)
-        {
-            var def = md.GetTypeDefinition(handle);
-            if (IsSystemType(def.BaseType, "System", "MulticastDelegate"))
-                _delegateDefinitions[DefinitionKotlinName(md, handle)] = handle;
-            else if (IsSystemType(def.BaseType, "System", "ValueType") || IsSystemType(def.BaseType, "System", "Enum"))
-                _valueTypeNames.Add(_arityNames.Full(md.GetString(def.Namespace), md.GetString(def.Name)));
-        }
     }
 
     // Record `type`'s projected name as a value type when — and only when — the signature occurrence STATES
@@ -6493,11 +6568,13 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     // recorded key is the one the NRT walk will look up.
     private KType MarkValueType(KType type)
     {
-        if (type.HasClassName && _names.ClassName(type.ClassName) is { } name) _valueTypeNames.Add(name);
+        if (type.HasClassName && _names.ClassName(type.ClassName) is { } name)
+            _observedValueTypeNames.Add(name);
         return type;
     }
 
-    private bool IsValueTypeName(string? name) => name is not null && _valueTypeNames.Contains(name);
+    private bool IsValueTypeName(string? name) => name is not null &&
+        (_seedValueTypeNames.Contains(name) || _observedValueTypeNames.Contains(name));
 
     public KType GetArrayType(KType elementType, ArrayShape shape) => Array(elementType);
     public KType GetByReferenceType(KType elementType) => ByRef(elementType);
@@ -6575,25 +6652,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     public KType GetSZArrayType(KType elementType) => Array(elementType);
 
     (string Package, IReadOnlyList<string> Names) DefinitionKotlinPath(
-        MetadataReader reader, TypeDefinitionHandle handle)
-    {
-        var handles = new Stack<TypeDefinitionHandle>();
-        for (var current = handle; !current.IsNil;)
-        {
-            handles.Push(current);
-            current = reader.GetTypeDefinition(current).GetDeclaringType();
-        }
-        var package = reader.GetString(reader.GetTypeDefinition(handles.Peek()).Namespace);
-        var rawScope = package;
-        var names = new List<string>();
-        foreach (var current in handles)
-        {
-            var metadataName = reader.GetString(reader.GetTypeDefinition(current).Name);
-            names.Add(_arityNames.Simple(rawScope, metadataName));
-            rawScope = string.IsNullOrEmpty(rawScope) ? metadataName : rawScope + "." + metadataName;
-        }
-        return (package, names);
-    }
+        MetadataReader reader, TypeDefinitionHandle handle) =>
+        SignatureDecoderSeeds.DefinitionKotlinPath(reader, _arityNames, handle);
 
     string DefinitionKotlinName(MetadataReader reader, TypeDefinitionHandle handle)
     {
@@ -7257,16 +7317,17 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         if (handle.IsNil || MetadataTokens.GetRowNumber(handle) > md.TypeDefinitions.Count)
             throw new InvalidDataException(
                 $"delegate catalog contains an invalid TypeDef row for {entry.MetadataName}");
+        var arityNames = ArityNames.Create(
+            md, Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES"));
         var decoder = new SignatureDecoder(
             md,
             _names,
             new MetadataAttributes(md),
-            ArityNames.Create(
-                md,
-                Environment.GetEnvironmentVariable("DOTKT_DLL2KLIB_ARITY_CLASHES")),
+            arityNames,
             _delegateCatalog,
             _companionCatalog,
-            _innerCatalog);
+            _innerCatalog,
+            SignatureDecoderSeeds.Discover(md, arityNames));
         var shape = decoder.DecodeDelegate(handle);
         _externalDelegateShapes[key] = shape;
         return shape.Clone();
