@@ -73,6 +73,7 @@ static class ConstrainedTypeParameterReceiverBinding
         var arity = CollectTypeArity(rootList);
         foreach (var root in rootList)
             BindFile(root, arity, close: false, isValue: null, resolvedPropertiesOnly: true);
+        foreach (var root in rootList) DropErasedConstraintFacts(root);
     }
 
     // name -> declared type-parameter count, for every type declared in this compilation. Only the ARITY is
@@ -195,7 +196,9 @@ static class ConstrainedTypeParameterReceiverBinding
                         && ReceiverTypeVariable(propertyRecv, scope, locals) is TypeNode.Tv propertyTv
                         && ClosedOwner(propertyOwner, arity) is TypeNode.Fqn closedPropertyOwner)
                     {
-                        if (Str(call["dispatch"]) == "callvirt")
+                        if (ConstraintDispatchWasErased(propertyTv, typeParams, methodParams))
+                            CastResolvedPropertyReceiver(call, closedPropertyOwner);
+                        else if (Str(call["dispatch"]) == "callvirt")
                             ConstrainResolvedProperty(call, kind == "clrPropSet", propertyTv, closedPropertyOwner);
                         else
                             CastResolvedPropertyReceiver(call, closedPropertyOwner);
@@ -220,29 +223,45 @@ static class ConstrainedTypeParameterReceiverBinding
                         }
                         else if (ClosedOwner(owner, arity) is TypeNode.Fqn iface)
                         {
-                            // PHASE 2. A !!T receiver is not an interface reference on the evaluation stack. Even
-                            // with the exact constructed MemberRef, ECMA-335 requires an address plus
-                            // `constrained. !!T; callvirt`. Author that dispatch explicitly in CIR; ilemit emits
-                            // this node one-to-one.
-                            // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
-                            // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
-                            // are carried through untouched. A clrGenericInstance's bir2cir-internal matching input is
-                            // `resolvedMemberParams`; constrainedCall uses the same input under its ordinary `sig` slot.
-                            // Move that fact rather than selecting again by name/arity.
-                            if (genericClrCall && call["resolvedMemberParams"] is JsonNode resolvedMemberParams)
+                            if (ConstraintDispatchWasErased(tv, typeParams, methodParams))
                             {
-                                call.Remove("resolvedMemberParams");
-                                call["sig"] = resolvedMemberParams;
+                                // The source bound remains authoritative Kotlin metadata, but an inner TypeDef whose
+                                // bound mentions a star outer cannot carry that relation as a CLR GenericParamConstraint.
+                                // Convert the value to the already-selected bound explicitly; constrained. would ask
+                                // the verifier to prove a relation deliberately absent from the physical declaration.
+                                call["recv"] = new JsonObject
+                                {
+                                    ["k"] = "cast",
+                                    ["type"] = TypeJson.Write(iface),
+                                    ["e"] = recv.DeepClone(),
+                                };
                             }
-                            call["k"] = "constrainedCall";
-                            call["recvType"] = TypeJson.Write(tv);
-                            call["iface"] = TypeJson.Write(iface);
-                            AlignArguments(call, iface, scope, isValue);
-                            if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
-                                call["ret"] = dynRet.DeepClone();
-                            call.Remove(ownerKey);
-                            call.Remove("virtual");
-                            call.Remove("dynRet");
+                            else
+                            {
+                                // PHASE 2. A !!T receiver is not an interface reference on the evaluation stack. Even
+                                // with the exact constructed MemberRef, ECMA-335 requires an address plus
+                                // `constrained. !!T; callvirt`. Author that dispatch explicitly in CIR; ilemit emits
+                                // this node one-to-one.
+                                // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
+                                // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
+                                // are carried through untouched. A clrGenericInstance's bir2cir-internal matching input
+                                // is `resolvedMemberParams`; constrainedCall uses the same input under its ordinary
+                                // `sig` slot. Move that fact rather than selecting again by name/arity.
+                                if (genericClrCall && call["resolvedMemberParams"] is JsonNode resolvedMemberParams)
+                                {
+                                    call.Remove("resolvedMemberParams");
+                                    call["sig"] = resolvedMemberParams;
+                                }
+                                call["k"] = "constrainedCall";
+                                call["recvType"] = TypeJson.Write(tv);
+                                call["iface"] = TypeJson.Write(iface);
+                                AlignArguments(call, iface, scope, isValue);
+                                if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
+                                    call["ret"] = dynRet.DeepClone();
+                                call.Remove(ownerKey);
+                                call.Remove("virtual");
+                                call.Remove("dynRet");
+                            }
                         }
                     }
                     foreach (var kv in call)
@@ -358,11 +377,39 @@ static class ConstrainedTypeParameterReceiverBinding
     {
         var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
         if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor
-            || descriptor["constraints"] is not JsonArray constraints)
+            || ConstraintDeclarations(descriptor) is not JsonArray constraints)
             return null;
         var fqns = constraints.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
             .Where(f => f.Name == ownerName).ToList();
         return fqns.Count == 1 ? fqns[0] : null;
+    }
+
+    static bool ConstraintDispatchWasErased(TypeNode.Tv tv, JsonArray typeParams, JsonArray methodParams)
+    {
+        var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
+        return source != null && tv.I >= 0 && tv.I < source.Count
+            && source[tv.I] is JsonObject descriptor
+            && descriptor[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is JsonArray;
+    }
+
+    static JsonArray ConstraintDeclarations(JsonObject descriptor) =>
+        descriptor[FBoundStarProjectionErasure.ErasedInnerConstraintKey] as JsonArray
+        ?? descriptor["constraints"] as JsonArray;
+
+    static void DropErasedConstraintFacts(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                obj.Remove(FBoundStarProjectionErasure.ErasedInnerConstraintKey);
+                foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
+                    DropErasedConstraintFacts(child);
+                break;
+            case JsonArray array:
+                foreach (var child in array.Where(value => value != null).ToList())
+                    DropErasedConstraintFacts(child);
+                break;
+        }
     }
 
     static string Str(JsonNode node) =>

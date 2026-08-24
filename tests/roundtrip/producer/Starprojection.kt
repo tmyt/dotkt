@@ -144,7 +144,12 @@ open class ReferencedConstrainedInnerBase<T>(private val label: String) {
     inner class NullableToken<E : T?>(private val value: E) {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
     }
-    inner class TransitiveToken<E, F>(private val value: E?) where E : T, F : List<E>
+    inner class TransitiveToken<E, F>(private val value: E?) where E : T, F : List<E> {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+    inner class TransitiveValueToken<E, F>(private val values: F) where E : T, F : List<E> {
+        fun size(): Int = values.size
+    }
 }
 
 class ReferencedConstrainedInnerLeaf<T>(label: String) : ReferencedConstrainedInnerBase<T>(label)

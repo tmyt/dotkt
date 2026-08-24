@@ -18,6 +18,8 @@ using DotKt.Bir;
 static class FBoundStarProjectionErasure
 {
     const string CarrierMark = "$star";
+    internal const int InnerFactoryBottomTypeArgument = -1;
+    internal const string ErasedInnerConstraintKey = "erasedInnerConstraints";
     const string NormalizedInnerFactoryReturnKey = "_normalizedInnerFactoryReturn";
     internal const string SourceMemberKey = "existentialSourceMember";
     internal const string InnerConstructorFactoryKey = "existentialInnerConstructorFactory";
@@ -50,6 +52,9 @@ static class FBoundStarProjectionErasure
         while (CollectNormalizedInnerFactoryReturns(rootList, owners, refs, normalizedReturns))
             foreach (var root in rootList)
                 RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+        // Binding above consumes the complete Kotlin constraint graph. Only after every local call and generated
+        // seam has been selected may the physical inner TypeDefs drop constraints that cannot name a star outer.
+        WeakenOwnerDependentInnerConstraints(owners.Values.Where(owner => owner.Needed));
         return owners.Values.Where(o => o.Needed)
             .ToDictionary(o => o.Name, o => o.ErasedName, StringComparer.Ordinal);
     }
@@ -756,30 +761,18 @@ static class FBoundStarProjectionErasure
 
         var directDependent = DirectOwnerDependentInnerParameters(inner, capturedCount);
         var dependent = OwnerDependentInnerParameters(inner, capturedCount);
-        // A parameter reached only through another own parameter (F : List<E>, E : T) is not itself restricted to
-        // bottom at the Kotlin call site: F=List<Nothing> is legal. The existential slot cannot name a CLR witness for
-        // that family without a richer per-instantiation ABI, so retain the pre-#567 behavior and omit this factory.
-        // Merely declaring the inner class must remain valid; a use requiring the unavailable factory fails at binding.
-        if (!dependent.SetEquals(directDependent)) return null;
-        if (inner.Def["typeParams"] is JsonArray declaredTypeParams
-            && dependent.Any(index => declaredTypeParams[index] is JsonObject parameter
-                && parameter["constraints"] is JsonArray constraints && constraints.Count != 1))
-            return null;
-        Dictionary<int, TypeNode> witnesses;
-        try { witnesses = InnerBottomWitnesses(inner, capturedCount, dependent); }
-        catch (UnresolvedBottomWitness) { return null; }
-        catch (NotSupportedException) { return null; }
+        var witnesses = directDependent.ToDictionary(
+            index => index, _ => (TypeNode)new TypeNode.Fqn("kotlin.Nothing"));
         var methodPositions = Enumerable.Range(capturedCount, inner.Arity - capturedCount)
-            .Where(index => !dependent.Contains(index)).ToArray();
+            .Where(index => !directDependent.Contains(index)).ToArray();
         var methodIndex = methodPositions.Select((source, index) => (source, index))
             .ToDictionary(pair => pair.source, pair => pair.index);
         TypeNode Project(TypeNode type) => ProjectInnerFactoryType(
             type, capturedCount, witnesses, methodIndex);
 
-        // The public existential factory cannot mention the captured outer frame. An own parameter whose bound
-        // depends on that frame is therefore not a MethodDef parameter: Kotlin can instantiate it through Outer<*>
-        // only with the bottom type, and the closed Outer<T> bridge uses the declared upper bound as its reified CLR
-        // witness. This preserves the original Inner<T,E>'s constraint instead of manufacturing Inner<T,object>.
+        // The public existential factory cannot mention the captured outer frame. A directly dependent own parameter
+        // is therefore fixed to Kotlin bottom and omitted from the MethodDef frame. A transitively dependent parameter
+        // remains a real method argument so its exact source value and identity survive the construction seam.
         for (var i = 0; i < exactParams.Count; i++) exactParams[i] = Project(exactParams[i]);
         for (var i = 0; i < physicalParams.Count; i++)
         {
@@ -791,7 +784,7 @@ static class FBoundStarProjectionErasure
         }
 
         var ownTypeParams = InnerFactoryTypeParams(
-            inner, capturedCount, dependent, witnesses, methodIndex, owners, refs);
+            inner, capturedCount, directDependent, dependent, witnesses, methodIndex, owners, refs);
         var result = new TypeNode.Fqn(inner.ErasedName);
         var carrierParams = new JsonArray(constructorParams.OfType<JsonObject>().Skip(1)
             .Select(parameter => TypeJson.Write(RequiredParamType(parameter, 0, inner.Name + ".<init>"))).ToArray());
@@ -813,12 +806,14 @@ static class FBoundStarProjectionErasure
             {
                 ["inner"] = inner.Name,
                 ["params"] = carrierParams,
-                // Position map, not type tokens: -1 is Kotlin bottom, while N selects factory MethodDef argument N.
-                // A type node for Nothing would be representation-lowered to System.Object before metadata stamping
-                // and lose the exact semantic distinction the consuming compiler requires.
+                // Position map, not type tokens: -1 is a direct owner-dependent Kotlin-bottom argument, while N
+                // selects factory MethodDef argument N. Transitively dependent source arguments remain ordinary
+                // method slots; only their CLR constraint is omitted because it cannot name the hidden outer frame.
                 ["typeArgs"] = new JsonArray(Enumerable.Range(capturedCount, inner.Arity - capturedCount)
                     .Select(index => (JsonNode)JsonValue.Create(
-                        dependent.Contains(index) ? -1 : methodIndex[index])).ToArray()),
+                        directDependent.Contains(index)
+                            ? InnerFactoryBottomTypeArgument
+                            : methodIndex[index])).ToArray()),
             },
         };
         if (ownTypeParams.Count > 0) slot["typeParams"] = ownTypeParams.DeepClone();
@@ -886,14 +881,15 @@ static class FBoundStarProjectionErasure
     }
 
     static JsonArray InnerFactoryTypeParams(Owner inner, int capturedCount,
-        IReadOnlySet<int> dependent, IReadOnlyDictionary<int, TypeNode> witnesses,
+        IReadOnlySet<int> directDependent, IReadOnlySet<int> dependent,
+        IReadOnlyDictionary<int, TypeNode> witnesses,
         IReadOnlyDictionary<int, int> methodIndex,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
         var result = new JsonArray();
         if (inner.Def["typeParams"] is not JsonArray typeParams) return result;
         foreach (var (parameter, _) in typeParams.Select((parameter, index) => (parameter, index))
-                     .Where(pair => pair.index >= capturedCount && !dependent.Contains(pair.index)))
+                     .Where(pair => pair.index >= capturedCount && !directDependent.Contains(pair.index)))
         {
             if (parameter is not JsonObject declaration)
             {
@@ -907,6 +903,10 @@ static class FBoundStarProjectionErasure
                 foreach (var constraint in constraints)
                     if (TypeJson.Read(constraint) is TypeNode type)
                     {
+                        // A public existential MethodDef has no name for the hidden outer frame or a direct-bottom
+                        // parameter. kotc already checked the complete Kotlin bound; retain only independently
+                        // expressible CLR constraints on this trusted generated seam.
+                        if (ContainsInnerDependency(type, capturedCount, dependent)) continue;
                         var physical = EraseOwnerTv(
                             ProjectInnerFactoryType(type, capturedCount, witnesses, methodIndex), owners, refs);
                         if (!IsObjectish(physical)) rewritten.Add(TypeJson.Write(physical));
@@ -916,6 +916,33 @@ static class FBoundStarProjectionErasure
             result.Add(copy);
         }
         return result;
+    }
+
+    static void WeakenOwnerDependentInnerConstraints(IEnumerable<Owner> owners)
+    {
+        foreach (var inner in owners.Where(owner => IsInner(owner.Def)))
+        {
+            var capturedCount = InnerCapturedCount(inner.Def);
+            var dependent = OwnerDependentInnerParameters(inner, capturedCount);
+            if (dependent.Count == 0 || inner.Def["typeParams"] is not JsonArray parameters) continue;
+
+            var recorded = new JsonObject();
+            foreach (var index in dependent.OrderBy(index => index))
+            {
+                if (parameters[index] is not JsonObject parameter
+                    || parameter["constraints"] is not JsonArray constraints || constraints.Count == 0) continue;
+                var retained = new JsonArray(constraints.Where(constraint =>
+                        TypeJson.Read(constraint) is not TypeNode type
+                        || !ContainsInnerDependency(type, capturedCount, dependent))
+                    .Select(constraint => constraint?.DeepClone()).ToArray());
+                if (retained.Count == constraints.Count) continue;
+                recorded[index.ToString()] = constraints.DeepClone();
+                parameter[ErasedInnerConstraintKey] = constraints.DeepClone();
+                parameter["constraints"] = retained;
+            }
+            if (recorded.Count > 0)
+                KotlinSupertypesRecord.Merge(inner.Def, new JsonObject { ["bounds"] = recorded });
+        }
     }
 
     static HashSet<int> OwnerDependentInnerParameters(Owner inner, int capturedCount)
@@ -987,72 +1014,6 @@ static class FBoundStarProjectionErasure
             || function.Ctx?.Any(context => ContainsInnerDependency(context, capturedCount, dependent)) == true,
         _ => false,
     };
-
-    static Dictionary<int, TypeNode> InnerBottomWitnesses(
-        Owner inner, int capturedCount, IReadOnlySet<int> dependent)
-    {
-        var result = new Dictionary<int, TypeNode>();
-        if (dependent.Count == 0) return result;
-        if (inner.Def["typeParams"] is not JsonArray parameters)
-            throw new InvalidOperationException($"inner type '{inner.Name}' has no generic parameter declarations");
-
-        TypeNode Resolve(int index, HashSet<int> active)
-        {
-            if (result.TryGetValue(index, out var known)) return known;
-            if (!active.Add(index))
-                throw new NotSupportedException(
-                    $"bir2cir: inner type '{inner.Name}' has a cyclic owner-dependent bottom constraint");
-            if (parameters[index] is not JsonObject declaration
-                || declaration["constraints"] is not JsonArray constraints)
-                throw new InvalidOperationException(
-                    $"inner type '{inner.Name}' has no bound for dependent parameter {index - capturedCount}");
-            foreach (var constraint in constraints)
-            {
-                if (TypeJson.Read(constraint) is not TypeNode candidate
-                    || !ContainsInnerDependency(candidate, capturedCount, dependent)) continue;
-                try
-                {
-                    var witness = Substitute(candidate);
-                    result[index] = witness;
-                    active.Remove(index);
-                    return witness;
-                }
-                catch (UnresolvedBottomWitness) { }
-            }
-            active.Remove(index);
-            throw new NotSupportedException(
-                $"bir2cir: inner type '{inner.Name}' has no reifiable owner-dependent bottom witness " +
-                $"for parameter {index - capturedCount}");
-
-            TypeNode Substitute(TypeNode type) => type switch
-            {
-                TypeNode.Tv { Scope: "type" } tv when tv.I < capturedCount => tv,
-                TypeNode.Tv { Scope: "type" } tv when dependent.Contains(tv.I)
-                    => active.Contains(tv.I) ? throw new UnresolvedBottomWitness() : Resolve(tv.I, active),
-                // An independent own parameter stays in the public factory MethodDef frame. Keep its declaration
-                // slot here; ProjectInnerFactoryType below maps it to the corresponding method slot after the full
-                // witness has been selected (for example E : Pair<T,F> -> Pair<!T,!!F>).
-                TypeNode.Tv { Scope: "type" } tv => tv,
-                TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
-                    args.Select(Substitute).ToArray()),
-                TypeNode.Nullable nullable => new TypeNode.Nullable(Substitute(nullable.Of)),
-                TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Substitute(oblivious.Of)),
-                TypeNode.Array array => new TypeNode.Array(Substitute(array.Elem)),
-                TypeNode.ByRef byRef => new TypeNode.ByRef(Substitute(byRef.Of)),
-                TypeNode.Ptr pointer => new TypeNode.Ptr(Substitute(pointer.Of)),
-                TypeNode.Fn function => new TypeNode.Fn(function.Suspend,
-                    Substitute(function.Ret), function.Params.Select(Substitute).ToArray(),
-                    function.Recv == null ? null : Substitute(function.Recv), function.Clr,
-                    function.Ctx?.Select(Substitute).ToArray()),
-                _ => type,
-            };
-        }
-
-        foreach (var index in dependent.OrderBy(index => index)) Resolve(index, new HashSet<int>());
-        return result;
-    }
-
-    sealed class UnresolvedBottomWitness : Exception { }
 
     static TypeNode ProjectInnerFactoryType(TypeNode type, int capturedCount,
         IReadOnlyDictionary<int, TypeNode> witnesses, IReadOnlyDictionary<int, int> methodIndex) => type switch
@@ -1471,14 +1432,14 @@ static class FBoundStarProjectionErasure
         if (innerArguments.Count != inner.Arity)
             throw new InvalidOperationException(
                 $"inner construction '{inner.Name}' has {innerArguments.Count} type arguments; expected {inner.Arity}");
-        var dependent = OwnerDependentInnerParameters(inner, capturedCount);
-        foreach (var index in dependent)
+        var directDependent = DirectOwnerDependentInnerParameters(inner, capturedCount);
+        foreach (var index in directDependent)
             if (innerArguments[index] is not TypeNode.Fqn { Args: null, Name: "kotlin.Nothing" })
                 throw new InvalidOperationException(
                     $"inner construction '{inner.Name}' through a star-projected outer must use kotlin.Nothing " +
                     $"for owner-dependent type argument {index - capturedCount}");
         return Enumerable.Range(capturedCount, inner.Arity - capturedCount)
-            .Where(index => !dependent.Contains(index)).Select(index => innerArguments[index]).ToArray();
+            .Where(index => !directDependent.Contains(index)).Select(index => innerArguments[index]).ToArray();
     }
 
     static IReadOnlySet<int> ExistentialTypeParameters(JsonArray declarations, string scope)

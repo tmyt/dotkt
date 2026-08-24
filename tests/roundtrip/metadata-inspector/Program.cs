@@ -1139,6 +1139,13 @@ static void VerifyKlib(string path)
     using var stream = entry.Open();
     var fragment = PackageFragment.Parser.ParseFrom(stream);
 
+    var starEntry = archive.Entries.Single(e =>
+        e.FullName.EndsWith("/package_starprojection/0_starprojection.knm", StringComparison.Ordinal));
+    using var starStream = starEntry.Open();
+    var star = PackageFragment.Parser.ParseFrom(starStream);
+    VerifyTransitiveInnerBounds(star, "starprojection.ReferencedConstrainedInnerBase.TransitiveToken");
+    VerifyTransitiveInnerBounds(star, "starprojection.ReferencedConstrainedInnerBase.TransitiveValueToken");
+
     VerifyCompanion(fragment, Ns + "NamedCompanionHost", "Key", ["marker", "suspendMarker", "id"]);
     VerifyCompanion(fragment, Ns + "DefaultCompanionHost", "Companion", ["marker"]);
     VerifyCompanion(fragment, Ns + "EnumCompanionHost", "Key", ["marker"]);
@@ -1373,6 +1380,24 @@ static void VerifyKlib(string path)
             shadowBound.Argument.Count == 1 && shadowBound.Argument[0].Type.HasTypeParameter &&
             shadowBound.Argument[0].Type.TypeParameter == shadowOwner.TypeParameter[0].Id,
         "generic owner constraint lost its Comparable<T> identity in the projected KLIB");
+}
+
+static void VerifyTransitiveInnerBounds(PackageFragment fragment, string className)
+{
+    var declaration = Class(fragment, className);
+    Require(declaration.TypeParameter.Count == 2,
+        $"{className} must retain its two own type parameters");
+    var e = declaration.TypeParameter.Single(parameter => String(fragment, parameter.Name) == "E");
+    var f = declaration.TypeParameter.Single(parameter => String(fragment, parameter.Name) == "F");
+    Require(e.UpperBound.Count == 1 && e.UpperBound[0].HasTypeParameter &&
+            e.UpperBound[0].TypeParameter == 0,
+        $"{className}.E lost its enclosing T bound in projected KLIB metadata");
+    Require(f.UpperBound.Count == 1 && f.UpperBound[0].HasClassName &&
+            QualifiedName(fragment, f.UpperBound[0].ClassName) == "kotlin.collections.List" &&
+            f.UpperBound[0].Argument.Count == 1 &&
+            f.UpperBound[0].Argument[0].Type is { HasTypeParameter: true } argument &&
+            argument.TypeParameter == e.Id,
+        $"{className}.F lost its List<E> bound in projected KLIB metadata");
 }
 
 static void VerifyCompanion(

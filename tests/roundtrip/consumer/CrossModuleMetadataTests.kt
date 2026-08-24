@@ -486,6 +486,14 @@ class GenericMetadataRoundtripTests {
             constrained.NullableToken(null).render(),
         )
         ClassicAssert.AreEqual(
+            "cross-bound:null",
+            constrained.TransitiveToken<Nothing, List<Nothing>>(null).render(),
+        )
+        ClassicAssert.AreEqual(
+            0,
+            constrained.TransitiveValueToken<Nothing, List<Nothing>>(emptyList()).size(),
+        )
+        ClassicAssert.AreEqual(
             "method-null",
             referencedNullableMethodBound<String, String?>(null),
         )

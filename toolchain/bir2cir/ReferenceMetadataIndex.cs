@@ -2308,7 +2308,7 @@ sealed partial class ReferenceMetadataIndex
                 var actual = arguments[capturedCount + i];
                 switch (pattern[i])
                 {
-                    case -1:
+                    case FBoundStarProjectionErasure.InnerFactoryBottomTypeArgument:
                         if (actual is not TypeNode.Fqn { Args: null, Name: "kotlin.Nothing" }) return false;
                         break;
                     case var slot when slot >= 0 && slot < result.Length:
@@ -5769,7 +5769,8 @@ sealed partial class ReferenceMetadataIndex
         var parsedTypeArguments = typeArguments.Select(argument =>
             argument is JsonValue value && value.TryGetValue<int>(out var position) ? position : int.MinValue).ToArray();
         if (parsed.Any(parameter => parameter == null)
-            || parsedTypeArguments.Any(position => position < -1))
+            || parsedTypeArguments.Any(position =>
+                position < FBoundStarProjectionErasure.InnerFactoryBottomTypeArgument))
             throw new InvalidDataException("malformed [KotlinInnerConstructorFactory] parameter descriptor");
         return new InnerConstructorFactoryPayloadInfo(inner, parsed, parsedTypeArguments);
     }
