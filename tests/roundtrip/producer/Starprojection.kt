@@ -138,6 +138,9 @@ open class ReferencedConstrainedInnerBase<T>(private val label: String) {
     inner class NestedToken<F, E>(private val value: E?) where E : ReferencedOwnerPair<T, F> {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
     }
+    inner class NullableToken<E : T?>(private val value: E) {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
     inner class TransitiveToken<E, F>(private val value: E?) where E : T, F : List<E>
 }
 

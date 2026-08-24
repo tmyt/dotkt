@@ -5582,8 +5582,8 @@ internal sealed class AssemblyScanner
     // constraint would either weaken it to `Sink<Any?>` or, as it did, publish no bound at all and let
     // `Box<BadSink>` compile and then fail to LOAD. Restored here, the frontend rejects the bad argument where the
     // author wrote it. Keyed by parameter INDEX — a type's own parameter list IS a transcription of the metadata's,
-    // unlike its supertype list — and matched by head within the parameter, so a bound the CLR constraint already
-    // supplied is replaced rather than duplicated.
+    // unlike its supertype list — and restored as the complete source list. The CLR rows are an erased physical
+    // approximation of that same list, so retaining any of them beside the carrier can publish a false stronger bound.
     private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
         NameTable names)
     {
@@ -5596,7 +5596,7 @@ internal sealed class AssemblyScanner
             ifs.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var i in ifs.EnumerateArray())
                 if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
-        RestoreErasedBounds(doc, result, signatures, names);
+        RestoreErasedBounds(doc, result, signatures);
         if (pre.Count == 0) return;
         for (var i = 0; i < result.Supertype.Count; i++)
         {
@@ -5611,7 +5611,7 @@ internal sealed class AssemblyScanner
     }
 
     private static void RestoreErasedBounds(System.Text.Json.JsonDocument doc, Class result,
-        SignatureDecoder signatures, NameTable names)
+        SignatureDecoder signatures)
     {
         if (!doc.RootElement.TryGetProperty("bounds", out var bounds) ||
             bounds.ValueKind != System.Text.Json.JsonValueKind.Object) return;
@@ -5621,20 +5621,18 @@ internal sealed class AssemblyScanner
                 continue;
             var parameter = result.TypeParameter.FirstOrDefault(p => p.Id == index);
             if (parameter is null) continue;
+            var restored = new List<KType>();
             foreach (var boundElement in entry.Value.EnumerateArray())
             {
                 if (TypeNode.Read(boundElement) is not { } node) continue;
-                var bound = signatures.FromTypeNode(node);
-                var at = -1;
-                if (bound.HasClassName)
-                    for (var i = 0; i < parameter.UpperBound.Count && at < 0; i++)
-                        if (parameter.UpperBound[i].HasClassName
-                            && names.ClassName(parameter.UpperBound[i].ClassName) == names.ClassName(bound.ClassName)
-                            && parameter.UpperBound[i].Argument.Count == bound.Argument.Count)
-                            at = i;
-                if (at >= 0) parameter.UpperBound[at] = bound;
-                else parameter.UpperBound.Add(bound);
+                restored.Add(signatures.FromTypeNode(node));
             }
+            // NullableGenericErasure records the parameter's WHOLE source constraint list when any constraint moves.
+            // The CLR rows are only its physical approximation: merging leaves an erased `object` row beside a
+            // restored `T?` and publishes the stronger, false Kotlin bound `E : Any, T?`. Replace the parameter as
+            // one semantic unit so the KLIB surface is exactly the producer-authored list.
+            parameter.UpperBound.Clear();
+            foreach (var bound in restored) parameter.UpperBound.Add(bound);
         }
     }
 
