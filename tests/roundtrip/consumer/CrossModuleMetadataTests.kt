@@ -116,6 +116,10 @@ import starprojection.ReferencedInnerLeaf
 import starprojection.referencedInnerLeaf
 import starprojection.ReferencedConstrainedInnerLeaf
 import starprojection.referencedConstrainedInnerLeaf
+import starprojection.referencedNullableMethodBound
+import starprojection.referencedNullableSuspendMethodBound
+import starprojection.ReferencedCapturedNullableOuter
+import starprojection.ReferencedNullableMethodImplementation
 import suspendcompanion.CompanionSuspendApi
 import suspendnullable.NullableSuspendHolder
 import suspendnullable.invokeNullableSuspend
@@ -476,6 +480,30 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual(
             "cross-bound:null",
             constrained.NestedToken<String, Nothing>(null).render(),
+        )
+        ClassicAssert.AreEqual(
+            "cross-bound:null",
+            constrained.NullableToken(null).render(),
+        )
+        ClassicAssert.AreEqual(
+            "method-null",
+            referencedNullableMethodBound<String, String?>(null),
+        )
+        ClassicAssert.AreEqual(
+            "member-bound:method:null",
+            referencedConstrainedInnerLeaf("member-bound").nullableMethodBound<String?>(null),
+        )
+        ClassicAssert.AreEqual(
+            1,
+            runCrossModuleSuspend {
+                referencedNullableSuspendMethodBound<String, String?>(null)
+            },
+        )
+        val capturedOuter = ReferencedCapturedNullableOuter<String, String?>()
+        ClassicAssert.AreEqual("captured", capturedOuter.Token("captured").render())
+        ClassicAssert.AreEqual(
+            "inherited-method-null",
+            ReferencedNullableMethodImplementation<String>().inheritedNullableMethodBound<String?>(null),
         )
 
         val continuation = CrossModuleStarContinuationProbe()

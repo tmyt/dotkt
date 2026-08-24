@@ -63,6 +63,20 @@ if (args.Length == 4 && args[0] == "--klib-package-properties")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--klib-package-nullable-method-bound")
+{
+    VerifyKlibPackageNullableMethodBound(args[1], args[2], args[3]);
+    Console.WriteLine("KLIB package nullable method bound: OK");
+    return;
+}
+
+if (args.Length == 4 && args[0] == "--klib-class-fake-override-nullable-method-bound")
+{
+    VerifyKlibClassFakeOverrideNullableMethodBound(args[1], args[2], args[3]);
+    Console.WriteLine("KLIB class fake-override nullable method bound: OK");
+    return;
+}
+
 if (args.Length == 5 && args[0] == "--klib-csharp-extension-shape")
 {
     VerifyKlibCSharpExtensionShape(args[1], args[2], args[3], args[4]);
@@ -80,6 +94,8 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-class-supertypes <file.klib> <class> <supertype[,supertype...]>\n" +
         "  CompanionMetadataInspector --klib-class-function-nullability <file.klib> <class> <function> <return-nullable> <parameter-nullable>\n" +
         "  CompanionMetadataInspector --klib-package-properties <file.klib> <package> <property[,property...]>\n" +
+        "  CompanionMetadataInspector --klib-package-nullable-method-bound <file.klib> <package> <function>\n" +
+        "  CompanionMetadataInspector --klib-class-fake-override-nullable-method-bound <file.klib> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>");
 
 VerifyLayerBoundary(args[2], args[3]);
@@ -239,6 +255,76 @@ static void VerifyKlibPackageProperties(string path, string packageName, IReadOn
     if (functionCollisions.Length != 0)
         throw new InvalidDataException(
             $"{packageName} properties also leaked as functions [{string.Join(", ", functionCollisions)}]");
+}
+
+static void VerifyKlibPackageNullableMethodBound(string path, string packageName, string functionName)
+{
+    using var archive = ZipFile.OpenRead(path);
+    var fragments = archive.Entries
+        .Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry =>
+        {
+            using var stream = entry.Open();
+            return PackageFragment.Parser.ParseFrom(stream);
+        })
+        .Where(fragment => fragment.FqName == packageName)
+        .ToArray();
+    Require(fragments.Length == 1,
+        $"expected one package fragment '{packageName}', found {fragments.Length}");
+    var fragment = fragments[0];
+    var functions = fragment.Package.Function
+        .Where(function => String(fragment, function.Name) == functionName)
+        .ToArray();
+    Require(functions.Length == 1,
+        $"expected one package function '{packageName}.{functionName}', found {functions.Length}");
+    var function = functions[0];
+    Require(function.TypeParameter.Count == 2,
+        $"{packageName}.{functionName} must have two type parameters");
+    var owner = function.TypeParameter.Single(parameter => parameter.Id == 10000);
+    var dependent = function.TypeParameter.Single(parameter => parameter.Id == 10001);
+    Require(owner.UpperBound.Count == 0,
+        $"{packageName}.{functionName} T unexpectedly has an explicit upper bound");
+    Require(dependent.UpperBound.Count == 1,
+        $"{packageName}.{functionName} E must have exactly one upper bound");
+    var bound = dependent.UpperBound[0];
+    Require(bound.HasTypeParameter && bound.TypeParameter == owner.Id && bound.Nullable,
+        $"{packageName}.{functionName} E bound must be nullable T");
+}
+
+static void VerifyKlibClassFakeOverrideNullableMethodBound(
+    string path,
+    string className,
+    string functionName)
+{
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var fragment in archive.Entries
+                 .Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+                 .Select(entry =>
+                 {
+                     using var stream = entry.Open();
+                     return PackageFragment.Parser.ParseFrom(stream);
+                 }))
+    {
+        var declaration = fragment.Class.FirstOrDefault(candidate =>
+            QualifiedName(fragment, candidate.FqName) == className);
+        if (declaration is null) continue;
+        var functions = declaration.Function.Where(function =>
+                String(fragment, function.Name) == functionName && ((function.Flags >> 6) & 3) == 1)
+            .ToArray();
+        Require(functions.Length == 1,
+            $"expected one fake override '{className}.{functionName}', found {functions.Length}");
+        var function = functions[0];
+        Require(function.TypeParameter.Count == 1,
+            $"{className}.{functionName} fake override must have one method type parameter");
+        var dependent = function.TypeParameter[0];
+        Require(dependent.UpperBound.Count == 1,
+            $"{className}.{functionName} fake override must have exactly one upper bound");
+        var bound = dependent.UpperBound[0];
+        Require(bound.HasTypeParameter && bound.TypeParameter == 0 && bound.Nullable,
+            $"{className}.{functionName} fake-override bound must be nullable owner T");
+        return;
+    }
+    throw new InvalidDataException($"class '{className}' not found in KLIB");
 }
 
 static void VerifyKlibCSharpExtensionShape(

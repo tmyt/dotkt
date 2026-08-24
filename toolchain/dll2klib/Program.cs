@@ -1446,6 +1446,9 @@ internal sealed class AssemblyScanner
             MetadataAttributes.DotKtNs + "KotlinDeclarationIdentityAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinTypeParameterBoundsAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinSuspendResultAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
@@ -2035,7 +2038,12 @@ internal sealed class AssemblyScanner
             if (isKotlinRichEnum)
             {
                 AddProjectedInterfaces();
-                RestoreErasedSupertypes(handle, result, signatures, names);
+                RestoreErasedSupertypes(
+                    handle,
+                    result,
+                    signatures,
+                    names,
+                    capturedOuterTypeParameters.GetValueOrDefault());
             }
         }
         else if (isAnnotation)
@@ -2061,7 +2069,12 @@ internal sealed class AssemblyScanner
             AddProjectedInterfaces();
             if (result.Supertype.Count == 0)
                 result.Supertype.Add(new KType { ClassName = names.Class("kotlin.Any") });
-            RestoreErasedSupertypes(handle, result, signatures, names);
+            RestoreErasedSupertypes(
+                handle,
+                result,
+                signatures,
+                names,
+                capturedOuterTypeParameters.GetValueOrDefault());
         }
         if (isKotlinSealed)
         {
@@ -2152,7 +2165,7 @@ internal sealed class AssemblyScanner
                 // extension view. Do not turn this class member into a second extension declaration. DotKt member
                 // extensions use the compiler-owned __self parameter and are still restored here.
                 PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
-                AddMethodTypeParameters(method, function, names, signatures, context);
+                AddMethodTypeParameters(methodHandle, method, function, names, signatures, context);
                 // A member's declaring-class path already carries its physical owner. Preserve only the exact
                 // frontend identity; ClrExternal is the top-level declaration transport.
                 if (declarationIdentity is { } identity)
@@ -3238,6 +3251,7 @@ internal sealed class AssemblyScanner
         };
         AddInheritedMethodTypeParameters(
             reader,
+            declarationHandle,
             declaration,
             function,
             names,
@@ -3305,6 +3319,7 @@ internal sealed class AssemblyScanner
 
     private void AddInheritedMethodTypeParameters(
         MetadataReader reader,
+        MethodDefinitionHandle methodHandle,
         MethodDefinition method,
         Function function,
         NameTable names,
@@ -3329,6 +3344,12 @@ internal sealed class AssemblyScanner
             }
             function.TypeParameter.Add(projected);
         }
+        RestoreErasedMethodBounds(
+            methodHandle,
+            function.TypeParameter,
+            signatures,
+            interfaceArguments,
+            new MetadataAttributes(reader));
     }
 
     private bool IsCurrentAssembly(MetadataReader reader) =>
@@ -3363,7 +3384,14 @@ internal sealed class AssemblyScanner
     private static KType SubstituteTypeParameters(KType source, ImmutableArray<KType> arguments)
     {
         if (source.HasTypeParameter && source.TypeParameter >= 0 && source.TypeParameter < arguments.Length)
-            return arguments[source.TypeParameter].Clone();
+        {
+            var replacement = arguments[source.TypeParameter].Clone();
+            // Substitution replaces the classifier, not the use-site nullability. `T?` instantiated with a non-null
+            // owner argument remains nullable; returning the argument verbatim weakened restored method bounds such
+            // as `E : T?` to `E : String` on inherited interface declarations.
+            if (source.Nullable) replacement.Nullable = true;
+            return replacement;
+        }
         var copy = source.Clone();
         for (var i = 0; i < copy.Argument.Count; i++)
             if (copy.Argument[i].Type is { } argument)
@@ -3375,6 +3403,7 @@ internal sealed class AssemblyScanner
 
 
     private void AddMethodTypeParameters(
+        MethodDefinitionHandle methodHandle,
         MethodDefinition method,
         Function function,
         NameTable names,
@@ -3395,6 +3424,48 @@ internal sealed class AssemblyScanner
                 parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
             }
             function.TypeParameter.Add(parameter);
+        }
+        RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
+    }
+
+    private void RestoreErasedMethodBounds(
+        MethodDefinitionHandle methodHandle,
+        Google.Protobuf.Collections.RepeatedField<TypeParameter> parameters,
+        SignatureDecoder signatures,
+        ImmutableArray<KType> ownerArguments = default,
+        MetadataAttributes? attributes = null)
+    {
+        attributes ??= _attrs;
+        using var document = attributes.CarrierDocument(
+            methodHandle, MetadataAttributes.DotKtNs + "KotlinTypeParameterBoundsAttribute");
+        if (document is null) return;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 1
+            || !root.TryGetProperty("bounds", out var bounds) || bounds.ValueKind != JsonValueKind.Object
+            || !bounds.EnumerateObject().Any())
+            throw new InvalidDataException("malformed [KotlinTypeParameterBounds] payload");
+
+        var seen = new HashSet<int>();
+        foreach (var entry in bounds.EnumerateObject())
+        {
+            if (!int.TryParse(entry.Name, out var index) || index < 0 || !seen.Add(index)
+                || entry.Value.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("malformed [KotlinTypeParameterBounds] entry");
+            var parameter = parameters.FirstOrDefault(candidate => candidate.Id == 10000 + index)
+                ?? throw new InvalidDataException(
+                    "[KotlinTypeParameterBounds] index exceeds method generic arity");
+            var restored = entry.Value.EnumerateArray().Select(boundElement =>
+            {
+                var node = TypeNode.Read(boundElement);
+                var bound = signatures.FromTypeNode(node);
+                return ownerArguments.IsDefaultOrEmpty
+                    ? bound
+                    : SubstituteTypeParameters(bound, ownerArguments);
+            }).ToArray();
+            if (restored.Length == 0)
+                throw new InvalidDataException("empty [KotlinTypeParameterBounds] constraint list");
+            parameter.UpperBound.Clear();
+            parameter.UpperBound.Add(restored);
         }
     }
 
@@ -4299,7 +4370,8 @@ internal sealed class AssemblyScanner
                     eraseBlockArguments: entry.KotlinImplementation != entry.Implementation),
             };
             PromoteContextParameters(method, function);
-            AddCSharp14MethodTypeParameters(method, function.TypeParameter, names, signatures, context);
+            AddCSharp14MethodTypeParameters(
+                entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -4443,6 +4515,7 @@ internal sealed class AssemblyScanner
     }
 
     private void AddCSharp14MethodTypeParameters(
+        MethodDefinitionHandle methodHandle,
         MethodDefinition method,
         Google.Protobuf.Collections.RepeatedField<TypeParameter> destination,
         NameTable names,
@@ -4464,6 +4537,7 @@ internal sealed class AssemblyScanner
             }
             destination.Add(parameter);
         }
+        RestoreErasedMethodBounds(methodHandle, destination, signatures);
     }
 
     private void ReadNestedClasses(
@@ -4652,6 +4726,7 @@ internal sealed class AssemblyScanner
                 }
                 function.TypeParameter.Add(tp);
             }
+            RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -5370,6 +5445,7 @@ internal sealed class AssemblyScanner
             }
             property.TypeParameter.Add(parameter);
         }
+        RestoreErasedMethodBounds(representativeHandle, property.TypeParameter, signatures);
         return property;
     }
 
@@ -5582,10 +5658,10 @@ internal sealed class AssemblyScanner
     // constraint would either weaken it to `Sink<Any?>` or, as it did, publish no bound at all and let
     // `Box<BadSink>` compile and then fail to LOAD. Restored here, the frontend rejects the bad argument where the
     // author wrote it. Keyed by parameter INDEX — a type's own parameter list IS a transcription of the metadata's,
-    // unlike its supertype list — and matched by head within the parameter, so a bound the CLR constraint already
-    // supplied is replaced rather than duplicated.
+    // unlike its supertype list — and restored as the complete source list. The CLR rows are an erased physical
+    // approximation of that same list, so retaining any of them beside the carrier can publish a false stronger bound.
     private void RestoreErasedSupertypes(TypeDefinitionHandle handle, Class result, SignatureDecoder signatures,
-        NameTable names)
+        NameTable names, int capturedOuterTypeParameterCount)
     {
         using var doc = _attrs.CarrierDocument(handle, MetadataAttributes.DotKtNs + "KotlinSupertypesAttribute");
         if (doc is null) return;
@@ -5596,7 +5672,7 @@ internal sealed class AssemblyScanner
             ifs.ValueKind == System.Text.Json.JsonValueKind.Array)
             foreach (var i in ifs.EnumerateArray())
                 if (TypeNode.Read(i) is { } n) pre.Add(signatures.FromTypeNode(n));
-        RestoreErasedBounds(doc, result, signatures, names);
+        RestoreErasedBounds(doc, result, signatures, capturedOuterTypeParameterCount);
         if (pre.Count == 0) return;
         for (var i = 0; i < result.Supertype.Count; i++)
         {
@@ -5611,30 +5687,34 @@ internal sealed class AssemblyScanner
     }
 
     private static void RestoreErasedBounds(System.Text.Json.JsonDocument doc, Class result,
-        SignatureDecoder signatures, NameTable names)
+        SignatureDecoder signatures, int capturedOuterTypeParameterCount)
     {
-        if (!doc.RootElement.TryGetProperty("bounds", out var bounds) ||
-            bounds.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+        if (!doc.RootElement.TryGetProperty("bounds", out var bounds)) return;
+        if (bounds.ValueKind != System.Text.Json.JsonValueKind.Object || !bounds.EnumerateObject().Any())
+            throw new InvalidDataException("malformed [KotlinSupertypes] bounds");
+        var seen = new HashSet<int>();
         foreach (var entry in bounds.EnumerateObject())
         {
-            if (!int.TryParse(entry.Name, out var index) || entry.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
-                continue;
-            var parameter = result.TypeParameter.FirstOrDefault(p => p.Id == index);
-            if (parameter is null) continue;
-            foreach (var boundElement in entry.Value.EnumerateArray())
-            {
-                if (TypeNode.Read(boundElement) is not { } node) continue;
-                var bound = signatures.FromTypeNode(node);
-                var at = -1;
-                if (bound.HasClassName)
-                    for (var i = 0; i < parameter.UpperBound.Count && at < 0; i++)
-                        if (parameter.UpperBound[i].HasClassName
-                            && names.ClassName(parameter.UpperBound[i].ClassName) == names.ClassName(bound.ClassName)
-                            && parameter.UpperBound[i].Argument.Count == bound.Argument.Count)
-                            at = i;
-                if (at >= 0) parameter.UpperBound[at] = bound;
-                else parameter.UpperBound.Add(bound);
-            }
+            if (!int.TryParse(entry.Name, out var index) || index < 0 || !seen.Add(index)
+                || entry.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
+                throw new InvalidDataException("malformed [KotlinSupertypes] bound entry");
+            var restoredNodes = entry.Value.EnumerateArray().Select(TypeNode.Read).ToArray();
+            if (restoredNodes.Length == 0)
+                throw new InvalidDataException("empty [KotlinSupertypes] constraint list");
+            // A CLR nested TypeDef flattens its enclosing type parameters before its own. Kotlin metadata instead
+            // owns those declarations on the enclosing class and omits the captured prefix from the inner class.
+            // Their constraints therefore have no declaration to restore here; only the inner class's retained slots
+            // are indexed in `result.TypeParameter`.
+            if (index < capturedOuterTypeParameterCount) continue;
+            var parameter = result.TypeParameter.FirstOrDefault(p => p.Id == index)
+                ?? throw new InvalidDataException("[KotlinSupertypes] bound index exceeds type generic arity");
+            var restored = restoredNodes.Select(signatures.FromTypeNode).ToArray();
+            // NullableGenericErasure records the parameter's WHOLE source constraint list when any constraint moves.
+            // The CLR rows are only its physical approximation: merging leaves an erased `object` row beside a
+            // restored `T?` and publishes the stronger, false Kotlin bound `E : Any, T?`. Replace the parameter as
+            // one semantic unit so the KLIB surface is exactly the producer-authored list.
+            parameter.UpperBound.Clear();
+            parameter.UpperBound.Add(restored);
         }
     }
 

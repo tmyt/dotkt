@@ -151,6 +151,34 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.reified-property-surface.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-package-nullable-method-bound "$producer_klib" "starprojection" \
+			"referencedNullableMethodBound" \
+			>"$ROOT/build/nunit-$name.nullable-method-bound.log" 2>&1; then
+			echo "  nullable method type-parameter bound survives DLL-to-KLIB projection"
+		else
+			echo "  NULLABLE METHOD BOUND KLIB SHAPE FAIL — see build/nunit-$name.nullable-method-bound.log"
+			tail -25 "$ROOT/build/nunit-$name.nullable-method-bound.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-package-nullable-method-bound "$producer_klib" "starprojection" \
+			"referencedNullableSuspendMethodBound" \
+			>"$ROOT/build/nunit-$name.nullable-suspend-method-bound.log" 2>&1; then
+			echo "  nullable suspend method type-parameter bound survives DLL-to-KLIB projection"
+		else
+			echo "  NULLABLE SUSPEND METHOD BOUND KLIB SHAPE FAIL — see build/nunit-$name.nullable-suspend-method-bound.log"
+			tail -25 "$ROOT/build/nunit-$name.nullable-suspend-method-bound.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-class-fake-override-nullable-method-bound "$producer_klib" \
+			"starprojection.ReferencedNullableMethodImplementation" \
+			"inheritedNullableMethodBound" \
+			>"$ROOT/build/nunit-$name.nullable-inherited-method-bound.log" 2>&1; then
+			echo "  inherited fake override preserves nullable owner-dependent method bound"
+		else
+			echo "  NULLABLE INHERITED METHOD BOUND KLIB SHAPE FAIL — see build/nunit-$name.nullable-inherited-method-bound.log"
+			tail -25 "$ROOT/build/nunit-$name.nullable-inherited-method-bound.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--klib-class-properties "$producer_klib" \
 			"roundtrip.memberextensionsurface.GenericMemberPropertyHost" \
 			"memberMatches,ordinaryMemberValue,ordinaryMemberCount" \

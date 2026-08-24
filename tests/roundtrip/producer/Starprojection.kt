@@ -126,6 +126,9 @@ fun referencedInnerLeaf(label: String): ReferencedInnerLeaf<String> =
 
 class ReferencedOwnerPair<A, B>
 open class ReferencedConstrainedInnerBase<T>(private val label: String) {
+    fun <E : T?> nullableMethodBound(value: E): String =
+        label + ":method:" + (value?.toString() ?: "null")
+
     inner class Token<E : T>(private val value: E?) {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
     }
@@ -138,12 +141,36 @@ open class ReferencedConstrainedInnerBase<T>(private val label: String) {
     inner class NestedToken<F, E>(private val value: E?) where E : ReferencedOwnerPair<T, F> {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
     }
+    inner class NullableToken<E : T?>(private val value: E) {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
     inner class TransitiveToken<E, F>(private val value: E?) where E : T, F : List<E>
 }
 
 class ReferencedConstrainedInnerLeaf<T>(label: String) : ReferencedConstrainedInnerBase<T>(label)
 fun referencedConstrainedInnerLeaf(label: String): ReferencedConstrainedInnerLeaf<String> =
     ReferencedConstrainedInnerLeaf(label)
+
+fun <T, E : T?> referencedNullableMethodBound(value: E): String =
+    value?.toString() ?: "method-null"
+
+suspend fun <T, E : T?> referencedNullableSuspendMethodBound(value: E): Int =
+    if (value == null) 1 else 2
+
+open class ReferencedCapturedNullableOuter<T, U : T?> {
+    inner class Token<E>(private val value: E) {
+        fun render(): String = value.toString()
+    }
+}
+
+interface ReferencedNullableMethodContract<T> {
+    fun <E : T?> inheritedNullableMethodBound(value: E): String
+}
+
+class ReferencedNullableMethodImplementation<T> : ReferencedNullableMethodContract<T> {
+    override fun <E : T?> inheritedNullableMethodBound(value: E): String =
+        value?.toString() ?: "inherited-method-null"
+}
 
 // The inline payload is consumed from the producer DLL. Its star-projected receiver must bind to the exact
 // existential slot again after the body is spliced into a downstream module.
