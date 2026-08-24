@@ -143,7 +143,7 @@ generation step. See `docs/user/getting-started.md`.
 | `toolchain/bir2cir/` | **BIR (JSON) → CIR (JSON)**: the Kotlin↔CLR lowering (reads the stdlib ref.dll bindings) |
 | `toolchain/ilemit/` | **CIR (JSON) → CIL** via `System.Reflection.Emit` |
 | `libraries/stdlib/` | the **CLR Kotlin stdlib** sources (common Kotlin + `clr/` actuals + `@Clr*` bindings) |
-| `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |
+| `packaging/` | NuGet packages: `DotKt.Sdk`, `DotKt.Sdk.Mpp`, `DotKt.Toolchain`, `DotKt.Stdlib`, `DotKt.Templates` |
 | `tests/` | categorized NUnit projects plus the few shell scenarios that require external process/build state |
 | `eng/` | in-repo development build integration (`KotlinClr.targets`) |
 | `scripts/` | reusable build/validation tools, `dotkt.sh`, and the three `build-stdlib-*.sh` helpers |

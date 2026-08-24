@@ -12,7 +12,7 @@ the real thing) and replaces only the backend, lowering Kotlin IR → CIL that r
 | `DotKt.Sdk.Mpp` | The SDK for multiplatform projects (common/actual `expect`/`actual` in one CLR compilation). |
 | `DotKt.Toolchain` | The compiler toolchain (`kotc`, `bir2cir`, `ilemit`, `dll2klib`) + the frontend stdlib klib + the compile-time stdlib reference assembly. Build-only. |
 | `DotKt.Stdlib` | The Kotlin standard library **runtime** assembly (`DotKt.Stdlib.dll`) apps link and ship against. |
-| `DotKt.Templates` | `dotnet new` project templates (`dotkt-cli`). |
+| `DotKt.Templates` | `dotnet new` project templates (`dotkt-cli`, `dotkt-mpp`). |
 
 ## Getting started
 
