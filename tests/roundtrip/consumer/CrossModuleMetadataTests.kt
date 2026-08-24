@@ -115,6 +115,7 @@ import starprojection.ReferencedStarBase
 import starprojection.ReferencedInnerLeaf
 import starprojection.referencedInnerLeaf
 import starprojection.ReferencedConstrainedInnerLeaf
+import starprojection.ReferencedComparableDependent
 import starprojection.referencedConstrainedInnerLeaf
 import starprojection.referencedNullableMethodBound
 import starprojection.referencedNullableSuspendMethodBound
@@ -492,6 +493,20 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual(
             0,
             constrained.TransitiveValueToken<Nothing, List<Nothing>>(emptyList()).size(),
+        )
+        ClassicAssert.AreEqual(
+            "cross-bound:null",
+            constrained.DirectMultiToken<Nothing>(null).render(),
+        )
+        ClassicAssert.AreEqual(
+            0,
+            constrained.TransitiveComparableToken<Nothing, ReferencedComparableDependent<Nothing>>(
+                ReferencedComparableDependent(),
+            ).compare(),
+        )
+        ClassicAssert.AreEqual(
+            7,
+            constrained.TransitiveValueTypeToken<Nothing, Int>(7).get(),
         )
         ClassicAssert.AreEqual(
             "method-null",

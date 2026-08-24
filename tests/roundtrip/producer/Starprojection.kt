@@ -150,7 +150,25 @@ open class ReferencedConstrainedInnerBase<T>(private val label: String) {
     inner class TransitiveValueToken<E, F>(private val values: F) where E : T, F : List<E> {
         fun size(): Int = values.size
     }
+    inner class DirectMultiToken<E>(private val value: E?) where E : List<T>, E : ReferencedConstraintMarker {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+    inner class TransitiveComparableToken<E, F>(private val value: F)
+        where E : T, F : ReferencedConstraintDependent<E>, F : Comparable<F> {
+        fun compare(): Int = referencedConstraintCompare(value)
+    }
+    inner class TransitiveValueTypeToken<E, F>(private val value: F) where E : T, F : Comparable<E> {
+        fun get(): F = value
+    }
 }
+
+interface ReferencedConstraintMarker
+interface ReferencedConstraintDependent<E>
+class ReferencedComparableDependent<E> :
+    ReferencedConstraintDependent<E>, Comparable<ReferencedComparableDependent<E>> {
+    override fun compareTo(other: ReferencedComparableDependent<E>): Int = 0
+}
+fun <C : Comparable<C>> referencedConstraintCompare(value: C): Int = value.compareTo(value)
 
 class ReferencedConstrainedInnerLeaf<T>(label: String) : ReferencedConstrainedInnerBase<T>(label)
 fun referencedConstrainedInnerLeaf(label: String): ReferencedConstrainedInnerLeaf<String> =

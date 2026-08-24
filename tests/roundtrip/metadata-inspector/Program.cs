@@ -1145,6 +1145,12 @@ static void VerifyKlib(string path)
     var star = PackageFragment.Parser.ParseFrom(starStream);
     VerifyTransitiveInnerBounds(star, "starprojection.ReferencedConstrainedInnerBase.TransitiveToken");
     VerifyTransitiveInnerBounds(star, "starprojection.ReferencedConstrainedInnerBase.TransitiveValueToken");
+    VerifyDirectMultiInnerBounds(star,
+        "starprojection.ReferencedConstrainedInnerBase.DirectMultiToken");
+    VerifyTransitiveComparableInnerBounds(star,
+        "starprojection.ReferencedConstrainedInnerBase.TransitiveComparableToken");
+    VerifyTransitiveValueTypeInnerBounds(star,
+        "starprojection.ReferencedConstrainedInnerBase.TransitiveValueTypeToken");
 
     VerifyCompanion(fragment, Ns + "NamedCompanionHost", "Key", ["marker", "suspendMarker", "id"]);
     VerifyCompanion(fragment, Ns + "DefaultCompanionHost", "Companion", ["marker"]);
@@ -1399,6 +1405,62 @@ static void VerifyTransitiveInnerBounds(PackageFragment fragment, string classNa
             argument.TypeParameter == e.Id,
         $"{className}.F lost its List<E> bound in projected KLIB metadata");
 }
+
+static void VerifyDirectMultiInnerBounds(PackageFragment fragment, string className)
+{
+    var declaration = Class(fragment, className);
+    Require(declaration.TypeParameter.Count == 1,
+        $"{className} must retain its own type parameter");
+    var e = declaration.TypeParameter.Single(parameter => String(fragment, parameter.Name) == "E");
+    Require(e.UpperBound.Count == 2 &&
+            HasClassifierBound(fragment, e, "kotlin.collections.List", 0) &&
+            HasClassifierBound(fragment, e, "starprojection.ReferencedConstraintMarker"),
+        $"{className}.E lost its complete List<T> + marker bounds in projected KLIB metadata");
+}
+
+static void VerifyTransitiveComparableInnerBounds(PackageFragment fragment, string className)
+{
+    var declaration = Class(fragment, className);
+    Require(declaration.TypeParameter.Count == 2,
+        $"{className} must retain its two own type parameters");
+    var e = declaration.TypeParameter.Single(parameter => String(fragment, parameter.Name) == "E");
+    var f = declaration.TypeParameter.Single(parameter => String(fragment, parameter.Name) == "F");
+    Require(e.UpperBound.Count == 1 && e.UpperBound[0].HasTypeParameter &&
+            e.UpperBound[0].TypeParameter == 0,
+        $"{className}.E lost its enclosing T bound in projected KLIB metadata");
+    Require(f.UpperBound.Count == 2 &&
+            HasClassifierBound(fragment, f, "starprojection.ReferencedConstraintDependent", e.Id) &&
+            HasClassifierBound(fragment, f, "kotlin.Comparable", f.Id),
+        $"{className}.F lost its dependent + self bounds in projected KLIB metadata");
+}
+
+static void VerifyTransitiveValueTypeInnerBounds(PackageFragment fragment, string className)
+{
+    var declaration = Class(fragment, className);
+    Require(declaration.TypeParameter.Count == 2,
+        $"{className} must retain its two own type parameters");
+    var e = declaration.TypeParameter.Single(parameter => String(fragment, parameter.Name) == "E");
+    var f = declaration.TypeParameter.Single(parameter => String(fragment, parameter.Name) == "F");
+    Require(e.UpperBound.Count == 1 && e.UpperBound[0].HasTypeParameter &&
+            e.UpperBound[0].TypeParameter == 0,
+        $"{className}.E lost its enclosing T bound in projected KLIB metadata");
+    Require(f.UpperBound.Count == 1 &&
+            HasClassifierBound(fragment, f, "kotlin.Comparable", e.Id),
+        $"{className}.F lost its Comparable<E> bound in projected KLIB metadata");
+}
+
+static bool HasClassifierBound(
+    PackageFragment fragment,
+    DotKt.Klib.Metadata.TypeParameter parameter,
+    string classifier,
+    int? argumentTypeParameter = null) =>
+    parameter.UpperBound.Any(bound =>
+        bound.HasClassName && QualifiedName(fragment, bound.ClassName) == classifier &&
+        (argumentTypeParameter == null
+            ? bound.Argument.Count == 0
+            : bound.Argument.Count == 1 &&
+              bound.Argument[0].Type is { HasTypeParameter: true } argument &&
+              argument.TypeParameter == argumentTypeParameter.Value));
 
 static void VerifyCompanion(
     PackageFragment fragment,
