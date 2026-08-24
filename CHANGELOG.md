@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Transitive inner constraints now remain constructible through a star-projected outer (#575).** Existential inner
+  factories keep indirect arguments such as `F : List<E>` in their own generic frame while fixing the directly
+  owner-dependent `E : T` argument to Kotlin bottom. The physical inner type omits constraints that cannot name the
+  hidden outer frame, preserves their complete Kotlin form for DLL-to-KLIB projection, and explicitly converts bound
+  receivers in method bodies, producing verifiable same-module and cross-module CLR binaries without losing values.
+
 - **Nullable type-parameter bounds now survive DLL-to-KLIB projection (#576).** When a producer-authored bound is
   restored from `KotlinSupertypes`, dll2klib replaces the CLR-erased constraint list as one semantic unit instead of
   retaining a spurious `Any` bound beside the restored nullable type. Method bounds travel on their own MethodDef

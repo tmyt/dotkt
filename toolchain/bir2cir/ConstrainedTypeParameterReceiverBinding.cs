@@ -46,6 +46,8 @@ using DotKt.Bir;
 // vocabulary and an SM field's `T` is the SM class's own type parameter.
 static class ConstrainedTypeParameterReceiverBinding
 {
+    const string ErasedConstraintDispatchKey = "_erasedConstraintDispatch";
+
     // PHASE 1 — close a bare owner token from the receiver type parameter's bound, leaving the node a
     // callInstance so the inherited-owner walk can still substitute the declaring type into it.
     public static void CloseOpenOwners(IEnumerable<JsonNode> roots)
@@ -56,11 +58,11 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     // PHASE 2 — author the constrained dispatch over the now-declaring, now-constructed owner.
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue)
+    public static void ApplyAll(IEnumerable<JsonNode> roots, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
     {
         var rootList = roots.ToList();
         var arity = CollectTypeArity(rootList);
-        foreach (var root in rootList) BindFile(root, arity, close: false, isValue);
+        foreach (var root in rootList) BindFile(root, arity, close: false, isValue, refs: refs);
     }
 
     // A CLR property cannot be classified as an accessor rather than a public field until ClrMemberResolution has
@@ -73,6 +75,11 @@ static class ConstrainedTypeParameterReceiverBinding
         var arity = CollectTypeArity(rootList);
         foreach (var root in rootList)
             BindFile(root, arity, close: false, isValue: null, resolvedPropertiesOnly: true);
+        foreach (var root in rootList)
+        {
+            DropConstraintDispatchFacts(root);
+            DropErasedConstraintFacts(root);
+        }
     }
 
     // name -> declared type-parameter count, for every type declared in this compilation. Only the ARITY is
@@ -95,50 +102,50 @@ static class ConstrainedTypeParameterReceiverBinding
     }
 
     static void BindFile(JsonNode root, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue = null, bool resolvedPropertiesOnly = false)
+        ValueTypeOracle isValue = null, bool resolvedPropertiesOnly = false, ReferenceMetadataIndex refs = null)
     {
         if (root is not JsonObject file) return;
         var noTypeParams = new JsonArray();
         if (file["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, noTypeParams, arity, close, isValue, resolvedPropertiesOnly);
-        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue, resolvedPropertiesOnly);
+                BindMethod(method, noTypeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
+        BindAccessors(file["properties"] as JsonArray, noTypeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
         if (file["types"] is JsonArray declared)
             foreach (var type in declared.OfType<JsonObject>())
-                BindType(type, arity, close, isValue, resolvedPropertiesOnly);
+                BindType(type, arity, close, isValue, resolvedPropertiesOnly, refs);
     }
 
     static void BindType(JsonObject type, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue, bool resolvedPropertiesOnly)
+        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs)
     {
         var typeParams = TypeParameterFrame.CloneDeclarations(type);
         if (type["ctors"] is JsonArray ctors)
             foreach (var ctor in ctors.OfType<JsonObject>())
-                BindMethod(ctor, typeParams, arity, close, isValue, resolvedPropertiesOnly);
+                BindMethod(ctor, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
         if (type["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
-                BindMethod(method, typeParams, arity, close, isValue, resolvedPropertiesOnly);
+                BindMethod(method, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
         // A property ACCESSOR body is executable code like any other, and `class H<T : Tagged>(val item: T) { val v
         // get() = item.tag() }` reaches this pass only through here — BIR keeps accessors under `properties`, not
         // `methods`.
-        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue, resolvedPropertiesOnly);
+        BindAccessors(type["properties"] as JsonArray, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
         if (type["types"] is JsonArray nested)
             foreach (var child in nested.OfType<JsonObject>())
-                BindType(child, arity, close, isValue, resolvedPropertiesOnly);
+                BindType(child, arity, close, isValue, resolvedPropertiesOnly, refs);
     }
 
     static void BindAccessors(JsonArray properties, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue, bool resolvedPropertiesOnly)
+        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs)
     {
         if (properties == null) return;
         foreach (var property in properties.OfType<JsonObject>())
             foreach (var slot in new[] { "getter", "setter" })
                 if (property[slot] is JsonObject accessor)
-                    BindMethod(accessor, typeParams, arity, close, isValue, resolvedPropertiesOnly);
+                    BindMethod(accessor, typeParams, arity, close, isValue, resolvedPropertiesOnly, refs);
     }
 
     static void BindMethod(JsonObject method, JsonArray typeParams, Dictionary<string, int> arity, bool close,
-        ValueTypeOracle isValue, bool resolvedPropertiesOnly)
+        ValueTypeOracle isValue, bool resolvedPropertiesOnly, ReferenceMetadataIndex refs)
     {
         var methodParams = method["typeParams"] as JsonArray ?? new JsonArray();
         // The declaration's local/param type environment, for a receiver read that carries no frontend `sty`
@@ -186,6 +193,50 @@ static class ConstrainedTypeParameterReceiverBinding
             {
                 case JsonObject call:
                     var kind = Str(call["k"]);
+                    // MemberCallSubstitution may already have authored a constrained CLR-interface call before the
+                    // star-inner pass weakens an unrepresentable bound. Such a call cannot keep `constrained.` once
+                    // that proof has deliberately been removed from the TypeDef. Preserve its already-selected
+                    // direct interface as an explicit conversion and ordinary virtual call. This is keyed on the
+                    // selected constraint, so a retained sibling/self-bound still gets boxing-free constrained
+                    // dispatch even when another constraint on the same parameter was removed.
+                    if (!close && !resolvedPropertiesOnly && kind == "constrainedCall"
+                        && refs != null
+                        && TypeJson.Read(call["iface"]) is TypeNode.Fqn constrainedIface
+                        && call["recv"] is JsonObject constrainedRecv
+                        // An already-authored constrained call states the physical receiver slot explicitly. Its
+                        // expression can be a field/property/call result whose surface stamp no longer exposes the
+                        // type variable after earlier rewrites, so do not re-infer what the node already owns.
+                        && TypeJson.Read(call["recvType"]) is TypeNode.Tv constrainedTv
+                        && ConstraintAtPhysical(
+                            constrainedTv, constrainedIface.Name, typeParams, methodParams, refs,
+                            out var existingConstraintErased)
+                            is not null
+                        && existingConstraintErased)
+                    {
+                        call["recv"] = new JsonObject
+                        {
+                            ["k"] = "cast",
+                            ["type"] = TypeJson.Write(constrainedIface),
+                            ["e"] = constrainedRecv.DeepClone(),
+                        };
+                        call["k"] = "clrInstance";
+                        call["type"] = TypeJson.Write(constrainedIface);
+                        call.Remove("recvType");
+                        call.Remove("iface");
+                        kind = "clrInstance";
+                    }
+                    // A CLR property has not yet been classified as accessor versus field here, but its direct
+                    // semantic/physical owner is still available. Preserve whether that selected route was one of
+                    // the constraints removed from the physical inner TypeDef. ClrMemberResolution may later replace
+                    // the owner with an inherited declaring interface, where comparing heads cannot recover the route.
+                    if (!close && !resolvedPropertiesOnly && refs != null
+                        && kind is "clrPropGet" or "clrPropSet"
+                        && TypeJson.Read(call["type"]) is TypeNode.Fqn unresolvedPropertyOwner
+                        && call["recv"] is JsonObject unresolvedPropertyRecv
+                        && ReceiverTypeVariable(unresolvedPropertyRecv, scope, locals) is TypeNode.Tv unresolvedPropertyTv
+                        && ConstraintAtPhysical(unresolvedPropertyTv, unresolvedPropertyOwner.Name,
+                            typeParams, methodParams, refs, out var propertyConstraintErased) is not null)
+                        call[ErasedConstraintDispatchKey] = propertyConstraintErased;
                     if (resolvedPropertiesOnly
                         && (kind == "clrPropGet" || kind == "clrPropSet")
                         && Str(call["member"]) == "accessor"
@@ -195,7 +246,13 @@ static class ConstrainedTypeParameterReceiverBinding
                         && ReceiverTypeVariable(propertyRecv, scope, locals) is TypeNode.Tv propertyTv
                         && ClosedOwner(propertyOwner, arity) is TypeNode.Fqn closedPropertyOwner)
                     {
-                        if (Str(call["dispatch"]) == "callvirt")
+                        var propertyRouteWasErased = NullableBool(call[ErasedConstraintDispatchKey])
+                            ?? ConstraintDispatchWasErased(
+                                propertyTv, closedPropertyOwner.Name, typeParams, methodParams);
+                        call.Remove(ErasedConstraintDispatchKey);
+                        if (propertyRouteWasErased)
+                            CastResolvedPropertyReceiver(call, closedPropertyOwner);
+                        else if (Str(call["dispatch"]) == "callvirt")
                             ConstrainResolvedProperty(call, kind == "clrPropSet", propertyTv, closedPropertyOwner);
                         else
                             CastResolvedPropertyReceiver(call, closedPropertyOwner);
@@ -212,37 +269,60 @@ static class ConstrainedTypeParameterReceiverBinding
                         {
                             // PHASE 1. Only the TOKEN changes: a bare owner gets the construction its receiver's
                             // bound already spells out, so the inherited-owner walk that follows has a constructed
-                            // type to substitute the declaring owner into.
-                            if (owner.Args == null
-                                && ConstraintAt(tv, owner.Name, typeParams, methodParams) is TypeNode.Fqn bound
-                                && bound.Args != null)
-                                call[ownerKey] = TypeJson.Write(bound);
+                            // type to substitute the declaring owner into. Also carry whether THAT selected bound was
+                            // physically removed; phase 2 may see its inherited declaring owner instead of this head.
+                            if (ConstraintAt(
+                                    tv, owner.Name, typeParams, methodParams, out var erased) is TypeNode.Fqn bound)
+                            {
+                                call[ErasedConstraintDispatchKey] = erased;
+                                if (owner.Args == null && bound.Args != null)
+                                    call[ownerKey] = TypeJson.Write(bound);
+                            }
                         }
                         else if (ClosedOwner(owner, arity) is TypeNode.Fqn iface)
                         {
-                            // PHASE 2. A !!T receiver is not an interface reference on the evaluation stack. Even
-                            // with the exact constructed MemberRef, ECMA-335 requires an address plus
-                            // `constrained. !!T; callvirt`. Author that dispatch explicitly in CIR; ilemit emits
-                            // this node one-to-one.
-                            // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
-                            // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
-                            // are carried through untouched. A clrGenericInstance's bir2cir-internal matching input is
-                            // `resolvedMemberParams`; constrainedCall uses the same input under its ordinary `sig` slot.
-                            // Move that fact rather than selecting again by name/arity.
-                            if (genericClrCall && call["resolvedMemberParams"] is JsonNode resolvedMemberParams)
+                            var selectedConstraintWasErased = Bool(call[ErasedConstraintDispatchKey])
+                                || ConstraintDispatchWasErased(tv, iface.Name, typeParams, methodParams);
+                            call.Remove(ErasedConstraintDispatchKey);
+                            if (selectedConstraintWasErased)
                             {
-                                call.Remove("resolvedMemberParams");
-                                call["sig"] = resolvedMemberParams;
+                                // The source bound remains authoritative Kotlin metadata, but an inner TypeDef whose
+                                // bound mentions a star outer cannot carry that relation as a CLR GenericParamConstraint.
+                                // Convert the value to the already-selected bound explicitly; constrained. would ask
+                                // the verifier to prove a relation deliberately absent from the physical declaration.
+                                call["recv"] = new JsonObject
+                                {
+                                    ["k"] = "cast",
+                                    ["type"] = TypeJson.Write(iface),
+                                    ["e"] = recv.DeepClone(),
+                                };
                             }
-                            call["k"] = "constrainedCall";
-                            call["recvType"] = TypeJson.Write(tv);
-                            call["iface"] = TypeJson.Write(iface);
-                            AlignArguments(call, iface, scope, isValue);
-                            if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
-                                call["ret"] = dynRet.DeepClone();
-                            call.Remove(ownerKey);
-                            call.Remove("virtual");
-                            call.Remove("dynRet");
+                            else
+                            {
+                                // PHASE 2. A !!T receiver is not an interface reference on the evaluation stack. Even
+                                // with the exact constructed MemberRef, ECMA-335 requires an address plus
+                                // `constrained. !!T; callvirt`. Author that dispatch explicitly in CIR; ilemit emits
+                                // this node one-to-one.
+                                // Only the DISPATCH changes. `sig` (the overload key), `typeArgs` (a generic member's
+                                // instantiation) and `ret` (the declared call-result view) are facts about the CALL and
+                                // are carried through untouched. A clrGenericInstance's bir2cir-internal matching input
+                                // is `resolvedMemberParams`; constrainedCall uses the same input under its ordinary
+                                // `sig` slot. Move that fact rather than selecting again by name/arity.
+                                if (genericClrCall && call["resolvedMemberParams"] is JsonNode resolvedMemberParams)
+                                {
+                                    call.Remove("resolvedMemberParams");
+                                    call["sig"] = resolvedMemberParams;
+                                }
+                                call["k"] = "constrainedCall";
+                                call["recvType"] = TypeJson.Write(tv);
+                                call["iface"] = TypeJson.Write(iface);
+                                AlignArguments(call, iface, scope, isValue);
+                                if (call["ret"] == null && call["dynRet"] is JsonNode dynRet)
+                                    call["ret"] = dynRet.DeepClone();
+                                call.Remove(ownerKey);
+                                call.Remove("virtual");
+                                call.Remove("dynRet");
+                            }
                         }
                     }
                     foreach (var kv in call)
@@ -354,15 +434,99 @@ static class ConstrainedTypeParameterReceiverBinding
 
     // The unique constraint of `tv` naming `ownerName`, as written in source — a closed type token by
     // construction. Ambiguity (two constraints with that name) yields null rather than a guess.
-    static TypeNode.Fqn ConstraintAt(TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams)
+    static TypeNode.Fqn ConstraintAt(
+        TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams, out bool erased)
+    {
+        erased = false;
+        var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
+        if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor)
+            return null;
+        var matches = ConstraintDeclarations(descriptor)
+            .Where(candidate => candidate.Constraint.Name == ownerName).ToList();
+        if (matches.Count != 1) return null;
+        erased = matches[0].Erased;
+        return matches[0].Constraint;
+    }
+
+    // MemberCallSubstitution crosses Kotlin collection/Comparable vocabulary into its CLR alias before this pass.
+    // Match that already-selected direct owner back to exactly one retained/removed source constraint; aliases are
+    // declaration facts from the trusted compile references, not a name/layout reconstruction.
+    static TypeNode.Fqn ConstraintAtPhysical(
+        TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams,
+        ReferenceMetadataIndex refs, out bool erased)
+    {
+        erased = false;
+        var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
+        if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor)
+            return null;
+        var matches = ConstraintDeclarations(descriptor).Where(candidate =>
+        {
+            if (candidate.Constraint.Name == ownerName) return true;
+            return refs.TryResolveClrOwner(candidate.Constraint.Name, out var physical, out _)
+                && physical == ownerName;
+        }).ToList();
+        if (matches.Count != 1) return null;
+        erased = matches[0].Erased;
+        return matches[0].Constraint;
+    }
+
+    static bool ConstraintDispatchWasErased(
+        TypeNode.Tv tv, string ownerName, JsonArray typeParams, JsonArray methodParams)
     {
         var source = tv.Scope == "type" ? typeParams : tv.Scope == "method" ? methodParams : null;
-        if (source == null || tv.I < 0 || tv.I >= source.Count || source[tv.I] is not JsonObject descriptor
-            || descriptor["constraints"] is not JsonArray constraints)
-            return null;
-        var fqns = constraints.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
-            .Where(f => f.Name == ownerName).ToList();
-        return fqns.Count == 1 ? fqns[0] : null;
+        return source != null && tv.I >= 0 && tv.I < source.Count
+            && source[tv.I] is JsonObject descriptor
+            && descriptor[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is JsonArray erased
+            && erased.Select(TypeJson.Read).OfType<TypeNode.Fqn>()
+                .Any(constraint => constraint.Name == ownerName);
+    }
+
+    static IEnumerable<(TypeNode.Fqn Constraint, bool Erased)> ConstraintDeclarations(JsonObject descriptor)
+    {
+        if (descriptor["constraints"] is JsonArray retained)
+            foreach (var constraint in retained.Select(TypeJson.Read).OfType<TypeNode.Fqn>())
+                yield return (constraint, false);
+        if (descriptor[FBoundStarProjectionErasure.ErasedInnerConstraintKey] is JsonArray erased)
+            foreach (var constraint in erased.Select(TypeJson.Read).OfType<TypeNode.Fqn>())
+                yield return (constraint, true);
+    }
+
+    static bool Bool(JsonNode node) =>
+        node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
+
+    static bool? NullableBool(JsonNode node) =>
+        node is JsonValue value && value.TryGetValue<bool>(out var result) ? result : null;
+
+    static void DropConstraintDispatchFacts(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                obj.Remove(ErasedConstraintDispatchKey);
+                foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
+                    DropConstraintDispatchFacts(child);
+                break;
+            case JsonArray array:
+                foreach (var child in array.Where(value => value != null).ToList())
+                    DropConstraintDispatchFacts(child);
+                break;
+        }
+    }
+
+    static void DropErasedConstraintFacts(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                obj.Remove(FBoundStarProjectionErasure.ErasedInnerConstraintKey);
+                foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
+                    DropErasedConstraintFacts(child);
+                break;
+            case JsonArray array:
+                foreach (var child in array.Where(value => value != null).ToList())
+                    DropErasedConstraintFacts(child);
+                break;
+        }
     }
 
     static string Str(JsonNode node) =>

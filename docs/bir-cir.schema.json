@@ -244,6 +244,11 @@
             "reified":  { "const": true, "$comment": "BIR-only Kotlin reified type-parameter fact. bir2cir consumes it into the CLR nullability-witness ABI and trusted round-trip metadata; it never reaches CIR." },
             "variance": { "enum": ["in", "out"] },
             "constraints": { "type": "array", "items": { "$ref": "#/$defs/type" } },
+            "erasedInnerConstraints": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/type" },
+              "$comment": "bir2cir-only constraints removed from an inner TypeDef because its star-outer physical frame cannot express them. Constrained receiver binding consumes this fact and DROPS it before CIR."
+            },
             "specialConstraints": {
               "type": "array",
               "items": { "enum": ["class", "struct", "new", "allowsRefStruct"] },

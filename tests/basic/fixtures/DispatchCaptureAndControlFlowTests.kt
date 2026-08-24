@@ -85,6 +85,13 @@ class DispatchCaptureNestedLeaf<E>(outer: DispatchCaptureNestedOuter<E>) :
     fun make(value: Int): Entry = Entry(value)
 }
 class DispatchCaptureOwnerPair<A, B>
+interface DispatchCaptureMarker
+interface DispatchCaptureDependent<E>
+class DispatchCaptureComparableDependent<E> :
+    DispatchCaptureDependent<E>, Comparable<DispatchCaptureComparableDependent<E>> {
+    override fun compareTo(other: DispatchCaptureComparableDependent<E>): Int = 0
+}
+fun <C : Comparable<C>> dispatchCaptureCompare(value: C): Int = value.compareTo(value)
 open class DispatchCaptureConstrainedInnerOuter<T>(private val label: String) {
     inner class Token<E : T>(private val value: E?) {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
@@ -101,9 +108,22 @@ open class DispatchCaptureConstrainedInnerOuter<T>(private val label: String) {
     inner class NullableToken<E : T?>(private val value: E) {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
     }
-    // A transitive owner dependency cannot use the fixed bottom-witness factory ABI. Merely declaring the valid
-    // Kotlin type must remain supported even though construction through Outer<*> needs a future representation.
-    inner class TransitiveToken<E, F>(private val value: E?) where E : T, F : List<E>
+    inner class TransitiveToken<E, F>(private val value: E?) where E : T, F : List<E> {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+    inner class TransitiveValueToken<E, F>(private val values: F) where E : T, F : List<E> {
+        fun size(): Int = values.size
+    }
+    inner class DirectMultiToken<E>(private val value: E?) where E : List<T>, E : DispatchCaptureMarker {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+    inner class TransitiveComparableToken<E, F>(private val value: F)
+        where E : T, F : DispatchCaptureDependent<E>, F : Comparable<F> {
+        fun compare(): Int = dispatchCaptureCompare(value)
+    }
+    inner class TransitiveValueTypeToken<E, F>(private val value: F) where E : T, F : Comparable<E> {
+        fun get(): F = value
+    }
 }
 class DispatchCaptureConstrainedInnerLeaf<T>(label: String) : DispatchCaptureConstrainedInnerOuter<T>(label)
 fun dispatchCaptureConstrainedInner(value: DispatchCaptureConstrainedInnerOuter<*>): String =
@@ -116,6 +136,18 @@ fun dispatchCaptureConstrainedNested(value: DispatchCaptureConstrainedInnerOuter
     value.NestedToken<String, Nothing>(null).render()
 fun dispatchCaptureConstrainedNullable(value: DispatchCaptureConstrainedInnerOuter<*>): String =
     value.NullableToken(null).render()
+fun dispatchCaptureConstrainedTransitive(value: DispatchCaptureConstrainedInnerOuter<*>): String =
+    value.TransitiveToken<Nothing, List<Nothing>>(null).render()
+fun dispatchCaptureConstrainedTransitiveValue(value: DispatchCaptureConstrainedInnerOuter<*>): Int =
+    value.TransitiveValueToken<Nothing, List<Nothing>>(emptyList()).size()
+fun dispatchCaptureConstrainedDirectMulti(value: DispatchCaptureConstrainedInnerOuter<*>): String =
+    value.DirectMultiToken<Nothing>(null).render()
+fun dispatchCaptureConstrainedTransitiveComparable(value: DispatchCaptureConstrainedInnerOuter<*>): Int =
+    value.TransitiveComparableToken<Nothing, DispatchCaptureComparableDependent<Nothing>>(
+        DispatchCaptureComparableDependent(),
+    ).compare()
+fun dispatchCaptureConstrainedTransitiveValueType(value: DispatchCaptureConstrainedInnerOuter<*>): Int =
+    value.TransitiveValueTypeToken<Nothing, Int>(7).get()
 fun dispatchCaptureConstrainedDerived(value: DispatchCaptureConstrainedInnerLeaf<*>): String {
     val kept = value.Token<Nothing>(null)
     return kept.render()
@@ -226,6 +258,11 @@ class NestedAndLocalClassTests {
         assertEquals("bound:null:mixed", dispatchCaptureConstrainedMixed(constrained))
         assertEquals("bound:null", dispatchCaptureConstrainedNested(constrained))
         assertEquals("bound:null", dispatchCaptureConstrainedNullable(constrained))
+        assertEquals("bound:null", dispatchCaptureConstrainedTransitive(constrained))
+        assertEquals(0, dispatchCaptureConstrainedTransitiveValue(constrained))
+        assertEquals(0, dispatchCaptureConstrainedTransitiveComparable(constrained))
+        assertEquals("bound:null", dispatchCaptureConstrainedDirectMulti(constrained))
+        assertEquals(7, dispatchCaptureConstrainedTransitiveValueType(constrained))
         assertEquals("bound:null", dispatchCaptureConstrainedFactoryUse(constrained))
         assertEquals("bound:null", dispatchCaptureConstrainedLocalFactory(constrained))
         assertEquals("wide", dispatchCaptureConstrainedWideLocal(constrained))
