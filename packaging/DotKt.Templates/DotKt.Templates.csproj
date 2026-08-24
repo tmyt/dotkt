@@ -4,7 +4,7 @@
     <PackageType>Template</PackageType>
     <PackageId>DotKt.Templates</PackageId>
     <Title>DotKt project templates</Title>
-    <Description>`dotnet new` templates for DotKt (Kotlin -&gt; .NET). Includes dotkt-cli.</Description>
+    <Description>`dotnet new` templates for DotKt (Kotlin -&gt; .NET). Includes dotkt-cli and dotkt-mpp.</Description>
     <Authors>DotKt</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/tmyt/dotkt</PackageProjectUrl>
