@@ -288,8 +288,9 @@ internal static class Program
             Environment.GetEnvironmentVariable(InnerCatalogEnvironment));
         using var publicTypeCatalog = PublicTypeCatalog.Load(
             Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment));
-        var fragments = new AssemblyScanner(
-            pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog).Scan();
+        using var scanner = new AssemblyScanner(
+            pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog);
+        var fragments = scanner.Scan();
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         var temp = output + "." + Guid.NewGuid().ToString("N") + ".tmp";
@@ -1341,7 +1342,7 @@ internal sealed class ArityNames
         string.IsNullOrEmpty(ns) ? name : ns + "." + name;
 }
 
-internal sealed class AssemblyScanner
+internal sealed class AssemblyScanner : IDisposable
 {
     private sealed record CompanionCarrier(
         string Kind,
@@ -1415,6 +1416,7 @@ internal sealed class AssemblyScanner
     private readonly Dictionary<string, TypeDefinitionHandle> _localDefinitions;
     private readonly CSharp14ExtensionCatalog _csharp14Extensions;
     private readonly SignatureDecoderSeeds _signatureSeeds;
+    private readonly ExternalSignatureDecoderCache _externalSignatureDecoders = new();
 
     public AssemblyScanner(
         PEReader pe,
@@ -1619,6 +1621,7 @@ internal sealed class AssemblyScanner
             var signatures = new SignatureDecoder(
                 _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
                 _signatureSeeds,
+                _externalSignatureDecoders,
                 SemanticCompanionTypeNames(names));
             var projectedBySemanticName = new Dictionary<string, Class>(StringComparer.Ordinal);
 
@@ -3105,8 +3108,11 @@ internal sealed class AssemblyScanner
             _delegateCatalog,
             _companionCatalog,
             _innerCatalog,
-            SignatureDecoderSeeds.Discover(reader, arityNames));
+            SignatureDecoderSeeds.Discover(reader, arityNames),
+            _externalSignatureDecoders);
     }
+
+    public void Dispose() => _externalSignatureDecoders.Dispose();
 
     private static GenericContext InheritedContext(
         MetadataReader reader,
@@ -6505,6 +6511,73 @@ internal sealed record SignatureDecoderSeeds(
     }
 }
 
+// An AssemblyScanner projects every visible namespace with a distinct NameTable, but all of those package-local
+// decoders read the same referenced assemblies. Keep each referenced PE and its read-only metadata prerequisites open
+// for the scanner's lifetime so the first external delegate in every namespace does not reopen and rescan it.
+internal sealed class ExternalSignatureDecoderCache : IDisposable
+{
+    private readonly Dictionary<string, Source> _sources = new(StringComparer.Ordinal);
+
+    internal Source Get(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (!_sources.TryGetValue(fullPath, out var source))
+        {
+            source = new Source(fullPath);
+            _sources.Add(fullPath, source);
+        }
+        return source;
+    }
+
+    public void Dispose()
+    {
+        foreach (var source in _sources.Values) source.Dispose();
+        _sources.Clear();
+    }
+
+    internal sealed class Source : IDisposable
+    {
+        private readonly FileStream _file;
+        private readonly PEReader _pe;
+
+        internal Source(string path)
+        {
+            _file = File.OpenRead(path);
+            PEReader? pe = null;
+            try
+            {
+                pe = new PEReader(_file, PEStreamOptions.PrefetchMetadata);
+                _pe = pe;
+                if (!_pe.HasMetadata)
+                    throw new InvalidDataException(
+                        $"delegate catalog target is not a managed PE: {path}");
+                Reader = _pe.GetMetadataReader();
+                ArityNames = ArityNames.Create(
+                    Reader, Environment.GetEnvironmentVariable(Program.ArityClashesEnvironment));
+                Attributes = new MetadataAttributes(Reader);
+                Seeds = SignatureDecoderSeeds.Discover(Reader, ArityNames);
+            }
+            catch
+            {
+                pe?.Dispose();
+                _file.Dispose();
+                throw;
+            }
+        }
+
+        internal MetadataReader Reader { get; }
+        internal MetadataAttributes Attributes { get; }
+        internal ArityNames ArityNames { get; }
+        internal SignatureDecoderSeeds Seeds { get; }
+
+        public void Dispose()
+        {
+            _pe.Dispose();
+            _file.Dispose();
+        }
+    }
+}
+
 internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericContext>
 {
     private readonly MetadataReader _md;
@@ -6514,6 +6587,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly DelegateReferenceCatalog _delegateCatalog;
     private readonly CompanionReferenceCatalog _companionCatalog;
     private readonly InnerReferenceCatalog _innerCatalog;
+    private readonly ExternalSignatureDecoderCache _externalSignatureDecoders;
     private readonly IReadOnlyDictionary<TypeDefinitionHandle, int> _semanticTypeNames;
     private readonly bool _restoreKotlinCollections;
     private readonly IReadOnlyDictionary<string, TypeDefinitionHandle> _delegateDefinitions;
@@ -6545,6 +6619,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         CompanionReferenceCatalog companionCatalog,
         InnerReferenceCatalog innerCatalog,
         SignatureDecoderSeeds seeds,
+        ExternalSignatureDecoderCache externalSignatureDecoders,
         IReadOnlyDictionary<TypeDefinitionHandle, int>? semanticTypeNames = null)
     {
         _md = md;
@@ -6554,6 +6629,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _delegateCatalog = delegateCatalog;
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
+        _externalSignatureDecoders = externalSignatureDecoders;
         _delegateDefinitions = seeds.DelegateDefinitions;
         _seedValueTypeNames = seeds.ValueTypeNames;
         _semanticTypeNames = semanticTypeNames ?? new Dictionary<TypeDefinitionHandle, int>();
@@ -7307,27 +7383,22 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         if (_externalDelegateShapes.TryGetValue(key, out var cached))
             return cached.Clone();
 
-        using var file = File.OpenRead(entry.DefinitionPath);
-        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-        if (!pe.HasMetadata)
-            throw new InvalidDataException(
-                $"delegate catalog target is not a managed PE: {entry.DefinitionPath}");
-        var md = pe.GetMetadataReader();
+        var source = _externalSignatureDecoders.Get(entry.DefinitionPath);
+        var md = source.Reader;
         var handle = MetadataTokens.TypeDefinitionHandle(entry.TypeDefinitionRow);
         if (handle.IsNil || MetadataTokens.GetRowNumber(handle) > md.TypeDefinitions.Count)
             throw new InvalidDataException(
                 $"delegate catalog contains an invalid TypeDef row for {entry.MetadataName}");
-        var arityNames = ArityNames.Create(
-            md, Environment.GetEnvironmentVariable(Program.ArityClashesEnvironment));
         var decoder = new SignatureDecoder(
             md,
             _names,
-            new MetadataAttributes(md),
-            arityNames,
+            source.Attributes,
+            source.ArityNames,
             _delegateCatalog,
             _companionCatalog,
             _innerCatalog,
-            SignatureDecoderSeeds.Discover(md, arityNames));
+            source.Seeds,
+            _externalSignatureDecoders);
         var shape = decoder.DecodeDelegate(handle);
         _externalDelegateShapes[key] = shape;
         return shape.Clone();

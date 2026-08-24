@@ -178,6 +178,7 @@ dll2klib-e2e: ## CLR reference DLL -> standard metadata-only KLIB end-to-end reg
 
 dll2klib-index-benchmark: ## repeatable synthetic benchmark for dll2klib assembly indexes
 	bash tests/special/dll2klib-local-index-benchmark/run.sh
+	bash tests/special/dll2klib-external-delegate-index-benchmark/run.sh
 
 # ==================================================================================================
 # Cleaning
