@@ -88,6 +88,23 @@ open class DispatchCaptureConstrainedInnerOuter<T>(private val label: String) {
     inner class Token<E : T>(private val value: E?) {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
     }
+    inner class PairToken<E, F>(private val first: E?, private val second: F?) where E : T, F : T {
+        fun render(): String = label + ":" + (first?.toString() ?: "null") + ":" + (second?.toString() ?: "null")
+    }
+    inner class MixedToken<E : T, F>(private val first: E?, private val second: F) {
+        fun render(): String = label + ":" + (first?.toString() ?: "null") + ":" + second.toString()
+    }
+}
+class DispatchCaptureConstrainedInnerLeaf<T>(label: String) : DispatchCaptureConstrainedInnerOuter<T>(label)
+fun dispatchCaptureConstrainedInner(value: DispatchCaptureConstrainedInnerOuter<*>): String =
+    value.Token<Nothing>(null).render()
+fun dispatchCaptureConstrainedPair(value: DispatchCaptureConstrainedInnerOuter<*>): String =
+    value.PairToken<Nothing, Nothing>(null, null).render()
+fun dispatchCaptureConstrainedMixed(value: DispatchCaptureConstrainedInnerOuter<*>): String =
+    value.MixedToken<Nothing, String>(null, "mixed").render()
+fun dispatchCaptureConstrainedDerived(value: DispatchCaptureConstrainedInnerLeaf<*>): String {
+    val kept = value.Token<Nothing>(null)
+    return kept.render()
 }
 fun dispatchCaptureMakeFromOutside(value: DispatchCaptureInnerLeaf<String>): String = value.Entry(9).render()
 fun dispatchCaptureMakeNestedStarFromOutside(value: DispatchCaptureNestedLeaf<*>): String = value.Entry(12).render()
@@ -172,6 +189,14 @@ class NestedAndLocalClassTests {
         assertEquals("star:default", dispatchCaptureMakeNestedStarDefault(star))
         assertEquals("star:i13", dispatchCaptureKeepNestedStar(star))
         assertEquals("star:i14", dispatchCaptureMakeThroughBound(Unit, star))
+        val constrained: DispatchCaptureConstrainedInnerOuter<*> =
+            DispatchCaptureConstrainedInnerOuter<String>("bound")
+        assertEquals("bound:null", dispatchCaptureConstrainedInner(constrained))
+        assertEquals("bound:null:null", dispatchCaptureConstrainedPair(constrained))
+        assertEquals("bound:null:mixed", dispatchCaptureConstrainedMixed(constrained))
+        val constrainedDerived: DispatchCaptureConstrainedInnerLeaf<*> =
+            DispatchCaptureConstrainedInnerLeaf<Int>("derived-bound")
+        assertEquals("derived-bound:null", dispatchCaptureConstrainedDerived(constrainedDerived))
     }
 
 }

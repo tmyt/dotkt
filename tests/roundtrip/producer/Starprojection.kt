@@ -124,6 +124,22 @@ class ReferencedInnerLeaf<E>(outer: ReferencedOuter<E>) :
 fun referencedInnerLeaf(label: String): ReferencedInnerLeaf<String> =
     ReferencedInnerLeaf(ReferencedOuter<String>(label))
 
+open class ReferencedConstrainedInnerBase<T>(private val label: String) {
+    inner class Token<E : T>(private val value: E?) {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+    inner class PairToken<E, F>(private val first: E?, private val second: F?) where E : T, F : T {
+        fun render(): String = label + ":" + (first?.toString() ?: "null") + ":" + (second?.toString() ?: "null")
+    }
+    inner class MixedToken<E : T, F>(private val first: E?, private val second: F) {
+        fun render(): String = label + ":" + (first?.toString() ?: "null") + ":" + second.toString()
+    }
+}
+
+class ReferencedConstrainedInnerLeaf<T>(label: String) : ReferencedConstrainedInnerBase<T>(label)
+fun referencedConstrainedInnerLeaf(label: String): ReferencedConstrainedInnerLeaf<String> =
+    ReferencedConstrainedInnerLeaf(label)
+
 // The inline payload is consumed from the producer DLL. Its star-projected receiver must bind to the exact
 // existential slot again after the body is spliced into a downstream module.
 inline fun deliverStarContinuationFailure(
