@@ -85,12 +85,16 @@ static class OpaqueCarrierTypeBinding
     {
         if (node is JsonObject obj)
         {
-            if ((obj[KotlinSupertypesRecord.PreKey] as JsonValue)?.TryGetValue<string>(out var encoded) == true)
+            foreach (var key in new[] {
+                KotlinSupertypesRecord.PreKey,
+                NullableGenericErasure.MethodTypeParameterBoundsPre,
+            })
             {
+                if ((obj[key] as JsonValue)?.TryGetValue<string>(out var encoded) != true) continue;
                 var payload = JsonNode.Parse(encoded)
-                    ?? throw new InvalidOperationException("KotlinSupertypes pass-local payload decoded to null");
+                    ?? throw new InvalidOperationException($"{key} pass-local payload decoded to null");
                 Rewrite(payload);
-                obj[KotlinSupertypesRecord.PreKey] = payload.ToJsonString();
+                obj[key] = payload.ToJsonString();
             }
             foreach (var child in obj.Select(kv => kv.Value).Where(value => value != null).ToList())
                 BindSupertypeRecords(child, localPhysical, refs);

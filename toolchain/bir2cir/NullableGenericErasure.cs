@@ -53,6 +53,10 @@ using DotKt.Bir;
 // Runs in every build so ref.dll, rt.dll, and the app's view of their signatures agree.
 static class NullableGenericErasure
 {
+    // Opaque pass-local hand-off consumed by RoundtripMetadata. Method type-parameter constraints belong to their
+    // MethodDef, so they cannot ride the type-level KotlinSupertypes carrier used for class parameters.
+    internal const string MethodTypeParameterBoundsPre = "methodTypeParameterBoundsPre";
+
     // WHERE a type sits, which is the whole of the erasure rule.
     internal enum Pos
     {
@@ -100,6 +104,7 @@ static class NullableGenericErasure
             foreach (var m in methods)
                 if (m is JsonObject mo)
                 {
+                    RecordMethodTypeParameterBounds(mo, isValue);
                     RecordNullableGenericSlot(mo, "ret", "nullableGenericRet", "retNullableFlags", isValue);
                     // A SUSPEND declaration's Kotlin result rides `suspendRet`, not `ret` — its `ret` is the cold
                     // entry's. The Task bridge that BECOMES its public ABI is built fresh later, so it cannot inherit
@@ -121,6 +126,25 @@ static class NullableGenericErasure
                 }
     }
 
+    static void RecordMethodTypeParameterBounds(JsonObject method, ValueTypeOracle isValue)
+    {
+        if (method["typeParams"] is not JsonArray typeParameters) return;
+        var bounds = new JsonObject();
+        for (var i = 0; i < typeParameters.Count; i++)
+        {
+            if (typeParameters[i] is not JsonObject parameter
+                || parameter["constraints"] is not JsonArray constraints
+                || constraints.Count == 0) continue;
+            if (!constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode bound
+                && !Erase(bound, Pos.Slot, isValue).Equals(bound))) continue;
+            // A constraint list is one Kotlin declaration fact. If any bound moves, preserve the whole list so the
+            // consumer replaces the CLR approximation instead of retaining a false stronger sibling.
+            bounds[i.ToString()] = constraints.DeepClone();
+        }
+        if (bounds.Count > 0)
+            method[MethodTypeParameterBoundsPre] = new JsonObject { ["bounds"] = bounds }.ToJsonString();
+    }
+
     // The key the pre-erasure SUPERTYPE list is stashed under, for RoundtripMetadata's `[KotlinSupertypes]` carrier.
     //
     // A SUPERTYPE ARGUMENT IS KOTLIN SOURCE, NOT AN INTERNAL SHAPE. `class E : Sink<Int?>` erases its edge to
@@ -132,8 +156,8 @@ static class NullableGenericErasure
     // The payload is the same opaque TypeNode form every other carrier uses — a `{base, interfaces, bounds}` object
     // of pre-erasure nodes — so no new encoding is introduced; `bounds` carries the upper bounds of THIS TYPE's own
     // type parameters, keyed by parameter index, which erase for exactly the same reason and are lost the same way.
-    // A METHOD's type-parameter bounds are not on it: the carrier is type-level, and giving them one is a per-member
-    // channel this does not have. dll2klib reads all three back (`RestoreErasedSupertypes`).
+    // Method type-parameter bounds use their own per-MethodDef carrier above. dll2klib reads all three type-level
+    // facts back through `RestoreErasedSupertypes`.
     static void RecordSupertypes(JsonObject to, ValueTypeOracle isValue)
     {
         var pre = new JsonObject();

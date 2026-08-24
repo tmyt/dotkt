@@ -151,6 +151,15 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.reified-property-surface.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-package-nullable-method-bound "$producer_klib" "starprojection" \
+			"referencedNullableMethodBound" \
+			>"$ROOT/build/nunit-$name.nullable-method-bound.log" 2>&1; then
+			echo "  nullable method type-parameter bound survives DLL-to-KLIB projection"
+		else
+			echo "  NULLABLE METHOD BOUND KLIB SHAPE FAIL — see build/nunit-$name.nullable-method-bound.log"
+			tail -25 "$ROOT/build/nunit-$name.nullable-method-bound.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--klib-class-properties "$producer_klib" \
 			"roundtrip.memberextensionsurface.GenericMemberPropertyHost" \
 			"memberMatches,ordinaryMemberValue,ordinaryMemberCount" \

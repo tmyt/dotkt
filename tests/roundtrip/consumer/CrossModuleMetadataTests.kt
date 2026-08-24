@@ -116,6 +116,7 @@ import starprojection.ReferencedInnerLeaf
 import starprojection.referencedInnerLeaf
 import starprojection.ReferencedConstrainedInnerLeaf
 import starprojection.referencedConstrainedInnerLeaf
+import starprojection.referencedNullableMethodBound
 import suspendcompanion.CompanionSuspendApi
 import suspendnullable.NullableSuspendHolder
 import suspendnullable.invokeNullableSuspend
@@ -480,6 +481,14 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual(
             "cross-bound:null",
             constrained.NullableToken(null).render(),
+        )
+        ClassicAssert.AreEqual(
+            "method-null",
+            referencedNullableMethodBound<String, String?>(null),
+        )
+        ClassicAssert.AreEqual(
+            "member-bound:method:null",
+            referencedConstrainedInnerLeaf("member-bound").nullableMethodBound<String?>(null),
         )
 
         val continuation = CrossModuleStarContinuationProbe()

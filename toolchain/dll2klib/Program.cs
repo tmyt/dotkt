@@ -1446,6 +1446,9 @@ internal sealed class AssemblyScanner
             MetadataAttributes.DotKtNs + "KotlinDeclarationIdentityAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinTypeParameterBoundsAttribute",
+            HandleKind.MethodDefinition);
+        _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinSuspendResultAttribute",
             HandleKind.MethodDefinition);
         _attrs.ValidateCarrierTargets(
@@ -2152,7 +2155,7 @@ internal sealed class AssemblyScanner
                 // extension view. Do not turn this class member into a second extension declaration. DotKt member
                 // extensions use the compiler-owned __self parameter and are still restored here.
                 PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
-                AddMethodTypeParameters(method, function, names, signatures, context);
+                AddMethodTypeParameters(methodHandle, method, function, names, signatures, context);
                 // A member's declaring-class path already carries its physical owner. Preserve only the exact
                 // frontend identity; ClrExternal is the top-level declaration transport.
                 if (declarationIdentity is { } identity)
@@ -3238,6 +3241,7 @@ internal sealed class AssemblyScanner
         };
         AddInheritedMethodTypeParameters(
             reader,
+            declarationHandle,
             declaration,
             function,
             names,
@@ -3305,6 +3309,7 @@ internal sealed class AssemblyScanner
 
     private void AddInheritedMethodTypeParameters(
         MetadataReader reader,
+        MethodDefinitionHandle methodHandle,
         MethodDefinition method,
         Function function,
         NameTable names,
@@ -3329,6 +3334,12 @@ internal sealed class AssemblyScanner
             }
             function.TypeParameter.Add(projected);
         }
+        RestoreErasedMethodBounds(
+            methodHandle,
+            function.TypeParameter,
+            signatures,
+            interfaceArguments,
+            new MetadataAttributes(reader));
     }
 
     private bool IsCurrentAssembly(MetadataReader reader) =>
@@ -3375,6 +3386,7 @@ internal sealed class AssemblyScanner
 
 
     private void AddMethodTypeParameters(
+        MethodDefinitionHandle methodHandle,
         MethodDefinition method,
         Function function,
         NameTable names,
@@ -3395,6 +3407,47 @@ internal sealed class AssemblyScanner
                 parameter.UpperBound.Add(signatures.DecodeEntity(constraint.Type, context, platform: false));
             }
             function.TypeParameter.Add(parameter);
+        }
+        RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
+    }
+
+    private void RestoreErasedMethodBounds(
+        MethodDefinitionHandle methodHandle,
+        Google.Protobuf.Collections.RepeatedField<TypeParameter> parameters,
+        SignatureDecoder signatures,
+        ImmutableArray<KType> ownerArguments = default,
+        MetadataAttributes? attributes = null)
+    {
+        attributes ??= _attrs;
+        using var document = attributes.CarrierDocument(
+            methodHandle, MetadataAttributes.DotKtNs + "KotlinTypeParameterBoundsAttribute");
+        if (document is null) return;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || root.EnumerateObject().Count() != 1
+            || !root.TryGetProperty("bounds", out var bounds) || bounds.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("malformed [KotlinTypeParameterBounds] payload");
+
+        var seen = new HashSet<int>();
+        foreach (var entry in bounds.EnumerateObject())
+        {
+            if (!int.TryParse(entry.Name, out var index) || index < 0 || !seen.Add(index)
+                || entry.Value.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException("malformed [KotlinTypeParameterBounds] entry");
+            var parameter = parameters.FirstOrDefault(candidate => candidate.Id == 10000 + index)
+                ?? throw new InvalidDataException(
+                    "[KotlinTypeParameterBounds] index exceeds method generic arity");
+            var restored = entry.Value.EnumerateArray().Select(boundElement =>
+            {
+                var node = TypeNode.Read(boundElement);
+                var bound = signatures.FromTypeNode(node);
+                return ownerArguments.IsDefaultOrEmpty
+                    ? bound
+                    : SubstituteTypeParameters(bound, ownerArguments);
+            }).ToArray();
+            if (restored.Length == 0)
+                throw new InvalidDataException("empty [KotlinTypeParameterBounds] constraint list");
+            parameter.UpperBound.Clear();
+            parameter.UpperBound.Add(restored);
         }
     }
 
@@ -4299,7 +4352,8 @@ internal sealed class AssemblyScanner
                     eraseBlockArguments: entry.KotlinImplementation != entry.Implementation),
             };
             PromoteContextParameters(method, function);
-            AddCSharp14MethodTypeParameters(method, function.TypeParameter, names, signatures, context);
+            AddCSharp14MethodTypeParameters(
+                entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -4443,6 +4497,7 @@ internal sealed class AssemblyScanner
     }
 
     private void AddCSharp14MethodTypeParameters(
+        MethodDefinitionHandle methodHandle,
         MethodDefinition method,
         Google.Protobuf.Collections.RepeatedField<TypeParameter> destination,
         NameTable names,
@@ -4464,6 +4519,7 @@ internal sealed class AssemblyScanner
             }
             destination.Add(parameter);
         }
+        RestoreErasedMethodBounds(methodHandle, destination, signatures);
     }
 
     private void ReadNestedClasses(
@@ -4652,6 +4708,7 @@ internal sealed class AssemblyScanner
                 }
                 function.TypeParameter.Add(tp);
             }
+            RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -5370,6 +5427,7 @@ internal sealed class AssemblyScanner
             }
             property.TypeParameter.Add(parameter);
         }
+        RestoreErasedMethodBounds(representativeHandle, property.TypeParameter, signatures);
         return property;
     }
 
@@ -5613,20 +5671,22 @@ internal sealed class AssemblyScanner
     private static void RestoreErasedBounds(System.Text.Json.JsonDocument doc, Class result,
         SignatureDecoder signatures)
     {
-        if (!doc.RootElement.TryGetProperty("bounds", out var bounds) ||
-            bounds.ValueKind != System.Text.Json.JsonValueKind.Object) return;
+        if (!doc.RootElement.TryGetProperty("bounds", out var bounds)) return;
+        if (bounds.ValueKind != System.Text.Json.JsonValueKind.Object)
+            throw new InvalidDataException("malformed [KotlinSupertypes] bounds");
+        var seen = new HashSet<int>();
         foreach (var entry in bounds.EnumerateObject())
         {
-            if (!int.TryParse(entry.Name, out var index) || entry.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
-                continue;
-            var parameter = result.TypeParameter.FirstOrDefault(p => p.Id == index);
-            if (parameter is null) continue;
+            if (!int.TryParse(entry.Name, out var index) || index < 0 || !seen.Add(index)
+                || entry.Value.ValueKind != System.Text.Json.JsonValueKind.Array)
+                throw new InvalidDataException("malformed [KotlinSupertypes] bound entry");
+            var parameter = result.TypeParameter.FirstOrDefault(p => p.Id == index)
+                ?? throw new InvalidDataException("[KotlinSupertypes] bound index exceeds type generic arity");
             var restored = new List<KType>();
             foreach (var boundElement in entry.Value.EnumerateArray())
-            {
-                if (TypeNode.Read(boundElement) is not { } node) continue;
-                restored.Add(signatures.FromTypeNode(node));
-            }
+                restored.Add(signatures.FromTypeNode(TypeNode.Read(boundElement)));
+            if (restored.Count == 0)
+                throw new InvalidDataException("empty [KotlinSupertypes] constraint list");
             // NullableGenericErasure records the parameter's WHOLE source constraint list when any constraint moves.
             // The CLR rows are only its physical approximation: merging leaves an erased `object` row beside a
             // restored `T?` and publishes the stronger, false Kotlin bound `E : Any, T?`. Replace the parameter as

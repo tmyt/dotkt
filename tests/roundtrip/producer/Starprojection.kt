@@ -126,6 +126,9 @@ fun referencedInnerLeaf(label: String): ReferencedInnerLeaf<String> =
 
 class ReferencedOwnerPair<A, B>
 open class ReferencedConstrainedInnerBase<T>(private val label: String) {
+    fun <E : T?> nullableMethodBound(value: E): String =
+        label + ":method:" + (value?.toString() ?: "null")
+
     inner class Token<E : T>(private val value: E?) {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
     }
@@ -147,6 +150,9 @@ open class ReferencedConstrainedInnerBase<T>(private val label: String) {
 class ReferencedConstrainedInnerLeaf<T>(label: String) : ReferencedConstrainedInnerBase<T>(label)
 fun referencedConstrainedInnerLeaf(label: String): ReferencedConstrainedInnerLeaf<String> =
     ReferencedConstrainedInnerLeaf(label)
+
+fun <T, E : T?> referencedNullableMethodBound(value: E): String =
+    value?.toString() ?: "method-null"
 
 // The inline payload is consumed from the producer DLL. Its star-projected receiver must bind to the exact
 // existential slot again after the body is spliced into a downstream module.

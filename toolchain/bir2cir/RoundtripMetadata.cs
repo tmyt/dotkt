@@ -67,6 +67,7 @@ static class RoundtripMetadata
     const string AKCollIdentity = Ns + "KotlinCollectionIdentityAttribute";
     const string AKType         = Ns + "KotlinTypeAttribute";
     const string AKSupertypes   = Ns + "KotlinSupertypesAttribute";
+    const string AKTypeParameterBounds = Ns + "KotlinTypeParameterBoundsAttribute";
     const string ANullable      = ClrNs + "NullableAttribute";
     const string ANullableCtx   = ClrNs + "NullableContextAttribute";
 
@@ -253,6 +254,13 @@ static class RoundtripMetadata
 
     static void StampMethod(JsonObject mo)
     {
+        // Generic constraints are declaration metadata owned by their MethodDef. The CLR rows contain the erased
+        // physical approximation; this carrier preserves the complete Kotlin constraint list for dll2klib.
+        if ((mo[NullableGenericErasure.MethodTypeParameterBoundsPre] as JsonValue)?.GetValue<string>() is string bounds)
+        {
+            Append(mo, JsonCarrierAttr(AKTypeParameterBounds, JsonNode.Parse(bounds)));
+            mo.Remove(NullableGenericErasure.MethodTypeParameterBoundsPre);
+        }
         // A generated method on an existential interface is the physical construction seam for an inner class whose
         // hidden outer slot cannot be named invariantly from G<*>.  The payload identifies the selected Kotlin inner
         // classifier and constructor descriptor; downstream bir2cir consumes it, while dll2klib omits the generated
@@ -561,6 +569,7 @@ static class RoundtripMetadata
             po.Remove(DeclarationIdentityBinding.Key);
             po.Remove("declarationSourceName");
             po.Remove(DeclarationIdentityBinding.SemanticSignatureKey);
+            po.Remove(NullableGenericErasure.MethodTypeParameterBoundsPre);
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);
@@ -785,6 +794,7 @@ static class RoundtripMetadata
             AttrClass(AKCollIdentity, Ctor(Param("System.String"), Param(ByteArrayType()))), // #29 — carrier of a pre-collapse `Box<List<T>>` collection identity
             AttrClass(AKType, Ctor(Param("System.String"), Param(ByteArrayType()))),         // compiler-synthesized CLR type -> original Kotlin TypeNode
             AttrClass(AKSupertypes, Ctor(Param("System.String"), Param(ByteArrayType()))),   // #86 — pre-erasure supertype edges + type-parameter bounds
+            AttrClass(AKTypeParameterBounds, Ctor(Param("System.String"), Param(ByteArrayType()))), // pre-erasure MethodDef type-parameter bounds
         };
         return new JsonObject
         {

@@ -9,8 +9,9 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - **Nullable type-parameter bounds now survive DLL-to-KLIB projection (#576).** When a producer-authored bound is
   restored from `KotlinSupertypes`, dll2klib replaces the CLR-erased constraint list as one semantic unit instead of
-  retaining a spurious `Any` bound beside the restored nullable type. Cross-module consumers can therefore infer
-  `Nothing?` for owner-dependent inner constructors just as they can in the producing module.
+  retaining a spurious `Any` bound beside the restored nullable type. Method bounds travel on their own MethodDef
+  carrier and follow the same complete-list rule. Cross-module consumers can therefore infer `Nothing?` for
+  owner-dependent inner constructors and pass nullable arguments to `E : T?` functions just as in the producer.
 
 - **Star-outer inner construction now preserves owner-dependent constraints (#567).** Existential constructor
   factories keep `E : T` on the real inner type while closing Kotlin's only universally constructible argument,
