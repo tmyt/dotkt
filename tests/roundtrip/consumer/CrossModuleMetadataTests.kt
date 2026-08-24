@@ -473,6 +473,10 @@ class GenericMetadataRoundtripTests {
             "cross-bound:null:mixed",
             constrained.MixedToken<Nothing, String>(null, "mixed").render(),
         )
+        ClassicAssert.AreEqual(
+            "cross-bound:null",
+            constrained.NestedToken<String, Nothing>(null).render(),
+        )
 
         val continuation = CrossModuleStarContinuationProbe()
         deliverStarContinuationFailure(continuation, System.Exception("cross-module-inline")) {}

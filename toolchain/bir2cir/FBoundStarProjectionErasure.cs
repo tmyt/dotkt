@@ -46,56 +46,98 @@ static class FBoundStarProjectionErasure
         foreach (var root in rootList) RecordDeclarationSurfaces(root);
         ForeignStarProjectionBinding.ApplyAll(rootList, refs);
         foreach (var root in rootList) Rewrite(root, owners, defs, refs);
-        var normalizedReturns = CollectNormalizedInnerFactoryReturns(rootList, owners, refs);
-        if (normalizedReturns.Count > 0)
+        var normalizedReturns = new NormalizedReturnBindings();
+        while (CollectNormalizedInnerFactoryReturns(rootList, owners, refs, normalizedReturns))
             foreach (var root in rootList)
                 RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
         return owners.Values.Where(o => o.Needed)
             .ToDictionary(o => o.Name, o => o.ErasedName, StringComparer.Ordinal);
     }
 
-    static Dictionary<string, TypeNode.Fqn> CollectNormalizedInnerFactoryReturns(
-        IEnumerable<JsonObject> roots, IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    sealed class NormalizedReturnBindings
     {
-        var result = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
-        void Collect(JsonNode node)
+        public readonly Dictionary<string, TypeNode.Fqn> ByDeclaration = new(StringComparer.Ordinal);
+        public readonly Dictionary<string, TypeNode.Fqn> ByPhysicalMethod = new(StringComparer.Ordinal);
+    }
+
+    static string PhysicalMethodKey(string owner, string method) => owner + "\0" + method;
+
+    static bool CollectNormalizedInnerFactoryReturns(
+        IEnumerable<JsonObject> roots, IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
+        NormalizedReturnBindings result)
+    {
+        var found = false;
+        void CollectMethods(JsonArray methods, string ownerName)
         {
-            switch (node)
+            foreach (var method in methods.OfType<JsonObject>())
             {
-                case JsonObject obj:
-                    if (Bool(obj[NormalizedInnerFactoryReturnKey])
-                        && obj["body"] is JsonArray && obj["params"] is JsonArray
-                        && Str(obj[DeclarationIdentityBinding.Key]) is string id
-                        && TypeJson.Read(obj["ret"]) is TypeNode.Fqn ret
-                        && (owners.Values.Any(owner => owner.ErasedName == ret.Name)
-                            || refs.IsExistentialPhysicalOwner(ret.Name)))
-                        result[id] = ret;
-                    obj.Remove(NormalizedInnerFactoryReturnKey);
-                    foreach (var value in obj.Select(pair => pair.Value).ToList())
-                        if (value != null) Collect(value);
-                    break;
-                case JsonArray array:
-                    foreach (var value in array)
-                        if (value != null) Collect(value);
-                    break;
+                if (!Bool(method[NormalizedInnerFactoryReturnKey])) continue;
+                method.Remove(NormalizedInnerFactoryReturnKey);
+                if (method["body"] is not JsonArray || method["params"] is not JsonArray
+                    || Str(method["name"]) is not string methodName
+                    || TypeJson.Read(method["ret"]) is not TypeNode.Fqn ret
+                    || !(owners.Values.Any(candidate => candidate.ErasedName == ret.Name)
+                        || refs.IsExistentialPhysicalOwner(ret.Name))) continue;
+                if (Str(method[DeclarationIdentityBinding.Key]) is string id)
+                {
+                    if (result.ByDeclaration.TryGetValue(id, out var prior) && prior != ret)
+                        throw new InvalidOperationException(
+                            $"normalized declaration '{id}' has conflicting physical return carriers");
+                    result.ByDeclaration[id] = ret;
+                }
+                else
+                {
+                    var key = PhysicalMethodKey(ownerName, methodName);
+                    if (result.ByPhysicalMethod.TryGetValue(key, out var prior) && prior != ret)
+                        throw new InvalidOperationException(
+                            $"normalized method '{ownerName}.{methodName}' has conflicting physical return carriers");
+                    result.ByPhysicalMethod[key] = ret;
+                }
+                found = true;
             }
         }
-        foreach (var root in roots) Collect(root);
-        return result;
+        void CollectOwner(JsonObject owner, string ownerName)
+        {
+            if (owner["methods"] is JsonArray methods) CollectMethods(methods, ownerName);
+            if (owner["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>())
+                    if (Str(type["name"]) is string typeName) CollectOwner(type, typeName);
+        }
+        foreach (var root in roots)
+        {
+            if (Str(root["fileClass"]) is string fileClass)
+                if (root["methods"] is JsonArray methods) CollectMethods(methods, fileClass);
+            if (root["types"] is JsonArray types)
+                foreach (var type in types.OfType<JsonObject>())
+                    if (Str(type["name"]) is string typeName) CollectOwner(type, typeName);
+        }
+        return found;
     }
 
     static void RewriteNormalizedInnerFactoryCalls(JsonNode node,
-        IReadOnlyDictionary<string, TypeNode.Fqn> normalizedReturns,
+        NormalizedReturnBindings normalizedReturns,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
         ReferenceMetadataIndex refs)
     {
         switch (node)
         {
             case JsonObject obj:
-                if (Str(obj[DeclarationIdentityBinding.Key]) is string id
-                    && normalizedReturns.TryGetValue(id, out var result)
-                    && Str(obj["k"]) is "callStatic" or "callInstance")
+                TypeNode.Fqn result = null;
+                if (Str(obj["k"]) is "callStatic" or "callInstance")
+                {
+                    if (Str(obj[DeclarationIdentityBinding.Key]) is string id)
+                        normalizedReturns.ByDeclaration.TryGetValue(id, out result);
+                    if (result == null && TypeJson.Read(obj["calleeOwner"]) is TypeNode.Fqn calleeOwner
+                        && Str(obj["method"]) is string method)
+                        normalizedReturns.ByPhysicalMethod.TryGetValue(
+                            PhysicalMethodKey(calleeOwner.Name, method), out result);
+                }
+                if (result != null)
+                {
                     obj["sty"] = TypeJson.Write(result);
+                    if (obj["ret"] != null) obj["ret"] = TypeJson.Write(result);
+                    if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(result);
+                }
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RewriteNormalizedInnerFactoryCalls(
                         value, normalizedReturns, owners, defs, refs);
@@ -446,12 +488,13 @@ static class FBoundStarProjectionErasure
                 foreach (var constructor in constructors.OfType<JsonObject>())
                 {
                     var factory = InnerConstructorFactory(owner, inner, constructor, ordinal++, owners, refs);
-                    var key = MethodKey(factory.Slot);
+                    if (factory == null) continue;
+                    var key = MethodKey(factory.Value.Slot);
                     if (key == null || !seen.Add(key))
                         throw new InvalidOperationException(
                             $"duplicate existential inner-constructor factory for '{inner.Name}'");
-                    methods.Add(factory.Slot);
-                    declared.Add(factory.Bridge);
+                    methods.Add(factory.Value.Slot);
+                    declared.Add(factory.Value.Bridge);
                 }
             }
         }
@@ -685,7 +728,7 @@ static class FBoundStarProjectionErasure
         return bridge;
     }
 
-    static (JsonObject Slot, JsonObject Bridge) InnerConstructorFactory(
+    static (JsonObject Slot, JsonObject Bridge)? InnerConstructorFactory(
         Owner outer, Owner inner, JsonObject constructor, int ordinal,
         IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
     {
@@ -711,8 +754,21 @@ static class FBoundStarProjectionErasure
             exactParams.Add(source);
         }
 
+        var directDependent = DirectOwnerDependentInnerParameters(inner, capturedCount);
         var dependent = OwnerDependentInnerParameters(inner, capturedCount);
-        var witnesses = InnerBottomWitnesses(inner, capturedCount, dependent);
+        // A parameter reached only through another own parameter (F : List<E>, E : T) is not itself restricted to
+        // bottom at the Kotlin call site: F=List<Nothing> is legal. The existential slot cannot name a CLR witness for
+        // that family without a richer per-instantiation ABI, so retain the pre-#567 behavior and omit this factory.
+        // Merely declaring the inner class must remain valid; a use requiring the unavailable factory fails at binding.
+        if (!dependent.SetEquals(directDependent)) return null;
+        if (inner.Def["typeParams"] is JsonArray declaredTypeParams
+            && dependent.Any(index => declaredTypeParams[index] is JsonObject parameter
+                && parameter["constraints"] is JsonArray constraints && constraints.Count != 1))
+            return null;
+        Dictionary<int, TypeNode> witnesses;
+        try { witnesses = InnerBottomWitnesses(inner, capturedCount, dependent); }
+        catch (UnresolvedBottomWitness) { return null; }
+        catch (NotSupportedException) { return null; }
         var methodPositions = Enumerable.Range(capturedCount, inner.Arity - capturedCount)
             .Where(index => !dependent.Contains(index)).ToArray();
         var methodIndex = methodPositions.Select((source, index) => (source, index))
@@ -883,6 +939,38 @@ static class FBoundStarProjectionErasure
         return result;
     }
 
+    static HashSet<int> DirectOwnerDependentInnerParameters(Owner inner, int capturedCount)
+    {
+        var result = new HashSet<int>();
+        if (inner.Def["typeParams"] is not JsonArray parameters) return result;
+        foreach (var (parameter, index) in parameters.Select((parameter, index) => (parameter, index)))
+        {
+            if (index < capturedCount || parameter is not JsonObject declaration
+                || declaration["constraints"] is not JsonArray constraints) continue;
+            if (constraints.Any(constraint => TypeJson.Read(constraint) is TypeNode type
+                    && ContainsCapturedInnerParameter(type, capturedCount)))
+                result.Add(index);
+        }
+        return result;
+    }
+
+    static bool ContainsCapturedInnerParameter(TypeNode type, int capturedCount) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv => tv.I < capturedCount,
+        TypeNode.Fqn { Args: { } args } => args.Any(argument =>
+            ContainsCapturedInnerParameter(argument, capturedCount)),
+        TypeNode.Nullable nullable => ContainsCapturedInnerParameter(nullable.Of, capturedCount),
+        TypeNode.Oblivious oblivious => ContainsCapturedInnerParameter(oblivious.Of, capturedCount),
+        TypeNode.Array array => ContainsCapturedInnerParameter(array.Elem, capturedCount),
+        TypeNode.ByRef byRef => ContainsCapturedInnerParameter(byRef.Of, capturedCount),
+        TypeNode.Ptr pointer => ContainsCapturedInnerParameter(pointer.Of, capturedCount),
+        TypeNode.Fn function => ContainsCapturedInnerParameter(function.Ret, capturedCount)
+            || function.Params.Any(parameter => ContainsCapturedInnerParameter(parameter, capturedCount))
+            || function.Recv != null && ContainsCapturedInnerParameter(function.Recv, capturedCount)
+            || function.Ctx?.Any(context => ContainsCapturedInnerParameter(context, capturedCount)) == true,
+        _ => false,
+    };
+
     static bool ContainsInnerDependency(TypeNode type, int capturedCount, IReadOnlySet<int> dependent) => type switch
     {
         TypeNode.Tv { Scope: "type" } tv => tv.I < capturedCount || dependent.Contains(tv.I),
@@ -941,7 +1029,10 @@ static class FBoundStarProjectionErasure
                 TypeNode.Tv { Scope: "type" } tv when tv.I < capturedCount => tv,
                 TypeNode.Tv { Scope: "type" } tv when dependent.Contains(tv.I)
                     => active.Contains(tv.I) ? throw new UnresolvedBottomWitness() : Resolve(tv.I, active),
-                TypeNode.Tv { Scope: "type" } => throw new UnresolvedBottomWitness(),
+                // An independent own parameter stays in the public factory MethodDef frame. Keep its declaration
+                // slot here; ProjectInnerFactoryType below maps it to the corresponding method slot after the full
+                // witness has been selected (for example E : Pair<T,F> -> Pair<!T,!!F>).
+                TypeNode.Tv { Scope: "type" } tv => tv,
                 TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
                     args.Select(Substitute).ToArray()),
                 TypeNode.Nullable nullable => new TypeNode.Nullable(Substitute(nullable.Of)),
@@ -967,7 +1058,8 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<int, TypeNode> witnesses, IReadOnlyDictionary<int, int> methodIndex) => type switch
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I < capturedCount => tv,
-        TypeNode.Tv { Scope: "type" } tv when witnesses.TryGetValue(tv.I, out var witness) => witness,
+        TypeNode.Tv { Scope: "type" } tv when witnesses.TryGetValue(tv.I, out var witness) =>
+            ProjectInnerFactoryType(witness, capturedCount, witnesses, methodIndex),
         TypeNode.Tv { Scope: "type" } tv when methodIndex.TryGetValue(tv.I, out var index)
             => new TypeNode.Tv("method", index),
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
@@ -1308,8 +1400,12 @@ static class FBoundStarProjectionErasure
             if (matches.Count != 1)
                 throw new InvalidOperationException(
                     $"bir2cir: star-projected inner construction '{inner.Name}' resolves to {matches.Count} exact local constructors");
-            var factory = InnerConstructorFactory(outer, inner, matches[0].ctor,
-                matches[0].ordinal, owners, refs).Slot;
+            var generatedFactory = InnerConstructorFactory(outer, inner, matches[0].ctor,
+                matches[0].ordinal, owners, refs);
+            if (generatedFactory == null)
+                throw new NotSupportedException(
+                    $"bir2cir: inner construction '{inner.Name}' has no reifiable star-outer constructor factory");
+            var factory = generatedFactory.Value.Slot;
             physicalOwner = outer.ErasedName;
             physicalMethod = Str(factory["name"]);
             physicalParameters = (factory["params"] as JsonArray)?.OfType<JsonObject>()
@@ -1431,6 +1527,11 @@ static class FBoundStarProjectionErasure
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
         ReferenceMetadataIndex refs)
     {
+        bool LogicalTypeMatchesCarrier(TypeNode type, TypeNode.Fqn carrier) => type is TypeNode.Fqn logical
+            && (owners.TryGetValue(logical.Name, out var local) && local.ErasedName == carrier.Name
+                || refs.TryExistentialPhysicalOwner(logical.Name, out var referenced)
+                    && referenced == carrier.Name);
+
         var locals = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
         void Collect(JsonNode node)
         {
@@ -1439,6 +1540,8 @@ static class FBoundStarProjectionErasure
                 case JsonObject obj:
                     if (Str(obj["k"]) == "var" && Str(obj["name"]) is string name
                         && ExpressionType(obj["init"]) is TypeNode.Fqn result
+                        && TypeJson.Read(obj["type"]) is TypeNode declared
+                        && LogicalTypeMatchesCarrier(declared, result)
                         && (owners.Values.Any(owner => owner.ErasedName == result.Name)
                             || refs.IsExistentialPhysicalOwner(result.Name)))
                         locals[name] = result;
@@ -1478,25 +1581,52 @@ static class FBoundStarProjectionErasure
 
         TypeNode.Fqn ResultCarrier(JsonNode expression) => expression switch
         {
+            JsonObject obj when ExpressionType(obj) is TypeNode.Fqn result
+                && (owners.Values.Any(owner => owner.ErasedName == result.Name)
+                    || refs.IsExistentialPhysicalOwner(result.Name)) => result,
             JsonObject obj when Str(obj["k"]) == "local" && Str(obj["name"]) is string name
                 && locals.TryGetValue(name, out var carrier) => carrier,
             JsonObject obj when Str(obj["k"]) == "valueBlock" => ResultCarrier(obj["result"]),
             JsonObject obj when Str(obj["k"]) == "cond" =>
                 ResultCarrier(obj["then"]) is TypeNode.Fqn thenCarrier
-                && (ResultCarrier(obj["else"]) is not TypeNode.Fqn elseCarrier || elseCarrier == thenCarrier)
+                && ResultCarrier(obj["else"]) is TypeNode.Fqn elseCarrier && elseCarrier == thenCarrier
                     ? thenCarrier
-                    : ResultCarrier(obj["else"]),
+                    : null,
             _ => null,
         };
-        var returned = (declaration["body"] as JsonArray)?.OfType<JsonObject>()
-            .Where(statement => Str(statement["k"]) == "return")
-            .Select(statement => ResultCarrier(statement["value"]))
-            .Where(carrier => carrier != null).Distinct().ToArray() ?? Array.Empty<TypeNode.Fqn>();
-        if (returned.Length == 1 && TypeJson.Read(declaration["ret"]) is TypeNode originalReturn
-            && originalReturn != returned[0])
+
+        var returned = new List<TypeNode.Fqn>();
+        var hasNonCarrierReturn = false;
+        void CollectReturns(JsonNode node)
+        {
+            switch (node)
+            {
+                case JsonObject obj:
+                    if (Str(obj["k"]) == "localFun") return;
+                    if (Str(obj["k"]) == "return")
+                    {
+                        if (ResultCarrier(obj["value"]) is TypeNode.Fqn carrier) returned.Add(carrier);
+                        else hasNonCarrierReturn = true;
+                        return;
+                    }
+                    foreach (var value in obj.Select(pair => pair.Value))
+                        if (value != null) CollectReturns(value);
+                    break;
+                case JsonArray array:
+                    foreach (var value in array)
+                        if (value != null) CollectReturns(value);
+                    break;
+            }
+        }
+        CollectReturns(declaration["body"]);
+        var distinctReturns = returned.Distinct().ToArray();
+        if (!hasNonCarrierReturn && distinctReturns.Length == 1
+            && TypeJson.Read(declaration["ret"]) is TypeNode originalReturn
+            && originalReturn != distinctReturns[0]
+            && LogicalTypeMatchesCarrier(originalReturn, distinctReturns[0]))
         {
             declaration["retKotlinType"] ??= TypeNode.ToJson(originalReturn);
-            declaration["ret"] = TypeJson.Write(returned[0]);
+            declaration["ret"] = TypeJson.Write(distinctReturns[0]);
             declaration[NormalizedInnerFactoryReturnKey] = true;
         }
     }

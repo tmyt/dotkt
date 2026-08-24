@@ -124,6 +124,7 @@ class ReferencedInnerLeaf<E>(outer: ReferencedOuter<E>) :
 fun referencedInnerLeaf(label: String): ReferencedInnerLeaf<String> =
     ReferencedInnerLeaf(ReferencedOuter<String>(label))
 
+class ReferencedOwnerPair<A, B>
 open class ReferencedConstrainedInnerBase<T>(private val label: String) {
     inner class Token<E : T>(private val value: E?) {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
@@ -134,6 +135,10 @@ open class ReferencedConstrainedInnerBase<T>(private val label: String) {
     inner class MixedToken<E : T, F>(private val first: E?, private val second: F) {
         fun render(): String = label + ":" + (first?.toString() ?: "null") + ":" + second.toString()
     }
+    inner class NestedToken<F, E>(private val value: E?) where E : ReferencedOwnerPair<T, F> {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+    inner class TransitiveToken<E, F>(private val value: E?) where E : T, F : List<E>
 }
 
 class ReferencedConstrainedInnerLeaf<T>(label: String) : ReferencedConstrainedInnerBase<T>(label)

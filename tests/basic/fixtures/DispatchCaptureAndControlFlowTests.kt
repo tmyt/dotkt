@@ -84,6 +84,7 @@ class DispatchCaptureNestedLeaf<E>(outer: DispatchCaptureNestedOuter<E>) :
     DispatchCaptureInnerBase<DispatchCaptureNestedOuter<E>>(outer) {
     fun make(value: Int): Entry = Entry(value)
 }
+class DispatchCaptureOwnerPair<A, B>
 open class DispatchCaptureConstrainedInnerOuter<T>(private val label: String) {
     inner class Token<E : T>(private val value: E?) {
         fun render(): String = label + ":" + (value?.toString() ?: "null")
@@ -94,6 +95,15 @@ open class DispatchCaptureConstrainedInnerOuter<T>(private val label: String) {
     inner class MixedToken<E : T, F>(private val first: E?, private val second: F) {
         fun render(): String = label + ":" + (first?.toString() ?: "null") + ":" + second.toString()
     }
+    inner class NestedToken<F, E>(private val value: E?) where E : DispatchCaptureOwnerPair<T, F> {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+    inner class NullableToken<E : T?>(private val value: E) {
+        fun render(): String = label + ":" + (value?.toString() ?: "null")
+    }
+    // A transitive owner dependency cannot use the fixed bottom-witness factory ABI. Merely declaring the valid
+    // Kotlin type must remain supported even though construction through Outer<*> needs a future representation.
+    inner class TransitiveToken<E, F>(private val value: E?) where E : T, F : List<E>
 }
 class DispatchCaptureConstrainedInnerLeaf<T>(label: String) : DispatchCaptureConstrainedInnerOuter<T>(label)
 fun dispatchCaptureConstrainedInner(value: DispatchCaptureConstrainedInnerOuter<*>): String =
@@ -102,10 +112,30 @@ fun dispatchCaptureConstrainedPair(value: DispatchCaptureConstrainedInnerOuter<*
     value.PairToken<Nothing, Nothing>(null, null).render()
 fun dispatchCaptureConstrainedMixed(value: DispatchCaptureConstrainedInnerOuter<*>): String =
     value.MixedToken<Nothing, String>(null, "mixed").render()
+fun dispatchCaptureConstrainedNested(value: DispatchCaptureConstrainedInnerOuter<*>): String =
+    value.NestedToken<String, Nothing>(null).render()
+fun dispatchCaptureConstrainedNullable(value: DispatchCaptureConstrainedInnerOuter<*>): String =
+    value.NullableToken(null).render()
 fun dispatchCaptureConstrainedDerived(value: DispatchCaptureConstrainedInnerLeaf<*>): String {
     val kept = value.Token<Nothing>(null)
     return kept.render()
 }
+fun dispatchCaptureConstrainedFactory(value: DispatchCaptureConstrainedInnerOuter<*>) =
+    value.Token<Nothing>(null)
+fun dispatchCaptureConstrainedFactoryUse(value: DispatchCaptureConstrainedInnerOuter<*>): String =
+    dispatchCaptureConstrainedFactory(value).render()
+fun dispatchCaptureConstrainedLocalFactory(value: DispatchCaptureConstrainedInnerOuter<*>): String {
+    fun construct() = value.Token<Nothing>(null)
+    return construct().render()
+}
+fun dispatchCaptureConstrainedWideLocal(value: DispatchCaptureConstrainedInnerOuter<*>): String {
+    var kept: Any = value.Token<Nothing>(null)
+    kept = "wide"
+    return if (kept == "wide") "wide" else "unexpected"
+}
+fun dispatchCaptureConstrainedMixedReturn(
+    value: DispatchCaptureConstrainedInnerOuter<*>, returnToken: Boolean,
+): Any = if (returnToken) value.Token<Nothing>(null) else "other"
 fun dispatchCaptureMakeFromOutside(value: DispatchCaptureInnerLeaf<String>): String = value.Entry(9).render()
 fun dispatchCaptureMakeNestedStarFromOutside(value: DispatchCaptureNestedLeaf<*>): String = value.Entry(12).render()
 fun dispatchCaptureMakeNestedStarString(value: DispatchCaptureNestedLeaf<*>): String = value.Entry("value").render()
@@ -194,6 +224,12 @@ class NestedAndLocalClassTests {
         assertEquals("bound:null", dispatchCaptureConstrainedInner(constrained))
         assertEquals("bound:null:null", dispatchCaptureConstrainedPair(constrained))
         assertEquals("bound:null:mixed", dispatchCaptureConstrainedMixed(constrained))
+        assertEquals("bound:null", dispatchCaptureConstrainedNested(constrained))
+        assertEquals("bound:null", dispatchCaptureConstrainedNullable(constrained))
+        assertEquals("bound:null", dispatchCaptureConstrainedFactoryUse(constrained))
+        assertEquals("bound:null", dispatchCaptureConstrainedLocalFactory(constrained))
+        assertEquals("wide", dispatchCaptureConstrainedWideLocal(constrained))
+        assertEquals("other", dispatchCaptureConstrainedMixedReturn(constrained, false))
         val constrainedDerived: DispatchCaptureConstrainedInnerLeaf<*> =
             DispatchCaptureConstrainedInnerLeaf<Int>("derived-bound")
         assertEquals("derived-bound:null", dispatchCaptureConstrainedDerived(constrainedDerived))
