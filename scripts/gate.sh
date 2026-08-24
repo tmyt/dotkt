@@ -17,6 +17,7 @@
 # and untracked paths. Override by passing explicit paths as arguments (e.g. `gate.sh toolchain/ilemit`).
 #
 # SELECTION RULES (each changed path contributes; the union is run; any UNMATCHED path forces --full):
+#   global.json / packaging/**         -> FULL + verify-packaged-sdk
 #   *.md / docs/** / CHANGELOG*        -> nothing  (schema doc -> verify-schema only)
 #   tests/<suite>/**                   -> that suite
 #   scripts/gate.sh                    -> nothing (this wrapper itself, no pipeline effect)
@@ -89,6 +90,12 @@ reason() { REASONS+=("$1"); }
 classify() { # <path>
 	local p="$1"
 	case "$p" in
+		# ---- release/package inputs --------------------------------------------------------------
+		# These still take the conservative FULL path, but FULL intentionally excludes the expensive
+		# packaged-SDK release gate for ordinary compiler changes. Select that gate explicitly only
+		# for inputs that can alter the SDK used to build or the nupkgs consumed by downstream projects.
+		global.json|packaging/*)
+			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (release/package input)" ;;
 		# ---- docs / changelog -------------------------------------------------------------------
 		docs/bir-cir-spec.md|docs/bir-cir.schema.json|docs/architecture.md)
 			want schema; reason "$p -> verify-schema (BIR/CIR schema doc)" ;;
@@ -99,7 +106,9 @@ classify() { # <path>
 			reason "$p -> (no gate: the wrapper itself, no pipeline effect)" ;;
 		scripts/verify-schema.py) want schema; reason "$p -> verify-schema" ;;
 		scripts/verify-sanity.py) want sanity; reason "$p -> verify-sanity" ;;
-		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/pack-nuget.sh|scripts/hooks/*)
+		scripts/pack-nuget.sh)
+			NEED_FULL=1; want packagedsdk; reason "$p -> FULL + verify-packaged-sdk (package assembly)" ;;
+		scripts/lib.sh|scripts/build-stdlib*.sh|scripts/dotkt.sh|scripts/gen-*|scripts/hooks/*)
 			NEED_FULL=1; reason "$p -> FULL (shared build machinery)" ;;
 		# ---- toolchain --------------------------------------------------------------------------
 		toolchain/bir2cir/*|toolchain/ilemit/*)

@@ -51,6 +51,10 @@ while (( $# )); do
 	esac
 done
 
+# Fail quickly, before packing, if release/package surfaces no longer select this gate or if an unrelated
+# conservative FULL fallback starts paying for it. These are dry-run selector fixtures for #549.
+bash "$ROOT/tests/packaged-sdk/verify-gate-selection.sh"
+
 # The authoritative XFAIL baseline (fail name -> reason). A listed name that starts passing prints
 # "FIXED — remove it" and reddens as a stale baseline; any name NOT listed that fails prints NEW-FAIL and reddens.
 # Computed by lib.sh xfail_diff at the bottom.
