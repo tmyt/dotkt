@@ -697,25 +697,26 @@ static class MemberCallSubstitution
             if (wrapper == null && args.Count == 1 && args[0] is JsonObject forwarded)
             {
                 // A lone spread (`intArrayOf(*xs)`) and a mixed `spreadConcat` (`intArrayOf(1, *xs)`) are already the
-                // complete value supplied to the vararg parameter. Preserve one whose physical element is the
-                // factory's element. A lone covariantly widened reference spread is different: forwarding a
-                // `string[]` from `arrayOf<Any>(*strings)` would expose that reified array as `object[]`, and a later
-                // valid object store would throw ArrayTypeMismatchException. Materialize that case through the same
-                // target-element spreadConcat used by mixed spreads, which copies while preserving evaluation.
-                var sourceElem = ArrayConstructionLowering.ArrayElementOf(
-                    StaticType.Surface(forwarded, BirScope.FromVars(ctx.VarTypes)));
-                if (CanonicalArrayElem(sourceElem) is TypeNode canonicalSource
-                    && canonicalSource.Equals(canonicalElem))
-                    return forwarded.DeepClone();
-                return new JsonObject
-                {
-                    ["k"] = "spreadConcat",
-                    ["elem"] = TypeJson.Write(canonicalElem),
-                    ["parts"] = new JsonArray
+                // complete value supplied to the vararg parameter. The factory result must still be a fresh array:
+                // forwarding a lone spread would alias its source, while Kotlin's spread constructs a new vararg pack.
+                // Normalize both shapes through spreadConcat at the factory's exact result element. A spread whose
+                // source has a different reified element is adapted through Enumerable.Cast<Target>: this is required
+                // for value elements (`Array<Int>` cannot inhabit IEnumerable<Any>) and is also the safe copy path for
+                // covariantly widened references. Direct mixed parts are explicitly cast into the same accumulator
+                // slot, so value elements are boxed before List<Target>.Add.
+                var spread = (forwarded["k"] as JsonValue)?.GetValue<string>() == "spreadConcat"
+                    ? (JsonObject)forwarded.DeepClone()
+                    : new JsonObject
                     {
-                        new JsonObject { ["spread"] = true, ["e"] = forwarded.DeepClone() },
-                    },
-                };
+                        ["k"] = "spreadConcat",
+                        ["parts"] = new JsonArray
+                        {
+                            new JsonObject { ["spread"] = true, ["e"] = forwarded.DeepClone() },
+                        },
+                    };
+                spread["elem"] = TypeJson.Write(canonicalElem);
+                NormalizeFactorySpreadParts(spread, canonicalElem, ctx);
+                return spread;
             }
             var arrElems = new JsonArray();
             foreach (var el in (wrapper?["elems"] as JsonArray) ?? new JsonArray()) arrElems.Add(el.DeepClone());
@@ -729,6 +730,34 @@ static class MemberCallSubstitution
             };
         }
         return null;
+    }
+
+    // Retype each spreadConcat input to the factory's exact physical element without asking ilemit to infer a
+    // conversion. A spread is an enumerable boundary: Enumerable.Cast<T> consumes every CLR array through its
+    // non-generic IEnumerable face and boxes value elements. A direct part is a scalar boundary: an explicit cast
+    // makes boxing/reference conversion part of CIR. Equal physical types need neither wrapper.
+    static void NormalizeFactorySpreadParts(JsonObject spread, TypeNode targetElem, SubstCtx ctx)
+    {
+        if (spread["parts"] is not JsonArray parts) return;
+        var scope = BirScope.FromVars(ctx.VarTypes);
+        foreach (var part in parts.OfType<JsonObject>())
+        {
+            if (part["e"] is not JsonObject operand) continue;
+            var isSpread = (part["spread"] as JsonValue)?.TryGetValue<bool>(out var spreadPart) == true && spreadPart;
+            var source = StaticType.Surface(operand, scope);
+            var physicalSource = isSpread
+                ? CanonicalArrayElem(ArrayConstructionLowering.ArrayElementOf(source))
+                : (source == null ? null : NullableGenericErasure.EraseNullableTv(source, _isValue));
+            if (physicalSource != null && physicalSource.Equals(targetElem)) continue;
+            part["e"] = isSpread
+                ? ValueElementIterableCoercion.CastElements(operand, targetElem)
+                : new JsonObject
+                {
+                    ["k"] = "cast",
+                    ["type"] = TypeJson.Write(targetElem),
+                    ["e"] = operand.DeepClone(),
+                };
+        }
     }
 
     // A collection factory's source call already carries the frontend's exact instantiated result type — including
