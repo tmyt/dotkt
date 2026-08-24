@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Repeatable benchmark for external delegate prerequisites. The external assembly supplies a large TypeDef table;
-# every consumer namespace mentions the same delegate and therefore creates a package-local SignatureDecoder. Doubling
-# both axes catches reopening or rescanning the external assembly once per package while retaining linear work.
+# Repeatable benchmark for external signature prerequisites. The external assembly supplies a large TypeDef table;
+# every consumer namespace mentions its delegate directly and implements its interface, exercising both external
+# delegate lookup and DecoderFor. Doubling both axes catches reopening or rescanning the external assembly once per
+# package while retaining linear work; the shape checks keep package-local NameTable isolation observable.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=dll2klib-external-delegate-index-benchmark
 source "$ROOT/scripts/lib.sh"
@@ -22,7 +23,7 @@ dotnet build "$ROOT/tests/special/dll2klib-external-delegate-index-benchmark/Gen
 measure_projection() {
 	local count="$1" namespaces="$2" stem="Synthetic${1}N${2}"
 	local input="$OUT/input/$stem" klib="$OUT/klib-$stem" rsp="$OUT/references-$stem.rsp"
-	local start_ns end_ns elapsed_ms projection_output
+	local start_ns end_ns elapsed_ms projection_output last_namespace
 	mkdir -p "$input" "$klib"
 	dotnet "$OUT/generator/Generator.dll" "$input" "$count" "$namespaces"
 	printf '%s\n' "$input/$stem.External.dll" "$input/$stem.Consumer.dll" > "$rsp"
@@ -33,10 +34,14 @@ measure_projection() {
 
 	grep -q "$stem.Consumer.dll -> $stem.Consumer.klib: $namespaces public class(es)" \
 		<<<"$projection_output" || die "consumer projection did not report all $namespaces public classes"
-	grep -q "$stem.External.dll -> $stem.External.klib: $(( count + 1 )) public class(es)" \
-		<<<"$projection_output" || die "external projection did not report all $(( count + 1 )) public classes"
+	grep -q "$stem.External.dll -> $stem.External.klib: $(( count + 2 )) public class(es)" \
+		<<<"$projection_output" || die "external projection did not report all $(( count + 2 )) public classes"
 	[[ -s "$klib/$stem.Consumer.klib" ]] || die "consumer projection did not produce a KLIB"
 	[[ -s "$klib/$stem.External.klib" ]] || die "external projection did not produce a KLIB"
+	printf -v last_namespace '%06d' "$(( namespaces - 1 ))"
+	dotnet "$OUT/generator/Generator.dll" --verify "$klib/$stem.Consumer.klib" \
+		"Consumer.N000000.UseDelegate" "Consumer.N${last_namespace}.UseDelegate" \
+		|| die "consumer delegate/interface shapes are not isolated in the first and last package"
 	printf '%s\n' "$elapsed_ms"
 }
 

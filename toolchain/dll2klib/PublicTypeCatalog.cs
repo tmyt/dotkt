@@ -13,7 +13,8 @@ internal sealed record PublicTypeCatalogEntry(
 
 internal sealed record ResolvedTypeDefinition(
     MetadataReader Reader,
-    TypeDefinitionHandle Handle);
+    TypeDefinitionHandle Handle,
+    string? DefinitionPath = null);
 
 internal readonly record struct PublicTypeSurface(
     bool IsPublic,
@@ -152,14 +153,15 @@ internal sealed class PublicTypeCatalog : IDisposable
     public bool TryResolveDefinition(
         MetadataReader reader,
         EntityHandle handle,
-        out ResolvedTypeDefinition resolved)
+        out ResolvedTypeDefinition resolved,
+        string? definitionPath = null)
     {
         ResolvedTypeDefinition? value = handle.Kind switch
         {
-            HandleKind.TypeDefinition => new(reader, (TypeDefinitionHandle)handle),
+            HandleKind.TypeDefinition => new(reader, (TypeDefinitionHandle)handle, definitionPath),
             HandleKind.TypeReference => ResolveDefinition(reader, (TypeReferenceHandle)handle),
             HandleKind.TypeSpecification => reader.GetTypeSpecification((TypeSpecificationHandle)handle)
-                .DecodeSignature(new DefinitionProvider(this), genericContext: null),
+                .DecodeSignature(new DefinitionProvider(this, definitionPath), genericContext: null),
             _ => null,
         };
         resolved = value!;
@@ -201,7 +203,7 @@ internal sealed class PublicTypeCatalog : IDisposable
             _loaded.Add(entry.AssemblyPath, assembly);
         }
         return assembly.Definitions.TryGetValue(entry.MetadataName, out var definition)
-            ? new ResolvedTypeDefinition(assembly.Reader, definition)
+            ? new ResolvedTypeDefinition(assembly.Reader, definition, entry.AssemblyPath)
             : null;
     }
 
@@ -260,8 +262,13 @@ internal sealed class PublicTypeCatalog : IDisposable
     private sealed class DefinitionProvider : ISignatureTypeProvider<ResolvedTypeDefinition?, object?>
     {
         private readonly PublicTypeCatalog _catalog;
+        private readonly string? _definitionPath;
 
-        internal DefinitionProvider(PublicTypeCatalog catalog) => _catalog = catalog;
+        internal DefinitionProvider(PublicTypeCatalog catalog, string? definitionPath)
+        {
+            _catalog = catalog;
+            _definitionPath = definitionPath;
+        }
 
         public ResolvedTypeDefinition? GetArrayType(ResolvedTypeDefinition? elementType, ArrayShape shape) => null;
         public ResolvedTypeDefinition? GetByReferenceType(ResolvedTypeDefinition? elementType) => null;
@@ -282,7 +289,7 @@ internal sealed class PublicTypeCatalog : IDisposable
         public ResolvedTypeDefinition? GetTypeFromDefinition(
             MetadataReader reader,
             TypeDefinitionHandle handle,
-            byte rawTypeKind) => new(reader, handle);
+            byte rawTypeKind) => new(reader, handle, _definitionPath);
         public ResolvedTypeDefinition? GetTypeFromReference(
             MetadataReader reader,
             TypeReferenceHandle handle,
