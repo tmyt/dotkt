@@ -547,12 +547,39 @@ sealed partial class Emitter
             case "this":
                 _il.Emit(OpCodes.Ldarg_0);
                 return;
+            case "clrPropGet":
+            {
+                // ClrMemberResolution projects a public CLR field through Kotlin property syntax as `clrPropGet`
+                // plus the explicit `member:"field"` decision. A real accessor is an rvalue and deliberately falls
+                // through to the temporary-address path; a field remains the same addressable CIR location it was
+                // before that physical reshape.
+                if (ClrMemberKind(e) != "field") break;
+                var projected = RequiredRef<FieldInfo>(e, "memberRef", "an external field address");
+                if (projected.IsLiteral) break; // a CLR literal has no storage
+                if (projected.IsStatic)
+                {
+                    EmitField(_il, OpCodes.Ldsflda, projected);
+                    return;
+                }
+                var projectedOwner = ClrRef(e.GetProperty("type"));
+                if (IsValueType(projectedOwner)) EmitAddr(e.GetProperty("recv"));
+                else EmitExpr(e.GetProperty("recv"));
+                EmitField(_il, OpCodes.Ldflda, projected);
+                return;
+            }
             case "field":
                 // A `field` node bir2cir resolved to an external ACCESSOR (member:"accessor") is a getter CALL, not a
                 // direct backing-field lvalue — its address is the materialized rvalue (temp + Ldloca) below, NOT Ldflda on
                 // the private cross-assembly field. Only a genuine direct-field node takes the Ldflda fast path here.
                 if (e.TryGetProperty("member", out var fam) && fam.ValueKind == JsonValueKind.String && fam.GetString() == "accessor") break;
-                EmitExpr(e.GetProperty("recv"));
+                // ECMA-335 `ldflda` over a VALUE-TYPE owner consumes the address of that owner. Loading a nested
+                // struct receiver by value first addresses a temporary copy, so `byref(holder.box.value)` silently
+                // loses the callee's write. Follow the CIR lvalue chain mechanically: a reference owner is a value,
+                // while a value owner is itself another addressable location (`array[i].box.value` recurses through
+                // `ldelema`; `holder.box.value` through the preceding `ldflda`). This is the address twin of the
+                // ordinary field read/write paths, which already make the same owner-type distinction.
+                if (IsValueType(ClrRef(e.GetProperty("ownerType")))) EmitAddr(e.GetProperty("recv"));
+                else EmitExpr(e.GetProperty("recv"));
                 EmitField(_il, OpCodes.Ldflda, PrimaryFromRef(e, "memberRef") as FieldInfo
                     ?? ResolveLocalField(ParseOwnerSlot(e.GetProperty("ownerType")),
                         e.GetProperty("name").GetString(), out _, "field address"));

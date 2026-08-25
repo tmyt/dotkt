@@ -21,4 +21,25 @@ namespace Probe {
         public GenericMutableBox(int value) { Value = value; }
         public void SetValue(int value) { Value = value; }
     }
+
+    public struct BoxNest {
+        public Box Value;
+        public BoxNest(int value) { Value = new Box(value); }
+    }
+
+    public sealed class BoxHolder {
+        public Box Direct;
+        public BoxNest Nested;
+        public Box[] Items;
+        public int SelfCalls;
+
+        public BoxHolder(int direct, int nested, int item) {
+            Direct = new Box(direct);
+            Nested = new BoxNest(nested);
+            Items = new[] { new Box(item) };
+        }
+
+        public ref Box DirectRef() => ref Direct;
+        public BoxHolder Self() { SelfCalls++; OutRef.Calc.SelfOrder += "h"; return this; }
+    }
 }

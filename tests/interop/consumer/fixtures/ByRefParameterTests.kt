@@ -7,6 +7,8 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import OutRef.Calc
+import Probe.Box
+import Probe.BoxHolder
 import kotlin.clr.byref
 import kotlin.clr.ClrRef
 import kotlin.clr.stackBuffer
@@ -53,8 +55,8 @@ private fun byRefOrderCallIndexed(arr: IntArray): Int = byRefOrderTake(byref(arr
 private fun byRefOrderTakeUnshared(a: Int = byRefOrderD(), p: Int, r: ClrRef<Int>): Int = p + a
 private fun byRefOrderCallUnshared(): Int =
     byRefOrderTakeUnshared(p = byRefOrderP(), r = byref(byRefOrderMk().n))
-// The pinned operand is an `arrayGet`, which carries neither `sty` nor `type` at the kotc boundary — it is typed from
-// its `elem`. An untyped pin is not a lesser local, it is unverifiable IL.
+// The array-producing call is pinned; the `arrayGet` itself remains the receiver of the value-type field link. This
+// distinguishes a storage-path arrayGet from the same node kind in a VALUE role (covered by indexes[0] below).
 private class ByRefOrderCell(var n: Int)
 private fun byRefOrderCells(): Array<ByRefOrderCell> { byRefOrderLog += "c"; return arrayOf(ByRefOrderCell(1)) }
 private fun byRefOrderCallElem(): Int = byRefOrderTake(byref(byRefOrderCells()[0].n))
@@ -114,6 +116,52 @@ class ByRefParameterTests {
         assertEquals("2 1", "${BrHold.a} ${BrHold.b}")      // 2 1    (was "1 2")
     }
 
+    @TestAttribute
+    fun byrefThroughValueTypeLocationLinks() {
+        val c = Calc()
+        val holder = BoxHolder(10, 20, 30)
+
+        // Every value-type field link remains part of the addressable path. Loading either Box as a value first
+        // would pass the address of a copy and both writes would disappear without producing invalid IL.
+        c.Swap(byref(holder.Direct.F), byref(holder.Nested.Value.F))
+        assertEquals("20 10", "${holder.Direct.F} ${holder.Nested.Value.F}")
+
+        // The array element is storage too, while its side-effecting index is call-plan work that must happen once
+        // before the omitted default is spliced. This covers the ordering probe as well as recursive ldelema/ldflda.
+        var indexCalls = 0
+        val marker = c.SwapWithMarker(byref(holder.Items[indexCalls++].F), byref(holder.Direct.F))
+        assertEquals(7, marker)
+        assertEquals(1, indexCalls)
+        assertEquals("20 30", "${holder.Items[0].F} ${holder.Direct.F}")
+
+        // A call root is a computed reference value, but Direct below it is still the storage path for F. Pinning
+        // Direct as a value would copy the Box; pinning only the root keeps the write on the holder.
+        val rooted = BoxHolder(40, 50, 60)
+        Calc.SelfOrder = ""
+        c.Self().SwapWithMarker(byref(rooted.Self().Direct.F), byref(rooted.Nested.Value.F))
+        assertEquals("rh", Calc.SelfOrder)
+        assertEquals(1, c.SelfCalls)
+        assertEquals(1, rooted.SelfCalls)
+        assertEquals("50 40", "${rooted.Direct.F} ${rooted.Nested.Value.F}")
+
+        // The inner arrayGet is an INDEX VALUE, not part of the outer element's storage path. It must be read before
+        // the later supplied argument mutates the index even though the physical address is taken only at the call.
+        val values = intArrayOf(10, 20)
+        val indexes = intArrayOf(0)
+        assertEquals(10, c.ReadWithDefaults(
+            byref(values[indexes[0]]),
+            later = run { indexes[0] = 1; 0 },
+        ))
+
+        // byrefLoad can be the receiver of a value-type field link. It remains an address rather than a Box value,
+        // so the final ldflda reaches the managed referent. The equivalent stackGet link lives in the existing
+        // localloc-classified test below, keeping this otherwise verifier-clean method out of that baseline.
+        val referred = BoxHolder(80, 90, 100)
+        var direct by byref(referred.DirectRef())
+        c.SwapWithMarker(byref(direct.F), byref(referred.Nested.Value.F))
+        assertEquals("90 80", "${referred.Direct.F} ${referred.Nested.Value.F}")
+    }
+
     // A STACK-BUFFER slot by reference, with a SIDE-EFFECTING index. The bounds check and the address computation are
     // one access, so the index is evaluated once: emitting them as two pieces incremented `i` twice per argument, and
     // the second bounds check then ran against a different element than the access.
@@ -127,6 +175,15 @@ class ByRefParameterTests {
             "$i ${b[0]} ${b[1]}"
         }
         assertEquals("2 20 10", log)                        // 2 increments (not 4), and the slots swapped
+
+        // A stackGet that owns a value-type field link remains an address rather than loading a Box copy first.
+        val holder = BoxHolder(70, 80, 90)
+        val nested = stackBuffer<Box, String>(1) { buffer ->
+            buffer[0] = Box(60)
+            c.SwapWithMarker(byref(buffer[0].F), byref(holder.Direct.F))
+            "${buffer[0].F} ${holder.Direct.F}"
+        }
+        assertEquals("70 60", nested)
     }
 
     @TestAttribute

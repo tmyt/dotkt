@@ -516,7 +516,8 @@ static partial class SuspendColdLowering
         // The reader: the node with every operand replaced by its plan read — or, when the node is truncated, the
         // terminal operand alone, which reads nothing the plan bound.
         var reader = terminalAt >= 0 ? ops[terminalAt].DeepClone() : Reassemble(o, order, reads);
-        var (stmts, repl) = CallEvalLowering.Materialise(bindings, new List<JsonNode> { reader }, role, force);
+        var (stmts, repl) = CallEvalLowering.Materialise(
+            bindings, new List<JsonNode> { reader }, role, force, _isValueFqn);
         if (terminalAt < 0 && stmts.Count == 0) return;    // every forced binding was re-readable — nothing moves
         foreach (var st in stmts)
             if (st is JsonObject sv && Str(sv["k"]) == "var" && Str(sv["name"]) is string vn) materialised.Add(vn);
@@ -615,7 +616,7 @@ static partial class SuspendColdLowering
                         for (var i = 0; i < last; i++)
                             if (order.Operands[i] != null
                                 && !(order.Slots[i].PreserveLocation
-                                    ? CallEvalLowering.IsPinnedLocation(order.Operands[i], Settled)
+                                    ? CallEvalLowering.IsPinnedLocation(order.Operands[i], Settled, _isValueFqn)
                                     : Settled(order.Operands[i])))
                                 throw new InvalidOperationException(
                                     $"bir2cir: suspend-lowering: in `{where}`, operand {i} of a "

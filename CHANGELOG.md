@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **By-reference paths through nested CLR structs now address the original storage (#308).** Call-plan lowering keeps
+  only value-type receiver links in the location path while fixing arrays, indices, call roots, and other computed
+  values once in Kotlin order. ilemit follows that physical path with recursive `ldelema`/`ldflda`, including CLR
+  fields projected through Kotlin property syntax, so writes no longer disappear into temporary struct copies.
+
 - **Constructed member returns no longer re-substitute caller-frame type variables (#328).** bir2cir treats exact
   agreement with the frontend result stamp as the closed-frame boundary and substitutes only distinct
   callee-relative results through the constructed owner. Nested results such as

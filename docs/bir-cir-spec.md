@@ -679,7 +679,13 @@ that can add a reader has finished — and is the ONLY consumer of the vocabular
   untyped local is unverifiable IL, so a node the shared deriver (`bir-common/NodeType.cs`) cannot type is a hole in
   the deriver and says so, never a `kotlin.Any` fallback. Stage 0 uses this same form for a value-type member receiver
   or constrained generic receiver left of a suspension: preserving only the receiver value would redirect the later
-  setter/call to a temporary struct copy instead of the source location;
+  setter/call to a temporary struct copy instead of the source location. Operand role, rather than node kind alone,
+  determines the surviving path: the receiver of a field owned by a value type remains an addressable link, while
+  an array, index, stack-buffer bound, call root, or reference-type receiver is a computed value fixed at its plan
+  position. Thus an `arrayGet` may be a surviving receiver in `array[i].field` but a pinned value when used as another
+  access's index. ilemit consumes the surviving CIR path recursively as `ldelema`/`ldflda`. A real property accessor
+  and `Nullable<T>.Value` remain rvalues and therefore use the ordinary temporary-address fallback; only a CIR access
+  explicitly resolved as a field denotes field storage;
 - a delegation's plan becomes the constructor's `preStmts`, which ilemit emits ahead of the `this`/`base` call.
 
 It decides NOTHING about storage. A `var` here is a request for a scoped local; whether a coroutine state machine may

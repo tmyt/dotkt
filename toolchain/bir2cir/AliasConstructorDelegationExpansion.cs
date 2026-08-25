@@ -31,7 +31,8 @@ sealed class AliasConstructorDelegationExpansion
     }
 
     public static AliasConstructorDelegationExpansion Collect(
-        IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, bool carryForReference)
+        IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs, ValueTypeOracle isValue,
+        bool carryForReference)
     {
         var rootList = roots.ToList();
         var aliases = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
@@ -41,7 +42,7 @@ sealed class AliasConstructorDelegationExpansion
         // out of its declaration, so lower that plan while it is still attached to the declaration and carry the
         // resulting ordered prefix with the argument vector.  All other expression lowering intentionally happens
         // after the adapter is inserted into its consumer.
-        foreach (var alias in aliases.Values) CallEvalLowering.Apply(alias);
+        foreach (var alias in aliases.Values) CallEvalLowering.Apply(alias, isValue);
         var result = new AliasConstructorDelegationExpansion(aliases, refs);
         if (carryForReference)
             foreach (var root in rootList) result.StampReferenceCarriers(root);

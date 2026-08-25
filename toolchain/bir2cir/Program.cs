@@ -309,7 +309,7 @@ sealed class Pipeline
         // it at the head of phase 1 so every expression copied out of an alias constructor flows through the same
         // semantic/representation lowerings as an expression authored directly in that consumer.
         var aliasConstructorDelegations = AliasConstructorDelegationExpansion.Collect(
-            birFiles.Select(file => file.Root), refs, carryForReference: _options.RefBuild);
+            birFiles.Select(file => file.Root), refs, isValueFqn, carryForReference: _options.RefBuild);
 
         // PHASE 1: per-file transforms up through the CharSequence bridge. Collect the staged roots so the
         // suspend cold lowering can run GLOBALLY (a same-assembly cross-file suspend call keeps `owner:null`,
@@ -403,7 +403,7 @@ sealed class Pipeline
             // `preStmts`. Unconditional (ref + rt + app): kotc emits a plan wherever a fill can duplicate a value, and
             // a stdlib self-build has same-module fills of exactly that shape. From here down no pass sees plan
             // vocabulary — the pass asserts that itself, and verify-schema enforces the same phase split.
-            CallEvalLowering.Apply(bir.Root);
+            CallEvalLowering.Apply(bir.Root, isValueFqn);
             // NOTHING-VALUE TERMINATION (#197): a `kotlin.Nothing`-typed expression delivers no value, but its CLR
             // erasure (`object`) still reaches whatever slot reads it — the other arm of an if/when merge, a `ret`, a
             // typed local — so the verifier sees an `object` where a `string` belongs. Terminate such a position in
@@ -855,7 +855,7 @@ sealed class Pipeline
         // cold lowering, then has no authoritative physical binding and falls back to the erased overload set. The
         // runtime and reference builds therefore execute the same declaration transform and physical allocation.
         var suspendCalleeRet = SuspendColdLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs,
-            localTypeFqns, attributeTopLevelOwner, localExistentialOwners);
+            localTypeFqns, attributeTopLevelOwner, localExistentialOwners, isValueFqn);
 
         // PHASE 1.6 — SUSPEND LAMBDA LOWERING (bundle-6 P3 wave-2b, LIVE): replace each `newSuspendLambda`
         // node with `new <mangled>_lambdaN$sm(captures..., null)` + synthesize its SuspendLambda state machine
