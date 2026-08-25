@@ -14,6 +14,7 @@ const string CarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinCompanionA
 const string LateinitAttribute = "DotKt.Runtime.CompilerServices.KotlinLateinitAttribute";
 const string StaticCarrierAttribute = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
 const string RichEnumAttribute = "DotKt.Runtime.CompilerServices.KotlinRichEnumAttribute";
+const string BasicEnumAttribute = "DotKt.Runtime.CompilerServices.KotlinBasicEnumAttribute";
 // Kotlin 2.4 metadata Flags.IS_STATIC_FUNCTION.
 const int IsStaticFunctionFlag = 1 << 18;
 // A hoisted companion carrier's reserved separator keeps compiler companion types disjoint from ordinary source
@@ -926,6 +927,48 @@ static void VerifyDll(string path)
     var carrierDefinition = md.TypeDefinitions.Single(h => DefinitionName(md, h) == CarrierAttribute);
     Require(HasAttribute(md, carrierDefinition, "System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
         "KotlinCompanionAttribute is not a compiler-generated trusted carrier definition");
+    var basicEnumCarrierDefinition = md.TypeDefinitions.Single(h => DefinitionName(md, h) == BasicEnumAttribute);
+    Require(HasAttribute(md, basicEnumCarrierDefinition,
+            "System.Runtime.CompilerServices.CompilerGeneratedAttribute"),
+        "KotlinBasicEnumAttribute is not a compiler-generated trusted carrier definition");
+
+    var explicitEnum = md.TypeDefinitions.Single(h =>
+        DefinitionName(md, h) == "roundtrip.clrenum.OrderedCode");
+    var explicitEnumDefinition = md.GetTypeDefinition(explicitEnum);
+    Require(TypeName(md, explicitEnumDefinition.BaseType) == "System.Enum",
+        "explicit Kotlin enum is not physically based on System.Enum");
+    using (var carrier = CarrierDocument(md, explicitEnum, BasicEnumAttribute))
+    {
+        var root = carrier.RootElement;
+        var entries = root.GetProperty("entries").EnumerateArray().ToArray();
+        Require(root.GetProperty("underlying").GetString() == "System.Int32"
+                && entries.Length == 3
+                && entries.Select(entry => entry.GetProperty("name").GetString())
+                    .SequenceEqual(new[] { "FIRST", "NEGATIVE", "ZERO" })
+                && entries.Select(entry => entry.GetProperty("ordinal").GetInt32())
+                    .SequenceEqual(new[] { 0, 1, 2 })
+                && entries.Select(entry => entry.GetProperty("physicalValue").GetString())
+                    .SequenceEqual(new[] { "10", "-4", "0" }),
+            "producer DLL lost the explicit basic-enum ordered value map");
+    }
+    var explicitFields = explicitEnumDefinition.GetFields()
+        .ToDictionary(handle => md.GetString(md.GetFieldDefinition(handle).Name), StringComparer.Ordinal);
+    Require(md.GetBlobBytes(md.GetFieldDefinition(explicitFields["value__"]).Signature)
+            .SequenceEqual(new byte[] { 0x06, 0x08 }),
+        "explicit Kotlin enum value__ is not int32-backed");
+    foreach (var expected in new Dictionary<string, int>
+             {
+                 ["FIRST"] = 10,
+                 ["NEGATIVE"] = -4,
+                 ["ZERO"] = 0,
+             })
+    {
+        var field = md.GetFieldDefinition(explicitFields[expected.Key]);
+        var constant = md.GetConstant(field.GetDefaultValue());
+        var value = md.GetBlobReader(constant.Value).ReadInt32();
+        Require(constant.TypeCode == ConstantTypeCode.Int32 && value == expected.Value,
+            $"explicit Kotlin enum field {expected.Key} has physical constant {value}");
+    }
 
     var carriers = new List<(TypeDefinitionHandle Handle, string Kind, string Owner, string Name, string Visibility,
         string PhysicalOwner, int PhysicalOwnerArity)>();

@@ -1,0 +1,2 @@
+malformed @ClrEnum declaration
+constructor parameter must be Byte, UByte, Short, UShort, Int, UInt, Long, or ULong

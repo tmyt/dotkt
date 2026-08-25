@@ -99,6 +99,7 @@ sealed partial class ReferenceMetadataIndex
     const string KotlinExtensionCoreAttr = "DotKt.Runtime.CompilerServices.KotlinExtensionCoreAttribute";
     const string KotlinStaticCarrierAttr = "DotKt.Runtime.CompilerServices.KotlinStaticCarrierAttribute";
     const string KotlinRichEnumAttr = "DotKt.Runtime.CompilerServices.KotlinRichEnumAttribute";
+    const string KotlinBasicEnumAttr = "DotKt.Runtime.CompilerServices.KotlinBasicEnumAttribute";
     const string KotlinInnerAttr = "DotKt.Runtime.CompilerServices.KotlinInnerAttribute";
     // The #86/#147 positional carrier: the PRE-erasure Kotlin TypeNode of a declaration slot whose `Nullable(Tv)`
     // NullableGenericErasure object-erased. Read per member slot (return parameter and each value parameter) so a
@@ -135,6 +136,7 @@ sealed partial class ReferenceMetadataIndex
     readonly HashSet<string> _byRefLikePhysicalOwners = new(StringComparer.Ordinal);
     readonly HashSet<string> _dotKtOwners = new(StringComparer.Ordinal);              // types authored by a DotKt-emitted assembly
     readonly Dictionary<string, RichEnumMetadata> _richEnums = new(StringComparer.Ordinal);
+    readonly Dictionary<string, BasicEnumMetadata> _basicEnums = new(StringComparer.Ordinal);
     // Trusted [KotlinType(G<*,...>)] on a compiler-generated non-generic interface is the explicit existential ABI
     // relation. No physical-name suffix participates in recognition.
     readonly Dictionary<string, string> _existentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
@@ -528,6 +530,17 @@ sealed partial class ReferenceMetadataIndex
                         existing.EntryFields.Any(entry =>
                             !kv.Value.EntryFields.TryGetValue(entry.Key, out var field) || field != entry.Value))
                         throw new InvalidOperationException($"conflicting Kotlin rich-enum metadata for '{owner}'");
+                }
+            }
+            foreach (var kv in asm.DotKt.BasicEnums)
+            {
+                var owner = StripGenericArity(DottedFqn(kv.Key));
+                if (!_basicEnums.TryAdd(owner, kv.Value))
+                {
+                    var existing = _basicEnums[owner];
+                    if (existing.Underlying != kv.Value.Underlying ||
+                        !existing.Entries.SequenceEqual(kv.Value.Entries))
+                        throw new InvalidOperationException($"conflicting Kotlin basic-enum metadata for '{owner}'");
                 }
             }
             foreach (var kv in asm.DotKt.ExistentialPhysicalBySemanticOwner)
@@ -1882,6 +1895,10 @@ sealed partial class ReferenceMetadataIndex
         valueOf = null;
         return false;
     }
+
+    public bool TryKotlinBasicEnum(string ownerFqn, out BasicEnumMetadata metadata) =>
+        _basicEnums.TryGetValue(
+            StripGenericArity(DottedFqn(BareOwnerFqn(ownerFqn))), out metadata);
 
     public bool TryKotlinRichEnumStaticApi(
         string ownerFqn, string sourceMemberName, int paramCount, out string physicalMemberName)
@@ -4295,6 +4312,13 @@ sealed partial class ReferenceMetadataIndex
                             throw new InvalidDataException(
                                 $"duplicate trusted [KotlinRichEnum] for '{semanticOwner}'");
                     }
+                    if (dotKtAuthored && BasicEnumMetadataOf(type, asm) is { } basicEnum)
+                    {
+                        var semanticOwner = StripGenericArity(DottedFqn(ownerFqn));
+                        if (!metadata.BasicEnums.TryAdd(semanticOwner, basicEnum))
+                            throw new InvalidDataException(
+                                $"duplicate trusted [KotlinBasicEnum] for '{semanticOwner}'");
+                    }
                     if (companionRepresentations.TryGetValue(type, out var companionIsStatic))
                         metadata.CompanionStaticByPhysicalOwner.Add(
                             StripGenericArity(DottedFqn(ownerFqn)), companionIsStatic);
@@ -4760,11 +4784,15 @@ sealed partial class ReferenceMetadataIndex
         attrs.ValidateCarrierTargets(
             KotlinRichEnumAttr,
             HandleKind.TypeDefinition);
+        attrs.ValidateCarrierTargets(
+            KotlinBasicEnumAttr,
+            HandleKind.TypeDefinition);
         foreach (var typeHandle in reader.TypeDefinitions)
         {
             var type = reader.GetTypeDefinition(typeHandle);
             using (attrs.CarrierDocument(typeHandle, KotlinStaticCarrierAttr)) { }
             using (attrs.CarrierDocument(typeHandle, KotlinRichEnumAttr)) { }
+            using (attrs.CarrierDocument(typeHandle, KotlinBasicEnumAttr)) { }
             foreach (var method in type.GetMethods())
             {
                 using (attrs.CarrierDocument(method, KotlinCompanionExtensionAttr)) { }
@@ -5833,6 +5861,68 @@ sealed partial class ReferenceMetadataIndex
             metadata.CompanionExtensionMembers[key] = "";
     }
 
+    static BasicEnumMetadata BasicEnumMetadataOf(Type type, Assembly declaringAssembly)
+    {
+        var trusted = type.GetCustomAttributesData().Where(attribute =>
+            attribute.AttributeType.FullName == KotlinBasicEnumAttr &&
+            attribute.AttributeType.Assembly == declaringAssembly &&
+            HasAttribute(attribute.AttributeType.GetCustomAttributesData(), CompilerGeneratedAttr)).ToArray();
+        if (trusted.Length == 0) return null;
+        if (trusted.Length != 1)
+            throw new InvalidDataException("expected exactly one trusted [KotlinBasicEnum]");
+        var payload = CarrierJsonOf(type.GetCustomAttributesData(), declaringAssembly, KotlinBasicEnumAttr) as JsonObject
+            ?? throw new InvalidDataException("malformed [KotlinBasicEnum] payload");
+        if (!type.IsEnum || type.IsGenericType || payload.Count != 2 ||
+            payload["underlying"] is not JsonValue underlyingValue ||
+            !underlyingValue.TryGetValue<string>(out var underlying) || string.IsNullOrEmpty(underlying) ||
+            payload["entries"] is not JsonArray entries || type.GetEnumUnderlyingType().FullName != underlying)
+            throw new InvalidDataException(
+                $"malformed [KotlinBasicEnum] on '{type.FullName}': expected a non-generic enum, exact underlying type, and entries");
+
+        var ordered = new List<BasicEnumEntry>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var physicalValues = new HashSet<string>(StringComparer.Ordinal);
+        for (var ordinal = 0; ordinal < entries.Count; ordinal++)
+        {
+            if (entries[ordinal] is not JsonObject entry || entry.Count != 3 ||
+                entry["name"] is not JsonValue nameValue ||
+                !nameValue.TryGetValue<string>(out var name) || string.IsNullOrEmpty(name) || !names.Add(name) ||
+                entry["ordinal"] is not JsonValue ordinalValue ||
+                !ordinalValue.TryGetValue<int>(out var declaredOrdinal) || declaredOrdinal != ordinal ||
+                entry["physicalValue"] is not JsonValue physicalValue ||
+                !physicalValue.TryGetValue<string>(out var text) || string.IsNullOrEmpty(text) ||
+                !physicalValues.Add(text))
+                throw new InvalidDataException(
+                    $"malformed [KotlinBasicEnum] on '{type.FullName}': entries require unique name/ordinal/value triples in declaration order");
+            var fields = type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Where(field => field.Name == name && field.FieldType == type && field.IsLiteral).ToArray();
+            if (fields.Length != 1 || EnumConstantText(fields[0].GetRawConstantValue()) != text)
+                throw new InvalidDataException(
+                    $"malformed [KotlinBasicEnum] on '{type.FullName}': entry '{name}' does not match its literal FieldDef");
+            ordered.Add(new BasicEnumEntry(name, ordinal, text));
+        }
+        var literalNames = type.GetFields(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly)
+            .Where(field => field.IsLiteral && field.FieldType == type)
+            .Select(field => field.Name).ToHashSet(StringComparer.Ordinal);
+        if (!literalNames.SetEquals(names))
+            throw new InvalidDataException(
+                $"malformed [KotlinBasicEnum] on '{type.FullName}': entry map does not match literal fields");
+        return new BasicEnumMetadata(underlying, ordered);
+    }
+
+    static string EnumConstantText(object value) => value switch
+    {
+        sbyte v => v.ToString(CultureInfo.InvariantCulture),
+        byte v => v.ToString(CultureInfo.InvariantCulture),
+        short v => v.ToString(CultureInfo.InvariantCulture),
+        ushort v => v.ToString(CultureInfo.InvariantCulture),
+        int v => v.ToString(CultureInfo.InvariantCulture),
+        uint v => v.ToString(CultureInfo.InvariantCulture),
+        long v => v.ToString(CultureInfo.InvariantCulture),
+        ulong v => v.ToString(CultureInfo.InvariantCulture),
+        _ => throw new InvalidDataException("malformed enum literal constant"),
+    };
+
     static RichEnumMetadata RichEnumMetadataOf(Type type, Assembly declaringAssembly)
     {
         var trusted = type.GetCustomAttributesData().Where(attribute =>
@@ -6724,6 +6814,7 @@ sealed class ReferenceDotKtMetadata
     public readonly HashSet<string> ByRefLikePhysicalOwners = new(StringComparer.Ordinal);
     public readonly HashSet<string> DotKtOwners = new(StringComparer.Ordinal);             // producer-marked DotKt assembly types
     public readonly Dictionary<string, ReferenceMetadataIndex.RichEnumMetadata> RichEnums = new(StringComparer.Ordinal);
+    public readonly Dictionary<string, BasicEnumMetadata> BasicEnums = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ExistentialPhysicalBySemanticOwner = new(StringComparer.Ordinal);
     public readonly HashSet<string> FileClassOwners = new(StringComparer.Ordinal);         // trusted [KotlinFileClass] types
     public readonly Dictionary<string, bool> CompanionStaticByPhysicalOwner = new(StringComparer.Ordinal);

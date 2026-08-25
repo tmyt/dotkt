@@ -1361,6 +1361,10 @@ internal sealed class AssemblyScanner : IDisposable
         string Values,
         string ValueOf);
 
+    private sealed record BasicEnumCarrier(
+        string Underlying,
+        IReadOnlyList<(string Name, int Ordinal, string PhysicalValue)> Entries);
+
     private sealed record ValidatedRichEnumCarrier(
         IReadOnlyDictionary<FieldDefinitionHandle, string> EntryNames,
         IReadOnlySet<FieldDefinitionHandle> SyntheticFields,
@@ -1465,6 +1469,9 @@ internal sealed class AssemblyScanner : IDisposable
             HandleKind.TypeDefinition);
         _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinRichEnumAttribute",
+            HandleKind.TypeDefinition);
+        _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinBasicEnumAttribute",
             HandleKind.TypeDefinition);
         _arityNames = arityNames;
         _delegateCatalog = delegateCatalog;
@@ -1795,6 +1802,104 @@ internal sealed class AssemblyScanner : IDisposable
             entries, nameField, ordinalField, valuesNode.GetString()!, valueOfNode.GetString()!);
     }
 
+    private BasicEnumCarrier? ReadBasicEnumCarrier(TypeDefinitionHandle handle)
+    {
+        using var doc = _attrs.CarrierDocument(
+            handle, MetadataAttributes.DotKtNs + "KotlinBasicEnumAttribute");
+        if (doc is null) return null;
+        var root = doc.RootElement;
+        var properties = root.ValueKind == JsonValueKind.Object
+            ? root.EnumerateObject().Select(property => property.Name).ToArray()
+            : [];
+        if (properties.Length != 2 ||
+            !properties.ToHashSet(StringComparer.Ordinal).SetEquals(["underlying", "entries"]) ||
+            !root.TryGetProperty("underlying", out var underlyingNode) ||
+            underlyingNode.ValueKind != JsonValueKind.String || string.IsNullOrEmpty(underlyingNode.GetString()) ||
+            !root.TryGetProperty("entries", out var entriesNode) || entriesNode.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException(
+                "malformed [KotlinBasicEnum] carrier: expected exactly underlying and entries");
+        var entries = new List<(string Name, int Ordinal, string PhysicalValue)>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in entriesNode.EnumerateArray())
+        {
+            var entryProperties = entry.ValueKind == JsonValueKind.Object
+                ? entry.EnumerateObject().Select(property => property.Name).ToArray()
+                : [];
+            if (entryProperties.Length != 3 ||
+                !entryProperties.ToHashSet(StringComparer.Ordinal).SetEquals(["name", "ordinal", "physicalValue"]) ||
+                !entry.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
+                string.IsNullOrEmpty(nameNode.GetString()) || !names.Add(nameNode.GetString()!) ||
+                !entry.TryGetProperty("ordinal", out var ordinalNode) || !ordinalNode.TryGetInt32(out var ordinal) ||
+                ordinal != entries.Count ||
+                !entry.TryGetProperty("physicalValue", out var valueNode) || valueNode.ValueKind != JsonValueKind.String ||
+                string.IsNullOrEmpty(valueNode.GetString()) || !values.Add(valueNode.GetString()!))
+                throw new InvalidDataException(
+                    "malformed [KotlinBasicEnum] carrier: entries require unique name/ordinal/value triples in declaration order");
+            entries.Add((nameNode.GetString()!, ordinal, valueNode.GetString()!));
+        }
+        return new BasicEnumCarrier(underlyingNode.GetString()!, entries);
+    }
+
+    private void ValidateBasicEnumCarrier(
+        TypeDefinitionHandle handle,
+        TypeDefinition def,
+        BasicEnumCarrier carrier)
+    {
+        var storage = carrier.Underlying switch
+        {
+            "System.SByte" => (ConstantTypeCode.SByte, (byte)0x04),
+            "System.Byte" => (ConstantTypeCode.Byte, (byte)0x05),
+            "System.Int16" => (ConstantTypeCode.Int16, (byte)0x06),
+            "System.UInt16" => (ConstantTypeCode.UInt16, (byte)0x07),
+            "System.Int32" => (ConstantTypeCode.Int32, (byte)0x08),
+            "System.UInt32" => (ConstantTypeCode.UInt32, (byte)0x09),
+            "System.Int64" => (ConstantTypeCode.Int64, (byte)0x0a),
+            "System.UInt64" => (ConstantTypeCode.UInt64, (byte)0x0b),
+            _ => throw new InvalidDataException(
+                $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': illegal underlying type '{carrier.Underlying}'"),
+        };
+        var fields = def.GetFields().ToDictionary(
+            fieldHandle => _md.GetString(_md.GetFieldDefinition(fieldHandle).Name),
+            StringComparer.Ordinal);
+        if (!fields.TryGetValue("value__", out var valueFieldHandle) ||
+            !_md.GetBlobBytes(_md.GetFieldDefinition(valueFieldHandle).Signature)
+                .SequenceEqual(new byte[] { 0x06, storage.Item2 }))
+            throw new InvalidDataException(
+                $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': value__ does not match '{carrier.Underlying}'");
+
+        foreach (var entry in carrier.Entries)
+        {
+            if (!fields.TryGetValue(entry.Name, out var fieldHandle))
+                throw new InvalidDataException(
+                    $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': missing literal field '{entry.Name}'");
+            var field = _md.GetFieldDefinition(fieldHandle);
+            var constantHandle = field.GetDefaultValue();
+            if ((field.Attributes & (FieldAttributes.Literal | FieldAttributes.Static)) !=
+                    (FieldAttributes.Literal | FieldAttributes.Static) || constantHandle.IsNil)
+                throw new InvalidDataException(
+                    $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': '{entry.Name}' is not a literal field");
+            var constant = _md.GetConstant(constantHandle);
+            var blob = _md.GetBlobReader(constant.Value);
+            var physical = constant.TypeCode switch
+            {
+                ConstantTypeCode.SByte => blob.ReadSByte().ToString(CultureInfo.InvariantCulture),
+                ConstantTypeCode.Byte => blob.ReadByte().ToString(CultureInfo.InvariantCulture),
+                ConstantTypeCode.Int16 => blob.ReadInt16().ToString(CultureInfo.InvariantCulture),
+                ConstantTypeCode.UInt16 => blob.ReadUInt16().ToString(CultureInfo.InvariantCulture),
+                ConstantTypeCode.Int32 => blob.ReadInt32().ToString(CultureInfo.InvariantCulture),
+                ConstantTypeCode.UInt32 => blob.ReadUInt32().ToString(CultureInfo.InvariantCulture),
+                ConstantTypeCode.Int64 => blob.ReadInt64().ToString(CultureInfo.InvariantCulture),
+                ConstantTypeCode.UInt64 => blob.ReadUInt64().ToString(CultureInfo.InvariantCulture),
+                _ => null,
+            };
+            if (constant.TypeCode != storage.Item1 || physical != entry.PhysicalValue || blob.RemainingBytes != 0)
+                throw new InvalidDataException(
+                    $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': literal '{entry.Name}' " +
+                    $"does not match {carrier.Underlying} value '{entry.PhysicalValue}'");
+        }
+    }
+
     private ValidatedRichEnumCarrier ValidateRichEnumCarrier(
         TypeDefinitionHandle handle,
         TypeDefinition def,
@@ -1913,7 +2018,11 @@ internal sealed class AssemblyScanner : IDisposable
         var isInterface = (def.Attributes & TypeAttributes.Interface) != 0;
         var isEnum = IsSystemType(def.BaseType, "System", "Enum");
         var richEnumCarrier = ReadRichEnumCarrier(handle);
+        var basicEnumCarrier = ReadBasicEnumCarrier(handle);
         var isKotlinRichEnum = richEnumCarrier is not null;
+        if (basicEnumCarrier is not null && !isEnum)
+            throw new InvalidDataException(
+                $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': target is not an enum");
         var isAnnotation = IsAttributeType(handle);
         var isClrExceptionRoot =
             metadataNamespace == "System" &&
@@ -2632,6 +2741,20 @@ internal sealed class AssemblyScanner : IDisposable
                 result.Function.Add(function);
         }
 
+        if (basicEnumCarrier is not null)
+        {
+            ValidateBasicEnumCarrier(handle, def, basicEnumCarrier);
+            var literalNames = def.GetFields().Select(fieldHandle => _md.GetFieldDefinition(fieldHandle))
+                .Where(field => (field.Attributes & (FieldAttributes.Literal | FieldAttributes.Static)) ==
+                    (FieldAttributes.Literal | FieldAttributes.Static))
+                .Select(field => _md.GetString(field.Name)).ToHashSet(StringComparer.Ordinal);
+            if (!literalNames.SetEquals(basicEnumCarrier.Entries.Select(entry => entry.Name)))
+                throw new InvalidDataException(
+                    $"malformed [KotlinBasicEnum] carrier on '{MetadataTypeName(handle)}': entry map does not match literal fields");
+            foreach (var entry in basicEnumCarrier.Entries)
+                result.EnumEntry.Add(new EnumEntry { Name = names.String(entry.Name) });
+        }
+
         foreach (var fieldHandle in def.GetFields())
         {
             // Suppress the exact ABI singleton slot validated from [KotlinCompanion], not a declaration selected by
@@ -2651,7 +2774,8 @@ internal sealed class AssemblyScanner : IDisposable
             if (isEnum && (field.Attributes & FieldAttributes.Literal) != 0 &&
                 (field.Attributes & FieldAttributes.Static) != 0)
             {
-                result.EnumEntry.Add(new EnumEntry { Name = names.String(name) });
+                if (basicEnumCarrier is null)
+                    result.EnumEntry.Add(new EnumEntry { Name = names.String(name) });
                 continue;
             }
             var fieldType = ProjectType(fieldHandle, field.DecodeSignature(signatures, typeContext), handle, names, signatures, typeContext);

@@ -44,6 +44,7 @@ static class RoundtripMetadata
     const string AKObject       = Ns + "KotlinObjectAttribute";
     const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKRichEnum     = Ns + "KotlinRichEnumAttribute";
+    const string AKBasicEnum    = Ns + "KotlinBasicEnumAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
     const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
@@ -169,8 +170,17 @@ static class RoundtripMetadata
 
     static void StampType(JsonObject to)
     {
-        // A real CLR enum lowers to an EnumBuilder (ilemit ti.TB == null) — it carries NO round-trip metadata (a
-        // [NullableContext] stamp would NRE on the null builder). A rich enum is a `kind:"class"` singleton and IS stamped.
+        // [KotlinBasicEnum(version, bytes)] — explicit CLR enum values destroy the ordinal=value and
+        // Enum.GetValues-order shortcuts. It must be stamped on the physical enum itself before returning from the
+        // reference-type metadata path; downstream projection cannot recover declaration order from FieldDef order or
+        // Enum.GetValues. A plain real enum carries no Kotlin metadata and still takes the early return.
+        if (to["basicEnum"] is JsonObject basicEnum)
+        {
+            Append(to, JsonCarrierAttr(AKBasicEnum, basicEnum));
+            to.Remove("basicEnum");
+        }
+        // A real CLR enum does not need the nullable/type-class carriers below. A rich enum is a `kind:"class"`
+        // singleton and does take the normal reference-type metadata path.
         if ((to["kind"] as JsonValue)?.GetValue<string>() == "enum") return;
         Prepend(to, ByteMarker(ANullableCtx, 1));                     // [NullableContext(1)]
         if (ModFlag(to, "fun")) Append(to, Marker(AKFunInterface));  // `fun interface` (SAM)
@@ -539,6 +549,7 @@ static class RoundtripMetadata
         o.Remove("kotlinCompanion");
         o.Remove("richEnum");
         o.Remove("enumRich");
+        o.Remove("basicEnum");
         StripAttrs(o, "attrs");
         StripDecls(o["methods"], hasParams: true);
         StripDecls(o["fields"]);
@@ -774,6 +785,7 @@ static class RoundtripMetadata
             AttrClass(AKObject, Ctor()),
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit rich-enum entry/API map
+            AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit basic-enum ordered values
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association

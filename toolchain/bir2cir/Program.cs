@@ -270,6 +270,10 @@ sealed class Pipeline
         // `kotlin.*` enum arrives from kotc already as an `objMethod`; neither reaches this local `callInstance` gap.
         var localBasicEnums = EnumMemberBinding.CollectBasicEnums(birFiles.Select(f => f.Root));
 
+        // EXPLICIT CLR ENUMS (#526): validate kotc's source-owned ordered constant map and resolve the Kotlin
+        // integral type to its exact CLR underlying type before any use-site enum operation is lowered.
+        var localExplicitEnums = ClrEnumLowering.Apply(birFiles.Select(f => f.Root));
+
         // The local reference TYPES (classes + interfaces) module-wide (name -> declared universal slots + base) —
         // AnySlotRebind rebinds a dead-ending `callInstance <UserType>.GetHashCode/ToString/Equals` (a fake override
         // inherited from the implicit kotlin.Any, which ilemit cannot resolve because the base field is absent) to an
@@ -478,7 +482,7 @@ sealed class Pipeline
             // ENUM ENTRY VALUES: kotc preserves owner + entry-name Kotlin identity. Resolve a referenced rich enum's
             // carrier-mapped singleton field, or a CLR enum's potentially sparse/negative/aliased physical constant,
             // from the exact compile reference here.
-            EnumValueLowering.Apply(bir.Root, refs, localBasicEnums);
+            EnumValueLowering.Apply(bir.Root, refs, localBasicEnums, localExplicitEnums);
             // ARRAY CONSTRUCTION + INTRINSIC ELEMENT (#73 Phase 2b-A): kotc emits the faithful `kotlin.IntArray`
             // identity — the sized ctor as `new kotlin.IntArray(size, init)`, the arrayGet/arraySet/forArray
             // intrinsics with NO `elem`. Derive the sized-array construction (newArrayInit/newArraySized) + stamp the

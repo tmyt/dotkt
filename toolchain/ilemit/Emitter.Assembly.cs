@@ -161,14 +161,20 @@ sealed partial class Emitter
                                 enumAccess | TypeAttributes.Sealed, Bcl("System.Enum"))
                             : _mod.DefineType(name, enumAccess | TypeAttributes.Sealed, Bcl("System.Enum"));
                         var eti = new TypeInfo { TB = enumTb, Def = t, IsEnum = true };
-                        eti.Fields["value__"] = enumTb.DefineField("value__", Bcl("System.Int32"),
+                        var underlying = t.TryGetProperty("underlying", out var enumUnderlying)
+                            ? NativeType(enumUnderlying)
+                            : Bcl("System.Int32");
+                        eti.Fields["value__"] = enumTb.DefineField("value__", underlying,
                             FieldAttributes.Public | FieldAttributes.SpecialName | FieldAttributes.RTSpecialName);
                         foreach (var en in t.GetProperty("entries").EnumerateArray())
                         {
                             var entryName = en.GetProperty("name").GetString();
                             var field = enumTb.DefineField(entryName, enumTb,
                                 FieldAttributes.Public | FieldAttributes.Static | FieldAttributes.Literal);
-                            field.SetConstant(en.GetProperty("ordinal").GetInt32());
+                            field.SetConstant(en.TryGetProperty("physicalValue", out var physicalValue)
+                                && en.TryGetProperty("underlying", out var physicalUnderlying)
+                                    ? EnumConstantValue(physicalUnderlying.GetString(), physicalValue.GetString())
+                                    : en.GetProperty("ordinal").GetInt32());
                             eti.Fields[entryName] = field;
                         }
                         _types[name] = eti;

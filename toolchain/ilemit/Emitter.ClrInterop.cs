@@ -120,26 +120,7 @@ sealed partial class Emitter
         if (e.TryGetProperty("physicalValue", out var pv)
             && e.TryGetProperty("underlying", out var ut))
         {
-            var text = pv.GetString();
-            switch (ut.GetString())
-            {
-                case "System.Int64":
-                    _il.Emit(OpCodes.Ldc_I8, long.Parse(text, CultureInfo.InvariantCulture));
-                    break;
-                case "System.UInt64":
-                    _il.Emit(OpCodes.Ldc_I8, unchecked((long)ulong.Parse(text, CultureInfo.InvariantCulture)));
-                    break;
-                case "System.UInt32":
-                    _il.Emit(OpCodes.Ldc_I4, unchecked((int)uint.Parse(text, CultureInfo.InvariantCulture)));
-                    break;
-                case "System.Byte":
-                case "System.UInt16":
-                    _il.Emit(OpCodes.Ldc_I4, int.Parse(text, CultureInfo.InvariantCulture));
-                    break;
-                default:
-                    _il.Emit(OpCodes.Ldc_I4, int.Parse(text, CultureInfo.InvariantCulture));
-                    break;
-            }
+            EmitEnumConstantBits(ut.GetString(), pv.GetString());
         }
         else
         {
@@ -151,6 +132,30 @@ sealed partial class Emitter
 
     Type EmitNativeClrEnumOrdinal(JsonElement e)
     {
+        if (e.TryGetProperty("values", out var values))
+        {
+            var et = NativeType(e.GetProperty("type"));
+            var local = _il.DeclareLocal(et);
+            EmitExpr(e.GetProperty("e"));
+            _il.Emit(OpCodes.Stloc, local);
+            var done = _il.DefineLabel();
+            foreach (var value in values.EnumerateArray())
+            {
+                var next = _il.DefineLabel();
+                _il.Emit(OpCodes.Ldloc, local);
+                EmitEnumConstantBits(
+                    value.GetProperty("underlying").GetString(),
+                    value.GetProperty("physicalValue").GetString());
+                _il.Emit(OpCodes.Ceq);
+                _il.Emit(OpCodes.Brfalse, next);
+                _il.Emit(OpCodes.Ldc_I4, value.GetProperty("ordinal").GetInt32());
+                _il.Emit(OpCodes.Br, done);
+                _il.MarkLabel(next);
+            }
+            _il.Emit(OpCodes.Ldc_I4_M1);
+            _il.MarkLabel(done);
+            return Bcl("System.Int32");
+        }
         // A LOCAL value-type enum's ordinal == its underlying value (kotc assigns contiguous 0..n) -> a plain Conv_I4.
         // A REFERENCED .NET enum (#107 — the node carries the enum `type`) may have sparse/negative/aliased values, so
         // its Kotlin ordinal (the DECLARATION INDEX) is Array.IndexOf(Enum.GetValues(t), value), NOT the underlying int.
@@ -173,11 +178,65 @@ sealed partial class Emitter
     Type EmitNativeClrEnumValues(JsonElement e)
     {
         var et = NativeType(e.GetProperty("type"));
+        if (e.TryGetProperty("values", out var values))
+        {
+            _il.Emit(OpCodes.Ldc_I4, values.GetArrayLength());
+            _il.Emit(OpCodes.Newarr, et);
+            var index = 0;
+            foreach (var value in values.EnumerateArray())
+            {
+                _il.Emit(OpCodes.Dup);
+                _il.Emit(OpCodes.Ldc_I4, index++);
+                EmitEnumConstantBits(
+                    value.GetProperty("underlying").GetString(),
+                    value.GetProperty("physicalValue").GetString());
+                EmitStelem(et);
+            }
+            return et.MakeArrayType();
+        }
         _il.Emit(OpCodes.Ldtoken, et);
         EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Type.FromHandle"));
         EmitMethod(_il, OpCodes.Call, WellKnown<MethodInfo>("Enum.GetValues"));
         _il.Emit(OpCodes.Castclass, et.MakeArrayType());
         return et.MakeArrayType();
+    }
+
+    static object EnumConstantValue(string underlying, string text) => underlying switch
+    {
+        "System.SByte" => sbyte.Parse(text, CultureInfo.InvariantCulture),
+        "System.Byte" => byte.Parse(text, CultureInfo.InvariantCulture),
+        "System.Int16" => short.Parse(text, CultureInfo.InvariantCulture),
+        "System.UInt16" => ushort.Parse(text, CultureInfo.InvariantCulture),
+        "System.Int32" => int.Parse(text, CultureInfo.InvariantCulture),
+        "System.UInt32" => uint.Parse(text, CultureInfo.InvariantCulture),
+        "System.Int64" => long.Parse(text, CultureInfo.InvariantCulture),
+        "System.UInt64" => ulong.Parse(text, CultureInfo.InvariantCulture),
+        _ => throw new InvalidDataException($"ilemit: illegal CLR enum underlying type '{underlying}'"),
+    };
+
+    void EmitEnumConstantBits(string underlying, string text)
+    {
+        switch (underlying)
+        {
+            case "System.Int64":
+                _il.Emit(OpCodes.Ldc_I8, long.Parse(text, CultureInfo.InvariantCulture));
+                break;
+            case "System.UInt64":
+                _il.Emit(OpCodes.Ldc_I8, unchecked((long)ulong.Parse(text, CultureInfo.InvariantCulture)));
+                break;
+            case "System.UInt32":
+                _il.Emit(OpCodes.Ldc_I4, unchecked((int)uint.Parse(text, CultureInfo.InvariantCulture)));
+                break;
+            case "System.SByte":
+            case "System.Byte":
+            case "System.Int16":
+            case "System.UInt16":
+            case "System.Int32":
+                _il.Emit(OpCodes.Ldc_I4, int.Parse(text, CultureInfo.InvariantCulture));
+                break;
+            default:
+                throw new InvalidDataException($"ilemit: illegal CLR enum underlying type '{underlying}'");
+        }
     }
 
     Type EmitNativeClrEnumParse(JsonElement e)

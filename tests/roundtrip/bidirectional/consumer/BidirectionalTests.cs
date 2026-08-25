@@ -8,6 +8,8 @@ using NUnit.Framework;
 
 public class BidirectionalTests
 {
+    private static T EnumIdentity<T>(T value) where T : struct, Enum => value;
+
     private sealed class CSharpPropertyOverride : BidirectionalPropertyBase
     {
         private int storage;
@@ -51,6 +53,47 @@ public class BidirectionalTests
     public void CSharpCallsKotlinTopLevelFunctionAtCompileTime()
     {
         Assert.That(LibraryKt.bidirectionalAdd(2, 3), Is.EqualTo(5));
+    }
+
+    [Test]
+    public void CSharpConsumesKotlinExplicitClrEnumContract()
+    {
+        static string Describe(BidirectionalAccess value) => value switch
+        {
+            BidirectionalAccess.NONE => "none",
+            BidirectionalAccess.READ => "read",
+            BidirectionalAccess.WRITE => "write",
+            BidirectionalAccess.READ_WRITE => "read-write",
+            BidirectionalAccess.HIGH => "high",
+            _ => "unknown",
+        };
+
+        Assert.That(Describe(BidirectionalAccess.WRITE), Is.EqualTo("write"));
+        Assert.That(EnumIdentity(BidirectionalAccess.HIGH), Is.EqualTo(BidirectionalAccess.HIGH));
+        Assert.That(Enum.GetUnderlyingType(typeof(BidirectionalAccess)), Is.EqualTo(typeof(uint)));
+        Assert.That(typeof(BidirectionalAccess).IsDefined(typeof(FlagsAttribute), inherit: false), Is.True);
+        Assert.That((uint)BidirectionalAccess.NONE, Is.EqualTo(0u));
+        Assert.That((uint)BidirectionalAccess.WRITE, Is.EqualTo(4u));
+        Assert.That((uint)BidirectionalAccess.HIGH, Is.EqualTo(0x80000000u));
+
+        var fields = typeof(BidirectionalAccess).GetFields(BindingFlags.Public | BindingFlags.Static);
+        Assert.That(fields.Select(field => field.Name), Is.EqualTo(
+            new[] { "NONE", "READ", "WRITE", "READ_WRITE", "HIGH" }));
+        Assert.That(fields.Select(field => (uint)field.GetRawConstantValue()!), Is.EqualTo(
+            new uint[] { 0u, 1u, 4u, 5u, 0x80000000u }));
+
+        Assert.That(LibraryKt.bidirectionalEnumDefault(), Is.EqualTo(BidirectionalAccess.WRITE));
+        Assert.That(LibraryKt.bidirectionalEnumOrdinal((BidirectionalAccess)2u), Is.EqualTo(-1));
+        var optional = typeof(LibraryKt).GetMethod(nameof(LibraryKt.bidirectionalEnumDefault))!
+            .GetParameters().Single();
+        Assert.That(optional.IsOptional, Is.True);
+        Assert.That(optional.DefaultValue, Is.EqualTo(BidirectionalAccess.WRITE));
+
+        var marker = typeof(BidirectionalAccessMarked).GetCustomAttributesData()
+            .Single(attribute => attribute.AttributeType.Name == nameof(BidirectionalAccessMarker));
+        var markerValue = marker.ConstructorArguments.Single();
+        Assert.That(markerValue.ArgumentType, Is.EqualTo(typeof(BidirectionalAccess)));
+        Assert.That(Convert.ToUInt32(markerValue.Value), Is.EqualTo((uint)BidirectionalAccess.READ_WRITE));
     }
 
     [Test]

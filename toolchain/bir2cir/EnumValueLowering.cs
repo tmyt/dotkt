@@ -6,10 +6,18 @@ using System.Text.Json.Nodes;
 // those Kotlin identities to the selected reference DLL's physical representation.
 static class EnumValueLowering
 {
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, ISet<string> localBasicEnums) =>
-        Walk(root, refs, localBasicEnums);
+    public static void Apply(
+        JsonNode root,
+        ReferenceMetadataIndex refs,
+        ISet<string> localBasicEnums,
+        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums) =>
+        Walk(root, refs, localBasicEnums, localExplicitEnums);
 
-    static void Walk(JsonNode node, ReferenceMetadataIndex refs, ISet<string> localBasicEnums)
+    static void Walk(
+        JsonNode node,
+        ReferenceMetadataIndex refs,
+        ISet<string> localBasicEnums,
+        IReadOnlyDictionary<string, BasicEnumMetadata> localExplicitEnums)
     {
         if (node is JsonObject obj)
         {
@@ -19,12 +27,26 @@ static class EnumValueLowering
                 && obj["type"] is JsonNode type
                 && TypeJson.OwnerName(type) is string owner)
             {
-                if (refs.TryKotlinRichEnumEntryField(owner, entry, out var field))
+                if (localExplicitEnums.TryGetValue(owner, out var localExplicit))
+                {
+                    var physical = localExplicit.Entries.SingleOrDefault(candidate => candidate.Name == entry)
+                        ?? throw new InvalidOperationException($"bir2cir: explicit enum '{owner}' has no entry '{entry}'");
+                    obj["underlying"] = localExplicit.Underlying;
+                    obj["physicalValue"] = physical.PhysicalValue;
+                }
+                else if (refs.TryKotlinRichEnumEntryField(owner, entry, out var field))
                 {
                     foreach (var key in obj.Select(kv => kv.Key).ToList()) obj.Remove(key);
                     obj["k"] = "staticField";
                     obj["ownerType"] = type.DeepClone();
                     obj["name"] = field;
+                }
+                else if (refs.TryKotlinBasicEnum(owner, out var referencedExplicit))
+                {
+                    var physical = referencedExplicit.Entries.SingleOrDefault(candidate => candidate.Name == entry)
+                        ?? throw new InvalidOperationException($"bir2cir: explicit enum '{owner}' has no entry '{entry}'");
+                    obj["underlying"] = referencedExplicit.Underlying;
+                    obj["physicalValue"] = physical.PhysicalValue;
                 }
                 else if (refs.ResolveNetEnumConstant(owner, entry) is EnumPhysicalConstant physical)
                 {
@@ -54,8 +76,17 @@ static class EnumValueLowering
                     var receiverClone = receiver.DeepClone();
                     obj.Clear();
                     obj["k"] = "objMethod";
-                    obj["method"] = "toString";
+                    obj["method"] = "ToString";
                     obj["recv"] = receiverClone;
+                }
+                else if (kind == "enumOrdinal"
+                    && localExplicitEnums.TryGetValue(enumOwner, out var localExplicit))
+                {
+                    obj["values"] = Values(localExplicit);
+                }
+                else if (kind == "enumOrdinal" && refs.TryKotlinBasicEnum(enumOwner, out var referencedExplicit))
+                {
+                    obj["values"] = Values(referencedExplicit);
                 }
                 else if (localBasicEnums.Contains(enumOwner))
                 {
@@ -64,13 +95,25 @@ static class EnumValueLowering
                     obj.Remove("type");
                 }
             }
+            if (kind == "enumValues" && TypeJson.OwnerName(obj["type"]) is string valuesOwner
+                && (localExplicitEnums.TryGetValue(valuesOwner, out var localValues)
+                    || refs.TryKotlinBasicEnum(valuesOwner, out localValues)))
+                obj["values"] = Values(localValues);
+
             foreach (var kv in obj)
-                if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums);
+                if (kv.Value != null) Walk(kv.Value, refs, localBasicEnums, localExplicitEnums);
         }
         else if (node is JsonArray arr)
             foreach (var item in arr)
-                if (item != null) Walk(item, refs, localBasicEnums);
+                if (item != null) Walk(item, refs, localBasicEnums, localExplicitEnums);
     }
+
+    static JsonArray Values(BasicEnumMetadata metadata) => new(metadata.Entries.Select(entry => (JsonNode)new JsonObject
+    {
+        ["ordinal"] = entry.Ordinal,
+        ["underlying"] = metadata.Underlying,
+        ["physicalValue"] = entry.PhysicalValue,
+    }).ToArray());
 }
 
 sealed record EnumPhysicalConstant(string Underlying, string Value);

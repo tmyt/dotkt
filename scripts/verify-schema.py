@@ -412,6 +412,54 @@ class V:
                 if not isinstance(entry.get(key), str) or not entry[key]:
                     self.err(f, entry_where + "/" + key, f"richEnum entry {key} must be a non-empty string")
 
+    def basic_enum_decl(self, f, path, o, is_type_decl):
+        """Validate #526's source and physical explicit-basic-enum declaration facts."""
+        has_source = "clrEnum" in o
+        has_carrier = "basicEnum" in o
+        has_underlying = is_type_decl and o.get("kind") == "enum" and "underlying" in o
+        if not has_source and not has_carrier and not has_underlying:
+            return
+        if not is_type_decl or o.get("kind") != "enum":
+            self.err(f, path, "clrEnum/basicEnum/enum underlying may appear only on a root enum declaration")
+        if f.endswith(".bir.json"):
+            if has_underlying or has_carrier:
+                self.err(f, path, "physical explicit-enum facts must not appear in BIR")
+            fact = o.get("clrEnum")
+            if not isinstance(fact, dict) or set(fact) != {"underlying"}:
+                self.err(f, path + "/clrEnum", "clrEnum must contain exactly the Kotlin underlying type")
+            entries = o.get("entries")
+            if not isinstance(entries, list):
+                self.err(f, path + "/entries", "explicit BIR enum entries must be an ordered array")
+            else:
+                for ordinal, entry in enumerate(entries):
+                    where = path + f"/entries[{ordinal}]"
+                    if not isinstance(entry, dict) or set(entry) != {"name", "ordinal", "value"}:
+                        self.err(f, where, "explicit BIR enum entry must contain exactly name/ordinal/value")
+                    elif (not isinstance(entry.get("name"), str) or not entry["name"] or
+                          entry.get("ordinal") != ordinal or
+                          not isinstance(entry.get("value"), str) or not entry["value"]):
+                        self.err(f, where, "explicit BIR enum entry must carry its name, declaration ordinal, and constant text")
+        if f.endswith(".cir.json"):
+            if has_source:
+                self.err(f, path + "/clrEnum", "clrEnum is a BIR declaration fact and must be consumed before CIR")
+            if has_carrier:
+                self.err(f, path + "/basicEnum", "basicEnum must be consumed into trusted metadata before CIR")
+            if not has_underlying:
+                self.err(f, path + "/underlying", "an explicit CIR enum requires its exact CLR underlying type")
+            entries = o.get("entries")
+            if not isinstance(entries, list):
+                self.err(f, path + "/entries", "explicit CIR enum entries must be an ordered array")
+            else:
+                for ordinal, entry in enumerate(entries):
+                    where = path + f"/entries[{ordinal}]"
+                    if not isinstance(entry, dict) or set(entry) != {"name", "ordinal", "underlying", "physicalValue"}:
+                        self.err(f, where, "explicit CIR enum entry must contain exactly name/ordinal/underlying/physicalValue")
+                    elif (not isinstance(entry.get("name"), str) or not entry["name"] or
+                          entry.get("ordinal") != ordinal or
+                          not isinstance(entry.get("underlying"), str) or not entry["underlying"] or
+                          not isinstance(entry.get("physicalValue"), str) or not entry["physicalValue"]):
+                        self.err(f, where, "explicit CIR enum entry must carry its name, declaration ordinal, underlying type, and physical value")
+
     def type_node(self, f, path, o):
         """Validate a {t:...} type node: known tag + required fields (§1)."""
         t = o.get("t")
@@ -730,6 +778,7 @@ class V:
     def walk(self, f, o, path, is_type_decl=False):
         if isinstance(o, dict):
             self.rich_enum_decl(f, path, o, is_type_decl)
+            self.basic_enum_decl(f, path, o, is_type_decl)
             for internal in BIR2CIR_INTERNAL_MEMBER_FACTS:
                 if internal in o:
                     self.err(
