@@ -348,7 +348,10 @@ static class StarProjectionLowering
                 };
             case "iterator":
                 if (mutable)
-                    return new JsonObject { ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), ["method"] = "clrMutableIteratorErased", ["sig"] = new JsonArray(TypeJson.Write(Any)), ["args"] = new JsonArray { cast["e"].DeepClone() }, ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) })) };
+                    // Keep the original star cast observable before entering the erased helper. Passing recvInner
+                    // directly would let e.g. `(aSet as MutableList<*>).iterator()` succeed merely because the set
+                    // is enumerable, even though the explicit MutableList cast must fail.
+                    return new JsonObject { ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), ["method"] = "clrMutableIteratorErased", ["sig"] = new JsonArray(TypeJson.Write(Any)), ["args"] = new JsonArray { CastTo(iface) }, ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) })) };
                 // `.iterator()` -> the rt bridge `ClrIteratorBridgeKt.iteratorOverRawEnumerable` (#74b(ii)), NOT a raw
                 // `IEnumerable.GetEnumerator()` clrInstance: the consumer var this call initializes stays declared
                 // `kotlin.collections.Iterator<Any?>` (StarProjectionLowering never touches that decl slot), and

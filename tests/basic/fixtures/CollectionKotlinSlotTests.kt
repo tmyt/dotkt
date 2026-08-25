@@ -430,6 +430,17 @@ class CollectionKotlinSlotTests {
         widenedIntIterator.remove()
         assertTrue(ints.isEmpty())
 
+        // Erasing the helper parameter must not erase the explicit star-cast check itself. A set is enumerable, so
+        // passing the pre-cast object directly to the helper would incorrectly let this MutableList cast succeed.
+        var invalidMutableListCastRejected = false
+        try {
+            val notAList: Any = mutableSetOf(56)
+            (notAList as MutableList<*>).iterator()
+        } catch (e: Exception) {
+            invalidMutableListCastRejected = true
+        }
+        assertTrue(invalidMutableListCastRejected)
+
         // Star projection also retains MutableIterator.remove rather than falling through the read-only raw adapter.
         val unknown: Any = CollectionKotlinSlotDelegatingSet(mutableSetOf(60, 70))
         if (unknown is MutableSet<*>) {
