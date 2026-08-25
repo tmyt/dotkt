@@ -119,7 +119,8 @@ static partial class ClrMemberResolution
 {
     internal static bool TryResolveAliasedInterfaceSlot(ReferenceMetadataIndex refs,
         TypeNode.Fqn physicalOwner, string member, int methodArity, TypeNode[] wantedParams,
-        JsonArray wantedTypeParams, out TypeNode.Fqn declarationOwner, out string declarationMember,
+        JsonArray wantedTypeParams, TypeNode[] wantedOwnerArgs,
+        out TypeNode.Fqn declarationOwner, out string declarationMember,
         out TypeNode[] declarationParams, out TypeNode declarationReturn)
     {
         declarationOwner = null;
@@ -154,20 +155,24 @@ static partial class ClrMemberResolution
                 var declaredTypeParams = new JsonArray(method.GetGenericArguments()
                     .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
                 if (!KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
-                        declaredTypeParams, wantedTypeParams, declaringArgs, Array.Empty<TypeNode>()))
+                        declaredTypeParams, wantedTypeParams, declaringArgs,
+                        wantedOwnerArgs ?? Array.Empty<TypeNode>()))
                     continue;
             }
             candidates.Add((method, reference, parameters,
                 SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArgs), declaringArgs));
         }
-        var distinct = candidates.GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
-            .Select(group => group.First()).ToList();
+        var distinct = MostDerived(candidates
+            .GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
+            .Select(group => group.First().Method).ToList());
         if (distinct.Count > 1)
             throw new InvalidOperationException(
                 $"bir2cir: aliased interface slot '{physicalOwner.Name}.{member}`{methodArity}' resolves to "
                 + $"{distinct.Count} declarations with the requested parameter vector");
         if (distinct.Count == 0) return false;
-        var selected = distinct[0];
+        var selectedMethod = distinct[0];
+        var selected = candidates.Single(candidate => candidate.Method.Module == selectedMethod.Module
+            && candidate.Method.MetadataToken == selectedMethod.MetadataToken);
         declarationOwner = selected.Reference.DeclaringType as TypeNode.Fqn;
         if (declarationOwner == null) return false;
         declarationMember = selected.Reference.Name;

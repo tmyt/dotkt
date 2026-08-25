@@ -28,6 +28,11 @@ import System.IComparable1
 import System.Collections.Generic.IComparer
 import System.Collections.Generic.List
 import SlotTableInterop.IOverloaded
+import SlotTableInterop.ConstraintBase
+import SlotTableInterop.ConstraintLeaf
+import SlotTableInterop.IConstrainedDefault
+import SlotTableInterop.IReturnBase
+import SlotTableInterop.IReturnDerived
 
 // il-clrifaceimpl: implement System.Collections.Generic.IComparer<T> (a reference-KLIB-projected .NET generic interface). The
 // projected Compare surfaces its unconstrained T params as nullable (`String?`), so the override matches that signature.
@@ -54,6 +59,16 @@ class BclInterfaceImplementationVer(val n: Int) : IComparable1<BclInterfaceImple
 class BclInterfaceImplementationOverloaded : IOverloaded<Int> {
     override fun Measure(value: String?): Int = value?.length ?: -1
     override fun Measure(value: Int?): Int = value ?: -2
+}
+
+interface BclInterfaceImplementationConstrainedDefault : IConstrainedDefault<ConstraintBase> {
+    override fun <U : ConstraintBase> Describe(): String = "kotlin-override"
+}
+
+class BclInterfaceImplementationConstrainedDefaultImpl : BclInterfaceImplementationConstrainedDefault
+
+class BclInterfaceImplementationReturnDerived : IReturnDerived {
+    override fun Read(): String = "derived-return"
 }
 
 class BclInterfaceImplementationTests {
@@ -110,5 +125,21 @@ class BclInterfaceImplementationTests {
         val slot: IOverloaded<Int> = BclInterfaceImplementationOverloaded()
         assertEquals(3, slot.Measure("abc"))
         assertEquals(7, slot.Measure(7))
+    }
+
+    @TestAttribute
+    fun constrainedGenericDefaultInterfaceOverrideUsesBaseSlot() {
+        val slot: IConstrainedDefault<ConstraintBase> =
+            BclInterfaceImplementationConstrainedDefaultImpl()
+        assertEquals("kotlin-override", slot.Describe<ConstraintLeaf>())
+    }
+
+    @TestAttribute
+    fun mostDerivedReturnOnlyInterfaceSlotIsSelected() {
+        val value = BclInterfaceImplementationReturnDerived()
+        val derived: IReturnDerived = value
+        val base: IReturnBase = value
+        assertEquals("derived-return", derived.Read())
+        assertEquals("derived-return", base.Read())
     }
 }

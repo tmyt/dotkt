@@ -434,7 +434,7 @@ static class KotlinOverrideSlotBridge
                         localTypeNames)).ToArray();
                     if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(
                             refs, loweredDescriptorOwner, aliasedPhysicalMember, methodArity, comparableParams,
-                            slot["typeParams"] as JsonArray,
+                            slot["typeParams"] as JsonArray, supArgs,
                             out var declarationOwner, out var declarationMember,
                             out var physicalParams, out var physicalRet))
                         throw new InvalidOperationException(
@@ -1129,7 +1129,7 @@ static class KotlinOverrideSlotBridge
                             typeArg: false, localTypeNames: null)).ToArray();
                         if (!ClrMemberResolution.TryResolveAliasedInterfaceSlot(
                                 refs, loweredOwner, descriptorMember, methodArity, comparableParams,
-                                selectedSlotTypeParams,
+                                selectedSlotTypeParams, supArgs,
                                 out var declarationOwner, out var declarationMember,
                                 out var physicalParams, out var physicalRet))
                             continue;

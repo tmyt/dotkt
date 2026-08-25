@@ -17,7 +17,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 - **Inherited CLR interface slots are resolved before emission (#355).** bir2cir now applies the same forwarding-
   bridge rules to plain .NET generic interfaces as to Kotlin-projected declarations, including nullable value-type
-  seams and value-to-void returns, and carries only exact declaration operands for required MethodImpl rows. ilemit
+  seams, value-to-void returns, constructed method constraints, and return-only base/derived slot families, and
+  carries only exact declaration operands for required MethodImpl rows. ilemit
   no longer enumerates interface members, guesses an implementation from a same-name overload set, or synthesizes
   semantic bridges; it consumes the resolved descriptors and rejects any descriptor left unmatched.
 
