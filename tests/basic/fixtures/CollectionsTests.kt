@@ -54,6 +54,12 @@ fun <K, V> Map<K, V>.crkValAt(k: K): V = this[k]!!
 // ---- #287 : a null that the frontend cannot const-fold, for the nullable star-projected is-test ---------------
 fun collNullSrc(): Any? = null
 
+// #315: emitted Kotlin implementations use compiler-owned nominal collection identities alongside their BCL
+// operational faces. Delegation keeps these probes about classifier identity rather than collection mechanics.
+class CollectionIdentityOnly(private val elements: List<Int>) : Collection<Int> by elements
+class SetIdentityOnly(private val elements: Set<Int>) : Set<Int> by elements
+class MutableSetIdentityOnly(private val elements: MutableSet<Int>) : MutableSet<Int> by elements
+
 // ---- il-collrevview : #100 H1 reverse variance-collapse seam -- make() returns the readonly List<Int> head ------
 fun collRevMake(): List<Int> = listOf(1, 2)
 
@@ -323,15 +329,9 @@ class CollectionsTests {
     // and for null it answers true. That has to hold even where `is T` is itself wrong — the two spellings must never
     // disagree, or a `?` silently changes which branch a `when` takes.
     //
-    // KNOWN-WRONG (tracked separately, NOT fixed here): a Kotlin `Set` has NO distinct CLR identity. `Set` is
-    // @ClrTypeAlias'd to the same `IReadOnlyCollection<T>` as `Collection`, and `MutableSet` to the same
-    // `ICollection<T>` as `MutableCollection`, so two Kotlin types are one CLR type and NO runtime test — reflection
-    // included — can separate them. `is Set<*>` therefore answers a `Collection` question through the reified
-    // interface: true for any REFERENCE-element collection (IReadOnlyCollection<out T> is covariant, so a
-    // `List<String>` passes), false for a value-element one (no value-type covariance). `is MutableSet<*>` is always
-    // false (ICollection<T> is invariant). Asserted at today's values so the contract violation is visible and a
-    // change in either direction reds the gate; fixing it means giving the Kotlin collection interfaces distinct CLR
-    // identities, a stdlib collection-ABI decision. See docs/dotkt-semantics.md §2.
+    // #315: the operational aliases still use the BCL collection surfaces, but emitted Kotlin implementations carry
+    // independent compiler-owned classifier identities. BCL-backed values are classified by the generic faces they
+    // actually implement; dictionaries and arrays are excluded from Collection despite their CLR collection shape.
     @TestAttribute
     fun starProjectedSetIdentity() {
         val setInt: Any = setOf(1, 2)
@@ -341,14 +341,13 @@ class CollectionsTests {
         val listStr: Any = listOf("a")
         val mapInt: Any = mapOf(1 to 2)
 
-        // `is Set<*>` — today's answers. Correct only for the reference-element set and the value-element list.
-        assertFalse(setInt is Set<*>)                   // False  KNOWN-WRONG: Kotlin says true
-        assertTrue(setStr is Set<*>)                    // True   correct, but only via reference covariance
-        assertTrue(mutSetStr is Set<*>)                 // True   correct, same reason
-        assertFalse(listInt is Set<*>)                  // False  correct
-        assertTrue(listStr is Set<*>)                   // True   KNOWN-WRONG: Kotlin says false (a List is not a Set)
-        assertFalse(mapInt is Set<*>)                   // False  correct
-        assertFalse(mutSetStr is MutableSet<*>)         // False  KNOWN-WRONG: Kotlin says true (invariant ICollection<T>)
+        assertTrue(setInt is Set<*>)
+        assertTrue(setStr is Set<*>)
+        assertTrue(mutSetStr is Set<*>)
+        assertFalse(listInt is Set<*>)
+        assertFalse(listStr is Set<*>)
+        assertFalse(mapInt is Set<*>)
+        assertTrue(mutSetStr is MutableSet<*>)
 
         // The `?` spelling agrees with the plain one on every non-null receiver, and adds null. This is what #287
         // guarantees, and it holds regardless of the wrongness above.
@@ -361,15 +360,32 @@ class CollectionsTests {
         assertFalse(collNullSrc() is Set<*>)            // False  the non-null spelling still rejects null
         assertTrue(collNullSrc() !is Set<*>)            // True   the `!is` twin
 
-        // `is Collection<*>` reaches the non-generic ICollection, which a HashSet does not implement and a
-        // Dictionary does — wrong in both directions, and likewise pinned rather than fixed here.
-        assertFalse(setInt is Collection<*>)            // False  KNOWN-WRONG: Kotlin says true
-        assertFalse(setStr is Collection<*>)            // False  KNOWN-WRONG: Kotlin says true
-        assertTrue(mapInt is Collection<*>)             // True   KNOWN-WRONG: Kotlin says false (a Map is not a Collection)
+        assertTrue(setInt is Collection<*>)
+        assertTrue(setStr is Collection<*>)
+        assertFalse(mapInt is Collection<*>)
+        assertFalse((arrayOf(1) as Any) is Collection<*>)
         assertEquals(setInt is Collection<*>, setInt is Collection<*>?)
         assertEquals(mapInt is Collection<*>, mapInt is Collection<*>?)
 
-        // List and Map DO have exact non-generic BCL twins, so those star tests are sound in both directions.
+        val userCollection: Any = CollectionIdentityOnly(listOf(1))
+        val userSet: Any = SetIdentityOnly(setOf(1))
+        val userMutableSet: Any = MutableSetIdentityOnly(mutableSetOf(1))
+        assertTrue(userCollection is Collection<*>)
+        assertFalse(userCollection is Set<*>)
+        assertTrue(userSet is Collection<*>)
+        assertTrue(userSet is Set<*>)
+        assertFalse(userSet is MutableSet<*>)
+        assertTrue(userMutableSet is Collection<*>)
+        assertTrue(userMutableSet is Set<*>)
+        assertTrue(userMutableSet is MutableSet<*>)
+
+        // A successful smart cast must keep member access valid for a value-element HashSet, while a safe cast of a
+        // list must fail at the Kotlin classifier boundary rather than accepting the shared collection face.
+        assertEquals(2, if (setInt is Set<*>) setInt.size else -1)
+        assertTrue((setInt as? Set<*>) != null)
+        assertTrue((listInt as? Set<*>) == null)
+
+        // List and Map have exact non-generic BCL twins.
         assertTrue(listInt is List<*>)                  // True
         assertFalse(setInt is List<*>)                  // False
         assertTrue(mapInt is Map<*, *>)                 // True

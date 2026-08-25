@@ -113,17 +113,13 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `IEnumerable`, which every value-type-arg BCL collection implements; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
-  **`List<*>` and `Map<*,*>` are exact** — `IList`/`IDictionary` are their non-generic twins. **`Collection<*>` and
-  `Set<*>` are NOT, and answer wrongly today.** A `Set` has no distinct CLR identity at all: it is aliased to the same
-  `IReadOnlyCollection<T>` as `Collection` (and `MutableSet` to the same `ICollection<T>` as `MutableCollection`), so
-  the two Kotlin types are ONE CLR type and no runtime test — reflection included, for a user implementation as much
-  as for a `HashSet` — can separate them. Concretely: `setOf(1) is Collection<*>` is **false** (a `HashSet<T>`
-  implements only the generic `ICollection<T>`), `mapOf(1 to 2) is Collection<*>` is **true** (a `Dictionary`
-  implements the non-generic `ICollection`), `listOf("a") is Set<*>` is **true** and `setOf(1) is Set<*>` is
-  **false** (the reified `IReadOnlyCollection<out T>` is covariant, so the answer tracks whether the element type is
-  a reference type, not whether the value is a set), and `is MutableSet<*>` is always **false** (`ICollection<T>` is
-  invariant). Fixing this means giving the Kotlin collection interfaces distinct CLR identities — a stdlib
-  collection-ABI decision, not a lowering one. Pinned by `CollectionsTests.starProjectedSetIdentity`.
+  **`List<*>` and `Map<*,*>` are exact** through their non-generic `IList`/`IDictionary` twins. `Collection<*>`,
+  `Set<*>`, and `MutableSet<*>` use a composite classifier because their operational BCL aliases overlap: emitted
+  Kotlin implementations carry compiler-owned nominal identity interfaces, while BCL-backed values are recognized
+  through the generic `IReadOnlyCollection<>`/`ICollection<>` and `IReadOnlySet<>`/`ISet<>` faces they actually
+  implement. Dictionary and array shapes are explicitly excluded from `Collection`. The checked value is not wrapped,
+  so reference identity and the existing BCL member ABI are preserved. Pinned by
+  `CollectionsTests.starProjectedSetIdentity`.
 - **`x is T` preserves a nullable reified instantiation.** `m<String?>` and `m<String>` are the same CLR generic
   instantiation, so the hidden witness supplies the otherwise-missing distinction on the null path. It is forwarded
   dynamically through calls such as `inline fun <reified U> f(x: Any?) = m<U>(x)`, including lifted object, closure,

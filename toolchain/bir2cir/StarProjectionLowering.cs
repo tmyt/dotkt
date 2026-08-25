@@ -52,6 +52,13 @@ using DotKt.Bir;
 // `as List<String>` unchecked cast alone. Emits final CLR/`clr:` tokens that pass through type-lowering unchanged.
 static class StarProjectionLowering
 {
+    const string RuntimeOwner = "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt";
+    static readonly TypeNode Any = new TypeNode.Fqn("kotlin.Any");
+    static readonly TypeNode AnyN = new TypeNode.Nullable(Any);
+    static readonly TypeNode Bool = new TypeNode.Fqn("kotlin.Boolean");
+    static readonly TypeNode Int = new TypeNode.Fqn("kotlin.Int");
+    static readonly TypeNode Type = new TypeNode.Fqn("System.Type");
+
     // Kotlin generic collection alias -> the non-generic BCL interface a `List<int>`/`Dictionary<int,int>` implements
     // regardless of element type.
     //
@@ -68,14 +75,21 @@ static class StarProjectionLowering
     // (the star-projection corollary), which is where the star-projected collection lowering is written up.
     static readonly Dictionary<string, string> NonGenericIface = new(StringComparer.Ordinal)
     {
-        ["kotlin.collections.Collection"] = "System.Collections.ICollection",
-        ["kotlin.collections.MutableCollection"] = "System.Collections.ICollection",
         ["kotlin.collections.List"] = "System.Collections.IList",
         ["kotlin.collections.MutableList"] = "System.Collections.IList",
         ["kotlin.collections.Iterable"] = "System.Collections.IEnumerable",
         ["kotlin.collections.MutableIterable"] = "System.Collections.IEnumerable",
         ["kotlin.collections.Map"] = "System.Collections.IDictionary",
         ["kotlin.collections.MutableMap"] = "System.Collections.IDictionary",
+    };
+
+    // Classifiers whose operational aliases overlap. 0 = Collection, 1 = Set, 2 = MutableSet. MutableCollection keeps
+    // its established non-generic ICollection classifier; #315 is the Collection-vs-Map and Set-vs-Collection hole.
+    static readonly Dictionary<string, int> IdentityKind = new(StringComparer.Ordinal)
+    {
+        ["kotlin.collections.Collection"] = 0,
+        ["kotlin.collections.Set"] = 1,
+        ["kotlin.collections.MutableSet"] = 2,
     };
 
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
@@ -96,6 +110,17 @@ static class StarProjectionLowering
         return f.Args.All(IsObjectArg);
     }
 
+    static bool IsIdentityCollection(JsonNode slot, out int kind, out bool nullable)
+    {
+        kind = -1;
+        nullable = false;
+        var read = TypeJson.Read(slot);
+        while (read is TypeNode.Nullable n) { nullable = true; read = n.Of; }
+        while (read is TypeNode.Oblivious o) read = o.Of;
+        if (read is not TypeNode.Fqn f || !IdentityKind.TryGetValue(f.Name, out kind)) return false;
+        return f.Args == null || f.Args.All(IsObjectArg);
+    }
+
     // A star-projection/erased type arg: `object`/`kotlin.Any`, possibly nullable/oblivious-wrapped (`Map<*,*>` projects
     // each arg to `Any?`, i.e. `{t:nullable,of:kotlin.Any}` post-#48). Unwrap the wrappers before the bare-name check.
     static bool IsObjectArg(TypeNode a) => a switch
@@ -111,6 +136,19 @@ static class StarProjectionLowering
     {
         if (node is JsonObject obj)
         {
+            // The overlapping Collection/Set classifiers use their compiler-owned nominal identity for emitted Kotlin
+            // values and the BCL's real generic faces for BCL-backed values. The checked value remains the original
+            // object; member access below projects only the operation it needs.
+            if (Str(obj["k"]) == "callInstance"
+                && IsIdentityCollection(obj["ownerType"], out _, out _)
+                && obj["recv"] is JsonObject identityRecv && Str(identityRecv["k"]) == "cast"
+                && IsIdentityCollection(identityRecv["type"], out var identityKind, out _)
+                && LowerIdentityMember(obj, identityRecv, identityKind) is JsonObject identityMember)
+            {
+                Replace(obj, identityMember);
+                foreach (var child in obj.Select(kv => kv.Value).Where(v => v != null).ToList()) Apply(child);
+                return;
+            }
             // Smart-cast member access: `callInstance` on a star-collection alias whose receiver is a `cast` to that
             // same star-collection -> a non-generic BCL member. Rewrite in place so the cast recv is lowered too.
             if (Str(obj["k"]) == "callInstance"
@@ -137,10 +175,114 @@ static class StarProjectionLowering
             // implement covariantly, and a `<*>` value can only be used non-generically anyway. Mirrors the isInst branch.
             if (Str(obj["k"]) == "cast" && IsStarCollection(obj["type"], out var castNg))
                 obj["type"] = TypeJson.Fqn(castNg);
+            var kind = Str(obj["k"]);
+            if (kind is "isInst" or "isInstRef" or "cast"
+                && obj["e"] is JsonNode operand
+                && IsIdentityCollection(obj["type"], out var classifierKind, out var nullable))
+            {
+                Replace(obj, LowerIdentityClassifier(kind, operand, classifierKind,
+                    nullable || Flag(obj["nullMatches"])));
+            }
             foreach (var kv in obj) if (kv.Value != null) Apply(kv.Value);
         }
         else if (node is JsonArray arr)
             foreach (var it in arr) if (it != null) Apply(it);
+    }
+
+    static JsonObject LowerIdentityClassifier(string nodeKind, JsonNode operand, int classifierKind, bool nullable)
+    {
+        var method = nodeKind switch
+        {
+            "isInst" when nullable => "starProjectionKotlinNullableCollectionIsInstance",
+            "isInst" => "starProjectionKotlinCollectionIsInstance",
+            "isInstRef" => "starProjectionKotlinCollectionSafeCast",
+            "cast" when nullable => "starProjectionKotlinNullableCollectionCast",
+            _ => "starProjectionKotlinCollectionCast",
+        };
+        var result = nodeKind == "isInst" ? Bool
+            : nodeKind == "cast" && !nullable ? Any
+            : AnyN;
+        var first = classifierKind == 0
+            ? "System.Collections.Generic.IReadOnlyCollection`1"
+            : classifierKind == 1
+                ? "System.Collections.Generic.IReadOnlySet`1"
+                : "System.Collections.Generic.ISet`1";
+        var second = classifierKind == 0
+            ? "System.Collections.Generic.ICollection`1"
+            : "System.Collections.Generic.ISet`1";
+        return Call(method,
+            new TypeNode[] { AnyN, Int, Type, Type, Type, Type }, result,
+            operand.DeepClone(), ConstInt(classifierKind), ClassRef(first), ClassRef(second),
+            ClassRef("System.Collections.Generic.IDictionary`2"),
+            ClassRef("System.Collections.Generic.IReadOnlyDictionary`2"));
+    }
+
+    static JsonObject LowerIdentityMember(JsonObject call, JsonObject cast, int classifierKind)
+    {
+        var checkedReceiver = LowerIdentityClassifier("cast", cast["e"], classifierKind, nullable: false);
+        var member = Str(call["method"]);
+        var propertyAccess = Str(call["prop"]);
+        JsonObject Count() => Call("starProjectionKotlinCollectionCount",
+            new TypeNode[] { Any, Type, Type }, Int,
+            checkedReceiver.DeepClone(), ClassRef("System.Collections.Generic.IReadOnlyCollection`1"),
+            ClassRef("System.Collections.Generic.ICollection`1"));
+        switch (member)
+        {
+            case "size" when propertyAccess == "get":
+                return Count();
+            case "isEmpty":
+                return new JsonObject
+                {
+                    ["k"] = "binOp", ["op"] = "==", ["type"] = TypeJson.Write(Bool), ["lhs"] = Count(),
+                    ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = 0 },
+                };
+            case "iterator":
+                return new JsonObject
+                {
+                    ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrIteratorBridgeKt"),
+                    ["method"] = "iteratorOverRawEnumerable",
+                    ["args"] = new JsonArray(new JsonObject
+                    {
+                        ["k"] = "cast", ["type"] = TypeJson.Fqn("System.Collections.IEnumerable"),
+                        ["e"] = checkedReceiver,
+                    }),
+                    ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.Iterator",
+                        new TypeNode[] { AnyN })),
+                };
+            default:
+                return null;
+        }
+    }
+
+    static JsonObject Call(string method, IReadOnlyList<TypeNode> signature, TypeNode result,
+        params JsonNode[] args) => new()
+    {
+        ["k"] = "callStatic", ["owner"] = TypeJson.Write(new TypeNode.Fqn(RuntimeOwner)), ["method"] = method,
+        ["sig"] = new JsonArray(signature.Select(TypeJson.Write).ToArray()), ["ret"] = TypeJson.Write(result),
+        ["args"] = new JsonArray(args),
+    };
+
+    static JsonObject ClassRef(string openType) => new()
+    {
+        ["k"] = "classRef", ["type"] = TypeJson.Write(new TypeNode.Fqn(openType)),
+    };
+
+    static JsonObject ConstInt(int value) => new()
+    {
+        ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = value,
+    };
+
+    static bool Flag(JsonNode node) =>
+        node is JsonValue value && value.TryGetValue<bool>(out var flag) && flag;
+
+    static void Replace(JsonObject target, JsonObject replacement)
+    {
+        foreach (var key in target.Select(kv => kv.Key).ToList()) target.Remove(key);
+        foreach (var pair in replacement.ToList())
+        {
+            replacement.Remove(pair.Key);
+            target[pair.Key] = pair.Value;
+        }
     }
 
     // Build the non-generic replacement for a star-cast member call. `iface` is the non-generic interface the receiver

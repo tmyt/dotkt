@@ -817,6 +817,14 @@ sealed class Pipeline
         if (!_options.RefBuild)
             KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
 
+        // NOMINAL COLLECTION CLASSIFIER IDENTITIES: the operational aliases intentionally share BCL faces
+        // (Collection/Set -> IReadOnlyCollection, MutableCollection/MutableSet -> ICollection), which otherwise makes
+        // the Kotlin classifiers indistinguishable for emitted user implementations. Add the compiler-owned identity
+        // edge while the Kotlin supertype graph is still present. BCL-backed values are handled by their real generic
+        // collection faces in StarProjectionLowering's runtime classifier.
+        if (!_options.RefBuild)
+            KotlinCollectionIdentitySynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
+
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
         // happens (`Deferred<Int>.await(): type-TV0` -> `Int`), otherwise a non-generic SM permanently captures an

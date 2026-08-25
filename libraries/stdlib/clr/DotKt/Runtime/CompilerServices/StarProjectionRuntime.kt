@@ -149,6 +149,94 @@ internal fun starProjectionCast(value: Any?, openGenericType: StarProjectionType
 internal fun starProjectionSafeCast(value: Any?, openGenericType: StarProjectionType): Any? =
     if (value != null && starProjectionClosedView(value.starProjectionRuntimeType(), openGenericType) != null) value else null
 
+// Collection/Set use overlapping BCL faces for member dispatch, so their Kotlin classifier is a composite physical
+// fact. Emitted Kotlin implementations carry the nominal identities above; unmodifiable BCL-backed implementations
+// are recognized by the generic faces they actually implement. Dictionary and array shapes are deliberately excluded
+// from Collection: both implement collection-shaped CLR interfaces but neither is a Kotlin Collection.
+@PublishedApi
+internal fun starProjectionKotlinCollectionIsInstance(
+    value: Any?,
+    kind: Int,
+    firstOpenType: StarProjectionType,
+    secondOpenType: StarProjectionType,
+    dictionaryOpenType: StarProjectionType,
+    readOnlyDictionaryOpenType: StarProjectionType,
+): Boolean {
+    if (value == null) return false
+    if (kind == 2 && value is KotlinMutableSetIdentity) return true
+    if (kind == 1 && value is KotlinSetIdentity) return true
+    if (kind == 0 && value is KotlinCollectionIdentity) return true
+    val runtimeType = value.starProjectionRuntimeType()
+    if (kind == 0 && (runtimeType.isArray
+            || starProjectionHasView(runtimeType, dictionaryOpenType)
+            || starProjectionHasView(runtimeType, readOnlyDictionaryOpenType))) return false
+    return starProjectionHasView(runtimeType, firstOpenType) || starProjectionHasView(runtimeType, secondOpenType)
+}
+
+@PublishedApi
+internal fun starProjectionKotlinNullableCollectionIsInstance(
+    value: Any?,
+    kind: Int,
+    firstOpenType: StarProjectionType,
+    secondOpenType: StarProjectionType,
+    dictionaryOpenType: StarProjectionType,
+    readOnlyDictionaryOpenType: StarProjectionType,
+): Boolean = value == null || starProjectionKotlinCollectionIsInstance(value, kind, firstOpenType, secondOpenType,
+    dictionaryOpenType, readOnlyDictionaryOpenType)
+
+@PublishedApi
+internal fun starProjectionKotlinCollectionCast(
+    value: Any?,
+    kind: Int,
+    firstOpenType: StarProjectionType,
+    secondOpenType: StarProjectionType,
+    dictionaryOpenType: StarProjectionType,
+    readOnlyDictionaryOpenType: StarProjectionType,
+): Any {
+    if (starProjectionKotlinCollectionIsInstance(value, kind, firstOpenType, secondOpenType,
+            dictionaryOpenType, readOnlyDictionaryOpenType)) return value!!
+    throw ClassCastException("Value is not an instance of the requested Kotlin collection classifier")
+}
+
+@PublishedApi
+internal fun starProjectionKotlinNullableCollectionCast(
+    value: Any?,
+    kind: Int,
+    firstOpenType: StarProjectionType,
+    secondOpenType: StarProjectionType,
+    dictionaryOpenType: StarProjectionType,
+    readOnlyDictionaryOpenType: StarProjectionType,
+): Any? = if (value == null) null else starProjectionKotlinCollectionCast(value, kind, firstOpenType, secondOpenType,
+    dictionaryOpenType, readOnlyDictionaryOpenType)
+
+@PublishedApi
+internal fun starProjectionKotlinCollectionSafeCast(
+    value: Any?,
+    kind: Int,
+    firstOpenType: StarProjectionType,
+    secondOpenType: StarProjectionType,
+    dictionaryOpenType: StarProjectionType,
+    readOnlyDictionaryOpenType: StarProjectionType,
+): Any? = if (starProjectionKotlinCollectionIsInstance(value, kind, firstOpenType, secondOpenType,
+    dictionaryOpenType, readOnlyDictionaryOpenType)) value else null
+
+@PublishedApi
+internal fun starProjectionKotlinCollectionCount(
+    value: Any,
+    readOnlyCollectionOpenType: StarProjectionType,
+    mutableCollectionOpenType: StarProjectionType,
+): Int {
+    val runtimeType = value.starProjectionRuntimeType()
+    val closed = starProjectionFirstView(runtimeType, readOnlyCollectionOpenType)
+        ?: starProjectionFirstView(runtimeType, mutableCollectionOpenType)
+        ?: throw ClassCastException("Value has no CLR collection count face")
+    for (candidate in closed.getMethods()) {
+        if (candidate.name == "get_Count" && candidate.getParameters().size == 0)
+            return candidate.invoke(value, arrayOf()) as Int
+    }
+    throw IllegalStateException("Missing CLR collection Count slot")
+}
+
 @PublishedApi
 internal fun starProjectionCloneValue(value: Any): Any = starProjectionCloneValueIntrinsic(value)
 
@@ -409,4 +497,24 @@ private fun starProjectionClosedView(
         match = candidate
     }
     return match
+}
+
+private fun starProjectionHasView(runtimeType: StarProjectionType, openGenericType: StarProjectionType): Boolean =
+    starProjectionFirstView(runtimeType, openGenericType) != null
+
+// Classifier checks need existence, not ForeignStarProjectionBinding's unique constructed witness. A CLR type may
+// legally implement the same open interface more than once; either closure proves the erased Kotlin classifier.
+private fun starProjectionFirstView(
+    runtimeType: StarProjectionType,
+    openGenericType: StarProjectionType,
+): StarProjectionType? {
+    var current: StarProjectionType? = runtimeType
+    while (current != null) {
+        if (current == openGenericType) return current
+        if (current.isGenericType && current.getGenericTypeDefinition() == openGenericType) return current
+        current = current.baseType
+    }
+    for (candidate in runtimeType.getInterfaces())
+        if (candidate.isGenericType && candidate.getGenericTypeDefinition() == openGenericType) return candidate
+    return null
 }
