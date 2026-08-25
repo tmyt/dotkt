@@ -1595,6 +1595,13 @@ resolves. (Previously such a delegate collapsed to a bare `Any?`, and the overri
 
 ## 8e-bis. A function type is a delegate: `System.Func`/`Action` to arity 16, the stdlib canonical `KFunc`/`KAction` for 17..22 (#220); above that there is none
 
+A recursive CLR delegate graph has no finite Kotlin function-type spelling.
+`dll2klib` rejects self-recursive and mutually recursive delegate `Invoke`
+signatures with a bounded cycle diagnostic rather than overflowing its worker
+or publishing a traversal-order-dependent truncation. This includes generic
+and cross-assembly cycles; ordinary acyclic CLR delegates retain the structural
+function-type projection described above.
+
 Every non-suspend Kotlin function type is one CLR delegate type, chosen by ARITY. An extension or context receiver
 occupies a delegate slot, so it counts toward that arity; a `suspend` function type is not a delegate at all (§4).
 

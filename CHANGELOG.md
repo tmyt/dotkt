@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Recursive CLR delegate graphs now fail with a bounded diagnostic (#584).** dll2klib tracks the exact active
+  TypeDef path while expanding delegate `Invoke` signatures and rejects local, generic, and cross-assembly cycles
+  that Kotlin metadata cannot represent as finite function types. Valid recursive CLR metadata therefore no longer
+  terminates a worker with a stack overflow, while acyclic delegates retain their ordinary Kotlin function shape.
+
 - **External delegate decoding now indexes each referenced assembly once per projection (#582).** dll2klib keeps
   referenced PE metadata and its arity, attribute, delegate, and value-type seeds at assembly-scanner scope while
   retaining decoded `KType` shapes in each package's own name table. Multi-namespace consumers therefore avoid
