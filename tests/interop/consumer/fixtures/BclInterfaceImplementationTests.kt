@@ -9,7 +9,7 @@
 //   il-clrifaceimplvt -> clrifaceimplvt_valueTypeIfaceSlotBridge    #128 the VALUE-TYPE sibling — IComparer<Int>/IEquatable<Int>.
 //                                                                   The projected `T?` override lowers to Nullable<int32> params but
 //                                                                   the constructed slot wants BARE int32; bir2cir's
-//                                                                   ValueTypeIfaceSlotBridge synthesizes a bare-signature bridge
+//                                                                   KotlinOverrideSlotBridge synthesizes a bare-signature bridge
 //                                                                   forwarding to the Nullable method (else TypeLoadException).
 //   il-icmparity      -> icmparity_arityClashInterfaceFamily        #129 an arity-clash .NET interface FAMILY
 //                                                                   (System.IComparable + System.IComparable`1). Kotlin cannot
@@ -27,6 +27,7 @@ import System.IEquatable
 import System.IComparable1
 import System.Collections.Generic.IComparer
 import System.Collections.Generic.List
+import SlotTableInterop.IOverloaded
 
 // il-clrifaceimpl: implement System.Collections.Generic.IComparer<T> (a reference-KLIB-projected .NET generic interface). The
 // projected Compare surfaces its unconstrained T params as nullable (`String?`), so the override matches that signature.
@@ -35,7 +36,7 @@ class BclInterfaceImplementationLenCmp : IComparer<String> {
 }
 
 // il-clrifaceimplvt: the value-type variant — IComparer<Int> (Compare on a Nullable<int32>-lowered override) and
-// IEquatable<Int> (Equals). Both need the ValueTypeIfaceSlotBridge to bind the bare-int32 constructed slot.
+// IEquatable<Int> (Equals). Both need the unified override slot table to bind the bare-int32 constructed slot.
 class BclInterfaceImplementationIntCmp : IComparer<Int> {
     override fun Compare(x: Int?, y: Int?): Int = (x ?: 0) - (y ?: 0)
 }
@@ -48,6 +49,11 @@ class BclInterfaceImplementationBox(val v: Int) : IEquatable<Int> {
 // `IComparable1`; the override uses the verbatim .NET member `CompareTo(other: Ver?)`.
 class BclInterfaceImplementationVer(val n: Int) : IComparable1<BclInterfaceImplementationVer> {
     override fun CompareTo(other: BclInterfaceImplementationVer?): Int = n - (other?.n ?: 0)
+}
+
+class BclInterfaceImplementationOverloaded : IOverloaded<Int> {
+    override fun Measure(value: String?): Int = value?.length ?: -1
+    override fun Measure(value: Int?): Int = value ?: -2
 }
 
 class BclInterfaceImplementationTests {
@@ -95,5 +101,14 @@ class BclInterfaceImplementationTests {
         assertEquals(-2, BclInterfaceImplementationVer(3).CompareTo(BclInterfaceImplementationVer(5)))   // -2
         val c: IComparable1<BclInterfaceImplementationVer> = BclInterfaceImplementationVer(10)
         assertEquals(6, c.CompareTo(BclInterfaceImplementationVer(4)))                // 6
+    }
+
+    // #355: the CLR slot is selected by its complete constructed signature, never the first same-name/same-count
+    // reflection result. The String overload is deliberately declared before T in the C# producer.
+    @TestAttribute
+    fun overloadedValueTypeInterfaceSlots() {
+        val slot: IOverloaded<Int> = BclInterfaceImplementationOverloaded()
+        assertEquals(3, slot.Measure("abc"))
+        assertEquals(7, slot.Measure(7))
     }
 }

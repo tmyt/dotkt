@@ -226,13 +226,12 @@ sealed partial class Emitter
     }
 
     /// <summary>
-    /// The slots of one external interface as the implementing type named them. An empty array is the producer's
-    /// explicit answer that this owner declares no slots; absence is malformed CIR at every external call site.
+    /// The exact external declarations named by this implementing type's MethodImpl descriptors for one interface.
+    /// Absence is malformed CIR whenever such a descriptor owner reaches emission.
     /// </summary>
     /// <remarks>
-    /// `owner` is whichever face the caller will anchor against: the constructed interface when it can be
-    /// reflected on, its open definition when it cannot. Substituting only the member SET leaves that decision
-    /// where it was — it is made by trying the reflection and catching, and no predicate reproduces that.
+    /// `owner` is the open anchoring face; each scalar reference is resolved by identity and re-anchored onto the
+    /// constructed interface by the caller when its arguments include a local TypeBuilder.
     /// </remarks>
     MethodInfo[] NamedInterfaceSlots(TypeInfo ti, TypeNode.Fqn ownerSpec, Type owner)
     {

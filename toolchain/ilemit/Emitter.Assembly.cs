@@ -418,44 +418,22 @@ sealed partial class Emitter
             }
         }
 
-        // Link interface implementations: every class method that satisfies an interface method. For a constructed
-        // generic interface `Container[int]`, the override target is the method on the instantiation (static helper).
-        // Iterate with the registry KEY (the BIR/full name, e.g. `p.Impl` for a packaged type, `Box` for a generic):
-        // FindMethod looks the type up in `_types` by that key, NOT by `ti.TB.Name` (the *simple* name, which only
-        // coincides with the key for a non-generic root-package type — so namespaced/generic types broke with KeyNotFound).
+        // Emit only the explicit interface MethodImpl rows bir2cir resolved. Exact public name/signature members bind
+        // implicitly under CLR rules; every mismatch, rename, selected DIM, event/accessor, suspend, or erasure seam
+        // arrives as one descriptor on its exact MethodDef body.
         foreach (var (typeKey, ti) in _types)
-            if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("interfaces", out var ifs))
+            if (!ti.IsFileClass && !ti.IsInterface && ti.Def.TryGetProperty("methods", out var directiveMethods))
             {
                 _curTypeParams = EffectiveTps(ti);
-                // Worklist over the class's interfaces INCLUDING transitively-inherited ones (a Kotlin interface method
-                // can be inherited through a chain, e.g. MonotonicTimeSource : WithComparableMarks : TimeSource — the
-                // covariant markNow over TimeSource.markNow must be bridged too, or the slot stays unimplemented).
-                // The interface entries are STRUCTURED Fqn nodes (birType-emitted). ilemit DERIVES the "referenced-vs-
-                // emitted" decision from the name (`_types` membership), not a clr:/clrg: marker.
-                // Include interfaces inherited through an emitted base class as well: a grandchild's own override may
-                // carry a resolved MethodImpl for such a slot. Any synthesis decision is already a CIR fact; this
-                // worklist only visits possible descriptor owners and ordinary implicit CLR bindings.
                 var ifWork = new Queue<DotKt.Bir.TypeNode.Fqn>();
                 var ifSeen = new HashSet<string>();
-                foreach (var i in ifs.EnumerateArray())
-                    if (ReadFqn(i) is DotKt.Bir.TypeNode.Fqn iff) ifWork.Enqueue(iff);
-                // A resolved MethodImpl descriptor is an independent CIR obligation. Its declaring interface may no
-                // longer be present as a direct edge after an earlier representation pass has introduced an
-                // existential carrier, so seed that exact owner into the mechanical wiring worklist as well. This is
-                // not a hierarchy reconstruction: bir2cir already stated owner/member/signature and ilemit merely
-                // visits the named metadata declaration. The descriptor-first lookup below still selects the body.
-                if (ti.Def.TryGetProperty("methods", out var directiveMethods))
-                    foreach (var method in directiveMethods.EnumerateArray())
-                        if (method.TryGetProperty("clrInterfaceImpls", out var directives)
-                            && directives.ValueKind == JsonValueKind.Array)
-                            foreach (var directive in directives.EnumerateArray())
-                                if (directive.TryGetProperty("owner", out var ownerNode)
-                                    && ReadFqn(ownerNode) is DotKt.Bir.TypeNode.Fqn owner)
-                                    ifWork.Enqueue(owner);
-                // A base class already owns the CLR interface mapping it inherited or authored. Walking its interface
-                // list here would make a derived class acquire a fresh MethodImpl merely because it has a same-named
-                // member, which is not CLR reimplementation semantics. Only this class's declared interface edges and
-                // bir2cir-authored exact descriptors enter the worklist; a legitimate re-list is present in `ifs`.
+                foreach (var method in directiveMethods.EnumerateArray())
+                    if (method.TryGetProperty("clrInterfaceImpls", out var directives)
+                        && directives.ValueKind == JsonValueKind.Array)
+                        foreach (var directive in directives.EnumerateArray())
+                            if (directive.TryGetProperty("owner", out var ownerNode)
+                                && ReadFqn(ownerNode) is DotKt.Bir.TypeNode.Fqn owner)
+                                ifWork.Enqueue(owner);
                 while (ifWork.Count > 0)
                 {
                     var specFqn = ifWork.Dequeue();
@@ -476,48 +454,15 @@ sealed partial class Emitter
                     if (!_types.ContainsKey(specName) || externalSynthIface)
                     {
                         var itype = externalSynthIface ? ResolveType(specName) : MapType(specFqn);
-                        // A SELF-REFERENTIAL constructed generic interface (e.g. `V : IComparable<V>`, V the emitted
-                        // type) is a TypeBuilderInstantiation whose .GetMethods() throws. Enumerate the OPEN
-                        // definition's methods and re-anchor each to the instantiation via TypeBuilder.GetMethod
-                        // (same pattern as the self-ref base-ctor below).
-                        // A constructed generic interface whose OPEN def is a TypeBuilder (a self-ref `V : IComparable<V>`,
-                        // OR a generic STDLIB interface instantiated even with a concrete arg) is a TypeBuilderInstantiation
-                        // whose .GetMethods() throws. Try GetMethods; on failure, enumerate the OPEN definition's methods
-                        // and re-anchor each to the instantiation via TypeBuilder.GetMethod.
-                        // member-lookup-residual: enumerate only to choose the TypeBuilder anchoring face; NamedInterfaceSlots
-                        // replaces the external set with bir2cir's resolved references before any operand is emitted.
-                        MethodInfo[] ifaceMs; bool reanchor; Type slotOwner; // member-lookup-residual: anchoring-face probe
-                        try { ifaceMs = itype.GetMethods(); reanchor = false; slotOwner = itype; }
-                        catch (NotSupportedException)
-                        {
-                            slotOwner = itype.GetGenericTypeDefinition();
-                            // member-lookup-residual: anchoring-face probe; carried slots replace this external set.
-                            ifaceMs = slotOwner.GetMethods(); reanchor = true;
-                        }
-                        // The slots are named on the type that implements them. Only the member SET is replaced:
-                        // which face to anchor against was decided just above, by the reflection that either
-                        // worked or did not, and that is not a decision a reference can make.
-                        if (NamedInterfaceSlots(ti, specFqn, slotOwner) is { } named) ifaceMs = named;
-                        // Reflection's GetMethods() omits a referenced interface's inherited slots. bir2cir's resolved
-                        // MethodImpl descriptors name each exact DECLARING interface, and those owners were seeded into
-                        // this worklist above. Consume the descriptor when that owner is dequeued; probing base interfaces
-                        // here as well would wire the same MethodImpl twice when the declaring owner is later visited.
+                        var reanchor = ContainsTypeBuilder(itype);
+                        var slotOwner = reanchor ? itype.GetGenericTypeDefinition() : itype;
+                        var ifaceMs = NamedInterfaceSlots(ti, specFqn, slotOwner);
                         foreach (var im in ifaceMs)
                         {
-                            // member-lookup-residual: the local axis: wiring a MethodImpl on a type being built (#395)
-                            // OVERLOADED body methods (e.g. the generic CompareTo(V) + the non-generic IComparable bridge
-                            // CompareTo(object)) collide in the name-keyed ti.Methods — wiring the wrong one to the slot
-                            // is a TypeLoad "signature ... do not match". Disambiguate by the interface method's
-                            // (instantiation-substituted) parameter types against each overload's recorded params.
-                            // The interface method's (instantiation-substituted) param + return types — used both to
-                            // disambiguate an overloaded body AND to decide whether the body needs a return-adapting bridge.
                             var ips = ParametersOf(im).Select(p => reanchor
                                 ? SubstituteIfaceArgs(p.ParameterType, itype.GetGenericArguments())
                                 : p.ParameterType).ToArray();
                             var methodArity = im.GetGenericArguments().Length;
-                            // A bir2cir-resolved MethodImpl comes first: it names the slot and the member that fills
-                            // it, so there is nothing to disambiguate. The name-based search below cannot find such a
-                            // bridge — it is deliberately not named after the slot.
                             var interfaceRet = reanchor
                                 ? SubstituteIfaceArgs(ReturnTypeOf(im), itype.GetGenericArguments())
                                 : ReturnTypeOf(im);
@@ -527,34 +472,6 @@ sealed partial class Emitter
                                 WireMethodOverride(ti.TB, directiveBridge, reanchor ? AnchorOn(itype, im) : im);
                                 continue;
                             }
-                            // member-lookup-residual: local axis — match MethodBuilders emitted in this assembly to a named slot.
-                            var cands = ti.MethodsBySig
-                                .Where(kv => kv.Key.Name == im.Name && kv.Key.GenericArity == methodArity)
-                                .Select(kv => kv.Value)
-                                .Where(b => _mparams.TryGetValue(b, out var bps)
-                                    && bps.Length == ips.Length
-                                    && bps.Zip(ips, SlotParamMatches).All(x => x))
-                                .Distinct()
-                                .ToList();
-                            if (cands.Count != 1) continue;   // no unique exact CLR identity -> skip, never mis-wire
-                            var body = cands[0];
-                            var ifaceM = reanchor ? AnchorOn(itype, im) : im;
-                            // A @ClrTypeAlias'd (referenced) interface slot whose return type the Kotlin body DROPS: the
-                            // Kotlin member returns a value but the BCL slot is void (MutableCollection.add():Boolean ->
-                            // ICollection.Add():void; MutableList.set/removeAt:E -> IList.set_Item/RemoveAt():void). A DIRECT
-                            // methodimpl then fails the CLR's exact-signature rule ("Signature of the body and declaration in a
-                            // method implementation do not match" -> the whole type, and every subclass like ArrayDeque, is
-                            // UNLOADABLE, surfacing at the referencing app as "cannot resolve .NET type"). Emit a void bridge
-                            // that calls the body and pops the dropped return, and carry the methodimpl on it — the referenced-
-                            // interface twin of EmitCovariantBridge (which already handles this in the emitted-interface path).
-                            // Guarded to the void-DROP case only (the confirmed family); a generic body directly overrides its
-                            // generic slot (never a bridge), and same-return slots keep the direct, byte-identical override.
-                            // `void` is substitution-invariant, so the slot's return needs no SubstituteIfaceArgs re-anchor.
-                            bool bodyIsGeneric = body is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
-                            if (!bodyIsGeneric && ReturnTypeOf(im) == Bcl("System.Void") && body.ReturnType != Bcl("System.Void"))
-                                EmitVoidDropBridge(ti, im.Name, ips, body, ifaceM);
-                            else
-                                WireMethodOverride(ti.TB, body, ifaceM);
                         }
                         continue;
                     }
@@ -564,11 +481,6 @@ sealed partial class Emitter
                     // [Self]. An interface method's declared type names the INTERFACE's OWN params as `Tv{type,i}`;
                     // SubstTv re-anchors each to specArgs[i] so it matches the class's own (concrete) member signature.
                     var specArgs = specFqn.Args;
-                    // Transitively process this interface's base interfaces too, substituting the type args through the
-                    // chain (e.g. WithComparableMarks : TimeSource, or List<object> : Collection<object>).
-                    if (iface.Def.ValueKind == JsonValueKind.Object && iface.Def.TryGetProperty("interfaces", out var baseIfs))
-                        foreach (var bi in baseIfs.EnumerateArray())
-                            if (ReadFqn(bi) is DotKt.Bir.TypeNode.Fqn bi0 && SubstTv(bi0, specArgs) is DotKt.Bir.TypeNode.Fqn biF) ifWork.Enqueue(biF);
                     // Iterate the interface's method DEFS (not the name-keyed iface.Methods) so OVERLOADED interface
                     // methods (e.g. MutableMap.remove(K):V vs the JVM remove(K,V):Boolean) each resolve to their own
                     // builder by signature, and to the matching body overload by TYPE-ARG-SUBSTITUTED signature. A miss
@@ -610,40 +522,9 @@ sealed partial class Emitter
                                 WireMethodOverride(ti.TB, explicitBridge, ifaceMethod);
                                 continue;
                             }
-                            // Only wire an EXACT signature match. A miss means the class doesn't override this exact
-                            // overload (e.g. it lacks the JVM remove(K,V):Boolean default) -> SKIP rather than mis-wire a
-                            // different overload; for a Kotlin interface the same-name+sig method resolves implicitly anyway.
-                            if (!ti.MethodsBySig.TryGetValue(subSig, out var bodyMethod))
-                            {
-                                // No CIR declaration or exact MethodImpl descriptor answers this slot. Inherited Kotlin
-                                // default selection is a frontend fact and must not be reconstructed here by walking
-                                // interface bodies/names. The CLR's ordinary DIM rules remain in force; a distinct
-                                // redeclared slot that needs a bridge must be materialized by bir2cir from explicit BIR.
-                                continue;
-                            }
-                            // Covariant return: a NARROWED override return type (markNow():ValueTimeMark over the iface's
-                            // :ComparableTimeMark) makes a direct MethodImpl fail the CLR's exact-return rule. Emit a bridge
-                            // with the iface's (base) return type that calls the narrow body method and upcasts; put the
-                            // MethodImpl on the bridge. The iface ret comes from imDef (BIR), Tv re-anchored to specArgs.
-                            Type ifaceRet = null;
-                            try { if (imDef.TryGetProperty("ret", out var rt)) ifaceRet = MapType(SubstTv(DotKt.Bir.TypeNode.Read(rt), specArgs)); } catch { }
-                            // Bridge only on a genuine type NARROWING (different type name) — not two reference-different
-                            // instantiations of the SAME generic (Iterator<Object> vs Iterator<Object>), which match fine.
-                            // A GENERIC body method (`fold<R>`) directly overrides the generic interface method (same
-                            // arity+signature) — never a covariant bridge: the bridge is NON-generic, so a non-generic
-                            // methodimpl body for a generic declaration fails the CLR's signature-match ("Signature of the
-                            // body and declaration in a method implementation do not match" -> TypeLoadException). The
-                            // A generic body has its own return frame and can never use this non-generic bridge shape.
-                            // Detect it from _methodTypeParams (IsGenericMethodDefinition is unreliable on an un-baked
-                            // builder) before interpreting the non-generic return comparison.
-                            var bodyIsGeneric = bodyMethod is MethodBuilder gmb && _methodTypeParams.ContainsKey(gmb);
-                            // member-lookup-residual: TYPE-shape comparison deciding whether a local adapter is required.
-                            if (!bodyIsGeneric && ifaceRet != null && bodyMethod.ReturnType != ifaceRet &&
-                                ((bodyMethod.ReturnType.Name != ifaceRet.Name && !IsValueType(bodyMethod.ReturnType) && !IsValueType(ifaceRet))   // covariant reference narrowing
-                                 || (ifaceRet == Bcl("System.Void") && bodyMethod.ReturnType != Bcl("System.Void"))))   // a BCL slot that DROPS the Kotlin return (MutableCollection.add():Boolean -> ICollection.Add():void, set/removeAt:E -> void)
-                                EmitCovariantBridge(ti, physicalInterfaceName, imDef, specArgs, bodyMethod, ifaceMethod, ifaceRet);
-                            else
-                                WireMethodOverride(ti.TB, bodyMethod, ifaceMethod);
+                            // As on the referenced axis, an exact declaration binds implicitly. A covariant, renamed,
+                            // erased, default, event, suspend, or return-dropping obligation must arrive as a resolved
+                            // descriptor and is consumed by the branch above.
                         }
                     }
                 }
@@ -655,16 +536,16 @@ sealed partial class Emitter
         // before CIR reaches ilemit.
         foreach (var (_, ti) in _types)
         {
-            if (!ti.IsInterface || ti.Def.ValueKind != JsonValueKind.Object || !ti.Def.TryGetProperty("interfaces", out var extIbs)) continue;
+            if (!ti.IsInterface || ti.Def.ValueKind != JsonValueKind.Object
+                || !ti.Def.TryGetProperty("methods", out var interfaceMethods)) continue;
             _curTypeParams = EffectiveTps(ti);
             // De-dup across a diamond (`I : A, B` with `A, B : C`): one methodimpl per (baseOwner :: subSig).
             var dimImplSeen = new HashSet<string>();
-            var externalBaseSpecs = extIbs.EnumerateArray().Select(ReadFqn)
-                .OfType<DotKt.Bir.TypeNode.Fqn>().ToList();
+            var externalBaseSpecs = new List<DotKt.Bir.TypeNode.Fqn>();
             // As with class implementations above, an explicit interface MethodImpl is driven by its resolved CIR
             // owner even when a representation carrier replaced the source-level direct edge. The existing exact
             // descriptor lookup remains the only operation that can select its body.
-            foreach (var method in ti.Def.GetProperty("methods").EnumerateArray())
+            foreach (var method in interfaceMethods.EnumerateArray())
                 if (method.TryGetProperty("clrInterfaceImpls", out var directives)
                     && directives.ValueKind == JsonValueKind.Array)
                     foreach (var directive in directives.EnumerateArray())
@@ -684,22 +565,9 @@ sealed partial class Emitter
                     continue;
                 }
                 var itype = MapType(ibF);
-                // A generic instantiation over an EMITTED TypeBuilder arg can't GetMethods() — enumerate the OPEN
-                // definition and re-anchor each slot onto the instantiation (same pattern as the class wiring).
-                // member-lookup-residual: enumerate only to choose the TypeBuilder anchoring face; NamedInterfaceSlots
-                // replaces the external set with bir2cir's resolved references before any operand is emitted.
-                MethodInfo[] ifaceMs; bool reanchor; // member-lookup-residual: anchoring-face probe
-                try { ifaceMs = itype.GetMethods(); reanchor = false; }
-                catch (NotSupportedException)
-                {
-                    // member-lookup-residual: anchoring-face probe; carried slots replace this external set.
-                    ifaceMs = itype.GetGenericTypeDefinition().GetMethods(); reanchor = true;
-                }
-                // The same resolved slot set drives MethodImpls authored ON an emitted interface as drives class
-                // implementations above. Omitting it here left this second wiring loop selecting declarations by
-                // reflection even though the producer had already named every one (notably star-projection carriers).
+                var reanchor = ContainsTypeBuilder(itype);
                 var slotOwner = reanchor ? itype.GetGenericTypeDefinition() : itype;
-                if (NamedInterfaceSlots(ti, ibF, slotOwner) is { } named) ifaceMs = named;
+                var ifaceMs = NamedInterfaceSlots(ti, ibF, slotOwner);
                 foreach (var im in ifaceMs)
                 {
                     var ips = ParametersOf(im).Select(p => reanchor
@@ -722,6 +590,11 @@ sealed partial class Emitter
                 }
             }
         }
+
+        // Every bir2cir-authored interface MethodImpl is an obligation, not a hint. A descriptor that no exact
+        // declaration loop consumed is malformed CIR/reference state; never fall back to implicit name binding or
+        // silently leave the slot for a later type-load failure.
+        ValidateInterfaceImplsConsumed();
 
         // A bir2cir-resolved MethodImpl against a BASE-CLASS slot (`clrBaseImpls`, #86 D3). The interface twin of this
         // instruction (`clrInterfaceImpls`) is consumed in the interface wiring above; a base-CLASS slot has no such
@@ -1393,51 +1266,6 @@ sealed partial class Emitter
                 if (ifaces.Length > 0) gp.SetInterfaceConstraints(ifaces);
             }
         }
-    }
-
-    int _covarBridge = 0;
-
-    // The referenced-interface (@ClrTypeAlias'd / clr:) twin of EmitCovariantBridge, working from a REFLECTED interface
-    // method rather than a BIR imDef: the BCL slot is VOID but the Kotlin body returns a value it drops (add():Boolean ->
-    // ICollection.Add():void, set/removeAt:E -> IList.set_Item/RemoveAt():void). Emit a private/final void bridge with the
-    // slot's signature that callvirts the body, pops the dropped return, and carry the MethodImpl on the bridge. (Same IL
-    // shape as the dimimpl bridge; `paramTypes` are the slot's substituted params, which the body's own params match.)
-    void EmitVoidDropBridge(TypeInfo ti, string name, Type[] paramTypes, MethodBuilder body, MethodInfo ifaceMethod)
-    {
-        var bridge = ti.TB.DefineMethod("dotkt$covar$" + name + "$" + (_covarBridge++),
-            MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
-            Bcl("System.Void"), paramTypes);
-        StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
-        var il = bridge.GetILGenerator();
-        il.Emit(OpCodes.Ldarg_0);
-        for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
-        var bodyCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
-        EmitMethod(il, OpCodes.Callvirt, bodyCall);
-        il.Emit(OpCodes.Pop);   // the BCL slot drops the Kotlin return
-        il.Emit(OpCodes.Ret);
-        WireMethodOverride(ti.TB, bridge, ifaceMethod);
-    }
-
-    // Emit a covariant-return bridge: a private explicit-interface-impl method with the iface's (base) return type +
-    // params, calling the narrow body method on `this` and returning it (a ref upcast); the MethodImpl goes on the bridge.
-    void EmitCovariantBridge(TypeInfo ti, string name, JsonElement imDef, DotKt.Bir.TypeNode[] specArgs, MethodBuilder body, MethodInfo ifaceMethod, Type ifaceRet)
-    {
-        var paramTypes = imDef.GetProperty("params").EnumerateArray()
-            .Select(p => MapType(SubstTv(DotKt.Bir.TypeNode.Read(p.GetProperty("type")), specArgs))).ToArray();
-        var bridge = ti.TB.DefineMethod("dotkt$covar$" + name + "$" + (_covarBridge++),
-            MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.NewSlot | MethodAttributes.HideBySig,
-            ifaceRet, paramTypes);
-        StampCompilerGenerated(bridge);   // #68: ilemit-authored generated member
-        var il = bridge.GetILGenerator();
-        il.Emit(OpCodes.Ldarg_0);
-        for (int i = 0; i < paramTypes.Length; i++) il.Emit(OpCodes.Ldarg, i + 1);
-        var bodyCall = ti.IsGeneric ? AnchorMethod(ConstructedType(ti.TB, ti.TB.GetGenericArguments()), body) : (MethodInfo)body;
-        EmitMethod(il, OpCodes.Callvirt, bodyCall);
-        // ifaceRet==void but the body returns a value (add():Boolean -> ICollection.Add():void): the BCL slot drops the
-        // Kotlin return -> pop it so the void bridge leaves an empty stack. Else the (reference) narrow return upcasts.
-        if (ifaceRet == Bcl("System.Void") && body.ReturnType != Bcl("System.Void")) il.Emit(OpCodes.Pop);
-        il.Emit(OpCodes.Ret);
-        WireMethodOverride(ti.TB, bridge, ifaceMethod);
     }
 
     // A structured owner Fqn -> (open name, constructed .NET type or null for a non-generic). An emitted open type

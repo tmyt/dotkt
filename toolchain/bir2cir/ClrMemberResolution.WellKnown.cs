@@ -12,6 +12,7 @@
 // land without waiting on the intrinsic-binding programme.
 
 using System.Reflection;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 using DotKt.Toolchain;
@@ -116,17 +117,73 @@ static partial class ClrMemberResolution
 
 static partial class ClrMemberResolution
 {
+    internal static bool TryResolveAliasedInterfaceSlot(ReferenceMetadataIndex refs,
+        TypeNode.Fqn physicalOwner, string member, int methodArity, TypeNode[] wantedParams,
+        JsonArray wantedTypeParams, out TypeNode.Fqn declarationOwner, out string declarationMember,
+        out TypeNode[] declarationParams, out TypeNode declarationReturn)
+    {
+        declarationOwner = null;
+        declarationMember = null;
+        declarationParams = null;
+        declarationReturn = null;
+        _refs = refs ?? throw new ArgumentNullException(nameof(refs));
+        var open = ResolveOwnerType(physicalOwner) ?? refs.PhysicalTypeNamed(physicalOwner.Name);
+        if (open == null || !open.IsInterface) return false;
+        var ownerArgs = physicalOwner.Args ?? Array.Empty<TypeNode>();
+        var declarationOwners = new[] { open }.Concat(open.GetInterfaces())
+            .Select(owner => owner.IsGenericType && !owner.IsGenericTypeDefinition
+                ? owner.GetGenericTypeDefinition() : owner)
+            .GroupBy(owner => (owner.Module, owner.MetadataToken)).Select(group => group.First());
+        var candidates = new List<(MethodInfo Method, MemberRefNode Reference,
+            TypeNode[] Parameters, TypeNode Return, TypeNode[] DeclaringArgs)>();
+        foreach (var method in declarationOwners.SelectMany(owner => owner.GetMethods(
+                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)))
+        {
+            if (!IsPublicOrProtected(method) || method.Name != member
+                || method.GetGenericArguments().Length != methodArity
+                || method.GetParameters().Length != wantedParams.Length) continue;
+            var referenceJson = MemberRefJson(method, MemberRefNode.Kinds.Method, open, ownerArgs);
+            using var referenceDocument = JsonDocument.Parse(referenceJson.ToJsonString());
+            var reference = MemberRefNode.Read(referenceDocument.RootElement);
+            var declaringArgs = (reference.DeclaringType as TypeNode.Fqn)?.Args ?? Array.Empty<TypeNode>();
+            var parameters = reference.ParameterTypes
+                .Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, declaringArgs)).ToArray();
+            if (!parameters.SequenceEqual(wantedParams, InterfaceSlotTypeComparer.Instance)) continue;
+            if (wantedTypeParams != null)
+            {
+                var declaredTypeParams = new JsonArray(method.GetGenericArguments()
+                    .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+                if (!KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
+                        declaredTypeParams, wantedTypeParams, declaringArgs, Array.Empty<TypeNode>()))
+                    continue;
+            }
+            candidates.Add((method, reference, parameters,
+                SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArgs), declaringArgs));
+        }
+        var distinct = candidates.GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
+            .Select(group => group.First()).ToList();
+        if (distinct.Count > 1)
+            throw new InvalidOperationException(
+                $"bir2cir: aliased interface slot '{physicalOwner.Name}.{member}`{methodArity}' resolves to "
+                + $"{distinct.Count} declarations with the requested parameter vector");
+        if (distinct.Count == 0) return false;
+        var selected = distinct[0];
+        declarationOwner = selected.Reference.DeclaringType as TypeNode.Fqn;
+        if (declarationOwner == null) return false;
+        declarationMember = selected.Reference.Name;
+        declarationParams = selected.Parameters;
+        declarationReturn = selected.Return;
+        return true;
+    }
+
     /// <summary>
-    /// Every slot of every EXTERNAL interface a type declares, named on the type that implements them.
+    /// The exact external declaration operands of this type's resolved interface MethodImpl table.
     /// </summary>
     /// <remarks>
-    /// The emitter wires a MethodImpl for each slot of each interface it does not itself emit, and it enumerates
-    /// those slots off the interface by reflection — the last external member reaching an operand unnamed. The
-    /// existing `clrInterfaceImpls` descriptors do not cover this: individual bridge passes author them for the
-    /// slots THOSE passes create, while an implicitly implemented slot has no descriptor at all.
-    ///
-    /// Which BODY fills each slot stays the emitter's question — that member belongs to the assembly being
-    /// built, which is the local axis. What arrives named is the slot the MethodImpl points AT.
+    /// Exact name/signature implementations need no MethodImpl and bind under ordinary CLR rules. Every non-implicit
+    /// obligation already names its body and declaration shape in `clrInterfaceImpls`; resolve precisely those rows
+    /// to scalar member references here. ilemit consumes the resulting owner-scoped table and never enumerates an
+    /// interface or searches the implementing type's overload set.
     /// </remarks>
     public static void ResolveInterfaceSlots(JsonNode root, IEnumerable<JsonNode> moduleRoots,
         ReferenceMetadataIndex refs)
@@ -291,8 +348,8 @@ static partial class ClrMemberResolution
         switch (node)
         {
             case JsonObject obj:
-                if (obj["interfaces"] is JsonArray ifaces && obj["name"] is JsonValue)
-                    StampInterfaceSlots(obj, ifaces, defs);
+                if (obj["name"] is JsonValue)
+                    StampInterfaceSlots(obj, defs);
                 foreach (var kv in obj) if (kv.Value != null) WalkTypesForSlots(kv.Value, defs);
                 break;
             case JsonArray arr:
@@ -301,111 +358,282 @@ static partial class ClrMemberResolution
         }
     }
 
-    static void StampInterfaceSlots(JsonObject type, JsonArray ifaces,
+    static void StampInterfaceSlots(JsonObject type,
         IReadOnlyDictionary<string, SupertypeGraph.Def> defs)
     {
         if (type.ContainsKey("interfaceSlotRefs")) return;
-        var slotSets = new JsonArray();
-        var owners = new List<TypeNode.Fqn>();
-        // Late synthetic types are not necessarily present in the module definition index. Their direct physical
-        // interface edges are nevertheless authoritative CIR facts and must always seed the carrier walk.
-        owners.AddRange(ifaces.Select(TypeJson.Read).OfType<TypeNode.Fqn>());
-        if ((type["name"] as JsonValue)?.GetValue<string>() is { } typeName
-            && defs.TryGetValue(typeName, out var def))
-        {
-            // ilemit also visits interfaces inherited through the emitted base-class chain. Mirror that finite local
-            // walk here, keeping every type argument in THIS type's frame. Do not traverse arbitrary referenced
-            // supertypes: the emitter never reconstructs that graph, and self-referential metadata can otherwise grow
-            // constructed specs without bound.
-            var baseSpec = def.Base;
-            var baseSeen = new HashSet<string>(StringComparer.Ordinal);
-            while (baseSpec != null && baseSeen.Add(SupertypeGraph.TypeKey(baseSpec))
-                && defs.TryGetValue(baseSpec.Name, out var baseDef) && baseDef.Kind != "interface")
-            {
-                var args = SupertypeGraph.EffectiveArgs(baseSpec, baseDef.Arity);
-                if (args == null) break;
-                owners.AddRange(baseDef.Interfaces.Select(parent =>
-                    (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(parent, args)));
-                baseSpec = baseDef.Base == null ? null
-                    : (TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(baseDef.Base, args);
-            }
-        }
-        // A bridge descriptor can name a slot declared by a BASE interface which is not one of this type's direct
-        // interface edges. Reflection's Interface.GetMethods() does not include inherited slots, while ilemit seeds
-        // each descriptor owner into its worklist. Carry those exact external owners too; otherwise the direct
-        // interface's own slots are named but the inherited MethodImpl silently falls back to reflection.
-        if (type["methods"] is JsonArray methods)
-            foreach (var method in methods.OfType<JsonObject>())
-                if (method["clrInterfaceImpls"] is JsonArray implementations)
-                    foreach (var implementation in implementations.OfType<JsonObject>())
-                        if (TypeJson.Read(implementation["owner"]) is TypeNode.Fqn owner)
-                            owners.Add(owner);
+        if (type["methods"] is not JsonArray methods) return;
 
-        // The shared module-wide supertype walk above covers direct interfaces, local interface chains, interfaces
-        // inherited through local base classes, and referenced base-interface chains in the implementing type's
-        // parameter frame. Descriptor-only owners are appended separately because a representation carrier may have
-        // replaced their source-level edge.
-        var externalOwners = new List<TypeNode.Fqn>();
-        var pending = new Queue<TypeNode.Fqn>(owners);
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        while (pending.Count > 0)
+        var descriptors = new List<(TypeNode.Fqn Owner, JsonObject Descriptor)>();
+        foreach (var method in methods.OfType<JsonObject>())
+            if (method["clrInterfaceImpls"] is JsonArray implementations)
+                foreach (var implementation in implementations.OfType<JsonObject>())
+                    if (TypeJson.Read(implementation["owner"]) is TypeNode.Fqn owner)
+                        descriptors.Add((owner, implementation));
+        if (descriptors.Count == 0) return;
+
+        var slotSets = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var ownerGroup in descriptors.GroupBy(entry => SupertypeGraph.TypeKey(entry.Owner),
+                     StringComparer.Ordinal))
         {
-            var iface = pending.Dequeue();
-            if (!seen.Add(SupertypeGraph.TypeKey(iface))) continue;
-            if (defs.TryGetValue(iface.Name, out var localIface) && localIface.Kind == "interface")
+            var iface = ownerGroup.First().Owner;
+            if (defs.TryGetValue(iface.Name, out var localIface))
             {
-                // A generated interface can be present as an identical local template while the runtime universe
-                // already owns its canonical CLR identity. ilemit consequently links that identity externally. Do
-                // not let the template's presence in the module graph misclassify the operand as local: the shipped
-                // declaration is the authority for its slot tokens. This is structural (generated interface + exact
-                // physical type), not a synthetic-name allowlist.
-                if ((localIface.Node?["generated"] as JsonValue)?.TryGetValue<bool>(out var generated) == true
-                    && generated
-                    && ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(iface.Name)
-                    && _refs.PhysicalTypeNamed(iface.Name, localIface.Arity) != null)
+                // A generated canonical interface template can be local while its physical identity is supplied by
+                // the runtime assembly. Every other local owner is linked directly from the emitted MethodDef table.
+                var generated = (localIface.Node?["generated"] as JsonValue)?.TryGetValue<bool>(out var value) == true
+                    && value;
+                if (!generated || !ManagedReferenceCatalog.IsCanonicalRuntimeSyntheticType(iface.Name)
+                    || _refs.PhysicalTypeNamed(iface.Name, localIface.Arity) == null)
                 {
-                    externalOwners.Add(iface);
+                    ResolveLocalInterfaceDescriptors(iface, localIface, ownerGroup);
                     continue;
                 }
-                var args = SupertypeGraph.EffectiveArgs(iface, localIface.Arity);
-                if (args == null) continue;
-                foreach (var parent in localIface.Interfaces)
-                    pending.Enqueue((TypeNode.Fqn)SupertypeGraph.SubstOwnerTvs(parent, args));
-                continue;
             }
-            externalOwners.Add(iface);
-        }
-
-        foreach (var iface in externalOwners)
-        {
-            // A canonical synthetic interface is spelled as a bare name and lives ONLY in the assembly that
-            // ships it: the reference twin describes the Kotlin surface and has no name for it, so no amount
-            // of reference resolution will ever find one. Read it from the shipped twin, as the emitter does.
             var open = ResolveOwnerType(iface) ?? _refs.PhysicalTypeNamed(iface.Name);
-            // A late synthetic interface can be emitted by this compilation without appearing in the source-level
-            // module index. It has no external declaration to name. A genuinely external unresolved owner cannot be
-            // consumed silently: ilemit requires this carrier at the external wiring site and fails closed there.
-            if (open == null) continue;
-            var args = iface.Args ?? Array.Empty<TypeNode>();
-            var slots = new JsonArray();
-            foreach (var m in open.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-            {
-                slots.Add(MemberRefJson(m, MemberRefNode.Kinds.Method, open, args));
-            }
-            var assembly = open.Assembly.GetName().Name;
-            if (string.IsNullOrEmpty(assembly))
+            if (open == null)
                 throw new InvalidOperationException(
-                    $"bir2cir: external interface '{iface.Name}' has no assembly identity");
-            slotSets.Add(new JsonObject
+                    $"bir2cir: interface MethodImpl owner '{iface.Name}' does not resolve in the reference set");
+            var args = iface.Args ?? Array.Empty<TypeNode>();
+            foreach (var (_, descriptor) in ownerGroup)
             {
-                ["owner"] = TypeJson.Write(iface),
-                ["assembly"] = ManagedReferenceCatalog.PhysicalAssemblyName(assembly),
-                ["slots"] = slots,
-            });
+                if ((descriptor["member"] as JsonValue)?.GetValue<string>() is not { } member
+                    || (descriptor["arity"] as JsonValue)?.TryGetValue<int>(out var arity) != true
+                    || descriptor["params"] is not JsonArray parameters
+                    || TypeJson.Read(descriptor["ret"]) is not TypeNode wantedRet)
+                    throw new InvalidOperationException(
+                        $"bir2cir: malformed interface MethodImpl descriptor on '{iface.Name}'");
+                var wantedParams = parameters.Select(TypeJson.Read).ToArray();
+                if (wantedParams.Any(parameter => parameter == null))
+                    throw new InvalidOperationException(
+                        $"bir2cir: interface MethodImpl '{iface.Name}.{member}' has an unreadable parameter type");
+                var declarationOwners = new[] { open }.Concat(open.GetInterfaces())
+                    .Select(owner => owner.IsGenericType && !owner.IsGenericTypeDefinition
+                        ? owner.GetGenericTypeDefinition() : owner)
+                    .GroupBy(owner => (owner.Module, owner.MetadataToken)).Select(group => group.First());
+                var allCandidates = declarationOwners.SelectMany(owner => owner.GetMethods(
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                    .Where(method => IsPublicOrProtected(method)
+                        && method.GetGenericArguments().Length == arity
+                        && method.GetParameters().Length == wantedParams.Length)
+                    .Select(method =>
+                    {
+                        var referenceJson = MemberRefJson(method, MemberRefNode.Kinds.Method, open, args);
+                        using var referenceDocument = JsonDocument.Parse(referenceJson.ToJsonString());
+                        var reference = MemberRefNode.Read(referenceDocument.RootElement);
+                        var declaringArgs = (reference.DeclaringType as TypeNode.Fqn)?.Args
+                            ?? Array.Empty<TypeNode>();
+                        var parameters = reference.ParameterTypes
+                            .Select(typeNode => SupertypeGraph.SubstOwnerTvs(typeNode, declaringArgs)).ToArray();
+                        var ret = SupertypeGraph.SubstOwnerTvs(reference.ReturnType, declaringArgs);
+                        return (Method: method, ReferenceJson: referenceJson, Reference: reference,
+                            DeclaringArgs: declaringArgs, Parameters: parameters, Return: ret);
+                    }).ToList();
+                var namedCandidates = allCandidates.Where(candidate => candidate.Method.Name == member).ToList();
+                bool SignatureMatches((MethodInfo Method, JsonNode ReferenceJson, MemberRefNode Reference,
+                    TypeNode[] DeclaringArgs, TypeNode[] Parameters, TypeNode Return) candidate) =>
+                    candidate.Parameters.SequenceEqual(wantedParams, InterfaceSlotTypeComparer.Instance)
+                    && SameInterfaceSlotType(candidate.Return, wantedRet);
+                var candidates = namedCandidates.Where(SignatureMatches).ToList();
+                if (descriptor["typeParams"] is JsonArray wantedTypeParams)
+                    candidates = candidates.Where(candidate =>
+                    {
+                        var declaredTypeParams = new JsonArray(candidate.Method.GetGenericArguments()
+                            .Select(ReferenceMetadataIndex.GenericParamDeclaration).ToArray());
+                        return KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
+                            declaredTypeParams, wantedTypeParams,
+                            candidate.DeclaringArgs, Array.Empty<TypeNode>());
+                    }).ToList();
+                var declarations = candidates
+                    .GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
+                    .Select(group => group.First()).ToList();
+                if (declarations.Count != 1)
+                {
+                    var implementingType = (type["name"] as JsonValue)?.GetValue<string>() ?? "?";
+                    var implementingMethod = methods.OfType<JsonObject>().FirstOrDefault(method =>
+                        method["clrInterfaceImpls"] is JsonArray impls
+                        && impls.OfType<JsonObject>().Any(impl => ReferenceEquals(impl, descriptor)));
+                    var implementingMember = (implementingMethod?["name"] as JsonValue)?.GetValue<string>() ?? "?";
+                    var wantedSignature = $"({string.Join(", ", wantedParams.Select(parameter =>
+                            TypeJson.Write(parameter).ToJsonString()))}) -> "
+                        + TypeJson.Write(wantedRet).ToJsonString();
+                    var candidateSignatures = namedCandidates.Count == 0 ? "<none>" : string.Join("; ",
+                        namedCandidates.Select(candidate =>
+                            $"{candidate.Reference.DeclaringType}.({string.Join(", ", candidate.Parameters.Select(
+                                typeNode => TypeJson.Write(typeNode).ToJsonString()))}) -> "
+                            + TypeJson.Write(candidate.Return).ToJsonString()));
+                    throw new InvalidOperationException(
+                        $"bir2cir: interface MethodImpl '{iface.Name}.{member}`{arity}' resolves to "
+                        + $"{declarations.Count} external declaration(s), expected exactly one; wanted "
+                        + $"{wantedSignature}; named candidates: {candidateSignatures}; descriptor: "
+                        + descriptor.ToJsonString() + $"; body: {implementingType}.{implementingMember}");
+                }
+                var selected = declarations[0];
+                var reference = selected.ReferenceJson;
+                if (selected.Reference.DeclaringType is not TypeNode.Fqn declarationOwner)
+                    throw new InvalidOperationException(
+                        $"bir2cir: interface MethodImpl '{iface.Name}.{member}`{arity}' resolved without a declaring type");
+                descriptor["owner"] = TypeJson.Write(declarationOwner);
+                descriptor["member"] = selected.Reference.Name;
+                descriptor["params"] = new JsonArray(selected.Parameters
+                    .Select(TypeJson.Write).ToArray());
+                descriptor["ret"] = TypeJson.Write(selected.Return);
+                var assembly = selected.Reference.Assembly;
+                if (string.IsNullOrEmpty(assembly))
+                    throw new InvalidOperationException(
+                        $"bir2cir: external interface '{declarationOwner.Name}' has no assembly identity");
+                var setKey = assembly + "::" + SupertypeGraph.TypeKey(declarationOwner);
+                if (!slotSets.TryGetValue(setKey, out var slotSet))
+                {
+                    slotSet = new JsonObject
+                    {
+                        ["owner"] = TypeJson.Write(declarationOwner),
+                        ["assembly"] = assembly,
+                        ["slots"] = new JsonArray(),
+                    };
+                    slotSets.Add(setKey, slotSet);
+                }
+                var slots = (JsonArray)slotSet["slots"];
+                if (!slots.Any(slot => slot?.ToJsonString() == reference.ToJsonString()))
+                    slots.Add(reference);
+            }
         }
-        // Presence is the contract, including the exact answer "this external interface declares no slots" (for
-        // example a marker interface or an interface whose slots are all inherited). Without the empty marker,
-        // ilemit cannot distinguish that answer from a producer omission without reconstructing the hierarchy.
-        if (slotSets.Count > 0) type["interfaceSlotRefs"] = slotSets;
+        DeduplicateResolvedInterfaceDescriptors(methods);
+        if (slotSets.Count > 0) type["interfaceSlotRefs"] = new JsonArray(slotSets.Values.ToArray());
+    }
+
+    // Several semantic edges can collapse onto one physical declaration (for example Collection.size and its
+    // inherited alias both name IReadOnlyCollection<T>.get_Count). Once every row has been normalized to the exact
+    // declaration signature above, retain one instruction on that body. Deduplicating earlier would compare mixed
+    // Kotlin/CLR vocabularies (`int` versus `System.Int32`) and either miss the duplicate or guess equivalence.
+    static void DeduplicateResolvedInterfaceDescriptors(JsonArray methods)
+    {
+        foreach (var method in methods.OfType<JsonObject>())
+        {
+            if (method["clrInterfaceImpls"] is not JsonArray descriptors) continue;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            for (var i = 0; i < descriptors.Count;)
+            {
+                var key = descriptors[i]?.ToJsonString();
+                if (key == null || seen.Add(key))
+                {
+                    i++;
+                    continue;
+                }
+                descriptors.RemoveAt(i);
+            }
+        }
+    }
+
+    static void ResolveLocalInterfaceDescriptors(TypeNode.Fqn iface, SupertypeGraph.Def definition,
+        IEnumerable<(TypeNode.Fqn Owner, JsonObject Descriptor)> descriptors)
+    {
+        var args = SupertypeGraph.EffectiveArgs(iface, definition.Arity);
+        if (args == null)
+            throw new InvalidOperationException(
+                $"bir2cir: local interface MethodImpl owner '{SupertypeGraph.TypeKey(iface)}' has invalid arity");
+        foreach (var (_, descriptor) in descriptors)
+        {
+            if ((descriptor["member"] as JsonValue)?.GetValue<string>() is not { } member
+                || (descriptor["arity"] as JsonValue)?.TryGetValue<int>(out var arity) != true
+                || descriptor["params"] is not JsonArray parameters
+                || TypeJson.Read(descriptor["ret"]) is not TypeNode wantedRet)
+                throw new InvalidOperationException(
+                    $"bir2cir: malformed local interface MethodImpl descriptor on '{iface.Name}'");
+            var wantedParams = parameters.Select(TypeJson.Read).ToArray();
+            if (wantedParams.Any(parameter => parameter == null))
+                throw new InvalidOperationException(
+                    $"bir2cir: local interface MethodImpl '{iface.Name}.{member}' has an unreadable parameter type");
+            var candidates = definition.Methods.OfType<JsonObject>().Where(method =>
+            {
+                if ((method["static"] as JsonValue)?.TryGetValue<bool>(out var isStatic) == true && isStatic
+                    || KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
+                    || (method["name"] as JsonValue)?.GetValue<string>() is not { } physicalName
+                    || ((method["typeParams"] as JsonArray)?.Count ?? 0) != arity
+                    || method["params"] is not JsonArray declaredParameters
+                    || declaredParameters.Count != wantedParams.Length
+                    || TypeJson.Read(method["ret"]) is not TypeNode declaredRet)
+                    return false;
+                // All semantic property/explicit-name allocation is complete before this late table. Matching a
+                // source name here would reconstruct meaning from a physical declaration, so require the final name.
+                if (physicalName != member) return false;
+                var declaredParams = declaredParameters.OfType<JsonObject>()
+                    .Select(parameter => TypeJson.Read(parameter["type"]))
+                    .ToArray();
+                if (declaredParams.Length != wantedParams.Length || declaredParams.Any(parameter => parameter == null)
+                    || !declaredParams.Select(parameter => SupertypeGraph.SubstOwnerTvs(parameter, args))
+                        .SequenceEqual(wantedParams, InterfaceSlotTypeComparer.Instance)
+                    || !SameInterfaceSlotType(SupertypeGraph.SubstOwnerTvs(declaredRet, args), wantedRet))
+                    return false;
+                return descriptor["typeParams"] is not JsonArray wantedTypeParams
+                    || KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
+                        method["typeParams"] as JsonArray, wantedTypeParams, args, Array.Empty<TypeNode>());
+            }).ToList();
+            if (candidates.Count != 1)
+            {
+                var available = string.Join("; ", definition.Methods.OfType<JsonObject>().Select(method =>
+                {
+                    KotlinPropertyAccessors.TryIdentity(method, out var propertyName, out var accessorKind);
+                    var name = (method["name"] as JsonValue)?.GetValue<string>() ?? "?";
+                    var source = (method[DeclarationRename.SourceMemberKey] as JsonValue)?.GetValue<string>();
+                    var declaredParams = method["params"] is JsonArray ps
+                        ? string.Join(", ", ps.OfType<JsonObject>().Select(parameter =>
+                            TypeJson.Write(TypeJson.Read(parameter["type"])).ToJsonString()))
+                        : "?";
+                    var declaredRet = TypeJson.Read(method["ret"]);
+                    return $"{name} [source={source ?? "-"}, property={propertyName ?? "-"}:{accessorKind ?? "-"}]"
+                        + $" ({declaredParams}) -> {(declaredRet == null ? "?" : TypeJson.Write(declaredRet).ToJsonString())}";
+                }));
+                throw new InvalidOperationException(
+                    $"bir2cir: local interface MethodImpl '{iface.Name}.{member}`{arity}' resolves to "
+                    + $"{candidates.Count} declaration(s), expected exactly one; candidates: {available}");
+            }
+            var selected = candidates[0];
+            descriptor["member"] = selected["name"]?.DeepClone();
+            descriptor["params"] = new JsonArray(((JsonArray)selected["params"]).OfType<JsonObject>()
+                .Select(parameter => TypeJson.Read(parameter["type"]))
+                .Select(parameter => TypeJson.Write(SupertypeGraph.SubstOwnerTvs(parameter, args)))
+                .ToArray());
+            descriptor["ret"] = TypeJson.Write(SupertypeGraph.SubstOwnerTvs(
+                TypeJson.Read(selected["ret"]), args));
+        }
+    }
+
+    static bool SameInterfaceSlotType(TypeNode metadata, TypeNode descriptor) =>
+        CanonicalInterfaceSlotType(metadata).Equals(CanonicalInterfaceSlotType(descriptor));
+
+    static TypeNode CanonicalInterfaceSlotType(TypeNode type) =>
+        CanonicalInterfaceSlotTypeCore(BirTypeLowering.CanonicalPhysicalSlotType(type));
+
+    static TypeNode CanonicalInterfaceSlotTypeCore(TypeNode type) => type switch
+    {
+        // A constructed TypeNode already carries arity in Args. Reflection preserves the metadata backtick suffix;
+        // CIR-authored descriptors use the semantic bare owner. They are one CLI TypeSpec, not two identities.
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(
+            ReferenceMetadataIndex.BareOwnerFqn(f.Name),
+            args.Select(CanonicalInterfaceSlotTypeCore).ToArray()),
+        TypeNode.Array array => new TypeNode.Array(
+            CanonicalInterfaceSlotTypeCore(array.Elem), array.Rank, array.SzArray),
+        TypeNode.Nullable nullable => new TypeNode.Nullable(CanonicalInterfaceSlotTypeCore(nullable.Of)),
+        TypeNode.Oblivious oblivious => new TypeNode.Oblivious(CanonicalInterfaceSlotTypeCore(oblivious.Of)),
+        TypeNode.ByRef byRef => new TypeNode.ByRef(CanonicalInterfaceSlotTypeCore(byRef.Of)),
+        TypeNode.Ptr pointer => new TypeNode.Ptr(CanonicalInterfaceSlotTypeCore(pointer.Of)),
+        TypeNode.Mod modifier => new TypeNode.Mod(modifier.Req,
+            CanonicalInterfaceSlotTypeCore(modifier.M), CanonicalInterfaceSlotTypeCore(modifier.Of)),
+        TypeNode.Fn function => new TypeNode.Fn(function.Suspend,
+            CanonicalInterfaceSlotTypeCore(function.Ret),
+            function.Params.Select(CanonicalInterfaceSlotTypeCore).ToArray(),
+            function.Recv == null ? null : CanonicalInterfaceSlotTypeCore(function.Recv),
+            function.Clr, function.Ctx?.Select(CanonicalInterfaceSlotTypeCore).ToArray()),
+        _ => type,
+    };
+
+    sealed class InterfaceSlotTypeComparer : IEqualityComparer<TypeNode>
+    {
+        public static readonly InterfaceSlotTypeComparer Instance = new();
+        public bool Equals(TypeNode left, TypeNode right) =>
+            left != null && right != null && SameInterfaceSlotType(left, right);
+        public int GetHashCode(TypeNode type) =>
+            CanonicalInterfaceSlotType(type).GetHashCode();
     }
 }

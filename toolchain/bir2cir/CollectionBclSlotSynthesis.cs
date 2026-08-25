@@ -13,14 +13,13 @@ using DotKt.Bir;
 // type kotlin.collections.ArrayDeque`1". (Latent until ArrayDeque: every other runnable concrete collection is a BCL type
 // — mutableListOf → List<T>, mutableMapOf → Dictionary<K,V> — never the Kotlin class.)
 //
-// Fill each missing slot with an ordinary public forwarding member (wired by name by ilemit's normal interface loop),
-// keyed on the DIRECTLY-listed alias — matching ilemit's per-interface wiring (IList<T>.GetMethods() does NOT include the
-// inherited ICollection<T> members, so an IList face needs only IndexOf; the ICollection face comes from a base or the
-// direct ICollection listing). Contains→`contains` / IndexOf→`indexOf` self-forward (the alias mandates the class declare
+// Fill each missing slot with an ordinary public forwarding member, keyed on the DIRECTLY-listed alias. An IList face
+// needs only IndexOf here; the ICollection face comes from a base or the direct ICollection listing. Contains→`contains`
+// / IndexOf→`indexOf` self-forward (the alias mandates the class declare
 // them). CopyTo iterates via ClrIteratorBridgeKt.iteratorOverEnumerable(this) — a static resolvable regardless of whether
 // THIS class declares iterator() (AbstractMutableSet inherits it). IsReadOnly returns false. The return-DROPPING slots
-// (Add/set_Item/RemoveAt) are the SEPARATE family ilemit's void-drop methodimpl bridge handles. Non-ref builds only
-// (the ref surface stays pure Kotlin). Modeled on ComparableBridgeSynthesis.
+// (Add/set_Item/RemoveAt) join the common late KotlinOverrideSlotBridge allocation. Non-ref builds only (the ref surface
+// stays pure Kotlin). Modeled on ComparableBridgeSynthesis.
 static class CollectionBclSlotSynthesis
 {
     const string ICollection = "System.Collections.Generic.ICollection";
@@ -53,10 +52,9 @@ static class CollectionBclSlotSynthesis
 
             // The CLR stdlib's mutable-collection abstract classes are FLAT (`AbstractMutableList : MutableList`, base
             // Object — NOT `: AbstractMutableCollection`), so an IList<E> implementer does NOT inherit the ICollection<E>
-            // face from a base. `IList<T>.GetMethods()` returns only IList's OWN members, so ilemit's per-interface wiring
-            // never bridges `ICollection.Add` (Boolean→void) on it. List ICollection<E> EXPLICITLY so ilemit wires that
-            // face too — its `Add` void-drop bridge, `Remove`/`Clear`/`Count` (the class's own renamed members), and the
-            // synthesized `Contains`/`CopyTo`/`IsReadOnly`. (Redundant-but-legal: IList already implies ICollection.)
+            // face from a base. List ICollection<E> EXPLICITLY so the common slot pass sees that face too — its `Add`
+            // void-drop bridge, `Remove`/`Clear`/`Count` (the class's own renamed members), and the synthesized
+            // `Contains`/`CopyTo`/`IsReadOnly`. (Redundant-but-legal: IList already implies ICollection.)
             var elem = listElem ?? collElem;
             if (listElem != null && !ifaces.Any(i => TypeJson.Read(i) is TypeNode.Fqn { Name: ICollection }))
                 ifaces.Add(new JsonObject { ["t"] = "fqn", ["name"] = ICollection, ["args"] = new JsonArray(Clone(elem)) });

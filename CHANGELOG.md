@@ -15,6 +15,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Inherited CLR interface slots are resolved before emission (#355).** bir2cir now applies the same forwarding-
+  bridge rules to plain .NET generic interfaces as to Kotlin-projected declarations, including nullable value-type
+  seams and value-to-void returns, and carries only exact declaration operands for required MethodImpl rows. ilemit
+  no longer enumerates interface members, guesses an implementation from a same-name overload set, or synthesizes
+  semantic bridges; it consumes the resolved descriptors and rejects any descriptor left unmatched.
+
 - **Packaged Kotlin builds no longer exceed Windows' 8191-character batch-command limit (#592).** The MSBuild
   integration writes each generated `kotc`, `bir2cir`, and `ilemit` argument set to a configuration-local response
   file, leaving only a short tool-and-`@file` invocation (plus explicit raw `kotc` user options) on the command line.
