@@ -187,7 +187,9 @@ open class ReferencedCapturedNullableOuter<T, U : T?> {
 }
 
 interface ReferencedNullableMethodContract<T> {
-    fun <E : T?> inheritedNullableMethodBound(value: E): String
+    // The covariant implementation return requires a real CLR MethodImpl, keeping the dll2klib fake-override path
+    // under test even when an exact public implementation can satisfy an interface slot implicitly.
+    fun <E : T?> inheritedNullableMethodBound(value: E): Any
 }
 
 class ReferencedNullableMethodImplementation<T> : ReferencedNullableMethodContract<T> {
