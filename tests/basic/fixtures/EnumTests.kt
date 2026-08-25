@@ -30,8 +30,78 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import System.Enum as SystemEnum
+import System.Type
 import kotlin.clr.ClrEvent
+import kotlin.clr.ClrEnum
 import kotlin.clr.clrEvent
+
+private const val enumExplicitConst = 9
+
+@ClrEnum
+enum class EnumExplicitConstExpr(value: Int) {
+    SUM(1 + 2),
+    REFERENCED(enumExplicitConst),
+}
+
+@ClrEnum
+enum class EnumExplicitByte(value: Byte) {
+    MIN(Byte.MIN_VALUE),
+    POSITIVE(7),
+}
+
+@ClrEnum
+enum class EnumExplicitUByte(value: UByte) {
+    MAX(UByte.MAX_VALUE),
+    MIN(UByte.MIN_VALUE),
+}
+
+@ClrEnum
+enum class EnumExplicitShort(value: Short) {
+    MIN(Short.MIN_VALUE),
+    POSITIVE(300),
+}
+
+@ClrEnum
+enum class EnumExplicitUShort(value: UShort) {
+    MAX(UShort.MAX_VALUE),
+    MIN(UShort.MIN_VALUE),
+}
+
+@ClrEnum
+enum class EnumExplicitInt(value: Int) {
+    FOUR(4),
+    NEGATIVE(-2),
+    ZERO(0),
+}
+
+fun enumExplicitIntLabel(value: EnumExplicitInt): String = when (value) {
+    EnumExplicitInt.FOUR -> "four"
+    EnumExplicitInt.NEGATIVE -> "negative"
+    EnumExplicitInt.ZERO -> "zero"
+}
+
+fun <T : Enum<T>> enumGenericOrdinal(value: T): Int = value.ordinal
+inline fun <reified T : Enum<T>> enumReifiedOrdinal(value: T): Int = value.ordinal
+
+@ClrEnum
+enum class EnumExplicitUInt(value: UInt) {
+    HIGH(0x80000000u),
+    ONE(1u),
+    MAX(UInt.MAX_VALUE),
+}
+
+@ClrEnum
+enum class EnumExplicitLong(value: Long) {
+    MIN(Long.MIN_VALUE),
+    POSITIVE(9000000000L),
+}
+
+@ClrEnum
+enum class EnumExplicitULong(value: ULong) {
+    MAX(ULong.MAX_VALUE),
+    ZERO(0uL),
+}
 
 // ---- il-enum : basic enum + `when` over enum -----------------------------------------------------------------
 enum class EnumWhenColor { RED, GREEN, BLUE }
@@ -266,6 +336,68 @@ enum class EnumSecondaryState(val value: Int, val label: String = "number:$value
 }
 
 class EnumTests {
+    @TestAttribute
+    fun explicitClrValuesPreserveKotlinOrder() {
+        fun underlying(name: String): String = SystemEnum.GetUnderlyingType(Type.GetType(name)!!).Name
+        assertEquals("SByte", underlying("EnumExplicitByte"))
+        assertEquals("Byte", underlying("EnumExplicitUByte"))
+        assertEquals("Int16", underlying("EnumExplicitShort"))
+        assertEquals("UInt16", underlying("EnumExplicitUShort"))
+        assertEquals("Int32", underlying("EnumExplicitInt"))
+        assertEquals("UInt32", underlying("EnumExplicitUInt"))
+        assertEquals("Int64", underlying("EnumExplicitLong"))
+        assertEquals("UInt64", underlying("EnumExplicitULong"))
+        assertEquals("SUM|REFERENCED", EnumExplicitConstExpr.values().joinToString("|") { it.name })
+        assertEquals("MIN|POSITIVE", EnumExplicitByte.values().joinToString("|") { it.name })
+        assertEquals("MAX|MIN", EnumExplicitUByte.values().joinToString("|") { it.name })
+        assertEquals("MIN|POSITIVE", EnumExplicitShort.values().joinToString("|") { it.name })
+        assertEquals("MAX|MIN", EnumExplicitUShort.values().joinToString("|") { it.name })
+        assertEquals("MIN|POSITIVE", EnumExplicitLong.values().joinToString("|") { it.name })
+        assertEquals(0, EnumExplicitInt.FOUR.ordinal)
+        assertEquals(1, EnumExplicitInt.NEGATIVE.ordinal)
+        assertEquals(2, EnumExplicitInt.ZERO.ordinal)
+        assertEquals(0, enumGenericOrdinal(EnumExplicitInt.FOUR))
+        assertEquals(1, enumGenericOrdinal(EnumExplicitInt.NEGATIVE))
+        assertEquals(0, enumReifiedOrdinal(EnumExplicitInt.FOUR))
+        assertEquals(1, enumReifiedOrdinal(EnumExplicitInt.NEGATIVE))
+        assertEquals(4, EnumExplicitInt.FOUR.name.length)
+        assertEquals("FOUR", EnumExplicitInt.FOUR.toString())
+        assertEquals("NEGATIVE", EnumExplicitInt.valueOf("NEGATIVE").toString())
+        val numericName = try {
+            EnumExplicitInt.valueOf("4")
+            "accepted"
+        } catch (e: IllegalArgumentException) {
+            "rejected"
+        }
+        assertEquals("rejected", numericName)
+        val reifiedNumericName = try {
+            enumValueOf<EnumExplicitInt>("4")
+            "accepted"
+        } catch (e: IllegalArgumentException) {
+            "rejected"
+        }
+        assertEquals("rejected", reifiedNumericName)
+        var valueOfEvaluations = 0
+        fun declaredName(): String {
+            valueOfEvaluations += 1
+            return "FOUR"
+        }
+        assertEquals(EnumExplicitInt.FOUR, EnumExplicitInt.valueOf(declaredName()))
+        assertEquals(1, valueOfEvaluations)
+        assertEquals("FOUR|NEGATIVE|ZERO", EnumExplicitInt.values().joinToString("|") { it.name })
+        assertEquals("FOUR|NEGATIVE|ZERO", enumValues<EnumExplicitInt>().joinToString("|") { it.name })
+        assertEquals("FOUR|NEGATIVE|ZERO", EnumExplicitInt.entries.joinToString("|") { it.name })
+        assertEquals(-2, EnumExplicitInt.FOUR.compareTo(EnumExplicitInt.ZERO))
+        assertTrue(EnumExplicitInt.FOUR == EnumExplicitInt.FOUR)
+        assertFalse(EnumExplicitInt.FOUR == EnumExplicitInt.ZERO)
+        assertEquals("negative", enumExplicitIntLabel(EnumExplicitInt.NEGATIVE))
+        assertEquals("HIGH|ONE|MAX", EnumExplicitUInt.values().joinToString("|") { it.name })
+        assertEquals(0, EnumExplicitUInt.HIGH.ordinal)
+        assertEquals(2, EnumExplicitUInt.MAX.ordinal)
+        assertEquals("MAX|ZERO", EnumExplicitULong.values().joinToString("|") { it.name })
+        assertEquals(0, EnumExplicitULong.MAX.ordinal)
+    }
+
     @TestAttribute
     fun whenOverEnum() {
         assertEquals("red", enumColorName(EnumWhenColor.RED))     // red

@@ -1,0 +1,5 @@
+malformed @ClrEnum declaration
+additional interfaces are not allowed
+instance methods are not allowed
+init blocks are not allowed
+enum-entry bodies are not allowed

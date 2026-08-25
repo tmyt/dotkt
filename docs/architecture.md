@@ -59,7 +59,12 @@ The split prevents frontend declarations, binding metadata, and executable imple
    to repeat Kotlin overload resolution. Duplicate CIR method signatures are malformed input; `ilemit` refuses them
    instead of inventing an order-dependent name.
 
-10. Every external member `ilemit` encodes as an operand comes from the CIR node's resolved `memberRef`. It performs
+10. An explicit Kotlin `@ClrEnum` keeps its source declaration order as Kotlin meaning while using the selected
+    integral values as CLR representation. `bir2cir` authors the trusted type/field carriers that preserve that
+    order across generic runtime access and DLL round-trip; `ilemit` only stamps the supplied attributes and literal
+    constants. Neither consumer reconstructs ordinals from CLR numeric order or FieldDef order.
+
+11. Every external member `ilemit` encodes as an operand comes from the CIR node's resolved `memberRef`. It performs
     exact metadata lookup — declaring type in the named assembly, one member whose whole signature equals the one
     stated — and no selection: no name-and-arity candidate set, no most-derived rule, no assignability, no
     reflection-order first-wins. A node that names no member is an earlier-layer drop and fails loudly.

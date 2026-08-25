@@ -193,7 +193,7 @@ sealed partial class Emitter
     // fact without reflecting over the attribute property or inferring a Kotlin annotation shape.
     static void WriteFieldOrPropType(BinaryWriter writer, Type type)
     {
-        if (type.IsEnum)
+        if (IsAttributeEnumType(type))
         {
             writer.Write((byte)0x55);
             WriteSerString(writer, type.FullName);
@@ -229,10 +229,24 @@ sealed partial class Emitter
 
     static void WriteAttributeValue(BinaryWriter writer, Type type, object value)
     {
-        if (type.IsEnum)
+        if (IsAttributeEnumType(type))
         {
-            WriteAttributeValue(writer, type.GetEnumUnderlyingType(), value);
-            return;
+            // bir2cir has already resolved an enum constant to its exact physical primitive. In particular, a local
+            // enum can still be represented by Reflection.Emit as a TypeBuilder here, whose IsEnum/
+            // GetEnumUnderlyingType surface is unavailable before final assembly creation. Encode the stated primitive
+            // directly; ilemit neither recovers the declaration nor infers a value from an entry name or ordinal.
+            switch (value)
+            {
+                case sbyte v: writer.Write(v); return;
+                case byte v: writer.Write(v); return;
+                case short v: writer.Write(v); return;
+                case ushort v: writer.Write(v); return;
+                case int v: writer.Write(v); return;
+                case uint v: writer.Write(v); return;
+                case long v: writer.Write(v); return;
+                case ulong v: writer.Write(v); return;
+                default: throw new ArgumentException($"custom attribute enum value '{value}' has no integral physical representation");
+            }
         }
         if (type.IsArray)
         {
@@ -265,6 +279,9 @@ sealed partial class Emitter
                 throw new NotSupportedException($"custom attribute fixed argument type '{type}' is not supported");
         }
     }
+
+    static bool IsAttributeEnumType(Type type) =>
+        type.IsEnum || type is TypeBuilder && type.BaseType?.FullName == "System.Enum";
 
     static void WriteSerString(BinaryWriter writer, string value)
     {
@@ -299,6 +316,16 @@ sealed partial class Emitter
         // the nested NullableAttribute(byte[]) form through this. Mutually exclusive with `value`/`type`; its byte[]
         // runtime type drives BuildCab's exact-ctor pick above.
         if (e.TryGetProperty("bytes", out var bb)) return Convert.FromBase64String(bb.GetString());
+        // A CIR enum constant already carries the exact physical underlying type and value selected by bir2cir.
+        // Attribute blobs and Param constants encode that primitive value; ilemit does not recover it from an enum
+        // declaration, entry name, or field order.
+        if (e.TryGetProperty("k", out var kind) && kind.GetString() == "enumValue")
+        {
+            if (e.TryGetProperty("physicalValue", out var physical)
+                && e.TryGetProperty("underlying", out var underlying))
+                return EnumConstantValue(underlying.GetString(), physical.GetString());
+            return e.GetProperty("ordinal").GetInt32();
+        }
         // Annotation arguments are always compile-time constants (const nodes).
         if (!e.TryGetProperty("value", out var v)) return null;
         var ty = e.TryGetProperty("type", out var tEl) ? PrimShorthandName(SlotName(tEl)) : null;
@@ -355,7 +382,7 @@ sealed partial class Emitter
             if (vararg) SetAttribute(pb.SetCustomAttribute,
                 // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 Bcl("System.ParamArrayAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
-            if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
+            if (hasDefault) pb.SetConstant(ConstArgValue(dflt));
             // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an
             // `attrExternal`-flagged referenced type); an attr referencing a type not in `_types` is skipped (BuildAttribute
             // would KeyNotFound) — the same "the CLR layer decides what is encodable" policy the method-level path uses.

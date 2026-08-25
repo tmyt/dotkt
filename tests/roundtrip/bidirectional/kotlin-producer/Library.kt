@@ -3,6 +3,27 @@ import BidirectionalInterop.ReferenceConstrainedTarget
 import BidirectionalInterop.RefLikeConstrainedTarget
 import BidirectionalInterop.RepeatedGenericOuter.RepeatedGenericInner
 import BidirectionalInterop.StructConstrainedTarget
+import System.FlagsAttribute
+import kotlin.clr.ClrEnum
+
+@FlagsAttribute
+@ClrEnum
+enum class BidirectionalAccess(value: UInt) {
+    NONE(0u),
+    READ(1u),
+    WRITE(4u),
+    READ_WRITE(5u),
+    HIGH(0x80000000u),
+}
+
+@Retention(AnnotationRetention.RUNTIME)
+annotation class BidirectionalAccessMarker(val value: BidirectionalAccess)
+
+@BidirectionalAccessMarker(BidirectionalAccess.READ_WRITE)
+class BidirectionalAccessMarked
+
+fun bidirectionalEnumDefault(value: BidirectionalAccess = BidirectionalAccess.WRITE): BidirectionalAccess = value
+fun bidirectionalEnumOrdinal(value: BidirectionalAccess): Int = value.ordinal
 
 class BidirectionalGreeter(val name: String) {
     fun greet(): String = "Hi, $name (accent=${Palette().Accent})"

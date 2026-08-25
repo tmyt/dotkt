@@ -298,6 +298,46 @@
       "required": ["entries", "name", "ordinal", "values", "valueOf"],
       "additionalProperties": false
     },
+    "clrEnumFact": {
+      "type": "object",
+      "$comment": "BIR-only @ClrEnum source contract. kotc has validated the restricted declaration and carries its exact Kotlin integral parameter type here; bir2cir consumes it into an exact CLR underlying type and ordered basicEnum carrier.",
+      "properties": { "underlying": { "$ref": "#/$defs/type" } },
+      "required": ["underlying"],
+      "additionalProperties": false
+    },
+    "enumPhysicalValue": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "ordinal": { "type": "integer", "minimum": 0 },
+        "underlying": { "type": "string" },
+        "physicalValue": { "type": "string" }
+      },
+      "required": ["ordinal", "underlying", "physicalValue"],
+      "additionalProperties": false
+    },
+    "basicEnumCarrier": {
+      "type": "object",
+      "$comment": "bir2cir transient ordered map for a Kotlin-authored explicit basic enum. RoundtripMetadata consumes it into trusted [KotlinBasicEnum]; declaration entries retain their physical literal facts for ilemit.",
+      "properties": {
+        "underlying": { "type": "string" },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "ordinal": { "type": "integer", "minimum": 0 },
+              "physicalValue": { "type": "string" }
+            },
+            "required": ["name", "ordinal", "physicalValue"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["underlying", "entries"],
+      "additionalProperties": false
+    },
     "typeDecl": {
       "type": "object",
       "description": "A class/interface/object/enum/annotation. `mods` carries data/sealed/inner/enum/fun/annotation/value; `vis` is separate.",
@@ -309,6 +349,9 @@
         "beforeFieldInit": { "type": "boolean", "$comment": "CIR-only exact CLR TypeAttributes.BeforeFieldInit flag." },
         "enumRich": { "const": true, "$comment": "BIR-only faithful fact that this class originated as a Kotlin rich enum. It is present exactly when richEnum is present and bir2cir consumes both before CIR." },
         "richEnum": { "$ref": "#/$defs/richEnumCarrier" },
+        "clrEnum": { "$ref": "#/$defs/clrEnumFact" },
+        "basicEnum": { "$ref": "#/$defs/basicEnumCarrier" },
+        "underlying": { "$ref": "#/$defs/type", "$comment": "CIR-only exact CLR underlying type for an explicit native enum; absent on ordinary Int32 ordinal-valued basic enums." },
         "mods":       { "$ref": "#/$defs/mods" },
         "vis":        { "$ref": "#/$defs/vis" },
         "_syntheticTypeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" }, "$comment": "#68 BIR-ONLY transient correspondence between a synthetic declaration's dense typeParams and the lexical frame from which they were captured. kotc authors it on a lexical local `fun`; bir2cir's ClosureSynthesis derives it for a lifted closure class. Consumers use it for owner-slot partition and shared synthetic identity. Consumed and DROPPED before CIR." },
@@ -382,7 +425,7 @@
         "ctors":      { "type": "array", "items": { "$ref": "#/$defs/ctorDecl" } },
         "methods":    { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
         "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" } },
-        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries" },
+        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries; an explicit CIR enum entry carries name/ordinal/underlying/physicalValue and may carry attrs authored by bir2cir for mechanical field stamping" },
         "pos":        { "$ref": "#/$defs/pos" }
       },
       "allOf": [
@@ -563,7 +606,7 @@
         "new", "newArray", "newArraySized", "newArrayInit", "arrayGet", "arraySet", "arrayLen",
         "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
         "newClrStaticDelegate", "companionValue",
-        "enumValue", "enumName", "enumOrdinal", "default", "defaultArg", "callEval", "bindRef",
+        "enumValue", "enumName", "enumOrdinal", "enumValues", "enumParse", "default", "defaultArg", "callEval", "bindRef",
         "nullableWrap", "nullableValue", "nullableHasValue", "nullableNull",
         "localFun", "block", "valueBlock", "exprStmt", "return", "returnExpr", "throw", "throwExpr",
         "if", "cond2", "label", "goto", "brIf", "break", "continue",
@@ -606,7 +649,9 @@
         { "properties": { "k": { "const": "newClrStaticDelegate" }, "clrType": { "$ref": "#/$defs/type" }, "method": { "type": "string" }, "typeArgs": { "type": "array", "items": { "$ref": "#/$defs/type" } }, "funcType": { "$ref": "#/$defs/type" } }, "required": ["clrType", "method", "funcType"], "$comment": "CIR-only CLR-static callable-reference construction. Its external target is the complete scalar memberRef; ilemit performs no member selection." },
         { "properties": { "k": { "const": "enumValue" }, "type": { "$ref": "#/$defs/type" }, "entry": { "type": "string" }, "ordinal": { "type": "integer" }, "underlying": { "type": "string" }, "physicalValue": { "type": "string" } }, "required": ["type"], "anyOf": [ { "required": ["entry"] }, { "required": ["ordinal"] }, { "required": ["underlying", "physicalValue"] } ], "dependentRequired": { "underlying": ["physicalValue"], "physicalValue": ["underlying"] }, "$comment": "Enum value construction. BIR carries a frontend-resolved entry identity (and optionally the local ordinal); a local intrinsic may carry its proven ordinal directly; bir2cir authors the CIR physical form as the declared enum type plus exact underlying type/value. The physical form deliberately need not name an entry so flags combinations remain representable without name recovery." },
         { "properties": { "k": { "const": "enumName" }, "type": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/node" } }, "required": ["type", "e"], "$comment": "BIR-only Kotlin enum name operation. bir2cir resolves a trusted rich-enum metadata field or lowers a CLR enum to its virtual ToString slot." },
-        { "properties": { "k": { "const": "enumOrdinal" }, "type": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/node" } }, "required": ["e"], "$comment": "A type is present for referenced enums whose declaration index may differ from the underlying value; bir2cir removes it for local basic enums." },
+        { "properties": { "k": { "const": "enumOrdinal" }, "type": { "$ref": "#/$defs/type" }, "e": { "$ref": "#/$defs/node" }, "values": { "type": "array", "items": { "$ref": "#/$defs/enumPhysicalValue" } } }, "required": ["e"], "$comment": "A type is present for referenced enums whose declaration index may differ from the underlying value. Explicit Kotlin-authored enums carry their CIR-authored ordered physical map; ordinary local basic enums remove type because ordinal equals value." },
+        { "properties": { "k": { "const": "enumValues" }, "type": { "$ref": "#/$defs/type" }, "values": { "type": "array", "items": { "$ref": "#/$defs/enumPhysicalValue" } } }, "required": ["type"], "$comment": "CLR enum values. An explicit Kotlin-authored enum carries its source declaration order and physical constants; ordinary/external enums use the target runtime enum surface." },
+        { "properties": { "k": { "const": "enumParse" }, "type": { "$ref": "#/$defs/type" }, "arg": { "$ref": "#/$defs/node" } }, "required": ["type", "arg"] },
         { "properties": { "k": { "const": "default" }, "type": { "$ref": "#/$defs/type" } }, "required": ["type"] },
         { "properties": { "k": { "const": "nullableWrap" }, "e": { "$ref": "#/$defs/node" }, "elem": { "$ref": "#/$defs/type" } }, "required": ["e", "elem"], "$comment": "value-type nullable wrap; operand `e`, element type `elem` (shared with nullableValue/nullableHasValue/nullableNull)" },
         { "properties": { "k": { "const": "localFun" }, "id": { "type": "string" }, "decl": { "type": "object" } }, "required": ["id", "decl"], "$comment": "BIR-only lexical Kotlin local-function declaration. The nested declaration is the semantic ownership fact; bir2cir consumes it into a physical MethodDef." },

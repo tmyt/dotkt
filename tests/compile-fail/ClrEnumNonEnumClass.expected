@@ -1,0 +1,2 @@
+malformed @ClrEnum declaration
+@ClrEnum may be applied only to an enum class

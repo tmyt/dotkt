@@ -86,6 +86,10 @@ import org.jetbrains.kotlin.ir.util.defaultType
 import org.jetbrains.kotlin.ir.types.makeNotNull
 import org.jetbrains.kotlin.ir.util.fqNameWhenAvailable
 import org.jetbrains.kotlin.ir.IrFileEntry
+import org.jetbrains.kotlin.ir.interpreter.IrInterpreter
+import org.jetbrains.kotlin.ir.interpreter.checker.EvaluationMode
+import org.jetbrains.kotlin.ir.interpreter.checker.IrInterpreterCheckerData
+import org.jetbrains.kotlin.ir.interpreter.checker.IrInterpreterCommonChecker
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageSeverity
 import org.jetbrains.kotlin.cli.common.messages.CompilerMessageLocation
@@ -344,6 +348,7 @@ private fun BirEmitter.interfaceSuperTypes(klass: IrClass): String = klass.super
 	.joinToString(",")
 
 internal fun BirEmitter.interfaceDef(iface: IrClass): String {
+	rejectClrEnumOnNonEnum(iface)
 	fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 		val savedSemanticOwner = activeSemanticOwner
 		activeSemanticOwner = semanticOwnerName(fn)
@@ -460,19 +465,159 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	return """{"name":${str(typeName(iface))},"kind":"interface"$semanticOwner$funSealed${typeParamsJson(iface.typeParameters)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[$staticFields],"ctors":[],"methods":[$methods],"properties":[$allIfaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
 }
 
+private const val CLR_ENUM_ANNOTATION = "kotlin.clr.ClrEnum"
+
+internal fun IrClass.isExplicitClrEnum(): Boolean =
+	annotations.any { it.type.classFqName?.asString() == CLR_ENUM_ANNOTATION }
+
+private fun BirEmitter.reportClrEnumError(node: IrElement?, detail: String) {
+	hadError = true
+	messageCollector?.report(
+		CompilerMessageSeverity.ERROR,
+		"malformed @ClrEnum declaration: $detail",
+		locationOf(node),
+	)
+}
+
+private fun BirEmitter.rejectClrEnumOnNonEnum(klass: IrClass) {
+	if (klass.kind != ClassKind.ENUM_CLASS && klass.isExplicitClrEnum())
+		reportClrEnumError(klass, "@ClrEnum may be applied only to an enum class")
+}
+
+private fun clrEnumConstantText(constant: IrConst, underlying: String?): String = when (underlying) {
+	// Kotlin IR represents unsigned constants by the same signed primitive bit carrier used by the inline class.
+	// Normalize from that carrier here, while the source-owned Kotlin type is still known, so BIR can preserve the
+	// full unsigned domain without a signed JSON-number ambiguity.
+	"kotlin.UByte" -> when (val value = constant.value) {
+		is UByte -> value.toString()
+		is Byte -> value.toUByte().toString()
+		is Number -> value.toInt().toUByte().toString()
+		else -> value.toString()
+	}
+	"kotlin.UShort" -> when (val value = constant.value) {
+		is UShort -> value.toString()
+		is Short -> value.toUShort().toString()
+		is Number -> value.toInt().toUShort().toString()
+		else -> value.toString()
+	}
+	"kotlin.UInt" -> when (val value = constant.value) {
+		is UInt -> value.toString()
+		is Int -> value.toUInt().toString()
+		is Number -> value.toLong().toUInt().toString()
+		else -> value.toString()
+	}
+	"kotlin.ULong" -> when (val value = constant.value) {
+		is ULong -> value.toString()
+		is Long -> value.toULong().toString()
+		is Number -> value.toLong().toULong().toString()
+		else -> value.toString()
+	}
+	else -> constant.value.toString()
+}
+
+private fun IrDeclaration.containingFile(): IrFile? {
+	var owner = parent
+	while (owner is IrDeclaration) owner = owner.parent
+	return owner as? IrFile
+}
+
+/**
+ * Evaluate exactly the constant-expression language accepted by Kotlin's frontend. The upstream IR interpreter's
+ * intrinsic-constant mode admits literals, const-property reads, and Kotlin's compile-time operators/conversions;
+ * arbitrary source functions remain outside that mode. Keeping this in kotc preserves the source-level distinction
+ * between a constant enum argument and an ordinary expression instead of asking bir2cir to reconstruct it.
+ */
+private fun BirEmitter.clrEnumConstant(expression: org.jetbrains.kotlin.ir.expressions.IrExpression, owner: IrDeclaration): IrConst? {
+	if (expression is IrConst) return expression
+	val builtIns = irBuiltIns ?: return null
+	val file = owner.containingFile() ?: return null
+	val mode = EvaluationMode.OnlyBuiltins
+	val admissible = runCatching {
+		expression.accept(IrInterpreterCommonChecker(), IrInterpreterCheckerData(file, mode, builtIns))
+	}.getOrDefault(false)
+	if (!admissible) return null
+	return runCatching { IrInterpreter(builtIns).interpret(expression, file) as? IrConst }.getOrNull()
+}
+
 /** A Kotlin `enum class` -> a real .NET enum (ilemit DefineEnum + literals). */
 internal fun BirEmitter.enumDef(e: IrClass): String {
-	val entries = e.declarations.filterIsInstance<IrEnumEntry>()
-		.mapIndexed { i, ent -> """{"name":${str(ent.name.asString())},"ordinal":$i}""" }
+	val sourceEntries = e.declarations.filterIsInstance<IrEnumEntry>()
+	val explicit = e.isExplicitClrEnum()
+	var clrEnumFact = ""
+	val entries = if (!explicit) {
+		sourceEntries.mapIndexed { i, ent -> """{"name":${str(ent.name.asString())},"ordinal":$i}""" }
+	} else {
+		val constructors = e.declarations.filterIsInstance<IrConstructor>()
+		val primary = constructors.singleOrNull { it.isPrimary }
+		val parameters = primary?.parameters?.filter(::isValueParameter).orEmpty()
+		val legalTypes = setOf(
+			"kotlin.Byte", "kotlin.UByte", "kotlin.Short", "kotlin.UShort",
+			"kotlin.Int", "kotlin.UInt", "kotlin.Long", "kotlin.ULong",
+		)
+		if (primary == null || parameters.size != 1)
+			reportClrEnumError(e, "exactly one regular primary-constructor parameter is required")
+		val parameter = parameters.singleOrNull()
+		val parameterType = parameter?.type?.classFqName?.asString()
+		if (parameter != null && parameterType !in legalTypes)
+			reportClrEnumError(parameter, "the constructor parameter must be Byte, UByte, Short, UShort, Int, UInt, Long, or ULong")
+		if (parameter?.defaultValue != null)
+			reportClrEnumError(parameter, "the constructor parameter must not have a default value")
+		if (parameter?.varargElementType != null)
+			reportClrEnumError(parameter, "the constructor parameter must not be vararg")
+		if (constructors.any { !it.isPrimary })
+			reportClrEnumError(constructors.first { !it.isPrimary }, "secondary constructors are not allowed")
+
+		val implementedInterfaces = e.superTypes.any { st ->
+			(st.classifierOrNull?.owner as? IrClass)?.kind == ClassKind.INTERFACE
+		}
+		if (implementedInterfaces)
+			reportClrEnumError(e, "additional interfaces are not allowed")
+		val instanceProperty = e.declarations.filterIsInstance<IrProperty>().firstOrNull { p ->
+			p.origin.toString() == "DEFINED" && !p.isFakeOverride && !isKotlinStaticProperty(p)
+		}
+		if (instanceProperty != null)
+			reportClrEnumError(instanceProperty, "the constructor parameter must be non-property and instance properties are not allowed")
+		val instanceMethod = e.declarations.filterIsInstance<IrSimpleFunction>().firstOrNull {
+			it.origin.toString() == "DEFINED" && it.correspondingPropertySymbol == null && it.body != null && !isKotlinStaticFunction(it)
+		}
+		if (instanceMethod != null)
+			reportClrEnumError(instanceMethod, "instance methods are not allowed")
+		val initializer = e.declarations.filterIsInstance<IrAnonymousInitializer>().firstOrNull()
+		if (initializer != null)
+			reportClrEnumError(initializer, "init blocks are not allowed")
+		val entryBody = sourceEntries.firstOrNull { it.correspondingClass != null }
+		if (entryBody != null)
+			reportClrEnumError(entryBody, "enum-entry bodies are not allowed")
+
+		val seenValues = HashSet<String>()
+		val rendered = sourceEntries.mapIndexed { i, ent ->
+			val call = (ent.initializerExpression as? IrExpressionBody)?.expression as? IrEnumConstructorCall
+			val args = call?.let(::regularArgs).orEmpty()
+			val constant = args.singleOrNull()?.let { clrEnumConstant(it, ent) }
+			if (args.size != 1 || constant == null)
+				reportClrEnumError(ent, "entry '${ent.name.asString()}' must pass exactly one compile-time integral constant")
+			val value = constant?.let { clrEnumConstantText(it, parameterType) } ?: "0"
+			if (constant != null && !seenValues.add(value))
+				reportClrEnumError(ent, "entry '${ent.name.asString()}' has duplicate physical enum value $value; aliases are not supported")
+			"""{"name":${str(ent.name.asString())},"ordinal":$i,"value":${str(value)}}"""
+		}
+		val underlying = parameterType ?: "kotlin.Int"
+		clrEnumFact = ""","clrEnum":{"underlying":${fqnJson(underlying)}}"""
+		rendered
+	}
 	val semanticOwner = semanticOwnerJson(e)
 	// The companion is emitted as its own semantic declaration; enumDef must not manufacture a duplicate association.
 	val kotlinCompanion = ""
-	return """{"name":${str(typeName(e))},"kind":"enum"$semanticOwner$kotlinCompanion,"entries":[${entries.joinToString(",")}]}"""
+	val explicitMetadata = if (explicit) ""","attrs":[${attrsJson(e.annotations)}]${posJson(e)}""" else ""
+	return """{"name":${str(typeName(e))},"kind":"enum"$semanticOwner$kotlinCompanion$clrEnumFact,"entries":[${entries.joinToString(",")}]$explicitMetadata}"""
 }
 
 /** A "rich" enum has source-authored state/behavior or per-entry bodies -> can't be a CLR enum. */
 internal fun BirEmitter.isRichEnum(ec: IrClass): Boolean {
 	if (ec.kind != ClassKind.ENUM_CLASS) return false
+	// @ClrEnum is an exact source contract. enumDef validates it and emits either that native enum shape or a
+	// source-located error; malformed input must never silently fall back to the rich reference-class representation.
+	if (ec.isExplicitClrEnum()) return false
 	// A CLR enum cannot implement an interface. Even a marker/default-only interface therefore requires the rich
 	// class shape; checking only source members misses `enum class E : Marker { A }` because every inherited member is
 	// synthetic in that declaration.
@@ -1306,6 +1451,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
  *  bir2cir DERIVES `base = System.Attribute` from it (annotation-base-lowering-to-bir2cir, USER 2026-07-02).
  *  kotc names NO CLR base type here. */
 internal fun BirEmitter.annotationDef(klass: IrClass): String {
+	rejectClrEnumOnNonEnum(klass)
 	val ctorParams = klass.declarations.filterIsInstance<IrConstructor>().firstOrNull { it.isPrimary }
 		?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
 	val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
@@ -1344,6 +1490,7 @@ internal fun BirEmitter.attrsJson(anns: List<IrConstructorCall>): String {
 }
 
 internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, captureEnclosingGenerics: Boolean = false, generated: Boolean = false): String {
+	rejectClrEnumOnNonEnum(klass)
 	val baseType = klass.superTypes
 		.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
 	val base = baseType?.classifierOrNull?.owner as? IrClass
@@ -2042,7 +2189,12 @@ internal fun BirEmitter.emittedParamCount(fn: org.jetbrains.kotlin.ir.declaratio
  *  interface-typed param), or ANY non-constant default → `@KotlinDefault(bir)` + a REQUIRED param (a kcc consumer
  *  splices the expression, a C# consumer passes the arg explicitly). */
 internal fun BirEmitter.isMetadataRepresentableDefault(p: org.jetbrains.kotlin.ir.declarations.IrValueParameter): Boolean {
-	val def = p.defaultValue?.expression as? org.jetbrains.kotlin.ir.expressions.IrConst ?: return false
+	val expression = p.defaultValue?.expression ?: return false
+	if (expression is IrGetEnumValue) {
+		val enumClass = expression.symbol.owner.parent as? IrClass ?: return false
+		return !isRichEnum(enumClass)
+	}
+	val def = expression as? org.jetbrains.kotlin.ir.expressions.IrConst ?: return false
 	val v = def.value
 	return when {
 		v == null -> true                                                   // null fits any nullable/reference param (ldnull)

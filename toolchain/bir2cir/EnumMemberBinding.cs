@@ -26,6 +26,7 @@ using System.Text.Json.Nodes;
 // `kotlin.Enum` owner and to locally-declared value-type enum owners, so no other call is affected.
 static class EnumMemberBinding
 {
+    const string RuntimeOwner = "DotKt.Runtime.CompilerServices.EnumRuntimeKt";
     // BCL Object-slot spellings (ObjectSlotRename runs first, so `anySlot` calls already carry these), and the arity of
     // each as an `objMethod` — ToString/GetHashCode take no arg, Equals takes one (moved from args[0] to `arg`).
     static readonly HashSet<string> ObjectSlots = new(System.StringComparer.Ordinal) { "ToString", "GetHashCode", "Equals" };
@@ -85,12 +86,13 @@ static class EnumMemberBinding
         {
             var ordinal = new JsonObject
             {
-                ["k"] = "enumOrdinal",
-                ["e"] = recv.DeepClone(),
+                ["k"] = "callStatic",
+                ["owner"] = TypeJson.Fqn(RuntimeOwner),
+                ["method"] = "kotlinEnumOrdinal",
+                ["sig"] = new JsonArray { TypeJson.Fqn("kotlin.Any") },
+                ["ret"] = TypeJson.Fqn("kotlin.Int"),
+                ["args"] = new JsonArray { recv.DeepClone() },
             };
-            if (recv is JsonObject receiver
-                && (receiver["sty"]?.DeepClone() ?? receiver["ret"]?.DeepClone()) is JsonNode receiverType)
-                ordinal["type"] = receiverType;
             obj.Clear();
             foreach (var kv in ordinal) obj[kv.Key] = kv.Value?.DeepClone();
             return;
