@@ -58,7 +58,6 @@ fun collNullSrc(): Any? = null
 // operational faces. Thin forwarding keeps these probes about classifier identity rather than collection mechanics.
 class CollectionIdentityOnly(private val elements: List<Int>) : Collection<Int> by elements
 class SetIdentityOnly(private val elements: Set<Int>) : Set<Int> by elements
-class DelegatingMutableSet590(private val elements: MutableSet<Int>) : MutableSet<Int> by elements
 class MutableSetIdentityOnly(private val elements: MutableSet<Int>) : MutableSet<Int> {
     override val size: Int get() = elements.size
     override fun isEmpty(): Boolean = elements.isEmpty()
@@ -437,15 +436,6 @@ class CollectionsTests {
         assertFalse(setInt is List<*>)                  // False
         assertTrue(mapInt is Map<*, *>)                 // True
         assertFalse(listInt is Map<*, *>)               // False
-    }
-
-    @TestAttribute
-    fun mutableSetDelegationKeepsMutableIteratorSlot() {
-        val set = DelegatingMutableSet590(mutableSetOf(1, 2))
-        val iterator: MutableIterator<Int> = set.iterator()
-        assertEquals(1, iterator.next())
-        iterator.remove()
-        assertFalse(set.contains(1))
     }
 
     @TestAttribute

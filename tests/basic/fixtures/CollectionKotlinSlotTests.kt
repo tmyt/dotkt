@@ -1,14 +1,16 @@
-// Kotlin-only mutable-collection members (#400): removeAll / retainAll / addAll(elements) / addAll(index, elements).
+// Kotlin-only mutable-collection members (#400/#590): mutable iterator / removeAll / retainAll / addAll(elements) /
+// addAll(index, elements).
 //
 // `MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and `MutableList<E>` IS `IList<E>`, and those
-// BCL interfaces carry no slot for any of the four. Before this battery existed the compiler emitted
+// BCL interfaces carry no slot for any of those Kotlin members. Before this battery existed the compiler emitted
 // `recv.GetType().GetMethod(name).Invoke(recv, args)` for `removeAll`/`retainAll`, which returned null (an opaque
 // NullReferenceException) on any BCL-backed receiver, and routed `addAll` unconditionally to a static helper, which
 // silently bypassed a Kotlin implementer's override. The contract now is:
 //
 //   * every call goes to a `kotlin.collections.ClrCollectionDefaults` dispatcher;
-//   * a Kotlin implementer carries `DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots` /
-//     `KotlinMutableListSlots` with an exact MethodImpl per member, so its OVERRIDE is reached by virtual dispatch;
+//   * a Kotlin implementer carries `DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots` /
+//     `KotlinMutableCollectionSlots` / `KotlinMutableListSlots` with an exact MethodImpl per member, so its OVERRIDE
+//     is reached by virtual dispatch;
 //   * a BCL-backed receiver runs the default, written only over slots that physically exist.
 //
 // Every override case asserts by SIDE EFFECT (a call counter), not by result value: a result can coincide with what
@@ -129,6 +131,13 @@ class CollectionKotlinSlotCountingList : MutableList<Int> {
 // A class-delegation forwarder over a BCL-backed delegate: `MutableList<T> by backing`. The compiler generates
 // forwarders for every member including the four here, and the delegate is a plain `System.Collections.Generic.List`.
 class CollectionKotlinSlotDelegating(backing: MutableList<Int>) : MutableList<Int> by backing
+class CollectionKotlinSlotDelegatingSet<T>(backing: MutableSet<T>) : MutableSet<T> by backing
+class CollectionKotlinSlotDelegatingCollection<T>(backing: MutableCollection<T>) : MutableCollection<T> by backing
+class CollectionKotlinSlotDelegatingIterable<T>(backing: MutableIterable<T>) : MutableIterable<T> by backing
+class CollectionKotlinSlotEqualValue(val id: Int) {
+    override fun equals(other: Any?): Boolean = other is CollectionKotlinSlotEqualValue
+    override fun hashCode(): Int = 0
+}
 
 
 // A subclass of a slot-holding implementer: it must inherit the slot interface and receive no bridge of its own,
@@ -321,6 +330,51 @@ class CollectionKotlinSlotTests {
         assertEquals("[1, 4, 7]", render(d))
         assertTrue(d.addAll(1, listOf(9)))
         assertEquals("[1, 9, 4, 7]", render(d))
+    }
+
+    @TestAttribute
+    fun mutableIteratorDelegationKeepsMutableSlot() {
+        // Pure-Kotlin LinkedHashSet carries the compiler-authored slot, so its exact override wins.
+        val kotlinSet = CollectionKotlinSlotDelegatingSet(mutableSetOf(1, 2))
+        val kotlinIterator: MutableIterator<Int> = kotlinSet.iterator()
+        assertEquals(1, kotlinIterator.next())
+        kotlinIterator.remove()
+        assertFalse(kotlinSet.contains(1))
+
+        // BCL HashSet cannot carry the slot; its fallback snapshots enumeration and removes the returned unique key.
+        val hashSet = HashSet<Int>()
+        hashSet.add(10)
+        hashSet.add(20)
+        val bclSet = CollectionKotlinSlotDelegatingSet(hashSet)
+        val bclIterator = bclSet.iterator()
+        val removed = bclIterator.next()
+        bclIterator.remove()
+        assertFalse(bclSet.contains(removed))
+
+        // A MutableCollection-typed BCL list still takes the indexed adapter. Removing the second of two equal but
+        // distinguishable values must not remove the first equal value through ICollection.Remove(value).
+        val first = CollectionKotlinSlotEqualValue(1)
+        val second = CollectionKotlinSlotEqualValue(2)
+        val third = CollectionKotlinSlotEqualValue(3)
+        val list = mutableListOf(first, second, third)
+        val collectionFace: MutableCollection<CollectionKotlinSlotEqualValue> = list
+        val collection = CollectionKotlinSlotDelegatingCollection(collectionFace)
+        val collectionIterator = collection.iterator()
+        assertTrue(collectionIterator.next() === first)
+        assertTrue(collectionIterator.next() === second)
+        collectionIterator.remove()
+        assertTrue(list[0] === first)
+        assertTrue(list[1] === third)
+
+        // MutableIterable has only IEnumerable as its operational face, so capability dispatch is its sole route to
+        // the implementer's remove-capable iterator.
+        val iterableBacking = mutableSetOf(30, 40)
+        val iterableFace: MutableIterable<Int> = iterableBacking
+        val iterable = CollectionKotlinSlotDelegatingIterable(iterableFace)
+        val iterableIterator = iterable.iterator()
+        val iterableRemoved = iterableIterator.next()
+        iterableIterator.remove()
+        assertFalse(iterableBacking.contains(iterableRemoved))
     }
 
     // ---- element types the dispatcher is instantiated at ----------------------------------------------------------

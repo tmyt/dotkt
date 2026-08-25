@@ -804,14 +804,14 @@ sealed class Pipeline
         var covariantBridgedSlots = CovariantInterfaceReturnBridge.ApplyAll(
             staged.Select(s => s.Root).ToList(), refs, isValueFqn);
 
-        // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: `MutableCollection<E>`/`MutableList<E>` ARE
-        // `ICollection<E>`/`IList<E>`, which carry no slot for Kotlin's `removeAll`/`retainAll`/`addAll(elements)`/
-        // `addAll(index, elements)`. A Kotlin class overriding one of them would therefore be unreachable through the
-        // BCL face. Give each participating class the compiler-owned `KotlinMutableCollectionSlots`/
-        // `KotlinMutableListSlots` interface plus a private forwarding bridge carrying a resolved `clrInterfaceImpls`
-        // instruction; the `ClrCollectionDefaults` dispatchers test for those interfaces and otherwise run the BCL
-        // default. HERE, in the Kotlin-vocabulary phase, because the pass keys on the frontend `overrides` identity —
-        // which does not survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
+        // KOTLIN-ONLY COLLECTION SLOTS -> EXACT CLR METHODIMPL: the BCL operational faces carry neither Kotlin's
+        // remove-capable `MutableIterable.iterator()` return nor `MutableCollection.removeAll`/`retainAll`/
+        // `addAll(elements)` / `MutableList.addAll(index, elements)`. A Kotlin class overriding one of them would
+        // therefore be unreachable through that face. Give each participating class the matching compiler-owned slot
+        // interface plus a private forwarding bridge carrying a resolved `clrInterfaceImpls` instruction; the
+        // `ClrCollectionDefaults` dispatchers test for those interfaces and otherwise run the BCL default. HERE, in
+        // the Kotlin-vocabulary phase, because the pass keys on the frontend `overrides` identity — which does not
+        // survive to CIR — and on Kotlin's own supertype graph. Non-ref builds only.
         if (!_options.RefBuild)
             KotlinCollectionSlotSynthesis.ApplyAll(staged.Select(s => s.Root).ToList());
 

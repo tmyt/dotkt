@@ -32,16 +32,17 @@ public fun <T> clrCollAdd(c: MutableCollection<T>, element: T): Boolean {
 
 // ---- Kotlin-only mutation members: capability dispatch, then the BCL default -----------------------------------
 //
-// `addAll` / `removeAll` / `retainAll` / `addAll(index, …)` are VIRTUAL Kotlin members of `MutableCollection` /
-// `MutableList` with no slot on `ICollection<T>` / `IList<T>`. Each of the four dispatchers below is the ONE place
-// where the two legitimate receiver categories are reconciled:
+// Mutable `iterator` / `addAll` / `removeAll` / `retainAll` / `addAll(index, …)` are VIRTUAL Kotlin members of
+// `MutableIterable` / `MutableCollection` / `MutableList` with no matching slot on their BCL operational faces.
+// The dispatchers below are the ONE place where the two legitimate receiver categories are reconciled:
 //
-//   * a Kotlin implementer carries the compiler-authored [KotlinMutableCollectionSlots] / [KotlinMutableListSlots]
-//     interface, so its (possibly overridden) member is reached through a real virtual slot;
+//   * a Kotlin implementer carries the matching compiler-authored [KotlinMutableIteratorSlots] /
+//     [KotlinMutableCollectionSlots] / [KotlinMutableListSlots] interface, so its (possibly overridden) member is
+//     reached through a real virtual slot;
 //   * a BCL-backed receiver has no Kotlin body, so the default below runs, written ONLY over members that do have a
 //     physical slot (`Remove`, `Insert`, `GetEnumerator`) plus the already-routed [clrCollAdd] / [clrCollContains].
 //
-// The capability test is on a NON-generic interface on purpose — see the note on [KotlinMutableCollectionSlots]:
+// The capability test is on a NON-generic interface on purpose — see the notes on the slot interfaces:
 // a constructed test would be defeated by an element type erased to `System.Object` at the call site and would then
 // silently skip a user override.
 //

@@ -660,25 +660,34 @@ removal (no guarantee). DotKt binds them to insertion-ordered containers instead
   slots + the reverse `GetEnumerator` bridge, so it flows through `Set`/`MutableSet` slots like any BCL set.
 - **Plain `HashMap`/`HashSet` stay UNORDERED** (`Dictionary`/`HashSet`) — Kotlin contracts no order for them.
 
-## 5c-quater. `removeAll`/`retainAll`/`addAll` dispatch through a compiler-owned slot interface — and their SELF-ALIASING forms are defined
+## 5c-quater. Mutable iterator and collection-only members dispatch through compiler-owned slot interfaces
 
 `MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and `MutableList<E>` IS `IList<E>`, and neither
 BCL interface has a slot for Kotlin's `removeAll(elements)`, `retainAll(elements)`, `addAll(elements)` or
 `MutableList.addAll(index, elements)`. All four are virtual Kotlin members a user class may override, and the receiver
 may equally be a plain BCL value (`mutableListOf()` is a `List<T>`, `HashSet()` is a `HashSet<T>`) with no Kotlin body
-at all. DotKt reconciles those two categories physically, with no runtime reflection:
+at all. The same boundary affects `MutableIterable.iterator()`: its operational `IEnumerable<E>` face returns a BCL
+enumerator and cannot carry Kotlin's remove-capable `MutableIterator<E>`. DotKt reconciles those categories physically,
+with no runtime reflection:
 
 - every call becomes a `kotlin.collections.ClrCollectionDefaults` dispatcher call (`clrCollRemoveAll`,
-  `clrCollRetainAll`, `clrCollAddAll`, `clrListAddAllAt`);
+  `clrCollRetainAll`, `clrCollAddAll`, `clrListAddAllAt`, `clrMutableIterator`);
 - every emitted Kotlin class declaring one of the members gains the compiler-owned
-  `DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots` / `KotlinMutableListSlots` interface with an exact
-  MethodImpl per member, so the dispatcher reaches the OVERRIDE by ordinary virtual dispatch;
+  `DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots` / `KotlinMutableCollectionSlots` /
+  `KotlinMutableListSlots` interface with an exact MethodImpl per member, so the dispatcher reaches the OVERRIDE by
+  ordinary virtual dispatch;
 - a receiver with no such interface runs a default written only over slots that physically exist.
+
+For mutable iteration, a BCL `IList<E>` uses the indexed adapter so removing the last-returned occurrence remains exact,
+including equal duplicate values. Other BCL mutable collections snapshot their enumeration and remove the returned
+element through `ICollection<E>.Remove`; this is exact for sets because their elements are unique. A pure-Kotlin
+implementer always takes its compiler-owned slot and therefore keeps its own iterator semantics.
 
 Those interfaces are **compiler vocabulary** and are `internal`, so user Kotlin source cannot name them; dll2klib
 also keeps the compiler's reserved `DotKt.Runtime.CompilerServices` namespace out of a projected type's Kotlin
-supertype list. Their element-collection parameter is deliberately erased to `Any`, which makes the capability test
-independent of the instantiation the dispatcher was called at. (A constructed `Slots<E>` test would be correct only
+supertype list. Their element-collection parameter — and the mutable iterator slot's return at the carrier boundary —
+is deliberately erased to `Any`, which makes the capability test independent of the instantiation the dispatcher was
+called at. (A constructed `Slots<E>` test would be correct only
 while the dispatchers keep an invariant `ICollection<T>`/`IList<T>` receiver — a property of those signatures rather
 than of the design, whose failure mode is a silently skipped override. No witness of it missing exists; the erased
 form is chosen for robustness, not to fix an observed bug.)
