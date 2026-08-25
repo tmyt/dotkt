@@ -136,7 +136,7 @@ static class StarProjectionLowering
                 && IsStarCollection(obj["ownerType"], out _)
                 && obj["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
                 && IsStarCollection(recv["type"], out var recvIface)
-                && LowerMember(obj, recv, recvIface) is JsonObject rewritten)
+                && LowerMember(obj, recv, recvIface, IsMutableStarCollection(obj["ownerType"])) is JsonObject rewritten)
             {
                 foreach (var kv in rewritten) obj[kv.Key] = kv.Value?.DeepClone();
                 foreach (var stale in obj.Select(kv => kv.Key).Where(k => !rewritten.ContainsKey(k)).ToList())
@@ -213,6 +213,16 @@ static class StarProjectionLowering
                     ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(Int), ["value"] = 0 },
                 };
             case "iterator":
+                if (classifierKind == 2)
+                    return new JsonObject
+                    {
+                        ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"),
+                        ["method"] = "clrMutableIteratorErased",
+                        ["sig"] = new JsonArray(TypeJson.Write(Any)),
+                        ["args"] = new JsonArray(checkedReceiver),
+                        ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator",
+                            new TypeNode[] { AnyN })),
+                    };
                 return new JsonObject
                 {
                     ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrIteratorBridgeKt"),
@@ -305,7 +315,16 @@ static class StarProjectionLowering
 
     // Build the non-generic replacement for a star-cast member call. `iface` is the non-generic interface the receiver
     // is cast to. Returns null for an unmapped member (leave it reified — the guarding isinst stays whatever it is).
-    static JsonObject LowerMember(JsonObject call, JsonObject cast, string iface)
+    static bool IsMutableStarCollection(JsonNode slot)
+    {
+        var read = TypeJson.Read(slot);
+        while (read is TypeNode.Nullable n) read = n.Of;
+        while (read is TypeNode.Oblivious o) read = o.Of;
+        return read is TypeNode.Fqn f && f.Name is "kotlin.collections.MutableIterable"
+            or "kotlin.collections.MutableCollection" or "kotlin.collections.MutableList";
+    }
+
+    static JsonObject LowerMember(JsonObject call, JsonObject cast, string iface, bool mutable)
     {
         var recvInner = cast["e"];
         JsonObject CastTo(string toIface) => new() { ["k"] = "cast", ["type"] = TypeJson.Fqn(toIface), ["e"] = recvInner.DeepClone() };
@@ -328,6 +347,11 @@ static class StarProjectionLowering
                     ["rhs"] = new JsonObject { ["k"] = "const", ["type"] = TypeJson.Fqn("System.Int32"), ["value"] = 0 },
                 };
             case "iterator":
+                if (mutable)
+                    // Keep the original star cast observable before entering the erased helper. Passing recvInner
+                    // directly would let e.g. `(aSet as MutableList<*>).iterator()` succeed merely because the set
+                    // is enumerable, even though the explicit MutableList cast must fail.
+                    return new JsonObject { ["k"] = "callStatic", ["owner"] = TypeJson.Fqn("kotlin.collections.ClrCollectionDefaultsKt"), ["method"] = "clrMutableIteratorErased", ["sig"] = new JsonArray(TypeJson.Write(Any)), ["args"] = new JsonArray { CastTo(iface) }, ["ret"] = TypeJson.Write(new TypeNode.Fqn("kotlin.collections.MutableIterator", new TypeNode[] { new TypeNode.Nullable(new TypeNode.Fqn("kotlin.Any")) })) };
                 // `.iterator()` -> the rt bridge `ClrIteratorBridgeKt.iteratorOverRawEnumerable` (#74b(ii)), NOT a raw
                 // `IEnumerable.GetEnumerator()` clrInstance: the consumer var this call initializes stays declared
                 // `kotlin.collections.Iterator<Any?>` (StarProjectionLowering never touches that decl slot), and

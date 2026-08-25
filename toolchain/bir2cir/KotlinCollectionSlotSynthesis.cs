@@ -8,9 +8,9 @@ using DotKt.Bir;
 //
 // That pass fills the BCL members Kotlin's collection interfaces lack (`Contains`/`CopyTo`/`IsReadOnly`/`IndexOf`).
 // This one fills the other direction: `MutableCollection<E>` IS `ICollection<E>` and `MutableList<E>` IS `IList<E>`,
-// and those BCL interfaces carry NO slot for Kotlin's `removeAll`, `retainAll`, `addAll(elements)` or
-// `addAll(index, elements)`. Without a slot there is nothing for a call to dispatch on, so a Kotlin class that
-// OVERRIDES one of them could not be reached: the call site can only see the BCL face.
+// and those BCL interfaces carry NO slot for Kotlin's mutable `iterator()` return, `removeAll`, `retainAll`,
+// `addAll(elements)` or `addAll(index, elements)`. Without a slot there is nothing for a call to dispatch on, so a
+// Kotlin class that OVERRIDES one of them could not be reached: the call site can only see the BCL face.
 //
 // Give every emitted class whose Kotlin supertypes reach such a member a real CLR interface slot for it. The class
 // gains `DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots` (plus `KotlinMutableListSlots` for the indexed
@@ -39,8 +39,10 @@ using DotKt.Bir;
 // the ref surface stays pure Kotlin and every consumer re-derives the physical form from it.
 static class KotlinCollectionSlotSynthesis
 {
+    const string MutableIterable = "kotlin.collections.MutableIterable";
     const string MutableCollection = "kotlin.collections.MutableCollection";
     const string MutableList = "kotlin.collections.MutableList";
+    const string IteratorSlots = "DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots";
     const string CollectionSlots = "DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots";
     const string ListSlots = "DotKt.Runtime.CompilerServices.KotlinMutableListSlots";
 
@@ -53,10 +55,14 @@ static class KotlinCollectionSlotSynthesis
         public string SlotInterface;        // the compiler-owned interface carrying the physical slot
         public string SlotMember;           // the slot's member name
         public string Bridge;               // the synthesized forwarding method's name
+        public bool EraseReturn;             // the non-generic carrier returns Any, while the target stays exact
     }
 
     static readonly Slot[] Slots =
     {
+        new() { DeclaringInterface = MutableIterable, Member = "iterator", Arity = 0,
+                SlotInterface = IteratorSlots, SlotMember = "dotktIterator", Bridge = "dotkt$slot$iterator",
+                EraseReturn = true },
         new() { DeclaringInterface = MutableCollection, Member = "removeAll", Arity = 1,
                 SlotInterface = CollectionSlots, SlotMember = "dotktRemoveAll", Bridge = "dotkt$slot$removeAll" },
         new() { DeclaringInterface = MutableCollection, Member = "retainAll", Arity = 1,
@@ -153,7 +159,7 @@ static class KotlinCollectionSlotSynthesis
         {
             if (!defs.TryGetValue(baseSpec.Name, out var local)) break;
             foreach (var i in local.Interfaces)
-                if (i.Name == CollectionSlots || i.Name == ListSlots) found.Add(i.Name);
+                if (i.Name == IteratorSlots || i.Name == CollectionSlots || i.Name == ListSlots) found.Add(i.Name);
             // A local base not yet visited still ANSWERS for its own declarations: the decision below is
             // declaration-driven, so a base that WILL receive the interface is detected by the same predicate
             // rather than by visit order.
@@ -272,7 +278,8 @@ static class KotlinCollectionSlotSynthesis
                 : Local(name));
         }
 
-        var ret = Subst(TypeJson.Read(target.Method["ret"]) ?? new TypeNode.Fqn("kotlin.Boolean"), ownerArgs);
+        var targetRet = Subst(TypeJson.Read(target.Method["ret"]) ?? new TypeNode.Fqn("kotlin.Boolean"), ownerArgs);
+        var slotRet = slot.EraseReturn ? new TypeNode.Fqn("kotlin.Any") : targetRet;
         return new JsonObject
         {
             ["name"] = slot.Bridge,
@@ -284,7 +291,7 @@ static class KotlinCollectionSlotSynthesis
             ["vis"] = "private",
             ["generated"] = true,
             ["params"] = bridgeParams,
-            ["ret"] = TypeJson.Write(ret),
+            ["ret"] = TypeJson.Write(slotRet),
             ["body"] = new JsonArray(new JsonObject
             {
                 ["k"] = "return",
@@ -299,7 +306,7 @@ static class KotlinCollectionSlotSynthesis
                     ["recv"] = new JsonObject { ["k"] = "this" },
                     ["method"] = Str(target.Method["name"]),
                     ["sig"] = callSig,
-                    ["ret"] = TypeJson.Write(ret),
+                    ["ret"] = TypeJson.Write(targetRet),
                     ["args"] = callArgs,
                 },
             }),
@@ -311,7 +318,7 @@ static class KotlinCollectionSlotSynthesis
                 ["member"] = slot.SlotMember,
                 ["arity"] = 0,
                 ["params"] = slotParams,
-                ["ret"] = TypeJson.Write(ret),
+                ["ret"] = TypeJson.Write(slotRet),
             }),
         };
     }
