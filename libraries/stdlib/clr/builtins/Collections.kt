@@ -122,8 +122,8 @@ public actual interface Map<K, out V> {
     // Kotlin `get` returns null on a missing key; IDictionary's get_Item THROWS. NOT bound — routed to
     // ClrMapDefaults.clrMapGet (ContainsKey + raw get_Item).
     public actual operator fun get(key: K): V?
-    // Set/Collection-typed read views: `Set` is a PURE Kotlin interface (unaliased), so these cannot bind to
-    // IDictionary.Keys/.Values (KeyCollection/ValueCollection do not implement it) — routed to ClrMapDefaults snapshots.
+    // Read views route to ClrMapDefaults snapshots so Set retains its Kotlin classifier identity and all views remain
+    // covariance-safe through the non-generic dictionary facade.
     public actual val keys: Set<K>
     public actual val values: Collection<V>
     public actual val entries: Set<Map.Entry<K, V>>
@@ -181,9 +181,8 @@ public actual interface MutableMap<K, V> : Map<K, V> {
         if (newValue == null) remove(key) else put(key, newValue)
         return newValue
     }
-    // The MUTABLE views' slot types lower to the BCL (MutableSet -> ICollection<K>, MutableCollection ->
-    // ICollection<V>), which IDictionary.Keys/.Values satisfy directly — bind them, unlike Map's pure-Set-typed reads.
-    @kotlin.clr.ClrIntrinsic("Keys")
+    // Mutable keys need an identity-bearing live Kotlin view; raw Dictionary.KeyCollection has only ICollection<K>.
+    // Mutable values can still bind directly to the BCL ValueCollection's ICollection<V> face.
     actual override val keys: MutableSet<K>
     @kotlin.clr.ClrIntrinsic("Values")
     actual override val values: MutableCollection<V>

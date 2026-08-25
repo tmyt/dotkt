@@ -5,6 +5,14 @@
 
 package DotKt.Runtime.CompilerServices
 
+// NOMINAL identities for Kotlin collection classifiers whose operational @ClrTypeAlias faces overlap. They are
+// compiler vocabulary: bir2cir attaches the most-specific identity while Kotlin's supertype graph is available.
+// The BCL-backed implementations cannot carry these interfaces and are recognized from their real CLR collection
+// faces by StarProjectionRuntime instead.
+internal interface KotlinCollectionClassifier
+internal interface KotlinSetClassifier : KotlinCollectionClassifier
+internal interface KotlinMutableSetClassifier : KotlinSetClassifier
+
 // SUPPLEMENTAL KOTLIN SLOTS FOR @ClrTypeAlias'd COLLECTION INTERFACES.
 //
 // `kotlin.collections.MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and

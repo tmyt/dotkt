@@ -172,7 +172,7 @@ class StarProjectionAndVisibilityTests {
             assertEquals(20, l[1])                       // 20 (non-generic IList.get_Item)
         }
         assertTrue(l is Iterable<*>)                     // -> non-generic IEnumerable facade
-        assertTrue(l is Collection<*>)                  // -> non-generic ICollection facade
+        assertTrue(l is Collection<*>)                  // -> composite Kotlin Collection classifier
         assertFalse((5 as Any) is Map<*, *>)            // False (a non-collection is not a Map)
         assertFalse(("x" as Any) is List<*>)            // False
     }
