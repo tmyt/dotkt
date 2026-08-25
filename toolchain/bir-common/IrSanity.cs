@@ -398,9 +398,9 @@ public static class IrSanity
     // falls in one of them:
     //
     //   (a) A TYPE VARIABLE or a `*` projection on EITHER side matches anything. `ret` may name the UNinstantiated
-    //       declared type (`Sequence<!0>` against an instantiated `Sequence<!1>`, `object` against a `!!0`), and a
-    //       substituted `Map$Entry<K,V>` legitimately faces a deeper re-substituted spelling of the same nest. 50 of
-    //       the 58 differing pairs are this.
+    //       declared type (`Sequence<!0>` against an instantiated `Sequence<!1>`, `object` against a `!!0`). The
+    //       generic-frame pairs in the calibration set fall in this class; an already-instantiated nested result is
+    //       no longer re-substituted and does not rely on this equivalence (#328).
     //   (b) The three spellings of one CLR type — `kotlin.Boolean` / `bool` / `System.Boolean`, `kotlin.Unit` /
     //       `void` / `System.Void`, `kotlin.Any` / `object`, … — are one canonical token. bir2cir lowers a type token
     //       when its pass runs, so a node retyped by an early pass and one retyped by a late pass carry the same type

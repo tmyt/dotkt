@@ -226,6 +226,10 @@ static class InheritedClassInterfaceBridge
             ["recv"] = new JsonObject { ["k"] = "this" },
             ["method"] = name,
             ["sig"] = rawTargetSig,
+            // `slotRet` has already been closed through the interface specification into the derived class's frame.
+            // Preserve that call-site fact just like kotc does for an ordinary call: the constructed-member return
+            // sweeps must not interpret its remaining type variables as formals of `target.ConstructedOwner`.
+            ["sty"] = TypeJson.Write(slotRet),
             ["dynRet"] = TypeJson.Write(slotRet),
             ["ret"] = TypeJson.Write(slotRet),
             ["args"] = args,

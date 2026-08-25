@@ -63,9 +63,8 @@ public static class NodeType
     /// "When, and only when" is the whole point, and it is asked through <see cref="IrSanity.StampAgrees"/> so that
     /// the pass and the #305 chokepoint cannot answer it differently. Dropping unconditionally would be wrong in both
     /// directions: it discards a stamp that still describes the value (`ret` then answers the same thing, so nothing
-    /// is gained), and where a pass's own substitution is the LESS trustworthy of the two — a callee-relative `tv`
-    /// re-substituted into an already-instantiated result — the stamp is what protects every downstream deriver from
-    /// it, so deleting it would turn a tolerated imprecision into a wrong spill-slot or state-machine-field type.
+    /// is gained), while a physical erasure that genuinely changes the result must not leave a semantic stamp that a
+    /// downstream spill slot or state-machine field would trust first.
     /// </summary>
     public static void DropStampIfStale(JsonObject o)
     {

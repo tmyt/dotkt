@@ -29,12 +29,10 @@ static class ConstructedMemberReturnSubstitution
                     // deriver, so a spill slot or state-machine field declared from it names a type the value does not
                     // have, and since the instantiation is not recoverable from an erased owner the stamp is DROPPED.
                     //
-                    // Only where the substitution CONTRADICTS it, though, and that qualifier is load-bearing here more
-                    // than anywhere else: this pass cannot tell a callee-relative `tv` from one kotc already
-                    // instantiated (both are `tv{scope:type,i}`), so on an `Iterator<Map$Entry<K,V>>` receiver whose
-                    // `ret` is already the instantiated `Map$Entry<K,V>` it re-substitutes into the nonsense
-                    // `Map$Entry<Map$Entry<K,V>,V>`. The stamp is what shields every downstream deriver from that, and
-                    // it survives — `DropStampIfStale` keeps a stamp the new result does not refute.
+                    // Only where the substitution CONTRADICTS it, though. RewriteSlot uses exact stamp equality as the
+                    // slot-level frame boundary: a return already instantiated in the caller frame is left alone,
+                    // while a distinct callee-relative result is closed through the constructed owner here. Any
+                    // physical erasure that makes the latter disagree with the frontend result still drops the stamp.
                     if (changed) NodeType.DropStampIfStale(obj);
                 }
                 foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) Walk(value);
@@ -49,6 +47,14 @@ static class ConstructedMemberReturnSubstitution
     static bool RewriteSlot(JsonObject obj, string key, TypeNode[] args)
     {
         if (TypeJson.Read(obj[key]) is not TypeNode type || !ContainsOwnerTv(type)) return false;
+        // kotc's `sty` is the frontend-resolved CALL-SITE result. When the result slot is exactly that shape, every
+        // tv in it already belongs to the caller's frame; substituting it through the callee owner would apply the
+        // construction twice (`Iterator<Entry<K,V>>.next()` -> `Entry<Entry<K,V>,V>`). A callee-relative result is
+        // distinguishable at the slot boundary without inventing another tv scope: it differs from the exact stamp
+        // (`AtomicRef<Any>.value`: ret=!0, sty=String), so only that form is substituted. A bir2cir producer that
+        // authors an already-closed result must carry the same exact stamp; equality then keeps that call stable
+        // across the early and late sweeps.
+        if (TypeJson.Read(obj["sty"]) is TypeNode stamp && type.Equals(stamp)) return false;
         obj[key] = TypeJson.Write(Subst(type, args));
         return true;
     }

@@ -1,0 +1,13 @@
+# The call-site stamp says that Array<T> is already closed over the caller's class frame. Both result slots retain
+# that exact shape through the early and late constructed-owner sweeps.
++"method":"read","sig":[],"ret":{"t":"array","elem":{"t":"tv","scope":"type","i":0}},"dynRet":{"t":"array","elem":{"t":"tv","scope":"type","i":0}}
+# The old pass substituted the already-instantiated owner argument once per sweep.
+-"ret":{"t":"array","elem":{"t":"array"
+-"dynRet":{"t":"array","elem":{"t":"array"
+
+# The inherited-class/interface bridge also authors an already-closed result. It must stamp its synthesized call so
+# both sweeps preserve Pairish<K,V> instead of substituting it through PassBase<Pairish<K,V>> once per sweep.
++"name":"DerivedPasser","kind":"class"
++"ownerType":{"t":"fqn","name":"PassBase","args":[{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}]},"virtual":false,"recv":{"k":"this"},"method":"pass"
++"dynRet":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]},"ret":{"t":"fqn","name":"Pairish","args":[{"t":"tv","scope":"type","i":0},{"t":"tv","scope":"type","i":1}]}
+-"ret":{"t":"fqn","name":"Pairish","args":[{"t":"fqn","name":"Pairish"
