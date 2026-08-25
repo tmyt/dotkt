@@ -69,6 +69,7 @@ static partial class SuspendColdLowering
     // GetAwaiter/awaiter shape) for whatever awaitable a `.await()` targets. Set by ApplyAll / BuildLambdaSm (the two
     // entry points); FunGen (nested) reads it. ApplyAll runs before the lambda phase, so it is always populated by then.
     static ReferenceMetadataIndex _refs;
+    static ValueTypeOracle _isValueFqn = _ => false;
 
     // APP-build gate for cold-lowering an `inline suspend fun`'s STANDALONE body. In an app build an inline suspend fun
     // is a user/kotlinx WRAPPER (e.g. `suspendCancellableCoroutine`, or the issue-#22 `mySuspend`) whose standalone body
@@ -329,9 +330,10 @@ static partial class SuspendColdLowering
     // lambda's `h()` await falls back to kotlin.Any and the value is never unboxed -> `object + int`).
     public static IReadOnlyDictionary<string, TypeNode> ApplyAll(IReadOnlyList<JsonNode> roots,
         ReferenceMetadataIndex refs, IReadOnlySet<string> localTypeFqns, bool appBuild,
-        IReadOnlyDictionary<string, string> localExistentialOwners)
+        IReadOnlyDictionary<string, string> localExistentialOwners, ValueTypeOracle isValueFqn)
     {
         _refs = refs;   // #10: EmitAwaitPoint reads it to resolve the .NET awaitable pattern for each `.await()`.
+        _isValueFqn = isValueFqn ?? (_ => false);
         _appBuild = appBuild;
         const string continuation = "kotlin.coroutines.Continuation";
         var continuationCarrier = localExistentialOwners.GetValueOrDefault(continuation);

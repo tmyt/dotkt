@@ -34,9 +34,9 @@ using DotKt.Bir;
 // `delegationBindings`, and scripts/verify-schema.py enforces the same split structurally.
 static class CallEvalLowering
 {
-    public static void Apply(JsonNode root)
+    public static void Apply(JsonNode root, ValueTypeOracle isValue)
     {
-        Walk(root);
+        Walk(root, isValue ?? (_ => false));
         AssertLowered(root, "");
     }
 
@@ -44,13 +44,13 @@ static class CallEvalLowering
     // plan lowers, the inner is an ordinary `valueBlock` — which may still contain reads of the OUTER plan's bindings,
     // and those are substituted here. An unknown `bindRef` id is therefore left alone on purpose: it belongs to an
     // enclosing plan that has not lowered yet.
-    static void Walk(JsonNode node)
+    static void Walk(JsonNode node, ValueTypeOracle isValue)
     {
         if (node is JsonObject obj)
         {
-            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value);
-            if (Str(obj["k"]) == "callEval") LowerExpression(obj);
-            else if (obj["delegationBindings"] is JsonArray) LowerDelegation(obj);
+            foreach (var kv in obj.ToList()) if (kv.Value != null) Walk(kv.Value, isValue);
+            if (Str(obj["k"]) == "callEval") LowerExpression(obj, isValue);
+            else if (obj["delegationBindings"] is JsonArray) LowerDelegation(obj, isValue);
             // NORMALIZE, unconditionally: a block whose RESULT is a block is one block — its statements run, then the
             // inner's, then the inner's value — and downstream expects the single layer the inline splice's own
             // flatten guarantees. Not restricted to the nesting this pass just created: a nested block is the same
@@ -62,18 +62,18 @@ static class CallEvalLowering
         }
         else if (node is JsonArray arr)
         {
-            foreach (var it in arr.ToList()) if (it != null) Walk(it);
+            foreach (var it in arr.ToList()) if (it != null) Walk(it, isValue);
         }
     }
 
     /// A `callEval` in EXPRESSION position: the materialised bindings become the `stmts` of a `valueBlock` whose
     /// `result` is the call. No materialised binding ⇒ no block at all, and the node collapses to the bare call.
-    static void LowerExpression(JsonObject plan)
+    static void LowerExpression(JsonObject plan, ValueTypeOracle isValue)
     {
         var bindings = plan["bindings"] as JsonArray ?? new JsonArray();
         var call = plan["expr"] ?? throw new InvalidOperationException("bir2cir: a callEval carries no `expr`");
         var type = plan["type"]?.DeepClone();
-        var (stmts, repl) = Materialise(bindings, new List<JsonNode> { call }, DescribeExpression(call));
+        var (stmts, repl) = Materialise(bindings, new List<JsonNode> { call }, DescribeExpression(call), isValue: isValue);
         var lowered = Substitute(call, repl);
         plan.Clear();
         if (stmts.Count == 0)
@@ -118,13 +118,13 @@ static class CallEvalLowering
     /// A constructor DELEGATION's plan. Its arguments ride the ctor DECLARATION (`thisArgs`/`baseArgs`), so there is
     /// no wrapping expression to hold the bindings: they become `preStmts`, which ilemit emits ahead of the `this`/
     /// `base` call — the first thing the constructor body does.
-    static void LowerDelegation(JsonObject ctor)
+    static void LowerDelegation(JsonObject ctor, ValueTypeOracle isValue)
     {
         var bindings = (JsonArray)ctor["delegationBindings"];
         var readers = new List<JsonNode>();
         if (ctor["thisArgs"] is JsonArray ta) readers.Add(ta);
         if (ctor["baseArgs"] is JsonArray ba) readers.Add(ba);
-        var (stmts, repl) = Materialise(bindings, readers, "a constructor delegation");
+        var (stmts, repl) = Materialise(bindings, readers, "a constructor delegation", isValue: isValue);
         foreach (var r in readers.ToList())
         {
             var arr = (JsonArray)r;
@@ -144,8 +144,10 @@ static class CallEvalLowering
     /// is exactly what `force` encodes), and deriving anything further here would move an operand from AFTER a
     /// suspension to before it — the reorder that plan exists to prevent. So `force`, when given, IS the answer.
     internal static (JsonArray Stmts, Dictionary<string, JsonNode> Repl) Materialise(
-        JsonArray bindings, List<JsonNode> readers, string site, bool[] force = null)
+        JsonArray bindings, List<JsonNode> readers, string site, bool[] force = null,
+        ValueTypeOracle isValue = null)
     {
+        isValue ??= _ => false;
         var n = bindings.Count;
         var ids = new string[n];
         var kinds = new string[n];
@@ -233,7 +235,8 @@ static class CallEvalLowering
         {
             var work = new bool[n];
             for (var i = 0; i < n; i++)
-                work[i] = asVar[i] || (kinds[i] == "address" && !drop[i] && LocationHasPinWork((bindings[i] as JsonObject)["expr"]));
+                work[i] = asVar[i] || (kinds[i] == "address" && !drop[i]
+                    && LocationHasPinWork((bindings[i] as JsonObject)["expr"], isValue));
             var last = Array.FindLastIndex(work, x => x);
             for (var i = 0; i < last; i++)
                 if (!stable[i] && !drop[i] && kinds[i] != "address") asVar[i] = true;
@@ -268,7 +271,7 @@ static class CallEvalLowering
                 //    Storing a `T` into a `T&` slot, which assuming ref-return would do, is unverifiable IL.
                 if (IsLvalueFormer(expr))
                 {
-                    PinLocationOperands(expr, stmts);
+                    PinLocationOperands(expr, stmts, isValue);
                     repl[ids[i]] = expr;
                 }
                 else
@@ -415,45 +418,76 @@ static class CallEvalLowering
     /// This asks about STORAGE, not about side effects, so its answer is unrelated to the other four questions and
     /// must not be reconciled with them: `arrayGet` is here because `byref(a[i])` names an element slot, even though
     /// the same kind is impure for the suspend lowering's Q3 and not droppable for Q2.
-    static bool IsLvalueFormer(JsonNode node) =>
-        node is JsonObject o && Str(o["k"]) is
-            "local" or "this" or "field" or "staticField" or "arrayGet" or "stackGet" or "byrefLoad" or "nullableValue";
+    static bool IsLvalueFormer(JsonNode node)
+    {
+        if (node is not JsonObject o) return false;
+        return Str(o["k"]) switch
+        {
+            "local" or "this" or "staticField" or "arrayGet" or "stackGet" or "byrefLoad" => true,
+            // A resolved accessor call and a Nullable<T>.Value read are rvalues. A CLR field projected through
+            // property syntax remains storage only when resolution has said so explicitly.
+            "field" => Str(o["member"]) != "accessor",
+            "clrPropGet" => Str(o["member"]) == "field",
+            _ => false,
+        };
+    }
 
-    /// May this child of an addressable location STAY where it is, or must it be pinned into a local?
+    /// May this OPERAND of an addressable location stay where it is, or must its value be pinned into a local?
     ///
     /// NOT Q2, though it once shared Q2's implementation and reads like it. Q2 asks whether an evaluation may be
     /// SKIPPED; nothing is skipped here — every operand of a location is evaluated, the only question is whether it
-    /// is evaluated in the slot or one statement earlier, out of a local. What decides that is STORAGE IDENTITY: a
-    /// `this`/`local`/`field`/`staticField` chain and an addressable element/referent (`arrayGet`, `stackGet`,
-    /// `byrefLoad`) are the location's own path. Pinning one of those links would take the address of the LOCAL — a
-    /// copy for a value type, so a callee writing through the `byref` would update the copy and not `a.b.c` or
-    /// `array[i].field`. Their computed operands are still visited and pinned after the location former itself stays.
-    /// A `const` or `classRef` is not a location link but has nothing to pin either.
+    /// is evaluated in the slot or one statement earlier, out of a local. What decides that is the OPERAND ROLE, not
+    /// the child's node kind in isolation. A field receiver belongs to the storage path only when the field's owner is
+    /// a value type: pinning that receiver would take the address of a copied struct. The array, index, stack-buffer
+    /// bounds and every reference-type field receiver are VALUES used to compute the location and may be pinned. Thus
+    /// the same `arrayGet` stays when it is the receiver of `array[i].field`, but is pinned whole when it is an index
+    /// value in `array[indexes[i]]`. A literal/local/binding read has no work to pin in either role.
     ///
     /// Deliberately says nothing about side effects. A `field` link can throw and a `staticField` link can run a type
-    /// initializer; both stay, and both then happen at the location's own position, which is where Kotlin puts them.
-    static bool StaysInLocation(JsonNode node) => node is JsonObject o && Str(o["k"]) switch
+    /// initializer; both stay when they are the actual storage link, and then happen at the location's own position,
+    /// which is where Kotlin puts them.
+    static bool StaysWithoutPin(JsonObject node) => Str(node["k"]) switch
     {
-        "const" or "this" or "local" or "bindRef" or "default" or "classRef"
-            or "staticField" or "enumValue" or "arrayGet" or "stackGet" or "byrefLoad" => true,
-        "field" => StaysInLocation(o["recv"]),
+        "const" or "this" or "local" or "bindRef" or "default" or "classRef" or "enumValue" => true,
         _ => false,
     };
 
+    static bool IsValueOwner(JsonObject location, ValueTypeOracle isValue)
+    {
+        var ownerKey = Str(location["k"]) == "clrPropGet" ? "type" : "ownerType";
+        return TypeJson.Read(location[ownerKey]) switch
+        {
+            TypeNode.Fqn f => isValue(f),
+            TypeNode.Nullable => true,
+            TypeNode.Oblivious o => o.Of is TypeNode.Fqn f && isValue(f) || o.Of is TypeNode.Nullable,
+            _ => false,
+        };
+    }
+
+    static bool IsStoragePathOperand(JsonObject location, string key, JsonObject child,
+        ValueTypeOracle isValue) =>
+        key == "recv" && IsLvalueFormer(child) && IsValueOwner(location, isValue)
+        && Str(location["k"]) is "field" or "clrPropGet";
+
+    static bool StaysInLocation(JsonObject location, string key, JsonObject child,
+        ValueTypeOracle isValue) =>
+        IsStoragePathOperand(location, key, child, isValue) || StaysWithoutPin(child);
+
     /// Would [PinLocationOperands] emit anything? Asked before the emission loop, because a binding that emits
     /// pre-call statements participates in the ordering rule.
-    static bool LocationHasPinWork(JsonNode location)
+    static bool LocationHasPinWork(JsonNode location, ValueTypeOracle isValue)
     {
         if (!IsLvalueFormer(location)) return true;   // the whole location moves — see the address arm
         var found = false;
-        WalkOperands(location as JsonObject, child =>
+        WalkOperands(location as JsonObject, (key, child) =>
         {
-            if (StaysInLocation(child))
+            if (StaysInLocation((JsonObject)location, key, child, isValue))
             {
                 // A location FORMER can stay while one of the values that computes it still has to move (`a[i()]`).
                 // Probe through the same recursive boundary PinLocationOperands uses, or the order pass will miss
                 // the pre-call work and let an earlier argument slide behind it.
-                if (IsLvalueFormer(child) && LocationHasPinWork(child)) found = true;
+                if (IsStoragePathOperand((JsonObject)location, key, child, isValue)
+                    && LocationHasPinWork(child, isValue)) found = true;
                 return null;
             }
             found = true;
@@ -466,31 +500,38 @@ static class CallEvalLowering
     /// operand order, leaving a location expression the call can still take the address of.
     ///
     /// Shape-agnostic on purpose: kotc renders an address through the ordinary expression emitter, so a location is
-    /// whatever the lvalue happens to be — a bare `local`, a `field` over a receiver chain, an `arrayGet` over an array
-    /// and an index, a member access. The rule is the same for all of them, and it is keyed on STORAGE-PATH IDENTITY
-    /// rather than on side effects ([StaysInLocation]): a link of the location's own path stays and is recursed into,
-    /// because pinning it would take the address of a local — a copy, for a value type. Everything else is a value
-    /// computed FOR the location and is pinned. So `a.b.c[i()]` pins `i()` and keeps the whole `a.b.c[…]` path, even
-    /// though a `field` link in it can throw.
-    static void PinLocationOperands(JsonNode location, JsonArray into) =>
-        WalkOperands(location as JsonObject, child =>
+    /// whatever the lvalue happens to be — a bare `local`, a field over a receiver chain, or an `arrayGet` over an
+    /// array and an index. The rule is the same for all of them, and it is keyed on STORAGE-PATH IDENTITY rather than
+    /// on side effects ([StaysInLocation]): only an operand whose ROLE is the next value-type link stays and is
+    /// recursed into, because pinning it would take the address of a local struct copy. Everything else is a value
+    /// computed FOR the location and is pinned. So `a.b.c[i()]` keeps only its value-type-owner links and pins the
+    /// array and `i()` values, even though a field link in it can throw.
+    static void PinLocationOperands(JsonNode location, JsonArray into, ValueTypeOracle isValue) =>
+        WalkOperands(location as JsonObject, (key, child) =>
         {
-            if (StaysInLocation(child)) { PinLocationOperands(child, into); return null; }
+            if (StaysInLocation((JsonObject)location, key, child, isValue))
+            {
+                if (IsStoragePathOperand((JsonObject)location, key, child, isValue))
+                    PinLocationOperands(child, into, isValue);
+                return null;
+            }
             return PinValue(child, into);
         });
 
     /// Is a location in the post-materialisation form produced by [PinLocationOperands]? Kept beside the mutating
     /// walk so the suspend planner's chokepoint validates the same storage-path rule rather than restating which
     /// children belong to a location. `settled` identifies values the caller knows were pinned into locals.
-    internal static bool IsPinnedLocation(JsonNode location, Func<JsonNode, bool> settled)
+    internal static bool IsPinnedLocation(JsonNode location, Func<JsonNode, bool> settled,
+        ValueTypeOracle isValue)
     {
         if (!IsLvalueFormer(location)) return settled(location);
         var ok = true;
-        WalkOperands(location as JsonObject, child =>
+        WalkOperands(location as JsonObject, (key, child) =>
         {
-            if (StaysInLocation(child))
+            if (StaysInLocation((JsonObject)location, key, child, isValue))
             {
-                if (IsLvalueFormer(child)) ok &= IsPinnedLocation(child, settled);
+                if (IsStoragePathOperand((JsonObject)location, key, child, isValue))
+                    ok &= IsPinnedLocation(child, settled, isValue);
             }
             else ok &= settled(child);
             return null;
@@ -500,7 +541,7 @@ static class CallEvalLowering
 
     /// Visit every OPERAND node of `o` in evaluation order, replacing it with whatever `visit` returns (null = keep).
     /// A type slot (`{t:…}`) and a descriptor are not operands; only a `{k:…}` node is a value.
-    static void WalkOperands(JsonObject o, Func<JsonObject, JsonNode> visit)
+    static void WalkOperands(JsonObject o, Func<string, JsonObject, JsonNode> visit)
     {
         if (o == null) return;
         foreach (var key in o.Select(kv => kv.Key).OrderBy(SuspendLiveness.OperandRank).ToList())
@@ -509,11 +550,11 @@ static class CallEvalLowering
             switch (o[key])
             {
                 case JsonObject child when Str(child["k"]) != null:
-                    if (visit(child) is JsonNode rep) o[key] = rep;
+                    if (visit(key, child) is JsonNode rep) o[key] = rep;
                     break;
                 case JsonArray arr:
                     for (var i = 0; i < arr.Count; i++)
-                        if (arr[i] is JsonObject e && Str(e["k"]) != null && visit(e) is JsonNode r) arr[i] = r;
+                        if (arr[i] is JsonObject e && Str(e["k"]) != null && visit(key, e) is JsonNode r) arr[i] = r;
                     break;
             }
         }

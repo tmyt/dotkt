@@ -31,11 +31,15 @@ namespace Probe {
         public Box Direct;
         public BoxNest Nested;
         public Box[] Items;
+        public int SelfCalls;
 
         public BoxHolder(int direct, int nested, int item) {
             Direct = new Box(direct);
             Nested = new BoxNest(nested);
             Items = new[] { new Box(item) };
         }
+
+        public ref Box DirectRef() => ref Direct;
+        public BoxHolder Self() { SelfCalls++; OutRef.Calc.SelfOrder += "h"; return this; }
     }
 }

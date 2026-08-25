@@ -498,7 +498,8 @@ static class MemberCallSubstitution
     /// argument then inlines back into its slot), so it emits the same bare `newClr` as before — no dead temp.
     static JsonNode MaterialiseMappedArguments(JsonArray plan, JsonObject lowered, TypeNode type)
     {
-        var (stmts, repl) = CallEvalLowering.Materialise(plan, new List<JsonNode> { lowered }, "a mapped constructor");
+        var (stmts, repl) = CallEvalLowering.Materialise(
+            plan, new List<JsonNode> { lowered }, "a mapped constructor", isValue: _isValue);
         var result = CallEvalLowering.Substitute(lowered, repl);
         // CHOKEPOINT, the same one `CallEvalLowering.Apply` asserts after its own lowering: the plan vocabulary must
         // not survive the pass that authored it. A kept argument's `bindRef` sits in an eager `newClr` slot, so it is
@@ -2334,7 +2335,8 @@ static class MemberCallSubstitution
                 binding.ByrefPositions, exactArgTypes),
             node, refs, ctx, ownerToken);
         var (stmts, replacements) = CallEvalLowering.Materialise(
-            bindings, new List<JsonNode> { lowered }, $"@ClrCountFromExclusiveEnd call {ownerToken}.{member}");
+            bindings, new List<JsonNode> { lowered }, $"@ClrCountFromExclusiveEnd call {ownerToken}.{member}",
+            isValue: _isValue);
         var result = CallEvalLowering.Substitute(lowered, replacements);
         AssertNoPlanVocabulary(result);
         if (stmts.Count == 0) return result;
