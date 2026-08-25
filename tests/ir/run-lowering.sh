@@ -33,7 +33,8 @@
 #
 #   BIR result-frame ownership (#328) — a call result exactly matching its frontend `sty` is already instantiated in
 #   the caller frame. `constructed-member-return-frame` runs that shape through both constructed-owner sweeps and
-#   rejects the former nested re-substitution while the await fixtures keep witnessing callee-relative substitution.
+#   rejects the former nested re-substitution, including for a bir2cir-synthesized inherited-interface bridge, while
+#   the await fixtures keep witnessing callee-relative substitution.
 #
 #   A generic owner's companion statics live on one non-generic physical carrier, including while reference bodies are
 #   retained long enough to emit field initializers. `reference-generic-static-self-init` pins the self-call owner.

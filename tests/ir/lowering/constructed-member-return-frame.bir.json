@@ -2,36 +2,7 @@
   "fileClass": "ConstructedMemberReturnFrameProbeKt",
   "hasMain": false,
   "fields": [],
-  "methods": [
-    {
-      "name": "probe", "static": true, "override": false, "virtual": false, "vis": "public",
-      "typeParams": [{ "name": "T" }],
-      "params": [{
-        "name": "box",
-        "type": {
-          "t": "fqn", "name": "LocalResultBox",
-          "args": [{ "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } }]
-        }
-      }],
-      "ret": { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
-      "body": [{
-        "k": "return",
-        "value": {
-          "k": "callInstance", "virtual": true,
-          "ownerType": {
-            "t": "fqn", "name": "LocalResultBox",
-            "args": [{ "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } }]
-          },
-          "method": "read", "sig": [],
-          "sty": { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
-          "ret": { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
-          "dynRet": { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
-          "recv": { "k": "local", "name": "box" },
-          "args": []
-        }
-      }]
-    }
-  ],
+  "methods": [],
   "types": [{
     "name": "LocalResultBox", "kind": "interface", "typeParams": [{ "name": "T" }],
     "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
@@ -40,6 +11,73 @@
       "abstract": true, "vis": "public", "params": [],
       "ret": { "t": "tv", "scope": "type", "i": 0 }, "body": []
     }]
+  }, {
+    "name": "ConstructedMemberReturnFrameProbe", "kind": "class", "typeParams": [{ "name": "T" }],
+    "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
+    "methods": [{
+      "name": "probe", "static": false, "override": false, "virtual": false, "vis": "public",
+      "params": [{
+        "name": "box",
+        "type": {
+          "t": "fqn", "name": "LocalResultBox",
+          "args": [{ "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } }]
+        }
+      }],
+      "ret": { "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } },
+      "body": [{
+        "k": "return",
+        "value": {
+          "k": "callInstance", "virtual": true,
+          "ownerType": {
+            "t": "fqn", "name": "LocalResultBox",
+            "args": [{ "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } }]
+          },
+          "method": "read", "sig": [],
+          "sty": { "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } },
+          "ret": { "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } },
+          "dynRet": { "t": "array", "elem": { "t": "tv", "scope": "type", "i": 0 } },
+          "recv": { "k": "local", "name": "box" },
+          "args": []
+        }
+      }]
+    }]
+  }, {
+    "name": "Pairish", "kind": "class", "typeParams": [{ "name": "A" }, { "name": "B" }],
+    "base": null, "interfaces": [], "fields": [], "ctors": [], "methods": [], "properties": [], "attrs": []
+  }, {
+    "name": "Passer", "kind": "interface", "typeParams": [{ "name": "T" }],
+    "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
+    "methods": [{
+      "name": "pass", "static": false, "override": false, "virtual": true, "abstract": true, "vis": "public",
+      "params": [{ "name": "value", "type": { "t": "tv", "scope": "type", "i": 0 } }],
+      "ret": { "t": "tv", "scope": "type", "i": 0 }, "body": []
+    }]
+  }, {
+    "name": "PassBase", "kind": "class", "typeParams": [{ "name": "T" }],
+    "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
+    "methods": [{
+      "name": "pass", "static": false, "override": false, "virtual": false, "abstract": false, "vis": "public",
+      "params": [{ "name": "value", "type": { "t": "tv", "scope": "type", "i": 0 } }],
+      "ret": { "t": "tv", "scope": "type", "i": 0 },
+      "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
+    }]
+  }, {
+    "name": "DerivedPasser", "kind": "class", "typeParams": [{ "name": "K" }, { "name": "V" }],
+    "base": {
+      "t": "fqn", "name": "PassBase",
+      "args": [{
+        "t": "fqn", "name": "Pairish",
+        "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
+      }]
+    },
+    "interfaces": [{
+      "t": "fqn", "name": "Passer",
+      "args": [{
+        "t": "fqn", "name": "Pairish",
+        "args": [{ "t": "tv", "scope": "type", "i": 0 }, { "t": "tv", "scope": "type", "i": 1 }]
+      }]
+    }],
+    "fields": [], "ctors": [], "methods": [], "properties": [], "attrs": []
   }],
   "refTypes": []
 }

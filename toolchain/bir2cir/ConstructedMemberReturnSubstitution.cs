@@ -51,8 +51,9 @@ static class ConstructedMemberReturnSubstitution
         // tv in it already belongs to the caller's frame; substituting it through the callee owner would apply the
         // construction twice (`Iterator<Entry<K,V>>.next()` -> `Entry<Entry<K,V>,V>`). A callee-relative result is
         // distinguishable at the slot boundary without inventing another tv scope: it differs from the exact stamp
-        // (`AtomicRef<Any>.value`: ret=!0, sty=String), so only that form is substituted. Exact equality also makes
-        // the early and late sweeps genuinely idempotent.
+        // (`AtomicRef<Any>.value`: ret=!0, sty=String), so only that form is substituted. A bir2cir producer that
+        // authors an already-closed result must carry the same exact stamp; equality then keeps that call stable
+        // across the early and late sweeps.
         if (TypeJson.Read(obj["sty"]) is TypeNode stamp && type.Equals(stamp)) return false;
         obj[key] = TypeJson.Write(Subst(type, args));
         return true;
