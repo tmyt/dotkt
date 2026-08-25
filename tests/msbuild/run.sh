@@ -252,7 +252,7 @@ if [[ -z "$config_msg" ]] && { ! grep -q 'dotkt-kotc.rsp' "$config/debug-build.l
 	|| ! grep -q 'dotkt-kotc.rsp' "$config/release-build.log" \
 	|| ! grep -q 'dotkt-bir2cir.rsp' "$config/release-build.log" \
 	|| ! grep -q 'dotkt-ilemit.rsp' "$config/release-build.log" \
-	|| grep -Eq 'kotc(\.bat)?"? .* -classpath |bir2cir\.dll" .*--compile-refs|ilemit\.dll" .*--compile-refs' "$config/debug-build.log" "$config/release-build.log"; }; then
+	|| grep -Eq 'kotc(\.bat)?"? .* -classpath |bir2cir\.dll" .*--compile-refs|ilemit\.dll" .*--(compile|runtime)-refs' "$config/debug-build.log" "$config/release-build.log"; }; then
 	config_msg="a compiler tool did not use its short response-file invocation"
 fi
 if [[ -z "$config_msg" ]] && awk '

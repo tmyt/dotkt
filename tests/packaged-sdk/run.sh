@@ -383,7 +383,7 @@ EOF
 		fail exe "back-end response files did not carry the resolved reference sets"
 	elif ! grep -q 'App;Response.kt' "$d/obj/Debug/net10.0/dotkt-kotc.rsp"; then
 		fail exe "packaged response file lost the punctuation-containing source path"
-	elif grep -Eq 'kotc(\.bat)?"? .* -classpath |bir2cir\.dll" .*--compile-refs|ilemit\.dll" .*--compile-refs' "$d/run.build.log"; then
+	elif grep -Eq 'kotc(\.bat)?"? .* -classpath |bir2cir\.dll" .*--compile-refs|ilemit\.dll" .*--(compile|runtime)-refs' "$d/run.build.log"; then
 		fail exe "a packaged compiler tool still received its generated argument set inline"
 	elif [[ "$actual" == "$expected" ]]; then pass exe
 	else fail exe "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
