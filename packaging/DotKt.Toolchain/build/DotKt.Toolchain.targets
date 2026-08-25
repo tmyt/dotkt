@@ -37,6 +37,8 @@
           Condition="'$(DotKtReferenceKlibPath)' == ''">$(IntermediateOutputPath)klib</DotKtReferenceKlibPath>
       <DotKtReferenceKlibResponseFile
           Condition="'$(DotKtReferenceKlibResponseFile)' == ''">$(IntermediateOutputPath)dotkt-reference-klibs.rsp</DotKtReferenceKlibResponseFile>
+      <DotKtCompilerResponseFile
+          Condition="'$(DotKtCompilerResponseFile)' == ''">$(IntermediateOutputPath)dotkt-kotc.rsp</DotKtCompilerResponseFile>
       <DotKtCompileOptionsManifest
           Condition="'$(DotKtCompileOptionsManifest)' == ''">$(IntermediateOutputPath)dotkt-compile-options.txt</DotKtCompileOptionsManifest>
     </PropertyGroup>
@@ -181,14 +183,41 @@
     <RemoveDir Directories="$(DotKtIntermediateBirPath)" />
     <MakeDir Directories="$(DotKtIntermediateBirPath)" />
     <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
-    <!-- $(DotKtKotcOptions): extra raw kotc flags a project may pass through (e.g. compiling the stdlib ITSELF needs
-         -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command.
-         $(DotKtMppFlags) is computed by DotKtComputeCompileOptions above. -->
+    <!-- Keep the process command line short on Windows. cmd.exe limits a batch invocation to 8191 characters, while
+         the complete frontend KLIB classpath alone routinely exceeds that for net10.0. kotc already implements the
+         standard Kotlin @argfile syntax, so put every MSBuild-generated argument there and leave only the explicitly
+         user-authored $(DotKtKotcOptions) on the command line. Paths are quoted for whitespace and escaped according
+         to Kotlin's argfile parser: inside quotes both backslashes and double quotes must be escaped with a backslash.
+         $(DotKtKotcOptions) remains verbatim because it is an intentional raw command-line extension point. -->
     <PropertyGroup>
       <_DotKtKlibPathSeparator>$([System.IO.Path]::PathSeparator)</_DotKtKlibPathSeparator>
       <_DotKtFrontendClasspath>$(DotKtStdlib)$(_DotKtKlibPathSeparator)@(_DotKtKlibReference->'%(KlibPath)', '$(_DotKtKlibPathSeparator)')</_DotKtFrontendClasspath>
+      <_DotKtEscapedFrontendClasspath>$([System.String]::Copy('$(_DotKtFrontendClasspath)').Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedFrontendClasspath>
+      <_DotKtCommonSourcePaths>@(DotKtCommon->'%(FullPath)', ',')</_DotKtCommonSourcePaths>
+      <_DotKtEscapedCommonSourcePaths>$([System.String]::Copy('$(_DotKtCommonSourcePaths)').Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCommonSourcePaths>
     </PropertyGroup>
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(_DotKtFrontendClasspath)&quot; -d &quot;$(DotKtIntermediateBirPath)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)" />
+    <ItemGroup>
+      <_DotKtKotcResponseArgument Remove="@(_DotKtKotcResponseArgument)" />
+      <_DotKtKotcResponseArgument Include="@(KotlinCompile)">
+        <Value>&quot;$([System.String]::Copy('%(FullPath)').Replace('\', '\\').Replace('&quot;', '\&quot;'))&quot;</Value>
+      </_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_no_stdlib"><Value>-no-stdlib</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_classpath_option"><Value>-classpath</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_classpath_value"><Value>&quot;$(_DotKtEscapedFrontendClasspath)&quot;</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_output_option"><Value>-d</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_output_value">
+        <Value>&quot;$([System.String]::Copy('$(DotKtIntermediateBirPath)').Replace('\', '\\').Replace('&quot;', '\&quot;'))&quot;</Value>
+      </_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_mpp" Condition="'@(DotKtCommon)' != ''"><Value>-Xmulti-platform</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_expect_actual" Condition="'@(DotKtCommon)' != ''"><Value>-Xexpect-actual-classes</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_common_sources" Condition="'@(DotKtCommon)' != ''">
+        <Value>&quot;-Xcommon-sources=$(_DotKtEscapedCommonSourcePaths)&quot;</Value>
+      </_DotKtKotcResponseArgument>
+    </ItemGroup>
+    <WriteLinesToFile File="$(DotKtCompilerResponseFile)"
+                      Lines="@(_DotKtKotcResponseArgument->'%(Value)')"
+                      Overwrite="true" />
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(DotKtKotcOptions)" />
     <Touch Files="$(DotKtIntermediateBirPath)/.stamp" AlwaysCreate="true" />
   </Target>
 
@@ -282,6 +311,6 @@
   <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean" DependsOnTargets="DotKtInitializeIntermediatePaths">
     <RemoveDir Directories="$(DotKtIntermediateBirPath);$(DotKtIntermediateCirPath);$(DotKtReferenceKlibPath)" />
-    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompileOptionsManifest)" />
+    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtCompileOptionsManifest)" />
   </Target>
 </Project>

@@ -127,13 +127,15 @@ if [[ $incr_rc1 -eq 0 && $incr_rc2 -eq 0 && "$incr1" == "12" && "$incr2" == "12"
 fi
 rm -rf "$incr"
 
-# #467: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
+# #467 + #592: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
 # $(BaseIntermediateOutputPath). Build one project as Debug and Release CONCURRENTLY while each configuration selects
 # a different DLL with the SAME assembly identity and a different Kotlin source. Shared BIR/CIR/KLIB/rsp state can
 # therefore fail by deletion races, project the wrong reference surface, or silently reuse the other configuration's
-# stamps; distinct directory spelling alone is not enough to pass this case. Then prove independent no-op state,
-# Debug-only source rename/deletion safety, and configuration-scoped clean behavior.
-config="$WORK/config-isolation"
+# stamps; distinct directory spelling alone is not enough to pass this case. The project directory contains whitespace
+# so the kotc response file must preserve quoted absolute source paths, and its complete net10.0 classpath is asserted
+# to exceed cmd.exe's 8191-character limit while the actual kotc invocation remains short. Then prove independent
+# no-op state, Debug-only source rename/deletion safety, and configuration-scoped clean behavior.
+config="$WORK/config isolation"
 rm -rf "$config"
 mkdir -p "$config/ref-src" "$config/refs/debug" "$config/refs/release" "$config/app"
 cat > "$config/ref-src/ConfigReference.csproj" <<'CSPROJ'
@@ -225,12 +227,22 @@ for cfg_root in "$cfg_debug_root" "$cfg_release_root"; do
 		[[ ! -f "$cfg_root/bir/.stamp" ]] || [[ ! -f "$cfg_root/cir/.stamp" ]] \
 			|| [[ ! -f "$cfg_root/klib/ConfigReference.klib" ]] \
 			|| [[ ! -f "$cfg_root/dotkt-reference-klibs.rsp" ]] \
+			|| [[ ! -f "$cfg_root/dotkt-kotc.rsp" ]] \
 			|| [[ ! -f "$cfg_root/dotkt-compile-options.txt" ]] \
 			|| [[ ! -f "$cfg_root/bir/_DotKtPlaceholder.cs" ]];
 	}; then
 		config_msg="incomplete compiler state under ${cfg_root#"$ROOT/"}"
 	fi
 done
+if [[ -z "$config_msg" ]] && { (( $(wc -c < "$cfg_debug_root/dotkt-kotc.rsp") <= 8191 )) \
+	|| (( $(wc -c < "$cfg_release_root/dotkt-kotc.rsp") <= 8191 )); }; then
+	config_msg="kotc response file did not carry a command line longer than cmd.exe's 8191-character limit"
+fi
+if [[ -z "$config_msg" ]] && { ! grep -q 'dotkt-kotc.rsp' "$config/debug-build.log" \
+	|| ! grep -q 'dotkt-kotc.rsp' "$config/release-build.log" \
+	|| grep -Eq 'kotc(\.bat)?"? .* -classpath ' "$config/debug-build.log" "$config/release-build.log"; }; then
+	config_msg="kotc did not use the short response-file invocation"
+fi
 if [[ -z "$config_msg" ]] && {
 	! grep -q 'DebugValue' "$cfg_debug_root/bir/DebugConfig.bir.json" \
 		|| ! grep -q 'debug-config-marker' "$cfg_debug_root/bir/DebugConfig.bir.json" \
@@ -295,6 +307,7 @@ if [[ -z "$config_msg" ]]; then
 fi
 if [[ -z "$config_msg" ]] && { [[ -e "$cfg_debug_root/bir" ]] || [[ -e "$cfg_debug_root/cir" ]] \
 	|| [[ -e "$cfg_debug_root/klib" ]] || [[ -e "$cfg_debug_root/dotkt-reference-klibs.rsp" ]] \
+	|| [[ -e "$cfg_debug_root/dotkt-kotc.rsp" ]] \
 	|| [[ -e "$cfg_debug_root/dotkt-compile-options.txt" ]] \
 	|| [[ ! -f "$cfg_release_root/bir/ReleaseConfig.bir.json" ]] \
 	|| [[ ! -f "$cfg_release_root/cir/ReleaseConfig.cir.json" ]] \

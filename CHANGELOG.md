@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Packaged Kotlin builds no longer exceed Windows' 8191-character batch-command limit (#592).** The MSBuild
+  integration writes sources, the complete frontend KLIB classpath, output paths, and multiplatform flags to a
+  configuration-local Kotlin response file and invokes `kotc` with only that file plus explicit raw user options.
+  Quoted response values preserve whitespace and Windows backslashes; `dotnet clean` removes the new intermediate.
+
 - **By-reference paths through nested CLR structs now address the original storage (#308).** Call-plan lowering keeps
   only value-type receiver links in the location path while fixing arrays, indices, call roots, and other computed
   values once in Kotlin order. ilemit follows that physical path with recursive `ldelema`/`ldflda`, including CLR
