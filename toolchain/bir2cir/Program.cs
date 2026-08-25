@@ -15,6 +15,7 @@ static class Bir2Cir
     {
         try
         {
+            args = ResponseFileArguments.Expand(args);
             // The shared BIR/CIR codec (bir-common) is <Compile Link/>-shared, so it has no project of its own
             // and no test host. Running its self-tests HERE exercises the exact compiled copy this tool reads and
             // writes documents with; tests/ir/run-schema.sh drives it beside the document-level freeze checks.

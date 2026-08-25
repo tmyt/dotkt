@@ -16,6 +16,15 @@ static class IlEmit
 {
     static int Main(string[] args)
     {
+        try
+        {
+            args = ResponseFileArguments.Expand(args);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ilemit: {ex.Message}");
+            return 1;
+        }
         if (args.Length < 3) { Console.Error.WriteLine("usage: ilemit <out-dir> <asmName> --compile-refs <dll;dll;...> [--build-stdlib=metadata|runtime] [--runtime-refs <dll;dll;...>] [--target-framework-moniker <framework>] [--target-rid <rid>] [--rid-graph-path <json>] <file.cir.json>..."); return 1; }
         var outDir = args[0];
         var asmName = args[1];

@@ -37,6 +37,12 @@
           Condition="'$(DotKtReferenceKlibPath)' == ''">$(IntermediateOutputPath)klib</DotKtReferenceKlibPath>
       <DotKtReferenceKlibResponseFile
           Condition="'$(DotKtReferenceKlibResponseFile)' == ''">$(IntermediateOutputPath)dotkt-reference-klibs.rsp</DotKtReferenceKlibResponseFile>
+      <DotKtCompilerResponseFile
+          Condition="'$(DotKtCompilerResponseFile)' == ''">$(IntermediateOutputPath)dotkt-kotc.rsp</DotKtCompilerResponseFile>
+      <DotKtBir2CirResponseFile
+          Condition="'$(DotKtBir2CirResponseFile)' == ''">$(IntermediateOutputPath)dotkt-bir2cir.rsp</DotKtBir2CirResponseFile>
+      <DotKtIlEmitResponseFile
+          Condition="'$(DotKtIlEmitResponseFile)' == ''">$(IntermediateOutputPath)dotkt-ilemit.rsp</DotKtIlEmitResponseFile>
       <DotKtCompileOptionsManifest
           Condition="'$(DotKtCompileOptionsManifest)' == ''">$(IntermediateOutputPath)dotkt-compile-options.txt</DotKtCompileOptionsManifest>
     </PropertyGroup>
@@ -157,7 +163,9 @@
          invocation the MPP NUnit producer exercises. All sources still pass POSITIONALLY (in @(KotlinCompile));
          -Xcommon-sources only tags which of them are common. Empty DotKtCommon => empty flags => unchanged compile. -->
     <PropertyGroup Condition="'@(DotKtCommon)' != ''">
-      <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;@(DotKtCommon->'%(FullPath)', ',')&quot;</DotKtMppFlags>
+      <_DotKtCommonSourcePaths>@(DotKtCommon->'%(FullPath)', ',')</_DotKtCommonSourcePaths>
+      <_DotKtEscapedCommonSourcePaths>$(_DotKtCommonSourcePaths.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCommonSourcePaths>
+      <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;$(_DotKtEscapedCommonSourcePaths)&quot;</DotKtMppFlags>
     </PropertyGroup>
     <WriteLinesToFile File="$(DotKtCompileOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
                       Lines="$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)')" />
@@ -181,14 +189,39 @@
     <RemoveDir Directories="$(DotKtIntermediateBirPath)" />
     <MakeDir Directories="$(DotKtIntermediateBirPath)" />
     <Message Importance="high" Text="DotKt: compiling @(KotlinCompile->Count()) .kt file(s) -> BIR" />
-    <!-- $(DotKtKotcOptions): extra raw kotc flags a project may pass through (e.g. compiling the stdlib ITSELF needs
-         -Xallow-kotlin-package -opt-in=... ). Space-separated; appended verbatim to the compile command.
-         $(DotKtMppFlags) is computed by DotKtComputeCompileOptions above. -->
+    <!-- Keep the process command line short on Windows. cmd.exe limits a batch invocation to 8191 characters, while
+         the complete frontend KLIB classpath alone routinely exceeds that for net10.0. kotc already implements the
+         standard Kotlin @argfile syntax, so put the generated compile arguments there and leave only the explicitly
+         user-authored $(DotKtKotcOptions) on the command line. -no-stdlib was a launcher compatibility spelling that
+         kotc discarded before parsing; the explicit frontend classpath makes it unnecessary here. Paths are quoted
+         for whitespace and escaped according to Kotlin's argfile parser: inside quotes both backslashes and double
+         quotes must be escaped with a backslash. $(DotKtKotcOptions) remains verbatim because it is an intentional raw
+         command-line extension point. -->
     <PropertyGroup>
       <_DotKtKlibPathSeparator>$([System.IO.Path]::PathSeparator)</_DotKtKlibPathSeparator>
       <_DotKtFrontendClasspath>$(DotKtStdlib)$(_DotKtKlibPathSeparator)@(_DotKtKlibReference->'%(KlibPath)', '$(_DotKtKlibPathSeparator)')</_DotKtFrontendClasspath>
+      <_DotKtEscapedFrontendClasspath>$(_DotKtFrontendClasspath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedFrontendClasspath>
+      <_DotKtEscapedBirOutputPath>$(DotKtIntermediateBirPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedBirOutputPath>
     </PropertyGroup>
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @(KotlinCompile->'&quot;%(FullPath)&quot;', ' ') -no-stdlib -classpath &quot;$(_DotKtFrontendClasspath)&quot; -d &quot;$(DotKtIntermediateBirPath)&quot; $(DotKtMppFlags) $(DotKtKotcOptions)" />
+    <ItemGroup>
+      <_DotKtKotcResponseArgument Remove="@(_DotKtKotcResponseArgument)" />
+      <_DotKtEscapedKotlinCompile Remove="@(_DotKtEscapedKotlinCompile)" />
+      <_DotKtEscapedKotlinCompile Include="@(KotlinCompile->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
+      <_DotKtKotcResponseArgument Include="@(_DotKtEscapedKotlinCompile)">
+        <Value>&quot;%(Identity)&quot;</Value>
+      </_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_classpath_option"><Value>-classpath</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_classpath_value"><Value>&quot;$(_DotKtEscapedFrontendClasspath)&quot;</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_output_option"><Value>-d</Value></_DotKtKotcResponseArgument>
+      <_DotKtKotcResponseArgument Include="_output_value"><Value>&quot;$(_DotKtEscapedBirOutputPath)&quot;</Value></_DotKtKotcResponseArgument>
+      <!-- Keep the manifest and compiler on the same MPP argument source. This is intentionally one argfile line:
+           kotc tokenizes its three arguments, while the quoted common-source value remains one token. -->
+      <_DotKtKotcResponseArgument Include="_mpp_flags" Condition="'$(DotKtMppFlags)' != ''"><Value>$(DotKtMppFlags)</Value></_DotKtKotcResponseArgument>
+    </ItemGroup>
+    <WriteLinesToFile File="$(DotKtCompilerResponseFile)"
+                      Lines="@(_DotKtKotcResponseArgument->'%(Value)')"
+                      Overwrite="true" />
+    <Exec Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(DotKtKotcOptions)" />
     <Touch Files="$(DotKtIntermediateBirPath)/.stamp" AlwaysCreate="true" />
   </Target>
 
@@ -238,7 +271,24 @@
     <RemoveDir Directories="$(DotKtIntermediateCirPath)" />
     <MakeDir Directories="$(DotKtIntermediateCirPath)" />
     <Message Importance="high" Text="DotKt: lowering BIR -> CIR" />
-    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; &quot;$(DotKtIntermediateCirPath)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; $(_DotKtReflectionRestrictedArg) @(_DotKtBir->'&quot;%(FullPath)&quot;', ' ')" />
+    <PropertyGroup>
+      <_DotKtEscapedCirOutputPath>$(DotKtIntermediateCirPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCirOutputPath>
+      <_DotKtEscapedCompileReferences>$(_DotKtCompileReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCompileReferences>
+    </PropertyGroup>
+    <ItemGroup>
+      <_DotKtBir2CirResponseArgument Remove="@(_DotKtBir2CirResponseArgument)" />
+      <_DotKtEscapedBir Remove="@(_DotKtEscapedBir)" />
+      <_DotKtEscapedBir Include="@(_DotKtBir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
+      <_DotKtBir2CirResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedCirOutputPath)&quot;</Value></_DotKtBir2CirResponseArgument>
+      <_DotKtBir2CirResponseArgument Include="_compile_refs_option"><Value>--compile-refs</Value></_DotKtBir2CirResponseArgument>
+      <_DotKtBir2CirResponseArgument Include="_compile_refs"><Value>&quot;$(_DotKtEscapedCompileReferences)&quot;</Value></_DotKtBir2CirResponseArgument>
+      <_DotKtBir2CirResponseArgument Include="_reflection_restricted" Condition="'$(_DotKtReflectionRestrictedArg)' != ''"><Value>$(_DotKtReflectionRestrictedArg)</Value></_DotKtBir2CirResponseArgument>
+      <_DotKtBir2CirResponseArgument Include="@(_DotKtEscapedBir)"><Value>&quot;%(Identity)&quot;</Value></_DotKtBir2CirResponseArgument>
+    </ItemGroup>
+    <WriteLinesToFile File="$(DotKtBir2CirResponseFile)"
+                      Lines="@(_DotKtBir2CirResponseArgument->'%(Value)')"
+                      Overwrite="true" />
+    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; @&quot;$(DotKtBir2CirResponseFile)&quot;" />
     <Touch Files="$(DotKtIntermediateCirPath)/.stamp;$(_DotKtBir2CirModeStamp)" AlwaysCreate="true" />
   </Target>
 
@@ -276,12 +326,43 @@
          is empty for a framework-dependent (no-RID) build → ilemit defaults to the host RID (correct). Both properties
          are set by Microsoft.NET.Sdk before this AfterTargets=CoreCompile target runs; $(RuntimeIdentifierGraphPath)
          names the SDK's portable graph (or, under UseRidGraph, the full one — same schema). -->
-    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; &quot;$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))&quot; &quot;$(TargetName)&quot; --compile-refs &quot;$(_DotKtCompileReferences)&quot; --runtime-refs &quot;$(_DotKtRuntimeReferences)&quot; --target-framework-moniker &quot;$(TargetFrameworkMoniker)&quot; --target-rid &quot;$(RuntimeIdentifier)&quot; --rid-graph-path &quot;$(RuntimeIdentifierGraphPath)&quot; @(_DotKtCir->'&quot;%(FullPath)&quot;', ' ')" />
+    <PropertyGroup>
+      <_DotKtIlEmitOutputPath>$(IntermediateOutputPath.TrimEnd('/').TrimEnd('\'))</_DotKtIlEmitOutputPath>
+      <_DotKtEscapedIlEmitOutputPath>$(_DotKtIlEmitOutputPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedIlEmitOutputPath>
+      <_DotKtEscapedTargetName>$(TargetName.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedTargetName>
+      <_DotKtEscapedCompileReferences>$(_DotKtCompileReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCompileReferences>
+      <_DotKtEscapedRuntimeReferences>$(_DotKtRuntimeReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedRuntimeReferences>
+      <_DotKtEscapedTargetFrameworkMoniker>$(TargetFrameworkMoniker.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedTargetFrameworkMoniker>
+      <_DotKtEscapedRuntimeIdentifier>$(RuntimeIdentifier.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedRuntimeIdentifier>
+      <_DotKtEscapedRuntimeIdentifierGraphPath>$(RuntimeIdentifierGraphPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedRuntimeIdentifierGraphPath>
+    </PropertyGroup>
+    <ItemGroup>
+      <_DotKtIlEmitResponseArgument Remove="@(_DotKtIlEmitResponseArgument)" />
+      <_DotKtEscapedCir Remove="@(_DotKtEscapedCir)" />
+      <_DotKtEscapedCir Include="@(_DotKtCir->'%(FullPath)'->Replace('\', '\\')->Replace('&quot;', '\&quot;'))" />
+      <_DotKtIlEmitResponseArgument Include="_output"><Value>&quot;$(_DotKtEscapedIlEmitOutputPath)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_assembly"><Value>&quot;$(_DotKtEscapedTargetName)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_compile_refs_option"><Value>--compile-refs</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_compile_refs"><Value>&quot;$(_DotKtEscapedCompileReferences)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_runtime_refs_option"><Value>--runtime-refs</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_runtime_refs"><Value>&quot;$(_DotKtEscapedRuntimeReferences)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_tfm_option"><Value>--target-framework-moniker</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_tfm"><Value>&quot;$(_DotKtEscapedTargetFrameworkMoniker)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_rid_option"><Value>--target-rid</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_rid"><Value>&quot;$(_DotKtEscapedRuntimeIdentifier)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_rid_graph_option"><Value>--rid-graph-path</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_rid_graph"><Value>&quot;$(_DotKtEscapedRuntimeIdentifierGraphPath)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="@(_DotKtEscapedCir)"><Value>&quot;%(Identity)&quot;</Value></_DotKtIlEmitResponseArgument>
+    </ItemGroup>
+    <WriteLinesToFile File="$(DotKtIlEmitResponseFile)"
+                      Lines="@(_DotKtIlEmitResponseArgument->'%(Value)')"
+                      Overwrite="true" />
+    <Exec Command="dotnet &quot;$(DotKtIlEmit)&quot; @&quot;$(DotKtIlEmitResponseFile)&quot;" />
   </Target>
 
   <!-- `dotnet clean`: wipe project-local compiler state and generated reference KLIBs before CoreClean. -->
   <Target Name="DotKtClean" BeforeTargets="CoreClean" DependsOnTargets="DotKtInitializeIntermediatePaths">
     <RemoveDir Directories="$(DotKtIntermediateBirPath);$(DotKtIntermediateCirPath);$(DotKtReferenceKlibPath)" />
-    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompileOptionsManifest)" />
+    <Delete Files="$(DotKtReferenceKlibResponseFile);$(DotKtCompilerResponseFile);$(DotKtBir2CirResponseFile);$(DotKtIlEmitResponseFile);$(DotKtCompileOptionsManifest)" />
   </Target>
 </Project>

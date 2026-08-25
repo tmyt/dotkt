@@ -127,13 +127,15 @@ if [[ $incr_rc1 -eq 0 && $incr_rc2 -eq 0 && "$incr1" == "12" && "$incr2" == "12"
 fi
 rm -rf "$incr"
 
-# #467: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
+# #467 + #592: every compiler-produced intermediate follows $(IntermediateOutputPath), not the project-wide
 # $(BaseIntermediateOutputPath). Build one project as Debug and Release CONCURRENTLY while each configuration selects
 # a different DLL with the SAME assembly identity and a different Kotlin source. Shared BIR/CIR/KLIB/rsp state can
 # therefore fail by deletion races, project the wrong reference surface, or silently reuse the other configuration's
-# stamps; distinct directory spelling alone is not enough to pass this case. Then prove independent no-op state,
-# Debug-only source rename/deletion safety, and configuration-scoped clean behavior.
-config="$WORK/config-isolation"
+# stamps; distinct directory spelling alone is not enough to pass this case. The project directory contains whitespace
+# so the response files must preserve quoted absolute source paths, and the complete net10.0 reference sets are asserted
+# to exceed cmd.exe's 8191-character limit while every tool invocation remains short. Then prove independent
+# no-op state, Debug-only source rename/deletion safety, and configuration-scoped clean behavior.
+config="$WORK/config O'Brien isolation"
 rm -rf "$config"
 mkdir -p "$config/ref-src" "$config/refs/debug" "$config/refs/release" "$config/app"
 cat > "$config/ref-src/ConfigReference.csproj" <<'CSPROJ'
@@ -159,11 +161,11 @@ CSHARP
 dotnet build "$config/ref-src/ConfigReference.csproj" -c Release -o "$config/refs/debug" \
 	-p:ProbeDebug=true -p:BaseIntermediateOutputPath="$config/refs/debug/obj/" -v q --nologo \
 	>"$config/ref-debug.log" 2>&1 \
-	|| die "config-isolation: Debug reference fixture failed to build — see build/tests-msbuild/config-isolation/ref-debug.log"
+	|| die "config isolation: Debug reference fixture failed to build — see $config/ref-debug.log"
 dotnet build "$config/ref-src/ConfigReference.csproj" -c Release -o "$config/refs/release" \
 	-p:ProbeDebug=false -p:BaseIntermediateOutputPath="$config/refs/release/obj/" -v q --nologo \
 	>"$config/ref-release.log" 2>&1 \
-	|| die "config-isolation: Release reference fixture failed to build — see build/tests-msbuild/config-isolation/ref-release.log"
+	|| die "config isolation: Release reference fixture failed to build — see $config/ref-release.log"
 
 cat > "$config/app/app.ktproj" <<KTPROJ
 <Project Sdk="Microsoft.NET.Sdk">
@@ -200,9 +202,12 @@ import ConfigReference.ConfigApi
 fun selectedConfigValue(): Int = ConfigApi.ReleaseValue()
 fun selectedConfigMarker(): String = "release-config-marker"
 KOTLIN
+cat > "$config/app/Semicolon;Probe.kt" <<'KOTLIN'
+fun responseFilePathMarker(): String = "semicolon-path-marker"
+KOTLIN
 
 dotnet restore "$config/app/app.ktproj" -v q --nologo >"$config/restore.log" 2>&1 \
-	|| die "config-isolation: app restore failed — see build/tests-msbuild/config-isolation/restore.log"
+	|| die "config isolation: app restore failed — see $config/restore.log"
 cfg_debug_rc=0
 cfg_release_rc=0
 dotnet build "$config/app/app.ktproj" -c Debug --no-restore -v n --nologo >"$config/debug-build.log" 2>&1 &
@@ -225,12 +230,43 @@ for cfg_root in "$cfg_debug_root" "$cfg_release_root"; do
 		[[ ! -f "$cfg_root/bir/.stamp" ]] || [[ ! -f "$cfg_root/cir/.stamp" ]] \
 			|| [[ ! -f "$cfg_root/klib/ConfigReference.klib" ]] \
 			|| [[ ! -f "$cfg_root/dotkt-reference-klibs.rsp" ]] \
+			|| [[ ! -f "$cfg_root/dotkt-kotc.rsp" ]] \
+			|| [[ ! -f "$cfg_root/dotkt-bir2cir.rsp" ]] \
+			|| [[ ! -f "$cfg_root/dotkt-ilemit.rsp" ]] \
 			|| [[ ! -f "$cfg_root/dotkt-compile-options.txt" ]] \
 			|| [[ ! -f "$cfg_root/bir/_DotKtPlaceholder.cs" ]];
 	}; then
 		config_msg="incomplete compiler state under ${cfg_root#"$ROOT/"}"
 	fi
 done
+for cfg_root in "$cfg_debug_root" "$cfg_release_root"; do
+	for rsp in dotkt-kotc.rsp dotkt-bir2cir.rsp dotkt-ilemit.rsp; do
+		if [[ -z "$config_msg" ]] && (( $(wc -c < "$cfg_root/$rsp") <= 8191 )); then
+			config_msg="$rsp did not carry an argument set longer than cmd.exe's 8191-character limit"
+		fi
+	done
+done
+if [[ -z "$config_msg" ]] && { ! grep -q 'dotkt-kotc.rsp' "$config/debug-build.log" \
+	|| ! grep -q 'dotkt-bir2cir.rsp' "$config/debug-build.log" \
+	|| ! grep -q 'dotkt-ilemit.rsp' "$config/debug-build.log" \
+	|| ! grep -q 'dotkt-kotc.rsp' "$config/release-build.log" \
+	|| ! grep -q 'dotkt-bir2cir.rsp' "$config/release-build.log" \
+	|| ! grep -q 'dotkt-ilemit.rsp' "$config/release-build.log" \
+	|| grep -Eq 'kotc(\.bat)?"? .* -classpath |bir2cir\.dll" .*--compile-refs|ilemit\.dll" .*--(compile|runtime)-refs' "$config/debug-build.log" "$config/release-build.log"; }; then
+	config_msg="a compiler tool did not use its short response-file invocation"
+fi
+if [[ -z "$config_msg" ]] && awk '
+	/kotc(\.bat)?"? @|bir2cir\.dll" @|ilemit\.dll" @/ { if (length($0) > 8191) long = 1 }
+	END { exit long ? 0 : 1 }
+' "$config/debug-build.log" "$config/release-build.log"; then
+	config_msg="a compiler tool invocation still exceeds cmd.exe's 8191-character limit"
+fi
+if [[ -z "$config_msg" ]] && { ! grep -q 'Semicolon;Probe.kt' "$cfg_debug_root/dotkt-kotc.rsp" \
+	|| ! grep -q 'Semicolon;Probe.kt' "$cfg_release_root/dotkt-kotc.rsp" \
+	|| ! grep -q 'semicolon-path-marker' "$cfg_debug_root/bir/Semicolon;Probe.bir.json" \
+	|| ! grep -q 'semicolon-path-marker' "$cfg_release_root/bir/Semicolon;Probe.bir.json"; }; then
+	config_msg="a whitespace/apostrophe/semicolon source path did not survive response-file parsing"
+fi
 if [[ -z "$config_msg" ]] && {
 	! grep -q 'DebugValue' "$cfg_debug_root/bir/DebugConfig.bir.json" \
 		|| ! grep -q 'debug-config-marker' "$cfg_debug_root/bir/DebugConfig.bir.json" \
@@ -295,6 +331,9 @@ if [[ -z "$config_msg" ]]; then
 fi
 if [[ -z "$config_msg" ]] && { [[ -e "$cfg_debug_root/bir" ]] || [[ -e "$cfg_debug_root/cir" ]] \
 	|| [[ -e "$cfg_debug_root/klib" ]] || [[ -e "$cfg_debug_root/dotkt-reference-klibs.rsp" ]] \
+	|| [[ -e "$cfg_debug_root/dotkt-kotc.rsp" ]] \
+	|| [[ -e "$cfg_debug_root/dotkt-bir2cir.rsp" ]] \
+	|| [[ -e "$cfg_debug_root/dotkt-ilemit.rsp" ]] \
 	|| [[ -e "$cfg_debug_root/dotkt-compile-options.txt" ]] \
 	|| [[ ! -f "$cfg_release_root/bir/ReleaseConfig.bir.json" ]] \
 	|| [[ ! -f "$cfg_release_root/cir/ReleaseConfig.cir.json" ]] \
@@ -438,7 +477,8 @@ fun exactMarker(): String = ExactRidProbe.TargetOnlyMarker()
 fun familyMarker(): String = FamilyRidProbe.FamilyOnlyMarker()
 KOTLIN
 
-# -v n so the ilemit Exec command line is logged: the two replays below re-run it with one argument changed.
+# -v n keeps ilemit's RID-selection diagnostics in the build log; the two replays below copy the generated response
+# file and rerun the same tool with one argument changed.
 rid_rc=0
 dotnet build "$rid/app/app.ktproj" -r "$rid_target" -v n --nologo >"$rid/build.log" 2>&1 || rid_rc=$?
 rid_asm="$rid/app/bin/Debug/net10.0/$rid_target/app.dll"
@@ -463,30 +503,29 @@ elif ! LC_ALL=C grep -qa 'TargetOnlyMarker' "$rid_asm" || ! LC_ALL=C grep -qa 'F
 	rid_msg="the emitted assembly does not reference the RID-asset-only marker members"
 fi
 
-# Two replays of the emit step. Both re-run the ilemit invocation the build just logged, with one argument changed;
-# the CIR and the resolved reference set stay exactly what MSBuild produced, so neither needs a second build.
-rid_cmd=""
-if [[ -z "$rid_msg" ]]; then
-	rid_cmd="$(grep -oE 'dotnet "[^"]*ilemit\.dll".*' "$rid/build.log" | head -1)" || true
-	[[ -n "$rid_cmd" ]] || rid_msg="could not recover the ilemit command line from the build log"
+# Two replays of the emit step. Both copy the generated response file and change one argument; the CIR and resolved
+# reference set stay exactly what MSBuild produced, so neither needs a second build.
+rid_rsp="$rid_intermediate/dotkt-ilemit.rsp"
+if [[ -z "$rid_msg" ]] && [[ ! -s "$rid_rsp" ]]; then
+	rid_msg="ilemit did not materialize its response file under the RID-specific IntermediateOutputPath"
 fi
+rsp_value_after() { # <option> <response-file>
+	awk -v option="$1" '$0 == option { getline; print; exit }' "$2"
+}
 if [[ -z "$rid_msg" ]]; then
-	compile_refs_arg="$(grep -oE -- '--compile-refs "[^"]+"' <<<"$rid_cmd" | head -1)" || true
-	[[ -n "$compile_refs_arg" ]] \
-		|| rid_msg="the ilemit invocation does not carry the non-empty MSBuild compile-reference universe"
+	compile_refs_arg="$(rsp_value_after --compile-refs "$rid_rsp")"
+	[[ -n "$compile_refs_arg" && "$compile_refs_arg" != '""' ]] \
+		|| rid_msg="the ilemit response file does not carry the non-empty MSBuild compile-reference universe"
 fi
-rid_replay() { # <log-name> <literal argument to replace (non-empty)> <replacement>; echoes the exit status
-	local from="$2" to="$3" pat cmd rc=0
-	# Bash replacement patterns are globs: escape metacharacters so Windows paths (with backslashes) match literally.
-	pat="$from"
-	pat="${pat//\\/\\\\}"
-	pat="${pat//\*/\\*}"
-	pat="${pat//\?/\\?}"
-	pat="${pat//\[/\\[}"
-	pat="${pat//\]/\\]}"
-	cmd="${rid_cmd//$pat/$to}"
-	[[ "$cmd" != "$rid_cmd" ]] || { echo "substitution-failed"; return; }
-	( cd "$rid/app" && eval "$cmd" ) >"$rid/$1.log" 2>&1 || rc=$?
+rid_replay() { # <log-name> <literal response-file line to replace> <replacement>; echoes the exit status
+	local name="$1" from="$2" to="$3" line rc=0 found=0 replay_rsp="$rid/replay-$1.rsp"
+	: > "$replay_rsp"
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "$line" == "$from" ]]; then line="$to"; found=1; fi
+		printf '%s\n' "$line" >> "$replay_rsp"
+	done < "$rid_rsp"
+	(( found != 0 )) || { echo "substitution-failed"; return; }
+	( cd "$rid/app" && dotnet "$ILEMIT_DLL" @"$replay_rsp" ) >"$rid/$name.log" 2>&1 || rc=$?
 	echo "$rc"
 }
 
@@ -494,10 +533,10 @@ rid_replay() { # <log-name> <literal argument to replace (non-empty)> <replaceme
 # hard-coded family chain instead of the portable graph's #import closure; that last-resort path must still reach the
 # family asset, so the same two selections (and a successful emit) must come out.
 if [[ -z "$rid_msg" ]]; then
-	rid_graph_arg="$(grep -oE -- '--rid-graph-path "[^"]*"' <<<"$rid_cmd" | head -1)" || true
+	rid_graph_arg="$(rsp_value_after --rid-graph-path "$rid_rsp")"
 	rid_bi_rc=substitution-failed
 	[[ -z "$rid_graph_arg" ]] \
-		|| rid_bi_rc="$(rid_replay builtin-chain "$rid_graph_arg" "--rid-graph-path \"$rid/absent-rid-graph.json\"")"
+		|| rid_bi_rc="$(rid_replay builtin-chain "$rid_graph_arg" "\"$rid/absent-rid-graph.json\"")"
 	if [[ "$rid_bi_rc" == "substitution-failed" ]]; then
 		rid_msg="the ilemit invocation no longer carries --rid-graph-path — the MSBuild RID-graph plumbing is gone"
 	elif [[ "$rid_bi_rc" != "0" ]]; then
@@ -513,7 +552,7 @@ fi
 # the sole source of type/member meaning; a runtime implementation may not remove a member from that universe. The
 # changed selection diagnostic is therefore the discriminating fact, while the output remains contract-shaped.
 if [[ -z "$rid_msg" ]]; then
-	rid_neg_rc="$(rid_replay negative "--target-rid \"$rid_target\"" "--target-rid \"$rid_host\"")"
+	rid_neg_rc="$(rid_replay negative "\"$rid_target\"" "\"$rid_host\"")"
 	if [[ "$rid_neg_rc" == "substitution-failed" ]]; then
 		rid_msg="the ilemit invocation no longer carries --target-rid \"$rid_target\" — the MSBuild target-RID plumbing is gone"
 	elif [[ "$rid_neg_rc" != "0" ]]; then
