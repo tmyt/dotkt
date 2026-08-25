@@ -1240,8 +1240,9 @@ sealed class Pipeline
             // interfaces lack — `Contains`/`CopyTo`/`get_IsReadOnly` (ICollection) and `IndexOf` (IList) — so the concrete
             // type (kotlin.collections.ArrayDeque, the AbstractMutable* bases, a MutableMap keys/values view) fails to LOAD
             // ("... does not have an implementation"), surfacing at the referencing app as "cannot resolve .NET type". Fill
-            // each missing slot with an ordinary public forwarding member (wired by name by ilemit's interface loop). The
-            // return-DROPPING slots (Add/set_Item/RemoveAt) are the separate family ilemit's void-drop bridge handles.
+            // each missing slot with an ordinary public forwarding member. Return-DROPPING slots
+            // (Add/set_Item/RemoveAt) are allocated by the common KotlinOverrideSlotBridge pass below, which carries
+            // their exact MethodImpl descriptors to ilemit.
             if (!_options.RefBuild) CollectionBclSlotSynthesis.Apply(lowered);
             // The READ-ONLY sibling of every mutable collection face this unit's types name. Kotlin's `MutableList<E>`
             // IS-A `List<E>`, but their lowered CLR faces (`IList<T>` / `IReadOnlyList<T>`) are unrelated interfaces,
@@ -1251,12 +1252,6 @@ sealed class Pipeline
             // All builds: the rule is keyed on the lowered BCL face, which the reference build (whose surface stays
             // Kotlin-faced) simply never has.
             ReadOnlyCollectionViewInterfaces.Apply(lowered);
-            // #128: a Kotlin class implementing a reference-KLIB-projected .NET generic interface instantiated with a
-            // VALUE-TYPE arg (`class C : IComparer<Int>`) declares its override with the projected member's `T?` params,
-            // which lower to `Compare(Nullable<int32>,…)` — but the CONSTRUCTED CLR slot wants BARE `int32`. Synthesize a
-            // bare-value-signature bridge that forwards to the Nullable method so the slot binds (ilemit re-wraps args);
-            // else DefineMethodOverride mismatches the slot -> TypeLoadException. Value-type type-arg positions only.
-            if (!_options.RefBuild) ValueTypeIfaceSlotBridge.Apply(lowered, refs);
         }
 
         // THE REVERSE ENUMERATOR BRIDGE (#139/#400): a class whose supertype graph reaches a BCL enumerable face owes

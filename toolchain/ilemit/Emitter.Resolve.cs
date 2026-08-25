@@ -363,6 +363,29 @@ sealed partial class Emitter
 
     // Consume bir2cir's resolved `clrInterfaceImpls` directive. Matching is structural against the already-substituted
     // interface spec and parameter signature; no assignability, hierarchy, or covariance decision occurs here.
+    readonly HashSet<string> _consumedInterfaceImpls = new(StringComparer.Ordinal);
+
+    static string InterfaceImplKey(TypeInfo ti, JsonElement method, JsonElement impl) =>
+        ti.TB.FullName + "::" + method.GetRawText() + "=>" + impl.GetRawText();
+
+    void ValidateInterfaceImplsConsumed()
+    {
+        foreach (var (_, ti) in _types)
+        {
+            if (ti.Def.ValueKind != JsonValueKind.Object
+                || !ti.Def.TryGetProperty("methods", out var methods)) continue;
+            foreach (var method in methods.EnumerateArray())
+            {
+                if (!method.TryGetProperty("clrInterfaceImpls", out var impls)
+                    || impls.ValueKind != JsonValueKind.Array) continue;
+                foreach (var impl in impls.EnumerateArray())
+                    if (!_consumedInterfaceImpls.Contains(InterfaceImplKey(ti, method, impl)))
+                        throw new InvalidOperationException(
+                            $"ilemit: resolved interface MethodImpl on '{ti.TB}' was not consumed: {impl.GetRawText()}");
+            }
+        }
+    }
+
     MethodBuilder FindExplicitInterfaceBridge(TypeInfo ti, DotKt.Bir.TypeNode.Fqn ifaceSpec, string member,
         MethodSigKey slotSig, DotKt.Bir.TypeNode slotRet, JsonElement slotMethod)
     {
@@ -394,7 +417,9 @@ sealed partial class Emitter
                 // ordinary CLR overloads (member-extension/index parameters), so the name-keyed compatibility index is
                 // insufficient and may point at a different MethodBuilder.
                 var bridgeName = PhysicalMethodName(method);
-                return ti.MethodsBySig.TryGetValue(DefinitionSigKey(bridgeName, method), out var bridge) ? bridge : null;
+                if (!ti.MethodsBySig.TryGetValue(DefinitionSigKey(bridgeName, method), out var bridge)) return null;
+                _consumedInterfaceImpls.Add(InterfaceImplKey(ti, method, impl));
+                return bridge;
             }
         }
         return null;
@@ -543,7 +568,10 @@ sealed partial class Emitter
                 if (_mparams.TryGetValue(bridge, out var bps) && bps.Length == ips.Length
                     && bps.Zip(ips, SlotParamMatches).All(x => x)
                     && SlotParamMatches(bridge.ReturnType, interfaceRet))
+                {
+                    _consumedInterfaceImpls.Add(InterfaceImplKey(ti, method, impl));
                     return bridge;
+                }
             }
         }
         return null;
@@ -1191,7 +1219,10 @@ sealed partial class Emitter
     {
         if (!ContainsTv(node))
         {
-            try { return MapType(node) == p; } catch { return false; }
+            // Constructing the same closed generic over a local TypeBuilder can produce distinct
+            // TypeBuilderInstantiation objects. The descriptor still names a complete concrete type; compare its
+            // physical structure exactly instead of requiring reflection-object identity.
+            try { return SlotParamMatches(MapType(node), p); } catch { return false; }
         }
         switch (node)
         {

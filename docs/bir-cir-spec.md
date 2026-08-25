@@ -216,8 +216,9 @@ calls are forbidden in final CIR.
 
 When that dedicated accessor implements an external CLR property, bir2cir records the exact external accessor as one
 scalar member reference. An external base-class virtual carries the `requiresClrOverride:true` MethodImpl instruction
-and its exact operand in the declaration's `clrOverrideRef`; external interface
-slots are named in the owner-scoped `interfaceSlotRefs` table. A class accessor can itself be the MethodImpl body.
+and its exact operand in the declaration's `clrOverrideRef`; the external declaration operands required by interface
+MethodImpl descriptors are named in the owner-scoped `interfaceSlotRefs` table. A class accessor can itself be the
+MethodImpl body.
 A default accessor declared on an interface requires the CLR explicit-interface shape instead: bir2cir emits a
 private forwarding body with `clrInterfaceSlotBridge:true`, and ilemit maps that CIR instruction directly to a
 `Private|Virtual|Final|NewSlot` MethodDef plus the stated MethodImpl. Neither path derives a slot from an accessor name.
@@ -233,9 +234,8 @@ view of a mutable collection: Kotlin's `MutableList<E>` IS-A `List<E>`, but thei
 `IReadOnlyList<T>` are unrelated CLR interfaces, so bir2cir adds the read-only sibling (`IList`→`IReadOnlyList`,
 `ICollection`/`ISet`→`IReadOnlyCollection`) to every type that names the mutable one. The sibling obliges no
 MethodImpl descriptor of its own: its members are the same names and signatures the mutable face already forced onto
-the type, and the CLR binds an interface slot to a matching public virtual method implicitly, per interface. (ilemit's
-own interface-slot wiring — the separate #400 obligation to delete it — does currently emit a redundant explicit
-MethodImpl for such a slot; it names the same body the implicit binding would have selected.)
+the type, and the CLR binds an interface slot to a matching public virtual method implicitly, per interface. ilemit
+does not enumerate that interface or manufacture a redundant MethodImpl.
 
 Fake-override resolution remains a frontend decision. kotc records a concrete selected declaration on an interface
 fake override as `inheritedImplementation`, and records each default property accessor inherited by a class in
