@@ -55,10 +55,39 @@ fun <K, V> Map<K, V>.crkValAt(k: K): V = this[k]!!
 fun collNullSrc(): Any? = null
 
 // #315: emitted Kotlin implementations use compiler-owned nominal collection identities alongside their BCL
-// operational faces. Delegation keeps these probes about classifier identity rather than collection mechanics.
+// operational faces. Thin forwarding keeps these probes about classifier identity rather than collection mechanics.
 class CollectionIdentityOnly(private val elements: List<Int>) : Collection<Int> by elements
 class SetIdentityOnly(private val elements: Set<Int>) : Set<Int> by elements
-class MutableSetIdentityOnly(private val elements: MutableSet<Int>) : MutableSet<Int> by elements
+class MutableSetIdentityOnly(private val elements: MutableSet<Int>) : MutableSet<Int> {
+    override val size: Int get() = elements.size
+    override fun isEmpty(): Boolean = elements.isEmpty()
+    override fun contains(element: Int): Boolean = elements.contains(element)
+    override fun containsAll(elements: Collection<Int>): Boolean = this.elements.containsAll(elements)
+    override fun iterator(): MutableIterator<Int> = object : MutableIterator<Int> {
+        private val snapshot = elements.toList()
+        private var index = 0
+        private var removable = -1
+        override fun hasNext(): Boolean = index < snapshot.size
+        override fun next(): Int {
+            if (!hasNext()) throw NoSuchElementException()
+            val value = snapshot[index]
+            removable = index
+            index++
+            return value
+        }
+        override fun remove() {
+            if (removable < 0) throw IllegalStateException("next() has not been called")
+            elements.remove(snapshot[removable])
+            removable = -1
+        }
+    }
+    override fun add(element: Int): Boolean = elements.add(element)
+    override fun addAll(elements: Collection<Int>): Boolean = this.elements.addAll(elements)
+    override fun remove(element: Int): Boolean = elements.remove(element)
+    override fun removeAll(elements: Collection<Int>): Boolean = this.elements.removeAll(elements)
+    override fun retainAll(elements: Collection<Int>): Boolean = this.elements.retainAll(elements)
+    override fun clear(): Unit = elements.clear()
+}
 
 // ---- il-collrevview : #100 H1 reverse variance-collapse seam -- make() returns the readonly List<Int> head ------
 fun collRevMake(): List<Int> = listOf(1, 2)
@@ -348,6 +377,8 @@ class CollectionsTests {
         assertFalse(listStr is Set<*>)
         assertFalse(mapInt is Set<*>)
         assertTrue(mutSetStr is MutableSet<*>)
+        assertTrue(setInt is MutableSet<*>)             // setOf is backed by the mutable LinkedHashSet, as on JVM
+        assertTrue((mutableListOf(1) as Any) is MutableCollection<*>)
 
         // The `?` spelling agrees with the plain one on every non-null receiver, and adds null. This is what #287
         // guarantees, and it holds regardless of the wrongness above.
@@ -379,11 +410,26 @@ class CollectionsTests {
         assertTrue(userMutableSet is Set<*>)
         assertTrue(userMutableSet is MutableSet<*>)
 
-        // A successful smart cast must keep member access valid for a value-element HashSet, while a safe cast of a
-        // list must fail at the Kotlin classifier boundary rather than accepting the shared collection face.
+        // A successful compiler-generated smart cast must keep every star-usable Collection member valid for a
+        // value-element HashSet. The explicit `as/as? Set<*>` existential representation is a separate contract.
         assertEquals(2, if (setInt is Set<*>) setInt.size else -1)
-        assertTrue((setInt as? Set<*>) != null)
-        assertTrue((listInt as? Set<*>) == null)
+        assertFalse(if (setInt is Collection<*>) setInt.isEmpty() else true)
+        assertEquals(1, if (mutSetStr is MutableSet<*>) mutSetStr.size else -1)
+        var iterated = 0
+        if (setInt is Collection<*>) for (ignored in setInt) iterated++
+        assertEquals(2, iterated)
+
+        // MutableMap views are Kotlin identity-bearing views, not the raw BCL KeyCollection/ArrayList faces.
+        val mutableMap = mutableMapOf(1 to "a", 2 to "b")
+        val mutableKeys: Any = mutableMap.keys
+        val mutableEntries: Any = mutableMap.entries
+        assertTrue(mutableKeys is Collection<*>)
+        assertTrue(mutableKeys is Set<*>)
+        assertTrue(mutableKeys is MutableSet<*>)
+        assertTrue(mutableEntries is Set<*>)
+        assertTrue(mutableEntries is MutableSet<*>)
+        assertTrue(mutableMap.keys.remove(1))
+        assertFalse(mutableMap.containsKey(1))
 
         // List and Map have exact non-generic BCL twins.
         assertTrue(listInt is List<*>)                  // True

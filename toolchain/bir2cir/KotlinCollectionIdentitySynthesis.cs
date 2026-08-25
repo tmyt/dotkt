@@ -23,9 +23,9 @@ static class KotlinCollectionIdentitySynthesis
     const string Set = "kotlin.collections.Set";
     const string MutableSet = "kotlin.collections.MutableSet";
 
-    const string CollectionIdentity = "DotKt.Runtime.CompilerServices.KotlinCollectionIdentity";
-    const string SetIdentity = "DotKt.Runtime.CompilerServices.KotlinSetIdentity";
-    const string MutableSetIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableSetIdentity";
+    const string CollectionIdentity = "DotKt.Runtime.CompilerServices.KotlinCollectionClassifier";
+    const string SetIdentity = "DotKt.Runtime.CompilerServices.KotlinSetClassifier";
+    const string MutableSetIdentity = "DotKt.Runtime.CompilerServices.KotlinMutableSetClassifier";
 
     sealed class Def
     {

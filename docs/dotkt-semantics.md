@@ -104,21 +104,21 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
   `DOTKTSTAR001`, because the
   referenced generic type/member metadata must be preserved; known BCL families with a faithful non-generic surface
   continue to use that surface directly.
-- **Corollary — a star-projected collection (`Map<*,*>` / `List<*>` / `Iterable<*>` / `Collection<*>`) binds to the
-  NON-generic BCL interface, because reified generics are INVARIANT.** On the JVM `x is Map<*,*>` and a subsequent
+- **Corollary — a star-projected collection classifier must erase its element arguments.** On the JVM `x is Map<*,*>` and a subsequent
   `x as Map<*,*>` erase to a raw `Map`, so a `Dictionary<int,int>` passes trivially. On the CLR the star projection
   erases to `Map<Any?,Any?>` = the generic `IDictionary<object,object>`, which a `Dictionary<int,int>` does **not**
   implement (no value-type covariance) — a naive `castclass`/`isinst` to it fails. So DotKt lowers a star-projected
-  `is`/`as` (and `.size`/`[i]`) to the **non-generic** `System.Collections.IDictionary`/`IList`/`ICollection`/
-  `IEnumerable`, which every value-type-arg BCL collection implements; `println` of such an erased value renders via
+  `is` and compiler-generated smart cast to the non-generic `System.Collections.IDictionary`/`IList`/`ICollection`/
+  `IEnumerable` where that face is faithful; `println` of such an erased value renders via
   the runtime-detecting `clrElemToString`. (A `<*>` value can only be used non-generically anyway.) This is the same
   invariance that forces §5c (`Map`/`MutableMap` both → `IDictionary<K,V>`). #60.
   **`List<*>` and `Map<*,*>` are exact** through their non-generic `IList`/`IDictionary` twins. `Collection<*>`,
-  `Set<*>`, and `MutableSet<*>` use a composite classifier because their operational BCL aliases overlap: emitted
+  `Set<*>`, and `MutableSet<*>` instead use a composite `is` classifier because their operational BCL aliases overlap: emitted
   Kotlin implementations carry compiler-owned nominal identity interfaces, while BCL-backed values are recognized
   through the generic `IReadOnlyCollection<>`/`ICollection<>` and `IReadOnlySet<>`/`ISet<>` faces they actually
   implement. Dictionary and array shapes are explicitly excluded from `Collection`. The checked value is not wrapped,
-  so reference identity and the existing BCL member ABI are preserved. Pinned by
+  so reference identity and the existing BCL member ABI are preserved. Explicit standalone `as/as?` existential
+  storage remains separate from this classifier contract. Pinned by
   `CollectionsTests.starProjectedSetIdentity`.
 - **`x is T` preserves a nullable reified instantiation.** `m<String?>` and `m<String>` are the same CLR generic
   instantiation, so the hidden witness supplies the otherwise-missing distinction on the null path. It is forwarded
@@ -623,12 +623,11 @@ Consequences (deliberate, declared):
 - **`Map.get` is null-on-missing** (Kotlin semantics), synthesized as `ContainsKey` + `get_Item` in
   `kotlin.collections.ClrMapDefaults` (`IDictionary`'s raw indexer throws); `put`/`remove` return the previous value
   the same way. `size`/`containsKey`/`clear` bind 1:1 (`Count`/`ContainsKey`/`Clear`).
-- **`Map.keys`/`values`/`entries` are SNAPSHOTS, not live views** (Kotlin's are live): `keys`/`entries` return a
-  pure-Kotlin `Set` (the BCL `KeyCollection` cannot implement the unaliased `kotlin.collections.Set`), `values` a
+- **`Map.keys`/`values`/`entries` are SNAPSHOTS, not live views** (Kotlin's are live): `keys`/`entries` return an
+  identity-bearing Kotlin `Set`, `values` a
   BCL List. Entry VALUES are live (`entry.value`/`setValue` read/write through the backing map), but a key
-  added/removed after taking the view is not reflected in it. `MutableMap.keys`/`values` bind directly to
-  `IDictionary.Keys`/`.Values` (their `MutableSet`/`MutableCollection` slots lower to `ICollection`, which
-  KeyCollection/ValueCollection implement); mutating THOSE views does not write back either (BCL contract: they throw).
+  added/removed after taking the view is not reflected in it. `MutableMap.keys` is a live identity-bearing Kotlin view:
+  remove/clear write through and add is unsupported. `MutableMap.values` still binds directly to `IDictionary.Values`.
 - **`Map.iterator()` and `MutableMap.iterator()` retain their Kotlin-selected declarations** even though both
   receivers lower to the same `IDictionary<K,V>` CLR type. The frontend declaration identity selects distinct,
   stable physical MethodDef names after erasure; neither declaration order nor an emitter-local `$dupN` repair

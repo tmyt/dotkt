@@ -9,9 +9,9 @@ package DotKt.Runtime.CompilerServices
 // compiler vocabulary: bir2cir attaches the most-specific identity while Kotlin's supertype graph is available.
 // The BCL-backed implementations cannot carry these interfaces and are recognized from their real CLR collection
 // faces by StarProjectionRuntime instead.
-internal interface KotlinCollectionIdentity
-internal interface KotlinSetIdentity : KotlinCollectionIdentity
-internal interface KotlinMutableSetIdentity : KotlinSetIdentity
+internal interface KotlinCollectionClassifier
+internal interface KotlinSetClassifier : KotlinCollectionClassifier
+internal interface KotlinMutableSetClassifier : KotlinSetClassifier
 
 // SUPPLEMENTAL KOTLIN SLOTS FOR @ClrTypeAlias'd COLLECTION INTERFACES.
 //

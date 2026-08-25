@@ -51,6 +51,7 @@ internal interface ClrRawDictionary {
     @kotlin.clr.ClrIntrinsic("set_Item") fun rawSet(key: Any?, value: Any?): Unit
     /** Non-generic `IDictionary.Remove(object)` — VOID (unlike generic `IDictionary<K,V>.Remove(K): bool`). */
     @kotlin.clr.ClrIntrinsic("Remove") fun rawRemove(key: Any?): Unit
+    @kotlin.clr.ClrIntrinsic("Clear") fun rawClear(): Unit
 }
 
 /** Non-generic `System.Collections.IDictionaryEnumerator` — `Key`/`Value` are `object` (erased entry access). */

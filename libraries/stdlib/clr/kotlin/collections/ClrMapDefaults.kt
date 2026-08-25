@@ -20,7 +20,8 @@
  * Semantics notes (recorded in docs/dotkt-semantics.md):
  *   - `Map.get` is null-on-missing (Kotlin), synthesized as ContainsKey + get_Item (IDictionary's get_Item throws).
  *   - Map's READ views (keys/values/entries: pure-Kotlin Set/Collection types) are SNAPSHOTS, not live views.
- *   - MutableMap.entries elements are LIVE (setValue writes through), but the entry SET itself is a snapshot.
+ *   - MutableMap.keys is a live identity-bearing view; MutableMap.entries elements are LIVE (setValue writes
+ *     through), but the entry SET itself is a snapshot.
  */
 @file:Suppress("NOTHING_TO_INLINE", "UNCHECKED_CAST")
 
@@ -119,7 +120,7 @@ public fun <K, V> clrMapGetOrDefault(m: Any, key: K, defaultValue: V): V {
     return if (d.Contains(key)) (d.rawGet(key) as V) else defaultValue
 }
 
-/** `Map.keys: Set<K>` — Set is PURE Kotlin (unaliased), so IDictionary.Keys can't back it; snapshot into a pure Set. */
+/** `Map.keys: Set<K>` — snapshot into an identity-bearing Kotlin Set rather than exposing Dictionary.KeyCollection. */
 public fun <K, V> clrMapKeys(m: Any): Set<K> {
     val e = (m as ClrRawDictionary).GetEnumerator()
     val out = ArrayList<K>()
@@ -237,11 +238,18 @@ public fun <K, V> clrMapMerge(m: Any, key: K, value: V, remappingFunction: (V, V
 public fun <K, V> clrMapMutableEntries(m: Any): MutableSet<MutableMap.MutableEntry<K, V>> {
     val d = m as ClrRawDictionary
     val e = d.GetEnumerator()
-    val out = ArrayList<MutableMap.MutableEntry<K, V>>()
+    val out = LinkedHashSet<MutableMap.MutableEntry<K, V>>()
     @Suppress("UNCHECKED_CAST")
     while (e.MoveNext()) out.add(ClrMutableMapEntry(d, e.key() as K))
-    return (out as Any) as MutableSet<MutableMap.MutableEntry<K, V>>
+    return out
 }
+
+/**
+ * Live `MutableMap.keys` view. The BCL Dictionary.KeyCollection is only an ICollection<K>, so it cannot carry the
+ * independent MutableSet identity. This Kotlin view does, while forwarding remove/clear to the backing raw map.
+ * Adding a key has no corresponding value and is therefore unsupported, matching Kotlin's MutableMap.keys contract.
+ */
+public fun <K, V> clrMapMutableKeys(m: Any): MutableSet<K> = ClrMutableMapKeySet(m as ClrRawDictionary)
 
 // ---- pure-Kotlin backing types --------------------------------------------------------------------------------------
 
@@ -270,6 +278,64 @@ private class ClrMapSnapshotSet<E>(private val elements: List<E>) : Set<E> {
     override fun contains(element: E): Boolean = clrCollContains(elements, element)
     override fun containsAll(elements: Collection<E>): Boolean = clrCollContainsAll(this.elements, elements)
     override fun iterator(): Iterator<E> = clrListListIterator(elements, 0)
+}
+
+private class ClrMutableMapKeySet<K>(private val raw: ClrRawDictionary) : MutableSet<K> {
+    override val size: Int get() = (raw as ClrRawCollection).count()
+    override fun isEmpty(): Boolean = size == 0
+    override fun contains(element: K): Boolean = raw.Contains(element)
+    override fun containsAll(elements: Collection<K>): Boolean {
+        for (element in elements) if (!raw.Contains(element)) return false
+        return true
+    }
+    override fun iterator(): MutableIterator<K> {
+        val snapshot = ArrayList<K>()
+        val e = raw.GetEnumerator()
+        @Suppress("UNCHECKED_CAST")
+        while (e.MoveNext()) snapshot.add(e.key() as K)
+        return object : MutableIterator<K> {
+            private var index = 0
+            private var last: K? = null
+            private var hasLast = false
+            override fun hasNext(): Boolean = index < snapshot.size
+            override fun next(): K {
+                if (!hasNext()) throw NoSuchElementException()
+                val value = snapshot[index]
+                index++
+                last = value
+                hasLast = true
+                return value
+            }
+            override fun remove() {
+                if (!hasLast) throw IllegalStateException("next() has not been called")
+                @Suppress("UNCHECKED_CAST")
+                raw.rawRemove(last as K)
+                hasLast = false
+            }
+        }
+    }
+    override fun add(element: K): Boolean = throw UnsupportedOperationException("add is not supported by MutableMap.keys")
+    override fun addAll(elements: Collection<K>): Boolean =
+        if (elements.isEmpty()) false else throw UnsupportedOperationException("addAll is not supported by MutableMap.keys")
+    override fun remove(element: K): Boolean = raw.clrMapRemoveKey(element)
+    override fun removeAll(elements: Collection<K>): Boolean {
+        var changed = false
+        for (element in elements) if (raw.clrMapRemoveKey(element)) changed = true
+        return changed
+    }
+    override fun retainAll(elements: Collection<K>): Boolean {
+        val remove = ArrayList<K>()
+        val e = raw.GetEnumerator()
+        @Suppress("UNCHECKED_CAST")
+        while (e.MoveNext()) {
+            val key = e.key() as K
+            if (!elements.contains(key)) remove.add(key)
+        }
+        var changed = false
+        for (key in remove) if (raw.clrMapRemoveKey(key)) changed = true
+        return changed
+    }
+    override fun clear() = raw.rawClear()
 }
 
 /** Kotlin structural Map equality: same size and every key of one maps to an equal value in the other (null-safe). */

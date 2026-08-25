@@ -1516,7 +1516,7 @@ static class MemberCallSubstitution
         // most Kotlin map members have no 1:1 IDictionary equivalent — `get` is null-on-missing while get_Item THROWS,
         // put/remove return the previous value, and the keys/values/entries views are Kotlin-typed. Route them to the
         // rt's ClrMapDefaults statics, generic over BOTH type args (the 2-type-arg mirror of CollDefaultCall). Members
-        // that DO bind 1:1 (@ClrIntrinsic size/containsKey/clear + MutableMap keys/values) were already renamed to
+        // that DO bind 1:1 (@ClrIntrinsic size/containsKey/clear + MutableMap values) were already renamed to
         // their BCL slot by DeclarationRename and fall through to Rule 4; the defensive get_keys/get_values entries
         // below catch an un-renamed MutableMap accessor call (no overrides metadata) as a direct property read.
         if (instance && kind == "interface" &&
@@ -1560,6 +1560,7 @@ static class MemberCallSubstitution
                 ("keys", "get", 0, false) => "clrMapKeys",
                 ("values", "get", 0, false) => "clrMapValues",
                 ("entries", "get", 0, false) => "clrMapEntries",
+                ("keys", "get", 0, true) => "clrMapMutableKeys",
                 ("entries", "get", 0, true) => "clrMapMutableEntries",
                 ("put", _, 2, true) => "clrMapPut",
                 ("remove", _, 1, true) => "clrMapRemove",
@@ -1573,8 +1574,8 @@ static class MemberCallSubstitution
             };
             if (helper != null)
                 return MapDefaultCall(node, helper, ownerFqnNode, args, refs, ctx);
-            if (mutable && semanticPropertyAccess == "get" && args.Count == 0 && member is "keys" or "values")
-                return ClrPropNode(node, clrOwner, member == "keys" ? "Keys" : "Values", ClrPropRead, member, args, "get");
+            if (mutable && semanticPropertyAccess == "get" && args.Count == 0 && member == "values")
+                return ClrPropNode(node, clrOwner, "Values", ClrPropRead, member, args, "get");
             // else fall through to Rule 4: an already-BCL member name on the aliased IDictionary owner.
         }
 
@@ -1978,7 +1979,7 @@ static class MemberCallSubstitution
         TypeNode[] ps = method switch
         {
             "clrMapIsEmpty" or "clrMapSize" or "clrMapKeys" or "clrMapValues" or "clrMapEntries"
-                or "clrMapMutableEntries" => new[] { any },
+                or "clrMapMutableKeys" or "clrMapMutableEntries" => new[] { any },
             "clrMapGet" or "clrMapContainsKey" or "clrMapRemove" => new[] { any, k },
             "clrMapContainsValue" => new[] { any, v },
             "clrMapPut" or "clrMapGetOrDefault" or "clrMapRemoveKV" or "clrMapPutIfAbsent" or "clrMapReplace"

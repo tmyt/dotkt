@@ -62,9 +62,10 @@ sealed class Pipeline
         var diagnostics = refs.Diagnostics.ToList();
         foreach (var d in diagnostics) Console.Error.WriteLine($"bir2cir: WARNING ref-scan diagnostic: {d}");
         var cirFiles = TransformFiles(birFiles, refs);
-        if (_options.ReflectionRestricted && ForeignStarProjectionBinding.UsedRuntimeFallback)
+        if (_options.ReflectionRestricted
+            && (ForeignStarProjectionBinding.UsedRuntimeFallback || StarProjectionLowering.UsedRuntimeFallback))
             Console.Error.WriteLine(
-                "bir2cir: warning DOTKTSTAR001: foreign CLR star projection uses reflection; "
+                "bir2cir: warning DOTKTSTAR001: a CLR star projection uses reflection; "
                 + "NativeAOT/trimming must preserve the referenced generic type and member metadata");
         // Release the long-lived .NET-interop MetadataLoadContext (kept alive across all transform passes for
         // NetInteropBinding's owner resolution — A2 / #61) now that no pass needs metadata reflection.
@@ -648,13 +649,10 @@ sealed class Pipeline
             // MemberCallSubstitution so CLR-bound calls can still be shaped from the exact external identity. Never in
             // ref builds, whose declarations remain a pure Kotlin surface.
             if (!_options.RefBuild) DeclarationRename.Apply(hoisted, refs);
-            // STAR-PROJECTION LOWERING (bundle-6 `iscoll`): `x is Collection<*>` + the guarded smart-cast member access
-            // (`.size`/`.iterator()`/`[i]`/…) -> the non-generic BCL interface (ICollection/IList/IEnumerable/IDictionary),
-            // which a value-type collection implements regardless of element type (reified generics have no value-type
-            // covariance). App build only — the ref/rt stdlib keeps the reified form, so collectionSizeOrDefault's harmless
-            // capacity-hint default is preserved and map/filter do not regress. Runs before MemberCallSubstitution so it
-            // sees the raw `callInstance` on the kotlin.collections.* alias.
-            if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted);
+            // STAR-PROJECTION COLLECTION CLASSIFIERS: use faithful non-generic BCL faces where one exists; otherwise
+            // author the Collection/Set/MutableSet composite classifier plus the following smart-cast member access.
+            // App build only, before MemberCallSubstitution while the Kotlin owner is still visible.
+            if (attributeTopLevelOwner) StarProjectionLowering.Apply(hoisted, refs);
             // .NET EVENT `subscribe` BINDING: kotc surfaces a .NET event as a `kotlin.clr.ClrEvent<T>` property and emits
             // `w.Changed.subscribe(h)` as the PLAIN call `callInstance(kotlin.clr.ClrEvent.subscribe,
             // recv = <clrEventGet w Changed>, [h])`. This pass BINDS that to the .NET add/remove accessor — the existing
