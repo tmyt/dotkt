@@ -449,6 +449,16 @@ static partial class ClrMemberResolution
                             declaredTypeParams, wantedTypeParams,
                             candidate.DeclaringArgs, Array.Empty<TypeNode>());
                     }).ToList();
+                var mostDerived = MostDerived(candidates.Select(candidate => candidate.Method)
+                    .GroupBy(method => (method.Module, method.MetadataToken))
+                    .Select(group => group.First()).ToList());
+                if (mostDerived.Count == 1)
+                {
+                    var selectedDeclaration = mostDerived[0];
+                    candidates = candidates.Where(candidate =>
+                        candidate.Method.Module == selectedDeclaration.Module
+                        && candidate.Method.MetadataToken == selectedDeclaration.MetadataToken).ToList();
+                }
                 var declarations = candidates
                     .GroupBy(candidate => (candidate.Method.Module, candidate.Method.MetadataToken))
                     .Select(group => group.First()).ToList();
