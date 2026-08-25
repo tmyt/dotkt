@@ -12,6 +12,25 @@ package kotlin.collections
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
+import DotKt.Runtime.CompilerServices.mutableCollectionRemoveErased
+import DotKt.Runtime.CompilerServices.mutableCollectionReplaceErased
+import DotKt.Runtime.CompilerServices.mutableIteratorHasNextErased
+import DotKt.Runtime.CompilerServices.mutableIteratorNextErased
+import DotKt.Runtime.CompilerServices.mutableIteratorRemoveErased
+
+/** Variance-independent mutable-list face used after `MutableIterable<out T>` has widened its element type. */
+@kotlin.clr.ClrTypeAlias("System.Collections.IList")
+private interface ClrRawMutableList {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Count") val count: Int
+    @kotlin.clr.ClrIntrinsic("get_Item") fun get(index: Int): Any?
+    @kotlin.clr.ClrIntrinsic("RemoveAt") fun removeAt(index: Int): Unit
+}
+
+private class ClrErasedMutableIteratorAdapter(private val iterator: Any) : MutableIterator<Any?> {
+    override fun hasNext(): Boolean = mutableIteratorHasNextErased(iterator)
+    override fun next(): Any? = mutableIteratorNextErased(iterator)
+    override fun remove() = mutableIteratorRemoveErased(iterator)
+}
 
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
 
@@ -227,49 +246,91 @@ private class ClrMutableListIterator<T>(
     }
 }
 
-public fun <T> clrMutableListIterator(list: MutableList<T>): MutableIterator<T> =
-    ClrMutableListIterator(list, 0)
+private class ClrRawMutableListIterator<T>(private val list: ClrRawMutableList) : MutableIterator<T> {
+    private var cursor = 0
+    private var last = -1
 
-// MutableIterable aliases IEnumerable<T>, whose GetEnumerator return cannot represent Kotlin's remove-capable
-// MutableIterator<T>. Kotlin implementers carry a compiler-authored non-generic slot that preserves their exact
-// override. BCL lists use the indexed adapter above; other BCL mutable collections snapshot their enumeration and
-// remove the last-returned value through ICollection<T>. Sets are exact because their elements are unique, while an
-// IList<T> never reaches the value-removal fallback.
-private class ClrMutableCollectionIterator<T>(
-    private val collection: MutableCollection<T>,
-    private val snapshot: List<T>,
+    override fun hasNext(): Boolean = cursor < list.count
+    override fun next(): T {
+        if (!hasNext()) throw NoSuchElementException()
+        val value = list.get(cursor) as T
+        last = cursor
+        cursor++
+        return value
+    }
+    override fun remove() {
+        if (last < 0) throw IllegalStateException("next() has not been called")
+        list.removeAt(last)
+        cursor--
+        last = -1
+    }
+}
+
+// MutableIterable aliases covariant IEnumerable<T>, whose GetEnumerator return cannot represent Kotlin's
+// remove-capable MutableIterator<T>. Kotlin implementers carry a compiler-authored non-generic slot preserving their
+// exact override. BCL lists use the non-generic indexed face, so a widened element type remains valid. Other BCL
+// mutable collections snapshot enumeration; ordinary removals invoke their exact closed ICollection<T> view. If an
+// earlier equal occurrence would make Remove(value) target the wrong element, rebuild the collection from the snapshot
+// without the exact last-returned occurrence.
+private class ClrErasedMutableCollectionIterator<T>(
+    private val collection: Any,
+    private val snapshot: MutableList<T>,
 ) : MutableIterator<T> {
     private var index = 0
-    private var last: T? = null
-    private var hasLast = false
+    private var lastIndex = -1
 
     override fun hasNext(): Boolean = index < snapshot.size
     override fun next(): T {
         if (!hasNext()) throw NoSuchElementException()
         val value = snapshot[index]
+        lastIndex = index
         index++
-        last = value
-        hasLast = true
         return value
     }
     override fun remove() {
-        if (!hasLast) throw IllegalStateException("next() has not been called")
-        collection.remove(last as T)
-        hasLast = false
+        if (lastIndex < 0) throw IllegalStateException("next() has not been called")
+        val value = snapshot[lastIndex]
+        var earlierEqual = false
+        var at = 0
+        while (at < lastIndex) {
+            if (snapshot[at] == value) { earlierEqual = true; break }
+            at++
+        }
+        snapshot.removeAt(lastIndex)
+        index--
+        if (earlierEqual) {
+            val replacement = arrayOfNulls<Any?>(snapshot.size)
+            at = 0
+            while (at < snapshot.size) { replacement[at] = snapshot[at]; at++ }
+            mutableCollectionReplaceErased(collection, replacement)
+        } else {
+            mutableCollectionRemoveErased(collection, value)
+        }
+        lastIndex = -1
     }
 }
 
 public fun <T> clrMutableIterator(iterable: MutableIterable<T>): MutableIterator<T> {
     val slots = iterable as? KotlinMutableIteratorSlots
     if (slots != null) return slots.dotktIterator() as MutableIterator<T>
-    val list = iterable as? MutableList<T>
-    if (list != null) return ClrMutableListIterator(list, 0)
-    val collection = iterable as? MutableCollection<T>
-        ?: throw UnsupportedOperationException("MutableIterable has no mutable CLR collection surface")
+    val list = iterable as? ClrRawMutableList
+    if (list != null) return ClrRawMutableListIterator(list)
     val snapshot = ArrayList<T>()
     val source = iteratorOverEnumerable(iterable as ClrEnumerable<T>)
     while (source.hasNext()) snapshot.add(source.next())
-    return ClrMutableCollectionIterator(collection, snapshot)
+    return ClrErasedMutableCollectionIterator(iterable, snapshot)
+}
+
+/** Star-projected twin: both capability tests and BCL fallbacks are independent of the erased element type. */
+public fun clrMutableIteratorErased(iterable: Any): MutableIterator<Any?> {
+    val slots = iterable as? KotlinMutableIteratorSlots
+    if (slots != null) return ClrErasedMutableIteratorAdapter(slots.dotktIterator())
+    val list = iterable as? ClrRawMutableList
+    if (list != null) return ClrRawMutableListIterator(list)
+    val snapshot = ArrayList<Any?>()
+    val source = iteratorOverRawEnumerable(iterable)
+    while (source.hasNext()) snapshot.add(source.next())
+    return ClrErasedMutableCollectionIterator(iterable, snapshot)
 }
 
 public fun <T> clrMutableListListIterator(list: MutableList<T>, index: Int): MutableListIterator<T> =

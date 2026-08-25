@@ -1593,14 +1593,9 @@ static class MemberCallSubstitution
             var elem = OwnerElemArg(ownerFqnNode);
             if (member == "iterator" && args.Count == 0)
             {
-                // MutableList's CLR face only exposes IEnumerable<T>.GetEnumerator, which cannot implement Kotlin's
-                // MutableIterator.remove contract. The resolved Kotlin owner is authoritative here: route it to the
-                // live IList-backed mutable adapter instead of narrowing its declared return to Iterator<T>.
-                if (ownerFqn == "kotlin.collections.MutableList")
-                    return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
-                        "clrMutableListIterator", elem, args);
                 if (ownerFqn is "kotlin.collections.MutableIterable"
-                    or "kotlin.collections.MutableCollection" or "kotlin.collections.MutableSet")
+                    or "kotlin.collections.MutableCollection" or "kotlin.collections.MutableSet"
+                    or "kotlin.collections.MutableList")
                     return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
                         "clrMutableIterator", elem, args);
                 return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elem, args);
@@ -1965,7 +1960,6 @@ static class MemberCallSubstitution
             (_, "clrCollIsEmpty") => new[] { Gen("kotlin.collections.Collection") },
             (_, "clrListSet") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), tv },
             (_, "clrListRemoveAt") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
-            (_, "clrMutableListIterator") => new[] { Gen("kotlin.collections.MutableList") },
             (_, "clrMutableIterator") => new[] { Gen("kotlin.collections.MutableIterable") },
             (_, "clrMutableListListIterator") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrListIndexOf" or "clrListLastIndexOf") => new TypeNode[] { Gen("kotlin.collections.List"), tv },

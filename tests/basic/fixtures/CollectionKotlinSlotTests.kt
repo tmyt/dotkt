@@ -21,6 +21,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import System.Collections.Generic.LinkedList as ClrLinkedList
 
 // A Kotlin class implementing MutableCollection DIRECTLY and overriding all three collection-level members.
 open class CollectionKotlinSlotCounting<E> : MutableCollection<E> {
@@ -74,6 +75,7 @@ class CollectionKotlinSlotCountingList : MutableList<Int> {
     private val backing = ArrayList<Int>()
     var addAllAtCalls: Int = 0
     var removeAllCalls: Int = 0
+    var iteratorCalls: Int = 0
 
     override val size: Int get() = backing.size
     override fun isEmpty(): Boolean = backing.size == 0
@@ -82,7 +84,10 @@ class CollectionKotlinSlotCountingList : MutableList<Int> {
         for (e in elements) if (!backing.contains(e)) return false
         return true
     }
-    override fun iterator(): MutableIterator<Int> = backing.iterator()
+    override fun iterator(): MutableIterator<Int> {
+        iteratorCalls++
+        return backing.iterator()
+    }
     override fun listIterator(): MutableListIterator<Int> = backing.listIterator()
     override fun listIterator(index: Int): MutableListIterator<Int> = backing.listIterator(index)
     override fun subList(fromIndex: Int, toIndex: Int): MutableList<Int> = backing.subList(fromIndex, toIndex)
@@ -134,6 +139,8 @@ class CollectionKotlinSlotDelegating(backing: MutableList<Int>) : MutableList<In
 class CollectionKotlinSlotDelegatingSet<T>(backing: MutableSet<T>) : MutableSet<T> by backing
 class CollectionKotlinSlotDelegatingCollection<T>(backing: MutableCollection<T>) : MutableCollection<T> by backing
 class CollectionKotlinSlotDelegatingIterable<T>(backing: MutableIterable<T>) : MutableIterable<T> by backing
+open class CollectionKotlinSlotAnimal
+class CollectionKotlinSlotDog : CollectionKotlinSlotAnimal()
 class CollectionKotlinSlotEqualValue(val id: Int) {
     override fun equals(other: Any?): Boolean = other is CollectionKotlinSlotEqualValue
     override fun hashCode(): Int = 0
@@ -366,6 +373,22 @@ class CollectionKotlinSlotTests {
         assertTrue(list[0] === first)
         assertTrue(list[1] === third)
 
+        // LinkedList is a duplicate-permitting ICollection but not an IList. Remove(value) would delete the first
+        // equal node; the erased fallback must instead remove the exact second occurrence returned by the iterator.
+        val linked = ClrLinkedList<CollectionKotlinSlotEqualValue>()
+        linked.AddLast(first)
+        linked.AddLast(second)
+        linked.AddLast(third)
+        val linkedFace = linked as MutableCollection<CollectionKotlinSlotEqualValue>
+        val linkedIterator = linkedFace.iterator()
+        assertTrue(linkedIterator.next() === first)
+        assertTrue(linkedIterator.next() === second)
+        linkedIterator.remove()
+        val linkedRemaining = ArrayList<CollectionKotlinSlotEqualValue>()
+        for (element in linked) linkedRemaining.add(element)
+        assertTrue(linkedRemaining[0] === first)
+        assertTrue(linkedRemaining[1] === third)
+
         // MutableIterable has only IEnumerable as its operational face, so capability dispatch is its sole route to
         // the implementer's remove-capable iterator.
         val iterableBacking = mutableSetOf(30, 40)
@@ -375,6 +398,51 @@ class CollectionKotlinSlotTests {
         val iterableRemoved = iterableIterator.next()
         iterableIterator.remove()
         assertFalse(iterableBacking.contains(iterableRemoved))
+
+        // MutableList is the same semantic slot: a Kotlin override must win over the indexed BCL fallback.
+        val customList: MutableList<Int> = CollectionKotlinSlotCountingList()
+        customList.add(50)
+        val customListIterator = customList.iterator()
+        assertEquals(50, customListIterator.next())
+        assertEquals(1, (customList as CollectionKotlinSlotCountingList).iteratorCalls)
+
+        // MutableIterable is covariant. A BCL List<Dog> viewed as MutableIterable<Animal> must use an erased physical
+        // list face rather than attempting the impossible invariant IList<Animal> cast.
+        val dogs: MutableList<CollectionKotlinSlotDog> = mutableListOf(CollectionKotlinSlotDog())
+        val animals: MutableIterable<CollectionKotlinSlotAnimal> = dogs
+        val animalIterator = animals.iterator()
+        assertTrue(animalIterator.next() is CollectionKotlinSlotDog)
+        animalIterator.remove()
+        assertTrue(dogs.isEmpty())
+
+        val dogSet: MutableSet<CollectionKotlinSlotDog> = HashSet<CollectionKotlinSlotDog>()
+        dogSet.add(CollectionKotlinSlotDog())
+        val animalSetView: MutableIterable<CollectionKotlinSlotAnimal> = dogSet
+        val animalSetIterator = animalSetView.iterator()
+        assertTrue(animalSetIterator.next() is CollectionKotlinSlotDog)
+        animalSetIterator.remove()
+        assertTrue(dogSet.isEmpty())
+
+        // Star projection also retains MutableIterator.remove rather than falling through the read-only raw adapter.
+        val unknown: Any = CollectionKotlinSlotDelegatingSet(mutableSetOf(60, 70))
+        if (unknown is MutableSet<*>) {
+            val starIterator = unknown.iterator()
+            starIterator.next()
+            starIterator.remove()
+            assertEquals(1, unknown.size)
+        } else {
+            assertTrue(false)
+        }
+
+        val unknownBclSet: Any = HashSet<Int>().also { it.add(80); it.add(90) }
+        if (unknownBclSet is MutableSet<*>) {
+            val starBclIterator = unknownBclSet.iterator()
+            starBclIterator.next()
+            starBclIterator.remove()
+            assertEquals(1, unknownBclSet.size)
+        } else {
+            assertTrue(false)
+        }
     }
 
     // ---- element types the dispatcher is instantiated at ----------------------------------------------------------

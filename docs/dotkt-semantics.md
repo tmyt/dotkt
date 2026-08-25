@@ -667,8 +667,7 @@ BCL interface has a slot for Kotlin's `removeAll(elements)`, `retainAll(elements
 `MutableList.addAll(index, elements)`. All four are virtual Kotlin members a user class may override, and the receiver
 may equally be a plain BCL value (`mutableListOf()` is a `List<T>`, `HashSet()` is a `HashSet<T>`) with no Kotlin body
 at all. The same boundary affects `MutableIterable.iterator()`: its operational `IEnumerable<E>` face returns a BCL
-enumerator and cannot carry Kotlin's remove-capable `MutableIterator<E>`. DotKt reconciles those categories physically,
-with no runtime reflection:
+enumerator and cannot carry Kotlin's remove-capable `MutableIterator<E>`. DotKt reconciles those categories physically:
 
 - every call becomes a `kotlin.collections.ClrCollectionDefaults` dispatcher call (`clrCollRemoveAll`,
   `clrCollRetainAll`, `clrCollAddAll`, `clrListAddAllAt`, `clrMutableIterator`);
@@ -676,12 +675,18 @@ with no runtime reflection:
   `DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots` / `KotlinMutableCollectionSlots` /
   `KotlinMutableListSlots` interface with an exact MethodImpl per member, so the dispatcher reaches the OVERRIDE by
   ordinary virtual dispatch;
-- a receiver with no such interface runs a default written only over slots that physically exist.
+- a receiver with no such interface runs a BCL adapter. Closed exact calls use ordinary physical slots; a widened or
+  star-projected mutable iterable resolves the runtime object's exact closed `ICollection<E>` interface through the
+  existing star-projection reflection runtime, never by a source overload name.
 
-For mutable iteration, a BCL `IList<E>` uses the indexed adapter so removing the last-returned occurrence remains exact,
-including equal duplicate values. Other BCL mutable collections snapshot their enumeration and remove the returned
-element through `ICollection<E>.Remove`; this is exact for sets because their elements are unique. A pure-Kotlin
-implementer always takes its compiler-owned slot and therefore keeps its own iterator semantics.
+For mutable iteration, a BCL list uses the non-generic `IList` indexed adapter. This remains valid after
+`MutableIterable<Derived>` widens to `MutableIterable<Base>` and removes the exact last-returned occurrence, including
+equal duplicate values. Other BCL mutable collections snapshot their enumeration and invoke their exact closed
+`ICollection<E>.Remove` slot. When an earlier equal occurrence would make value removal target the wrong element (for
+example `LinkedList<E>`), the adapter rebuilds from the snapshot without the exact returned occurrence. A pure-Kotlin
+implementer always takes its compiler-owned slot and therefore keeps its own iterator semantics. Star-projected
+mutable iterators use the same capability/BCL order; their erased adapter is required for value elements because CLR
+generic covariance does not lift `MutableIterator<Int>` to `MutableIterator<Any?>`.
 
 Those interfaces are **compiler vocabulary** and are `internal`, so user Kotlin source cannot name them; dll2klib
 also keeps the compiler's reserved `DotKt.Runtime.CompilerServices` namespace out of a projected type's Kotlin

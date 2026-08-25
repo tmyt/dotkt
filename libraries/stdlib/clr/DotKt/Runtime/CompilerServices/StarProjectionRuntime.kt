@@ -463,6 +463,91 @@ private fun starProjectionClosedView(
 private fun starProjectionHasView(runtimeType: StarProjectionType, openGenericType: StarProjectionType): Boolean =
     starProjectionFirstView(runtimeType, openGenericType) != null
 
+// MutableIterable is covariant while its mutable BCL collection face is invariant. A widened or star-projected
+// receiver therefore cannot name ICollection<T> statically even though the runtime object has one exact closed view.
+// Resolve that physical view here and invoke only the fixed ICollection slots; source overload names are irrelevant.
+private fun erasedMutableCollectionView(receiver: Any): StarProjectionType {
+    var match: StarProjectionType? = null
+    for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
+        if (!candidate.isGenericType
+            || candidate.getGenericTypeDefinition().fullName != "System.Collections.Generic.ICollection`1") continue
+        if (match != null && match != candidate)
+            throw IllegalStateException("Ambiguous mutable collection view")
+        match = candidate
+    }
+    return match ?: throw UnsupportedOperationException("MutableIterable has no mutable CLR collection surface")
+}
+
+private fun erasedMutableCollectionMethod(receiver: Any, name: String, parameterCount: Int): StarProjectionMethod {
+    var match: StarProjectionMethod? = null
+    for (candidate in erasedMutableCollectionView(receiver).getMethods()) {
+        if (candidate.name != name || candidate.getParameters().size != parameterCount) continue
+        if (match != null) throw IllegalStateException("Ambiguous ICollection member " + name)
+        match = candidate
+    }
+    return match ?: throw IllegalStateException("Missing ICollection member " + name)
+}
+
+@PublishedApi
+internal fun mutableCollectionRemoveErased(receiver: Any, element: Any?): Boolean = try {
+    erasedMutableCollectionMethod(receiver, "Remove", 1).invoke(receiver, arrayOf(element)) as Boolean
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
+internal fun mutableCollectionReplaceErased(receiver: Any, elements: Array<Any?>) {
+    val clear = erasedMutableCollectionMethod(receiver, "Clear", 0)
+    val add = erasedMutableCollectionMethod(receiver, "Add", 1)
+    try {
+        clear.invoke(receiver, arrayOfNulls<Any?>(0))
+        for (element in elements) add.invoke(receiver, arrayOf(element))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
+private fun erasedMutableIteratorMethod(receiver: Any, name: String): StarProjectionMethod {
+    var view: StarProjectionType? = null
+    for (candidate in receiver.starProjectionRuntimeType().getInterfaces()) {
+        if (!candidate.isGenericType
+            || candidate.getGenericTypeDefinition().fullName != "kotlin.collections.MutableIterator`1") continue
+        if (view != null && view != candidate) throw IllegalStateException("Ambiguous mutable iterator view")
+        view = candidate
+    }
+    val closed = view ?: throw IllegalStateException("Missing mutable iterator view")
+    var match: StarProjectionMethod? = null
+    for (candidate in closed.getMethods()) {
+        if (candidate.name != name || candidate.getParameters().size != 0) continue
+        if (match != null) throw IllegalStateException("Ambiguous MutableIterator member " + name)
+        match = candidate
+    }
+    return match ?: throw IllegalStateException("Missing MutableIterator member " + name)
+}
+
+@PublishedApi
+internal fun mutableIteratorHasNextErased(receiver: Any): Boolean = try {
+    erasedMutableIteratorMethod(receiver, "hasNext").invoke(receiver, arrayOfNulls<Any?>(0)) as Boolean
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
+internal fun mutableIteratorNextErased(receiver: Any): Any? = try {
+    erasedMutableIteratorMethod(receiver, "next").invoke(receiver, arrayOfNulls<Any?>(0))
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+@PublishedApi
+internal fun mutableIteratorRemoveErased(receiver: Any) {
+    try {
+        erasedMutableIteratorMethod(receiver, "remove").invoke(receiver, arrayOfNulls<Any?>(0))
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
 // Classifier checks need existence, not ForeignStarProjectionBinding's unique constructed witness. A CLR type may
 // legally implement the same open interface more than once; either closure proves the erased Kotlin classifier.
 private fun starProjectionFirstView(
