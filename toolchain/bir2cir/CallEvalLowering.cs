@@ -424,16 +424,18 @@ static class CallEvalLowering
     /// NOT Q2, though it once shared Q2's implementation and reads like it. Q2 asks whether an evaluation may be
     /// SKIPPED; nothing is skipped here — every operand of a location is evaluated, the only question is whether it
     /// is evaluated in the slot or one statement earlier, out of a local. What decides that is STORAGE IDENTITY: a
-    /// `this`/`local`/`field`/`staticField` chain is the location's own path, and pinning a link of it would take the
-    /// address of the LOCAL — a copy for a value type, so a callee writing through the `byref` would update the copy
-    /// and not `a.b.c`. A `const` or `classRef` is not a location link but has nothing to pin either.
+    /// `this`/`local`/`field`/`staticField` chain and an addressable element/referent (`arrayGet`, `stackGet`,
+    /// `byrefLoad`) are the location's own path. Pinning one of those links would take the address of the LOCAL — a
+    /// copy for a value type, so a callee writing through the `byref` would update the copy and not `a.b.c` or
+    /// `array[i].field`. Their computed operands are still visited and pinned after the location former itself stays.
+    /// A `const` or `classRef` is not a location link but has nothing to pin either.
     ///
     /// Deliberately says nothing about side effects. A `field` link can throw and a `staticField` link can run a type
     /// initializer; both stay, and both then happen at the location's own position, which is where Kotlin puts them.
     static bool StaysInLocation(JsonNode node) => node is JsonObject o && Str(o["k"]) switch
     {
         "const" or "this" or "local" or "bindRef" or "default" or "classRef"
-            or "staticField" or "enumValue" => true,
+            or "staticField" or "enumValue" or "arrayGet" or "stackGet" or "byrefLoad" => true,
         "field" => StaysInLocation(o["recv"]),
         _ => false,
     };
@@ -446,7 +448,14 @@ static class CallEvalLowering
         var found = false;
         WalkOperands(location as JsonObject, child =>
         {
-            if (StaysInLocation(child)) return null;
+            if (StaysInLocation(child))
+            {
+                // A location FORMER can stay while one of the values that computes it still has to move (`a[i()]`).
+                // Probe through the same recursive boundary PinLocationOperands uses, or the order pass will miss
+                // the pre-call work and let an earlier argument slide behind it.
+                if (IsLvalueFormer(child) && LocationHasPinWork(child)) found = true;
+                return null;
+            }
             found = true;
             return null;                              // probe only: never rewrite
         });

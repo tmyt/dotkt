@@ -7,6 +7,7 @@
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import OutRef.Calc
+import Probe.BoxHolder
 import kotlin.clr.byref
 import kotlin.clr.ClrRef
 import kotlin.clr.stackBuffer
@@ -112,6 +113,25 @@ class ByRefParameterTests {
         BrHold.b = 2
         c.Swap(byref(BrHold.a), byref(BrHold.b))            // a static field's own address
         assertEquals("2 1", "${BrHold.a} ${BrHold.b}")      // 2 1    (was "1 2")
+    }
+
+    @TestAttribute
+    fun byrefThroughValueTypeLocationLinks() {
+        val c = Calc()
+        val holder = BoxHolder(10, 20, 30)
+
+        // Every value-type field link remains part of the addressable path. Loading either Box as a value first
+        // would pass the address of a copy and both writes would disappear without producing invalid IL.
+        c.Swap(byref(holder.Direct.F), byref(holder.Nested.Value.F))
+        assertEquals("20 10", "${holder.Direct.F} ${holder.Nested.Value.F}")
+
+        // The array element is storage too, while its side-effecting index is call-plan work that must happen once
+        // before the omitted default is spliced. This covers the ordering probe as well as recursive ldelema/ldflda.
+        var indexCalls = 0
+        val marker = c.SwapWithMarker(byref(holder.Items[indexCalls++].F), byref(holder.Direct.F))
+        assertEquals(7, marker)
+        assertEquals(1, indexCalls)
+        assertEquals("20 30", "${holder.Items[0].F} ${holder.Direct.F}")
     }
 
     // A STACK-BUFFER slot by reference, with a SIDE-EFFECTING index. The bounds check and the address computation are

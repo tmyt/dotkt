@@ -9,6 +9,7 @@ namespace OutRef {
             return true;
         }
         public void Swap(ref int x, ref int y) { var t = x; x = y; y = t; }
+        public int SwapWithMarker(ref int x, ref int y, int marker = 7) { Swap(ref x, ref y); return marker; }
         private int[] data = new int[] { 10, 20, 30 };
         public ref int Slot(int i) => ref data[i];   // ref return
     }
