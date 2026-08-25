@@ -1,0 +1,45 @@
+{
+  "fileClass": "ConstructedMemberReturnFrameProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [
+    {
+      "name": "probe", "static": true, "override": false, "virtual": false, "vis": "public",
+      "typeParams": [{ "name": "T" }],
+      "params": [{
+        "name": "box",
+        "type": {
+          "t": "fqn", "name": "LocalResultBox",
+          "args": [{ "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } }]
+        }
+      }],
+      "ret": { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
+      "body": [{
+        "k": "return",
+        "value": {
+          "k": "callInstance", "virtual": true,
+          "ownerType": {
+            "t": "fqn", "name": "LocalResultBox",
+            "args": [{ "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } }]
+          },
+          "method": "read", "sig": [],
+          "sty": { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
+          "ret": { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
+          "dynRet": { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
+          "recv": { "k": "local", "name": "box" },
+          "args": []
+        }
+      }]
+    }
+  ],
+  "types": [{
+    "name": "LocalResultBox", "kind": "interface", "typeParams": [{ "name": "T" }],
+    "base": null, "interfaces": [], "fields": [], "ctors": [], "properties": [], "attrs": [],
+    "methods": [{
+      "name": "read", "static": false, "override": false, "virtual": true,
+      "abstract": true, "vis": "public", "params": [],
+      "ret": { "t": "tv", "scope": "type", "i": 0 }, "body": []
+    }]
+  }],
+  "refTypes": []
+}

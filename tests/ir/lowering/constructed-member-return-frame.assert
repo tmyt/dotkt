@@ -1,0 +1,6 @@
+# The call-site stamp says that Array<T> is already closed over the caller's method frame. Both result slots retain
+# that exact shape through the early and late constructed-owner sweeps.
++"method":"read","sig":[],"ret":{"t":"array","elem":{"t":"tv","scope":"method","i":0}},"dynRet":{"t":"array","elem":{"t":"tv","scope":"method","i":0}}
+# The old pass substituted the already-instantiated owner argument once per sweep.
+-"ret":{"t":"array","elem":{"t":"array"
+-"dynRet":{"t":"array","elem":{"t":"array"

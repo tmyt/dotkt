@@ -31,6 +31,10 @@
 #   `local-const-field-read` pins that decision boundary so ilemit never needs to reflect over fields and rediscover
 #   whether a static field is a literal.
 #
+#   BIR result-frame ownership (#328) — a call result exactly matching its frontend `sty` is already instantiated in
+#   the caller frame. `constructed-member-return-frame` runs that shape through both constructed-owner sweeps and
+#   rejects the former nested re-substitution while the await fixtures keep witnessing callee-relative substitution.
+#
 #   A generic owner's companion statics live on one non-generic physical carrier, including while reference bodies are
 #   retained long enough to emit field initializers. `reference-generic-static-self-init` pins the self-call owner.
 #

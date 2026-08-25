@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Fixed
 
+- **Constructed member returns no longer re-substitute caller-frame type variables (#328).** bir2cir treats exact
+  agreement with the frontend result stamp as the closed-frame boundary and substitutes only distinct
+  callee-relative results through the constructed owner. Nested results such as
+  `Iterator<Map.Entry<K,V>>.next()` therefore retain `Map.Entry<K,V>` across both lowering sweeps instead of growing
+  another nested entry at each pass.
+
 - **Recursive CLR delegate graphs now fail with a bounded diagnostic (#584).** dll2klib tracks the exact active
   TypeDef path while expanding delegate `Invoke` signatures and rejects local, generic, and cross-assembly cycles
   that Kotlin metadata cannot represent as finite function types. Valid recursive CLR metadata therefore no longer
