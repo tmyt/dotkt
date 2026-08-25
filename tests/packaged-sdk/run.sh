@@ -6,8 +6,8 @@
 # broken twice for exactly this reason (#131 stale SDK version, #132 a Library's non-copy-local reference
 # never reaching bir2cir/ilemit). This suite packs the 5 nupkgs to a local feed and drives EIGHT isolated
 # scenarios through `dotnet build`/`dotnet run` from that feed only:
-#   exe      — a plain `Sdk="DotKt.Sdk"` Exe under a whitespace-containing path: build + RUN, assert stdout, and
-#              prove its >8191-byte generated kotc argument set travels through the packaged response file.
+#   exe      — a plain `Sdk="DotKt.Sdk"` Exe under a punctuation/whitespace-containing path: build + RUN, assert
+#              stdout, and prove each >8191-byte compiler argument set travels through a packaged response file.
 #   multi-target-klib-references — direct outer-build invocation of the public KLIB-reference target: dispatch
 #              across both TFMs and preserve each generated KLIB's source/TFM ownership metadata.
 #   library  — a `Library` that PackageReferences a SECOND DotKt library (packed as its own nupkg) and calls
@@ -308,9 +308,9 @@ fi
 # Case: exe — a plain packaged Exe, build + run.
 # ---------------------------------------------------------------------------------------------------------
 case_exe() {
-	# The whitespace is deliberate: the response file must preserve the absolute Kotlin source path after Kotlin's
-	# quote/backslash parsing on every host. Its net10.0 KLIB classpath is also long enough to trip cmd.exe when inline.
-	local d="$WS/exe response-file"; mkdir -p "$d"; cp "$NUGET_CONFIG" "$d/nuget.config"
+	# The punctuation and whitespace are deliberate: response-file parsing must preserve the absolute source path on
+	# every host. The net10.0 reference sets are also long enough to trip cmd.exe when passed inline.
+	local d="$WS/exe O'Brien response-file"; mkdir -p "$d"; cp "$NUGET_CONFIG" "$d/nuget.config"
 	cat > "$d/App.ktproj" <<EOF
 <Project Sdk="DotKt.Sdk/$VER">
   <PropertyGroup>
@@ -344,7 +344,7 @@ case_exe() {
   </Target>
 </Project>
 EOF
-	cat > "$d/app.kt" <<'EOF'
+	cat > "$d/App;Response.kt" <<'EOF'
 fun nullableCharSequence(): CharSequence? = null
 fun nullableBuilder(value: StringBuilder?): CharSequence? = value
 var producerCalls = 0
@@ -368,12 +368,23 @@ EOF
 	local expected="packaged exe ok: 5" actual rc=0
 	actual="$(run_project "$d" "$d/run.err")" || rc=$?
 	if (( rc != 0 )); then fail exe "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
-	elif [[ ! -s "$d/obj/Debug/net10.0/dotkt-kotc.rsp" ]]; then
-		fail exe "packaged KotlinCompile did not materialize dotkt-kotc.rsp"
-	elif (( $(wc -c < "$d/obj/Debug/net10.0/dotkt-kotc.rsp") <= 8191 )); then
-		fail exe "response-file fixture no longer exceeds cmd.exe's 8191-character limit"
+	elif [[ ! -s "$d/obj/Debug/net10.0/dotkt-kotc.rsp" \
+		|| ! -s "$d/obj/Debug/net10.0/dotkt-bir2cir.rsp" \
+		|| ! -s "$d/obj/Debug/net10.0/dotkt-ilemit.rsp" ]]; then
+		fail exe "packaged compiler pipeline did not materialize all three response files"
+	elif (( $(wc -c < "$d/obj/Debug/net10.0/dotkt-kotc.rsp") <= 8191 \
+		|| $(wc -c < "$d/obj/Debug/net10.0/dotkt-bir2cir.rsp") <= 8191 \
+		|| $(wc -c < "$d/obj/Debug/net10.0/dotkt-ilemit.rsp") <= 8191 )); then
+		fail exe "a packaged response-file fixture no longer exceeds cmd.exe's 8191-character limit"
 	elif ! grep -qx -- '-classpath' "$d/obj/Debug/net10.0/dotkt-kotc.rsp"; then
 		fail exe "kotc response file did not carry the frontend classpath option"
+	elif ! grep -qx -- '--compile-refs' "$d/obj/Debug/net10.0/dotkt-bir2cir.rsp" \
+		|| ! grep -qx -- '--runtime-refs' "$d/obj/Debug/net10.0/dotkt-ilemit.rsp"; then
+		fail exe "back-end response files did not carry the resolved reference sets"
+	elif ! grep -q 'App;Response.kt' "$d/obj/Debug/net10.0/dotkt-kotc.rsp"; then
+		fail exe "packaged response file lost the punctuation-containing source path"
+	elif grep -Eq 'kotc(\.bat)?"? .* -classpath |bir2cir\.dll" .*--compile-refs|ilemit\.dll" .*--compile-refs' "$d/run.build.log"; then
+		fail exe "a packaged compiler tool still received its generated argument set inline"
 	elif [[ "$actual" == "$expected" ]]; then pass exe
 	else fail exe "output mismatch" "$(printf -- '--- expected ---\n%s\n--- actual ---\n%s' "$expected" "$actual")"; fi
 }

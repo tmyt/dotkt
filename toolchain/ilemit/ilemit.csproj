@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../ref-common/ManagedReferenceCatalog.cs" Link="ManagedReferenceCatalog.cs" />
+    <Compile Include="../ref-common/ResponseFileArguments.cs" Link="ResponseFileArguments.cs" />
     <!-- Shared atomic (temp+rename) file writer so an emitted dll is never observed mid-write by a concurrent reader (#52). -->
     <Compile Include="../ref-common/AtomicFile.cs" Link="AtomicFile.cs" />
     <!-- Shared single-source Type read/write helper of the BIR/CIR freeze (#37). Linked (not a project ref)
