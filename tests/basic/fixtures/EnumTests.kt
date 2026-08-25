@@ -81,6 +81,9 @@ fun enumExplicitIntLabel(value: EnumExplicitInt): String = when (value) {
     EnumExplicitInt.ZERO -> "zero"
 }
 
+fun <T : Enum<T>> enumGenericOrdinal(value: T): Int = value.ordinal
+inline fun <reified T : Enum<T>> enumReifiedOrdinal(value: T): Int = value.ordinal
+
 @ClrEnum
 enum class EnumExplicitUInt(value: UInt) {
     HIGH(0x80000000u),
@@ -353,9 +356,34 @@ class EnumTests {
         assertEquals(0, EnumExplicitInt.FOUR.ordinal)
         assertEquals(1, EnumExplicitInt.NEGATIVE.ordinal)
         assertEquals(2, EnumExplicitInt.ZERO.ordinal)
+        assertEquals(0, enumGenericOrdinal(EnumExplicitInt.FOUR))
+        assertEquals(1, enumGenericOrdinal(EnumExplicitInt.NEGATIVE))
+        assertEquals(0, enumReifiedOrdinal(EnumExplicitInt.FOUR))
+        assertEquals(1, enumReifiedOrdinal(EnumExplicitInt.NEGATIVE))
         assertEquals(4, EnumExplicitInt.FOUR.name.length)
         assertEquals("FOUR", EnumExplicitInt.FOUR.toString())
         assertEquals("NEGATIVE", EnumExplicitInt.valueOf("NEGATIVE").toString())
+        val numericName = try {
+            EnumExplicitInt.valueOf("4")
+            "accepted"
+        } catch (e: IllegalArgumentException) {
+            "rejected"
+        }
+        assertEquals("rejected", numericName)
+        val reifiedNumericName = try {
+            enumValueOf<EnumExplicitInt>("4")
+            "accepted"
+        } catch (e: IllegalArgumentException) {
+            "rejected"
+        }
+        assertEquals("rejected", reifiedNumericName)
+        var valueOfEvaluations = 0
+        fun declaredName(): String {
+            valueOfEvaluations += 1
+            return "FOUR"
+        }
+        assertEquals(EnumExplicitInt.FOUR, EnumExplicitInt.valueOf(declaredName()))
+        assertEquals(1, valueOfEvaluations)
         assertEquals("FOUR|NEGATIVE|ZERO", EnumExplicitInt.values().joinToString("|") { it.name })
         assertEquals("FOUR|NEGATIVE|ZERO", enumValues<EnumExplicitInt>().joinToString("|") { it.name })
         assertEquals("FOUR|NEGATIVE|ZERO", EnumExplicitInt.entries.joinToString("|") { it.name })

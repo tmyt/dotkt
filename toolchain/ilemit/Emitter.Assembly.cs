@@ -175,6 +175,7 @@ sealed partial class Emitter
                                 && en.TryGetProperty("underlying", out var physicalUnderlying)
                                     ? EnumConstantValue(physicalUnderlying.GetString(), physicalValue.GetString())
                                     : en.GetProperty("ordinal").GetInt32());
+                            StampMemberAttrs(field.SetCustomAttribute, en);
                             eti.Fields[entryName] = field;
                         }
                         _types[name] = eti;

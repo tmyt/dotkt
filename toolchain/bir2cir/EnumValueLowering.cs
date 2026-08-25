@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // A Kotlin enum entry is semantic declaration identity: owner + entry name. A referenced rich Kotlin enum carries an
 // explicit producer map from that identity to its singleton field; a basic local enum uses its contiguous ordinal,
@@ -53,6 +54,16 @@ static class EnumValueLowering
                     obj["underlying"] = physical.Underlying;
                     obj["physicalValue"] = physical.Value;
                 }
+            }
+
+            if (kind == "enumParse"
+                && obj["type"] is JsonNode parseType
+                && obj["arg"] is JsonNode parseArg
+                && TypeJson.OwnerName(parseType) is string parseOwner
+                && (localExplicitEnums.TryGetValue(parseOwner, out var localParse)
+                    || refs.TryKotlinBasicEnum(parseOwner, out localParse)))
+            {
+                RewriteExplicitParse(obj, parseType, parseArg, parseOwner, localParse);
             }
 
             if (kind is "enumName" or "enumOrdinal"
@@ -114,6 +125,83 @@ static class EnumValueLowering
         ["underlying"] = metadata.Underlying,
         ["physicalValue"] = entry.PhysicalValue,
     }).ToArray());
+
+    static int _parseTemp;
+
+    // System.Enum.Parse also accepts numeric strings and, for [Flags] enums, comma-separated combinations. Kotlin's
+    // valueOf contract accepts one exact declared entry name only. The trusted ordered producer map is therefore the
+    // complete decision table: evaluate the source name once, compare it to every declaration, and materialize the
+    // exact physical constant already selected by bir2cir. Failure stays an ordinary Kotlin exception expression so
+    // the later alias/member-resolution passes bind it exactly like a source-authored throw.
+    static void RewriteExplicitParse(
+        JsonObject node,
+        JsonNode enumType,
+        JsonNode argument,
+        string owner,
+        BasicEnumMetadata metadata)
+    {
+        var tempName = "__enumParse$" + System.Threading.Interlocked.Increment(ref _parseTemp);
+        var tempType = TypeJson.Fqn("kotlin.String");
+        JsonNode result = new JsonObject
+        {
+            ["k"] = "throwExpr",
+            ["value"] = new JsonObject
+            {
+                ["k"] = "new",
+                ["type"] = TypeJson.Fqn("kotlin.IllegalArgumentException"),
+                ["argTypes"] = new JsonArray
+                {
+                    TypeJson.Write(new TypeNode.Nullable(new TypeNode.Fqn("kotlin.String"))),
+                },
+                ["args"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["k"] = "const", ["type"] = tempType.DeepClone(),
+                        ["value"] = $"No enum constant {owner}",
+                    },
+                },
+            },
+        };
+        foreach (var entry in metadata.Entries.Reverse())
+        {
+            result = new JsonObject
+            {
+                ["k"] = "cond",
+                ["type"] = enumType.DeepClone(),
+                ["cond"] = new JsonObject
+                {
+                    ["k"] = "objEq",
+                    ["lhs"] = new JsonObject { ["k"] = "local", ["name"] = tempName },
+                    ["rhs"] = new JsonObject
+                    {
+                        ["k"] = "const", ["type"] = tempType.DeepClone(), ["value"] = entry.Name,
+                    },
+                },
+                ["then"] = new JsonObject
+                {
+                    ["k"] = "enumValue",
+                    ["type"] = enumType.DeepClone(),
+                    ["entry"] = entry.Name,
+                    ["ordinal"] = entry.Ordinal,
+                    ["underlying"] = metadata.Underlying,
+                    ["physicalValue"] = entry.PhysicalValue,
+                },
+                ["else"] = result,
+            };
+        }
+        node.Clear();
+        node["k"] = "valueBlock";
+        node["type"] = enumType.DeepClone();
+        node["stmts"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["k"] = "var", ["name"] = tempName, ["type"] = tempType, ["init"] = argument.DeepClone(),
+            },
+        };
+        node["result"] = result;
+    }
 }
 
 sealed record EnumPhysicalConstant(string Underlying, string Value);

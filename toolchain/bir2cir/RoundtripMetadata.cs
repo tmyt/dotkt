@@ -45,6 +45,7 @@ static class RoundtripMetadata
     const string AKInner        = Ns + "KotlinInnerAttribute";
     const string AKRichEnum     = Ns + "KotlinRichEnumAttribute";
     const string AKBasicEnum    = Ns + "KotlinBasicEnumAttribute";
+    const string AKBasicEnumOrdinal = Ns + "KotlinBasicEnumOrdinalAttribute";
     const string AKCompanion    = Ns + "KotlinCompanionAttribute";
     const string AKCompanionExt = Ns + "KotlinCompanionExtensionAttribute";
     const string AKPropertyAccessor = Ns + "KotlinPropertyAccessorAttribute";
@@ -176,6 +177,18 @@ static class RoundtripMetadata
         // Enum.GetValues. A plain real enum carries no Kotlin metadata and still takes the early return.
         if (to["basicEnum"] is JsonObject basicEnum)
         {
+            if (to["entries"] is not JsonArray physicalEntries || basicEnum["entries"] is not JsonArray semanticEntries
+                || physicalEntries.Count != semanticEntries.Count)
+                throw new InvalidOperationException("basic-enum metadata does not match its physical entry declarations");
+            for (var i = 0; i < physicalEntries.Count; i++)
+            {
+                if (physicalEntries[i] is not JsonObject physical || semanticEntries[i] is not JsonObject semantic
+                    || (physical["name"] as JsonValue)?.GetValue<string>()
+                        != (semantic["name"] as JsonValue)?.GetValue<string>()
+                    || (semantic["ordinal"] as JsonValue)?.GetValue<int>() != i)
+                    throw new InvalidOperationException("basic-enum metadata entry does not match its physical declaration");
+                Append(physical, Marker(AKBasicEnumOrdinal, IntArg(i)));
+            }
             Append(to, JsonCarrierAttr(AKBasicEnum, basicEnum));
             to.Remove("basicEnum");
         }
@@ -786,6 +799,7 @@ static class RoundtripMetadata
             AttrClass(AKInner, Ctor(Param("System.Int32"))), // source `inner` + leading physical outer slots
             AttrClass(AKRichEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit rich-enum entry/API map
             AttrClass(AKBasicEnum, Ctor(Param("System.String"), Param(ByteArrayType()))), // explicit basic-enum ordered values
+            AttrClass(AKBasicEnumOrdinal, Ctor(Param("System.Int32"))), // declaration ordinal on each explicit enum literal
             AttrClass(AKCompanion, Ctor(Param("System.String"), Param(ByteArrayType()))), // #275 — source companion owner/name/representation
             AttrClass(AKCompanionExt, Ctor(Param("System.String"), Param(ByteArrayType()))), // #382 — a companion extension's associated Kotlin type
             AttrClass(AKPropertyAccessor, Ctor(Param("System.String"), Param(ByteArrayType()))), // method-generic Kotlin property accessor association

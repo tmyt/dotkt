@@ -382,7 +382,7 @@ sealed partial class Emitter
             if (vararg) SetAttribute(pb.SetCustomAttribute,
                 // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the assembly, not a call any program makes
                 Bcl("System.ParamArrayAttribute").GetConstructor(Type.EmptyTypes), Array.Empty<Type>());
-            if (hasDefault) { try { pb.SetConstant(ConstArgValue(dflt)); } catch { } }
+            if (hasDefault) pb.SetConstant(ConstArgValue(dflt));
             // Apply each param attribute whose type this assembly can encode (an in-assembly emitted type, or an
             // `attrExternal`-flagged referenced type); an attr referencing a type not in `_types` is skipped (BuildAttribute
             // would KeyNotFound) — the same "the CLR layer decides what is encodable" policy the method-level path uses.

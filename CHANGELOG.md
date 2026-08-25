@@ -5,6 +5,14 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Added
+
+- **Kotlin can now publish native CLR enums with explicit integral constants (#526).** `@ClrEnum` gives one
+  non-property enum constructor parameter a compile-time-only role for selecting any legal signed or unsigned CLR
+  enum underlying type. Declaration order remains Kotlin `ordinal` even for sparse or negative physical values,
+  including through generic `T : Enum<T>` code and DLL-to-KLIB round trips; exact-name `valueOf`, CLR attributes,
+  optional defaults, reflection, C# switches, and `System.FlagsAttribute` all consume the same explicit value map.
+
 ### Fixed
 
 - **By-reference paths through nested CLR structs now address the original storage (#308).** Call-plan lowering keeps

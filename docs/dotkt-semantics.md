@@ -35,7 +35,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [5b](#5b-charsequence-is-string-on-the-clr--an-immutable-snapshot-not-a-live-view) | **`CharSequence` is `string`** — snapshot, not live view |
 | [5c](#5c-mapmutablemap-both-erase-to-idictionarykv--read-only-ness-is-frontend-enforced) | `Map`/`MutableMap` → `IDictionary<K,V>` |
 | [5d](#5d-appendable-is-systemtextstringbuilder) | `Appendable` is `System.Text.StringBuilder` |
-| [5e](#5e-enum-classes-have-two-clr-shapes) | Enum classes: basic → real CLR `enum`, rich → singleton class |
+| [5e](#5e-enum-classes-have-two-clr-shapes) | Enum classes: basic/`@ClrEnum` → real CLR `enum`, rich → singleton class |
 | [5f](#5f-value-class-is-a-real-wrapper-class-never-erased) | `value class` = a real class (never erased) |
 | [6](#6-consuming-a-dotkt-assembly-as-kotlin--what-rides-metadata-vs-needs-an-attribute) | Round-trip: what rides metadata vs. needs an attribute |
 | [7](#7-default-arguments--a-two-tier-rule-native-metadata-else-a-carried-bir-expression) | Default arguments — the two-tier rule |
@@ -818,12 +818,19 @@ all three `append` members). The range overload additionally marks its exclusive
 
 - A **basic** `enum class` (constants only, no ctor params / methods / per-entry bodies) → a **real CLR `enum`** —
   ideal for .NET interop (usable in C# `switch`, attributes, etc.).
+- An **explicit** `@kotlin.clr.ClrEnum` declaration is also a real CLR enum. It has exactly one non-property
+  compile-time constructor parameter of type `Byte`, `UByte`, `Short`, `UShort`, `Int`, `UInt`, `Long`, or `ULong`;
+  every entry supplies one distinct in-range constant. That parameter emits no constructor, field, or property. The
+  chosen Kotlin type becomes the exact CLR underlying type, while Kotlin `ordinal`, `values()`, and exact-name
+  `valueOf()` continue to follow declaration order rather than numeric order. Generic `T : Enum<T>` ordinal reads use
+  the compiler-stamped declaration ordinal rather than recovering it from CLR FieldDef or `Enum.GetValues` order.
 - A **rich** enum (constructor params, methods, per-entry bodies) → a **singleton-field class** (one static readonly
   instance per entry, with real properties/methods; `name`/`ordinal`/`values()`/`valueOf()` synthesized).
 - Within a DotKt module both behave like Kotlin enums. **Across the round-trip** (re-consuming the dll as Kotlin)
-  neither is restored as a Kotlin `enum class` — see §10.2 — so exhaustive `when` over a *consumed* enum degrades.
-  A reference-KLIB-projected **.NET** enum arrives as an object of enum-typed `val`s (read, pass, `==`, `when` all work,
-  without exhaustiveness).
+  an explicit `@ClrEnum` is restored from its trusted ordered carrier, including names, physical values, and
+  declaration ordinals. Ordinary basic and rich enums are not restored as Kotlin `enum class` declarations — see
+  §10.2 — so exhaustive `when` over those consumed enums degrades. A reference-KLIB-projected **.NET** enum arrives as
+  an object of enum-typed `val`s (read, pass, `==`, `when` all work, without exhaustiveness).
 
 ## 5f. `value class` is a real wrapper class — never erased
 

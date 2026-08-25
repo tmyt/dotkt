@@ -348,6 +348,7 @@ private fun BirEmitter.interfaceSuperTypes(klass: IrClass): String = klass.super
 	.joinToString(",")
 
 internal fun BirEmitter.interfaceDef(iface: IrClass): String {
+	rejectClrEnumOnNonEnum(iface)
 	fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
 		val savedSemanticOwner = activeSemanticOwner
 		activeSemanticOwner = semanticOwnerName(fn)
@@ -476,6 +477,11 @@ private fun BirEmitter.reportClrEnumError(node: IrElement?, detail: String) {
 		"malformed @ClrEnum declaration: $detail",
 		locationOf(node),
 	)
+}
+
+private fun BirEmitter.rejectClrEnumOnNonEnum(klass: IrClass) {
+	if (klass.kind != ClassKind.ENUM_CLASS && klass.isExplicitClrEnum())
+		reportClrEnumError(klass, "@ClrEnum may be applied only to an enum class")
 }
 
 private fun clrEnumConstantText(constant: IrConst, underlying: String?): String = when (underlying) {
@@ -1445,6 +1451,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
  *  bir2cir DERIVES `base = System.Attribute` from it (annotation-base-lowering-to-bir2cir, USER 2026-07-02).
  *  kotc names NO CLR base type here. */
 internal fun BirEmitter.annotationDef(klass: IrClass): String {
+	rejectClrEnumOnNonEnum(klass)
 	val ctorParams = klass.declarations.filterIsInstance<IrConstructor>().firstOrNull { it.isPrimary }
 		?.parameters?.filter { it.kind == IrParameterKind.Regular }.orEmpty()
 	val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
@@ -1483,6 +1490,7 @@ internal fun BirEmitter.attrsJson(anns: List<IrConstructorCall>): String {
 }
 
 internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDeclaration, String>> = emptyList(), isObject: Boolean = false, captureEnclosingGenerics: Boolean = false, generated: Boolean = false): String {
+	rejectClrEnumOnNonEnum(klass)
 	val baseType = klass.superTypes
 		.firstOrNull { val k = it.classifierOrNull?.owner as? IrClass; k != null && k.kind == ClassKind.CLASS && k.fqNameWhenAvailable?.asString() != "kotlin.Any" }
 	val base = baseType?.classifierOrNull?.owner as? IrClass

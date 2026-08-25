@@ -452,12 +452,16 @@ class V:
             else:
                 for ordinal, entry in enumerate(entries):
                     where = path + f"/entries[{ordinal}]"
-                    if not isinstance(entry, dict) or set(entry) != {"name", "ordinal", "underlying", "physicalValue"}:
-                        self.err(f, where, "explicit CIR enum entry must contain exactly name/ordinal/underlying/physicalValue")
+                    if not isinstance(entry, dict) or not set(entry).issubset(
+                            {"name", "ordinal", "underlying", "physicalValue", "attrs"}) or not {
+                                "name", "ordinal", "underlying", "physicalValue"
+                            }.issubset(entry):
+                        self.err(f, where, "explicit CIR enum entry must contain name/ordinal/underlying/physicalValue and optional attrs")
                     elif (not isinstance(entry.get("name"), str) or not entry["name"] or
                           entry.get("ordinal") != ordinal or
                           not isinstance(entry.get("underlying"), str) or not entry["underlying"] or
-                          not isinstance(entry.get("physicalValue"), str) or not entry["physicalValue"]):
+                          not isinstance(entry.get("physicalValue"), str) or not entry["physicalValue"] or
+                          ("attrs" in entry and not isinstance(entry["attrs"], list))):
                         self.err(f, where, "explicit CIR enum entry must carry its name, declaration ordinal, underlying type, and physical value")
 
     def type_node(self, f, path, o):

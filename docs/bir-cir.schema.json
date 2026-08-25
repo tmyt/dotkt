@@ -425,7 +425,7 @@
         "ctors":      { "type": "array", "items": { "$ref": "#/$defs/ctorDecl" } },
         "methods":    { "type": "array", "items": { "$ref": "#/$defs/funDecl" } },
         "properties": { "type": "array", "items": { "$ref": "#/$defs/propDecl" } },
-        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries" },
+        "entries":    { "type": "array", "items": { "type": "object" }, "description": "enum entries; an explicit CIR enum entry carries name/ordinal/underlying/physicalValue and may carry attrs authored by bir2cir for mechanical field stamping" },
         "pos":        { "$ref": "#/$defs/pos" }
       },
       "allOf": [
