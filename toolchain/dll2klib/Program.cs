@@ -289,7 +289,7 @@ internal static class Program
         using var publicTypeCatalog = PublicTypeCatalog.Load(
             Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment));
         using var scanner = new AssemblyScanner(
-            pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog);
+            input, pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog);
         var fragments = scanner.Scan();
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -1397,6 +1397,7 @@ internal sealed class AssemblyScanner : IDisposable
         bool IsExplicit);
 
     private readonly MetadataReader _md;
+    private readonly string _definitionPath;
     private readonly MetadataAttributes _attrs;
     private readonly ArityNames _arityNames;
     private readonly DelegateReferenceCatalog _delegateCatalog;
@@ -1419,6 +1420,7 @@ internal sealed class AssemblyScanner : IDisposable
     private readonly ExternalSignatureDecoderCache _externalSignatureDecoders = new();
 
     public AssemblyScanner(
+        string definitionPath,
         PEReader pe,
         MetadataReader md,
         ArityNames arityNames,
@@ -1427,6 +1429,7 @@ internal sealed class AssemblyScanner : IDisposable
         InnerReferenceCatalog innerCatalog,
         PublicTypeCatalog publicTypeCatalog)
     {
+        _definitionPath = Path.GetFullPath(definitionPath);
         _md = md;
         _attrs = new MetadataAttributes(md);
         _attrs.ValidateCarrierTargets(
@@ -1622,6 +1625,7 @@ internal sealed class AssemblyScanner : IDisposable
                 _md, names, _attrs, _arityNames, _delegateCatalog, _companionCatalog, _innerCatalog,
                 _signatureSeeds,
                 _externalSignatureDecoders,
+                _definitionPath,
                 SemanticCompanionTypeNames(names));
             var projectedBySemanticName = new Dictionary<string, Class>(StringComparer.Ordinal);
 
@@ -3130,7 +3134,8 @@ internal sealed class AssemblyScanner : IDisposable
             _companionCatalog,
             _innerCatalog,
             source.Seeds,
-            _externalSignatureDecoders);
+            _externalSignatureDecoders,
+            definitionPath);
     }
 
     public void Dispose() => _externalSignatureDecoders.Dispose();
@@ -6623,27 +6628,42 @@ internal sealed class ExternalSignatureDecoderCache : IDisposable
 
 // CLR delegate signatures may form recursive graphs, but Kotlin metadata has no recursive function-type constructor:
 // expanding one edge to `Any?` would make the public type depend on which delegate happened to be visited first.
-// Track the exact metadata definitions on the active expansion path and reject only the recursive graph. MVID +
-// TypeDef row remains the same when a cross-assembly edge reopens the assembly through the resolved delegate catalog.
+// Track the exact resolved definitions on the active expansion path and reject only the recursive graph. The catalog's
+// definition path + TypeDef row remains the same when a cross-assembly edge reopens an assembly, and unlike MVID it is
+// an identity assigned by this exact resolved-input universe rather than a producer-supplied uniqueness hint.
 internal sealed class DelegateDecodingContext
 {
     private readonly List<Entry> _active = [];
 
-    internal IDisposable Enter(MetadataReader reader, TypeDefinitionHandle handle, string displayName)
+    internal IDisposable Enter(
+        string definitionPath,
+        MetadataReader reader,
+        ArityNames arityNames,
+        TypeDefinitionHandle handle)
     {
-        var module = reader.GetModuleDefinition();
-        var key = new Key(reader.GetGuid(module.Mvid), MetadataTokens.GetRowNumber(handle));
+        var key = new Key(definitionPath, MetadataTokens.GetRowNumber(handle));
         var cycleStart = _active.FindIndex(entry => entry.Key == key);
         if (cycleStart >= 0)
         {
-            var cycle = _active.Skip(cycleStart).Select(entry => entry.DisplayName).Append(displayName);
+            var repeated = new Entry(key, reader, arityNames, handle);
+            var cycle = _active.Skip(cycleStart).Append(repeated).Select(DisplayName);
             throw new InvalidDataException(
                 "recursive CLR delegate graph cannot be represented as a finite Kotlin function type: " +
                 string.Join(" -> ", cycle));
         }
 
-        _active.Add(new Entry(key, displayName));
+        _active.Add(new Entry(key, reader, arityNames, handle));
         return new ExitScope(this, key);
+    }
+
+    private static string DisplayName(Entry entry)
+    {
+        var reader = entry.Reader;
+        var assemblyName = reader.IsAssembly
+            ? reader.GetString(reader.GetAssemblyDefinition().Name)
+            : reader.GetString(reader.GetModuleDefinition().Name);
+        return assemblyName + "/" +
+            SignatureDecoderSeeds.DefinitionKotlinName(reader, entry.ArityNames, entry.Handle);
     }
 
     private void Exit(Key key)
@@ -6653,8 +6673,12 @@ internal sealed class DelegateDecodingContext
         _active.RemoveAt(_active.Count - 1);
     }
 
-    private readonly record struct Key(Guid ModuleVersionId, int TypeDefinitionRow);
-    private sealed record Entry(Key Key, string DisplayName);
+    private readonly record struct Key(string DefinitionPath, int TypeDefinitionRow);
+    private sealed record Entry(
+        Key Key,
+        MetadataReader Reader,
+        ArityNames ArityNames,
+        TypeDefinitionHandle Handle);
 
     private sealed class ExitScope(DelegateDecodingContext owner, Key key) : IDisposable
     {
@@ -6679,6 +6703,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private readonly CompanionReferenceCatalog _companionCatalog;
     private readonly InnerReferenceCatalog _innerCatalog;
     private readonly ExternalSignatureDecoderCache _externalSignatureDecoders;
+    private readonly string _definitionPath;
     private readonly DelegateDecodingContext _delegateDecoding;
     private readonly IReadOnlyDictionary<TypeDefinitionHandle, int> _semanticTypeNames;
     private readonly bool _restoreKotlinCollections;
@@ -6712,6 +6737,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         InnerReferenceCatalog innerCatalog,
         SignatureDecoderSeeds seeds,
         ExternalSignatureDecoderCache externalSignatureDecoders,
+        string definitionPath,
         IReadOnlyDictionary<TypeDefinitionHandle, int>? semanticTypeNames = null,
         DelegateDecodingContext? delegateDecoding = null)
     {
@@ -6723,6 +6749,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
         _externalSignatureDecoders = externalSignatureDecoders;
+        _definitionPath = Path.GetFullPath(definitionPath);
         _delegateDecoding = delegateDecoding ?? new DelegateDecodingContext();
         _delegateDefinitions = seeds.DelegateDefinitions;
         _seedValueTypeNames = seeds.ValueTypeNames;
@@ -6901,6 +6928,9 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
 
     public KType GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind)
     {
+        // SRM decodes a custom modifier's TypeDefOrRef before calling GetModifiedType, whose Kotlin projection drops
+        // the modifier. Do not expand a delegate graph that cannot affect the resulting KType.
+        if (rawTypeKind == (byte)SignatureTypeKind.Unknown) return Any(nullable: true);
         var def = reader.GetTypeDefinition(handle);
         var name = DefinitionKotlinName(reader, handle);
         var className = DefinitionKotlinClassName(reader, handle);
@@ -6925,6 +6955,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     }
     public KType GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
     {
+        if (rawTypeKind == (byte)SignatureTypeKind.Unknown) return Any(nullable: true);
         if (_companionCatalog.TryResolve(reader, handle, out var externalCompanion))
         {
             var semantic = rawTypeKind == (byte)SignatureTypeKind.Class
@@ -7463,11 +7494,8 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     private KType DecodeDelegate(TypeDefinitionHandle handle)
     {
         var def = _md.GetTypeDefinition(handle);
-        var assemblyName = _md.IsAssembly
-            ? _md.GetString(_md.GetAssemblyDefinition().Name)
-            : _md.GetString(_md.GetModuleDefinition().Name);
         using var active = _delegateDecoding.Enter(
-            _md, handle, assemblyName + "/" + DefinitionKotlinName(_md, handle));
+            _definitionPath, _md, _arityNames, handle);
         var invokeHandle = def.GetMethods()
             .FirstOrDefault(h => _md.GetString(_md.GetMethodDefinition(h).Name) == "Invoke");
         if (invokeHandle.IsNil) return Any(nullable: true);
@@ -7500,6 +7528,7 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
             _innerCatalog,
             source.Seeds,
             _externalSignatureDecoders,
+            entry.DefinitionPath,
             delegateDecoding: _delegateDecoding);
         var shape = decoder.DecodeDelegate(handle);
         _externalDelegateShapes[key] = shape;

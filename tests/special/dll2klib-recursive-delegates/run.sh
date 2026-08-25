@@ -30,6 +30,9 @@ expect_recursive_failure() {
 
 expect_recursive_failure local "$OUT/generated/Recursive.Local.dll"
 expect_recursive_failure generic "$OUT/generated/Recursive.Generic.dll"
+expect_recursive_failure return "$OUT/generated/Recursive.Return.dll"
+expect_recursive_failure array "$OUT/generated/Recursive.Array.dll"
+expect_recursive_failure container "$OUT/generated/Recursive.Container.dll"
 expect_recursive_failure cross \
 	"$OUT/generated/Recursive.CrossA.dll" \
 	"$OUT/generated/Recursive.CrossB.dll"
@@ -41,4 +44,12 @@ grep -q "Recursive.Generic/Recursive.Generic.Self -> Recursive.Generic/Recursive
 grep -Eq "Recursive.CrossA/Recursive.Cross.A -> Recursive.CrossB/Recursive.Cross.B -> Recursive.CrossA/Recursive.Cross.A|Recursive.CrossB/Recursive.Cross.B -> Recursive.CrossA/Recursive.Cross.A -> Recursive.CrossB/Recursive.Cross.B" \
 	"$OUT/cross.log" || die "cross-assembly diagnostic did not retain the cycle path"
 
-info "PASS  recursive CLR delegate graphs terminate with a stable local/generic/cross-assembly diagnostic"
+printf '%s\n' "$OUT/generated/Recursive.Modifier.dll" > "$OUT/modifier.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/modifier-klib" --jobs 1 "@$OUT/modifier.rsp" \
+	>"$OUT/modifier.log" 2>&1
+[[ -f "$OUT/modifier-klib/Recursive.Modifier.klib" ]] \
+	|| die "recursive delegate used only as an erased custom modifier did not project"
+! grep -q "recursive CLR delegate graph" "$OUT/modifier.log" \
+	|| die "erased custom modifier expanded an irrelevant recursive delegate graph"
+
+info "PASS  recursive CLR delegate graphs terminate across local/generic/cross-assembly shapes; erased modifiers stay finite"

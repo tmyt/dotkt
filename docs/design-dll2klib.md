@@ -338,8 +338,9 @@ A recursive CLR delegate graph cannot be represented as a finite Kotlin
 function type. `dll2klib` therefore rejects self-recursive and mutually
 recursive `Invoke` signatures, including generic and cross-assembly cycles,
 instead of truncating the graph to an order-dependent Kotlin type. The active
-expansion path is keyed by module MVID and TypeDef row, so reopening a defining
-assembly through the resolved catalog cannot evade the cycle check.
+expansion path is keyed by resolved definition path and TypeDef row, so
+reopening a defining assembly through the resolved catalog cannot evade the
+cycle check and producer-chosen MVID values cannot alias distinct inputs.
 
 The batch coordinator builds a compact delegate catalog from the complete
 reference set. A worker consults the defining assembly metadata only when a
@@ -515,6 +516,8 @@ A compiler upgrade must validate:
 Current deliberate limits are:
 
 - pointer and function-pointer types fall back to `Any?`;
+- recursive CLR delegate graphs are refused because Kotlin metadata cannot
+  represent them as finite function types;
 - Kotlin function arities 17..22 use the stdlib's canonical
   `DotKt.Runtime.CompilerServices.KFunc`/`KAction`. The stdlib produces no projected KLIB, but remains in the
   resolved delegate catalog so references are restored from the actual TypeDef/`Invoke` shape and assembly identity,
@@ -546,7 +549,9 @@ It verifies:
    calls;
 6. binding through `bir2cir`;
 7. CIL emission through `ilemit`; and
-8. execution of the resulting CLR assembly.
+8. execution of the resulting CLR assembly; and
+9. bounded diagnostics for local, generic, and cross-assembly recursive CLR
+   delegate graphs.
 
 The round-trip and packaged-SDK suites are also authoritative because they
 exercise the same MSBuild reference-set path used by production projects.

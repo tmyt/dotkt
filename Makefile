@@ -42,7 +42,8 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
         verify verify-core verify-tests verify-nunit verify-compile-fail verify-test-corpus verify-integration \
         verify-schema verify-sanity verify-lowering verify-msbuild verify-gate-selection verify-packaged-sdk \
         verify-target-universe verify-csharp14-extension-abi verify-xfail-policy \
-        dev dll2klib-e2e dll2klib-index-benchmark clean clean-tools clean-stdlib clean-pack help
+        dev dll2klib-e2e dll2klib-recursive-delegates dll2klib-index-benchmark \
+        clean clean-tools clean-stdlib clean-pack help
 
 all: pack ## one-shot: toolchain -> stdlib -> the 5 NuGet packages in build/nuget-feed
 
@@ -133,6 +134,7 @@ verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy ga
 	+$(MAKE) verify-msbuild
 	+$(MAKE) verify-target-universe
 	+$(MAKE) verify-csharp14-extension-abi
+	+$(MAKE) dll2klib-recursive-delegates
 	+$(MAKE) verify-xfail-policy
 	+$(MAKE) verify-gate-selection
 
