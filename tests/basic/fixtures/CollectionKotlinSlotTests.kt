@@ -423,6 +423,13 @@ class CollectionKotlinSlotTests {
         animalSetIterator.remove()
         assertTrue(dogSet.isEmpty())
 
+        val ints: MutableList<Int> = mutableListOf(55)
+        val widenedInts: MutableIterable<Any?> = ints
+        val widenedIntIterator = widenedInts.iterator()
+        assertEquals(55, widenedIntIterator.next())
+        widenedIntIterator.remove()
+        assertTrue(ints.isEmpty())
+
         // Star projection also retains MutableIterator.remove rather than falling through the read-only raw adapter.
         val unknown: Any = CollectionKotlinSlotDelegatingSet(mutableSetOf(60, 70))
         if (unknown is MutableSet<*>) {

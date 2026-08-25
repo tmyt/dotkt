@@ -675,9 +675,13 @@ enumerator and cannot carry Kotlin's remove-capable `MutableIterator<E>`. DotKt 
   `DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots` / `KotlinMutableCollectionSlots` /
   `KotlinMutableListSlots` interface with an exact MethodImpl per member, so the dispatcher reaches the OVERRIDE by
   ordinary virtual dispatch;
-- a receiver with no such interface runs a BCL adapter. Closed exact calls use ordinary physical slots; a widened or
-  star-projected mutable iterable resolves the runtime object's exact closed `ICollection<E>` interface through the
-  existing star-projection reflection runtime, never by a source overload name.
+- a receiver with no such interface runs a BCL adapter. Mutable-iterator dispatch accepts its receiver through an
+  erased physical parameter: Kotlin permits a value-typed `MutableIterable<Int>` to widen to `MutableIterable<Any?>`,
+  while CLR generic variance deliberately does not lift value-type instantiations. An alias local for such a widened
+  mutable iterable therefore retains the source collection's exact physical type; its Kotlin call owner remains the
+  widened type and dispatch enters the erased receiver helper. Closed mutation still resolves the runtime object's
+  exact `ICollection<E>` interface through the existing star-projection reflection runtime, never by a source overload
+  name.
 
 For mutable iteration, a BCL list uses the non-generic `IList` indexed adapter. This remains valid after
 `MutableIterable<Derived>` widens to `MutableIterable<Base>` and removes the exact last-returned occurrence, including

@@ -93,7 +93,10 @@ static class MapVarianceRealign
             if (mo["body"] is JsonNode body)
             {
                 GatherLocals(body, env, aliases);
-                if (constraints.Count > 0) RealignVarTypes(body, env, aliases, constraints);
+                // Besides constrained invariant collections, this also keeps a MutableIterable alias on the exact
+                // physical source type. The latter has no CLR value-type covariance, and its sole Kotlin operation
+                // is routed through an erased receiver by MemberCallSubstitution.
+                RealignVarTypes(body, env, aliases, constraints);
                 Walk(body, env, calleeTypeParams, aliases, constraints, refs);
             }
         }
@@ -139,11 +142,23 @@ static class MapVarianceRealign
                 if (it != null) RealignVarTypes(it, env, aliases, constraints);
     }
 
-    // The precise type for a temp declared `declType` but aliased to a source of `srcType`. When the source is a
-    // type-param `Tv`: a bare kotlin.Any/object temp regains that Tv; a temp declared as an invariant collection generic
-    // regains the bound's concrete args wherever it holds an over-approximated (kotlin.Any) position.
+    // The precise physical type for a temp declared `declType` but aliased to a source of `srcType`.
+    //
+    // MutableIterable is covariant in Kotlin and aliases IEnumerable<T> physically. CLR variance only applies when T
+    // is a reference type, so storing MutableList<Int> in a local physically declared MutableIterable<Any?> produces
+    // unverifiable IL. Retain the accepted source's exact collection face in that alias local; calls keep their Kotlin
+    // owner token and MutableIterable.iterator is routed through the variance-independent `Any` dispatcher parameter.
+    //
+    // When the source is a type-param `Tv`: a bare kotlin.Any/object temp regains that Tv; a temp declared as an
+    // invariant collection generic regains the bound's concrete args wherever it holds an over-approximated
+    // (kotlin.Any) position.
     static TypeNode RealignedType(TypeNode declType, TypeNode srcType, IReadOnlyDictionary<int, TypeNode> constraints)
     {
+        if (declType is TypeNode.Fqn { Name: "kotlin.collections.MutableIterable", Args.Length: 1 }
+            && srcType is TypeNode.Fqn { Args.Length: 1 } source
+            && source.Name is "kotlin.collections.MutableIterable" or "kotlin.collections.MutableCollection"
+                or "kotlin.collections.MutableSet" or "kotlin.collections.MutableList")
+            return srcType;
         if (srcType is not TypeNode.Tv srcTv) return declType;
         if (IsObjectish(declType)) return srcType;
         if (!constraints.TryGetValue(srcTv.I, out var bound)) return declType;

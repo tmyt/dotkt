@@ -1960,7 +1960,11 @@ static class MemberCallSubstitution
             (_, "clrCollIsEmpty") => new[] { Gen("kotlin.collections.Collection") },
             (_, "clrListSet") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), tv },
             (_, "clrListRemoveAt") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
-            (_, "clrMutableIterator") => new[] { Gen("kotlin.collections.MutableIterable") },
+            // MutableIterable is declaration-site covariant. A legal Kotlin view such as MutableIterable<Any?> over
+            // MutableList<Int> cannot be passed as CLR IEnumerable<object>: CLR generic variance does not apply to
+            // value-type arguments. The helper therefore receives the physical object erased and adapts its exact
+            // runtime iterator while retaining T only in the return type.
+            (_, "clrMutableIterator") => new[] { new TypeNode.Fqn("kotlin.Any") },
             (_, "clrMutableListListIterator") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrListIndexOf" or "clrListLastIndexOf") => new TypeNode[] { Gen("kotlin.collections.List"), tv },
             (_, "clrListListIterator") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int") },

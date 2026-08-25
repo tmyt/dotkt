@@ -26,9 +26,9 @@ private interface ClrRawMutableList {
     @kotlin.clr.ClrIntrinsic("RemoveAt") fun removeAt(index: Int): Unit
 }
 
-private class ClrErasedMutableIteratorAdapter(private val iterator: Any) : MutableIterator<Any?> {
+private class ClrErasedMutableIteratorAdapter<T>(private val iterator: Any) : MutableIterator<T> {
     override fun hasNext(): Boolean = mutableIteratorHasNextErased(iterator)
-    override fun next(): Any? = mutableIteratorNextErased(iterator)
+    override fun next(): T = mutableIteratorNextErased(iterator) as T
     override fun remove() = mutableIteratorRemoveErased(iterator)
 }
 
@@ -310,21 +310,21 @@ private class ClrErasedMutableCollectionIterator<T>(
     }
 }
 
-public fun <T> clrMutableIterator(iterable: MutableIterable<T>): MutableIterator<T> {
+public fun <T> clrMutableIterator(iterable: Any): MutableIterator<T> {
     val slots = iterable as? KotlinMutableIteratorSlots
-    if (slots != null) return slots.dotktIterator() as MutableIterator<T>
+    if (slots != null) return ClrErasedMutableIteratorAdapter(slots.dotktIterator())
     val list = iterable as? ClrRawMutableList
     if (list != null) return ClrRawMutableListIterator(list)
     val snapshot = ArrayList<T>()
-    val source = iteratorOverEnumerable(iterable as ClrEnumerable<T>)
-    while (source.hasNext()) snapshot.add(source.next())
+    val source = iteratorOverRawEnumerable(iterable)
+    while (source.hasNext()) snapshot.add(source.next() as T)
     return ClrErasedMutableCollectionIterator(iterable, snapshot)
 }
 
 /** Star-projected twin: both capability tests and BCL fallbacks are independent of the erased element type. */
 public fun clrMutableIteratorErased(iterable: Any): MutableIterator<Any?> {
     val slots = iterable as? KotlinMutableIteratorSlots
-    if (slots != null) return ClrErasedMutableIteratorAdapter(slots.dotktIterator())
+    if (slots != null) return ClrErasedMutableIteratorAdapter<Any?>(slots.dotktIterator())
     val list = iterable as? ClrRawMutableList
     if (list != null) return ClrRawMutableListIterator(list)
     val snapshot = ArrayList<Any?>()
