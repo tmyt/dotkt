@@ -16,9 +16,9 @@ internal interface KotlinMutableSetClassifier : KotlinSetClassifier
 // SUPPLEMENTAL KOTLIN SLOTS FOR @ClrTypeAlias'd COLLECTION INTERFACES.
 //
 // `kotlin.collections.MutableCollection<E>` IS `System.Collections.Generic.ICollection<E>` and
-// `MutableList<E>` IS `IList<E>`. Those BCL interfaces carry no slot for Kotlin's `removeAll`, `retainAll`,
-// `addAll(elements)` or `addAll(index, elements)`, so a call through the Kotlin interface has no physical member
-// to dispatch on. Two receiver categories must both work, and they need opposite treatments:
+// `MutableList<E>` IS `IList<E>`. Those BCL interfaces carry no slot for Kotlin's mutable `iterator()` return,
+// `removeAll`, `retainAll`, `addAll(elements)` or `addAll(index, elements)`, so a call through the Kotlin interface
+// has no physical member to dispatch on. Two receiver categories must both work, and they need opposite treatments:
 //
 //   * a BCL-backed value (`mutableListOf()` -> `List<T>`, `HashSet()`) has no Kotlin body at all and needs a
 //     default written over the slots that DO exist (`Remove`/`Add`/`Insert`/`GetEnumerator`);
@@ -54,6 +54,12 @@ internal interface KotlinMutableSetClassifier : KotlinSetClassifier
 // reserved `DotKt.Runtime.CompilerServices` namespace from a projected type's Kotlin supertype list, so a consumer
 // never sees one either. `kotlin.collections.ClrCollectionDefaults` is in this same module and resolves them
 // normally.
+
+/** The Kotlin mutable-iterator slot that `System.Collections.Generic.IEnumerable<E>` cannot represent. */
+internal interface KotlinMutableIteratorSlots {
+    /** Returns the implementer's exact `MutableIterator<E>` erased only at this compiler-owned carrier boundary. */
+    fun dotktIterator(): Any
+}
 
 /** The Kotlin-only `MutableCollection` slots that `System.Collections.Generic.ICollection<E>` does not carry. */
 internal interface KotlinMutableCollectionSlots {

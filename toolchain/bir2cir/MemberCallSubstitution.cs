@@ -1599,6 +1599,10 @@ static class MemberCallSubstitution
                 if (ownerFqn == "kotlin.collections.MutableList")
                     return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
                         "clrMutableListIterator", elem, args);
+                if (ownerFqn is "kotlin.collections.MutableIterable"
+                    or "kotlin.collections.MutableCollection" or "kotlin.collections.MutableSet")
+                    return CollDefaultCall(node, "kotlin.collections.ClrCollectionDefaultsKt",
+                        "clrMutableIterator", elem, args);
                 return CollDefaultCall(node, "kotlin.collections.ClrIteratorBridgeKt", "iteratorOverEnumerable", elem, args);
             }
             if (member == "listIterator")
@@ -1962,6 +1966,7 @@ static class MemberCallSubstitution
             (_, "clrListSet") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int"), tv },
             (_, "clrListRemoveAt") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrMutableListIterator") => new[] { Gen("kotlin.collections.MutableList") },
+            (_, "clrMutableIterator") => new[] { Gen("kotlin.collections.MutableIterable") },
             (_, "clrMutableListListIterator") => new TypeNode[] { Gen("kotlin.collections.MutableList"), new TypeNode.Fqn("kotlin.Int") },
             (_, "clrListIndexOf" or "clrListLastIndexOf") => new TypeNode[] { Gen("kotlin.collections.List"), tv },
             (_, "clrListListIterator") => new TypeNode[] { Gen("kotlin.collections.List"), new TypeNode.Fqn("kotlin.Int") },

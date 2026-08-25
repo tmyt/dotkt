@@ -5,11 +5,12 @@
  * ONLY BCL-bound members (size->Count, get->get_Item, iterator->GetEnumerator) so they never recurse into a routed member.
  * See docs/design-clr-collection-binding.md.
  */
-@file:Suppress("NOTHING_TO_INLINE")
+@file:Suppress("NOTHING_TO_INLINE", "UNCHECKED_CAST")
 
 package kotlin.collections
 
 import DotKt.Runtime.CompilerServices.KotlinMutableCollectionSlots
+import DotKt.Runtime.CompilerServices.KotlinMutableIteratorSlots
 import DotKt.Runtime.CompilerServices.KotlinMutableListSlots
 
 public fun <T> clrCollIsEmpty(c: Collection<T>): Boolean = c.size == 0
@@ -227,6 +228,48 @@ private class ClrMutableListIterator<T>(
 
 public fun <T> clrMutableListIterator(list: MutableList<T>): MutableIterator<T> =
     ClrMutableListIterator(list, 0)
+
+// MutableIterable aliases IEnumerable<T>, whose GetEnumerator return cannot represent Kotlin's remove-capable
+// MutableIterator<T>. Kotlin implementers carry a compiler-authored non-generic slot that preserves their exact
+// override. BCL lists use the indexed adapter above; other BCL mutable collections snapshot their enumeration and
+// remove the last-returned value through ICollection<T>. Sets are exact because their elements are unique, while an
+// IList<T> never reaches the value-removal fallback.
+private class ClrMutableCollectionIterator<T>(
+    private val collection: MutableCollection<T>,
+    private val snapshot: List<T>,
+) : MutableIterator<T> {
+    private var index = 0
+    private var last: T? = null
+    private var hasLast = false
+
+    override fun hasNext(): Boolean = index < snapshot.size
+    override fun next(): T {
+        if (!hasNext()) throw NoSuchElementException()
+        val value = snapshot[index]
+        index++
+        last = value
+        hasLast = true
+        return value
+    }
+    override fun remove() {
+        if (!hasLast) throw IllegalStateException("next() has not been called")
+        collection.remove(last as T)
+        hasLast = false
+    }
+}
+
+public fun <T> clrMutableIterator(iterable: MutableIterable<T>): MutableIterator<T> {
+    val slots = iterable as? KotlinMutableIteratorSlots
+    if (slots != null) return slots.dotktIterator() as MutableIterator<T>
+    val list = iterable as? MutableList<T>
+    if (list != null) return ClrMutableListIterator(list, 0)
+    val collection = iterable as? MutableCollection<T>
+        ?: throw UnsupportedOperationException("MutableIterable has no mutable CLR collection surface")
+    val snapshot = ArrayList<T>()
+    val source = iteratorOverEnumerable(iterable as ClrEnumerable<T>)
+    while (source.hasNext()) snapshot.add(source.next())
+    return ClrMutableCollectionIterator(collection, snapshot)
+}
 
 public fun <T> clrMutableListListIterator(list: MutableList<T>, index: Int): MutableListIterator<T> =
     ClrMutableListIterator(list, index)
