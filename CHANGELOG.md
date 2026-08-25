@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.10 (2026-08-26)
+
 ### Added
 
 - **Kotlin can now publish native CLR enums with explicit integral constants (#526).** `@ClrEnum` gives one
