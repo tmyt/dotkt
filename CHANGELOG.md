@@ -5,6 +5,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.10 (2026-08-26)
+
+This final release includes all changes from `0.9.10-beta1` and `0.9.10-beta2`, plus the changes below.
+
 ### Added
 
 - **Kotlin can now publish native CLR enums with explicit integral constants (#526).** `@ClrEnum` gives one
@@ -14,6 +18,24 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   optional defaults, reflection, C# switches, and `System.FlagsAttribute` all consume the same explicit value map.
 
 ### Fixed
+
+- **Mutable Kotlin collections now retain mutable iterator semantics across delegation and widened views (#590).**
+  `MutableSet`, `MutableCollection`, `MutableIterable`, and `MutableList` route iterator calls through a compiler-owned
+  mutable capability slot instead of returning the read-only `Iterator<T>` face. Pure-Kotlin and BCL-backed values,
+  covariant and star-projected views, value elements, and duplicate-permitting collections therefore keep verifiable
+  `MutableIterator<T>` behavior, including exact removal of the last returned occurrence.
+
+- **Kotlin collection runtime classifiers now distinguish collections, sets, and maps without wrapping values
+  (#315).** Emitted Kotlin collections carry compiler-owned nominal identities alongside their BCL operational faces,
+  while star-projected BCL values are classified from the exact generic collection/set faces they implement.
+  Dictionaries and arrays are excluded from `Collection`, reference identity is preserved, and mutable map keys and
+  entries expose live identity-bearing Kotlin set views.
+
+- **Suspending expressions now preserve Kotlin operand order across every current CIR operand shape (#306).**
+  bir2cir records and reconstructs exact ordered operands for array and member writes, delegate/object/constrained
+  calls, construction, collection literals, spread parts, and loop-borne inline iteration. Values before a suspension
+  are evaluated once before resumption, and addressable value-type or constrained receivers keep their original
+  storage location instead of mutating a copy.
 
 - **Inherited CLR interface slots are resolved before emission (#355).** bir2cir now applies the same forwarding-
   bridge rules to plain .NET generic interfaces as to Kotlin-projected declarations, including nullable value-type
