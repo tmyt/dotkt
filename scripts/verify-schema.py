@@ -905,6 +905,28 @@ class V:
                 if o.get("k") != "callInstance" or role not in {"or", "and", "xor", "inv", "contains"}:
                     self.err(f, path + "/clrFlagsOperation",
                              "clrFlagsOperation must carry a known role on a callInstance")
+                required = ("ownerType", "recv", "ret", "args", "argTypes")
+                for key in required:
+                    if key not in o:
+                        self.err(f, path, f"clrFlagsOperation call is missing required field {key!r}")
+                args = o.get("args")
+                arg_types = o.get("argTypes")
+                expected = 0 if role == "inv" else 1
+                if not isinstance(args, list) or len(args) != expected:
+                    self.err(f, path + "/args",
+                             f"clrFlagsOperation {role!r} requires exactly {expected} argument nodes")
+                elif any(argument is None for argument in args):
+                    self.err(f, path + "/args", "clrFlagsOperation arguments must be expression nodes, not null")
+                if not isinstance(arg_types, list) or len(arg_types) != expected:
+                    self.err(f, path + "/argTypes",
+                             f"clrFlagsOperation {role!r} requires exactly {expected} argument Type nodes")
+                elif any(not isinstance(t, dict) or not isinstance(t.get("t"), str) for t in arg_types):
+                    self.err(f, path + "/argTypes", "clrFlagsOperation argTypes must be structured Type nodes")
+                for key in ("ownerType", "ret"):
+                    value = o.get(key)
+                    if not isinstance(value, dict) or not isinstance(value.get("t"), str):
+                        self.err(f, path + "/" + key,
+                                 f"clrFlagsOperation {key} must be a structured Type node")
             if isinstance(o.get("k"), str):
                 k = o["k"]
                 self.kinds_seen.add(k)
@@ -917,6 +939,14 @@ class V:
                     target = o["to"]
                     if not isinstance(target, dict) or not isinstance(target.get("t"), str):
                         self.err(f, path + "/to", "conv.to must be a structured Type node")
+                if k == "enumBits":
+                    if not f.endswith(".cir.json"):
+                        self.err(f, path, "enumBits is a CIR-only physical representation node")
+                    for key in ("type", "underlying"):
+                        value = o.get(key)
+                        if not isinstance(value, dict) or not isinstance(value.get("t"), str):
+                            self.err(f, path + "/" + key,
+                                     f"enumBits.{key} must be a structured Type node")
                 if k == "constrainedCall" and "args" in o and not isinstance(o["args"], list):
                     self.err(f, path + "/args", "constrainedCall.args must be an array")
                 if k == "new":

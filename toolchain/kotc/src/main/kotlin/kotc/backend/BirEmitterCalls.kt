@@ -1118,10 +1118,14 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	if (flagsOperation.isNotEmpty()) {
 		val receiver = dispatchReceiver(call)
 		if (receiver != null) {
+			val semanticOwner = ownerSpec(declaringClass, receiver.type)
+			val operationOwner = declaringClass?.let(::clrName)?.let { physicalName ->
+				TypeNode.Fqn(physicalName, (semanticOwner as? TypeNode.Fqn)?.args)
+			} ?: semanticOwner
 			val arguments = regularArgs(call)
 			val argumentTypes = regularParams(callee).take(arguments.size)
 				.joinToString(",") { birType(it.type).toJson() }
-			return """{"k":"callInstance","ownerType":${birType(receiver.type).toJson()},"virtual":false,"recv":${expr(receiver)},"method":${str(name)},"argTypes":[$argumentTypes],"ret":${birType(call.type).toJson()},"args":[${arguments.joinToString(",") { expr(it) }}]$flagsOperation}"""
+			return """{"k":"callInstance","ownerType":${operationOwner.toJson()},"virtual":false,"recv":${expr(receiver)},"method":${str(name)},"argTypes":[$argumentTypes],"ret":${birType(call.type).toJson()},"args":[${arguments.joinToString(",") { expr(it) }}]$flagsOperation}"""
 		}
 	}
 	// Kotlin 2.4 can replace the property association of a method-generic DLL -> KLIB member-extension access with

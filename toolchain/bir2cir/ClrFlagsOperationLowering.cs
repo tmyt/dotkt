@@ -43,17 +43,22 @@ static class ClrFlagsOperationLowering
         var representation = refs.ResolveFlagsEnum(owner)
             ?? throw new InvalidOperationException(
                 $"bir2cir: ClrFlagsOperation owner '{TypeJson.OwnerName(call["ownerType"])}' is not an exact referenced CLR [Flags] enum");
-        var args = call["args"] as JsonArray ?? new JsonArray();
-        var argTypes = call["argTypes"] as JsonArray ?? new JsonArray();
+        var args = call["args"] as JsonArray
+            ?? throw new InvalidOperationException("bir2cir: ClrFlagsOperation call carries no argument vector");
+        var argTypes = call["argTypes"] as JsonArray
+            ?? throw new InvalidOperationException("bir2cir: ClrFlagsOperation call carries no argument-type vector");
         var unary = role == "inv";
         if (args.Count != (unary ? 0 : 1) || argTypes.Count != args.Count)
             throw new InvalidOperationException(
                 $"bir2cir: ClrFlagsOperation '{role}' has an invalid argument vector");
-        if (!unary && TypeJson.Read(argTypes[0]) != owner)
+        if (!unary && !SameFlagsEnumDefinition(TypeJson.Read(argTypes[0]), representation, refs))
             throw new InvalidOperationException(
-                $"bir2cir: ClrFlagsOperation '{role}' argument must have the receiver's exact enum type");
-        var expectedReturn = role == "contains" ? new TypeNode.Fqn("kotlin.Boolean") : owner;
-        if (TypeJson.Read(call["ret"]) != expectedReturn)
+                $"bir2cir: ClrFlagsOperation '{role}' argument must name the receiver's exact enum declaration");
+        var returnType = TypeJson.Read(call["ret"]);
+        var validReturn = role == "contains"
+            ? returnType == new TypeNode.Fqn("kotlin.Boolean")
+            : SameFlagsEnumDefinition(returnType, representation, refs);
+        if (!validReturn)
             throw new InvalidOperationException(
                 $"bir2cir: ClrFlagsOperation '{role}' carries an invalid return type");
         var receiver = call["recv"]?.DeepClone()
@@ -63,7 +68,10 @@ static class ClrFlagsOperationLowering
         JsonObject argumentRef = null;
         if (!unary)
         {
-            argumentRef = Bind("arg", "argument", owner, args[0]?.DeepClone(), out var argumentBinding);
+            var argument = args[0]?.DeepClone()
+                ?? throw new InvalidOperationException(
+                    $"bir2cir: ClrFlagsOperation '{role}' carries a null argument node");
+            argumentRef = Bind("arg", "argument", owner, argument, out var argumentBinding);
             bindings.Add(argumentBinding);
         }
 
@@ -117,6 +125,21 @@ static class ClrFlagsOperationLowering
             ["k"] = "conv", ["to"] = TypeJson.Write(representation.Underlying), ["e"] = expression,
         },
     };
+
+    static bool SameFlagsEnumDefinition(
+        TypeNode candidate,
+        FlagsEnumRepresentation expected,
+        ReferenceMetadataIndex refs)
+    {
+        var resolved = refs.ResolveFlagsEnum(candidate);
+        if (resolved is null ||
+            resolved.EnumType is not TypeNode.Fqn actual ||
+            expected.EnumType is not TypeNode.Fqn wanted)
+            return false;
+        return StringComparer.Ordinal.Equals(actual.Name, wanted.Name) &&
+            (actual.Args?.Length ?? 0) == (wanted.Args?.Length ?? 0) &&
+            resolved.Underlying == expected.Underlying;
+    }
 
     static void AssertConsumed(JsonNode node)
     {

@@ -574,6 +574,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 	val memberDeclarationIdentityTag = selectedDeclarationId
 		?.let { ""","declarationId":${str(it)}""" }
 		?: declarationIdField(physicalIdentityDeclaration).ifEmpty { declarationIdField(fn) }
+	val flagsOperationTag = clrFlagsOperationTag(fn)
 	// A suspend function reference (`::suspendFn`, typed KSuspendFunctionN) -> a `newSuspendLambda` ADAPTER: the
 	// suspend lambda `{ args -> target(args) }` whose body is a suspendCall to the target. A plain `newDelegate`
 	// cannot carry the cold-suspend protocol (bir2cir has no suspend-delegate lowering; it DOES build a SuspendLambda
@@ -833,7 +834,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 		val argsJson = regs.joinToString(",") { """{"k":"local","name":${str(it.name.asString())}}""" }
 		val recv = """{"k":"field","ownerType":${fqnJson(cname)},"recv":{"k":"this"},"name":"__recv"}"""
 		val rawCall = if (!isExternalNetType(ownerClass) || memberDeclarationIdentityTag.isNotEmpty())
-			"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag}"""
+			"""{"k":"callInstance","ownerType":$owner,"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$memberDeclarationIdentityTag$flagsOperationTag}"""
 		else {
 			// A projected CLR member without a DotKt declaration identity still needs the adapter. Emit the same neutral
 			// external-call facts as an ordinary invocation; bir2cir resolves their physical member representation.
@@ -842,7 +843,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				?: error("validated external bound reference lost its physical owner")
 			val physicalOwner = (selfT as? TypeNode.Fqn)?.let { TypeNode.Fqn(physicalName, it.args) }
 				?: TypeNode.Fqn(physicalName)
-			"""{"k":"callInstance","ownerType":${physicalOwner.toJson()},"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}}"""
+			"""{"k":"callInstance","ownerType":${physicalOwner.toJson()},"virtual":$virtual,"recv":$recv,"method":${str(fn.name.asString())}${overloadSigField(fn)}$referenceTypeArgs,"argTypes":[$argTypes],"ret":${birType(fn.returnType).toJson()},"args":[$argsJson]${if (isAnySlotMethod(fn)) ""","anySlot":true""" else ""}$flagsOperationTag}"""
 		}
 		val call = memberVisibilityStamped(fn, rawCall)
 		val body = if (resolvedFuncType.ret == TypeNode.Fqn("kotlin.Unit")) """{"k":"exprStmt","expr":$call}"""
@@ -944,6 +945,8 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 			val declaration = withLiftedMethodFrame(freeTps) {
 				val liftedFuncType = birType(node.type) as TypeNode.Fn
 				val selfT = liftedFuncType.params.first()
+				val liftedOwner = (selfT as? TypeNode.Fqn)?.let { TypeNode.Fqn(clrOwner, it.args) }
+					?: TypeNode.Fqn(clrOwner)
 				val psJson = (listOf("""{"name":"__self","type":${selfT.toJson()}}""") +
 					regs.zip(liftedFuncType.params.drop(1)).map { (parameter, type) ->
 						"""{"name":${str(parameter.name.asString())},"type":${type.toJson()}}"""
@@ -953,7 +956,7 @@ internal fun BirEmitter.functionRef(node: IrFunctionReference): String {
 				val liftedReferenceTypeArgs = functionReferenceTypeArgs(node, fn)
 					?: error("validated .NET method reference lost its type arguments in its lifted method frame")
 				// A genuine `NetType::m` method reference -> a lifted static forwarding to the .NET instance method.
-				val callE = """{"k":"callInstance","ownerType":${fqnJson(clrOwner)},"method":${str(member)}$liftedReferenceTypeArgs,"argTypes":[$liftedArgTypes],"ret":${liftedFuncType.ret.toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]$anySlotTag}"""
+				val callE = """{"k":"callInstance","ownerType":${liftedOwner.toJson()},"method":${str(member)}$liftedReferenceTypeArgs,"argTypes":[$liftedArgTypes],"ret":${liftedFuncType.ret.toJson()},"recv":{"k":"local","name":"__self"},"args":[$argsJson]$anySlotTag$flagsOperationTag}"""
 				val effectiveIdentityTag = if (!selfT.containsStarProjection()) memberDeclarationIdentityTag else ""
 				val identityCallE = if (effectiveIdentityTag.isEmpty()) callE
 					else callE.dropLast(1) + effectiveIdentityTag + "}"

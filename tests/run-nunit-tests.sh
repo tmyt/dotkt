@@ -54,7 +54,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=196
 	["tests/roundtrip/consumer"]=87
 	["tests/roundtrip/bidirectional/consumer"]=9
-	["tests/interop/consumer"]=170
+	["tests/interop/consumer"]=171
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -133,6 +133,13 @@ for proj in "${PROJECTS[@]}"; do
 		ownership_bir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/NestedOwnership.bir.json"
 		ownership_cir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/NestedOwnership.cir.json"
 		consumer_dll="$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll"
+		if bash "$ROOT/tests/roundtrip/run-flags-lookalike-negative.sh" \
+			>"$ROOT/build/nunit-$name.flags-lookalike.log" 2>&1; then
+			echo "  same-FQN System.Enum/FlagsAttribute lookalikes do not project flags operations"
+		else
+			echo "  FLAGS LOOKALIKE NEGATIVE FAIL — see build/nunit-$name.flags-lookalike.log"
+			tail -25 "$ROOT/build/nunit-$name.flags-lookalike.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			"$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" "$ownership_bir" "$ownership_cir" "$consumer_dll" \
 			>"$ROOT/build/nunit-$name.metadata.log" 2>&1; then

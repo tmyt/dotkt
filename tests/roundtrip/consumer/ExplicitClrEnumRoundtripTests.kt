@@ -3,6 +3,7 @@ package roundtrip.consumer
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.TestAttribute
 import roundtrip.clrenum.OrderedCode
+import roundtrip.clrenum.RoundtripAccess
 import roundtrip.clrenum.classifyOrderedCode
 
 private fun <T : Enum<T>> consumedEnumOrdinal(value: T): Int = value.ordinal
@@ -41,5 +42,9 @@ class ExplicitClrEnumRoundtripTests {
         assertEquals("rejected", reifiedNumericName)
         assertEquals("negative", classifyOrderedCode(OrderedCode.NEGATIVE))
         assertEquals(526, OrderedCode.Companion.marker())
+
+        val access = RoundtripAccess.READ or RoundtripAccess.WRITE
+        assertEquals(RoundtripAccess.READ_WRITE, access)
+        assertEquals(true, RoundtripAccess.READ in access)
     }
 }

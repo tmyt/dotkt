@@ -1,6 +1,7 @@
 import FlagsInterop.AccessFlags
 import FlagsInterop.ByteFlags
 import FlagsInterop.FlagsApi
+import FlagsInterop.GenericFlagsContainer.NestedFlags
 import FlagsInterop.Int16Flags
 import FlagsInterop.Int32Flags
 import FlagsInterop.Int64Flags
@@ -10,6 +11,10 @@ import FlagsInterop.UInt32Flags
 import FlagsInterop.UInt64Flags
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import System.Reflection.BindingFlags
+
+@Suppress("FINAL_UPPER_BOUND")
+private fun <T : AccessFlags> combineFlagsUpperBound(left: T, right: T): AccessFlags = left or right
 
 class ClrFlagsEnumTests {
     private var evaluationCount = 0
@@ -30,6 +35,10 @@ class ClrFlagsEnumTests {
 
     @TestAttribute
     fun typedOperationsAcceptNamedUnnamedAndUnknownBitPatterns() {
+        val reflectionFlags: BindingFlags = BindingFlags.Instance or BindingFlags.Public
+        assertEquals(true, BindingFlags.Instance in reflectionFlags)
+        assertEquals(true, BindingFlags.Public in reflectionFlags)
+
         val readWrite: AccessFlags = AccessFlags.Read or AccessFlags.Write
         assertEquals(AccessFlags.ReadWrite, readWrite)
         assertEquals(AccessFlags.Read, readWrite and AccessFlags.Read)
@@ -83,5 +92,24 @@ class ClrFlagsEnumTests {
         assertEquals(2, evaluationCount)
         assertEquals("flags", firstEvaluation)
         assertEquals("requested", secondEvaluation)
+    }
+
+    @TestAttribute
+    fun callableReferencesAndGenericOuterOwnersRetainTheTypedOperation() {
+        val boundOr: (AccessFlags) -> AccessFlags = AccessFlags.Read::or
+        val unboundAnd: (AccessFlags, AccessFlags) -> AccessFlags = AccessFlags::and
+        val boundInv: () -> AccessFlags = AccessFlags.Read::inv
+        assertEquals(AccessFlags.ReadWrite, boundOr(AccessFlags.Write))
+        assertEquals(AccessFlags.Read, unboundAnd(AccessFlags.ReadWrite, AccessFlags.Read))
+        assertEquals(AccessFlags.Read, boundInv().inv())
+        assertEquals(
+            AccessFlags.ReadWrite,
+            combineFlagsUpperBound(AccessFlags.Read, AccessFlags.Write),
+        )
+
+        val first: NestedFlags<String> = FlagsApi.NestedFirst()
+        val nested: NestedFlags<String> = first or FlagsApi.NestedSecond()
+        assertEquals(3, FlagsApi.NestedBits(nested))
+        assertEquals(true, first in nested)
     }
 }

@@ -1,0 +1,19 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [{
+    "name": "flags",
+    "params": [],
+    "ret": {"t":"fqn","name":"Fixture.Access"},
+    "body": [{"k":"return","value":{
+      "k":"callInstance",
+      "ownerType":{"t":"fqn","name":"Fixture.Access"},
+      "virtual":false,
+      "recv":{"k":"const","type":{"t":"fqn","name":"Fixture.Access"},"value":0},
+      "method":"or",
+      "argTypes":[{"t":"fqn","name":"Fixture.Access"}],
+      "ret":{"t":"fqn","name":"Fixture.Access"},
+      "args":[{"k":"const","type":{"t":"fqn","name":"Fixture.Access"},"value":1}],
+      "clrFlagsOperation":"or"
+    }}]
+  }]
+}

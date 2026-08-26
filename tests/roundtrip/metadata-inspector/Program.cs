@@ -95,6 +95,13 @@ if (args.Length == 5 && args[0] == "--klib-flags-enum")
     return;
 }
 
+if (args.Length == 3 && args[0] == "--klib-no-flags-enum")
+{
+    VerifyKlibNoFlagsEnum(args[1], args[2]);
+    Console.WriteLine("KLIB same-FQN lookalike has no CLR [Flags] surface: OK");
+    return;
+}
+
 if (args.Length != 7)
     throw new ArgumentException(
         "usage:\n" +
@@ -108,7 +115,8 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-package-nullable-method-bound <file.klib> <package> <function>\n" +
         "  CompanionMetadataInspector --klib-class-fake-override-nullable-method-bound <file.klib> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>\n" +
-        "  CompanionMetadataInspector --klib-flags-enum <file.klib> <class> <file.bir.json> <file.cir.json>");
+        "  CompanionMetadataInspector --klib-flags-enum <file.klib> <class> <file.bir.json> <file.cir.json>\n" +
+        "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>");
 
 VerifyLayerBoundary(args[2], args[3]);
 VerifyOwnershipLayerBoundary(args[4], args[5]);
@@ -294,6 +302,30 @@ static void VerifyKlibFlagsEnum(string path, string className)
     throw new InvalidDataException($"KLIB class '{className}' not found");
 }
 
+static void VerifyKlibNoFlagsEnum(string path, string className)
+{
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var entry in archive.Entries.Where(entry =>
+                 entry.FullName.EndsWith(".knm", StringComparison.Ordinal)))
+    {
+        using var stream = entry.Open();
+        var fragment = PackageFragment.Parser.ParseFrom(stream);
+        var declaration = fragment.Class.SingleOrDefault(candidate =>
+            QualifiedName(fragment, candidate.FqName) == className);
+        if (declaration is null) continue;
+        var flagsNames = new HashSet<string>(["or", "and", "xor", "inv", "contains"], StringComparer.Ordinal);
+        var leaked = declaration.Function
+            .Select(function => String(fragment, function.Name))
+            .Where(flagsNames.Contains)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        Require(leaked.Length == 0,
+            $"{className} same-FQN lookalike unexpectedly projected CLR [Flags] operations [{string.Join(", ", leaked)}]");
+        return;
+    }
+    throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
 static void VerifyFlagsIrBoundary(string birPath, string cirPath)
 {
     var bir = JsonNode.Parse(File.ReadAllText(birPath))
@@ -329,6 +361,7 @@ static void VerifyFlagsIrBoundary(string birPath, string cirPath)
         ("FlagsInterop.UInt32Flags", "System.UInt32"),
         ("FlagsInterop.Int64Flags", "System.Int64"),
         ("FlagsInterop.UInt64Flags", "System.UInt64"),
+        ("FlagsInterop.GenericFlagsContainer`1+NestedFlags", "System.Int32"),
     }.ToHashSet();
     Require(representations.SetEquals(expectedRepresentations),
         "CIR enumBits does not preserve every tested CLR enum representation");

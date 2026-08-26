@@ -22,6 +22,18 @@ public enum AccessFlags
 [Flags] public enum Int64Flags : long { None = 0, Low = 1, High = long.MinValue, NotLow = -2 }
 [Flags] public enum UInt64Flags : ulong { None = 0, Low = 1, High = 0x8000000000000000ul, NotLow = 0xfffffffffffffffeul }
 
+public sealed class GenericFlagsContainer<T>
+{
+    [Flags]
+    public enum NestedFlags
+    {
+        None = 0,
+        First = 1,
+        Second = 2,
+        Both = First | Second,
+    }
+}
+
 public enum PlainEnum
 {
     None = 0,
@@ -41,4 +53,9 @@ public static class FlagsApi
     public static AccessFlags Unknown() => (AccessFlags)8;
     public static AccessFlags RoundTrip(AccessFlags value) => value;
     public static int Bits(AccessFlags value) => (int)value;
+    public static GenericFlagsContainer<string>.NestedFlags NestedFirst() =>
+        GenericFlagsContainer<string>.NestedFlags.First;
+    public static GenericFlagsContainer<string>.NestedFlags NestedSecond() =>
+        GenericFlagsContainer<string>.NestedFlags.Second;
+    public static int NestedBits(GenericFlagsContainer<string>.NestedFlags value) => (int)value;
 }

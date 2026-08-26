@@ -1,5 +1,6 @@
 package roundtrip.clrenum
 
+import System.FlagsAttribute
 import kotlin.clr.ClrEnum
 
 @ClrEnum
@@ -17,4 +18,13 @@ fun classifyOrderedCode(value: OrderedCode): String = when (value) {
     OrderedCode.FIRST -> "first"
     OrderedCode.NEGATIVE -> "negative"
     OrderedCode.ZERO -> "zero"
+}
+
+@FlagsAttribute
+@ClrEnum
+enum class RoundtripAccess(value: UInt) {
+    NONE(0u),
+    READ(1u),
+    WRITE(2u),
+    READ_WRITE(3u),
 }

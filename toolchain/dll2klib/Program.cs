@@ -6329,7 +6329,8 @@ internal sealed class AssemblyScanner : IDisposable
     {
         if (!_publicTypeCatalog.TryResolveDefinition(
                 _md, definition.BaseType, out var enumBase, _definitionPath) ||
-            !IsResolvedSystemType(enumBase, "Enum"))
+            !IsTargetCoreLibraryEnum(enumBase) ||
+            !HasSupportedEnumStorage(definition))
             return false;
         var flags = _attrs.AttributeTypes(handle, "System.FlagsAttribute");
         if (flags.Count == 0) return false;
@@ -6341,6 +6342,35 @@ internal sealed class AssemblyScanner : IDisposable
             return false;
         return StringComparer.Ordinal.Equals(enumBase.DefinitionPath, flagsType.DefinitionPath);
 
+        bool IsTargetCoreLibraryEnum(ResolvedTypeDefinition resolvedEnum)
+        {
+            if (!IsResolvedSystemType(resolvedEnum, "Enum")) return false;
+            var enumDefinition = resolvedEnum.Reader.GetTypeDefinition(resolvedEnum.Handle);
+            if (!_publicTypeCatalog.TryResolveDefinition(
+                    resolvedEnum.Reader, enumDefinition.BaseType, out var valueType, resolvedEnum.DefinitionPath) ||
+                !IsResolvedSystemType(valueType, "ValueType") ||
+                !StringComparer.Ordinal.Equals(resolvedEnum.DefinitionPath, valueType.DefinitionPath))
+                return false;
+            var valueDefinition = valueType.Reader.GetTypeDefinition(valueType.Handle);
+            if (!_publicTypeCatalog.TryResolveDefinition(
+                    valueType.Reader, valueDefinition.BaseType, out var objectType, valueType.DefinitionPath) ||
+                !IsResolvedSystemType(objectType, "Object") ||
+                !StringComparer.Ordinal.Equals(resolvedEnum.DefinitionPath, objectType.DefinitionPath))
+                return false;
+            return objectType.Reader.GetTypeDefinition(objectType.Handle).BaseType.IsNil;
+        }
+
+        bool HasSupportedEnumStorage(TypeDefinition enumDefinition)
+        {
+            var storage = enumDefinition.GetFields()
+                .Select(fieldHandle => _md.GetFieldDefinition(fieldHandle))
+                .Where(field => (field.Attributes & FieldAttributes.Static) == 0)
+                .ToArray();
+            if (storage.Length != 1 || _md.GetString(storage[0].Name) != "value__") return false;
+            var signature = _md.GetBlobBytes(storage[0].Signature);
+            return signature.Length == 2 && signature[0] == 0x06 && signature[1] is >= 0x04 and <= 0x0b;
+        }
+
         static bool IsResolvedSystemType(ResolvedTypeDefinition resolved, string name)
         {
             var type = resolved.Reader.GetTypeDefinition(resolved.Handle);
@@ -6349,7 +6379,7 @@ internal sealed class AssemblyScanner : IDisposable
         }
     }
 
-    private static void AddFlagsEnumOperations(
+    private void AddFlagsEnumOperations(
         TypeDefinitionHandle handle,
         Class result,
         NameTable names)
@@ -6383,7 +6413,7 @@ internal sealed class AssemblyScanner : IDisposable
                     .SequenceEqual(parameters.Select(parameter => parameter.Type)));
             if (collision is not null)
                 throw new InvalidDataException(
-                    $"CLR [Flags] enum projection '{handle}' cannot synthesize '{name}': " +
+                    $"CLR [Flags] enum projection '{MetadataTypeName(handle)}' cannot synthesize '{name}': " +
                     "an actual CLR member has the same complete Kotlin declaration signature");
 
             var function = new Function

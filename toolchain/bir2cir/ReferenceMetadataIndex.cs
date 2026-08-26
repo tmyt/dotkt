@@ -1599,8 +1599,8 @@ sealed partial class ReferenceMetadataIndex
     // exact System.FlagsAttribute, not a same-FQN lookalike.
     public FlagsEnumRepresentation ResolveFlagsEnum(TypeNode typeNode)
     {
-        if (typeNode is not TypeNode.Fqn owner || owner.Args is { Length: > 0 }) return null;
-        var type = ResolveNetType(owner.Name);
+        if (typeNode is not TypeNode.Fqn owner) return null;
+        var type = ResolveRefType(owner.Name, owner.Args?.Length ?? 0);
         if (type == null || !type.IsEnum) return null;
         Type underlying;
         Type enumBase;
@@ -1623,7 +1623,7 @@ sealed partial class ReferenceMetadataIndex
         if (underlyingName is not ("System.SByte" or "System.Byte" or "System.Int16" or "System.UInt16" or
             "System.Int32" or "System.UInt32" or "System.Int64" or "System.UInt64"))
             return null;
-        var exactEnum = new TypeNode.Fqn(ExactPhysicalMetadataName(type));
+        var exactEnum = new TypeNode.Fqn(ExactPhysicalMetadataName(type), owner.Args);
         return new FlagsEnumRepresentation(exactEnum, new TypeNode.Fqn(underlyingName));
     }
 
