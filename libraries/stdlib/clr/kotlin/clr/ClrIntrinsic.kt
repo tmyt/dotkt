@@ -23,6 +23,14 @@ public annotation class ClrExternal(val owner: String, val physicalOwner: String
 @Retention(AnnotationRetention.BINARY)
 public annotation class ClrAwaitBridge
 
+// Compiler-owned semantic role on metadata-only operations synthesized by dll2klib for an exact CLR [Flags] enum.
+// The declaration has no corresponding MethodDef: kotc carries the selected role to BIR without interpreting its CLR
+// representation, and bir2cir consumes it into explicit enum-width bit operations before CIR. User-authored use is
+// undefined compiler metadata, just like ClrExternal/KotlinDeclarationIdentity.
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.BINARY)
+public annotation class ClrFlagsOperation(val role: String)
+
 // A projected CLR FieldDef has no exact declaration form in Kotlin metadata:
 // KLIB exposes it as a Kotlin property for frontend lookup, while this marker
 // preserves the storage fact so kotc emits a BIR field access. bir2cir still

@@ -375,6 +375,14 @@ node-format stability is achieved DECLARATIVELY, in three parts:
    node model, the validator is node-format's ONLY structural safety net (contrast `Type`, which is drift-proof
    by construction). Therefore the validator is NOT deferred to last; it lands early enough to guard the flip.
 
+`enumBits` is a CIR-only physical reinterpretation node with the exact shape
+`{"k":"enumBits","type":<enum Type>,"underlying":<integral Type>,"e":<expression>}`. bir2cir authors it only
+after resolving a typed Kotlin enum operation against the selected CLR reference universe. Its `e` is already an
+explicitly converted value of `underlying`; ilemit emits that expression and treats the resulting stack value as
+`type` without inspecting `FlagsAttribute`, enum fields, or operation names. The BIR-only
+`clrFlagsOperation` call field carries one of `or`/`and`/`xor`/`inv`/`contains` from the exact frontend-selected
+metadata declaration and must be consumed before CIR.
+
 ### 2.2 `sig` — resolved declaration signature is a `Type[]`
 A call node carries `sig` so its consumer links the already-resolved overload by name and declaration signature.
 It is a **JSON array of `Type` nodes** (§1) — `"sig":[T, T, …]` (extension receiver first, then value params).

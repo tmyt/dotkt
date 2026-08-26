@@ -54,7 +54,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=196
 	["tests/roundtrip/consumer"]=87
 	["tests/roundtrip/bidirectional/consumer"]=9
-	["tests/interop/consumer"]=167
+	["tests/interop/consumer"]=170
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -224,6 +224,16 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/$CONFIGURATION/net10.0/klib/InteropProducer.klib"
+		flags_bir="$dir/obj/$CONFIGURATION/net10.0/bir/ClrFlagsEnumTests.bir.json"
+		flags_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ClrFlagsEnumTests.cir.json"
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-flags-enum "$interop_klib" FlagsInterop.AccessFlags "$flags_bir" "$flags_cir" \
+			>"$ROOT/build/nunit-$name.flags-enum.log" 2>&1; then
+			echo "  CLR [Flags] exact KLIB signatures and BIR-to-CIR carrier consumption OK"
+		else
+			echo "  CLR FLAGS ENUM METADATA FAIL — see build/nunit-$name.flags-enum.log"
+			tail -25 "$ROOT/build/nunit-$name.flags-enum.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--klib-csharp-extension-shape "$interop_klib" C1Net C1Net.Ext tripled \
 			>"$ROOT/build/nunit-$name.extension-shape.log" 2>&1; then

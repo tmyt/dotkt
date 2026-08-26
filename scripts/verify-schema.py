@@ -84,6 +84,7 @@ REQUIRED_OPERATION_REFS = {
 # conv.to is a Type while for/forRange.to is an expression. Keep these checks kind-directed for the same reason.
 REQUIRED_NODE_FIELDS = {
     "conv": ("e", "to"),
+    "enumBits": ("e", "type", "underlying"),
     "new": ("type", "args"),
     "constrainedCall": ("args",),
 }
@@ -167,7 +168,7 @@ STR_OK = {
     "k", "t",                                   # node-kind / type-tag (validated vs frozen sets)
     "name",                                     # decl/local/var/field names AND fqn.name (the type identity string)
     "scope",                                    # tv.scope enum
-    "op", "cmp",                                # binOp/unaryOp operator / structured-for comparison operator
+    "op", "cmp", "clrFlagsOperation",           # operator / compiler-carried CLR [Flags] semantic role
     "value", "constant",                       # expression literal / attribute-arg scalar; CIR field Constant value
     "entry",                                    # enumValue's Kotlin entry-name identity
     "underlying", "physicalValue",              # resolved external-enum underlying CLR type + invariant integral
@@ -318,7 +319,7 @@ KINDS = {
     "newList", "newSet", "newMap", "newClosure", "newDelegate", "newSam", "newSuspendLambda",
     "newBoundDelegate", "newBoundClrDelegate", "newClrStaticDelegate",
     "companionValue",                           # #275 BIR-only semantic access; bir2cir resolves the nested carrier.
-    "enumValue", "enumName", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",
+    "enumValue", "enumBits", "enumName", "enumValues", "enumParse", "enumOrdinal", "default", "defaultArg", "classRef", "console",
     # §2.7 CALL-EVALUATION PLAN — BIR-only. `callEval` wraps a call in its ordered bindings; `bindRef` is a pure READ
     # of one. bir2cir's CallEvalLowering lowers both (to `var`+`valueBlock`, or to a ctor's `preStmts`) before CIR.
     "callEval", "bindRef",
@@ -896,6 +897,14 @@ class V:
                     self.err(f, path, f"a resolved member identity must ride on a frozen memberRef carrier key, not {carrier!r}")
                     if f.endswith(".bir.json"):
                         self.err(f, path, "memberRef is a bir2cir-authored resolved member identity and must not appear in kotc BIR")
+            if "clrFlagsOperation" in o:
+                role = o.get("clrFlagsOperation")
+                if f.endswith(".cir.json"):
+                    self.err(f, path + "/clrFlagsOperation",
+                             "clrFlagsOperation is a BIR semantic carrier and must be consumed before CIR")
+                if o.get("k") != "callInstance" or role not in {"or", "and", "xor", "inv", "contains"}:
+                    self.err(f, path + "/clrFlagsOperation",
+                             "clrFlagsOperation must carry a known role on a callInstance")
             if isinstance(o.get("k"), str):
                 k = o["k"]
                 self.kinds_seen.add(k)

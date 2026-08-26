@@ -1593,6 +1593,40 @@ sealed partial class ReferenceMetadataIndex
             Convert.ToString(raw, CultureInfo.InvariantCulture));
     }
 
+    // Resolve the physical representation of the exact referenced CLR enum selected by a dll2klib
+    // [ClrFlagsOperation] declaration. The semantic carrier is trusted compiler metadata, but its signature is still
+    // validated against the current target reference universe: it must name a real enum carrying the target corelib's
+    // exact System.FlagsAttribute, not a same-FQN lookalike.
+    public FlagsEnumRepresentation ResolveFlagsEnum(TypeNode typeNode)
+    {
+        if (typeNode is not TypeNode.Fqn owner || owner.Args is { Length: > 0 }) return null;
+        var type = ResolveNetType(owner.Name);
+        if (type == null || !type.IsEnum) return null;
+        Type underlying;
+        Type enumBase;
+        IList<CustomAttributeData> attributes;
+        try
+        {
+            underlying = type.GetEnumUnderlyingType();
+            enumBase = type.BaseType;
+            attributes = type.GetCustomAttributesData();
+        }
+        catch { return null; }
+        var flags = attributes.Where(attribute =>
+            attribute.AttributeType.FullName == "System.FlagsAttribute" &&
+            enumBase != null &&
+            StringComparer.Ordinal.Equals(
+                attribute.AttributeType.Assembly.FullName,
+                enumBase.Assembly.FullName)).ToArray();
+        if (flags.Length != 1) return null;
+        var underlyingName = underlying.FullName;
+        if (underlyingName is not ("System.SByte" or "System.Byte" or "System.Int16" or "System.UInt16" or
+            "System.Int32" or "System.UInt32" or "System.Int64" or "System.UInt64"))
+            return null;
+        var exactEnum = new TypeNode.Fqn(ExactPhysicalMetadataName(type));
+        return new FlagsEnumRepresentation(exactEnum, new TypeNode.Fqn(underlyingName));
+    }
+
     // The shared MLC probe (cache + candidate spellings + forwarder collapse) — the caller applies the owner-universe
     // policy (ResolveNetType excludes kotlin.*/dotkt$ synthetics/local; ResolveRefType excludes only the latter two).
     /// <summary>
