@@ -63,7 +63,8 @@ static class ClrFlagsOperationLowering
                 $"bir2cir: ClrFlagsOperation '{role}' carries an invalid return type");
         var receiver = call["recv"]?.DeepClone()
             ?? throw new InvalidOperationException("bir2cir: ClrFlagsOperation call carries no receiver");
-        var receiverRef = Bind("recv", "receiver", owner, receiver, out var receiverBinding);
+        var receiverRef = Bind(
+            "recv", "receiver", representation.EnumType, EnumCast(representation, receiver), out var receiverBinding);
         var bindings = new JsonArray { receiverBinding };
         JsonObject argumentRef = null;
         if (!unary)
@@ -71,7 +72,8 @@ static class ClrFlagsOperationLowering
             var argument = args[0]?.DeepClone()
                 ?? throw new InvalidOperationException(
                     $"bir2cir: ClrFlagsOperation '{role}' carries a null argument node");
-            argumentRef = Bind("arg", "argument", owner, argument, out var argumentBinding);
+            argumentRef = Bind(
+                "arg", "argument", representation.EnumType, EnumCast(representation, argument), out var argumentBinding);
             bindings.Add(argumentBinding);
         }
 
@@ -124,6 +126,15 @@ static class ClrFlagsOperationLowering
         {
             ["k"] = "conv", ["to"] = TypeJson.Write(representation.Underlying), ["e"] = expression,
         },
+    };
+
+    // A selected operation may be invoked through a Kotlin type parameter whose final upper bound is the enum.
+    // Such a value still occupies a CLR generic-parameter stack slot; explicitly cast it to the exact physical enum
+    // before integer operations so ilemit emits the required box + unbox.any. For an already-exact enum this is an
+    // identity cast and ilemit emits no instructions.
+    static JsonObject EnumCast(FlagsEnumRepresentation representation, JsonNode expression) => new()
+    {
+        ["k"] = "cast", ["type"] = TypeJson.Write(representation.EnumType), ["e"] = expression,
     };
 
     static bool SameFlagsEnumDefinition(

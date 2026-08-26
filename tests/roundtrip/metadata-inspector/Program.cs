@@ -362,6 +362,7 @@ static void VerifyFlagsIrBoundary(string birPath, string cirPath)
         ("FlagsInterop.Int64Flags", "System.Int64"),
         ("FlagsInterop.UInt64Flags", "System.UInt64"),
         ("FlagsInterop.GenericFlagsContainer`1+NestedFlags", "System.Int32"),
+        ("System.Reflection.BindingFlags", "System.Int32"),
     }.ToHashSet();
     Require(representations.SetEquals(expectedRepresentations),
         "CIR enumBits does not preserve every tested CLR enum representation");
