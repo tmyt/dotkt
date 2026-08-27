@@ -167,6 +167,6 @@ real, so `T::class` / `is T` need no inlining tricks.
 
 - JDK auto-provisioned by Gradle (foojay); **.NET SDK 10** required.
 - Kotlin/IR APIs are **version-pinned to 2.4.10** (internal, unstable — intentionally not tracking
-  newer versions; bumped from 2.2.0 in #111 — see `docs/kotlin-frontend-bump-playbook.md`). Some
-  round-trip limits stem from this pin (`docs/dotkt-semantics.md` §10).
+  newer versions; bumped from 2.2.0 in #111 — see `docs/kotlin-frontend-bump-playbook.md`). Current
+  round-trip limits are documented in `docs/dotkt-semantics.md` §10.
 - WPF/WinUI samples build on Windows only; **Avalonia** windowing runs cross-platform (incl. WSLg).
