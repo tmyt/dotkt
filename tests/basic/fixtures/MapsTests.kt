@@ -144,7 +144,9 @@ class MapsTests {
         assertEquals("a=1", entry.toString())
         println(entry) // println has its own early faithful-rendering route; it must not cast the entry to IDictionary.
         assertEquals("entry=a=1", "entry=$entry")
-        assertTrue(entry == entry)
+        val equalEntry: Map.Entry<String, Int> = mapOf("a" to 1).entries.first()
+        assertTrue(entry == equalEntry)
+        assertEquals(entry.hashCode(), equalEntry.hashCode())
 
         // ListIterator likewise contains "List" but is not a Collection. These universal operations must remain
         // ordinary object dispatch; the exact runtime name is intentionally not part of the assertion.

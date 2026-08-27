@@ -267,6 +267,8 @@ private class ClrMutableMapEntry<K, V>(private val raw: ClrRawDictionary, overri
         raw.rawSet(key, newValue)
         return old
     }
+    override fun equals(other: Any?): Boolean = AbstractMap.entryEquals(this, other)
+    override fun hashCode(): Int = AbstractMap.entryHashCode(this)
     override fun toString(): String = key.toString() + "=" + value.toString()
 }
 
