@@ -45,7 +45,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | [8c-bis](#8c-bis-kotlin-static-declarations-companion--and-companion-fun-cf) | Kotlin static declarations: `companion { }` and `companion fun C.f()` |
 | [8d](#8d-net-event-subscriptions-and-closeable-tokens) | .NET events use closeable subscriptions |
 | [9](#9-reference-type-nullability--net-nrt-un-annotated-net-types-are-platform-types) | Nullability ⇔ .NET NRT; platform types `T!` |
-| [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit (incl. pinned-2.4.0 limitations) |
+| [10](#10-round-trip-fidelity-audit--what-re-consuming-a-dotkt-assembly-as-kotlin-loses) | Round-trip fidelity audit |
 
 ---
 

@@ -5,6 +5,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Toolchain
+
+- **The embedded Kotlin frontend is now 2.4.10 (#598).** Packages publish the new compiler identity, while
+  `dll2klib` mirrors Kotlin's 2.4-line KLIB contract: compiler version 2.4.10 with ABI and metadata version 2.4.0.
+
 ## 0.9.10 (2026-08-26)
 
 This final release includes all changes from `0.9.10-beta1` and `0.9.10-beta2`, plus the changes below.

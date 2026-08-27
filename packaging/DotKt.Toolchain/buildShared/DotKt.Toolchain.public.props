@@ -4,7 +4,7 @@
     <DotKtToolchainDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../tools/'))</DotKtToolchainDir>
     <!-- Public toolchain identity for editor/build integrations. Keep this value aligned with
          DotKt.Versions.props; scripts/pack-nuget.sh rejects a drift before packaging. -->
-    <DotKtKotlinVersion Condition="'$(DotKtKotlinVersion)' == ''">2.4.0</DotKtKotlinVersion>
+    <DotKtKotlinVersion Condition="'$(DotKtKotlinVersion)' == ''">2.4.10</DotKtKotlinVersion>
     <!-- kotc -classpath: the CLR FRONTEND stdlib KLIB built FROM our CLR stdlib sources for the common frontend. -->
     <DotKtStdlib Condition="'$(DotKtStdlib)' == ''">$(DotKtToolchainDir)kotlin-stdlib-clr-frontend.klib</DotKtStdlib>
   </PropertyGroup>

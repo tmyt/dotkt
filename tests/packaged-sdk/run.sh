@@ -187,6 +187,21 @@ run_project() { # <dir> <stderr-logfile> [timeout]
 	return $rc
 }
 
+# A projected reference KLIB and the authoritative frontend stdlib KLIB must declare the same compiler contract.
+# Patch releases may advance compiler_version while retaining the minor line's ABI and metadata versions, so compare
+# the producer outputs instead of deriving one version tuple from the package's display version.
+compare_klib_manifest_versions() { # <frontend-klib> <projected-klib>
+	local frontend="$1" projected="$2" key frontend_value projected_value
+	[[ -f "$frontend" ]] || { echo "frontend KLIB is missing: $frontend"; return 1; }
+	[[ -f "$projected" ]] || { echo "projected KLIB is missing: $projected"; return 1; }
+	for key in abi_version compiler_version ir_signature_versions metadata_version; do
+		frontend_value="$(unzip -p "$frontend" default/manifest | sed -n "s/^$key=//p")"
+		projected_value="$(unzip -p "$projected" default/manifest | sed -n "s/^$key=//p")"
+		[[ -n "$frontend_value" && "$projected_value" == "$frontend_value" ]] \
+			|| { echo "$key: projected '$projected_value' != frontend '$frontend_value'"; return 1; }
+	done
+}
+
 # A tiny metadata-only reflection checker (does the emitted dll declare owner.member?) — built ONCE with the
 # DEFAULT NuGet config (it needs System.Reflection.MetadataLoadContext from nuget.org; it is a build-time
 # tool, NOT part of the isolated SDK-resolution test). Lives OUTSIDE $WS so the isolated local-only
@@ -365,9 +380,13 @@ fun main() {
     println("packaged exe ok: " + (2 + 3))
 }
 EOF
-	local expected="packaged exe ok: 5" actual rc=0
+	local expected="packaged exe ok: 5" actual rc=0 manifest_error="" projected_klib=""
 	actual="$(run_project "$d" "$d/run.err")" || rc=$?
+	projected_klib="$(find "$d/obj/Debug/net10.0/klib" -maxdepth 1 -name '*.klib' -print -quit 2>/dev/null)"
 	if (( rc != 0 )); then fail exe "run exit $rc" "$(printf -- '--- expected ---\n%s\n--- stdout ---\n%s\n--- stderr ---\n%s' "$expected" "$actual" "$(tail -30 "$d/run.err" 2>/dev/null)")"
+	elif ! manifest_error="$(compare_klib_manifest_versions \
+		"$WS/pkgs/dotkt.toolchain/$VER/tools/kotlin-stdlib-clr-frontend.klib" "$projected_klib")"; then
+		fail exe "projected KLIB manifest does not match the pinned frontend" "$manifest_error"
 	elif [[ ! -s "$d/obj/Debug/net10.0/dotkt-kotc.rsp" \
 		|| ! -s "$d/obj/Debug/net10.0/dotkt-bir2cir.rsp" \
 		|| ! -s "$d/obj/Debug/net10.0/dotkt-ilemit.rsp" ]]; then

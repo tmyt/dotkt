@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-kotlin/clr — a compiler that runs **Kotlin on .NET (CLR)**. It reuses the stock Kotlin 2.4.0 frontend
+kotlin/clr — a compiler that runs **Kotlin on .NET (CLR)**. It reuses the stock Kotlin 2.4.10 frontend
 (Configuration → FIR → Fir2Ir) and replaces only the backend:
 
     Kotlin IR → BirEmitter → BIR(json) → bir2cir → CIR(json) → ilemit → CIL
@@ -153,7 +153,7 @@ bir2cir/ilemit/dll2klib you need `rm -rf build/*-bin` (plus `build/clr-stdlib*` 
 before a gate result means anything; and after any kotc change, `./gradlew :kotc:installDist`, or a stale
 launcher fails the gate for the wrong reason.
 
-Toolchain: JDK auto-provisioned by Gradle, .NET SDK 10 required, Kotlin/IR APIs pinned to 2.4.0 (bump
+Toolchain: JDK auto-provisioned by Gradle, .NET SDK 10 required, Kotlin/IR APIs pinned to 2.4.10 (bump
 procedure in `docs/kotlin-frontend-bump-playbook.md`).
 
 ## Layers

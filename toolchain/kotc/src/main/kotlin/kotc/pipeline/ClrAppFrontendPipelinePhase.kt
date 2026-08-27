@@ -50,7 +50,7 @@ import org.jetbrains.kotlin.platform.CommonPlatforms
 import java.io.File
 
 /**
- * Fork of the stock `MetadataFrontendPipelinePhase` (2.4.0) -- PSI-only, non-light-tree branch,
+ * Fork of the stock `MetadataFrontendPipelinePhase` (2.4.10) -- PSI-only, non-light-tree branch,
  * matching the rest of kotc, which never sets [CommonConfigurationKeys.USE_LIGHT_TREE] -- needed for
  * TWO reasons:
  *  1. The stock phase builds its FIR sessions internally via `prepareMetadataSessions` and only returns
@@ -65,7 +65,7 @@ import java.io.File
  *
  * `prepareMetadataSessions` itself IS public CLI API (`org.jetbrains.kotlin.cli.common`), so this
  * reimplements only the thin CLI glue around it plus its (now flag-parameterised) session-preparation
- * body (kept in sync with the stock 2.4.0 non-light-tree branch: `loadMetadataKlibs`,
+ * body (kept in sync with the stock 2.4.10 non-light-tree branch: `loadMetadataKlibs`,
  * `toVfsBasedProjectEnvironment`, `getCompilerExtensions`), not Kotlin-core session-construction logic.
  */
 object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact, MetadataFrontendPipelineArtifact>(
@@ -86,7 +86,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 			dependsOnDependencies(refinedPaths.map { it.absolutePath })
 		}
 
-		// 2.4.0's stock metadata frontend (MetadataFrontendPipelinePhase) does exactly this: load the
+		// 2.4.10's stock metadata frontend (MetadataFrontendPipelinePhase) does exactly this: load the
 		// classpath klibs via the KlibLoader entry point rather than resolveSingleFileKlib. This subsumed
 		// kotc's old KT-63573 manual-resolution workaround (its own comment predicted the migration).
 		val klibs: List<KotlinLibrary> = loadMetadataKlibs(
@@ -136,7 +136,7 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		// (common module + platform-module-depends-on-common). Downstream Fir2Ir actualization + BIR emit
 		// already handle the multi-session output — the stdlib self-build uses the same two tail phases.
 		// The block below is a verbatim copy of `prepareMetadataSessions` (upstream
-		// `compiler/cli/.../common/FirSessionConstructionUtils.kt`, 2.4.0) with the sole `metadataCompilationMode`
+		// `compiler/cli/.../common/FirSessionConstructionUtils.kt`, 2.4.10) with the sole `metadataCompilationMode`
 		// literal parameterised — keep it in sync on a frontend bump. NOTE: `-Xfragments` app builds (an HMPP
 		// module structure rather than `-Xcommon-sources`) are NOT wired here yet — `hasCommonSources` would be
 		// false and force single-session; widening the guard to also cover an HMPP structure is a follow-up.
