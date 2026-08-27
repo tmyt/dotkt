@@ -1120,10 +1120,9 @@ static partial class ClrMemberResolution
                 var sysArr = SystemArrayMlc();
                 if (sysArr != null) { try { if (p.IsAssignableFrom(sysArr)) return MatchKind.Assignable; } catch { } }
             }
-            // A LOCAL Kotlin ENUM (a self-build `kind:"enum"` the MLC can't see) — bare or wrapped in a collection/array
-            // — reinterprets to a .NET enum param: `RegexOption` -> `.ctor(String, RegexOptions)`, and `Set<RegexOption>`
-            // -> the OR'd `RegexOptions` (`new Regex(pattern, options)`). GATED to an arg that MENTIONS a known local enum
-            // so an arbitrary unresolvable arg (a local class, a `dotkt$` synthetic) does NOT slip into an enum param.
+            // A LOCAL Kotlin ENUM (a self-build `kind:"enum"` the MLC can't see), bare or nested in an unresolved
+            // constructed type, can still inhabit a reflected enum parameter. Gate this to an argument that mentions
+            // a known local enum so an arbitrary unresolvable local class or `dotkt$` synthetic cannot slip through.
             if (IsEnumMlc(p) && MentionsLocalEnum(a)) return MatchKind.Assignable;
             return IsObjectMlc(p) ? MatchKind.Assignable : MatchKind.No;
         }
