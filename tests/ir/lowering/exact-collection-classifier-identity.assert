@@ -1,0 +1,7 @@
+# Names containing Map, Set, or List do not own collection semantics, even inside kotlin.collections.
++"name":"mapObserverToString"
++"name":"setObserverToString"
++"name":"listObserverToString"
++"k":"objMethod","method":"ToString"
+-clrMapToString
+-clrCollToString

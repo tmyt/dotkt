@@ -1,0 +1,85 @@
+{
+  "fileClass": "ExactCollectionClassifierIdentityProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [
+    {
+      "name": "kotlin.collections.MapObserver",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "typeParams": [],
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": [],
+      "attrs": []
+    },
+    {
+      "name": "kotlin.collections.SetObserver",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "typeParams": [],
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": [],
+      "attrs": []
+    },
+    {
+      "name": "kotlin.collections.ListObserver",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "typeParams": [],
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "methods": [],
+      "attrs": []
+    }
+  ],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "mapObserverToString",
+      "static": true,
+      "vis": "public",
+      "params": [{ "name": "value", "type": { "t": "fqn", "name": "kotlin.collections.MapObserver" } }],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": [{
+        "k": "return",
+        "value": { "k": "objMethod", "method": "toString", "recv": { "k": "local", "name": "value" } }
+      }]
+    },
+    {
+      "name": "setObserverToString",
+      "static": true,
+      "vis": "public",
+      "params": [{ "name": "value", "type": { "t": "fqn", "name": "kotlin.collections.SetObserver" } }],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": [{
+        "k": "return",
+        "value": { "k": "objMethod", "method": "toString", "recv": { "k": "local", "name": "value" } }
+      }]
+    },
+    {
+      "name": "listObserverToString",
+      "static": true,
+      "vis": "public",
+      "params": [{ "name": "value", "type": { "t": "fqn", "name": "kotlin.collections.ListObserver" } }],
+      "ret": { "t": "fqn", "name": "kotlin.String" },
+      "body": [{
+        "k": "return",
+        "value": { "k": "objMethod", "method": "toString", "recv": { "k": "local", "name": "value" } }
+      }]
+    }
+  ]
+}
