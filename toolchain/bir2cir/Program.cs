@@ -1326,7 +1326,7 @@ sealed class Pipeline
             // the fully-lowered tree — so owner/argTypes speak the CLR vocabulary the MLC resolves; unconditional so
             // RefBodySquash's `newClr NotImplementedException` is stamped too (its owner resolves off the BCL compile-refs).
             ClrMemberResolution.EnsurePlainCallDescriptors(lowered);
-            ClrMemberResolution.Apply(lowered, refs, localBasicEnums, emittedLocalTypes);
+            ClrMemberResolution.Apply(lowered, refs, emittedLocalTypes);
             // Exact member resolution above selected the authoritative MethodDef and temporarily carried its CLR-only
             // generic parameter facts. Validate the call's actual method arguments in the caller's lexical frame, then
             // consume that internal carrier before CIR serialization. Generic Kotlin properties are physical accessor

@@ -63,10 +63,48 @@ public actual class Regex {
     public actual constructor(pattern: String)
 
     /** Creates a regular expression from the specified [pattern] string and the specified single [option].  */
-    public actual constructor(pattern: String, option: RegexOption)
+    public actual constructor(pattern: String, option: RegexOption) : this(
+        pattern,
+        when (option) {
+            RegexOption.IGNORE_CASE -> ClrRegexOptions.IGNORE_CASE
+            RegexOption.MULTILINE -> ClrRegexOptions.MULTILINE
+            RegexOption.COMMENTS -> ClrRegexOptions.COMMENTS
+            RegexOption.DOT_MATCHES_ALL -> ClrRegexOptions.DOT_MATCHES_ALL
+            RegexOption.LITERAL, RegexOption.UNIX_LINES, RegexOption.CANON_EQ -> ClrRegexOptions.NONE
+        }
+    )
 
     /** Creates a regular expression from the specified [pattern] string and the specified set of [options].  */
-    public actual constructor(pattern: String, options: Set<RegexOption>)
+    public actual constructor(pattern: String, options: Set<RegexOption>) : this(
+        pattern,
+        when (
+            (if (RegexOption.IGNORE_CASE in options) 1 else 0) or
+                (if (RegexOption.MULTILINE in options) 2 else 0) or
+                (if (RegexOption.DOT_MATCHES_ALL in options) 16 else 0) or
+                (if (RegexOption.COMMENTS in options) 32 else 0)
+        ) {
+            0 -> ClrRegexOptions.NONE
+            1 -> ClrRegexOptions.IGNORE_CASE
+            2 -> ClrRegexOptions.MULTILINE
+            3 -> ClrRegexOptions.IGNORE_CASE_MULTILINE
+            16 -> ClrRegexOptions.DOT_MATCHES_ALL
+            17 -> ClrRegexOptions.IGNORE_CASE_DOT_MATCHES_ALL
+            18 -> ClrRegexOptions.MULTILINE_DOT_MATCHES_ALL
+            19 -> ClrRegexOptions.IGNORE_CASE_MULTILINE_DOT_MATCHES_ALL
+            32 -> ClrRegexOptions.COMMENTS
+            33 -> ClrRegexOptions.IGNORE_CASE_COMMENTS
+            34 -> ClrRegexOptions.MULTILINE_COMMENTS
+            35 -> ClrRegexOptions.IGNORE_CASE_MULTILINE_COMMENTS
+            48 -> ClrRegexOptions.COMMENTS_DOT_MATCHES_ALL
+            49 -> ClrRegexOptions.IGNORE_CASE_COMMENTS_DOT_MATCHES_ALL
+            50 -> ClrRegexOptions.MULTILINE_COMMENTS_DOT_MATCHES_ALL
+            else -> ClrRegexOptions.IGNORE_CASE_MULTILINE_COMMENTS_DOT_MATCHES_ALL
+        }
+    )
+
+    // Terminal physical constructor for the two Kotlin option adapters above. Alias-constructor delegation carries
+    // their authored expressions to consumers; bir2cir resolves this exact signature to the BCL RegexOptions overload.
+    private constructor(pattern: String, options: ClrRegexOptions)
 
     /** The pattern string of this regular expression. */
     // System...Regex has no `Pattern` property; Regex.ToString() (a METHOD) returns the pattern string.
@@ -284,11 +322,29 @@ public actual class Regex {
     }
 }
 
-/** Opaque handle to System...RegexOptions (the [Flags] enum). Bound as a @ClrTypeAlias so a Regex's compiled `.Options`
- *  can be read and fed straight into the static Match(string,string,RegexOptions) overload WITHOUT a RegexOptions->Int
- *  decode — the value is never inspected in Kotlin, only forwarded. */
+/** System...RegexOptions binding vocabulary. Explicit values keep the Kotlin-to-CLR option mapping in the stdlib
+ *  declaration while [kotlin.clr.ClrTypeAlias] makes each value inhabit the BCL enum slot directly. Values read from
+ *  CLR may carry additional RegexOptions bits; Kotlin code must keep those values opaque and forward them unchanged. */
 @kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.RegexOptions")
-internal class ClrRegexOptions
+@kotlin.clr.ClrEnum
+internal enum class ClrRegexOptions(value: Int) {
+    NONE(0),
+    IGNORE_CASE(1),
+    MULTILINE(2),
+    IGNORE_CASE_MULTILINE(3),
+    DOT_MATCHES_ALL(16),
+    IGNORE_CASE_DOT_MATCHES_ALL(17),
+    MULTILINE_DOT_MATCHES_ALL(18),
+    IGNORE_CASE_MULTILINE_DOT_MATCHES_ALL(19),
+    COMMENTS(32),
+    IGNORE_CASE_COMMENTS(33),
+    MULTILINE_COMMENTS(34),
+    IGNORE_CASE_MULTILINE_COMMENTS(35),
+    COMMENTS_DOT_MATCHES_ALL(48),
+    IGNORE_CASE_COMMENTS_DOT_MATCHES_ALL(49),
+    MULTILINE_COMMENTS_DOT_MATCHES_ALL(50),
+    IGNORE_CASE_MULTILINE_COMMENTS_DOT_MATCHES_ALL(51),
+}
 
 // === System.Text.RegularExpressions adapters ===
 // These @ClrIntrinsic classes ARE the BCL types (Match/Group/GroupCollection); their members are metadata-only TODO stubs

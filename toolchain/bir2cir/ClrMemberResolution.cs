@@ -27,18 +27,13 @@ static partial class ClrMemberResolution
     static readonly Dictionary<int, JsonArray> KotlinSigSnapshots = new();
     static int _nextKotlinSigSnapshotId;
     static ReferenceMetadataIndex _refs;
-    static IReadOnlySet<string> _localEnums = new HashSet<string>();
     static IReadOnlySet<string> _localTypes = new HashSet<string>();
     static IReadOnlySet<string> _externalCanonicalTypes = new HashSet<string>();
     static IReadOnlySet<string> _localDeclarationIds = new HashSet<string>();
 
-    // `localEnums` = every LOCAL `kind:"enum"` FQN in this compilation (the self-build's own enums — in an APP build a
-    // stdlib enum like RegexOption is in the ref.dll and resolves concretely, never via the enum-reinterpret fallback).
-    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlySet<string> localEnums,
-        IReadOnlySet<string> localTypes)
+    public static void Apply(JsonNode root, ReferenceMetadataIndex refs, IReadOnlySet<string> localTypes)
     {
         _refs = refs;
-        _localEnums = localEnums ?? new HashSet<string>();
         _localTypes = localTypes ?? new HashSet<string>();
         ResolveExternalClassOverrides(root);
         ResolveExternalBaseMethodImpls(root);
@@ -1120,11 +1115,6 @@ static partial class ClrMemberResolution
                 var sysArr = SystemArrayMlc();
                 if (sysArr != null) { try { if (p.IsAssignableFrom(sysArr)) return MatchKind.Assignable; } catch { } }
             }
-            // A LOCAL Kotlin ENUM (a self-build `kind:"enum"` the MLC can't see) — bare or wrapped in a collection/array
-            // — reinterprets to a .NET enum param: `RegexOption` -> `.ctor(String, RegexOptions)`, and `Set<RegexOption>`
-            // -> the OR'd `RegexOptions` (`new Regex(pattern, options)`). GATED to an arg that MENTIONS a known local enum
-            // so an arbitrary unresolvable arg (a local class, a `dotkt$` synthetic) does NOT slip into an enum param.
-            if (IsEnumMlc(p) && MentionsLocalEnum(a)) return MatchKind.Assignable;
             return IsObjectMlc(p) ? MatchKind.Assignable : MatchKind.No;
         }
         // p is OPEN (a generic parameter or a constructed generic mentioning one).
@@ -1360,16 +1350,6 @@ static partial class ClrMemberResolution
     internal static JsonNode DeclaringTypeDescriptor(MethodBase member)
         => TypeJson.Write(new TypeNode.Fqn(DeclaringTypeIdentity(member)));
     static bool IsObjectMlc(Type t) { try { return t.FullName == "System.Object"; } catch { return false; } }
-    static bool IsEnumMlc(Type t) { try { return t.IsEnum; } catch { return false; } }
-    // True iff the arg TypeNode is (or wraps, in a collection/array/nullable) a KNOWN local enum FQN.
-    static bool MentionsLocalEnum(TypeNode t) => t switch
-    {
-        TypeNode.Fqn f => _localEnums.Contains(f.Name) || (f.Args?.Any(MentionsLocalEnum) ?? false),
-        TypeNode.Array a => MentionsLocalEnum(a.Elem),
-        TypeNode.Nullable n => MentionsLocalEnum(n.Of),
-        TypeNode.Oblivious o => MentionsLocalEnum(o.Of),
-        _ => false,
-    };
     static bool IsVoidNode(TypeNode t) => t is TypeNode.Fqn { Args: null, Name: "void" or "System.Void" or "kotlin.Unit" };
 
     // A function-type arg binds an `object` param OR a delegate param (BCL Func/Action or a stdlib delegate, possibly

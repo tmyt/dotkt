@@ -7,7 +7,7 @@
 //
 // This family is the Kotlin Regex surface binding to the BCL: toRegex/containsMatchIn/replace/matches/find
 // (il-regex), the TRUE anchored matchEntire/matches (il-regexanchor, #162), the options-taking ctors
-// (il-regexopts, #178), replaceFirst/replace/pattern marshaling (il-regexreplace), MatchResult.groups
+// (il-regexopts, #515), replaceFirst/replace/pattern marshaling (il-regexreplace), MatchResult.groups
 // (il-regexgroups, ClrMatchGroupCollection), the Sequence-returning findAll/splitToSequence + options getter
 // (il-regexseq, #104), and groupValues/destructured (il-groupvalues). All are pure-Kotlin at the source (Regex /
 // RegexOption are kotlin.text defaults) — no `import System`, so they belong in this value-assert battery, not
@@ -16,7 +16,7 @@
 // Coverage preserved (old case -> method):
 //   il-regex        -> regex_basic                containsMatchIn / replace / matches / find(-> null) core surface
 //   il-regexanchor  -> regexanchor_fullMatch      #162 matchEntire/matches = full anchored match (alternation, lazy, options)
-//   il-regexopts    -> regexopts_options          #178 Regex(String, RegexOption) / Regex(String, Set<RegexOption>) ctors -> RegexOptions bitmask
+//   il-regexopts    -> regexopts_options          #515 stdlib-authored Regex option constructor adapters -> RegexOptions bitmask
 //   il-regexreplace -> regexreplace_marshaling    replaceFirst/replace(String,String) + CharSequence input + toString/pattern
 //   il-regexgroups  -> regexgroups_groupCollection MatchResult.groups by-index/by-name/iteration/`in`/containsAll
 //   il-regexseq     -> regexseq_sequenceMembers   #104 findAll / splitToSequence (Sequence machinery) + options getter
@@ -66,8 +66,8 @@ class RegexTests {
         assertNull(Regex("a").matchEntire("ab")?.value)              // null (partial, not full)
     }
 
-    // il-regexopts (#178): the options-taking ctors Regex(String, RegexOption) / Regex(String, Set<RegexOption>)
-    // convert the RegexOption / Set<RegexOption> arg to the BCL RegexOptions int bitmask at the ctor call site.
+    // il-regexopts (#515): stdlib-authored constructor delegations convert RegexOption / Set<RegexOption> to the
+    // explicit BCL RegexOptions value carrier; bir2cir applies only the general alias-constructor adapter contract.
     @TestAttribute
     fun options() {
         // single RegexOption (compile-time enum constant)
@@ -89,9 +89,52 @@ class RegexTests {
         // multi-element set (OR of two bits)
         assertTrue(Regex("A B", setOf(RegexOption.IGNORE_CASE, RegexOption.COMMENTS)).matches("ab"))  // True
 
-        // runtime-held option (not a compile-time constant) exercises the enumOrdinal path
+        // runtime-held option (not a compile-time constant) exercises the authored selection path
         val opt = RegexOption.IGNORE_CASE
         assertTrue(Regex("x", opt).matches("X"))                                         // True
+        assertTrue(Regex("^b", RegexOption.MULTILINE).containsMatchIn("a\nb"))
+        assertTrue(Regex("a b", RegexOption.COMMENTS).matches("ab"))
+        assertTrue(Regex("a.b", RegexOption.DOT_MATCHES_ALL).matches("a\nb"))
+        for (unsupported in listOf(RegexOption.LITERAL, RegexOption.UNIX_LINES, RegexOption.CANON_EQ)) {
+            assertEquals(emptySet<RegexOption>(), Regex("x", unsupported).options)
+        }
+
+        // Every representable subset is carried by the stdlib-authored constructor adapter. This pins the explicit
+        // value table rather than merely sampling individual bits.
+        val represented = listOf(
+            RegexOption.IGNORE_CASE,
+            RegexOption.MULTILINE,
+            RegexOption.DOT_MATCHES_ALL,
+            RegexOption.COMMENTS,
+        )
+        for (mask in 0..15) {
+            val selected = represented.filterIndexed { index, _ -> mask and (1 shl index) != 0 }.toSet()
+            assertEquals(selected, Regex("x", selected).options)
+        }
+
+        // These Kotlin options have no direct System.Text.RegularExpressions.RegexOptions representation.
+        assertEquals(
+            emptySet<RegexOption>(),
+            Regex("x", setOf(RegexOption.LITERAL, RegexOption.UNIX_LINES, RegexOption.CANON_EQ)).options,
+        )
+
+        // Alias-constructor expansion must materialize each source argument exactly once even though the authored
+        // adapters inspect it repeatedly.
+        var singleEvaluations = 0
+        fun nextOption(): RegexOption {
+            singleEvaluations++
+            return RegexOption.IGNORE_CASE
+        }
+        assertTrue(Regex("x", nextOption()).matches("X"))
+        assertEquals(1, singleEvaluations)
+
+        var setEvaluations = 0
+        fun nextOptions(): Set<RegexOption> {
+            setEvaluations++
+            return setOf(RegexOption.IGNORE_CASE, RegexOption.COMMENTS)
+        }
+        assertTrue(Regex("X Y", nextOptions()).matches("xy"))
+        assertEquals(1, setEvaluations)
     }
 
     // il-regexreplace: Regex.replaceFirst / replace(String,String) marshaling. replaceFirst must bind the 3-arg

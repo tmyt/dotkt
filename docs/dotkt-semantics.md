@@ -588,8 +588,10 @@ Kotlin `RegexOption`s have **no** `System...RegexOptions` bit and therefore neve
 they are unrepresentable in a compiled .NET `Regex`): `LITERAL` (.NET realizes literal matching via `Regex.Escape`, not
 an option), `UNIX_LINES` (no .NET line-terminator mode), and `CANON_EQ` (no .NET canonical-equivalence flag). A default
 `Regex` decodes to an empty set. The inverse — the `Regex(pattern, options)` constructor's `Set<RegexOption>` /
-`RegexOption` → `RegexOptions` encode — is wired in bir2cir `NetInteropBinding` (#178) and mirrors this table
-(`IGNORE_CASE`→1, `MULTILINE`→2, `DOT_MATCHES_ALL`→16, `COMMENTS`→32). Symmetrically, the three unrepresentable options
+`RegexOption` → `RegexOptions` encode — is authored by the stdlib constructor delegation and its explicit
+`ClrRegexOptions` value carrier (#515): `IGNORE_CASE`→1, `MULTILINE`→2, `DOT_MATCHES_ALL`→16, `COMMENTS`→32.
+bir2cir applies the general `@ClrTypeAlias` constructor-adapter contract and knows neither the Regex declarations nor
+their bit table. Symmetrically, the three unrepresentable options
 **encode to no bit (dropped)**: e.g. `Regex("a.b", RegexOption.LITERAL)` compiles with `RegexOptions.None`, so `.`
 matches as a wildcard rather than a literal (a deliberate CLR choice, consistent with the decode table above — a
 program needing literal matching uses `Regex.escape`).
