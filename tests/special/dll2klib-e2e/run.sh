@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end regression test for projecting a CLR reference assembly directly to a
-# standard Kotlin 2.4.0 KLIB, with no dll2klib JSON and no kotc declaration
+# standard Kotlin 2.4.10 KLIB, with no dll2klib JSON and no kotc declaration
 # generation extension: CLR ref.dll -> .klib -> kotc -> BIR -> bir2cir -> ilemit.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=dll2klib-e2e
@@ -119,6 +119,14 @@ grep -q '2 KLIB(s) up to date' <<<"$catalog_restore" \
 	|| die "rejected incomplete reference catalog corrupted the complete KLIB cache"
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
+done
+# dll2klib must author the exact manifest version contract produced by the pinned frontend. In particular, a Kotlin
+# patch release can advance compiler_version while retaining the minor line's ABI and metadata versions.
+for key in abi_version compiler_version ir_signature_versions metadata_version; do
+	frontend_value="$(unzip -p "$FE_KLIB" default/manifest | sed -n "s/^$key=//p")"
+	projected_value="$(unzip -p "$PROBE_KLIB" default/manifest | sed -n "s/^$key=//p")"
+	[[ -n "$frontend_value" && "$projected_value" == "$frontend_value" ]] \
+		|| die "dll2klib manifest $key '$projected_value' != frontend KLIB '$frontend_value'"
 done
 dotnet "$OUT/tools/metadata-inspector/CompanionMetadataInspector.dll" \
 	--klib-csharp-extension-shape "$PROBE_KLIB" Probe Probe.WidgetExtensions Bump

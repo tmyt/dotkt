@@ -6,7 +6,7 @@ This document defines the production design of the DotKt CLR reference-assembly
 projection pipeline.
 
 `dll2klib` converts each MSBuild-resolved CLR reference assembly into one
-metadata-only Kotlin library. The generated KLIBs are ordinary Kotlin 2.4.0
+metadata-only Kotlin library. The generated KLIBs are ordinary Kotlin 2.4.10
 KLIBs and are supplied to the standard `kotc` KLIB loader.
 
 The design has four primary goals:
@@ -186,7 +186,7 @@ For example, `System.String` becomes `String..String?`:
 - `flexible_upper_bound` contains the nullable form of the same type; and
 - `flexible_type_capabilities_id` is `dotkt.clr.PlatformType`.
 
-The Kotlin 2.4.0 FIR KLIB loader reconstructs this as a flexible type, giving
+The Kotlin 2.4.10 FIR KLIB loader reconstructs this as a flexible type, giving
 the frontend normal platform-type behavior and presenting it as `String!` to
 frontend clients such as completion.
 
@@ -505,7 +505,10 @@ exists to eliminate.
 ## Compatibility and current limits
 
 The KLIB metadata wire format is a Kotlin compiler-internal format.
-`dll2klib` is therefore pinned to the Kotlin 2.4.0 schema and version tuple.
+`dll2klib` is therefore pinned to the Kotlin 2.4.0 ABI/metadata schema and the
+Kotlin 2.4.10 compiler version. Kotlin patch releases need not advance all
+three manifest versions together, so the generated manifest must match the
+frontend-produced KLIB exactly.
 A compiler upgrade must validate:
 
 - protobuf field and extension numbers;

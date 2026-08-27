@@ -117,6 +117,6 @@ current language version 2.4.` Functions, properties, members, extensions,
 - **Live `CharSequence` views** and user implementations of `Appendable` (use `StringBuilder`).
 - Consuming a DotKt dll **back as Kotlin** loses some declaration facts: `enum class`-ness,
   `object` singleton sugar, implicit companion access, SAM conversion of a bare lambda — each a
-  pinned-Kotlin-2.4.0 limitation, documented in
+  pinned-Kotlin-2.4.10 limitation, documented in
   [`dotkt-semantics.md` §10](../dotkt-semantics.md).
 - `internal` is assembly-visibility; there is no friend-module (`InternalsVisibleTo`) wiring yet.

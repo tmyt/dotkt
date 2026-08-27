@@ -48,7 +48,7 @@ import org.jetbrains.kotlin.util.klibMetadataVersionOrDefault
  * expect", and emits BOTH the common session's raw `expect class String` (fake-override hashCode ->
  * kotlin.Any) AND the clr session's `actual` as separate top-level `kotlin.String` declarations; a plain
  * (non-HMPP) consumer session then picks the unactualized expect. So this phase runs Fir2Ir first and
- * feeds its actualized result into upstream's [Fir2KlibMetadataSerializer] (2.4.0's HMPP/actualization-
+ * feeds its actualized result into upstream's [Fir2KlibMetadataSerializer] (2.4.10's HMPP/actualization-
  * aware serializer — exactly what kotc used to hand-roll), which serializes against the actualized
  * session and drops the actualized `expect`s.
  *

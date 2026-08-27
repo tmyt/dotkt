@@ -1,7 +1,7 @@
 # DotKt — Kotlin → .NET (CLR) compiler
 
 A compiler that runs **Kotlin on .NET**. It reuses the official Kotlin frontend
-(`kotlin-compiler-embeddable` 2.4.0 — Configuration / FIR / Fir2Ir, so resolution and type
+(`kotlin-compiler-embeddable` 2.4.10 — Configuration / FIR / Fir2Ir, so resolution and type
 checking are the real thing) and replaces only the backend, lowering **Kotlin IR → CIL** that
 runs on `dotnet`.
 
@@ -166,7 +166,7 @@ real, so `T::class` / `is T` need no inlining tricks.
 ## Toolchain / caveats
 
 - JDK auto-provisioned by Gradle (foojay); **.NET SDK 10** required.
-- Kotlin/IR APIs are **version-pinned to 2.4.0** (internal, unstable — intentionally not tracking
+- Kotlin/IR APIs are **version-pinned to 2.4.10** (internal, unstable — intentionally not tracking
   newer versions; bumped from 2.2.0 in #111 — see `docs/kotlin-frontend-bump-playbook.md`). Some
   round-trip limits stem from this pin (`docs/dotkt-semantics.md` §10).
 - WPF/WinUI samples build on Windows only; **Avalonia** windowing runs cross-platform (incl. WSLg).
