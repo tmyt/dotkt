@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Non-public Kotlin enums now retain their declaration visibility in CLR metadata (#602).** `kotc` carries the
+  source visibility of basic and explicit `@ClrEnum` declarations through BIR, so top-level and nested enum TypeDefs
+  are no longer widened to public while `bir2cir` and `ilemit` continue consuming the explicit fact one-to-one.
+
 - **Regex option constructors now use an explicit stdlib binding contract (#515).** The stdlib authors the
   `RegexOption` and `Set<RegexOption>` conversion through alias-constructor delegation and explicit CLR enum values;
   bir2cir no longer recognizes Regex declarations, Kotlin enum ordinals, or the `RegexOptions` bit table. Constructor

@@ -606,10 +606,11 @@ internal fun BirEmitter.enumDef(e: IrClass): String {
 		rendered
 	}
 	val semanticOwner = semanticOwnerJson(e)
+	val visibility = visOf(e).let { if (it == "public") "" else ""","vis":${str(it)}""" }
 	// The companion is emitted as its own semantic declaration; enumDef must not manufacture a duplicate association.
 	val kotlinCompanion = ""
 	val explicitMetadata = if (explicit) ""","attrs":[${attrsJson(e.annotations)}]${posJson(e)}""" else ""
-	return """{"name":${str(typeName(e))},"kind":"enum"$semanticOwner$kotlinCompanion$clrEnumFact,"entries":[${entries.joinToString(",")}]$explicitMetadata}"""
+	return """{"name":${str(typeName(e))},"kind":"enum"$semanticOwner$visibility$kotlinCompanion$clrEnumFact,"entries":[${entries.joinToString(",")}]$explicitMetadata}"""
 }
 
 /** A "rich" enum has source-authored state/behavior or per-entry bodies -> can't be a CLR enum. */

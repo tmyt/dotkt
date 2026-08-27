@@ -38,6 +38,19 @@ import kotlin.clr.clrEvent
 
 private const val enumExplicitConst = 9
 
+private enum class EnumPrivateVisibility { VALUE }
+internal enum class EnumInternalVisibility { VALUE }
+
+@ClrEnum
+internal enum class EnumInternalExplicitVisibility(value: Int) { VALUE(7) }
+
+class EnumVisibilityOwner {
+    private enum class PrivateNested { VALUE }
+    internal enum class InternalNested { VALUE }
+    protected enum class ProtectedNested { VALUE }
+    enum class PublicNested { VALUE }
+}
+
 @ClrEnum
 enum class EnumExplicitConstExpr(value: Int) {
     SUM(1 + 2),
@@ -336,6 +349,17 @@ enum class EnumSecondaryState(val value: Int, val label: String = "number:$value
 }
 
 class EnumTests {
+    @TestAttribute
+    fun declarationVisibilityReachesClrTypeDefinitions() {
+        assertTrue(Type.GetType("EnumPrivateVisibility")!!.IsNotPublic)
+        assertTrue(Type.GetType("EnumInternalVisibility")!!.IsNotPublic)
+        assertTrue(Type.GetType("EnumInternalExplicitVisibility")!!.IsNotPublic)
+        assertTrue(Type.GetType("EnumVisibilityOwner+PrivateNested")!!.IsNestedPrivate)
+        assertTrue(Type.GetType("EnumVisibilityOwner+InternalNested")!!.IsNestedAssembly)
+        assertTrue(Type.GetType("EnumVisibilityOwner+ProtectedNested")!!.IsNestedFamily)
+        assertTrue(Type.GetType("EnumVisibilityOwner+PublicNested")!!.IsNestedPublic)
+    }
+
     @TestAttribute
     fun explicitClrValuesPreserveKotlinOrder() {
         fun underlying(name: String): String = SystemEnum.GetUnderlyingType(Type.GetType(name)!!).Name
