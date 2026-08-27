@@ -137,6 +137,25 @@ class MapsTests {
     }
 
     @TestAttribute
+    fun entryAndIteratorNamesDoNotImplyCollectionSemantics() {
+        // Map.Entry contains "Map" in its exact Kotlin FQN but is one key/value pair, not a Map. Faithful rendering
+        // and equality must dispatch to the entry object instead of passing it to the IDictionary-backed Map helpers.
+        val entry: Map.Entry<String, Int> = mapOf("a" to 1).entries.first()
+        assertEquals("a=1", entry.toString())
+        println(entry) // println has its own early faithful-rendering route; it must not cast the entry to IDictionary.
+        assertEquals("entry=a=1", "entry=$entry")
+        assertTrue(entry == entry)
+
+        // ListIterator likewise contains "List" but is not a Collection. These universal operations must remain
+        // ordinary object dispatch; the exact runtime name is intentionally not part of the assertion.
+        val iterator: ListIterator<Int> = listOf(1).listIterator()
+        assertTrue(iterator == iterator)
+        assertTrue(iterator.toString().isNotEmpty())
+        println(iterator)
+        assertTrue("iterator=$iterator".startsWith("iterator="))
+    }
+
+    @TestAttribute
     fun concreteGen() {
         // (a) concrete HashMap<String,Int>: rule-3 put/get/remove (previous-value semantics via the hoisted helper)
         val m = HashMap<String, Int>()

@@ -31,6 +31,38 @@ static class FaithfulHints
 
     public enum CollKind { Map, Set, Coll }
 
+    // Exact Kotlin classifier identity owns the family. A name that merely contains Map/Set/List (Map.Entry,
+    // ListIterator, or a future declaration) carries no collection semantics. Keep the public stdlib interfaces,
+    // abstract bases, and concrete implementations explicit so adding a new declaration is a reviewed ABI decision.
+    static readonly IReadOnlyDictionary<string, CollKind> CollectionKinds =
+        new Dictionary<string, CollKind>(StringComparer.Ordinal)
+        {
+            ["kotlin.collections.Map"] = CollKind.Map,
+            ["kotlin.collections.MutableMap"] = CollKind.Map,
+            ["kotlin.collections.AbstractMap"] = CollKind.Map,
+            ["kotlin.collections.AbstractMutableMap"] = CollKind.Map,
+            ["kotlin.collections.HashMap"] = CollKind.Map,
+            ["kotlin.collections.LinkedHashMap"] = CollKind.Map,
+
+            ["kotlin.collections.Set"] = CollKind.Set,
+            ["kotlin.collections.MutableSet"] = CollKind.Set,
+            ["kotlin.collections.AbstractSet"] = CollKind.Set,
+            ["kotlin.collections.AbstractMutableSet"] = CollKind.Set,
+            ["kotlin.collections.HashSet"] = CollKind.Set,
+            ["kotlin.collections.LinkedHashSet"] = CollKind.Set,
+
+            ["kotlin.collections.Collection"] = CollKind.Coll,
+            ["kotlin.collections.MutableCollection"] = CollKind.Coll,
+            ["kotlin.collections.AbstractCollection"] = CollKind.Coll,
+            ["kotlin.collections.AbstractMutableCollection"] = CollKind.Coll,
+            ["kotlin.collections.List"] = CollKind.Coll,
+            ["kotlin.collections.MutableList"] = CollKind.Coll,
+            ["kotlin.collections.AbstractList"] = CollKind.Coll,
+            ["kotlin.collections.AbstractMutableList"] = CollKind.Coll,
+            ["kotlin.collections.ArrayList"] = CollKind.Coll,
+            ["kotlin.collections.ArrayDeque"] = CollKind.Coll,
+        };
+
     // The known collection/map @ClrTypeAlias FQNs whose STAR-projection / `Any?`-erasure has no usable generic BCL form
     // (invariant + reified on the CLR — a value-type-arg `Dictionary<int,int>` is NOT an `IDictionary<object,object>`).
     static readonly HashSet<string> StarProjectableColls = new(StringComparer.Ordinal)
@@ -60,18 +92,13 @@ static class FaithfulHints
     };
 
     // A collection HINT type -> (kind, type-args). Unwraps a nullable wrapper first (the receiver may be `List<Int>?`),
-    // then requires a `kotlin.collections.*` Fqn. name contains "Map" -> Map; else contains "Set" -> Set; else contains
-    // "List" or endsWith "Collection" -> Coll. Null when the type is not a recognized collection.
+    // then recognizes only the exact stdlib classifier identities above. Null for every other type.
     public static (CollKind kind, TypeNode[] args)? ClassifyColl(TypeNode t)
     {
         if (Unwrap(t) is not TypeNode.Fqn f) return null;
-        if (!f.Name.StartsWith("kotlin.collections.", StringComparison.Ordinal)) return null;
-        var args = f.Args ?? Array.Empty<TypeNode>();
-        if (f.Name.Contains("Map", StringComparison.Ordinal)) return (CollKind.Map, args);
-        if (f.Name.Contains("Set", StringComparison.Ordinal)) return (CollKind.Set, args);
-        if (f.Name.Contains("List", StringComparison.Ordinal) || f.Name.EndsWith("Collection", StringComparison.Ordinal))
-            return (CollKind.Coll, args);
-        return null;
+        return CollectionKinds.TryGetValue(f.Name, out var kind)
+            ? (kind, f.Args ?? Array.Empty<TypeNode>())
+            : null;
     }
 
     public static TypeNode Unwrap(TypeNode t) => t is TypeNode.Nullable n ? n.Of : t;
