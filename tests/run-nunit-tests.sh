@@ -54,7 +54,7 @@ declare -A EXPECTED_DISCOVERED=(
 	["tests/coroutines"]=196
 	["tests/roundtrip/consumer"]=87
 	["tests/roundtrip/bidirectional/consumer"]=9
-	["tests/interop/consumer"]=167
+	["tests/interop/consumer"]=171
 )
 
 # Validate the baseline map before doing any expensive work. A new/renamed suite without a reviewed count is a
@@ -133,6 +133,13 @@ for proj in "${PROJECTS[@]}"; do
 		ownership_bir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/NestedOwnership.bir.json"
 		ownership_cir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/NestedOwnership.cir.json"
 		consumer_dll="$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll"
+		if bash "$ROOT/tests/roundtrip/run-flags-lookalike-negative.sh" \
+			>"$ROOT/build/nunit-$name.flags-lookalike.log" 2>&1; then
+			echo "  same-FQN System.Enum/FlagsAttribute lookalikes do not project flags operations"
+		else
+			echo "  FLAGS LOOKALIKE NEGATIVE FAIL — see build/nunit-$name.flags-lookalike.log"
+			tail -25 "$ROOT/build/nunit-$name.flags-lookalike.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			"$producer_dll" "$producer_klib" "$producer_bir" "$producer_cir" "$ownership_bir" "$ownership_cir" "$consumer_dll" \
 			>"$ROOT/build/nunit-$name.metadata.log" 2>&1; then
@@ -224,6 +231,16 @@ for proj in "${PROJECTS[@]}"; do
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"
 		interop_klib="$dir/obj/$CONFIGURATION/net10.0/klib/InteropProducer.klib"
+		flags_bir="$dir/obj/$CONFIGURATION/net10.0/bir/ClrFlagsEnumTests.bir.json"
+		flags_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ClrFlagsEnumTests.cir.json"
+		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--klib-flags-enum "$interop_klib" FlagsInterop.AccessFlags "$flags_bir" "$flags_cir" \
+			>"$ROOT/build/nunit-$name.flags-enum.log" 2>&1; then
+			echo "  CLR [Flags] exact KLIB signatures and BIR-to-CIR carrier consumption OK"
+		else
+			echo "  CLR FLAGS ENUM METADATA FAIL — see build/nunit-$name.flags-enum.log"
+			tail -25 "$ROOT/build/nunit-$name.flags-enum.log"; rc=1
+		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--klib-csharp-extension-shape "$interop_klib" C1Net C1Net.Ext tripled \
 			>"$ROOT/build/nunit-$name.extension-shape.log" 2>&1; then

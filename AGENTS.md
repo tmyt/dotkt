@@ -40,7 +40,8 @@ platform deviations.
   `ClrRefArgument`, `ClrCollectionFactory`, or
   `ClrArrayFactory` is undefined behavior. User-authored use of the compiler
   metadata carriers `ClrExternal`, `ClrAwaitBridge`,
-  `KotlinDeclarationIdentity`, and `KotlinDefault` is also undefined behavior.
+  `ClrFlagsOperation`, `KotlinDeclarationIdentity`, and `KotlinDefault` is also
+  undefined behavior.
   This does not apply to ordinary use of stdlib declarations carrying those
   annotations, nor to the supported user-facing `ClrName` and `ClrField`
   annotations.

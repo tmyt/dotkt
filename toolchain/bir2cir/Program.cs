@@ -403,6 +403,12 @@ sealed class Pipeline
             CompanionRepresentationLowering.BindUses(
                 bir.Root, companionRepresentations, refs,
                 bindExternal: _options.StdlibMode == BuildStdlibMode.App);
+            // CLR [Flags] ENUM OPERATIONS (#496): dll2klib publishes metadata-only typed Kotlin declarations and kotc
+            // carries the exact selected declaration's semantic role. Resolve the target enum and underlying width
+            // here, then author an ordered call-evaluation plan around explicit bit/comparison CIR vocabulary. This
+            // must run immediately before CallEvalLowering: contains reads its mask twice, so that existing single
+            // evaluation authority materializes receiver/argument values once in Kotlin order.
+            ClrFlagsOperationLowering.Apply(bir.Root, refs);
             // CALL-EVALUATION PLAN LOWERING (§2.7). EVERY splice that can add a reader to one of a call's values has
             // now run, so each plan's readers are final and its bindings lower to locals in Kotlin order: a
             // single-reader binding back into its own slot, a shared one into a `var`, a constructor delegation's into

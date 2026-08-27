@@ -1114,6 +1114,20 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	val name = callee.name.asString()
 	val companionExtensionCallTag = companionReceiverCallTag(callee, call)
 	val declaringClass = callee.parent as? IrClass
+	val flagsOperation = clrFlagsOperationTag(callee)
+	if (flagsOperation.isNotEmpty()) {
+		val receiver = dispatchReceiver(call)
+		if (receiver != null) {
+			val semanticOwner = ownerSpec(declaringClass, receiver.type)
+			val operationOwner = declaringClass?.let(::clrName)?.let { physicalName ->
+				TypeNode.Fqn(physicalName, (semanticOwner as? TypeNode.Fqn)?.args)
+			} ?: semanticOwner
+			val arguments = regularArgs(call)
+			val argumentTypes = regularParams(callee).take(arguments.size)
+				.joinToString(",") { birType(it.type).toJson() }
+			return """{"k":"callInstance","ownerType":${operationOwner.toJson()},"virtual":false,"recv":${expr(receiver)},"method":${str(name)},"argTypes":[$argumentTypes],"ret":${birType(call.type).toJson()},"args":[${arguments.joinToString(",") { expr(it) }}]$flagsOperation}"""
+		}
+	}
 	// Kotlin 2.4 can replace the property association of a method-generic DLL -> KLIB member-extension access with
 	// a synthetic raw-accessor view that no longer carries the usable property identity. Consume the exact property/
 	// accessor fact captured from FIR before any IR-shape-dependent external-member path can return. Applying the
@@ -2289,6 +2303,18 @@ internal fun BirEmitter.suspendCallTag(callee: org.jetbrains.kotlin.ir.declarati
 		}
 		""","suspendCall":true${if (awaitBridge) ""","clrAwaitBridge":true,"awaitResult":${birType(callee.returnType).toJson()}""" else ""}"""
 	} else ""
+
+/** Preserve dll2klib's compiler-owned semantic role for a metadata-only CLR [Flags] enum operation. kotc does not
+ * inspect FlagsAttribute, select the enum's underlying width, or choose an IL opcode; it carries the annotation value
+ * from the exact frontend-selected declaration so bir2cir can realize that Kotlin operation against the target CLR
+ * type. */
+internal fun BirEmitter.clrFlagsOperationTag(callee: org.jetbrains.kotlin.ir.declarations.IrFunction): String {
+	val annotation = callee.annotations.singleOrNull {
+		it.type.classFqName?.asString() == "kotlin.clr.ClrFlagsOperation"
+	} ?: return ""
+	val role = (regularArgs(annotation).singleOrNull() as? IrConst)?.value as? String ?: return ""
+	return ""","clrFlagsOperation":${str(role)}"""
+}
 
 /** #199/#204: the `,"calleeOwner":<fileClassFqn>` mandatory DISPATCH identity on a top-level `callStatic` whose `owner` stays
  *  `null`. `owner:null` is the load-bearing "top-level call" axis ~12 bir2cir owner-null recognizers key on

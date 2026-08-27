@@ -663,6 +663,16 @@ sealed partial class Emitter
             {
                 return EmitNativeClrEnumValue(e);
             }
+            case "enumBits":
+            {
+                var enumType = MapType(e.GetProperty("type"));
+                var underlying = MapType(e.GetProperty("underlying"));
+                var actual = EmitExpr(e.GetProperty("e"));
+                if (actual != underlying)
+                    throw new InvalidOperationException(
+                        $"enumBits expression produced '{actual}', expected explicit underlying '{underlying}'");
+                return enumType;
+            }
             case "enumOrdinal":
                 return EmitNativeClrEnumOrdinal(e);
             case "enumValues":

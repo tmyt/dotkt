@@ -1,0 +1,14 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [{
+    "name": "flags",
+    "params": [],
+    "ret": {"t":"fqn","name":"Fixture.Access"},
+    "body": [{"k":"return","value":{
+      "k":"enumBits",
+      "type":{"t":"fqn","name":"Fixture.Access"},
+      "underlying":{"t":"fqn","name":"System.Int32"},
+      "e":{"k":"const","type":{"t":"fqn","name":"System.Int32"},"value":1}
+    }}]
+  }]
+}

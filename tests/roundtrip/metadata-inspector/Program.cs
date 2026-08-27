@@ -17,6 +17,8 @@ const string RichEnumAttribute = "DotKt.Runtime.CompilerServices.KotlinRichEnumA
 const string BasicEnumAttribute = "DotKt.Runtime.CompilerServices.KotlinBasicEnumAttribute";
 // Kotlin 2.4 metadata Flags.IS_STATIC_FUNCTION.
 const int IsStaticFunctionFlag = 1 << 18;
+const int IsOperatorFunctionFlag = 1 << 8;
+const int IsInfixFunctionFlag = 1 << 9;
 // A hoisted companion carrier's reserved separator keeps compiler companion types disjoint from ordinary source
 // names. Star-projection existential association is metadata-authoritative and does not depend on this spelling.
 const string HoistedMarker = "$companion$";
@@ -85,6 +87,21 @@ if (args.Length == 5 && args[0] == "--klib-csharp-extension-shape")
     return;
 }
 
+if (args.Length == 5 && args[0] == "--klib-flags-enum")
+{
+    VerifyKlibFlagsEnum(args[1], args[2]);
+    VerifyFlagsIrBoundary(args[3], args[4]);
+    Console.WriteLine("KLIB CLR [Flags] surface + BIR/CIR boundary: OK");
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--klib-no-flags-enum")
+{
+    VerifyKlibNoFlagsEnum(args[1], args[2]);
+    Console.WriteLine("KLIB same-FQN lookalike has no CLR [Flags] surface: OK");
+    return;
+}
+
 if (args.Length != 7)
     throw new ArgumentException(
         "usage:\n" +
@@ -97,7 +114,9 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-package-properties <file.klib> <package> <property[,property...]>\n" +
         "  CompanionMetadataInspector --klib-package-nullable-method-bound <file.klib> <package> <function>\n" +
         "  CompanionMetadataInspector --klib-class-fake-override-nullable-method-bound <file.klib> <class> <function>\n" +
-        "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>");
+        "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>\n" +
+        "  CompanionMetadataInspector --klib-flags-enum <file.klib> <class> <file.bir.json> <file.cir.json>\n" +
+        "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>");
 
 VerifyLayerBoundary(args[2], args[3]);
 VerifyOwnershipLayerBoundary(args[4], args[5]);
@@ -223,6 +242,145 @@ static void VerifyKlibClassFunctions(string path, string className, IReadOnlyLis
         return;
     }
     throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyKlibFlagsEnum(string path, string className)
+{
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var entry in archive.Entries.Where(entry =>
+                 entry.FullName.EndsWith(".knm", StringComparison.Ordinal)))
+    {
+        using var stream = entry.Open();
+        var fragment = PackageFragment.Parser.ParseFrom(stream);
+        var declaration = fragment.Class.SingleOrDefault(candidate =>
+            QualifiedName(fragment, candidate.FqName) == className);
+        if (declaration is null) continue;
+
+        var expected = new Dictionary<string, (string Role, bool Infix, bool Operator, bool BooleanReturn)>
+        {
+            ["or"] = ("or", true, false, false),
+            ["and"] = ("and", true, false, false),
+            ["xor"] = ("xor", true, false, false),
+            ["inv"] = ("inv", false, false, false),
+            ["contains"] = ("contains", false, true, true),
+        };
+        var actual = declaration.Function
+            .Where(function => expected.ContainsKey(String(fragment, function.Name)))
+            .ToArray();
+        Require(actual.Length == expected.Count,
+            $"{className} must carry exactly one declaration for each CLR [Flags] operation");
+        foreach (var function in actual)
+        {
+            var name = String(fragment, function.Name);
+            var shape = expected[name];
+            Require(((function.Flags & IsInfixFunctionFlag) != 0) == shape.Infix,
+                $"{className}.{name} has the wrong infix modifier");
+            Require(((function.Flags & IsOperatorFunctionFlag) != 0) == shape.Operator,
+                $"{className}.{name} has the wrong operator modifier");
+            Require(function.ValueParameter.Count == (name == "inv" ? 0 : 1),
+                $"{className}.{name} has the wrong parameter count");
+            foreach (var parameter in function.ValueParameter)
+                Require(parameter.Type.HasClassName &&
+                        QualifiedName(fragment, parameter.Type.ClassName) == className,
+                    $"{className}.{name} parameter is not the exact enum type");
+            var expectedReturn = shape.BooleanReturn ? "kotlin.Boolean" : className;
+            Require(function.ReturnType.HasClassName &&
+                    QualifiedName(fragment, function.ReturnType.ClassName) == expectedReturn,
+                $"{className}.{name} return type is not {expectedReturn}");
+            var carrier = function.FunctionAnnotation.SingleOrDefault(annotation =>
+                QualifiedName(fragment, annotation.Id) == "kotlin.clr.ClrFlagsOperation");
+            Require(carrier is not null && carrier.Argument.Count == 1,
+                $"{className}.{name} lost its ClrFlagsOperation carrier");
+            var role = carrier!.Argument[0];
+            Require(String(fragment, role.NameId) == "role" &&
+                    role.Value.Type == Annotation.Types.Argument.Types.Value.Types.Type.String &&
+                    String(fragment, role.Value.StringValue) == shape.Role,
+                $"{className}.{name} carries the wrong ClrFlagsOperation role");
+        }
+        return;
+    }
+    throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyKlibNoFlagsEnum(string path, string className)
+{
+    using var archive = ZipFile.OpenRead(path);
+    foreach (var entry in archive.Entries.Where(entry =>
+                 entry.FullName.EndsWith(".knm", StringComparison.Ordinal)))
+    {
+        using var stream = entry.Open();
+        var fragment = PackageFragment.Parser.ParseFrom(stream);
+        var declaration = fragment.Class.SingleOrDefault(candidate =>
+            QualifiedName(fragment, candidate.FqName) == className);
+        if (declaration is null) continue;
+        var flagsNames = new HashSet<string>(["or", "and", "xor", "inv", "contains"], StringComparer.Ordinal);
+        var leaked = declaration.Function
+            .Select(function => String(fragment, function.Name))
+            .Where(flagsNames.Contains)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        Require(leaked.Length == 0,
+            $"{className} same-FQN lookalike unexpectedly projected CLR [Flags] operations [{string.Join(", ", leaked)}]");
+        return;
+    }
+    throw new InvalidDataException($"KLIB class '{className}' not found");
+}
+
+static void VerifyFlagsIrBoundary(string birPath, string cirPath)
+{
+    var bir = JsonNode.Parse(File.ReadAllText(birPath))
+        ?? throw new InvalidDataException("CLR [Flags] BIR is empty");
+    var cir = JsonNode.Parse(File.ReadAllText(cirPath))
+        ?? throw new InvalidDataException("CLR [Flags] CIR is empty");
+    var roles = DescendantObjects(bir)
+        .Select(node => node["clrFlagsOperation"]?.GetValue<string>())
+        .Where(role => role is not null)
+        .ToHashSet(StringComparer.Ordinal);
+    Require(roles.SetEquals(new[] { "or", "and", "xor", "inv", "contains" }),
+        "BIR does not carry every exact CLR [Flags] operation role");
+    Require(!DescendantObjects(cir).Any(node => node.ContainsKey("clrFlagsOperation")),
+        "ClrFlagsOperation carrier survived into CIR");
+    Require(!DescendantObjects(cir).Any(node =>
+            node["k"]?.GetValue<string>() is "callInstance" or "clrInstance" &&
+            node["method"]?.GetValue<string>() is "or" or "and" or "xor" or "inv" or "contains"),
+        "a fabricated CLR [Flags] method call survived into CIR");
+    var representations = DescendantObjects(cir)
+        .Where(node => node["k"]?.GetValue<string>() == "enumBits")
+        .Select(node => (
+            Enum: node["type"]?["name"]?.GetValue<string>() ?? "<missing>",
+            Underlying: node["underlying"]?["name"]?.GetValue<string>() ?? "<missing>"))
+        .ToHashSet();
+    var expectedRepresentations = new[]
+    {
+        ("FlagsInterop.AccessFlags", "System.Int32"),
+        ("FlagsInterop.SByteFlags", "System.SByte"),
+        ("FlagsInterop.ByteFlags", "System.Byte"),
+        ("FlagsInterop.Int16Flags", "System.Int16"),
+        ("FlagsInterop.UInt16Flags", "System.UInt16"),
+        ("FlagsInterop.Int32Flags", "System.Int32"),
+        ("FlagsInterop.UInt32Flags", "System.UInt32"),
+        ("FlagsInterop.Int64Flags", "System.Int64"),
+        ("FlagsInterop.UInt64Flags", "System.UInt64"),
+        ("FlagsInterop.GenericFlagsContainer`1+NestedFlags", "System.Int32"),
+        ("System.Reflection.BindingFlags", "System.Int32"),
+    }.ToHashSet();
+    Require(representations.SetEquals(expectedRepresentations),
+        "CIR enumBits does not preserve every tested CLR enum representation");
+}
+
+static IEnumerable<JsonObject> DescendantObjects(JsonNode node)
+{
+    if (node is JsonObject obj)
+    {
+        yield return obj;
+        foreach (var value in obj.Select(pair => pair.Value).Where(value => value is not null))
+            foreach (var descendant in DescendantObjects(value!))
+                yield return descendant;
+    }
+    else if (node is JsonArray array)
+        foreach (var value in array.Where(value => value is not null))
+            foreach (var descendant in DescendantObjects(value!))
+                yield return descendant;
 }
 
 static void VerifyKlibPackageProperties(string path, string packageName, IReadOnlyList<string> expectedNames)

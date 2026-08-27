@@ -831,6 +831,14 @@ all three `append` members). The range overload additionally marks its exclusive
   declaration ordinals. Ordinary basic and rich enums are not restored as Kotlin `enum class` declarations — see
   §10.2 — so exhaustive `when` over those consumed enums degrades. A reference-KLIB-projected **.NET** enum arrives as
   an object of enum-typed `val`s (read, pass, `==`, `when` all work, without exhaustiveness).
+- A referenced CLR enum carrying the target core library's exact `[System.Flags]` attribute additionally exposes
+  typed `or`, `and`, `xor`, `inv`, and `contains` operations. Every non-Boolean operation accepts and returns that
+  exact enum type, including unnamed and unknown bit patterns; distinct enum types never mix. `flag in value` means
+  `(value and flag) == flag`, so the zero value is contained in every value. `inv()` is truncated to the enum's exact
+  signed or unsigned 8/16/32/64-bit underlying width. Binary operations evaluate the receiver before the argument,
+  once each; Kotlin's reversed `in` surface therefore still evaluates the flags value before the requested flag.
+  Bound and unbound callable references retain the same behavior. The contract also round-trips for a DotKt
+  `@ClrEnum` carrying `[Flags]`; a same-name user attribute is not sufficient.
 
 ## 5f. `value class` is a real wrapper class — never erased
 

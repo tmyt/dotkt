@@ -2017,6 +2017,7 @@ internal sealed class AssemblyScanner : IDisposable
         var kotlinName = KotlinDefinitionPath(handle).Chain[^1];
         var isInterface = (def.Attributes & TypeAttributes.Interface) != 0;
         var isEnum = IsSystemType(def.BaseType, "System", "Enum");
+        var isFlagsEnum = isEnum && IsExactSystemFlagsEnum(handle, def);
         var richEnumCarrier = ReadRichEnumCarrier(handle);
         var basicEnumCarrier = ReadBasicEnumCarrier(handle);
         var isKotlinRichEnum = richEnumCarrier is not null;
@@ -2328,6 +2329,8 @@ internal sealed class AssemblyScanner : IDisposable
                 ValueParameter = { parameters.Skip(1) },
             });
         }
+        if (isFlagsEnum)
+            AddFlagsEnumOperations(handle, result, names);
 
         // Suppress a public field only when a receiverless CLR Property row below projects that field's own Kotlin
         // declaration. An extension/context property may legally share the source name with an independent field-backed
@@ -5688,6 +5691,21 @@ internal sealed class AssemblyScanner : IDisposable
         return annotation;
     }
 
+    private static Annotation ClrFlagsOperationAnnotation(NameTable names, string role)
+    {
+        var annotation = new Annotation { Id = names.Class("kotlin.clr.ClrFlagsOperation") };
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String("role"),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                StringValue = names.String(role),
+            },
+        });
+        return annotation;
+    }
+
     private static IEnumerable<Annotation> ExplicitSlotAnnotations(NameTable names)
     {
         var deprecated = new Annotation { Id = names.Class("kotlin.Deprecated") };
@@ -6305,6 +6323,117 @@ internal sealed class AssemblyScanner : IDisposable
         };
         bool IsReference(TypeReference t) => _md.GetString(t.Namespace) == ns && _md.GetString(t.Name) == name;
         bool IsDefinition(TypeDefinition t) => _md.GetString(t.Namespace) == ns && _md.GetString(t.Name) == name;
+    }
+
+    private bool IsExactSystemFlagsEnum(TypeDefinitionHandle handle, TypeDefinition definition)
+    {
+        if (!_publicTypeCatalog.TryResolveDefinition(
+                _md, definition.BaseType, out var enumBase, _definitionPath) ||
+            !IsTargetCoreLibraryEnum(enumBase) ||
+            !HasSupportedEnumStorage(definition))
+            return false;
+        var flags = _attrs.AttributeTypes(handle, "System.FlagsAttribute");
+        if (flags.Count == 0) return false;
+        if (flags.Count != 1)
+            throw new InvalidDataException(
+                $"enum '{MetadataTypeName(handle)}' carries duplicate System.FlagsAttribute applications");
+        if (!_publicTypeCatalog.TryResolveDefinition(_md, flags[0], out var flagsType, _definitionPath) ||
+            !IsResolvedSystemType(flagsType, "FlagsAttribute"))
+            return false;
+        return StringComparer.Ordinal.Equals(enumBase.DefinitionPath, flagsType.DefinitionPath);
+
+        bool IsTargetCoreLibraryEnum(ResolvedTypeDefinition resolvedEnum)
+        {
+            if (!IsResolvedSystemType(resolvedEnum, "Enum")) return false;
+            var enumDefinition = resolvedEnum.Reader.GetTypeDefinition(resolvedEnum.Handle);
+            if (!_publicTypeCatalog.TryResolveDefinition(
+                    resolvedEnum.Reader, enumDefinition.BaseType, out var valueType, resolvedEnum.DefinitionPath) ||
+                !IsResolvedSystemType(valueType, "ValueType") ||
+                !StringComparer.Ordinal.Equals(resolvedEnum.DefinitionPath, valueType.DefinitionPath))
+                return false;
+            var valueDefinition = valueType.Reader.GetTypeDefinition(valueType.Handle);
+            if (!_publicTypeCatalog.TryResolveDefinition(
+                    valueType.Reader, valueDefinition.BaseType, out var objectType, valueType.DefinitionPath) ||
+                !IsResolvedSystemType(objectType, "Object") ||
+                !StringComparer.Ordinal.Equals(resolvedEnum.DefinitionPath, objectType.DefinitionPath))
+                return false;
+            return objectType.Reader.GetTypeDefinition(objectType.Handle).BaseType.IsNil;
+        }
+
+        bool HasSupportedEnumStorage(TypeDefinition enumDefinition)
+        {
+            var storage = enumDefinition.GetFields()
+                .Select(fieldHandle => _md.GetFieldDefinition(fieldHandle))
+                .Where(field => (field.Attributes & FieldAttributes.Static) == 0)
+                .ToArray();
+            if (storage.Length != 1 || _md.GetString(storage[0].Name) != "value__") return false;
+            var signature = _md.GetBlobBytes(storage[0].Signature);
+            return signature.Length == 2 && signature[0] == 0x06 && signature[1] is >= 0x04 and <= 0x0b;
+        }
+
+        static bool IsResolvedSystemType(ResolvedTypeDefinition resolved, string name)
+        {
+            var type = resolved.Reader.GetTypeDefinition(resolved.Handle);
+            return resolved.Reader.GetString(type.Namespace) == "System" &&
+                resolved.Reader.GetString(type.Name) == name;
+        }
+    }
+
+    private void AddFlagsEnumOperations(
+        TypeDefinitionHandle handle,
+        Class result,
+        NameTable names)
+    {
+        var self = new KType { ClassName = result.FqName };
+        foreach (var parameter in result.TypeParameter)
+            self.Argument.Add(new KType.Types.Argument
+            {
+                Projection = KType.Types.Argument.Types.Projection.Inv,
+                Type = new KType { TypeParameter = parameter.Id },
+            });
+
+        void Add(string name, string role, int kotlinFlags, bool takesArgument, bool returnsBoolean)
+        {
+            var nameId = names.String(name);
+            var parameters = takesArgument
+                ? new[]
+                {
+                    new ValueParameter
+                    {
+                        Name = names.String(role == "contains" ? "flag" : "other"),
+                        Type = self.Clone(),
+                    },
+                }
+                : Array.Empty<ValueParameter>();
+            var collision = result.Function.FirstOrDefault(function =>
+                function.Name == nameId &&
+                function.TypeParameter.Count == 0 &&
+                function.ValueParameter.Count == parameters.Length &&
+                function.ValueParameter.Select(parameter => parameter.Type)
+                    .SequenceEqual(parameters.Select(parameter => parameter.Type)));
+            if (collision is not null)
+                throw new InvalidDataException(
+                    $"CLR [Flags] enum projection '{MetadataTypeName(handle)}' cannot synthesize '{name}': " +
+                    "an actual CLR member has the same complete Kotlin declaration signature");
+
+            var function = new Function
+            {
+                Name = nameId,
+                Flags = Flags.Callable(MethodAttributes.Public, modality: 0, kotlinFlags: kotlinFlags),
+                ReturnType = returnsBoolean
+                    ? new KType { ClassName = names.Class("kotlin.Boolean") }
+                    : self.Clone(),
+            };
+            function.ValueParameter.Add(parameters);
+            function.FunctionAnnotation.Add(ClrFlagsOperationAnnotation(names, role));
+            result.Function.Add(function);
+        }
+
+        Add("or", "or", kotlinFlags: 1, takesArgument: true, returnsBoolean: false);
+        Add("and", "and", kotlinFlags: 1, takesArgument: true, returnsBoolean: false);
+        Add("xor", "xor", kotlinFlags: 1, takesArgument: true, returnsBoolean: false);
+        Add("inv", "inv", kotlinFlags: 0, takesArgument: false, returnsBoolean: false);
+        Add("contains", "contains", kotlinFlags: 2, takesArgument: true, returnsBoolean: true);
     }
 
     // System.ValueType and System.Enum are physical CLR roots, not classifiers in Kotlin's nominal subtype lattice.

@@ -49,6 +49,23 @@ internal sealed class MetadataAttributes
     public Attr? Find(EntityHandle owner, string name, bool requireTrust = true) =>
         All(owner, requireTrust).FirstOrDefault(a => a.Name == name);
 
+    // Return the exact metadata type handles behind matching custom-attribute applications. A name alone is not
+    // enough for contracts such as [System.Flags]: an input assembly may define a same-FQN lookalike. The projection
+    // layer resolves these handles through the selected reference universe before trusting the attribute.
+    public IReadOnlyList<EntityHandle> AttributeTypes(EntityHandle owner, string name)
+    {
+        if (owner.IsNil) return Array.Empty<EntityHandle>();
+        var result = new List<EntityHandle>();
+        foreach (var handle in _md.GetCustomAttributes(owner))
+        {
+            var attribute = _md.GetCustomAttribute(handle);
+            if (AttributeTypeName(attribute.Constructor) != name) continue;
+            var type = AttributeType(attribute.Constructor);
+            if (!type.IsNil) result.Add(type);
+        }
+        return result;
+    }
+
     public byte? Byte(EntityHandle owner, string name, bool requireTrust = true) =>
         Find(owner, name, requireTrust)?.ByteValue;
 
@@ -257,6 +274,14 @@ internal sealed class MetadataAttributes
         return parent.Kind == HandleKind.TypeDefinition
             ? (TypeDefinitionHandle)parent
             : default;
+    }
+
+    private EntityHandle AttributeType(EntityHandle constructor)
+    {
+        if (constructor.Kind == HandleKind.MethodDefinition)
+            return _md.GetMethodDefinition((MethodDefinitionHandle)constructor).GetDeclaringType();
+        if (constructor.Kind != HandleKind.MemberReference) return default;
+        return _md.GetMemberReference((MemberReferenceHandle)constructor).Parent;
     }
 
     private string? ParentTypeName(EntityHandle parent) => parent.Kind switch

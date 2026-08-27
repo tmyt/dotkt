@@ -108,7 +108,7 @@ public static class NodeType
         if (Stamp(o) is TypeNode stamped) return stamped;
         switch (Str(o["k"]))
         {
-            case "const": case "cast": case "new": case "newClr": case "var": case "enumValue": case "default":
+            case "const": case "cast": case "new": case "newClr": case "var": case "enumValue": case "enumBits": case "default":
                 // A structural kind carries its own type in `type` — including a `cast`, whose TARGET is what the
                 // node produces (the boxing/narrowing conversion is the point of the node).
                 return TypeJson.Read(o["type"]);
