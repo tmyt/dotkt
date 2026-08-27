@@ -92,6 +92,12 @@ class RegexTests {
         // runtime-held option (not a compile-time constant) exercises the authored selection path
         val opt = RegexOption.IGNORE_CASE
         assertTrue(Regex("x", opt).matches("X"))                                         // True
+        assertTrue(Regex("^b", RegexOption.MULTILINE).containsMatchIn("a\nb"))
+        assertTrue(Regex("a b", RegexOption.COMMENTS).matches("ab"))
+        assertTrue(Regex("a.b", RegexOption.DOT_MATCHES_ALL).matches("a\nb"))
+        for (unsupported in listOf(RegexOption.LITERAL, RegexOption.UNIX_LINES, RegexOption.CANON_EQ)) {
+            assertEquals(emptySet<RegexOption>(), Regex("x", unsupported).options)
+        }
 
         // Every representable subset is carried by the stdlib-authored constructor adapter. This pins the explicit
         // value table rather than merely sampling individual bits.

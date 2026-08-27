@@ -323,7 +323,8 @@ public actual class Regex {
 }
 
 /** System...RegexOptions binding vocabulary. Explicit values keep the Kotlin-to-CLR option mapping in the stdlib
- *  declaration while [kotlin.clr.ClrTypeAlias] makes each value inhabit the BCL enum slot directly. */
+ *  declaration while [kotlin.clr.ClrTypeAlias] makes each value inhabit the BCL enum slot directly. Values read from
+ *  CLR may carry additional RegexOptions bits; Kotlin code must keep those values opaque and forward them unchanged. */
 @kotlin.clr.ClrTypeAlias("System.Text.RegularExpressions.RegexOptions")
 @kotlin.clr.ClrEnum
 internal enum class ClrRegexOptions(value: Int) {

@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Regex option constructors now use an explicit stdlib binding contract (#515).** The stdlib authors the
+  `RegexOption` and `Set<RegexOption>` conversion through alias-constructor delegation and explicit CLR enum values;
+  bir2cir no longer recognizes Regex declarations, Kotlin enum ordinals, or the `RegexOptions` bit table. Constructor
+  arguments remain single-evaluated, and unresolved local enum shapes no longer implicitly match arbitrary CLR enums.
+
 - **The embedded Kotlin frontend is now 2.4.10 (#598).** Packages publish the new compiler identity, while
   `dll2klib` mirrors Kotlin's 2.4-line KLIB contract: compiler version 2.4.10 with ABI and metadata version 2.4.0.
 
