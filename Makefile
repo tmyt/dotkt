@@ -145,7 +145,7 @@ verify-schema: ## BIR/CIR schema contract enforcer (types-are-nodes + canonical 
 verify-sanity: ## offline IR-sanity gate (semantic invariants over fresh BIR/CIR); run AFTER verify-nunit
 	bash tests/ir/run-sanity.sh
 
-verify-lowering: ## lowering self-tests (synthetic BIR -> bir2cir -> CIR assertions, for rules the corpus no longer witnesses)
+verify-lowering: bir2cir stdlib-ref ## lowering self-tests (synthetic BIR -> bir2cir -> CIR assertions, for rules the corpus no longer witnesses)
 	bash tests/ir/run-lowering.sh
 
 verify-msbuild: ## stateful MSBuild integration (same obj/ across source mutation)

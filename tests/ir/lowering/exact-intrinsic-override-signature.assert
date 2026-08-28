@@ -7,3 +7,17 @@
 +"owner":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"member":"Numeric","arity":0,"params":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"void"}
 +"owner":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"member":"Text","arity":0,"params":[{"t":"fqn","name":"System.String"}],"ret":{"t":"fqn","name":"void"}
 -"owner":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"member":"Numeric","arity":0,"params":[{"t":"fqn","name":"System.String"}]
+
+# Selected call nodes carry their identity in sig/typeArgs rather than declaration params/typeParams. Same-value-arity
+# overloads must follow sig, and equal signatures must remain distinct by method generic arity.
++"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"method":"Numeric"
++"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"method":"Text"
++"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"method":"NonGeneric"
++"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"method":"Generic"
++"name":"Generic","genericArity":1,"returnType":{"t":"fqn","name":"void"},"callingConvention":"instance","parameterTypes":[{"t":"fqn","name":"System.Int32"}]
+
+# Referenced generic owner parameters are closed in the override edge's constructed frame before matching. This pins
+# both the direct declaration rename and the inherited-reference fallback; leaving !0 open must not select Text/skip.
++"name":"Value","static":false,"override":true,"virtual":true,"abstract":false,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.Int32"}}]
++"owner":{"t":"fqn","name":"DotKt.Tests.GenericPhysicalSlots\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"member":"Value","arity":0,"params":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"void"}
+-"owner":{"t":"fqn","name":"DotKt.Tests.GenericPhysicalSlots\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"member":"Text","arity":0,"params":[{"t":"fqn","name":"System.Int32"}]

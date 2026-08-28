@@ -2,7 +2,120 @@
   "fileClass": "ExactIntrinsicOverrideSignatureKt",
   "hasMain": false,
   "fields": [],
-  "methods": [],
+  "methods": [
+    {
+      "name": "exerciseExactCalls",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "vis": "public",
+      "params": [
+        {
+          "name": "surface",
+          "type": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+            "virtual": true,
+            "recv": { "k": "local", "name": "surface" },
+            "method": "select",
+            "sig": [{ "t": "fqn", "name": "kotlin.Int" }],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 1 }
+            ],
+            "overrides": [
+              {
+                "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+                "member": "select",
+                "kind": "method",
+                "arity": 1
+              }
+            ]
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+            "virtual": true,
+            "recv": { "k": "local", "name": "surface" },
+            "method": "select",
+            "sig": [{ "t": "fqn", "name": "kotlin.String" }],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "x" }
+            ],
+            "overrides": [
+              {
+                "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+                "member": "select",
+                "kind": "method",
+                "arity": 1
+              }
+            ]
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+            "virtual": true,
+            "recv": { "k": "local", "name": "surface" },
+            "method": "transform",
+            "sig": [{ "t": "fqn", "name": "kotlin.Int" }],
+            "typeArgs": [],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 2 }
+            ],
+            "overrides": [
+              {
+                "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+                "member": "transform",
+                "kind": "method",
+                "arity": 1
+              }
+            ]
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+            "virtual": true,
+            "recv": { "k": "local", "name": "surface" },
+            "method": "transform",
+            "sig": [{ "t": "fqn", "name": "kotlin.Int" }],
+            "typeArgs": [{ "t": "fqn", "name": "kotlin.String" }],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 3 }
+            ],
+            "overrides": [
+              {
+                "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+                "member": "transform",
+                "kind": "method",
+                "arity": 1
+              }
+            ]
+          }
+        }
+      ],
+      "attrs": []
+    }
+  ],
   "refTypes": [],
   "types": [
     {
@@ -129,6 +242,112 @@
           "overrides": [
             {
               "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicBaseSurface" },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            }
+          ],
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    },
+    {
+      "name": "ExactConstructedOwnerProbe",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        {
+          "t": "fqn",
+          "name": "DotKt.Tests.GenericDerivedSurface",
+          "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+        }
+      ],
+      "fields": [],
+      "ctors": [
+        { "params": [], "baseArgs": null, "thisArgs": null, "vis": "public", "body": [] }
+      ],
+      "methods": [
+        {
+          "name": "select",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": false,
+          "vis": "public",
+          "params": [
+            { "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "overrides": [
+            {
+              "owner": {
+                "t": "fqn",
+                "name": "DotKt.Tests.GenericBaseSurface",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            },
+            {
+              "owner": {
+                "t": "fqn",
+                "name": "DotKt.Tests.GenericDerivedSurface",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            }
+          ],
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    },
+    {
+      "name": "ExactConstructedOwnerFallbackProbe",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        {
+          "t": "fqn",
+          "name": "DotKt.Tests.GenericDerivedSurface",
+          "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+        }
+      ],
+      "fields": [],
+      "ctors": [
+        { "params": [], "baseArgs": null, "thisArgs": null, "vis": "public", "body": [] }
+      ],
+      "methods": [
+        {
+          "name": "select",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": false,
+          "vis": "public",
+          "params": [
+            { "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "overrides": [
+            {
+              "owner": {
+                "t": "fqn",
+                "name": "DotKt.Tests.GenericBaseSurface",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              },
               "member": "select",
               "kind": "method",
               "arity": 1

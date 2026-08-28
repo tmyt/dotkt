@@ -69,9 +69,10 @@
 #   `sequence-element-adapter` pins that physical boundary and its malformed sibling pins the marker contract.
 #
 #   Declaration/override identity (#444) — an ordinary member's @ClrIntrinsic allocation is selected by its complete
-#   source declaration signature, never source name plus parameter count. `exact-intrinsic-override-signature` uses a
-#   compiler-authored metadata reference with a resolvable wrong physical decoy to pin both declaration rename and the
-#   referenced-interface fallback; a later CLR lookup cannot make the test pass merely by rejecting the wrong name.
+#   source declaration signature, method-generic arity, and constructed owner frame, never source name plus parameter
+#   count. `exact-intrinsic-override-signature` uses a compiler-authored metadata reference with resolvable wrong
+#   physical decoys to pin declarations, selected calls, and the referenced-interface fallback; a later CLR lookup
+#   cannot make the test pass merely by rejecting the wrong name.
 #
 # ACCEPT case — `<name>.bir.json` plus a `<name>.assert` file of lines:
 #     +<substring>   the emitted CIR MUST contain it
@@ -106,8 +107,7 @@ if ! dotnet build tests/ir/reference-fixtures/exact-intrinsic-overloads/ExactInt
 	exit 1
 fi
 
-refs="$FRAMEWORK_COMPILE_REFS"
-if [[ -f "$STDLIB_REF_DLL" ]]; then refs="$(refset_join "$refs" "$STDLIB_REF_DLL")"; fi
+refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
 refs="$(refset_join "$refs" "$exact_intrinsic_ref/DotKt.Tests.ExactIntrinsicOverloads.dll")"
 
 rc=0
