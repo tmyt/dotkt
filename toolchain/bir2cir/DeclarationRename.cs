@@ -203,8 +203,19 @@ static class DeclarationRename
             }
             if (!TryCallableSignature(declaration, out var signature, out var methodArity)
                 || signature.Length != arity) continue;
+            // A declaration's params live in the declaring type's frame, so close the referenced ancestor into that
+            // frame through the override edge. A call's sig is the SELECTED CALLEE DECLARATION vector (§2.2), but the
+            // frontend can state an inherited slot either in its open declaration frame (!T) or already constructed
+            // at the receiver (Instant in Comparable<Instant>). Prefer the raw exact identity first; only if it has no
+            // match, compare the same referenced declaration closed by the authored override edge. Both routes still
+            // require the complete vector and method arity; neither falls back to name/parameter count.
+            var isSelectedCall = (declaration["k"] as JsonValue)?.GetValue<string>() == "callInstance";
+            if (isSelectedCall
+                && refs.TryExactMemberIntrinsic(owner, member, methodArity, signature, out var openIntrinsic))
+                return openIntrinsic;
             if (refs.TryExactMemberIntrinsic(owner, member, methodArity, signature,
-                    ownerSpec.Args ?? Array.Empty<TypeNode>(), out var intr)) return intr;
+                    ownerSpec.Args ?? Array.Empty<TypeNode>(), out var closedIntrinsic))
+                return closedIntrinsic;
         }
         // REFERENCE-KLIB-PROJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
         // refs (NOT a stdlib ref.dll alias — ResolveNetType excludes kotlin.*/dotkt$ synthetics and locals

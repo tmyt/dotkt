@@ -15,6 +15,8 @@
 +"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"method":"NonGeneric"
 +"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.IntrinsicPhysicalSlots"},"method":"Generic"
 +"name":"Generic","genericArity":1,"returnType":{"t":"fqn","name":"void"},"callingConvention":"instance","parameterTypes":[{"t":"fqn","name":"System.Int32"}]
++"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.GenericPhysicalSlots\u00601","args":[{"t":"tv","scope":"method","i":0}]},"method":"Value"
++"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.GenericPhysicalSlots\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"method":"Value"
 
 # Referenced generic owner parameters are closed in the override edge's constructed frame before matching. This pins
 # both the direct declaration rename and the inherited-reference fallback; leaving !0 open must not select Text/skip.
