@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Pure-app String values now cross referenced CharSequence helper boundaries with valid IL (#443).**
+  `bir2cir` keeps frontend result-type stamps synchronized when local declarations and local-call returns collapse from
+  `CharSequence` to `String`, so referenced Kotlin wrappers receive an explicit adapter instead of a raw CLR string.
+
 - **Intrinsic override allocation now preserves exact declaration identity (#444).** Declaration rename and
   referenced-interface MethodImpl allocation select `@ClrIntrinsic` from the frontend-resolved generic arity and full
   parameter vector instead of taking the first same-name, same-parameter-count overload.

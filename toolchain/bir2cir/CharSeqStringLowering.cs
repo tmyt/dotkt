@@ -241,16 +241,16 @@ static class CharSeqStringLowering
         //     kotc emits a bare `{k:local}` typed by the refined `dotkt$CharSequence` — BirEmitterExpressions IrGetValue
         //     narrowing) can hold a GENUINE `dotkt$StringCharSequence` adapter; its decl was never collapsed, so leaving
         //     its sty intact keeps the bridge from wrongly adapter-wrapping a non-String value (Fable-flagged, gate-blind).
-        // A call / subSequence RESULT that genuinely stays a `dotkt$CharSequence` adapter is a callInstance/callStatic —
-        // NOT in this set — so it keeps its `sty`. (Delegate-target lambda subtrees never reach here — Walk clones them
-        // out before Transform — so their un-collapsed CharSequence reads are untouched.)
+        // An EXTERNAL call / subSequence RESULT that genuinely stays a `dotkt$CharSequence` adapter keeps its `sty`.
+        // A LOCAL call whose return is collapsed synchronizes every result fact in LowerLocalCall below. (Delegate-
+        // target lambda subtrees never reach here, so their uncollapsed CharSequence reads are untouched.)
         if (IsCharSeqSlot(node["sty"]))
         {
             var collapseSty = k switch
             {
                 "field" or "lateinitGet" or "staticField" => true,
                 "local" => Str(node["name"]) is not string sn
-                           || !env.Vars.TryGetValue(sn, out var st) || IsStringTokT(st),
+                           || !env.Vars.TryGetValue(sn, out var st) || IsStringDeclT(st),
                 _ => false,
             };
             if (collapseSty) node["sty"] = LowerSlot(node["sty"]);
@@ -331,7 +331,12 @@ static class CharSeqStringLowering
                     && CoerceOrNull(a, env, tn is TypeNode.Nullable) is JsonNode w)
                     args[i] = w;
             }
-        if (IsCharSeqSlot(node["dynRet"])) node["dynRet"] = LowerSlot(node["dynRet"]);
+        // The frontend carries the selected declaration return separately from the expression result. Later private-
+        // access and local-owner binding may consume any of these slots, so a local declaration whose return collapsed
+        // to String must update the complete result fact set here, not leave a semantic CharSequence spelling for a
+        // later pass to restore as the physical call return.
+        foreach (var resultSlot in new[] { "sty", "ret", "dynRet", "memberReturnType" })
+            if (IsCharSeqSlot(node[resultSlot])) node[resultSlot] = LowerSlot(node[resultSlot]);
     }
 
     // `cs.length` -> System.String.Length; `cs[i]` (get) -> get_Chars; `cs.subSequence(a,b)` -> Substring(a, b-a).
@@ -437,6 +442,7 @@ static class CharSeqStringLowering
         ["owner"] = TypeJson.Fqn("kotlin.LibraryKt"),
         ["method"] = "toString",
         ["sig"] = new JsonArray { TypeJson.Fqn("object") },
+        ["ret"] = TypeJson.Write(StringTn),
         ["args"] = new JsonArray { value.DeepClone() },
     };
 
@@ -507,5 +513,7 @@ static class CharSeqStringLowering
     }
 
     static bool IsStringTokT(TypeNode t) => t is TypeNode.Fqn { Args: null } f && StringTokens.Contains(f.Name);
+    static bool IsStringDeclT(TypeNode t) => IsStringTokT(t)
+        || t is TypeNode.Nullable nullable && IsStringTokT(nullable.Of);
 
 }
