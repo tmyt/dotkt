@@ -16,7 +16,7 @@ using System.Text.Json.Nodes;
 //       at an omitted call site). The attribute CLASS is a real stdlib annotation a USER / round-trip library only
 //       REFERENCES; in an APP build it is NOT in `_types`, so mark it `attrExternal:true` (ilemit resolves it from the
 //       referenced stdlib rt.dll). The STDLIB self-build (ref/rt) DEFINES the type in `_types`, so it must stay LOCAL
-//       there (app-only) — the self-builds stay byte-identical.
+//       there: only app builds cross the external-attribute boundary.
 static class AttrExternalNormalize
 {
     const string KotlinDefaultFqn = "kotlin.clr.KotlinDefault";

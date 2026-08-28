@@ -18,12 +18,11 @@ using DotKt.Bir;
 //  (2) `f(x)` invoking a function-typed value. kotc emits the FAITHFUL `callInstance ownerType:kotlin.FunctionN[..]`
 //      (or `kotlin.reflect.KFunctionN[..]`) `method:invoke recv:<f> args:[..]` member call. This pass re-emits the
 //      `{k:delegateInvoke, funcType, recv, args}` node kotc used to synthesize (a function value IS a delegate at the
-//      CLR level). `funcType` = the fn type reconstructed from the FunctionN owner's type args (params = all but the
-//      last, ret = the last) — byte-identical to the former `birType(recv.type)`.
+//      CLR level). `funcType` is derived from the declared FunctionN owner type args (params = all but the last,
+//      ret = the last), which are the authoritative BIR function signature at this boundary.
 //
 // Runs EARLY (before NetInteropBinding / MemberCallSubstitution / any type-erasing pass) and UNCONDITIONALLY (ref +
-// app), reproducing the flow that existed when kotc emitted `conv`/`delegateInvoke` directly — so every downstream
-// pass (type lowering, the suspend/closure passes that CONSUME delegateInvoke) sees the exact same tree shape.
+// app), so type lowering and the suspend/closure consumers receive the canonical `conv`/`delegateInvoke` CIR forms.
 static class CharCodeInvokeLowering
 {
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null) => Walk(root, refs);

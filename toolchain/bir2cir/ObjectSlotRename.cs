@@ -11,12 +11,12 @@ using System.Text.Json.Nodes;
 // equals->Equals. (ilemit's EmitObjMethod + objectOverride slot-reuse both key on the BCL spelling, so the FINAL CIR
 // must carry it in both the decl `name` and the objMethod/call `method`.)
 //
-// Runs FIRST in the per-file loop (before every other pass) and UNCONDITIONALLY (ref + rt + app): kotc's former
-// `objectMethodName` rename was unconditional, so the ref.dll's decl names (kotlin.Any itself, String.toString, every
-// stdlib Any-override) and the emitted-name-keyed member index must stay byte-identical — a ref-build skip would shift
-// every downstream binder. Placing it first means every subsequent pass (FaithfulHintRecognition's collection-`ToString`
-// recognition, EnumMemberBinding, MemberStrip's bound-stub match, NetInteropBinding, DeclarationRename, ilemit) sees the
-// exact same BCL-spelled trees it saw when kotc baked the names — zero downstream changes.
+// Runs FIRST in the per-file loop (before every other pass) and UNCONDITIONALLY (ref + rt + app). The ref.dll's
+// declarations (kotlin.Any itself, String.toString, every stdlib Any override) and the emitted-name-keyed member index
+// must use one canonical BCL slot spelling in every build; skipping the ref build would make downstream binders index
+// a different contract. Placing it first means every subsequent pass (FaithfulHintRecognition's collection-`ToString`
+// recognition, EnumMemberBinding, MemberStrip's bound-stub match, NetInteropBinding, DeclarationRename, ilemit) sees
+// that canonical physical spelling.
 static class ObjectSlotRename
 {
     static readonly Dictionary<string, string> Slot = new(StringComparer.Ordinal)

@@ -1183,8 +1183,8 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		val capArgs = caps.map { capValueExpr(it) }
 		// The lift emits the callee's OWN value params in declaration order (receivers before regulars, see liftLocalFn),
 		// so a receiver-bearing local (a local extension fun called as `x.f()`) must pass its dispatch/extension receiver
-		// value in that SAME slot, between the captures and the regular args. (A plain local fn has no receiver params →
-		// empty → byte-identical to before.)
+		// value in that SAME slot, between the captures and the regular args. A plain local function has no receiver
+		// parameters, so this contribution is empty.
 		// FILL FIRST: under an evaluation plan the fill binds this call's receivers, and the reads below render those
 		// bindings rather than a second emission of the receiver expressions.
 		val localRegArgs = filledArgs(call)
@@ -1516,7 +1516,7 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 		// (`"prop":"index-get"/"index-set"`, extending step 3's accessor-KIND mechanism); it does NOT bake the CLR
 		// slot name. bir2cir's NetInteropBinding reflects the .NET type's default indexed property off the refs (its
 		// DefaultMember / `[IndexerName]` name) -> its `get_`/`set_` accessor method, emitting the plain `clrInstance`
-		// call — byte-identical to the old hardcoded `get_Item`/`set_Item` for the standard case, but correct for a
+		// call. The standard Item property resolves naturally to get_Item/set_Item, while this also handles a
 		// custom-named indexer. The receiver's type carries the element type arg (`Collection<Int>`), so the
 		// constructed `clrg:...[int]` resolves the substituted accessor.
 		val ixOwner = (callee.takeIf { it.isFakeOverride }?.resolveFakeOverride()?.parent as? IrClass) ?: declaringClass

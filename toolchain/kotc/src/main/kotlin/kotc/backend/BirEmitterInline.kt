@@ -291,7 +291,7 @@ internal fun BirEmitter.inlineReceiverParts(
 	//    `Base` inline member) -> the corresponding supertype instantiation `Base<Int>` (transitive + substitution-aware,
 	//    #88). Without this the payload's `tv{scope:type,i}` stays OPEN -> ilemit types the dispatch temp as the bare open
 	//    generic (`Node`) -> BadImageFormatException. Was a documented F2A follow-up; NOW carried.
-	// Guards (fail -> OMIT the key, leaving the existing corpus byte-identical + the status-quo positional bind):
+	// Guards (fail -> OMIT the key and retain the positional binding defined for payloads without this fact):
 	//  - a nullable receiver type unwraps to its Fqn core; a type-parameter-typed receiver with no fixed supertype
 	//    renders as `tv` (not Fqn) and correctly omits;
 	//  - the rendered arg count must equal the owner's flattened type-param arity — a raw/star-projected USER generic

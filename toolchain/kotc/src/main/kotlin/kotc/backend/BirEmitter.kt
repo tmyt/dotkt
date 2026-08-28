@@ -1057,7 +1057,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// AliasHelperHoist drops each alias type def and, for a class, hoists its rule-3 members into the helper.
 		// One source declaration can be visited through two serialized value roots (notably a default expression is
 		// emitted both into its carrier and at an in-module call site). The lift table then contains the same authored
-		// TypeDef JSON twice. Declaration identity is still its generated name; remove only byte-for-byte identical
+		// TypeDef JSON twice. Declaration identity is still its generated name; remove only structurally equal
 		// entries here, while deliberately retaining same-name/different-body entries for a loud downstream collision.
 		val types = (typeDefs + liftedTypes).distinct().joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}]}"""

@@ -15,8 +15,8 @@ using DotKt.Bir;
 //                     "ret":<type>, "body":[…invoke body], "typeParams":[…]? } }
 // This pass reads `synthClass`, ASSEMBLES the actual closure class (the class/base/interfaces wrapper + the ctor
 // field-init body), appends it to the file `types`, and STRIPS `synthClass` — leaving the lean `newClosure`
-// (closureType + capture VALUE exprs + funcType + typeArgs) that ilemit already consumes for the `new`. Byte-identical
-// to the old kotc-emitted output.
+// (closureType + capture VALUE exprs + funcType + typeArgs) that CIR defines for closure construction and ilemit
+// consumes one-to-one.
 //
 // Runs FIRST in the Phase-1 per-file loop — before EVERY other transform — so the synthesized class is present in
 // `types` exactly as kotc's `liftedTypes` closure class used to be (downstream passes see it verbatim). Critically it
@@ -289,7 +289,7 @@ static class ClosureSynthesis
             ["generated"] = true,
         };
         // Emit `typeParams` only when non-empty — matches kotc (typeParamsJson omitted the key entirely for a
-        // non-generic closure), so the shape is byte-identical for the common case.
+        // non-generic closure), so the canonical monomorphic shape remains unchanged.
         if (sc["typeParams"] is JsonArray tps && tps.Count > 0) cls["typeParams"] = tps.DeepClone();
         if (sc["semanticOwner"] is JsonValue owner) cls["semanticOwner"] = owner.DeepClone();
         if (sc["outerTypeParamCount"] is JsonValue outerCount)

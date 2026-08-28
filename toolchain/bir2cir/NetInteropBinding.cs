@@ -21,10 +21,9 @@ using DotKt.Bir;
 // stdlib is bound by MemberCallSubstitution off the ref.dll; a local type is emitted here). CLR-ONLY vocabulary that
 // has no plain-Kotlin form — `.NET events` (ClrEvent<T>), `byref`/`ClrRef<T>` — is NOT emitted as a plain call by
 // kotc (kotc lowers it directly, as reference-KLIB-projected CLR vocab), so it never reaches this pass. Runs BEFORE
-// ClrEventSubscriptionBinding/KClassMemberBinding/MemberCallSubstitution and before BirTypeLowering, so the shaped `clr*`
-// nodes still carry pure-Kotlin type tokens that the subsequent lowering turns into the CLR forms — the CIR is
-// byte-identical to what kotc used to emit directly (the shape decision merely moved down a layer). Bottom-up walk,
-// mirroring ClrEventSubscriptionBinding/KClassMemberBinding.
+// ClrEventSubscriptionBinding/KClassMemberBinding/MemberCallSubstitution and before BirTypeLowering, so the shaped
+// `clr*` nodes still carry pure-Kotlin type tokens that subsequent lowering resolves into the canonical CIR physical
+// forms. Bottom-up walk, mirroring ClrEventSubscriptionBinding/KClassMemberBinding.
 //
 // RESULT STAMPS (#304, spec §2.7). Every reshape here changes a node's SHAPE and not what it produces: the `clr*`
 // node stands for the same call/read, resolved to its CLR member, and leaves the same value behind. So every
@@ -69,8 +68,8 @@ static class NetInteropBinding
         // #61 used for calls.
         // A `field`/`setField` whose owner resolves to a .NET type declaring a property OR field of that name (both, via
         // MemberIsPropertyOrField) -> clrPropGet/clrPropSet, whose EmitClrPropGet/Set is struct-receiver-safe + inlines a
-        // const field (unlike the plain-field external Ldfld/Callvirt route) — matching the old kotc clrPropGet parity,
-        // which reshaped unconditionally. A member the refs can't see (a non-.NET owner, or a name absent from the .NET
+        // const field (unlike the plain-field external Ldfld/Callvirt route). A member the refs can't see (a non-.NET
+        // owner, or a name absent from the .NET
         // type) never resolves here -> the plain `field`/`setField` is left for ilemit's own handler.
         if (k is "field" or "setField" or "setFieldExpr"
             or "staticField" or "staticFieldSet" or "setStaticField" or "setStaticFieldExpr")
@@ -98,8 +97,8 @@ static class NetInteropBinding
         if (node["clrAwaitBridge"]?.GetValue<bool>() == true) return;
         var ownerJson = node["ownerType"];
         // Peel Nullable/Oblivious/ByRef wrappers to reach the underlying .NET Fqn (a `List<Item>?` receiver's owner is
-        // spelled `nullable(fqn List<Item>)`); the ORIGINAL wrapped node is preserved verbatim in the `type` slot below
-        // (ilemit unwraps nullability when resolving the owner — byte-identical to the old kotc `clrInstance.type`).
+        // spelled `nullable(fqn List<Item>)`); preserve the original wrapped node in the `type` slot because CIR records
+        // the receiver's complete static type while member resolution uses the underlying owner.
         var ownerFqnNode = ownerJson == null ? null : UnwrapFqn(ownerJson);
         if (ownerFqnNode == null) return;
         var bare = ReferenceMetadataIndex.BareOwnerFqn(ownerFqnNode.Name);
@@ -213,8 +212,8 @@ static class NetInteropBinding
             return;
         }
 
-        // Detach every current field (removing a key from a JsonObject detaches its value) so it can be re-added in the
-        // CLR-shape order — byte-identical to what kotc used to emit directly, only the shape decision moved here.
+        // Detach every current field (removing a key from a JsonObject detaches its value) so it can be re-added to the
+        // canonical `clr*` object without giving a JsonNode two parents.
         var v = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
         foreach (var key in node.Select(kv => kv.Key).ToList()) { var val = node[key]; node.Remove(key); v[key] = val; }
         JsonNode Take(string key) => v.TryGetValue(key, out var x) ? x : null;
@@ -297,8 +296,8 @@ static class NetInteropBinding
         // (`method:"get"/"set"`) + an index marker; it does NOT bake the `get_Item`/`set_Item` slot (WRONG for a custom
         // `[IndexerName]`). Resolve the .NET type's default indexed property off the refs (its DefaultMember/[IndexerName]
         // name) -> its `get_`/`set_` accessor method, then fall through to the PLAIN clrInstance method path — an indexer
-        // is an INDEXED property, so MemberIsPropertyOrField excludes it and it stays a method call, byte-identical to the
-        // old hardcoded `get_Item`/`set_Item` for the standard case.
+        // is an INDEXED property, so MemberIsPropertyOrField excludes it and it stays a method call. The conventional
+        // Item property naturally resolves to get_Item/set_Item; custom IndexerName metadata resolves its own accessors.
         if (propKind == "index-get" || propKind == "index-set")
         {
             var isIxSet = propKind == "index-set";
@@ -350,9 +349,8 @@ static class NetInteropBinding
         // Reconstruct the .NET static operator off the refs: map the Kotlin operator name to its `op_X` slot, confirm the
         // CLR type declares that `op_X` as a `public static` method (DON'T rewrite a Kotlin `plus` on a non-operator .NET
         // type), and emit `clrStatic op_X` with the receiver PREPENDED as the first arg (binary: [recv, arg]; unary
-        // unaryMinus/unaryPlus/inc/dec: [recv] only). This is the exact node kotc used to emit directly (callStatic op_X,
-        // receiver already prepended) -> byte-identical CIR. The receiver's type is the declaring .NET type = the owner,
-        // mirroring kotc's old `birType(recv.type)` for argTypes[0].
+        // unaryMinus/unaryPlus/inc/dec: [recv] only). CIR models CLR operators as static calls, so the receiver becomes
+        // argTypes[0] with its frontend-resolved static type and the declaring .NET type becomes the owner.
         if (!isStatic && method != null && OperatorToNet.TryGetValue(method, out var opNet)
             && DeclaresPublicStaticMethod(netType, opNet))
         {

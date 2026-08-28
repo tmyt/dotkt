@@ -22,8 +22,8 @@ using System.Text.Json.Nodes;
 //
 // require/check `requireNotNull`/`checkNotNull` value-nullable awareness: the concrete `T` is on the call's `typeArgs`
 // (e.g. `requireNotNull(s: String?)` -> `typeArgs:[kotlin.String]`, `checkNotNull(n: Int?)` -> `typeArgs:[kotlin.Int]`).
-// A value-type `T` (Int/Long/…) uses the `Nullable<T>` HasValue/Value shape; a reference `T` the objEq-null shape —
-// exactly kotc's former `nullableElem(arg.type)` split.
+// A value-type `T` (Int/Long/…) uses the `Nullable<T>` HasValue/Value shape; a reference `T` uses object null testing.
+// This split follows the CLR representation selected for the frontend-resolved `T`.
 //
 // The top-level helpers arrive as `callStatic owner:null method:<name>` (the `until`/`println` owner:null precedent).
 // Two guards keep a user symbol from being mistaken for the helper: (1) a top-level PROPERTY accessor (`prop:` marker)
@@ -76,9 +76,9 @@ static class PreconditionLowering
         if (method == null) return;
 
         // COMPILER INTRINSICS (collision-safe names, no user shadow possible) — the exhaustive-when synthetic else and
-        // the uninitialized-property-access throw. kotc re-emits them faithfully (like ieee754equals) as an intrinsic
-        // call carrying a `kotlin.*` owner; we throw the IllegalStateException it used to synthesize, with the intrinsic
-        // name as the message (kotc's `str(name)`). (On this pipeline only noWhenBranchMatchedException actually reaches
+        // the uninitialized-property-access throw. kotc emits them faithfully (like ieee754equals) as an intrinsic
+        // call carrying a `kotlin.*` owner; this pass realizes their Kotlin failure semantics as IllegalStateException,
+        // using the intrinsic name as the message. (On this pipeline only noWhenBranchMatchedException actually reaches
         // here — lateinit lowers to `lateinitGet` — but recognizing both keeps kotc's defensive emission from 0-candidating.)
         if (method is "noWhenBranchMatchedException" or "throwUninitializedPropertyAccessException"
             && TypeJson.OwnerName(o["owner"]) is string iowner && iowner.StartsWith("kotlin", System.StringComparison.Ordinal))

@@ -8,9 +8,8 @@ using DotKt.Bir;
 // the stdlib helpers (ClrCollectionDefaultsKt / ClrMapDefaultsKt / NumbersKt / LibraryKt) by hardcoded FQN. It emits
 // the FAITHFUL op (`objMethod ToString/Equals`, `concat` with parts, `callStatic println/print`, `callInstance
 // compareTo`) with NO type hint (#59 — the transient recvType/argType/argTypes/partTypes hints are RETIRED). bir2cir
-// does ALL the recognition off the operand's RECOVERED static type (StaticType — StaticTypeResolver.cs), reproducing
-// the EXACT SAME helper `callStatic` node kotc used to synthesize. Final IL is byte-identical: only the RECOGNITION
-// moved, the helper bodies are unchanged.
+// performs recognition from the operand's recovered static type (StaticType — StaticTypeResolver.cs) and constructs
+// the canonical stdlib helper call defined by the current CLR representation contract.
 //
 // The EQEQ family is handled inside PrimitiveOperatorLowering.LowerIntrinsic (it already owns the EQEQ arm); this pass
 // handles the remaining four sites (objMethod ToString/Equals, println/print, concat, Double/Float compareTo). Both
@@ -123,7 +122,7 @@ static class FaithfulHints
     }
 
     // The Kotlin `[a, b]` / `{a=1, b=2}` renderer: clrCollToString (1 type-arg) for List/Set/Collection, clrMapToString
-    // (2 type-args) for Map. `op` is DeepCloned; key order = k,owner,method,args,typeArgs (byte-identical to kotc).
+    // (2 type-args) for Map. `op` is DeepCloned and the helper node uses the canonical field order.
     public static JsonObject CollToString(JsonNode op, CollKind kind, TypeNode[] args) =>
         kind == CollKind.Map
             ? Helper(MapDefaults, "clrMapToString", new JsonArray { op.DeepClone() },
@@ -201,8 +200,8 @@ static class FaithfulHints
 
 static class FaithfulHintRecognition
 {
-    // This assembly's own top-level fun names — so the M9 reinterpret recognition can DEFER to a user fun that shadows
-    // `toByteArray`/`toUByteArray` (matching the old kotc gate, which fired only for the stdlib EXTENSION).
+    // This assembly's own top-level fun names — so the M9 reinterpret recognition can distinguish a user function that
+    // shadows `toByteArray`/`toUByteArray` from the stdlib extension whose identity this pass realizes.
     static IReadOnlySet<string> _localTopLevelFns = new HashSet<string>(StringComparer.Ordinal);
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null, IReadOnlySet<string> localTopLevelFns = null)
@@ -267,9 +266,9 @@ static class FaithfulHintRecognition
     // ByteArray IS a native sbyte[]; the two are freely castclass-compatible (same 8-bit storage, ECMA reduced-type
     // array compatibility), so the stdlib's @InlineOnly `storage.copyOf()` extension (whose value-class `storage` has
     // no native form) lowers to a plain array REINTERPRET cast — a VIEW, not a defensive copy (noted in
-    // dotkt-semantics). kotc now emits the FAITHFUL top-level extension call (`callStatic owner=null method=toByteArray
-    // args=[recv]`, no CLR knowledge); bir2cir recognizes it off the receiver's recovered static type and re-emits the
-    // SAME `cast` node kotc used to synthesize (byte-identical). Guarded on the EXACT receiver array identity so the
+    // dotkt-semantics). kotc emits the FAITHFUL top-level extension call (`callStatic owner=null method=toByteArray
+    // args=[recv]`, no CLR knowledge); bir2cir recognizes it off the receiver's recovered static type and emits the CIR
+    // reinterpret `cast` required by that documented view operation. Guarded on the EXACT receiver array identity so the
     // Collection<Byte>/Array<out Byte> overloads of the same names are untouched.
     static JsonNode TransformUnsignedByteArrayReinterpret(JsonObject o, BirScope scope)
     {
@@ -284,8 +283,7 @@ static class FaithfulHintRecognition
             _ => (null, null),
         };
         if (need == null) return o;
-        // A user top-level fun in THIS assembly that shadows the name -> defer (the old kotc gate fired only for the
-        // stdlib EXTENSION; a same-named user fun kept its own body).
+        // A user top-level fun in THIS assembly that shadows the name is not the stdlib extension, so defer to its body.
         if (_localTopLevelFns.Contains(method)) return o;
         if (o["args"] is not JsonArray args || args.Count != 1) return o;
         if (StaticType.Surface(args[0], scope) is not TypeNode.Fqn rf || rf.Name != need) return o;

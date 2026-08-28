@@ -66,7 +66,7 @@ static class AliasHelperHoist
             // A non-capturing lambda/local adapter physically becomes a generic FILE-FACADE method. kotc states the
             // exact lexical-to-declaration correspondence on its newDelegate.typeArgs edge: an enclosing !i / !!j
             // becomes this helper's !!k. Consume that authored fact while changing the physical owner; leaving the
-            // declaration in its old type frame makes CIR depend on ilemit's cross-scope fallback to reinterpret !i.
+            // declaration in the source type frame would put an out-of-scope !i in CIR.
             var frame = GeneratedMethodFrame(root, owner, name, method);
             RewriteLexicalTypes(method, type => RemapTypeVariables(type, frame));
             method["semanticOwner"] = fileClass;
@@ -322,7 +322,7 @@ static class AliasHelperHoist
         // `kotlin.collections.ArrayList[gp:E]` — BirTypeLowering then lowers it to `clrg:System...List[gp:E]` (with
         // arity). A bare `kotlin.collections.ArrayList` token would lower to a non-generic `clr:System...List` that
         // ilemit cannot resolve. The class type params (bare-string entries like "E") become the `gp:` args; they are
-        // declared on the method via MergeTypeParams below, so `gp:E` is in scope. (Mirrors kotc's old birType(__self).)
+        // declared on the method via MergeTypeParams below, so `gp:E` is in the helper's method scope.
         // The class type params are declared on the static helper as its OWN (method-scope) params AHEAD of the
         // method's own (MergeTypeParams), so `__self`'s generic args are METHOD-scope tv by flattened position.
         TypeNode selfType = classTps is { Count: > 0 }

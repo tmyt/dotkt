@@ -5,10 +5,9 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using DotKt.Bir;
 
-// PRIMITIVE OPERATOR LOWERING (#52 Phase 5): recognize the primitive value-type OPERATORS that kotc used to
-// lower itself (its retired BINARY/UNARY tables) and re-emit the SAME `binOp`/`unaryOp` nodes — so ilemit is
-// UNCHANGED and the CIR stays byte-identical. Also recognizes `kotlin.String.plus` (the last operator-recognition
-// residual) and re-emits the `concat` node kotc used to synthesize (the string-`+` member call). kotc now emits
+// PRIMITIVE OPERATOR LOWERING (#52 Phase 5): recognize faithful primitive value-type operator calls and realize the
+// canonical CIR `binOp`/`unaryOp` nodes that ilemit emits one-to-one. Also recognizes `kotlin.String.plus` (the last
+// operator-recognition residual) and realizes the CIR `concat` node for the string-`+` member call. kotc emits
 // the FAITHFUL member call (`callInstance kotlin.Int.plus`, `kotlin.Char.unaryMinus`, `kotlin.Int.inc`,
 // `kotlin.String.plus`); its recv/args are already value-shaped by
 // kotc (recvExpr/argExpr — nullable-unwrap + boxed-Any cast). The primitive-op GATE and the IL-op selection are
@@ -177,7 +176,7 @@ static class PrimitiveOperatorLowering
     }
 
     // A comparison intrinsic `callStatic owner=kotlin.internal.ir` -> `{k:binOp, op:<}`, else null. The operands
-    // are already value-shaped by kotc (same shaping the retired binOp had), so the CIR is byte-identical.
+    // already carry the frontend-resolved value shape required by the CIR comparison node.
     static JsonNode LowerIntrinsic(JsonObject o, BirScope scope)
     {
         if (OwnerFqn(o["owner"]) != IntrinsicOwner) return null;
@@ -186,8 +185,8 @@ static class PrimitiveOperatorLowering
         // The comparison intrinsics (`less`/`lessOrEqual`/`greater`/`greaterOrEqual`) -> `{k:binOp, op:<}`. kotc emits
         // the PLAIN operand expressions; the operand SHAPING that the retired kotc COMPARE block did — a nullable
         // primitive (`Int?` smart-cast to `Int`) surfaces `Nullable<T>.Value`, a boxed-Any operand casts to the
-        // OTHER operand's concrete type — is reproduced HERE off StaticType (the CLR<->Kotlin relation). Operands
-        // stay byte-identical to the retired binOp.
+        // OTHER operand's concrete type — is derived HERE from StaticType (the CLR<->Kotlin relation), satisfying the
+        // CIR binOp requirement that both stack operands have the physical comparison type.
         if (args.Count == 2 && CompareOp.TryGetValue(m, out var cop))
             return new JsonObject
             {
@@ -256,8 +255,8 @@ static class PrimitiveOperatorLowering
         if (m == "EQEQEQ" && args.Count == 2)
             return new JsonObject { ["k"] = "binOp", ["op"] = "==", ["lhs"] = args[0]?.DeepClone(), ["rhs"] = args[1]?.DeepClone() };
         // `ieee754equals`: the ordered IEEE-754 float/double comparison (`-0.0 == 0.0`, `NaN != NaN`) -> raw CIL
-        // `ceq` (`binOp ==`). For the NON-NULL direct `==` the operands are already value-shaped by kotc, so this stays
-        // byte-identical to the former kotc lowering. But the frontend ALSO routes a DIRECT/mixed NULLABLE float `==`
+        // `ceq` (`binOp ==`). For the NON-NULL direct `==` the operands already satisfy the raw CIR binOp contract. But
+        // the frontend ALSO routes a DIRECT/mixed NULLABLE float `==`
         // (`Double? == Double?`, `Double == Double?`) here with RAW `Nullable<T>` operands — a raw `binOp ==` would then
         // emit `ceq` over `Nullable<double>` structs = UNVERIFIABLE IL / InvalidProgram (#180). When at least one operand
         // is value-nullable, shape a null-safe IEEE compare (the #152 operand-hoist skeleton, but the both-present core is
@@ -306,8 +305,8 @@ static class PrimitiveOperatorLowering
             && (f.Name == "kotlin.Double" || f.Name == "kotlin.Float") ? f.Name : null;
 
     // Classify an `ieee754equals` operand's SURFACE type as a Double/Float family with its nullness (#180). Returns null
-    // for a non-float surface type (unresolvable / not a Double/Float) — so the caller keeps the raw `binOp ==` (the
-    // byte-identical non-null direct path and the defensive unresolved fallback). A raw value-nullable `Double?`/`Float?`
+    // for a non-float surface type (unresolvable / not a Double/Float), so the caller keeps the raw `binOp ==` used by
+    // the non-null direct path and the defensive unresolved fallback. A raw value-nullable `Double?`/`Float?`
     // -> (nullable=true, elem); a non-null `Double`/`Float` -> (nullable=false, elem).
     static (bool nullable, string elem)? FloatOperand(TypeNode t)
     {

@@ -14,7 +14,7 @@ using System.Text.Json.Nodes;
 //
 // Runs FIRST in the per-file loop, right after RangeForLowering — before MemberCallSubstitution (whose Rule-4
 // make-it-loud gate would otherwise refuse the unbound `kotlin.Int.rangeTo`) and before any type-erasing pass, so the
-// recv/arg value nodes flow through the SAME downstream passes the equivalent kotc-emitted `new` did (byte-identical).
+// realized `new` and its recv/arg values enter the ordinary CIR lowering pipeline at its canonical construction point.
 static class RangeConstructionLowering
 {
     public static void Apply(JsonNode node)

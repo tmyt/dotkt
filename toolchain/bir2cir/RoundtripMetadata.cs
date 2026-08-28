@@ -85,8 +85,8 @@ static class RoundtripMetadata
         Prepend(o, ByteMarker(ANullableCtx, 1));   // [NullableContext(1)] — the per-type non-null NRT default.
         Append(o, Marker(AKFileClass));            // [KotlinFileClass]
         StampMethods(o["methods"]);
-        // Top-level file-class `val`/`var` static fields carry NO [KotlinReadOnly] (the old file-class field path
-        // stamped only [KotlinSuspendFunctionType]; a `val`'s read-only-ness rode the CLR property, not the field).
+        // Top-level file-class `val`/`var` static fields carry NO [KotlinReadOnly]: source mutability belongs to the
+        // projected CLR property declaration, not its physical backing field.
         StampFields(o["fields"], topLevel: true);
         // Accessor-routed top-level declarations use the same CLR Property metadata as member properties. Preserve
         // their nullable/suspend/context-function type carriers on the file facade as well; dll2klib reads those
@@ -561,8 +561,8 @@ static class RoundtripMetadata
     // the @Clr* binding surface (`kotlin.clr.*`) + the round-trip carriers (`DotKt.Runtime.CompilerServices.*` / NRT
     // `System.Runtime.CompilerServices.Nullable{,Context}`) — both compile-time-only, ref-side facts that must NOT ship
     // on DotKt.Stdlib.dll (the never-metadata-read runtime assembly, substituted away at app-emit) — AND the user's own
-    // annotations (kotlin.Deprecated / SinceKotlin / InlineOnly / PublishedApi / …). The old strip dropped EVERYTHING,
-    // silently losing the user annotations (this bug); now the predicate keeps them and drops only the internal carriers.
+    // annotations (kotlin.Deprecated / SinceKotlin / InlineOnly / PublishedApi / …). The predicate must preserve those
+    // user annotations and drop only compiler-internal carriers that have no runtime stdlib meaning.
     // ---------------------------------------------------------------------------------------------------------------
     public static void StripRuntimeAttrs(JsonNode root)
     {
@@ -621,7 +621,7 @@ static class RoundtripMetadata
     }
 
     // Remove ONLY the compile-time-only carriers from a decl's `attrs`/`retAttrs` array, leaving user annotations. An
-    // array that empties out is removed entirely (byte-equivalence with a decl that never had the key).
+    // array that empties out is removed entirely because an empty attribute list carries no CIR fact.
     static void StripAttrs(JsonObject decl, string key)
     {
         if (decl[key] is not JsonArray a) return;
@@ -646,11 +646,11 @@ static class RoundtripMetadata
     // ATTRIBUTE-INSTANCE builders (a CIR `attrs` entry {attr, args:[…]} routed through ilemit's generic BuildCab).
     // ---------------------------------------------------------------------------------------------------------------
 
-    // [Nullable(byte)] scalar for a single reference position, [Nullable(byte[])] nested for a flattened NRT walk —
-    // reproducing ilemit's `flags.Length == 1 -> scalar ctor` collapse so the emitted metadata is byte-equivalent.
+    // [Nullable(byte)] scalar for a single reference position, [Nullable(byte[])] for a flattened multi-position NRT
+    // walk. These are the two attribute constructors defined by the target framework's nullability metadata contract.
     static JsonObject NullableAttr(JsonArray flags)
     {
-        if (flags.Count == 0) return null;   // defensive (old ApplyNullable returned on empty); unreachable via NullableFlags.Compute
+        if (flags.Count == 0) return null;   // defensive; unreachable via NullableFlags.Compute
         if (flags.Count == 1)
             return Marker(ANullable, ByteArg((flags[0] as JsonValue)!.GetValue<int>()));
         var bytes = new byte[flags.Count];
@@ -658,8 +658,8 @@ static class RoundtripMetadata
         return Marker(ANullable, BytesArg(Convert.ToBase64String(bytes)));
     }
 
-    // [KotlinSuspendFunctionType(version, bytes)] — the pre-erasure `fn` shape node, carrier-encoded (same envelope as
-    // KotlinInline). Encoding the SAME JsonNode ilemit used to Parse-then-ToJsonString keeps the payload bytes equal.
+    // [KotlinSuspendFunctionType(version, bytes)] — the pre-erasure `fn` shape node, encoded in the versioned carrier
+    // envelope shared with KotlinInline. The TypeNode itself is the authoritative semantic payload.
     static JsonObject SuspendFnAttr(JsonNode shape)
     {
         byte[] content = BirCarrier.EncodeBody(BirCarrier.JsonV1, shape.DeepClone());
@@ -793,8 +793,8 @@ static class RoundtripMetadata
 
     // ---------------------------------------------------------------------------------------------------------------
     // The embedded attribute-class defs, emitted ONCE as a dedicated synthetic CIR file. Each is `internal sealed :
-    // System.Attribute` with the same ctor overloads ilemit's DefineEmbeddedAttr{,N} used to synthesize. `final:true`
-    // -> TypeAttributes.Sealed (matching the old NotPublic|Sealed|Class); `generated:true` makes ilemit stamp the
+    // System.Attribute` with the constructor signatures defined by the compiler-metadata carrier ABI. `final:true`
+    // maps to TypeAttributes.Sealed; `generated:true` makes ilemit stamp the
     // STANDARD [CompilerGenerated] trust marker. dll2klib accepts DotKt metadata only from carrier definitions bearing
     // that marker in an explicitly marked DotKt assembly, so a C# lookalike with the same full name is inert. Ctor params carry
     // NO name (a named ctor param would mint Param rows the embedded attrs never had); the empty body chains to
@@ -890,7 +890,7 @@ static class RoundtripMetadata
         };
     }
 
-    // A ctor param with a bare CLR type and NO name (byte-equivalence: no Param table row).
+    // A ctor param with a bare CLR type and NO name; omitting the name means no Param metadata row is required.
     static JsonObject Param(string fqn) => new() { ["type"] = Fqn(fqn) };
     static JsonObject Param(JsonNode type) => new() { ["type"] = type };
 

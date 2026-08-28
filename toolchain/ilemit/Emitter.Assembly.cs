@@ -15,7 +15,7 @@ sealed partial class Emitter
         // #84 Phase 4: run the in-process CIR SANITY gate at the CIR boundary, BEFORE any emit — malformed CIR
         // (undeclared local, dangling goto, missing owner) fails LOUD with a precise `sanity: <invariant>` message
         // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
-        // See Emitter.Sanity.cs. Pure fail-fast validation — no IL effect (a valid CIR is byte-identical after it).
+        // See Emitter.Sanity.cs. Pure fail-fast validation: a valid CIR reaches emission unchanged.
         CheckCir(files);
         LoadWellKnown(files);
         // #370: how many references these documents carry, so the parity check below can be held to all of them.

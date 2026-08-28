@@ -257,7 +257,7 @@ internal fun BirEmitter.birType(t0: IrType): TypeNode {
 		val enclArgs = innerEnclosingTypeParams(klass).map { tvOf(it) }
 		// A LIFTED local class made generic over enclosing type params (liftLocalClass) is DENOTABLE — a `val l: L`
 		// slot / member access `l.x` must name the CONSTRUCTED `L<T>`. Append the captured params (flattened LAST).
-		// Empty for a non-generic local class and every other type (byte-identical). See liftedCaptureArgs.
+		// Empty for a non-generic local class and every other type. See liftedCaptureArgs.
 		val liftedCaps = liftedCaptureArgs(klass)
 		if (klass.typeParameters.isNotEmpty() || klass.isInner) {
 			val sargs = (t as? IrSimpleType)?.arguments
@@ -483,7 +483,7 @@ internal fun BirEmitter.sourceVisOf(d: IrDeclarationWithVisibility): String = wh
 /** For a LIFTED local/object class made generic over enclosing type params (liftLocalClass/blockExpr), the captured
  *  type args to append to its constructed identity — resolved in the CURRENT scope (an active inline `typeArgSubst`,
  *  else the enclosing `tv`). Empty for every other class (`liftedTypeArgParams` is populated ONLY for those lifts, and
- *  is an EMPTY list for a non-generic lift → byte-identical for all pre-existing types). Centralizes the "a local class
+ *  is an EMPTY list for a non-generic lift). Centralizes the "a local class
  *  is DENOTABLE" append so the var-slot birType, member-access ownerSpec, and the `new` site all name the SAME `L<T>`. */
 internal fun BirEmitter.liftedCaptureArgs(klass: IrClass): List<TypeNode> =
 	liftedTypeArgParams[klass]?.map { typeArgSubst[it] ?: tvOf(it) }.orEmpty()

@@ -392,8 +392,8 @@ internal fun BirEmitter.lambda(node: IrFunctionExpression): String {
 	// #52 (kotc-purity): kotc no longer SYNTHESIZES the closure CLASS (a CLR-representation type). It emits the raw
 	// build-INGREDIENTS as a transient `synthClass` fact (capture fields=name+type, invoke params/ret/body, generic
 	// type-param decls); bir2cir's ClosureSynthesis assembles the actual closure class (kind/base/interfaces wrapper +
-	// the ctor field-init body) into the file `types`, then STRIPS `synthClass`, leaving the lean `newClosure`
-	// (closureType + capture VALUE exprs + funcType + typeArgs) that ilemit consumes for the `new` — byte-identical.
+	// the ctor field-init body) into the file `types`, then STRIPS `synthClass`, leaving the canonical CIR `newClosure`
+	// contract (closureType + capture VALUE exprs + funcType + typeArgs) that ilemit consumes one-to-one.
 	val synthClass = """{"name":${str(cname)},"fields":[$fields],"params":[${lambdaParamsJson(fn.parameters, recvName)}],"ret":${str(ret)},"body":[$body]${typeParamsJson(freeTps)}${semanticUseSiteOwnerJson()}}"""
 	// Capture values are evaluated in the enclosing context (the outer `this`, or an outer local).
 	val capExprs = captures.joinToString(",") { capValueExpr(it) }
@@ -1905,7 +1905,7 @@ internal fun BirEmitter.orderedLambdaParams(fn: IrSimpleFunction): List<IrValueP
 /** The function type `fn` for a lambda's Kotlin signature, in the physical delegate shape [orderedLambdaParams]
  *  defines. When the Kotlin type is an EXTENSION function type its FIRST physical argument rides `fn.recv` and the
  *  rest ride `fn.params` — that is what `birType` produces reading `@ExtensionFunctionType FunctionN<A1..An,R>`
- *  (recv = A1, params = A2..An), so a lambda's `funcType` and its target's declared type node are byte-identical.
+ *  (recv = A1, params = A2..An), so a lambda's `funcType` and its target use one physical delegate signature.
  *  For `context(A) B.(D) -> E` that puts the CONTEXT in `recv` and the real receiver in `params[0]`: the labels
  *  diverge from Kotlin's roles, but the PHYSICAL projection (`recv` prepended to `params` by `DelegateParams`) is
  *  the correct `A, B, D` — and physical agreement is the whole contract of this node. A non-extension context

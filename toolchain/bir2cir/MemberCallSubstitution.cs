@@ -55,8 +55,8 @@ static class MemberCallSubstitution
     // owner resolves against the emitted signed-array class — the identical native-array method-holder. bir2cir OWNS
     // this Kotlin<->CLR array identity, so it rewrites the call `ownerType` to the signed-array FQN here (the ownerType
     // survives only in the rt self-build; consumer CIR is fully lowered). This RETIRES ilemit's NativeArrayOwner alias
-    // (Emitter.Types.cs / Resolve.cs FindMethod) — the layer-purity fix: ilemit re-resolved a Kotlin equivalence it
-    // should never have known. Sig/args are unchanged, so the resolved method is byte-identical to the former alias.
+    // (Emitter.Types.cs / Resolve.cs FindMethod) — the layer-purity fix: ilemit must not re-resolve a Kotlin
+    // equivalence. Sig/args are unchanged; only the CIR owner now names the physical signed-array MethodDef directly.
     static readonly IReadOnlyDictionary<string, string> UnsignedArraySignedOwner = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["kotlin.UByteArray"] = "kotlin.ByteArray",

@@ -17,8 +17,8 @@ using DotKt.Bir;
 // Enum.Parse); no values()/valueOf() name/signature convention is used to classify a referenced owner.
 //
 // Runs EARLY (grouped with the range/array/char faithful recognitions, before MemberCallSubstitution / BirTypeLowering)
-// so the produced enumValues/enumParse/values nodes flow through every downstream pass exactly as kotc's retired
-// call-site interception used to — byte-identical CIR.
+// so the produced enumValues/enumParse/values nodes enter the ordinary CIR pipeline with their semantic enum identity
+// still available.
 static class EnumIntrinsicLowering
 {
     static readonly HashSet<string> Names = new(System.StringComparer.Ordinal)

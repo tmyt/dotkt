@@ -3229,7 +3229,7 @@ sealed partial class ReferenceMetadataIndex
         // the FIRST array overload (the signed generic `toList<T>(T[])`) for EVERY array call, miscompiling an unsigned
         // `ubyteArrayOf(..).toList()` onto _ArraysKt's uninstantiated generic. The fine first-param ParamKey pins the
         // exact file-class+overload (UByteArray -> Array(UInt8) -> UArraysKt). Only "[]" is lossy; a normal owner recvKey
-        // is already exact, so gate on it to leave every non-array resolution byte-identical. (#153)
+        // is already exact, so the extra discriminator applies only to the lossy array key. (#153)
         if (recvKey == "[]" && firstParamKey != null)
             foreach (var c in cands)
                 if (c.ParamKey == firstParamKey) { owner = c.Owner; return true; }

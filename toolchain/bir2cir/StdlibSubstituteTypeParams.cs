@@ -20,8 +20,8 @@ using System.Text.Json.Nodes;
 //       types don't need declaration-site variance (a compile-time concern; the ref.dll keeps it).
 //
 // Runs BEFORE BirTypeLowering so the constraint is still the pure `kotlin.Comparable` token (after lowering it would
-// already be `System.IComparable`). After the drops, a name-only type param collapses back to the bare-string form
-// kotc's rt build used to emit, so the emitted rt.dll is byte-identical.
+// already be `System.IComparable`). After the drops, a name-only type param collapses to the canonical bare-string
+// form required by the runtime stdlib's CLR generic signature.
 static class StdlibSubstituteTypeParams
 {
     public static void Apply(JsonNode node)
