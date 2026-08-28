@@ -480,6 +480,13 @@ static class NullableGenericErasure
                 {
                     var child = obj[key];
                     if (child == null) continue;
+                    // An override edge is a pure-Kotlin declaration identity consumed by the slot allocator and
+                    // stripped before CIR. Its constructed owner arguments must stay in the source vocabulary:
+                    // erasing `Comparable<Int?>` to `Comparable<object>` here destroys the exact declaration selected
+                    // by the frontend and can leave `compareTo(Int?)` disconnected from its CLR `CompareTo` slot.
+                    // Physical bridge consumers derive their own slot types from the selected declaration; this
+                    // marker is not one of those slots.
+                    if (key == "overrides") continue;
                     var keyPos = key switch
                     {
                         "elem" => elemPos,

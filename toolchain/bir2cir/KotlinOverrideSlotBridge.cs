@@ -1106,19 +1106,26 @@ static class KotlinOverrideSlotBridge
                     // exact @ClrIntrinsic binding when it has one, lower that declaration owner, and resolve the
                     // actual CLR declaration before authoring the table row. A marker whose physical face declares no
                     // such member is not this row; the transitive override closure supplies the base marker next.
-                    var selectedSemanticOwner = spec;
+                    var selectedDescriptorOwner = spec;
                     if (refs.TryExactMemberClrBinding(owner.Name, member, methodArity,
                             implementationSignature, owner.Args ?? Array.Empty<TypeNode>(), out var markerBinding)
                         && markerBinding.Intrinsic != null)
                     {
-                        selectedSemanticOwner = owner;
+                        // `owner` remains the pristine Kotlin declaration identity so the exact lookup above can
+                        // distinguish nullable constructed overloads. The MethodImpl descriptor is physical: erase
+                        // each reified owner argument before lowering its alias. In particular,
+                        // Comparable<Int?> selects compareTo(Int?) semantically but implements the collapsed
+                        // non-generic System.IComparable.CompareTo(object) face physically.
+                        selectedDescriptorOwner = new TypeNode.Fqn(owner.Name, owner.Args?.Select(argument =>
+                            NullableGenericErasure.EraseArgument(argument, isValue)).ToArray());
                         descriptorMember = markerBinding.Intrinsic;
                     }
-                    else if (refs.TryMemberIntrinsicExact(spec.Name, member, ps.Count, out var clrName))
+                    else if (refs.TryExactMemberIntrinsic(spec.Name, member, methodArity,
+                            implementationSignature, spec.Args ?? Array.Empty<TypeNode>(), out var clrName))
                         descriptorMember = clrName;
 
                     var loweredOwner = BirTypeLowering.LowerPhysicalType(
-                        selectedSemanticOwner, refs.Aliases, isValue, refs.PhysicalTypeNames,
+                        selectedDescriptorOwner, refs.Aliases, isValue, refs.PhysicalTypeNames,
                         typeArg: false, localTypeNames: null) as TypeNode.Fqn;
                     if (loweredOwner != null
                         && refs.ResolveNetType(loweredOwner.Name, loweredOwner.Args?.Length ?? 0)
