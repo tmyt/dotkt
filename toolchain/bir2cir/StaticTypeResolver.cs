@@ -100,8 +100,8 @@ static class StaticType
         {
             // A local read: the frontend stamp (accurate incl. smart-cast); else the declared type from the lexical
             // scope, for a bir2cir-SYNTHESIZED local (a spliced temp) that carries no stamp. NOTE the stamp SHADOWS a
-            // later var-decl retype (InlineSplice.RetypeReceiverToConcrete / CharSeqStringLowering) — benign today
-            // (collection classification is name-keyed; CharSeq rets ride the explicit charSeqRetLambdas channel).
+            // later var-decl retype. The retyping pass owns keeping or deleting that stamp under the NodeType §2.7
+            // contract; consumers must not silently demote the frontend stamp below the lexical declaration.
             case "local":
                 return TypeJson.Read(o["sty"])
                     ?? ((o["name"] as JsonValue)?.GetValue<string>() is string vn
