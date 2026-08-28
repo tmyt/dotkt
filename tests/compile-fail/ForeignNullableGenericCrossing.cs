@@ -39,6 +39,8 @@ namespace fgn
 
         public int?[] MakeArray() => new int?[] { 1, null };
 
+        public int?[,] MakeMatrix() => new int?[,] { { 1, null } };
+
         // REFUSED at a PROPERTY, which reaches the same stamp through the accessor.
         public List<int?> Items { get; } = new List<int?>();
 
@@ -55,5 +57,10 @@ namespace fgn
 
         // CONTROL: a delegate PARAMETER keeps its `Nullable<Int32>` in Kotlin too.
         public string Describe(int? x, Func<int?, string> f) => f(x);
+    }
+
+    public interface IArrayMatrixSink
+    {
+        int CountMatrix(int?[,] xs);
     }
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
@@ -444,7 +445,7 @@ static class ForeignNullableGenericCrossing
         TypeNode.Oblivious o => Alias(o.Of, aliases),
         TypeNode.Fqn f => new TypeNode.Fqn(aliases.TryGetValue(f.Name, out var bcl) ? bcl : f.Name,
             f.Args?.Select(a => Alias(a, aliases)).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(Alias(a.Elem, aliases)),
+        TypeNode.Array a => new TypeNode.Array(Alias(a.Elem, aliases), a.Rank, a.SzArray),
         TypeNode.Nullable n => new TypeNode.Nullable(Alias(n.Of, aliases)),
         TypeNode.ByRef b => new TypeNode.ByRef(Alias(b.Of, aliases)),
         _ => t,
@@ -463,7 +464,7 @@ static class ForeignNullableGenericCrossing
         TypeNode.Fqn f => new TypeNode.Fqn(
             refs.ExactReflectedOwner(f.Name, f.Args?.Length ?? 0),
             f.Args?.Select(a => Exact(a, refs)).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(Exact(a.Elem, refs)),
+        TypeNode.Array a => new TypeNode.Array(Exact(a.Elem, refs), a.Rank, a.SzArray),
         TypeNode.Nullable n => new TypeNode.Nullable(Exact(n.Of, refs)),
         TypeNode.ByRef b => new TypeNode.ByRef(Exact(b.Of, refs)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(Exact(o.Of, refs)),
@@ -479,7 +480,7 @@ static class ForeignNullableGenericCrossing
         TypeNode.Oblivious o => Canon(o.Of),
         TypeNode.Fqn { Name: "System.Object", Args: null } => new TypeNode.Fqn("object"),
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name, args.Select(Canon).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(Canon(a.Elem)),
+        TypeNode.Array a => new TypeNode.Array(Canon(a.Elem), a.Rank, a.SzArray),
         TypeNode.Nullable n => new TypeNode.Nullable(Canon(n.Of)),
         TypeNode.ByRef b => new TypeNode.ByRef(Canon(b.Of)),
         _ => t,
@@ -598,13 +599,35 @@ static class ForeignNullableGenericCrossing
     {
         TypeNode.Nullable n => "System.Nullable<" + Render(n.Of) + ">",
         TypeNode.Oblivious o => Render(o.Of),
-        TypeNode.Array a => Render(a.Elem) + "[]",
+        TypeNode.Array a => Render(a.Elem) + ArraySuffix(a),
         TypeNode.ByRef b => "ref " + Render(b.Of),
-        TypeNode.Fqn { Args: { } args } fa => fa.Name + "<" + string.Join(", ", args.Select(Render)) + ">",
-        TypeNode.Fqn f => f.Name,
+        TypeNode.Fqn { Args: { } args } fa => DisplayName(fa.Name) + "<" + string.Join(", ", args.Select(Render)) + ">",
+        TypeNode.Fqn f => DisplayName(f.Name),
+        TypeNode.Tv tv => (tv.Scope == "method" ? "!!" : "!") + tv.I,
         TypeNode.Fn fn => "(" + string.Join(", ", fn.Params.Select(Render)) + ") -> " + Render(fn.Ret),
         _ => t.ToString(),
     };
+
+    static string ArraySuffix(TypeNode.Array a) => a.SzArray
+        ? "[]"
+        : a.Rank == 1 ? "[*]" : "[" + new string(',', a.Rank - 1) + "]";
+
+    // Metadata arity is identity, but the diagnostic already prints the closed argument list. Keep the human-facing
+    // spelling consistent between memberRef (`List`1`) and document (`List`) sources, including nested segments.
+    static string DisplayName(string name)
+    {
+        var result = new StringBuilder(name.Length);
+        for (var i = 0; i < name.Length; i++)
+        {
+            if (name[i] == '`')
+            {
+                while (i + 1 < name.Length && char.IsDigit(name[i + 1])) i++;
+                continue;
+            }
+            result.Append(name[i]);
+        }
+        return result.ToString();
+    }
 
     static string Str(JsonNode n) => (n as JsonValue)?.TryGetValue<string>(out var s) == true ? s : null;
     static bool Bool(JsonNode n) => n is JsonValue v && v.TryGetValue<bool>(out var b) && b;
