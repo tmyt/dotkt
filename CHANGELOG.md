@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **DLL-to-KLIB round trips now preserve extension-receiver roles explicitly (#512).** Kotlin extension methods and
+  property accessors carry a trusted parameter-role marker instead of relying on the physical name `__self`; ordinary
+  parameters with that name remain ordinary, and receiver slots are collision-safe across inline and suspend lowering.
+
 - **Non-public Kotlin interfaces and annotation classes now retain their CLR metadata visibility (#604).** `kotc`
   carries their source visibility through BIR alongside enums and now emits nested annotation declarations, so private
   and internal top-level declarations and private, internal, and protected nested declarations are no longer widened

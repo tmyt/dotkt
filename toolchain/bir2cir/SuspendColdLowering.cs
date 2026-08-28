@@ -1191,6 +1191,7 @@ static partial class SuspendColdLowering
         readonly bool _resultNullable;           // the suspend fn's result had an outer `?` (#37/#48: read off the type node)
         readonly string _resultNullableGeneric;  // #86: the PRE-erasure `T?` result, for the bridge's carrier (else null)
         readonly List<JsonObject> _params;       // original params (extension: leading __self)
+        readonly string _extensionReceiverName;  // explicit role's physical slot name; null for a non-extension
         readonly List<string> _typeParams;       // generic type-param names ([] when non-generic)
         readonly JsonArray _methodTypeParamDecls; // original names + constraints for emitted bridge/cold signatures
         // Kotlin override ownership is the proof used by the late CLR slot normalizer. Suspend lowering replaces one
@@ -1285,6 +1286,10 @@ static partial class SuspendColdLowering
             _resultType = (suspendRetRaw is TypeNode.Nullable srn ? srn.Of : suspendRetRaw) ?? VoidTn;
             _taskResultType = TypeJson.Read(m[KotlinPropertyAccessors.SuspendTaskResultKey]) ?? _resultType;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
+            _extensionReceiverName = _params.FirstOrDefault() is JsonObject first
+                && first["mods"] is JsonObject firstMods && Bool(firstMods["extensionReceiver"])
+                    ? Str(first["name"])
+                    : null;
             _typeParams = ReadTypeParamNames(m["typeParams"]);
             _methodTypeParamDecls = (m["typeParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
             _overrideMarkers = (m["overrides"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
@@ -1877,7 +1882,8 @@ static partial class SuspendColdLowering
                     return Suspended();
                 if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, RequiredFieldType(ln));
-                if (Str(o["k"]) == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf0)
+                if (Str(o["k"]) == "local" && Str(o["name"]) == (_extensionReceiverName ?? "__self")
+                    && CapturedSelfField() is JsonNode sf0)
                     return sf0;
                 if (Str(o["k"]) == "setLocal" && Str(o["name"]) is string sln && _fields.Contains(sln))
                     return SetField(sln, RewriteNoSpill(o["value"]));
@@ -1936,7 +1942,8 @@ static partial class SuspendColdLowering
                     return Suspended();
                 if (k == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, RequiredFieldType(ln));
-                if (k == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf1)
+                if (k == "local" && Str(o["name"]) == (_extensionReceiverName ?? "__self")
+                    && CapturedSelfField() is JsonNode sf1)
                     return sf1;
                 // A `setLocal`/`var` that assigns a SPILLED variable but sits INSIDE an expression subtree (e.g. the
                 // `index++` post-increment lowered to `valueBlock { var <unary> = index; index = index+1; <unary> }`)
@@ -3003,7 +3010,7 @@ static partial class SuspendColdLowering
         // Guarded on `!__self` field: a NAMED-fun cold entry spills its real `__self` PARAM into a `__self` field,
         // which the generic local->field rule already redirects — this alias is only for the lambda-capture mismatch.
         JsonNode CapturedSelfField() =>
-            (!_fields.Contains("__self") && _fields.Contains("__outer"))
+            (!_fields.Contains(_extensionReceiverName ?? "__self") && _fields.Contains("__outer"))
                 ? FieldOf("__outer", RequiredFieldType("__outer")) : null;
 
         // #34a — a suspend LAMBDA that closes over its enclosing INSTANCE captures it as the `__outer`
@@ -3058,7 +3065,8 @@ static partial class SuspendColdLowering
             if (name == "__outer")
             {
                 if (_isMember) return FieldOf(ThisField, _selfType);
-                if (_fields.Contains("__self")) return FieldOf("__self", RequiredFieldType("__self"));
+                var receiverName = _extensionReceiverName ?? "__self";
+                if (_fields.Contains(receiverName)) return FieldOf(receiverName, RequiredFieldType(receiverName));
                 if (_isLambda && _fields.Contains("__outer")) return FieldOf("__outer", RequiredFieldType("__outer"));
                 return new JsonObject { ["k"] = "this" };
             }

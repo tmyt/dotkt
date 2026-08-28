@@ -510,6 +510,15 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// name-keyed map can't tell them apart (it would capture C's `this` too). The dispatch `<this>` then falls
 	// through to `{"k":"this"}` and the extension receiver resolves here.
 	internal val selfSubst = java.util.IdentityHashMap<IrValueDeclaration, String>()
+	private val extensionReceiverSlotNames = java.util.IdentityHashMap<org.jetbrains.kotlin.ir.declarations.IrFunction, String>()
+	/** The physical leading slot for a declaration extension receiver. Keep the conventional spelling when it is free,
+	 *  but allocate a collision-free name when a valid value parameter is itself named `__self`. Receiver meaning rides
+	 *  `mods.extensionReceiver`; the physical spelling is never semantic. */
+	internal fun extensionReceiverSlotName(fn: org.jetbrains.kotlin.ir.declarations.IrFunction): String =
+		extensionReceiverSlotNames.getOrPut(fn) {
+			if (fn.parameters.filter { isValueParameter(it) }.none { it.name.asString() == "__self" }) "__self"
+			else freshFrameName("__self", fn)
+		}
 	// A function frame is keyed by DECLARATION IDENTITY in Kotlin IR, not by the source spelling of a local. Give
 	// every IrVariable an unspellable, module-unique BIR slot name so no later phase has to reconstruct lexical
 	// binding from JSON scopes. Value parameters retain their observable metadata/ABI names. Inline-lambda capture

@@ -53,6 +53,7 @@ inline fun iepOuter(q: Int, block: () -> Int): Int = q + block()
 // ---- forwarding: the enclosing inline fn's own lambda parameter passed BY NAME into a nested inline call ---
 inline fun iepForwardTarget(v: Int, block: (Int) -> Int): Int = block(v) + block(v)
 inline fun iepForwardSource(v: Int, block: (Int) -> Int): Int = iepForwardTarget(v, block)
+inline fun iepOrdinarySelfName(__self: Int, block: (Int) -> Int): Int = block(__self) + __self
 
 // ---- receivers: dispatch before arguments, extension before arguments, each once --------------------------
 class IepBox(val n: Int) {
@@ -128,6 +129,12 @@ class InlineEvaluationPlanTests {
         val r = iepForwardSource(iepT("fw")) { iepLog.add("c"); it + 1 }
         assertEquals(6, r)                    // (2+1) + (2+1)
         assertEquals("fw,c,c", iepTrace())    // the value once, the carrier spliced at both invokes
+    }
+
+    /** A user spelling `__self` does not turn an ordinary inline parameter into an extension receiver. */
+    @TestAttribute
+    fun ordinarySelfNameIsNotAnInlineReceiver() {
+        assertEquals(15, iepOrdinarySelfName(5) { it * 2 })
     }
 
     /** A member inline fn evaluates its dispatch receiver before its arguments, once. */

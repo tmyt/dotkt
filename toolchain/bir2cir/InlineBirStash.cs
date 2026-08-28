@@ -97,11 +97,11 @@ static class InlineBirStash
         int pc = prms?.Count ?? 0;
         int ga = typeParams?.Count ?? 0;
 
-        // recv classification (drives the splicer's guard): a leading `__self` param = extension receiver; a non-static
-        // instance member = a `{k:this}` dispatch receiver; else none.
-        string firstParam = prms != null && prms.Count > 0 ? Str((prms[0] as JsonObject)?["name"]) : null;
+        // Receiver meaning is an explicit Kotlin role, never a physical parameter-name convention.
+        bool extensionReceiver = prms != null && prms.Count > 0 && prms[0] is JsonObject first
+            && first["mods"] is JsonObject firstMods && Bool(firstMods["extensionReceiver"]) == true;
         bool isStatic = Bool(mo["static"]) == true;
-        string recv = firstParam == "__self" ? "extensionParam"
+        string recv = extensionReceiver ? "extensionParam"
                     : (!isStatic ? "dispatch" : "none");
 
         // #23: carry the post-representation `static` flag. For a member-EXTENSION (recv==extensionParam) the

@@ -1190,6 +1190,9 @@ class V:
                 if f.endswith(".cir.json") and o["mods"].get("suspend") is True:
                     self.err(f, path + "/mods",
                              "mods.suspend is consumed by bir2cir and must not appear in CIR")
+                if f.endswith(".cir.json") and o["mods"].get("extensionReceiver") is True:
+                    self.err(f, path + "/mods",
+                             "mods.extensionReceiver is consumed by bir2cir and must not appear in CIR")
             if isinstance(o.get("vis"), str) and o["vis"] not in VIS:
                 self.err(f, path, f"unknown vis {o['vis']!r}")
             if o.get("vis") == "protectedInternal" and f.endswith(".bir.json"):

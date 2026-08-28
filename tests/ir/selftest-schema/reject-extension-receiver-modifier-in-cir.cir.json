@@ -1,0 +1,22 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "unconsumedExtensionReceiver",
+      "params": [
+        {
+          "name": "receiver",
+          "type": { "t": "fqn", "name": "System.Int32" },
+          "mods": { "extensionReceiver": true }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "System.Int32" },
+      "body": [
+        {
+          "k": "return",
+          "value": { "k": "local", "name": "receiver" }
+        }
+      ]
+    }
+  ]
+}

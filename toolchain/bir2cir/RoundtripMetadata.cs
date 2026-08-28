@@ -607,6 +607,13 @@ static class RoundtripMetadata
             po.Remove("declarationSourceName");
             po.Remove(DeclarationIdentityBinding.SemanticSignatureKey);
             po.Remove(NullableGenericErasure.MethodTypeParameterBoundsPre);
+            if (po["mods"] is JsonObject mods)
+            {
+                // BIR-only slot role. Metadata builds consume it into [KotlinExtensionReceiver]; runtime builds emit
+                // no round-trip carriers but must consume the same frontend fact before CIR reaches ilemit.
+                mods.Remove("extensionReceiver");
+                if (mods.Count == 0) po.Remove("mods");
+            }
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);

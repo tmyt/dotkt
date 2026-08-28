@@ -120,7 +120,7 @@ internal fun BirEmitter.tailrecJump(call: IrCall, ctx: BirEmitter.TailrecCtx): S
 		// The dispatch receiver of a member `tailrec` self-call is the SAME `this` (Kotlin requires it) — never reassigned.
 		if (p.kind == IrParameterKind.DispatchReceiver) return@forEachIndexed
 		val arg = call.arguments.getOrNull(i) ?: return@forEachIndexed
-		val name = if (p.kind == IrParameterKind.ExtensionReceiver) "__self" else p.name.asString()
+		val name = if (p.kind == IrParameterKind.ExtensionReceiver) extensionReceiverSlotName(ctx.fn) else p.name.asString()
 		reassigns.add(Reassign(name, "__tailrec_${ctx.startLabel}_$i", coerceValue(arg, p.type), p.type))
 	}
 	val stmts = ArrayList<String>()
