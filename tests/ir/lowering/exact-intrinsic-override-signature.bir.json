@@ -220,6 +220,61 @@
         }
       ],
       "attrs": []
+    },
+    {
+      "name": "exerciseNullableConstructedOwnerCall",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "abstract": false,
+      "vis": "public",
+      "params": [
+        {
+          "name": "surface",
+          "type": {
+            "t": "fqn",
+            "name": "DotKt.Tests.GenericDerivedSurface",
+            "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }]
+          }
+        },
+        {
+          "name": "value",
+          "type": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": {
+              "t": "fqn",
+              "name": "DotKt.Tests.GenericDerivedSurface",
+              "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }]
+            },
+            "virtual": true,
+            "recv": { "k": "local", "name": "surface" },
+            "method": "select",
+            "sig": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [{ "k": "local", "name": "value" }],
+            "overrides": [
+              {
+                "owner": {
+                  "t": "fqn",
+                  "name": "DotKt.Tests.GenericDerivedSurface",
+                  "args": [{ "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Int" } }]
+                },
+                "member": "select",
+                "kind": "method",
+                "arity": 1
+              }
+            ]
+          }
+        }
+      ],
+      "attrs": []
     }
   ],
   "refTypes": [],

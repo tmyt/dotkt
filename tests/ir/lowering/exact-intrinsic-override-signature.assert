@@ -23,3 +23,7 @@
 +"name":"Value","static":false,"override":true,"virtual":true,"abstract":false,"vis":"public","params":[{"name":"value","type":{"t":"fqn","name":"System.Int32"}}]
 +"owner":{"t":"fqn","name":"DotKt.Tests.GenericPhysicalSlots\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"member":"Value","arity":0,"params":[{"t":"fqn","name":"System.Int32"}],"ret":{"t":"fqn","name":"void"}
 -"owner":{"t":"fqn","name":"DotKt.Tests.GenericPhysicalSlots\u00601","args":[{"t":"fqn","name":"System.Int32"}]},"member":"Text","arity":0,"params":[{"t":"fqn","name":"System.Int32"}]
+
+# Override markers remain semantic identity through nullable-generic physical erasure, while the selected CLR call
+# owner uses that declaration's physical object-erased application.
++"k":"clrInstance","type":{"t":"fqn","name":"DotKt.Tests.GenericPhysicalSlots\u00601","args":[{"t":"fqn","name":"object"}]},"method":"Value"

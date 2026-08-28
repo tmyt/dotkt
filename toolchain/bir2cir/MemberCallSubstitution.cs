@@ -1157,7 +1157,15 @@ static class MemberCallSubstitution
             if (distinctInherited.Count == 1)
             {
                 var inheritedSlot = distinctInherited[0];
-                ownerFqnNode = inheritedSlot.Owner;
+                // The override carrier remains a pristine Kotlin declaration identity so the lookup above can
+                // distinguish constructed nullable overloads. From this point onward the owner is a physical call
+                // application: erase each reified argument before alias selection, just as the declaration-side
+                // MethodImpl path does. Otherwise Comparable<Int?> resolves semantically to compareTo(Int?) but the
+                // emitted call incorrectly targets IComparable<Nullable<int>> instead of the collapsed
+                // IComparable.CompareTo(object) face the receiver actually implements.
+                ownerFqnNode = new TypeNode.Fqn(inheritedSlot.Owner.Name,
+                    inheritedSlot.Owner.Args?.Select(argument =>
+                        NullableGenericErasure.EraseArgument(argument, _isValue)).ToArray());
                 ownerToken = inheritedSlot.Owner.Name;
                 memberOwnerToken = ownerToken;
                 node["method"] = inheritedSlot.Member;
