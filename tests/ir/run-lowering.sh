@@ -59,9 +59,10 @@
 #
 #   Layer ownership (collection-view value flow) — after Kotlin read-only/mutable collection faces become unrelated
 #   CLR siblings, bir2cir materializes the checked view conversion on every resolved CIR value-flow edge. The
-#   `collection-view-value-flow` fixture pins both directions across argument, local/field storage, return, local-call
-#   result, and reflected generic-property result edges, including the exact physical result stamp inside the caller-
-#   facing cast; ilemit emits those nodes one-to-one and owns no collection ABI inference.
+#   `collection-view-value-flow` fixture pins both directions across argument, local/field storage, conditional joins,
+#   constructor evaluation/delegation, return, local-call result, and exact field/property result edges. It includes
+#   fieldRef, constructed generic-field closure, and the exact physical result stamp inside each caller-facing cast;
+#   ilemit emits those nodes one-to-one and owns no collection ABI inference.
 #
 #   Layer ownership (the reified sequence element face) — a marked stdlib declaration owns the Kotlin predicate,
 #   while bir2cir replaces only its final erased-platform cast with the concrete CLR element-view adapter.

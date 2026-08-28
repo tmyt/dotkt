@@ -17,6 +17,11 @@
 // Assembly-wide collision rule: the sole top-level helper is `CollectionTypePosition`-prefixed.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import kotlin.clr.ClrField
+
+class CollectionTypePositionCell<T>(initial: T) {
+    @ClrField var item: T = initial
+}
 
 class CollectionTypePositionTests {
     // ---- generic-ARGUMENT position: the token collapses to the invariant sibling ------------------------------
@@ -97,5 +102,18 @@ class CollectionTypePositionTests {
         val flat: List<Int> = listOf(listOf(1, 2), listOf(3)).flatten()
         assertEquals(3, flat.size)
         assertEquals(3, flat[2])
+    }
+
+    @TestAttribute
+    fun conditionalBranchesAndGenericFieldsCarryTheirPhysicalViews() {
+        val mutable: MutableList<Int> = mutableListOf(1, 2)
+        val readonly: List<Int> = listOf(3, 4)
+        val fromMutable: List<Int> = if (mutable.size == 2) mutable else readonly
+        assertEquals(1, fromMutable[0])
+
+        val mutableCell: CollectionTypePositionCell<List<Int>> = CollectionTypePositionCell(readonly)
+        assertEquals(3, mutableCell.item[0])
+        mutableCell.item = mutable
+        assertEquals(2, mutableCell.item[1])
     }
 }

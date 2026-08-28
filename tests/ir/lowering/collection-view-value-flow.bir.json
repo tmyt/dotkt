@@ -21,7 +21,130 @@
       }
     }
   ],
-  "types": [],
+  "types": [
+    {
+      "name": "GenericCollectionCell",
+      "kind": "class",
+      "typeParams": [{ "name": "T" }],
+      "base": null,
+      "interfaces": [],
+      "fields": [{ "name": "item", "type": { "t": "tv", "scope": "type", "i": 0 } }],
+      "ctors": [],
+      "methods": [],
+      "properties": [],
+      "attrs": []
+    },
+    {
+      "name": "CollectionViewExternalBaseProbe",
+      "kind": "class",
+      "base": {
+        "t": "fqn",
+        "name": "System.Collections.ObjectModel.ReadOnlyCollection",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "interfaces": [],
+      "fields": [],
+      "ctors": [
+        {
+          "params": [
+            {
+              "name": "readonly",
+              "type": {
+                "t": "fqn",
+                "name": "kotlin.collections.List",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            }
+          ],
+          "delegationSig": [
+            {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            }
+          ],
+          "baseArgs": [{ "k": "local", "name": "readonly" }],
+          "thisArgs": null,
+          "body": []
+        },
+        {
+          "params": [
+            {
+              "name": "readonly",
+              "type": {
+                "t": "fqn",
+                "name": "kotlin.collections.List",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            },
+            { "name": "marker", "type": { "t": "fqn", "name": "kotlin.Boolean" } }
+          ],
+          "preStmts": [
+            {
+              "k": "var",
+              "name": "mutableTemp",
+              "type": {
+                "t": "fqn",
+                "name": "kotlin.collections.MutableList",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              },
+              "init": { "k": "local", "name": "readonly" }
+            }
+          ],
+          "delegationSig": [
+            {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            }
+          ],
+          "baseArgs": [{ "k": "local", "name": "mutableTemp" }],
+          "thisArgs": null,
+          "body": []
+        }
+      ],
+      "methods": [],
+      "properties": [],
+      "attrs": []
+    },
+    {
+      "name": "CollectionViewAccessorOwner",
+      "kind": "class",
+      "abstract": true,
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "methods": [
+        {
+          "name": "getMutable",
+          "virtual": true,
+          "abstract": true,
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "body": []
+        },
+        {
+          "name": "getReadonly",
+          "virtual": true,
+          "abstract": true,
+          "params": [],
+          "ret": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "body": []
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    }
+  ],
   "refTypes": [],
   "methods": [
     {
@@ -137,6 +260,94 @@
       "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
     },
     {
+      "name": "chooseReadonly",
+      "static": true,
+      "params": [
+        { "name": "flag", "type": { "t": "fqn", "name": "kotlin.Boolean" } },
+        {
+          "name": "mutable",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        },
+        {
+          "name": "readonly",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.collections.List",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cond",
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "cond": { "k": "local", "name": "flag" },
+            "then": { "k": "local", "name": "mutable" },
+            "else": { "k": "local", "name": "readonly" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "chooseMutable",
+      "static": true,
+      "params": [
+        { "name": "flag", "type": { "t": "fqn", "name": "kotlin.Boolean" } },
+        {
+          "name": "mutable",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        },
+        {
+          "name": "readonly",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.collections.MutableList",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "body": [
+        {
+          "k": "return",
+          "value": {
+            "k": "cond",
+            "type": {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "cond": { "k": "local", "name": "flag" },
+            "then": { "k": "local", "name": "mutable" },
+            "else": { "k": "local", "name": "readonly" }
+          }
+        }
+      ]
+    },
+    {
       "name": "probe",
       "static": true,
       "params": [
@@ -185,6 +396,38 @@
               { "t": "fqn", "name": "kotlin.Int" }
             ]
           }
+        },
+        {
+          "name": "mutableCell",
+          "type": {
+            "t": "fqn",
+            "name": "GenericCollectionCell",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "kotlin.collections.List",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            ]
+          }
+        },
+        {
+          "name": "readonlyCell",
+          "type": {
+            "t": "fqn",
+            "name": "GenericCollectionCell",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IReadOnlyList",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            ]
+          }
+        },
+        {
+          "name": "accessorOwner",
+          "type": { "t": "fqn", "name": "CollectionViewAccessorOwner" }
         }
       ],
       "ret": { "t": "fqn", "name": "kotlin.Unit" },
@@ -212,11 +455,40 @@
         { "k": "setLocal", "name": "readonlyLocal", "value": { "k": "local", "name": "mutable" } },
         { "k": "setLocal", "name": "mutableLocal", "value": { "k": "local", "name": "readonly" } },
         {
+          "k": "var",
+          "name": "untypedConditional",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": {
+            "k": "cond",
+            "cond": { "k": "const", "type": { "t": "fqn", "name": "kotlin.Boolean" }, "value": true },
+            "then": { "k": "local", "name": "mutable" },
+            "else": { "k": "local", "name": "readonly" }
+          }
+        },
+        {
           "k": "exprStmt",
           "expr": {
             "k": "staticFieldSet",
             "ownerType": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
             "name": "readonlyField",
+            "fieldRef": {
+              "kind": "field",
+              "assembly": "CollectionViewValueFlowProbe",
+              "declaringType": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+              "name": "readonlyField",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IReadOnlyList",
+                "args": [{ "t": "fqn", "name": "System.Int32" }]
+              },
+              "callingConvention": "static",
+              "parameterTypes": []
+            },
             "value": { "k": "local", "name": "mutable" }
           }
         },
@@ -227,6 +499,121 @@
             "ownerType": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
             "name": "mutableField",
             "value": { "k": "local", "name": "readonly" }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "staticField",
+            "ownerType": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+            "name": "readonlyField",
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "fieldRef": {
+              "kind": "field",
+              "assembly": "CollectionViewValueFlowProbe",
+              "declaringType": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+              "name": "readonlyField",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IReadOnlyList",
+                "args": [{ "t": "fqn", "name": "System.Int32" }]
+              },
+              "callingConvention": "static",
+              "parameterTypes": []
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "setFieldExpr",
+            "ownerType": {
+              "t": "fqn",
+              "name": "GenericCollectionCell",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "kotlin.collections.List",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                }
+              ]
+            },
+            "recv": { "k": "local", "name": "mutableCell" },
+            "name": "item",
+            "value": { "k": "local", "name": "readonly" }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "field",
+            "ownerType": {
+              "t": "fqn",
+              "name": "GenericCollectionCell",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "kotlin.collections.List",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                }
+              ]
+            },
+            "recv": { "k": "local", "name": "mutableCell" },
+            "name": "item",
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "setFieldExpr",
+            "ownerType": {
+              "t": "fqn",
+              "name": "GenericCollectionCell",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "System.Collections.Generic.IReadOnlyList",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                }
+              ]
+            },
+            "recv": { "k": "local", "name": "readonlyCell" },
+            "name": "item",
+            "value": { "k": "local", "name": "mutable" }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "field",
+            "ownerType": {
+              "t": "fqn",
+              "name": "GenericCollectionCell",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "System.Collections.Generic.IReadOnlyList",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                }
+              ]
+            },
+            "recv": { "k": "local", "name": "readonlyCell" },
+            "name": "item",
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            }
           }
         },
         {
@@ -361,6 +748,118 @@
               "args": [{ "t": "fqn", "name": "kotlin.Int" }]
             },
             "args": []
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "field",
+            "ownerType": { "t": "fqn", "name": "CollectionViewAccessorOwner" },
+            "recv": { "k": "local", "name": "accessorOwner" },
+            "name": "mutableItems",
+            "member": "accessor",
+            "accessor": "getMutable",
+            "dispatch": "callvirt",
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "memberRef": {
+              "kind": "propertyAccessor",
+              "assembly": "CollectionViewValueFlowProbe",
+              "declaringType": { "t": "fqn", "name": "CollectionViewAccessorOwner" },
+              "name": "getMutable",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IList",
+                "args": [{ "t": "fqn", "name": "System.Int32" }]
+              },
+              "callingConvention": "instance",
+              "parameterTypes": []
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "field",
+            "ownerType": { "t": "fqn", "name": "CollectionViewAccessorOwner" },
+            "recv": { "k": "local", "name": "accessorOwner" },
+            "name": "readonlyItems",
+            "member": "accessor",
+            "accessor": "getReadonly",
+            "dispatch": "callvirt",
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "memberRef": {
+              "kind": "propertyAccessor",
+              "assembly": "CollectionViewValueFlowProbe",
+              "declaringType": { "t": "fqn", "name": "CollectionViewAccessorOwner" },
+              "name": "getReadonly",
+              "genericArity": 0,
+              "returnType": {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IReadOnlyList",
+                "args": [{ "t": "fqn", "name": "System.Int32" }]
+              },
+              "callingConvention": "instance",
+              "parameterTypes": []
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "field",
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Tuple",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "System.Collections.Generic.IList",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                },
+                { "t": "fqn", "name": "kotlin.Int" }
+              ]
+            },
+            "recv": { "k": "local", "name": "mutableProperty" },
+            "name": "Item1",
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "field",
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Tuple",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "System.Collections.Generic.IReadOnlyList",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                },
+                { "t": "fqn", "name": "kotlin.Int" }
+              ]
+            },
+            "recv": { "k": "local", "name": "readonlyProperty" },
+            "name": "Item1",
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            }
           }
         }
       ]

@@ -1368,7 +1368,8 @@ sealed class Pipeline
 
         // BirTypeLowering's mutable/read-only collection faces are sibling CLR interfaces. Materialize every cast
         // required by the final value-flow graph only now, after every synthetic declaration and exact memberRef is
-        // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI.
+        // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI. A metadata/ref
+        // build keeps kotlin.collections.* verbatim and never creates these physical sibling faces.
         if (!_options.RefBuild)
             CollectionViewCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList());
 

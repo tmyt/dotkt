@@ -8,9 +8,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 ### Toolchain
 
 - **Collection-view conversions are now explicit CIR facts (#513).** After final member binding, `bir2cir`
-  materializes every resolved mutable/read-only CLR sibling conversion across arguments, storage, returns, and
-  expression results. `ilemit` emits those casts one-to-one instead of inferring Kotlin collection ABI from stack
-  types, including both directions of nested `List` storage seams.
+  materializes every resolved mutable/read-only CLR sibling conversion across branch merges, constructor delegation,
+  arguments, lexical/field storage, returns, and expression results. It closes exact field/member declarations against
+  their constructed owner frames; `ilemit` emits those casts one-to-one instead of inferring Kotlin collection ABI
+  from stack types, including both directions of nested `List` storage seams.
 
 - **DLL-to-KLIB round trips now preserve extension-receiver roles explicitly (#512).** Kotlin extension methods and
   property accessors carry a trusted parameter-role marker instead of relying on the physical name `__self`; ordinary

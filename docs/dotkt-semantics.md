@@ -728,8 +728,9 @@ each read-only collection FQN to its invariant sibling whenever it appears at ge
 element keys and call/ctor type-args); the head keeps the covariant alias. Then `Map<K, List<V>>` lowers to
 `IDictionary<K, IList<V>>` and the concrete `Dictionary` inhabits it. Where a head-position read-only value then
 meets a collapsed mutable slot (or vice-versa), bir2cir materializes a runtime-checked CIR `cast` after final member
-binding. The resulting `castclass` is always verifiable — it targets a closed interface — and succeeds because
-stdlib collection values implement every face.
+binding, including branch joins, constructor delegation, storage, arguments, returns, and resolved member results.
+The resulting `castclass` is always verifiable — it targets a closed interface — and succeeds because stdlib
+collection values implement every face.
 
 Known deliberate gaps (all **verify-only / run-correct** for stdlib-backed values, tracked as follow-ups):
 - A **user class implementing ONLY the read-only face** (`class X : List<T>` with no mutable sibling) cannot be

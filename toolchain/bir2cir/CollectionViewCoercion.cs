@@ -143,14 +143,27 @@ static class CollectionViewCoercion
                     var rewritten = Coerce(Rewrite(init, fieldScope, index), target, fieldScope, index);
                     if (!ReferenceEquals(rewritten, init)) field["init"] = rewritten;
                 }
-        foreach (var key in new[] { "ctors", "methods" })
-            if (container[key] is JsonArray declarations)
-                foreach (var declaration in declarations.OfType<JsonObject>())
+        if (container["ctors"] is JsonArray constructors)
+            foreach (var constructor in constructors.OfType<JsonObject>())
+            {
+                var scope = new Scope().Frame(constructor, owner, new TypeNode.Fqn("void"));
+                // Constructor delegation is executable CIR too. Its evaluation plan establishes locals consumed by
+                // the bare argument vector, so preserve the same order ilemit uses: preStmts, delegation, body.
+                if (constructor["preStmts"] is JsonArray pre) RewriteArray(pre, scope, index);
+                var arguments = constructor["thisArgs"] as JsonArray ?? constructor["baseArgs"] as JsonArray;
+                if (arguments != null)
                 {
-                    var ret = key == "ctors" ? new TypeNode.Fqn("void") : TypeJson.Read(declaration["ret"]);
-                    var scope = new Scope().Frame(declaration, owner, ret);
-                    if (declaration["body"] is JsonArray body) RewriteArray(body, scope, index);
+                    RewriteArray(arguments, scope, index);
+                    CoerceVector(arguments, ConstructorParameterTypes(constructor), scope, index);
                 }
+                if (constructor["body"] is JsonArray body) RewriteArray(body, scope, index);
+            }
+        if (container["methods"] is JsonArray methods)
+            foreach (var method in methods.OfType<JsonObject>())
+            {
+                var scope = new Scope().Frame(method, owner, TypeJson.Read(method["ret"]));
+                if (method["body"] is JsonArray body) RewriteArray(body, scope, index);
+            }
     }
 
     static JsonNode Rewrite(JsonNode node, Scope scope, Index index)
@@ -167,7 +180,6 @@ static class CollectionViewCoercion
             return obj;
         }
 
-        var kind = Str(obj["k"]);
         var loopScope = LoopScope(obj, scope);
         foreach (var child in obj.ToList())
         {
@@ -223,7 +235,7 @@ static class CollectionViewCoercion
                     CoerceSlot(node, "value", localType, scope, index);
                 break;
             case "setField": case "setFieldExpr": case "staticFieldSet":
-                CoerceSlot(node, "value", FieldTarget(node, index), scope, index);
+                CoerceSlot(node, "value", FieldTarget(node, scope, index), scope, index);
                 break;
             case "return": case "returnExpr":
                 CoerceSlot(node, "value", scope.Return, scope, index);
@@ -238,10 +250,10 @@ static class CollectionViewCoercion
                     CoerceArguments(node, fn.DelegateParams, scope, index);
                 break;
             case "clrPropSet":
-                CoerceSlot(node, "value", FieldTarget(node, index), scope, index);
+                CoerceSlot(node, "value", FieldTarget(node, scope, index), scope, index);
                 break;
             case "arraySet":
-                CoerceSlot(node, "value", NodeType.ElementOf(ExprType(node["array"], scope, index)), scope, index);
+                CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
                 break;
             case "stackSet": case "byrefStore":
                 CoerceSlot(node, "value", TypeJson.Read(node["elem"]), scope, index);
@@ -260,12 +272,22 @@ static class CollectionViewCoercion
                         CoerceSlot(entry, "value", TypeJson.Read(node["valType"]), scope, index);
                     }
                 break;
+            case "cond":
+                var result = TypeJson.Read(node["type"]);
+                CoerceSlot(node, "then", result, scope, index);
+                CoerceSlot(node, "else", result, scope, index);
+                break;
         }
     }
 
     static void CoerceArguments(JsonObject node, TypeNode[] targets, Scope scope, Index index)
     {
-        if (targets == null || node["args"] is not JsonArray args || targets.Length != args.Count) return;
+        if (node["args"] is JsonArray args) CoerceVector(args, targets, scope, index);
+    }
+
+    static void CoerceVector(JsonArray args, TypeNode[] targets, Scope scope, Index index)
+    {
+        if (targets == null || args == null || targets.Length != args.Count) return;
         for (var i = 0; i < args.Count; i++)
             if (args[i] is JsonNode arg)
             {
@@ -296,6 +318,22 @@ static class CollectionViewCoercion
 
     static JsonNode Coerce(JsonNode value, TypeNode target, Scope scope, Index index)
     {
+        // A stamp-less conditional still has an internal verifier merge before its enclosing store/argument/return.
+        // An outer cast is too late: normalize the sibling branch itself and state the merge type once an edge proves
+        // it. Typed conditionals take the same path earlier through CoerceInputs.
+        if (target != null && value is JsonObject conditional && Str(conditional["k"]) == "cond"
+            && conditional["type"] == null)
+        {
+            var thenSeam = CollectionViewFaces.IsViewSeam(ExprType(conditional["then"], scope, index), target);
+            var elseSeam = CollectionViewFaces.IsViewSeam(ExprType(conditional["else"], scope, index), target);
+            if (thenSeam || elseSeam)
+            {
+                CoerceSlot(conditional, "then", target, scope, index);
+                CoerceSlot(conditional, "else", target, scope, index);
+                conditional["type"] = TypeJson.Write(target);
+                return conditional;
+            }
+        }
         var got = ExprType(value, scope, index);
         if (!CollectionViewFaces.IsViewSeam(got, target)) return value;
         return new JsonObject
@@ -342,10 +380,10 @@ static class CollectionViewCoercion
     {
         var kind = Str(expression["k"]);
         if (kind == "cast") return TypeJson.Read(expression["type"]);
-        if (expression["memberRef"] is JsonObject member
+        if (ResolvedMember(expression) is JsonObject member
             && kind is "callStatic" or "callInstance" or "constrainedCall"
                 or "clrStatic" or "clrInstance" or "clrGenericStatic" or "clrGenericInstance"
-                or "clrPropGet" or "field" or "staticField")
+                or "clrPropGet" or "field" or "staticField" or "clrStaticField" or "lateinitGet")
             return Close(TypeJson.Read(member["returnType"]), OwnerArgs(member), MethodArgs(expression));
         if (kind is "callStatic" or "callInstance" && index.Method(expression) is MethodShape method)
         {
@@ -353,21 +391,42 @@ static class CollectionViewCoercion
             return Close(method.Return, owner?.Args, MethodArgs(expression));
         }
         if (kind is "field" or "staticField" or "lateinitGet")
-            return index.Field(TypeJson.OwnerName(expression["ownerType"]), Str(expression["name"]));
+        {
+            var owner = FieldOwner(expression, scope, index);
+            return Close(index.Field(owner?.Name, Str(expression["name"])), owner?.Args, MethodArgs(expression));
+        }
         return null;
     }
 
-    static TypeNode FieldTarget(JsonObject node, Index index)
+    static TypeNode FieldTarget(JsonObject node, Scope scope, Index index)
     {
-        if (node["memberRef"] is JsonObject member)
+        if (ResolvedMember(node) is JsonObject member)
         {
             var raw = Str(member["kind"]) == "field"
                 ? TypeJson.Read(member["returnType"])
                 : ReadTypes(member["parameterTypes"] as JsonArray)?.LastOrDefault();
             return Close(raw, OwnerArgs(member), MethodArgs(node));
         }
-        return TypeJson.Read(node["memberType"])
-            ?? index.Field(TypeJson.OwnerName(node["ownerType"]), Str(node["name"]));
+        var owner = FieldOwner(node, scope, index);
+        var localRaw = TypeJson.Read(node["memberType"]) ?? index.Field(owner?.Name, Str(node["name"]));
+        return Close(localRaw, owner?.Args, MethodArgs(node));
+    }
+
+    static TypeNode.Fqn FieldOwner(JsonObject node, Scope scope, Index index)
+        => TypeJson.Read(node["ownerType"] ?? node["type"]) as TypeNode.Fqn
+            ?? ExprType(node["recv"], scope, index) as TypeNode.Fqn;
+
+    static JsonObject ResolvedMember(JsonObject node)
+        => node["memberRef"] as JsonObject ?? node["fieldRef"] as JsonObject;
+
+    static TypeNode[] ConstructorParameterTypes(JsonObject constructor)
+    {
+        if (constructor["baseCtorRef"] is JsonObject member)
+        {
+            var parameters = ReadTypes(member["parameterTypes"] as JsonArray);
+            return parameters?.Select(p => Close(p, OwnerArgs(member), Array.Empty<TypeNode>())).ToArray();
+        }
+        return ReadTypes(constructor["delegationSig"] as JsonArray);
     }
 
     static TypeNode[] ParameterTypes(JsonObject node)
