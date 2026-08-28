@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inline `try` values now produce valid IL in array and object-method operand slots (#437).** `bir2cir` models
+  `arrayGet`, `arraySet`, and `objMethod` operands in their physical evaluation order, hoisting protected regions to
+  an empty CLR evaluation stack while preserving Kotlin's left-to-right side effects.
+
 - **Cross-module suspend `super` calls now retain valid non-virtual dispatch (#439).** Consumer state machines call a
   private derived-instance forwarder that targets the producer's exact cold entry on its real `this`, avoiding
   recursive redispatch and invalid receiver IL.

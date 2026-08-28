@@ -65,6 +65,17 @@ static class TryValueOperandHoist
         ["newSet"] = "elems",
     };
 
+    // Node kinds whose value operands are named fields rather than `recv` + `args`. Keep the physical evaluation
+    // order explicit: a protected region in any slot after the first begins while its predecessors are live on the
+    // CLR stack. `objMethod` is here even though it has a receiver because Equals spells its sole argument as `arg`,
+    // not as an `args` array; treating every receiver-bearing node as an ordinary call silently skipped that slot.
+    static readonly Dictionary<string, string[]> OrderedNamedValueSlots = new(StringComparer.Ordinal)
+    {
+        ["arrayGet"] = new[] { "array", "index" },
+        ["arraySet"] = new[] { "array", "index", "value" },
+        ["objMethod"] = new[] { "recv", "arg" },
+    };
+
     static string K(JsonNode n) => (n as JsonObject)?["k"] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
 
     // Post-order whole-tree walk: normalize INNER statement lists first (so a hoisted try-valueBlock's
@@ -185,6 +196,11 @@ static class TryValueOperandHoist
         if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
         {
             HoistOrdered(2, i => i == 0 ? o["lhs"] : o["rhs"], (i, v) => { if (i == 0) o["lhs"] = v; else o["rhs"] = v; }, atEmpty, pre, scope);
+            return o;
+        }
+        if (k != null && OrderedNamedValueSlots.TryGetValue(k, out var namedValueSlots))
+        {
+            HoistNamedSlots(o, namedValueSlots, atEmpty, pre, scope);
             return o;
         }
         if (k == "concat" && o["parts"] is JsonArray parts)
@@ -340,6 +356,17 @@ static class TryValueOperandHoist
         if (k == "valueBlock" && IsTryValueBlock(o)) return !atEmpty;
         if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
             return WillHoist(o["lhs"], atEmpty) || WillHoist(o["rhs"], false);
+        if (k != null && OrderedNamedValueSlots.TryGetValue(k, out var namedValueSlots))
+        {
+            var first = true;
+            foreach (var key in namedValueSlots)
+                if (o[key] is JsonNode operand)
+                {
+                    if (WillHoist(operand, first && atEmpty)) return true;
+                    first = false;
+                }
+            return false;
+        }
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
             foreach (var part in parts) if (WillHoist(part, atEmpty: false)) return true;
