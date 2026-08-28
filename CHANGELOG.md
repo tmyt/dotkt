@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Cross-module suspend `super` calls now retain valid non-virtual dispatch (#439).** Consumer state machines call a
+  private derived-instance forwarder that targets the producer's exact cold entry on its real `this`, avoiding
+  recursive redispatch and invalid receiver IL.
+
 - **Pure-app String values now cross referenced CharSequence helper boundaries with valid IL (#443).**
   `bir2cir` keeps frontend result-type stamps synchronized when local declarations and local-call returns collapse from
   `CharSequence` to `String`, so referenced Kotlin wrappers receive an explicit adapter instead of a raw CLR string.
