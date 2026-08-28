@@ -28,6 +28,17 @@ namespace fgn
         // `List<Nullable<Int32>>` on a stack typed as the unrelated Kotlin form.
         public List<int?> Make() { var l = new List<int?>(); l.Add(1); l.Add(null); return l; }
 
+        // #354: an array element is the same reified-argument crossing. Kotlin's `Array<Int?>` is physically
+        // `object[]`, not `Nullable<int>[]`, so neither direction has an inhabitable Kotlin value.
+        public int CountPresentArray(int?[] xs)
+        {
+            int n = 0;
+            foreach (var x in xs) if (x.HasValue) n++;
+            return n;
+        }
+
+        public int?[] MakeArray() => new int?[] { 1, null };
+
         // REFUSED at a PROPERTY, which reaches the same stamp through the accessor.
         public List<int?> Items { get; } = new List<int?>();
 
