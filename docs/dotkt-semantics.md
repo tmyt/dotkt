@@ -727,8 +727,10 @@ each read-only collection FQN to its invariant sibling whenever it appears at ge
 `List`→`IList`, `Collection`/`Set`→`ICollection` inside any type argument (and in `newList`/`newMap`/`newSet`
 element keys and call/ctor type-args); the head keeps the covariant alias. Then `Map<K, List<V>>` lowers to
 `IDictionary<K, IList<V>>` and the concrete `Dictionary` inhabits it. Where a head-position read-only value then
-meets a collapsed mutable slot (or vice-versa), ilemit reconciles with a runtime-checked `castclass` (always
-verifiable — a closed interface cast — and succeeds because stdlib collection values implement every face).
+meets a collapsed mutable slot (or vice-versa), bir2cir materializes a runtime-checked CIR `cast` after final member
+binding, including branch joins, constructor delegation, storage, arguments, returns, and resolved member results.
+The resulting `castclass` is always verifiable — it targets a closed interface — and succeeds because stdlib
+collection values implement every face.
 
 Known deliberate gaps (all **verify-only / run-correct** for stdlib-backed values, tracked as follow-ups):
 - A **user class implementing ONLY the read-only face** (`class X : List<T>` with no mutable sibling) cannot be
@@ -740,11 +742,11 @@ Known deliberate gaps (all **verify-only / run-correct** for stdlib-backed value
   dirty — the collapse trades the (previously CLR-granted, rarely-used) nested covariance for the far more
   common concrete-into-slot verifiability. It runs correctly.
 
-## 5c-ter. Two residual covariance gaps left DURABLE after the Root-V collapse (accepted, not fixed)
+## 5c-ter. Residual covariance and physical view seams after the Root-V collapse
 
-The #75/#100 Root-V collapse (§5c-bis) closed nested **value**-covariance for `List`/`Collection`/`Set`. Two
-covariance seams it did **not** address are deliberately accepted as durable limitations (task #102) — both are
-narrow, and closing either would add per-call reconciliation for an idiom that is rare or already run-correct.
+The #75/#100 Root-V collapse (§5c-bis) closed nested **value**-covariance for `List`/`Collection`/`Set`. It leaves
+one durable source-level covariance limitation (task #102), plus a family of physical sibling-view conversions that
+bir2cir must state explicitly after it has resolved each value-flow edge.
 
 - **`Map<out K, V>` key-covariance (the "Root-K" seam).** `Map` is declared `Map<K, out V>`: values are
   declaration-site covariant (and collapse via §5c-bis), but **keys are invariant**, exactly as CLR
@@ -760,14 +762,15 @@ narrow, and closing either would add per-call reconciliation for an idiom that i
   `Map<Sub, V>` into a `Map<Super, V>`-typed target; same-key merges (the overwhelming majority) never touch it.
   **Disposition: documented, not fixed** — key invariance matches CLR `IDictionary`, so there is no covariant
   sibling to collapse to; use a target-key-typed source map when merging.
-- **The ~46 internal `IList`↔`IReadOnlyList` view seams inside the shipped runtime stdlib (`DotKt.Stdlib.dll`).**
+- **The internal `IList`↔`IReadOnlyList` view seams inside the shipped runtime stdlib (`DotKt.Stdlib.dll`).**
   These are the head-vs-nested face mismatches (§5c-bis) as they occur **inside stdlib bodies** — a head-position
-  read-only value meeting a collapsed mutable slot, or its exact transpose. They are **reconciled at emit** by
-  ilemit's `IsCollectionViewSeam` `castclass` (bidirectional since #100 H1) and are **not user-observable**: every
-  stdlib/BCL-backed collection implements all faces, so the closed-interface cast always succeeds. The only way to
-  surface an `InvalidCastException` is the already-documented §5c-bis edge — a hand-rolled **read-only-only** user
-  collection or a foreign **`IList`-only** C# collection crossing such a slot. **Disposition: internal + reconciled,
-  documented, not fixed** — they are body-level emit artifacts, not an exported ABI shape.
+  read-only value meeting a collapsed mutable slot, or its exact transpose. After final member binding, bir2cir
+  materializes each resolved seam as an explicit CIR `cast`; ilemit emits that physical instruction one-to-one and
+  has no Kotlin collection-family or stdlib-ABI inference. Every stdlib/BCL-backed collection implements all faces,
+  so the closed-interface cast succeeds. The only way to surface an `InvalidCastException` is the already-documented
+  §5c-bis edge — a hand-rolled **read-only-only** user collection or a foreign **`IList`-only** C# collection crossing
+  such a slot. **Disposition: internal + explicitly reconciled** — they are body-level physical conversions, not an
+  exported ABI shape.
 
 ## 5c-quater. Cross-module collection surfacing: DotKt `kotlin.collections.*` restores; genuine C# BCL stays BCL (#27)
 

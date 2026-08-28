@@ -237,6 +237,13 @@ MethodImpl descriptor of its own: its members are the same names and signatures 
 the type, and the CLR binds an interface slot to a matching public virtual method implicitly, per interface. ilemit
 does not enumerate that interface or manufacture a redundant MethodImpl.
 
+The same physical-face rule applies to executable value flow. After member and constructor binding are final,
+bir2cir writes an ordinary CIR `cast` at every edge where equal-element `IList`/`ICollection` and
+`IReadOnlyList`/`IReadOnlyCollection` sibling faces meet. Edges include branch merges, lexical and field storage,
+arguments (including constructor delegation), returns, and a resolved member's physical result versus its declared
+caller-facing result. The resolved declaration, constructed owner frame, or lexical slot is the authority for each
+target; ilemit emits the stated cast one-to-one and must not recognize collection families from transient stack types.
+
 Fake-override resolution remains a frontend decision. kotc records a concrete selected declaration on an interface
 fake override as `inheritedImplementation`, and records each default property accessor inherited by a class in
 `inheritedDefaultAccessors` together with its class-frame Kotlin signature. These selected identities include the

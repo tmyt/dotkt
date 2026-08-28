@@ -179,7 +179,7 @@ static class BirTypeLowering
     // `IDictionary<K,IReadOnlyList<V>>` (invariant). The concrete BCL type inhabits these exactly: List<T>/HashSet<T>
     // implement IList<T>/ICollection<T>. (Iterable->IEnumerable is covariant, no collapse; Map/MutableMap already
     // collapse to IDictionary at head.) HEAD-position seams (a head IList<T> value into a readonly IReadOnlyList<T>
-    // slot) are materialized as explicit CIR casts by CollectionViewCallCoercion after this transform.
+    // slot) are materialized as explicit CIR casts by CollectionViewCoercion after final member binding.
     static readonly IReadOnlyDictionary<string, string> InvariantSibling = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["kotlin.collections.List"] = "System.Collections.Generic.IList",
@@ -242,7 +242,7 @@ static class BirTypeLowering
             return new TypeNode.Fqn("System.IComparable");
         // ARG-POSITION VARIANCE COLLAPSE (Root V): in a storage slot a covariant readonly collection interface ->
         // its INVARIANT sibling, so a concrete invariant value inhabits the nested slot EXACTLY. The head keeps the
-        // covariant alias; CollectionViewCallCoercion materializes any resulting call-site seam as a CIR cast.
+        // covariant alias; CollectionViewCoercion materializes any resulting value-flow seam as a CIR cast.
         if (collapseInvariant && InvariantSibling.TryGetValue(kotlinFqn, out var inv))
             return new TypeNode.Fqn(inv, loweredArgs);
         // A generic application: a @ClrTypeAlias GENERIC owner -> the BCL generic (ilemit arity-constructs).

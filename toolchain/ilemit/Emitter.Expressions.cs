@@ -54,15 +54,8 @@ sealed partial class Emitter
                     var getter = LinkClrMethod(ftype, e.GetProperty("accessor").GetString(), e, instance: true);
                     if (IsValueType(ftype)) EmitAddr(e.GetProperty("recv")); else EmitExpr(e.GetProperty("recv"));
                     EmitClrDispatch(getter, RequireDispatch(e, ftype, "field"), ftype);
-                    // Property-read twin of the CoerceReturn seam (`pair.first` vs the destructuring `component1()`),
-                    // reconciling a collapsed-variance collection seam between the getter's REAL return type and bir2cir's
-                    // declared `ret` view. FORWARD: the getter returns the mutable interface (IList<T>) while `ret` declares
-                    // the readonly view (IReadOnlyList<T>). REVERSE: an external property genuinely typed readonly while
-                    // `ret` declares the collapsed mutable view. Reconcile the stack to the declared view with a castclass.
                     var getterReturn = ReturnTypeOf(getter);
-                    var prDeclared = RetOr(e, getterReturn);
-                    if (IsCollectionViewSeam(getterReturn, prDeclared)) _il.Emit(OpCodes.Castclass, prDeclared);
-                    return prDeclared;
+                    return RetOr(e, getterReturn);
                 }
                 var fon = ParseOwnerSlot(e.GetProperty("ownerType"));
                 FieldInfo fb; Type ft;
@@ -241,9 +234,8 @@ sealed partial class Emitter
                 if (ccPs != null) EmitArgsTyped(ccArgs, ccPs, mi); else EmitArgs(ccArgs, ParametersOf(mi));
                 _il.Emit(OpCodes.Constrained, recvType);
                 EmitMethod(_il, OpCodes.Callvirt, mi);
-                // …and the declared call-RESULT view still has to be reconciled with the resolved return type —
-                // the object-erasure unbox/castclass and the collapsed-variance collection seam are properties of
-                // the CALL, not of how its receiver was addressed.
+                // …and the object-erasure conversion is a property of the call, not of how its receiver was addressed.
+                // Any other physical/result-view conversion is already an explicit enclosing CIR node.
                 return CoerceReturn(e, mi == mi0 ? ReturnTypeOf(mi) : ccRet);
             }
             case "callStatic":

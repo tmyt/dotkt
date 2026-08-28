@@ -17,17 +17,18 @@
 // Assembly-wide collision rule: the sole top-level helper is `CollectionTypePosition`-prefixed.
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
+import kotlin.clr.ClrField
+
+class CollectionTypePositionCell<T>(initial: T) {
+    @ClrField var item: T = initial
+}
 
 class CollectionTypePositionTests {
     // ---- generic-ARGUMENT position: the token collapses to the invariant sibling ------------------------------
 
-    // These two assert through `flatten()` rather than by indexing an element out of the nested collection.
-    // That is not squeamishness about the assertion: extracting the element crosses a SEPARATE seam, where the
-    // value really is the invariant sibling (Root-V made it one) while the Kotlin declared type says the
-    // covariant face, and no view coercion is inserted there — ILVerify rejects the result. That gap is about
-    // call-site casts rather than member identity, it reproduces without this change, and letting it decide the
-    // shape of this fixture would mean testing two unrelated things and being able to fix neither.
-    // `flatten()` keeps the nested collection whole, so the reference under test is still the one being proven.
+    // Direct element extraction crosses the physical sibling seam created by Root-V: the member returns the
+    // invariant nested face while Kotlin exposes the read-only face. bir2cir must state that view conversion in
+    // CIR; leaving it to ilemit both violates layer ownership and produces unverifiable IL when it is omitted.
 
     @TestAttribute
     fun nestedCollectionInAReturnedElementSlot() {
@@ -35,6 +36,10 @@ class CollectionTypePositionTests {
         // shape that was mis-spelled: the reference said `IReadOnlyList<IReadOnlyList<T>>`.
         val w: List<List<Int>> = listOf(1, 2, 3, 4).windowed(2, 1)
         assertEquals(3, w.size)
+        val first: List<Int> = w[0]
+        assertEquals(2, first.size)
+        assertEquals(1, first[0])
+        assertEquals(2, first[1])
         val f: List<Int> = w.flatten()
         assertEquals(6, f.size)
         assertEquals(1, f[0])
@@ -45,6 +50,9 @@ class CollectionTypePositionTests {
     fun nestedCollectionThroughChunked() {
         val c: List<List<Int>> = listOf(1, 2, 3, 4, 5).chunked(2)
         assertEquals(3, c.size)
+        val last: List<Int> = c[2]
+        assertEquals(1, last.size)
+        assertEquals(5, last[0])
         val f: List<Int> = c.flatten()
         assertEquals(5, f.size)
         assertEquals(5, f[4])
@@ -94,5 +102,18 @@ class CollectionTypePositionTests {
         val flat: List<Int> = listOf(listOf(1, 2), listOf(3)).flatten()
         assertEquals(3, flat.size)
         assertEquals(3, flat[2])
+    }
+
+    @TestAttribute
+    fun conditionalBranchesAndGenericFieldsCarryTheirPhysicalViews() {
+        val mutable: MutableList<Int> = mutableListOf(1, 2)
+        val readonly: List<Int> = listOf(3, 4)
+        val fromMutable: List<Int> = if (mutable.size == 2) mutable else readonly
+        assertEquals(1, fromMutable[0])
+
+        val mutableCell: CollectionTypePositionCell<List<Int>> = CollectionTypePositionCell(readonly)
+        assertEquals(3, mutableCell.item[0])
+        mutableCell.item = mutable
+        assertEquals(2, mutableCell.item[1])
     }
 }
