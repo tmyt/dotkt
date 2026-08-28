@@ -256,8 +256,8 @@ static class SuspendLambdaLowering
             else
                 // `__outer` is kotc's name for a captured enclosing `<this>`/extension-receiver (BirEmitter.kt:2929).
                 // Its VALUE at an ORDINARY (non-SM) construction site is the enclosing method's receiver: an instance
-                // method reads `this`; a STATIC extension fun (receiver rode a leading `__self` param) reads
-                // `local __self`. `outerSelf` carries which. Every other capture is a real local.
+                // method reads `this`; a STATIC extension fun reads the exact physical receiver slot carried by
+                // `outerSelf`. Every other capture is a real local.
                 args.Add(n == "__outer"
                     ? (outerSelf != null ? new JsonObject { ["k"] = "local", ["name"] = outerSelf }
                                  : new JsonObject { ["k"] = "this" })
