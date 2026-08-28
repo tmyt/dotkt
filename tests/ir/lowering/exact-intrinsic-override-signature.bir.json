@@ -1,0 +1,145 @@
+{
+  "fileClass": "ExactIntrinsicOverrideSignatureKt",
+  "hasMain": false,
+  "fields": [],
+  "methods": [],
+  "refTypes": [],
+  "types": [
+    {
+      "name": "ExactIntrinsicOverrideProbe",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" }
+      ],
+      "fields": [],
+      "ctors": [
+        { "params": [], "baseArgs": null, "thisArgs": null, "vis": "public", "body": [] }
+      ],
+      "methods": [
+        {
+          "name": "select",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": false,
+          "vis": "public",
+          "params": [
+            { "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "overrides": [
+            {
+              "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicBaseSurface" },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            },
+            {
+              "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            }
+          ],
+          "body": [],
+          "attrs": []
+        },
+        {
+          "name": "select",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": false,
+          "vis": "public",
+          "params": [
+            { "name": "value", "type": { "t": "fqn", "name": "kotlin.String" } }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "overrides": [
+            {
+              "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicBaseSurface" },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            },
+            {
+              "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            }
+          ],
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    },
+    {
+      "name": "ExactIntrinsicFallbackProbe",
+      "kind": "class",
+      "abstract": false,
+      "vis": "public",
+      "base": null,
+      "interfaces": [
+        { "t": "fqn", "name": "DotKt.Tests.IntrinsicDerivedSurface" }
+      ],
+      "fields": [],
+      "ctors": [
+        { "params": [], "baseArgs": null, "thisArgs": null, "vis": "public", "body": [] }
+      ],
+      "methods": [
+        {
+          "name": "select",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": false,
+          "vis": "public",
+          "params": [
+            { "name": "value", "type": { "t": "fqn", "name": "kotlin.Int" } }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "overrides": [
+            {
+              "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicBaseSurface" },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            }
+          ],
+          "body": [],
+          "attrs": []
+        },
+        {
+          "name": "select",
+          "static": false,
+          "override": false,
+          "virtual": true,
+          "abstract": false,
+          "vis": "public",
+          "params": [
+            { "name": "value", "type": { "t": "fqn", "name": "kotlin.String" } }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "overrides": [
+            {
+              "owner": { "t": "fqn", "name": "DotKt.Tests.IntrinsicBaseSurface" },
+              "member": "select",
+              "kind": "method",
+              "arity": 1
+            }
+          ],
+          "body": [],
+          "attrs": []
+        }
+      ],
+      "properties": [],
+      "attrs": []
+    }
+  ]
+}

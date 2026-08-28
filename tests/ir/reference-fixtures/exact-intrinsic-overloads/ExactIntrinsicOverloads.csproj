@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>DotKt.Tests.ExactIntrinsicOverloads</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="DotKt.Stdlib">
+      <HintPath>$(DotKtStdlibRef)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

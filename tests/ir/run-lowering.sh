@@ -68,6 +68,11 @@
 #   while bir2cir replaces only its final erased-platform cast with the concrete CLR element-view adapter.
 #   `sequence-element-adapter` pins that physical boundary and its malformed sibling pins the marker contract.
 #
+#   Declaration/override identity (#444) — an ordinary member's @ClrIntrinsic allocation is selected by its complete
+#   source declaration signature, never source name plus parameter count. `exact-intrinsic-override-signature` uses a
+#   compiler-authored metadata reference with a resolvable wrong physical decoy to pin both declaration rename and the
+#   referenced-interface fallback; a later CLR lookup cannot make the test pass merely by rejecting the wrong name.
+#
 # ACCEPT case — `<name>.bir.json` plus a `<name>.assert` file of lines:
 #     +<substring>   the emitted CIR MUST contain it
 #     -<substring>   the emitted CIR must NOT contain it
@@ -82,10 +87,29 @@ cd "$ROOT"
 
 need_tool bir2cir
 need_dotnet_reference_sets
+work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+if [[ ! -f "$STDLIB_REF_DLL" ]]; then
+	echo "LOWERING GATE: RED — exact-intrinsic compiler metadata fixture requires $STDLIB_REF_DLL"
+	exit 1
+fi
+
+# Compiler-owned metadata fixture for exact declaration/override binding. It deliberately contains a same-name,
+# same-parameter-count intrinsic overload set and a physical decoy slot, so a name+arity lookup produces valid but
+# wrong MethodImpl metadata instead of failing later by accident. Keep its build products out of the source tree.
+exact_intrinsic_ref="$work/exact-intrinsic-ref"
+if ! dotnet build tests/ir/reference-fixtures/exact-intrinsic-overloads/ExactIntrinsicOverloads.csproj \
+	--nologo -v:q -o "$exact_intrinsic_ref" \
+	-p:BaseIntermediateOutputPath="$work/exact-intrinsic-obj/" \
+	-p:MSBuildProjectExtensionsPath="$work/exact-intrinsic-obj/" \
+	-p:DotKtStdlibRef="$STDLIB_REF_DLL" >/dev/null; then
+	echo "LOWERING GATE: RED — failed to build exact-intrinsic compiler metadata fixture"
+	exit 1
+fi
+
 refs="$FRAMEWORK_COMPILE_REFS"
 if [[ -f "$STDLIB_REF_DLL" ]]; then refs="$(refset_join "$refs" "$STDLIB_REF_DLL")"; fi
+refs="$(refset_join "$refs" "$exact_intrinsic_ref/DotKt.Tests.ExactIntrinsicOverloads.dll")"
 
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 rc=0
 cases=0
 rejects=0

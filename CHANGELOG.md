@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Intrinsic override allocation now preserves exact declaration identity (#444).** Declaration rename and
+  referenced-interface MethodImpl allocation select `@ClrIntrinsic` from the frontend-resolved generic arity and full
+  parameter vector instead of taking the first same-name, same-parameter-count overload.
+
 - **Collection-view conversions are now explicit CIR facts (#513).** After final member binding, `bir2cir`
   materializes every resolved mutable/read-only CLR sibling conversion across branch merges, constructor delegation,
   arguments, lexical/field storage, returns, and expression results. It closes exact field/member declarations against

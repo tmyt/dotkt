@@ -177,8 +177,9 @@ static class DeclarationRename
         catch { return false; }
     }
 
-    // The first override entry whose (owner, Kotlin member name, arity) resolves to a CLR slot. Property accessors use
-    // the referenced Property/MethodSemantics association; ordinary methods use their exact intrinsic/native name.
+    // The first override entry whose complete declaration identity resolves to a CLR slot. Property accessors use the
+    // referenced Property/MethodSemantics association; ordinary methods use source name + method generic arity + the
+    // complete parameter vector in the override owner's constructed frame.
     // null = no CLR-bound member in the closure (leave the kotc name).
     internal static string ResolveSlot(JsonObject declaration, JsonArray ovs, ReferenceMetadataIndex refs)
     {
@@ -193,14 +194,17 @@ static class DeclarationRename
             // A property annotation names the target CLR Property, not an accessor spelling. Resolve the exact
             // MethodSemantics association from reference metadata. A setter overriding a getter-only `val` still uses
             // the getter to establish the property allocation, then resolves the external setter if one exists. Plain
-            // methods use their exact intrinsic name. Arity remains part of ordinary-method overload selection.
+            // methods use their exact intrinsic name.
             if (kind is "getter" or "setter")
             {
                 if (TryExactPropertySlot(declaration, refs, ownerSpec, member, kind,
                         out _, out _, out var accessorMethod, out _)) return accessorMethod;
                 continue;
             }
-            if (refs.TryMemberIntrinsicExact(owner, member, arity, out var intr)) return intr;
+            if (!TryCallableSignature(declaration, out var signature, out var methodArity)
+                || signature.Length != arity) continue;
+            if (refs.TryExactMemberIntrinsic(owner, member, methodArity, signature,
+                    ownerSpec.Args ?? Array.Empty<TypeNode>(), out var intr)) return intr;
         }
         // REFERENCE-KLIB-PROJECTED .NET interface/base (A2 step 5): the override owner resolves to a REAL .NET Type off the
         // refs (NOT a stdlib ref.dll alias — ResolveNetType excludes kotlin.*/dotkt$ synthetics and locals
@@ -221,6 +225,29 @@ static class DeclarationRename
             if (NetInteropBinding.DeclaresPublicMethodNamed(nt, member)) return member;
         }
         return null;
+    }
+
+    // ResolveSlot serves both a declaration and its already-selected call nodes. They carry the same declaration
+    // identity in different structural slots: declarations use params/typeParams, calls use sig/typeArgs. Keep that
+    // vocabulary distinction explicit rather than recovering either vector from the override marker's coarse arity.
+    static bool TryCallableSignature(JsonObject node, out TypeNode[] signature, out int methodArity)
+    {
+        signature = null;
+        methodArity = 0;
+        if (node["params"] is JsonArray parameters)
+        {
+            signature = parameters.OfType<JsonObject>()
+                .Select(parameter => TypeJson.Read(parameter["type"])).ToArray();
+            methodArity = (node["typeParams"] as JsonArray)?.Count ?? 0;
+            return signature.Length == parameters.Count && signature.All(type => type != null);
+        }
+        if (node["sig"] is JsonArray callSignature)
+        {
+            signature = callSignature.Select(TypeJson.Read).ToArray();
+            methodArity = (node["typeArgs"] as JsonArray)?.Count ?? 0;
+            return signature.All(type => type != null);
+        }
+        return false;
     }
 
     // The overriding declaration already carries the frontend-resolved accessor signature. Pair it with the exact

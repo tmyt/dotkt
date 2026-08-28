@@ -2663,9 +2663,16 @@ sealed partial class ReferenceMetadataIndex
     // cannot be represented by a method delegate without an explicit lowering of their own.
     public bool TryExactMemberIntrinsic(string ownerFqn, string memberName, int methodArity,
         IReadOnlyList<TypeNode> signature, out string intrinsic)
+        => TryExactMemberIntrinsic(ownerFqn, memberName, methodArity, signature, null, out intrinsic);
+
+    // An override edge can name a constructed semantic owner. Close the referenced declaration in that exact owner
+    // frame before comparing it with the implementation's already-selected parameter vector; selecting another
+    // same-name/same-count overload would split declaration rename from MethodImpl allocation.
+    internal bool TryExactMemberIntrinsic(string ownerFqn, string memberName, int methodArity,
+        IReadOnlyList<TypeNode> signature, IReadOnlyList<TypeNode> ownerTypeArguments, out string intrinsic)
     {
         intrinsic = null;
-        if (!TryExactMemberClrBinding(ownerFqn, memberName, methodArity, signature, out var binding)
+        if (!TryExactMemberClrBinding(ownerFqn, memberName, methodArity, signature, ownerTypeArguments, out var binding)
             || binding.Intrinsic == null) return false;
         intrinsic = binding.Intrinsic;
         return true;
@@ -2688,17 +2695,6 @@ sealed partial class ReferenceMetadataIndex
         if (exact.Count > 0) return exact;
         return candidates.Where(m => Parameters(m)
             .Select((p, i) => DeclarationDescribesCall(p, signature[i])).All(x => x)).ToList();
-    }
-
-    // STRICT arity-exact @ClrIntrinsic lookup for the DECLARATION rename: the declaration being renamed already owns
-    // its parameter vector, so `add(element)` (arity 1, ->Add) must NOT fall through to `add(index,element)` (arity 2,
-    // ->Insert). There is no fallback — no exact-arity match means no rename.
-    public bool TryMemberIntrinsicExact(string ownerFqn, string memberName, int argCount, out string intrinsic)
-    {
-        intrinsic = TryMembersByBirOwner(ownerFqn, out var list)
-            ? list.FirstOrDefault(m => m.Name == memberName && m.Intrinsic != null && m.ParamCount == argCount)?.Intrinsic
-            : null;
-        return intrinsic != null;
     }
 
     // Resolve the declaration selected by the frontend, including the generic-parameter constraint vector that is

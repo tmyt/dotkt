@@ -1114,7 +1114,8 @@ static class KotlinOverrideSlotBridge
                         selectedSemanticOwner = owner;
                         descriptorMember = markerBinding.Intrinsic;
                     }
-                    else if (refs.TryMemberIntrinsicExact(spec.Name, member, ps.Count, out var clrName))
+                    else if (refs.TryExactMemberIntrinsic(spec.Name, member, methodArity,
+                            implementationSignature, spec.Args ?? Array.Empty<TypeNode>(), out var clrName))
                         descriptorMember = clrName;
 
                     var loweredOwner = BirTypeLowering.LowerPhysicalType(
