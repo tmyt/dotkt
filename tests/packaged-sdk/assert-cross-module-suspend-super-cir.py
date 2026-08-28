@@ -24,6 +24,11 @@ with open(sys.argv[1], encoding="utf-8") as stream:
 derived_name = "asyncconsumer.CrossModuleSuspendDerived"
 state_machine_name = derived_name + "_token$sm"
 base_name = "asyncgate.CrossModuleSuspendBase"
+derived_type = {"t": "fqn", "name": derived_name}
+base_type = {"t": "fqn", "name": base_name}
+string_type = {"t": "fqn", "name": "System.String"}
+object_type = {"t": "fqn", "name": "System.Object"}
+continuation_type = {"t": "fqn", "name": "kotlin.coroutines.Continuation`1", "args": [object_type]}
 types = {item.get("name"): item for item in root.get("types", []) if isinstance(item, dict)}
 
 derived = types.get(derived_name)
@@ -46,7 +51,6 @@ if len(helper_calls) != 1:
     raise SystemExit(f"#439 CIR: state machine has {len(helper_calls)} super-helper calls, expected 1")
 
 helper_call = helper_calls[0]
-derived_type = {"t": "fqn", "name": derived_name}
 expected_receiver = {
     "k": "field",
     "ownerType": {"t": "fqn", "name": state_machine_name},
@@ -61,41 +65,52 @@ if (
 ):
     raise SystemExit(f"#439 CIR: state machine does not call its derived helper correctly: {helper_call!r}")
 
-# The state machine must never issue the base cold call on its captured outer receiver directly. CLR verification
-# requires that lexical base call to execute in an instance method whose physical `this` is the derived type.
+# No state machine may issue the base cold call on its captured outer receiver directly. CLR verification requires
+# that lexical base call to execute in an instance method whose physical `this` is the derived type.
+state_machines = [item for name, item in types.items() if isinstance(name, str) and name.endswith("$sm")]
 direct_base_calls = [
     item
-    for item in objects(state_machine.get("methods", []))
+    for item in objects(state_machines)
     if item.get("k") in ("callInstance", "clrInstance")
     and item.get("method") == "token$dotkt_suspend"
-    and (item.get("ownerType") or item.get("type")) == {"t": "fqn", "name": base_name}
+    and (item.get("ownerType") or item.get("type")) == base_type
 ]
 if direct_base_calls:
-    raise SystemExit(f"#439 CIR: state machine calls the producer base cold entry directly: {direct_base_calls!r}")
+    raise SystemExit(f"#439 CIR: a state machine calls the producer base cold entry directly: {direct_base_calls!r}")
 
 helpers = [method for method in derived.get("methods", []) if method.get("name") == helper_call["method"]]
 if len(helpers) != 1:
     raise SystemExit(f"#439 CIR: derived type has {len(helpers)} matching super helpers, expected 1")
+helper = helpers[0]
+if helper.get("vis") != "private" or helper.get("static") is not False or helper.get("virtual") is not False:
+    raise SystemExit(f"#439 CIR: super helper is not a private non-virtual instance method: {helper!r}")
 
 base_calls = [
     item
-    for item in objects(helpers[0].get("body", []))
-    if item.get("k") in ("callInstance", "clrInstance") and item.get("method") == "token$dotkt_suspend"
+    for item in objects(helper.get("body", []))
+    if item.get("k") == "callInstance" and item.get("method") == "token$dotkt_suspend"
 ]
 if len(base_calls) != 1:
     raise SystemExit(f"#439 CIR: helper has {len(base_calls)} base cold calls, expected 1")
 
 base_call = base_calls[0]
 member_ref = base_call.get("memberRef")
+expected_member_ref = {
+    "kind": "method",
+    "assembly": "DotKt.AsyncGate",
+    "declaringType": base_type,
+    "name": "token$dotkt_suspend",
+    "genericArity": 0,
+    "returnType": object_type,
+    "callingConvention": "instance",
+    "parameterTypes": [string_type, continuation_type],
+}
 if (
-    (base_call.get("ownerType") or base_call.get("type")) != {"t": "fqn", "name": base_name}
+    base_call.get("ownerType") != base_type
     or base_call.get("recv") != {"k": "this"}
     or base_call.get("virtual") is not False
     or base_call.get("super") is not True
-    or not isinstance(member_ref, dict)
-    or member_ref.get("assembly") != "DotKt.AsyncGate"
-    or member_ref.get("declaringType") != {"t": "fqn", "name": base_name}
-    or member_ref.get("name") != "token$dotkt_suspend"
+    or member_ref != expected_member_ref
 ):
     raise SystemExit(f"#439 CIR: helper lost the exact non-virtual producer cold-entry edge: {base_call!r}")
 

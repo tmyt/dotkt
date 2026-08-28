@@ -916,11 +916,13 @@ private class CrossModuleSuspendDerived : CrossModuleSuspendBase() {
 
 fun main() {
     val value = blockOnObserved { delayedValue() }
+    val topLevelSuspended = observedSuspension
     val superValue = blockOnObserved { CrossModuleSuspendDerived().drive("value") }
-    println("packaged coroutine ok: $value suspended=$observedSuspension super=$superValue")
+    val superSuspended = observedSuspension
+    println("packaged coroutine ok: $value suspended=$topLevelSuspended super-suspended=$superSuspended super=$superValue")
 }
 EOF
-	local expected="packaged coroutine ok: 42 suspended=True super=override:base:value" actual rc=0
+	local expected="packaged coroutine ok: 42 suspended=True super-suspended=True super=override:base:value" actual rc=0
 	actual="$(run_project "$con" "$con/run.err" 20s)" || rc=$?
 	if (( rc != 0 )); then
 		fail coroutine-cross-module "consumer run exit $rc" \
