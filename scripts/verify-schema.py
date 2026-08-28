@@ -302,6 +302,8 @@ MOD_KEYS = {
     "inlineOnly",                                # #98: @InlineOnly → [MethodImpl(AggressiveInlining)] (ilemit reads mods.inlineOnly)
     "context",                                   # a Kotlin CONTEXT parameter (a param-only mod; bir2cir turns it into
                                                  # the [KotlinContextParameter] marker projected into reference KLIBs)
+    "extensionReceiver",                         # a Kotlin extension-receiver parameter; bir2cir turns it into the
+                                                 # trusted [KotlinExtensionReceiver] slot-role marker
 }
 VIS = {"public", "private", "protected", "internal", "protectedInternal"}
 CARRIER_VERSIONS = {"bir-json/1"}

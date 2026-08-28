@@ -216,6 +216,7 @@
         "inline":     { "const": true }, "infix":     { "const": true },
         "operator":   { "const": true }, "tailrec":   { "const": true },
         "external":   { "const": true }, "ext":       { "const": true },
+        "extensionReceiver": { "const": true },
         "override":   { "const": true }, "abstract":  { "const": true },
         "open":       { "const": true },
         "suspend":    { "const": true, "$comment": "BIR-only. The Kotlin `suspend` modifier is consumed by bir2cir — the cold-core lowering rewrites the declaration into a state machine + `$dotkt_suspend` cold entry + Task bridge, and RoundtripMetadata stamps [KotlinFunction(Suspend)] from it. It never reaches CIR; the validator refuses one there." },
@@ -267,7 +268,7 @@
         "name":     { "type": "string" },
         "type":     { "$ref": "#/$defs/type" },
         "nullableFlags": { "type": "array", "items": { "type": "integer", "enum": [0, 1, 2] }, "$comment": "bir2cir-derived flattened NullableAttribute bytes (0=oblivious,1=not-null,2=nullable) for this param's reference-nullable positions; RoundtripMetadata folds it into the param's `attrs` as a NullableAttribute entry, which ilemit stamps. Absent when the type carries no nullable-reference position." },
-        "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline/context apply to a param; `context` marks a Kotlin context parameter (physically an ordinary positional slot, restored AS a context parameter by a consuming Kotlin module)" },
+        "mods":     { "$ref": "#/$defs/mods", "$comment": "only vararg/noinline/crossinline/context/extensionReceiver apply to a param; `context` and `extensionReceiver` preserve Kotlin slot roles on physically ordinary positional parameters" },
         "default":  { "$ref": "#/$defs/node", "description": "a KotlinDefault expression; absent = required" },
         "ctxFnType": { "type": "integer", "minimum": 1, "description": "How many of the slot function type's LEADING physical arguments (recv first, then params) are Kotlin CONTEXT parameters: `context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A,B,D,E>`, so 1 — contexts precede the receiver. Absent = an ordinary function type. fir2ir ERASES the fact (it makes `context(A) B.(D) -> E` the SAME IrType as `B.(A,D) -> E`), so kotc recovers it from FIR and carries it here; bir2cir turns it into [KotlinContextFunctionType(N)]. Without it a consuming module restores the context AS the extension receiver and a lambda's `this` silently binds to the wrong value." }
       },

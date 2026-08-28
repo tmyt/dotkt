@@ -383,7 +383,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		} else ""
 		activeSemanticOwner = savedSemanticOwner
 		if (extRecv != null) selfSubst.remove(extRecv)
-		val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+		val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 		val params = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 		// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
 		// `gp:E`/`gp:R` in its signature is unresolvable at emit (CoroutineContext / ContinuationInterceptor / …).
@@ -1384,7 +1384,7 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
 	activeDelegatedAccessor = savedDelegatedAccessor
 	if (extRecv != null) selfSubst.remove(extRecv)
-	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 	val kind = if (isGetter) "get" else "set"
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
@@ -1402,7 +1402,7 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// resolve via selfSubst (by identity, so it isn't confused with the dispatch `<this>`).
 	val extRecv = extensionReceiverParam(acc)
 	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
-	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val savedDelegatedAccessor = activeDelegatedAccessor
 	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
 	// [isValueParameter], not `Regular`: `context(c: Ctx) val C.p get() = c.n` carries its context parameter as an
@@ -1930,7 +1930,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	// #6 non-null parameter PRECONDITIONS run at entry, BEFORE the tailrec label so a self-tail-jump does not re-check.
 	val body = (preconditionChecks(fn) + listOfNotNull(coreBody.takeIf { it.isNotEmpty() })).joinToString(",")
 	if (extRecv != null) selfSubst.remove(extRecv)
-	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
 	// `override fun toString()/equals()/hashCode()` emits the KOTLIN name + `objectOverride:true` (a pure-Kotlin

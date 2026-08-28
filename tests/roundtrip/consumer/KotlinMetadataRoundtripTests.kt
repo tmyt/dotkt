@@ -78,6 +78,7 @@ import System.Threading.Tasks.Task1
 import roundtrip.pkg.Vec
 import roundtrip.pkg.Dir
 import roundtrip.pkg.greet as pkgGreet
+import roundtrip.pkg.ordinarySelfName
 import roundtrip.pkg.typeName
 import roundtrip.pkg.forEach3
 import roundtrip.pkg.plus
@@ -627,6 +628,7 @@ class PackageAndInlineRoundtripTests {
     fun packagedNamespaces() {
         ClassicAssert.AreEqual(11, Vec(1, 2) dot Vec(3, 4))      // 11   geom.Vec, infix
         ClassicAssert.AreEqual("Hi, pkg", pkgGreet("pkg"))       // Hi, pkg   top-level via import
+        ClassicAssert.AreEqual(9, ordinarySelfName(4, 5))         // 9     ordinary first parameter named __self stays positional
         ClassicAssert.AreEqual("EAST", Dir.EAST.toString())      // EAST  enum in a package
         ClassicAssert.AreEqual("String", typeName<String>())     // String  cross-module reified inline -> generic method call
         ClassicAssert.AreEqual(4, firstEven())                   // 4     cross-module inline + lambda + non-local return

@@ -214,6 +214,7 @@ internal sealed class MetadataAttributes
                 or DotKtNs + "KotlinObjectAttribute"
                 or DotKtNs + "KotlinExtensionFunctionTypeAttribute"
                 or DotKtNs + "KotlinContextParameterAttribute"
+                or DotKtNs + "KotlinExtensionReceiverAttribute"
                 or DotKtNs + "KotlinNothingAttribute"))
         {
             var version = reader.ReadSerializedString();
