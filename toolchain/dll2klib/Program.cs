@@ -6114,7 +6114,6 @@ internal sealed class AssemblyScanner : IDisposable
         bool recognizeClrExtension = true)
     {
         if (function.ValueParameter.Count == 0) return;
-        var physical = SemanticPhysicalParameters(handle, method);
         var isReceiver =
             (recognizeClrExtension &&
                 _attrs.Has(handle, "System.Runtime.CompilerServices.ExtensionAttribute", requireTrust: false)) ||
