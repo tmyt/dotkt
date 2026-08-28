@@ -19,9 +19,10 @@
 #              rather than what the compiler can restore. Reports two verdicts: `nullable-generic-shape` (the
 #              erased slot's physical type + [KotlinNullableGeneric] carrier, by reflection) and `csharp-consumer`
 #              (the C# program compiles against those slots and runs). Both #86, both XFAIL_PKG-listed today.
-#   coroutine-cross-module — a packaged Kotlin library exports a suspend function that genuinely suspends on
-#              Task.Delay; a separately compiled packaged-SDK Kotlin Exe restores and drives that function across
-#              the assembly boundary, observes return-before-resume, and both emitted assemblies pass ILVerify (#137).
+#   coroutine-cross-module — a packaged Kotlin library exports suspend declarations that genuinely suspend on
+#              Task.Delay; a separately compiled packaged-SDK Kotlin Exe restores and drives both a top-level call
+#              and an overriding cross-module super call, observes return-before-resume, and both emitted assemblies
+#              pass ILVerify (#137, #439).
 #   mpp      — a `Sdk="DotKt.Sdk.Mpp"` multiplatform Exe (common `expect` + clr `actual`): the MPP SDK path
 #              end-to-end through nupkg resolution. build + RUN, assert stdout.
 #   template — install DotKt.Templates, scaffold the CLI template, then build + RUN it.
@@ -805,6 +806,13 @@ suspend fun delayedValue(): Int {
     Task.Delay(500).await()
     return 42
 }
+
+open class CrossModuleSuspendBase {
+    open suspend fun token(value: String): String {
+        Task.Delay(100).await()
+        return "base:$value"
+    }
+}
 EOF
 	if ! (cd "$lib" && dotnet build -v q --nologo >"$lib/build.log" 2>&1); then
 		fail coroutine-cross-module "producer build failed" "$(tail -30 "$lib/build.log")"; return
@@ -854,6 +862,7 @@ EOF
 package asyncconsumer
 
 import System.Threading.Monitor
+import asyncgate.CrossModuleSuspendBase
 import asyncgate.delayedValue
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
@@ -899,12 +908,19 @@ private fun <T> blockOnObserved(block: suspend () -> T): T {
     return sink.value as T
 }
 
+private class CrossModuleSuspendDerived : CrossModuleSuspendBase() {
+    override suspend fun token(value: String): String = "override:" + super.token(value)
+
+    suspend fun drive(value: String): String = token(value)
+}
+
 fun main() {
     val value = blockOnObserved { delayedValue() }
-    println("packaged coroutine ok: $value suspended=$observedSuspension")
+    val superValue = blockOnObserved { CrossModuleSuspendDerived().drive("value") }
+    println("packaged coroutine ok: $value suspended=$observedSuspension super=$superValue")
 }
 EOF
-	local expected="packaged coroutine ok: 42 suspended=True" actual rc=0
+	local expected="packaged coroutine ok: 42 suspended=True super=override:base:value" actual rc=0
 	actual="$(run_project "$con" "$con/run.err" 20s)" || rc=$?
 	if (( rc != 0 )); then
 		fail coroutine-cross-module "consumer run exit $rc" \
@@ -919,6 +935,12 @@ EOF
 
 	local condll; condll="$(find "$con/bin" -name 'AsyncConsumer.dll' | head -1)"
 	[[ -f "$condll" ]] || { fail coroutine-cross-module "consumer dll not emitted"; return; }
+	local concir="$con/obj/Debug/net10.0/cir/Main.cir.json"
+	if ! python3 "$ROOT/tests/packaged-sdk/assert-cross-module-suspend-super-cir.py" "$concir" \
+		>"$con/suspend-super-cir.log" 2>&1; then
+		fail coroutine-cross-module "cross-module suspend-super CIR assertion failed" \
+			"$(tail -40 "$con/suspend-super-cir.log")"; return
+	fi
 	if ! bash "$ROOT/tests/run-ilverify.sh" "$libdll" "$condll" >"$con/ilverify.log" 2>&1; then
 		fail coroutine-cross-module "ILVerify failed" "$(tail -40 "$con/ilverify.log")"; return
 	fi
