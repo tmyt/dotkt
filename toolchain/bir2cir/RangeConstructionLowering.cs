@@ -12,9 +12,9 @@ using System.Text.Json.Nodes;
 // (a custom ClosedRange) is a real method call, left untouched. Structured for-loops are counter-lowered in kotc's
 // birForLoop (it intercepts the range at the IR level, so this member call is never emitted for a for-range).
 //
-// Runs FIRST in the per-file loop, right after RangeForLowering — before MemberCallSubstitution (whose Rule-4
-// make-it-loud gate would otherwise refuse the unbound `kotlin.Int.rangeTo`) and before any type-erasing pass, so the
-// recv/arg value nodes flow through the SAME downstream passes the equivalent kotc-emitted `new` did (byte-identical).
+// Runs after RangeMembershipLowering has consumed inline range constructions and before MemberCallSubstitution (whose
+// Rule-4 make-it-loud gate would otherwise refuse the unbound `kotlin.Int.rangeTo`) and any type-erasing pass. The
+// remaining value-position range calls become ordinary CIR constructions before physical member binding.
 static class RangeConstructionLowering
 {
     public static void Apply(JsonNode node)

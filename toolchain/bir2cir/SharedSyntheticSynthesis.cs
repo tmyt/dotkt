@@ -9,10 +9,10 @@ using DotKt.Bir;
 //
 //   • dotkt$CharSequence  — the monomorphic interface (get_length/get/subSequence) a `class S : CharSequence` or a
 //     CharSequence-typed slot needs (kotlin.CharSequence has no faithful .NET supertype). Emitted into any file that
-//     REFERENCES the identity, mirroring kotc's old per-file `usesCharSeq` trigger (ilemit dedups per assembly and
-//     canonicalizes to the rt stdlib's copy when it resolves externally).
-//   • dotkt_<scope>_Ref_<elem> — the heap cell `class …{ var v }` promoting a captured-and-mutated local. Assembled
-//     from the file's `refTypes` registry ({name, element-type}); the element type is unrecoverable from the use-site
+//     REFERENCES the identity because local uses need a declaration; ilemit dedups that generated identity per assembly
+//     and resolves external uses to the runtime stdlib's canonical definition.
+//   • the scoped generated ref-cell identity — the heap cell `class …{ var v }` promoting a captured-and-mutated local.
+//     Assembled from the file's `refTypes` registry ({name, element-type}); the element type is unrecoverable from the use-site
 //     `field .v` nodes alone, so kotc carries it as the registry fact. A closed element stays monomorphic. An element
 //     mentioning an enclosing type/method variable becomes a generic cell whose parameters preserve the complete
 //     bound closure, and every bare use-site identity becomes the corresponding constructed cell.
@@ -22,8 +22,8 @@ using DotKt.Bir;
 // directly via the ordinary `liftedTypes`/`new` machinery, like any other lifted class — no bir2cir synthesis needed.)
 //
 // Runs in the Phase-1 per-file loop, AFTER ClosureSynthesis (a closure's invoke body may reference CharSequence, so
-// its class must already be in `types` to be scanned) and before type lowering. Unconditional (ref/rt/app): kotc
-// emits these facts in every build, exactly as its old charSeqIfaceDefs/refDefs ran regardless of build.
+// its class must already be in `types` to be scanned) and before type lowering. Unconditional (ref/rt/app): these BIR
+// facts exist in every build, and every consumer requires the same generated-type identity contract.
 static class SharedSyntheticSynthesis
 {
     // #68: `dotkt$…` names use Kotlin's OWN unspeakable marker `$` (the string-template char; normal Kotlin source cannot
@@ -446,8 +446,8 @@ static class SharedSyntheticSynthesis
         return clone;
     }
 
-    // A heap cell `class <name><T…>(var v: elem)` — a single field + its init ctor. Closed elements retain the old
-    // monomorphic byte shape; open elements become a constrained generic cell constructed at every lexical use.
+    // A heap cell `class <name><T…>(var v: elem)` — a single field + its init ctor. Closed elements use the canonical
+    // monomorphic form; open elements become a constrained generic cell constructed at every lexical use.
     static JsonObject BuildRefCell(RefCellSpec spec)
     {
         var positions = spec.Free.Select((key, index) => (key, index)).ToDictionary(x => x.key, x => x.index);
@@ -514,7 +514,7 @@ static class SharedSyntheticSynthesis
         };
     }
 
-    // Fixed-shape def transcribed verbatim from kotc's retired charSeqIfaceDefs().
+    // Fixed-shape CLR contract for the generated CharSequence bridge interface.
     const string CharSeqDef = """
     {"name":"dotkt$CharSequence","kind":"interface","generated":true,"base":null,"fields":[],"ctors":[],"methods":[
       {"name":"length","propertyName":"length","propertyAccessor":"get","propertyAssociation":"charsequence-length","static":false,"override":false,"virtual":true,"abstract":true,"objectOverride":false,"vis":"public","params":[],"ret":{"t":"fqn","name":"kotlin.Int"},"body":[]},

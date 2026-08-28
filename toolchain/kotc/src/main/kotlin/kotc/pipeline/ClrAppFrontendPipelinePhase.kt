@@ -129,8 +129,8 @@ object ClrAppFrontendPipelinePhase : PipelinePhase<ConfigurationPipelineArtifact
 		// ("expect and corresponding actual are declared in the same module"). For a user MPP app the common
 		// sources (marked via `-Xcommon-sources`) must form a separate common module that the platform module
 		// refines, so expect/actual matches ACROSS the boundary. We therefore drive `metadataCompilationMode`
-		// off whether any common source is present: with NO common sources the flag stays `true` and the path
-		// is byte-identical to the stock single-session app compile (the non-MPP `cases/il-*` samples); with
+		// off whether any common source is present: with NO common sources the flag stays `true` and uses the ordinary
+		// single-session app pipeline (the non-MPP `cases/il-*` samples); with
 		// common sources present it flips to `false`, and since `-Xmulti-platform` is always on (Main.kt) and
 		// no `-Xfragments`/HMPP structure is passed, `prepareSessions` takes the legacy-MPP split
 		// (common module + platform-module-depends-on-common). Downstream Fir2Ir actualization + BIR emit

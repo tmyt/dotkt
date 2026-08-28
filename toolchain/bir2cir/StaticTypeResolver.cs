@@ -12,7 +12,7 @@ using DotKt.Bir;
 // stamp directly — it no longer re-does overload return-type resolution against the ref.dll (the deleted
 // ResolveCallReturn / ResolveFieldType / LocalMemberType / SubstMemberTv path, and the cross-file GlobalTypes hack).
 //
-// Two flavors (the CLR/Roslyn twins of kotc's former birType(op.type) vs stripImplicit/stripCast):
+// Two flavors answer distinct current lowering questions:
 //   Surface — the operand expression's OWN static type (`sty`, or a structural type slot — a boxing/narrowing `cast`
 //             node's target IS the surface type). Reproduces EQEQ `argTypes` (the primitive fast-path key).
 //   Value   — peel a compiler/boxing `cast` (and the value-nullable unwrap) to the UNDERLYING value type.
@@ -82,8 +82,8 @@ static class StaticType
 {
     // The operand expression's OWN static type. A value node reads the FRONTEND-STAMPED `sty` (kotc's instantiated
     // node.type, carried through lowering); a bir2cir-synthesized node reads its own structural type slot. null when
-    // the node carries no recoverable static type — treated by callers as "not a bare primitive"/"not a collection",
-    // the same posture the former re-resolution took on a miss.
+    // the node carries no recoverable static type. Callers conservatively treat that as "not a recognized bare
+    // primitive"/"not a recognized collection" rather than inferring a type from physical layout.
     //
     // FOUNDED ON `bir-common/NodeType.cs`, which answers every kind whose type is IN the node (and is the same
     // deriver the suspend spill and the plan's address pins type their locals with) — INCLUDING the precedence of the

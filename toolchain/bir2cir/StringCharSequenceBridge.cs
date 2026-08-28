@@ -16,11 +16,10 @@ static class StringCharSequenceBridge
     static readonly HashSet<string> StringBuilderTokens = new(StringComparer.Ordinal)
         { "kotlin.text.StringBuilder", "java.lang.StringBuilder", "java.lang.AbstractStringBuilder", "System.Text.StringBuilder" };
 
-    // Synthesized exactly once per app assembly (dedup below). Pre-BirTypeLowering vocabulary: kotlin.* signature tokens
-    // (lowered by the next pass), CLR-call bodies (String.get_Chars/Length/Substring — the SAME shape kotc emits for a
-    // user `class S(val s:String): CharSequence`). Structurally mirrors that verified S class, renamed s->value.
-    // Type slots are STRUCTURED `{t:"fqn",…}` nodes (§1 — types are nodes, no bare strings), exactly as kotc emits
-    // for a real user `class S(val s:String): CharSequence`; the subsequent DeclNullableFlags/ReferenceNullableStrip/
+    // Synthesized exactly once per app assembly (dedup below). It uses pre-BirTypeLowering kotlin.* signature tokens and
+    // ordinary CIR CLR-call bodies for String.get_Chars/Length/Substring, implementing the same CharSequence slots as a
+    // user class. Type slots are structured `{t:"fqn",…}` nodes (§1 — types are nodes, no bare strings); the subsequent
+    // DeclNullableFlags/ReferenceNullableStrip/
     // BirTypeLowering passes lower the `kotlin.*` identities to the CLR forms uniformly. (The retired `@<name>`
     // this-assembly marker is dropped — bir2cir/ilemit derive local-vs-referenced from the FQN via `_types`.)
     const string AdapterTypeJson = """

@@ -1976,7 +1976,7 @@ static partial class SuspendColdLowering
                 // each one an SM field iff it is read after the resume), then
                 // rewrite the result expression — a suspend call in the result becomes a normal suspension point
                 // owned by this pass. A suspension-FREE valueBlock (e.g. an `index++` post-increment) is left
-                // intact (the default copy below) for ilemit's inline emission — output stays byte-identical.
+                // intact (the default copy below) because CIR permits ilemit to emit a suspension-free valueBlock inline.
                 if (k == "valueBlock" && (HasOwnSuspension(o) || EscapesExpression(o)))
                 {
                     if (o["stmts"] is JsonArray vbStmts) foreach (var s in vbStmts) EmitStmt(s, outp);
@@ -2012,8 +2012,8 @@ static partial class SuspendColdLowering
                 // control flow ahead of the receiver's suspension. The rank table is the toolchain's one statement of
                 // which operand of a node runs first, so this holds for every kind rather than for a listed few —
                 // which is why the suspension-bearing operands stage 0 has already lifted out (SuspendOperandPlan.cs)
-                // need no second arm here. The COPY is still built in the node's own key order, so the emitted CIR is
-                // byte-identical to what an unordered copy produced.
+                // need no second arm here. The copy retains the node's existing key order while rewriting operands in
+                // semantic evaluation order.
                 var rewritten = new Dictionary<string, JsonNode>(StringComparer.Ordinal);
                 foreach (var kv in o.OrderBy(kv => SuspendLiveness.OperandRank(kv.Key)).ToList())
                     rewritten[kv.Key] = kv.Value == null ? null : Rewrite(kv.Value, outp);
@@ -2333,7 +2333,7 @@ static partial class SuspendColdLowering
                 // must therefore be armed to `state` BEFORE the block runs (mirroring the JVM CPS, which sets
                 // `this.label = N` before the suspend call) — otherwise the re-entry finds label 0 and restarts the
                 // block from the top (unbounded recursion). The wrapper form buffers through SafeContinuation, so its
-                // label-set stays AFTER the block (below), keeping that path byte-identical.
+                // label-set stays AFTER the block (below), which is the wrapper form's required state transition.
                 // INVARIANT: the intrinsic block is a PLAIN (non-suspend) lambda, so its pre-stmts carry no nested
                 // suspension that would re-arm the label to a later state — arming `state` here is the sole write in
                 // this segment.
@@ -3905,7 +3905,7 @@ static partial class SuspendColdLowering
         //
         // BUG 4 (main-drain): drive the cold body under a REAL root continuation (a RootContinuation<Unit> over a
         // TaskCompletionSource<Unit>) — NOT a null completion. A fully-synchronous suspend main returns a non-SUSPENDED
-        // value and needs no wait (the root is unused, byte-for-byte the old behaviour, and a raw synchronous throw
+        // value and needs no wait (the root is unused, and a raw synchronous throw
         // still propagates because there is no try/catch on the sync path). A GENUINELY-suspending main (e.g. it awaits
         // an incomplete Task) returns COROUTINE_SUSPENDED; the eventual resume lands in RootContinuation.resumeWith on a
         // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then. Drain it through

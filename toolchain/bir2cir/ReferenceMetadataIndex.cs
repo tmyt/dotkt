@@ -3229,7 +3229,7 @@ sealed partial class ReferenceMetadataIndex
         // the FIRST array overload (the signed generic `toList<T>(T[])`) for EVERY array call, miscompiling an unsigned
         // `ubyteArrayOf(..).toList()` onto _ArraysKt's uninstantiated generic. The fine first-param ParamKey pins the
         // exact file-class+overload (UByteArray -> Array(UInt8) -> UArraysKt). Only "[]" is lossy; a normal owner recvKey
-        // is already exact, so gate on it to leave every non-array resolution byte-identical. (#153)
+        // is already exact, so the extra discriminator applies only to the lossy array key. (#153)
         if (recvKey == "[]" && firstParamKey != null)
             foreach (var c in cands)
                 if (c.ParamKey == firstParamKey) { owner = c.Owner; return true; }
@@ -6905,8 +6905,8 @@ sealed class ReferenceDotKtMetadata
     public readonly Dictionary<string, List<(string Owner, string RecvKey, ReferenceMetadataIndex.TypeKey ParamKey)>> TopLevelStatics = new(StringComparer.Ordinal);
     // Collection/array FACTORY top-level funs, keyed by fun NAME -> the factory kind. A @kotlin.clr.ClrCollectionFactory
     // ("list"/"set"/"map") or @kotlin.clr.ClrArrayFactory ("vararg"/"sized") marker on a [KotlinFileClass] static.
-    // MemberCallSubstitution reads these on a `callStatic owner=null` (listOf/setOf/mapOf/arrayOf/intArrayOf/arrayOfNulls
-    // -> the `{k:newList/newSet/newMap/newArray/newArraySized}` construction node kotc used to synthesize). Keyed by name
+    // MemberCallSubstitution reads these on a `callStatic owner=null` (listOf/setOf/mapOf/arrayOf/intArrayOf/arrayOfNulls)
+    // and realizes the corresponding `{k:newList/newSet/newMap/newArray/newArraySized}` CIR construction. Keyed by name
     // alone: every overload of a factory name shares the kind, so no receiver disambiguation is needed.
     public readonly Dictionary<string, string> CollectionFactories = new(StringComparer.Ordinal);
     public readonly Dictionary<string, string> ArrayFactories = new(StringComparer.Ordinal);

@@ -192,7 +192,7 @@ static class BirTypeLowering
     // concrete `List<X>` argument through Root-V here would produce `KProperty1<IList<X>,V>` while the implementing
     // method's head-position parameter lowers to `IReadOnlyList<X>`, making the generated reference type unloadable.
     // Treat these carrier arguments as method-slot heads (typeArg:false); recursion inside the argument still applies
-    // Root-V normally, so `KProperty0<List<List<X>>>.get()` and its return stay byte-identical at every depth.
+    // Root-V normally, so `KProperty0<List<List<X>>>.get()` and its return use the same slot projection at every depth.
     // ClrPropertyStub<V> must use the same rule because it supplies the generated reference's KProperty<V> base face.
     static readonly HashSet<string> InterfaceMethodSlotCarriers = new(StringComparer.Ordinal)
     {
@@ -633,7 +633,7 @@ static class BirTypeLowering
             {
                 // STEP-1 clrName migration: kotc emits a pure-Kotlin `overrides` marker (the override closure) so a
                 // future bir2cir decl-rename pass can derive BCL slot names from the ref.dll @ClrIntrinsic. It is
-                // bir2cir-internal metadata — strip it here so it never reaches the CIR/ilemit (keeps emit byte-identical).
+                // bir2cir-internal metadata and must be stripped before the CIR boundary.
                 if (kv.Key == DeclarationRename.SourceMemberKey)
                 {
                     continue;

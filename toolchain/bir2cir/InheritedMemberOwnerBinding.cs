@@ -12,8 +12,8 @@ using DotKt.Bir;
 // A CLR MemberRef, however, cannot name the open `Base<>.m` when the call is made on
 // `Base<T>`: doing so produces "containing type is not fully instantiated" at JIT time.
 //
-// The old ilemit path discovered the base declaration while emitting and then tried to
-// reconstruct its generic instantiation.  Besides making emission semantic, that loses
+// Discovering the base declaration while emitting and reconstructing its generic
+// instantiation makes emission semantic and loses
 // the substitution on generic-method calls.  This pass performs the general hierarchy
 // substitution in bir2cir and rewrites ownerType to the exact constructed declaration
 // (`Base<T>`).  ilemit subsequently links that owner one-to-one.

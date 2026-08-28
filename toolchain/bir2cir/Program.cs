@@ -158,7 +158,7 @@ sealed class Pipeline
         // a bir2cir concern (the Kotlin<->CLR layer), so SUBSTITUTE it here — as a one-type hardcode, exactly like the ref.dll
         // @ClrTypeAlias types substitute `kotlin.String` -> `System.String`. It runs FIRST (before the `hasUserCharSeqImpl`
         // detection, CharSeqStringLowering, and the per-file SharedSyntheticSynthesis trigger) so every downstream pass sees
-        // the canonical `dotkt$CharSequence` identity exactly as kotc's retired charSeqIface() mapping used to emit it. Only a
+        // the canonical `dotkt$CharSequence` identity defined by SharedSyntheticSynthesis. Only a
         // `{t:"fqn"}` type-reference NAME is rewritten (a type DECLARATION's own `name` sits under `kind`, not `t`, so real
         // kotlin.CharSequence declarations — if any — are untouched).
         foreach (var b in birFiles) SubstituteCharSeqIdentity(b.Root);
@@ -326,23 +326,22 @@ sealed class Pipeline
             var outputName = OutputNameFor(bir.Path);
             if (!_options.RefBuild) aliasConstructorDelegations.Apply(bir.Root);
             // SYNTHETIC CLR-REPRESENTATION TYPES (#52 kotc-purity): kotc emits only the FACTS — a capturing lambda's
-            // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence / KProperty use references
-            // the identity; a heap ref-cell rides the `refTypes` registry. Assemble the actual closure / interface /
-            // cell TYPE definitions HERE, in the Kotlin<->CLR layer, and inject them into the file `types`. Runs FIRST
-            // (before every other transform) so the synthesized types are present exactly as kotc's old liftedTypes /
-            // charSeqIfaceDefs / kPropertyDefs / refDefs used to be — and, crucially, before Phase-1.5
-            // SuspendColdLowering builds its `closures` lookup from `types`. ClosureSynthesis first so a closure invoke
-            // body that references KProperty is in `types` when SharedSyntheticSynthesis scans for it.
+            // `newClosure` carries a transient `synthClass` ingredient bag; a CharSequence use references the generated
+            // bridge identity; a heap ref-cell rides the `refTypes` registry. After raw payload splicing and witness
+            // capture below, ClosureSynthesis and SharedSyntheticSynthesis materialize those CLR types into `types`.
+            // They run before ForIn classification and the global SuspendColdLowering declaration index; closure
+            // synthesis runs first so SharedSyntheticSynthesis can scan the completed invoke bodies.
             // OBJECT-SLOT RENAME (#73 M5): restore the System.Object BCL slot names (ToString/GetHashCode/Equals) that
             // kotc stopped emitting — it now emits the Kotlin names (toString/hashCode/equals) + the pure-Kotlin facts
-            // `objectOverride:true` (decl) / `anySlot:true` (call). Runs FIRST and UNCONDITIONALLY (ref + rt + app): the
-            // former kotc rename was unconditional, so the ref.dll decl names + emitted-name-keyed member index must stay
-            // byte-identical; placing it first lets every downstream pass see the same BCL-spelled trees as before.
+            // `objectOverride:true` (decl) / `anySlot:true` (call). Runs before semantic recognition passes and
+            // unconditionally (ref + rt + app): physical object slots are one cross-build contract, so ref.dll
+            // declarations and the emitted-name-keyed member index must be canonicalized together; placing it first
+            // gives every downstream pass BCL spellings.
             ObjectSlotRename.Apply(bir.Root);
             // PRECONDITION / ERROR FAMILY (#73 M6): kotc emits the FAITHFUL top-level call (require/check/error/TODO/
             // requireNotNull/checkNotNull as `callStatic owner:null`, noWhenBranchMatchedException as the faithful
-            // `kotlin.internal.ir` intrinsic). These @InlineOnly helpers have NO rt.dll body, so bir2cir SYNTHESIZES the
-            // throw/condition FQN-keyed — the exact cond/throwExpr/valueBlock CIR kotc used to emit over bare Kotlin
+            // `kotlin.internal.ir` intrinsic). These @InlineOnly helpers have NO rt.dll body, so bir2cir realizes their
+            // Kotlin failure semantics as FQN-keyed cond/throwExpr/valueBlock CIR over bare Kotlin
             // exception FQNs (the IllegalArgumentException->System.ArgumentException BCL mapping happens downstream off
             // the ref.dll @ClrTypeAlias). Runs BEFORE ClosureSynthesis so a discarded `require(cond){ lazyMessage }`
             // closure is never synthesized into an orphan type, and before MemberCallSubstitution (which would else
@@ -373,14 +372,15 @@ sealed class Pipeline
             ValueJoinNullWidening.Apply(bir.Root, isValueFqn);
             // CROSS-MODULE DEFAULT-ARG SPLICE (#146): fill a call's OMITTED defaulted args (kotc's `defaultArg`
             // placeholders) from the callee's `[kotlin.clr.KotlinDefault]` BIR on the referenced .dll. Runs HERE — phase 1,
-            // right after InlineSplice, before ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/BirTypeLowering —
+            // after InlineSplice/join widening and before payload renormalization, ClosureSynthesis,
+            // MemberCallSubstitution, and BirTypeLowering —
             // so the spliced RAW default expression (a `newDelegate` re-hoisted app-local, a `callStatic owner:null`, a
             // const) re-lowers IN THIS app's context, exactly like an inline-body splice. Ownerless (name|arity), because
             // the owner is not yet attributed. APP builds only (user libraries build in App mode too — Metadata/Runtime are
             // stdlib-self-build flags): a `defaultArg` placeholder is born ONLY on a reference-KLIB callee
             // (the cross-module IrErrorExpression path), and the ref/rt stdlib self-builds reference no DotKt assembly, so no
-            // external callee — hence no placeholder — exists there. The gate is not merely "harmless off": running on a
-            // self-build would also disturb its byte-stable RefBodySquash/RoundtripMetadata decl set for zero benefit.
+            // external callee — hence no placeholder — exists there. Running on a self-build would mutate its
+            // RefBodySquash/RoundtripMetadata declaration set without any default payload to consume.
             if (attributeTopLevelOwner)
             {
                 DefaultArgSplice.Apply(bir.Root, refs);
@@ -450,8 +450,8 @@ sealed class Pipeline
             // RANGE FOR-LOOP (#52 Phase 5 "range partial"): kotc emits a FAITHFUL `forRange` (range VALUE + loop var +
             // Kotlin `rangeType`, NO CLR accessor names/owner). Realize the IntProgression get_first/get_last/get_step
             // access HERE — the stdlib form keeps `forRange` + injects the accessors (ilemit resolves off `_types`);
-            // the app form rewrites to a cross-module counter loop. Runs FIRST so the produced callInstance / forRange
-            // flow through every downstream pass exactly as the equivalent kotc-emitted forms did (byte-identical IL).
+            // the app form rewrites to a cross-module counter loop. Runs FIRST so the realized callInstance / forRange
+            // nodes enter the ordinary downstream CIR pipeline.
             RangeForLowering.Apply(bir.Root, !attributeTopLevelOwner);
             // RANGE MEMBERSHIP (#73 M2): kotc emits the FAITHFUL `contains` member call for `x in a..b` (by identity,
             // NO comparison synthesis — its old bare-name lowering MISCOMPILED a user rangeTo/contains type). Lower the
@@ -465,13 +465,11 @@ sealed class Pipeline
             // VALUE-POSITION RANGE CONSTRUCTION (#73 Phase 2b-1): kotc emits the FAITHFUL `callInstance
             // kotlin.Int.rangeTo(b)` for `a..b` / `a..<b`; materialize the stdlib `new IntRange/LongRange/CharRange`
             // HERE (the Kotlin<->CLR realization). Runs before MemberCallSubstitution (whose Rule-4 gate would refuse
-            // the unbound `kotlin.Int.rangeTo`) so the recv/arg nodes flow through every downstream pass as the
-            // equivalent kotc-emitted `new` did (byte-identical).
+            // the unbound `kotlin.Int.rangeTo`) so the realized construction enters the ordinary downstream pipeline.
             RangeConstructionLowering.Apply(bir.Root);
-            // PRIMITIVE OPERATORS (#52 Phase 5): re-emit the binOp/unaryOp kotc used to synthesize for a primitive's
-            // arithmetic/bitwise/unary operator (kotc now emits the faithful `callInstance kotlin.Int.plus`). Runs
-            // FIRST and UNCONDITIONALLY (ref + app) so every downstream pass sees the old tree shape, and a ref-build
-            // ctor field-init / base-arg (not body-squashed) carries a raw IL op, not an unresolvable builtin call.
+            // PRIMITIVE OPERATORS (#52 Phase 5): realize faithful primitive member calls as CIR binOp/unaryOp nodes.
+            // Runs in ref + app before body-squash/type/suspend consumers, so a ref-build ctor field-init or base-arg
+            // (not body-squashed) carries a raw IL operation rather than an unresolvable bodyless builtin call.
             PrimitiveOperatorLowering.Apply(bir.Root, refs);
             // ENUM REIFIED INTRINSICS (#73): kotc emits the faithful top-level `callStatic owner:null method:enumValues
             // typeArgs:[T]` for `enumValues<T>()`/`enumValueOf<T>()`/`enums.enumEntries<T>()`/`enumEntriesIntrinsic<T>()`.
@@ -481,8 +479,8 @@ sealed class Pipeline
             // BEFORE ArrayConstructionLowering (#77): a `for (x in enumValues<Color>())` / `.entries` for-loop wraps
             // this call in a `forArray` whose element ArrayConstructionLowering derives via StaticType off the ALREADY-
             // lowered `enumValues`/rich-`values()` node — so the reified top-level intrinsic must already be in its
-            // final semantic shape when elem-derivation runs, exactly as kotc's retired call-site interception order
-            // implied. entries family: App-build sites only (stdlib self-build keeps the filler body — see
+            // final semantic shape when element derivation runs. Entries family: App-build sites only (stdlib
+            // self-build keeps the filler body — see
             // EnumIntrinsicLowering).
             EnumIntrinsicLowering.Apply(
                 bir.Root, localRichEnums, localTopLevelFns, attributeTopLevelOwner, refs);
@@ -501,18 +499,17 @@ sealed class Pipeline
             // FAITHFUL-HINT RECOGNITION (#52 Phase 4b / #59): kotc emits the faithful op (`objMethod` toString/equals —
             // BCL-restored to ToString/Equals by ObjectSlotRename above, `concat`, `callStatic println/print`, Double/Float
             // `callInstance compareTo`) with NO type hint; bir2cir
-            // RECOVERS the collection/Map/Double/Float/null operand types via StaticType (StaticTypeResolver.cs) and
-            // reproduces the SAME stdlib-helper `callStatic` node kotc used to emit (clrCollToString/clrMapToString/
+            // recovers the collection/Map/Double/Float/null operand types via StaticType (StaticTypeResolver.cs) and
+            // selects the stdlib helper required by the semantic operation (clrCollToString/clrMapToString/
             // clrCollStructEquals/clrDoubleCompare/LibraryKt.toString…). (The EQEQ family is handled by
             // PrimitiveOperatorLowering above.) Runs SECOND — right after the primitive-op restore, before the compareTo
             // callInstance reaches MemberCallSubstitution's primitive-compareTo -> System.Double.CompareTo routing, and
             // before any type-erasing pass — so the inner value nodes stay pure kotlin.* and lower normally downstream.
             FaithfulHintRecognition.Apply(bir.Root, refs, localTopLevelFns);
-            // CHAR.CODE + FUNCTION.INVOKE (#73 Phase 2b-2): two single-node recognitions kotc used to do — `c.code`
+            // CHAR.CODE + FUNCTION.INVOKE (#73 Phase 2b-2): realize two faithful Kotlin operations — `c.code`
             // (faithful `callStatic get_code(Char)`) -> `{k:conv, to:kotlin.Int}`, and `f(x)` (faithful `callInstance
             // kotlin.FunctionN.invoke`) -> `{k:delegateInvoke}`. Runs EARLY (before NetInteropBinding / the suspend
-            // + closure passes that CONSUME delegateInvoke / any type-erasing pass) and UNCONDITIONALLY (ref + app),
-            // reproducing the flow that existed when kotc emitted conv/delegateInvoke directly.
+            // + closure passes that CONSUME delegateInvoke / any type-erasing pass) and unconditionally (ref + app).
             CharCodeInvokeLowering.Apply(bir.Root, refs);
             // .NET-INTEROP CALL BINDING (A2 / #61): bind a reference-KLIB-projected .NET member call — which kotc now emits as
             // a PLAIN `callStatic`/`callInstance` by the .NET owner's FQN identity — to its CLR call SHAPE
@@ -1151,9 +1148,10 @@ sealed class Pipeline
             // be gone. Runs AFTER DeclNullableFlags (byte walk already captured the semantic nullability) and BEFORE type
             // lowering (oracle unambiguous on kotlin.* names). Value/struct/enum `{t:nullable}` stays for ilemit.
             ReferenceNullableStrip.Apply(substituted, isValueFqn);
-            // #66 — RUNTIME stdlib build only: drop the `kotlin.Comparable` upper bound + `in` declaration-site variance
-            // that kotc used to strip under DOTKT_STDLIB_SUBSTITUTE. kotc now emits the pure-Kotlin type params in EVERY
-            // build (ref==rt BIR); this reproduces the substitution consequence so the rt.dll stays byte-identical. Runs
+            // #66 — RUNTIME stdlib build only: remove the `kotlin.Comparable` upper bound that substituted CLR
+            // primitives cannot satisfy, plus `in` declaration-site variance that the CLR rejects for the realized
+            // signature. kotc emits pure-Kotlin type params in every build (ref==rt BIR); this pass removes only the
+            // constraints/variance incompatible with the runtime stdlib's substituted CLR shape. Runs
             // BEFORE BirTypeLowering (the constraint is still the pure `kotlin.Comparable` token here).
             if (_options.SubstituteStdlibBuild) StdlibSubstituteTypeParams.Apply(substituted);
             // STAR-PROJECTION BOUND LOWERING (#2): a `T<*>` on a self-ref-bounded generic (`Key<E : Element>`) that kotc
@@ -1307,8 +1305,8 @@ sealed class Pipeline
             // are emitted ONCE below (SynthDefsFile), not per-file.
             if (!_options.SubstituteStdlibBuild) RoundtripMetadata.Stamp(lowered);
             // RUNTIME build: strip every applied user annotation (kotc's kotlin.Deprecated/SinceKotlin/InlineOnly/…) —
-            // the job ilemit's deleted `_stripMetadata` did. DotKt.Stdlib.dll is the shipping runtime assembly (never
-            // metadata-read); keep it lean, matching the old strip.
+            // DotKt.Stdlib.dll is the shipping runtime assembly and is never metadata-read, so only runtime-relevant
+            // annotations survive this boundary.
             else RoundtripMetadata.StripRuntimeAttrs(lowered);
             // The Kotlin `suspend` modifier has no CLR meaning and every consumer of it is a bir2cir pass: the cold
             // lowering, and the [KotlinFunction(Suspend)] stamp just written (which is how a referenced module still

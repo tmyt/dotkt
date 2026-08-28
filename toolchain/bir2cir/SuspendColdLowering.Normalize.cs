@@ -67,7 +67,7 @@ static partial class SuspendColdLowering
 
         JsonArray FlattenSuspendingLoops(JsonArray body)
         {
-            if (!HasFlattenableLoop(body)) return body;         // byte-identical when nothing to flatten
+            if (!HasFlattenableLoop(body)) return body;         // preserve the original node when no rewrite applies
             return FlattenStmtList(body);
         }
 
@@ -272,7 +272,7 @@ static partial class SuspendColdLowering
 
         JsonArray HoistSuspendingCatches(JsonArray body)
         {
-            if (!HasHoistableCatch(body)) return body;          // byte-identical when nothing to hoist
+            if (!HasHoistableCatch(body)) return body;          // preserve the original node when no rewrite applies
             return HoistStmtList(body);
         }
 

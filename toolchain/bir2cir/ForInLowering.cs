@@ -26,11 +26,10 @@ using DotKt.Bir;
 //     supertype walk over the compilation's own type defs (a concrete stdlib subtype such as ArrayList : MutableList
 //     matches even though its own FQN is not a collection interface); a concrete `Sequence`-implementing class arrives
 //     as a forIn and resolves through this walk (Sequence is in CollectionFqns).
-//   forIn otherwise -> the `fallback` block (the FIR-desugared iterator protocol kotc used to emit by returning null).
+//   forIn otherwise -> the frontend-provided `fallback` block containing the FIR-desugared iterator protocol.
 //
-// Runs FIRST in the per-file loop (before RangeForLowering / RangeConstructionLowering / SequenceForEachLowering) so
-// the produced forms flow through every downstream pass exactly as the equivalent kotc-emitted forms did — byte-
-// identical in a consumer build (a range's forRange, a .NET forEachInline, a Kotlin-collection's iterator fallback).
+// Runs before RangeForLowering / RangeConstructionLowering / SequenceForEachLowering so each classified form enters
+// the downstream pipeline at the consumer that owns its physical realization.
 static class ForInLowering
 {
     const string IntRangeFqn = "kotlin.ranges.IntRange";
@@ -179,7 +178,7 @@ static class ForInLowering
         };
     }
 
-    // forIn / forEachInline -> the faithful forRange kotc used to emit (k, label, var, range, rangeType, body).
+    // forIn / forEachInline -> faithful forRange (k, label, var, range, rangeType, body).
     static JsonObject BuildForRange(JsonObject o, JsonNode range) => new()
     {
         ["k"] = "forRange",
@@ -190,8 +189,7 @@ static class ForInLowering
         ["body"] = o["body"]?.DeepClone(),
     };
 
-    // A stdlib-collection forIn -> the forEachInline (GetEnumerator) kotc used to emit for it directly, keys in the
-    // same post-strip order (k, label, elem, src, var, body) — the transient srcType/fallback are dropped.
+    // A stdlib-collection forIn -> forEachInline (GetEnumerator); transient srcType/fallback facts are dropped.
     static JsonObject BuildForEachInline(JsonObject o) => new()
     {
         ["k"] = "forEachInline",

@@ -1318,8 +1318,8 @@ internal fun BirEmitter.synthClrEventForwarders(klass: IrClass): Pair<List<Strin
 /** STEP-1 (kotc->bir2cir clrName migration) — a PURE-KOTLIN override marker for an emitted member: the transitive
  *  closure of interface/base members it overrides, each as {owner FQN, Kotlin member name, kind, arity}. NO CLR
  *  knowledge (no @ClrIntrinsic read, no BCL name). bir2cir (Step 2) consumes this + the ref.dll @ClrIntrinsic to
- *  derive the BCL slot name. Behavior-neutral: bir2cir strips
- *  the `overrides` key, so it never reaches ilemit (Step 1 keeps CIR byte-identical). `member` is the property name
+ *  derive the BCL slot name. bir2cir consumes and strips the transient `overrides` key before the CIR boundary.
+ *  `member` is the property name
  *  for an accessor (kind getter/setter) so bir2cir can resolve the external Property/MethodSemantics slot. */
 private fun BirEmitter.overrideOwnerType(fn: IrSimpleFunction, owner: IrClass): TypeNode {
 	val currentOwner = (fn.parent as? IrClass)
@@ -2270,8 +2270,8 @@ internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations
 }
 
 /** #146: the @KotlinDefault carrier BIR for a default expression, made CLOSED so bir2cir can re-emit it at a
- *  cross-module omitted call site. A constant / simple call (`= emptyList()`) emits NO lifted method, so its BIR is
- *  carried verbatim (byte-identical to the #134 constant carrier). A NON-CAPTURING lambda default (`= {}`, the
+ *  cross-module omitted call site. A constant / simple call (`= emptyList()`) emits no lifted method and its closed
+ *  BIR expression is carried directly. A NON-CAPTURING lambda default (`= {}`, the
  *  Avalonia `configure: Panel.() -> Unit = {}` idiom) lifts a generated static method into THIS file's `liftedMethods`
  *  and returns a `newDelegate` referencing it — an OPEN term (the method is library-local). Detach that lift DELTA from
  *  this library's file class (it is dead here — only the default's call sites materialize it) and wrap it with its

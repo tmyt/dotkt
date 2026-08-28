@@ -193,7 +193,7 @@ sealed partial class Emitter
 
     // #84 Phase 1 diagnostic breadcrumb: the declaration (and current node kind) being emitted, so a throw deep in
     // resolution surfaces as `ilemit: <Type>.<method> [node]: <message>`. Set at EmitMethodBody/EmitCtorBody head,
-    // refined per node in EmitStmt/EmitExpr. Pure error-path plumbing — no IL effect (a valid emit is byte-identical).
+    // refined per node in EmitStmt/EmitExpr. This is pure error-path plumbing and does not affect valid emission.
     string _ctxType;
     string _ctxMethod;
     string _ctxNode;

@@ -73,9 +73,8 @@ static class RefBodySquash
     static bool IsAbstract(JsonObject method) =>
         method["abstract"] is JsonValue v && v.TryGetValue<bool>(out var b) && b;
 
-    // A one-statement body: `throw new System.NotImplementedException()`. Mirrors the existing throw-statement
-    // shape ilemit already consumes (see the stdlib's NotSupportedException intrinsic stubs); the same shape kotc
-    // emits for `kotlin.TODO()`, only as a statement rather than an expression.
+    // A one-statement CIR body: `throw new System.NotImplementedException()`. The reference-body contract preserves
+    // declarations while replacing executable bodies with this ordinary throw statement.
     static JsonArray ThrowStubBody() => new()
     {
         new JsonObject

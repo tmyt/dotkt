@@ -10,8 +10,8 @@ using DotKt.Bir;
 // OPAQUE STRING field `"inlineBir"` = base64(BirCarrier.EncodeBody(JsonV1, payload)). Encoding AT STASH TIME is load-
 // bearing: every downstream walker (BirTypeLowering, RefBodySquash, …) then sees an inert JsonValue string and cannot
 // descend into / rewrite the captured body. ilemit later stamps that string VERBATIM as the [KotlinInline] carrier
-// (base64-decode -> the (version, byte[]) ctor args) — the payload remains re-lowerable BIR in the app context,
-// not the post-lowering/post-squash CIR the old ilemit ApplyKotlinInline built from `params`+`body`.
+// (base64-decode -> the (version, byte[]) ctor args). The payload remains re-lowerable BIR in the app context rather
+// than CIR: consumers must apply their own current lowering and reference context after splicing.
 //
 // Also feeds the in-memory index `owner|name|pc|ga -> [decl facts]` for SAME-module splices (InlineSplice reads it once
 // kotc emits `inlineSpliceCallSameModule` in #75 S4b). RefBodySquash is UNTOUCHED: it squashes `body` to the throw sentinel;

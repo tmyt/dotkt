@@ -10,20 +10,19 @@ using DotKt.Bir;
 //  (1) `c.code` (Char -> Int code point). kotc emits the FAITHFUL top-level extension-property getter call by the
 //      property's BARE identity + a `"prop":"get"` accessor-KIND marker (#81; the same convention every top-level
 //      extension-property accessor now uses): `callStatic owner:null method:code prop:get sig:[kotlin.Char]
-//      args:[<char>]` (the stdlib `val Char.code: Int` in kotlin.CharCodeKt). This pass re-emits the `{k:conv,
-//      to:kotlin.Int, e:<char>}` node kotc used to synthesize — the char value AS an int (a genuine primitive IL
+//      args:[<char>]` (the stdlib `val Char.code: Int` in kotlin.CharCodeKt). This pass realizes the `{k:conv,
+//      to:kotlin.Int, e:<char>}` CIR operation — the char value AS an int (a genuine primitive IL
 //      op), distinct from `.toInt()`'s @ClrConv routing. Recognized by the bare name + the `get` marker + the Char
 //      receiver in `sig`; the owner (kotlin.CharCodeKt) + Int return are confirmed against the ref.dll when available.
 //
 //  (2) `f(x)` invoking a function-typed value. kotc emits the FAITHFUL `callInstance ownerType:kotlin.FunctionN[..]`
-//      (or `kotlin.reflect.KFunctionN[..]`) `method:invoke recv:<f> args:[..]` member call. This pass re-emits the
-//      `{k:delegateInvoke, funcType, recv, args}` node kotc used to synthesize (a function value IS a delegate at the
-//      CLR level). `funcType` = the fn type reconstructed from the FunctionN owner's type args (params = all but the
-//      last, ret = the last) — byte-identical to the former `birType(recv.type)`.
+//      (or `kotlin.reflect.KFunctionN[..]`) `method:invoke recv:<f> args:[..]` member call. This pass realizes the
+//      `{k:delegateInvoke, funcType, recv, args}` CIR node (a function value IS a delegate at the
+//      CLR level). `funcType` is derived from the declared FunctionN owner type args (params = all but the last,
+//      ret = the last), which are the authoritative BIR function signature at this boundary.
 //
 // Runs EARLY (before NetInteropBinding / MemberCallSubstitution / any type-erasing pass) and UNCONDITIONALLY (ref +
-// app), reproducing the flow that existed when kotc emitted `conv`/`delegateInvoke` directly — so every downstream
-// pass (type lowering, the suspend/closure passes that CONSUME delegateInvoke) sees the exact same tree shape.
+// app), so type lowering and the suspend/closure consumers receive the canonical `conv`/`delegateInvoke` CIR forms.
 static class CharCodeInvokeLowering
 {
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs = null) => Walk(root, refs);

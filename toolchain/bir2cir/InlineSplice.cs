@@ -963,7 +963,7 @@ static class InlineSplice
     // `klass` in `filter { klass.isInstance(it) }`) into the HOST inlineLambda frame with NO matching host descriptor — so
     // once the host is lifted (a `newClosure` / suspend SM) they dangle (`references undeclared local`). Restore the
     // invariant: copy each spliced-carrier capture descriptor onto the host `captures`, gated on the capture actually
-    // SURVIVING in the spliced body (a descriptor-only residue frees nothing — keeps green shapes byte-identical) and
+    // SURVIVING in the spliced body (a descriptor-only residue frees nothing and needs no rewrite) and
     // dedup'd against the host's existing captures. A type conflict against a same-named host capture is the one
     // unrepresentable case -> fail loud (#95 doctrine).
     //
@@ -1232,7 +1232,7 @@ static class InlineSplice
                 { outerName = cn; captures.Add(new JsonObject { ["k"] = "this" }); }   // enclosing `this`
                 // #126: an ALPHA-CONVERTED free capture carries an explicit construction-source `value` node — the field/
                 // body use the fresh descriptor name `cn`, but the ctor-arg reads the ORIGINAL enclosing local (or other
-                // enclosing expr). Absent `value` (the common case) = the name-derived `{k:local,name:cn}`, byte-identical.
+                // enclosing expr). Absent `value` uses the canonical name-derived `{k:local,name:cn}` descriptor.
                 else { capNames.Add(cn); captures.Add(c["value"]?.DeepClone() ?? new JsonObject { ["k"] = "local", ["name"] = cn }); }
             }
         // A bare `{k:this}` (the enclosing receiver — a lambda has no `this` of its own) with NO `outer:true` capture listed
@@ -1392,7 +1392,7 @@ static class InlineSplice
         var captures = new JsonArray();
         // #126: positional construction-value overrides (the schema's `newSuspendLambda.capValues` channel), aligned with
         // `captures` — an ALPHA-CONVERTED capture's field/body use the fresh descriptor name while its construction value
-        // reads the ORIGINAL enclosing local. Non-`value` slots stay null (descriptor-name synthesis, byte-identical).
+        // reads the ORIGINAL enclosing local. Non-`value` slots stay null and use descriptor-name synthesis.
         var suspendCapValues = new JsonArray();
         bool anySuspendCapValue = false;
         var innerScope = new HashSet<string>(StringComparer.Ordinal);
@@ -2093,7 +2093,7 @@ static class InlineSplice
             // F2 (#61) SCOPE BOUNDARY (symmetric with ApplyPrefix/RewriteLocalRefs): a nested `inlineLambda` carrier's
             // OWN params are NOT splice-declared locals (they bind at BuildLambdaSplice), so they never enter `declared`;
             // its `body`/`result` DO declare real locals that still need hygiene prefixing, so descend them. `params`/
-            // `captures` descriptors declare nothing collectable — descending only body/result is byte-identical.
+            // `captures` descriptors declare nothing collectable, so only body/result participate in hygiene.
             if (Str(o["k"]) == "inlineLambda")
             {
                 if (o["body"] is JsonNode ib) CollectDeclared(ib, declared);

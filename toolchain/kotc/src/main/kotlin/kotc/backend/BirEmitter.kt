@@ -842,9 +842,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		walk(t)
 		return parts.sorted().joinToString(";")
 	}
-	// #52 (kotc-purity): the monomorphized heap cell `dotkt$Ref_<elem>{ var v }` is a CLR-representation synthetic.
+	// #52 (kotc-purity): the scoped generated heap cell `{ var v }` is a CLR-representation synthetic.
 	// kotc emits ONLY the FACT — a file-level `refTypes` registry (each cell's name + element TYPE identity) plus the
-	// use-site `new`/`field`/`setField` on the cell. bir2cir's RefCellSynthesis assembles the actual trivial class
+	// use-site `new`/`field`/`setField` on the cell. bir2cir's SharedSyntheticSynthesis assembles the actual trivial class
 	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
 	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
 	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { fact ->
@@ -1050,15 +1050,16 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
 		// #52 (kotc-purity): the CLR-representation synthetic TYPE definitions are no longer synthesized here — kotc emits
 		// only the FACTS. bir2cir owns the type synthesis: SharedSyntheticSynthesis builds the fixed-shape
-		// `dotkt$CharSequence` interface + `dotkt_KProperty(Impl)` from their use-site references; RefCellSynthesis
-		// builds each `dotkt$Ref_<elem>` cell from the `refTypes` registry below; ClosureSynthesis builds each capturing
+		// `dotkt$CharSequence` interface from its use-site identity and each generated ref cell from the `refTypes`
+		// registry below; ClosureSynthesis builds each capturing
 		// closure class from the `synthClass` fact on its `newClosure` node. The CLR-bound (@ClrTypeAlias) classes are
 		// already in `typeDefs` (they flow through `classes` like any other type — kotc no longer strips them); bir2cir's
 		// AliasHelperHoist drops each alias type def and, for a class, hoists its rule-3 members into the helper.
 		// One source declaration can be visited through two serialized value roots (notably a default expression is
 		// emitted both into its carrier and at an in-module call site). The lift table then contains the same authored
-		// TypeDef JSON twice. Declaration identity is still its generated name; remove only byte-for-byte identical
-		// entries here, while deliberately retaining same-name/different-body entries for a loud downstream collision.
+		// TypeDef JSON twice. Declaration identity is still its generated name; remove only entries whose serialized
+		// declaration string is identical, while deliberately retaining same-name/different-body entries for a loud
+		// downstream collision.
 		val types = (typeDefs + liftedTypes).distinct().joinToString(",")
 		return """{"fileClass":${str(className)},"hasMain":$hasMain,"fields":[${statFields.joinToString(",")}],"methods":[$methods],"properties":[$topPropRecords],"types":[$types],"refTypes":[${refTypesJson()}]}"""
 	}

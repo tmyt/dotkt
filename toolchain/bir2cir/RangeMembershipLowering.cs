@@ -5,7 +5,7 @@ using DotKt.Bir;
 // RANGE MEMBERSHIP `x in a..b` (#73 M2). kotc emits the FAITHFUL `contains` member call on the range receiver
 // (`callInstance kotlin.ranges.IntRange.contains(x)`, recv = the un-materialized `a.rangeTo(b)` / `a until b`) — by
 // identity, NO comparison synthesis and NO FQN gate. A USER type with `operator fun rangeTo`+`contains` therefore
-// stays a real method dispatch (kotc's old bare-name lowering MISCOMPILED it to primitive comparisons). This pass
+// stays a real method dispatch. This pass
 // lowers the membership to the short-circuit fast path — FQN-keyed, so it fires ONLY for a stdlib PRIMITIVE range:
 //
 //   x in a..b   (rangeTo)                 -> (x >= a && x <= b)
@@ -34,13 +34,13 @@ using DotKt.Bir;
 //
 // Gate: the `contains` owner is `kotlin.ranges.{IntRange,LongRange,CharRange}` AND the recv is the primitive range
 // construction (`callInstance kotlin.<Prim>.rangeTo/rangeUntil` or the `callStatic until` extension over a primitive).
-// A variable-held range (`val r = a..b; x in r`) has a `local` recv -> not matched -> the real IntRange.contains
-// binding handles it, exactly as kotc's old `range as? IrCall` gate required an inline range call. `downTo`/`step`
-// build an `IntProgression`, not a `*Range`, so they never reach here either.
+// A variable-held range (`val r = a..b; x in r`) has a `local` recv, so the real IntRange.contains binding handles it.
+// Only an immediate primitive range construction exposes the bound expressions this rewrite must evaluate once.
+// `downTo`/`step` build an `IntProgression`, not a `*Range`, so they never reach here either.
 //
 // Runs BEFORE RangeConstructionLowering (which would otherwise materialize the recv rangeTo into `new IntRange`) and
-// before MemberCallSubstitution (which would bind the unresolved `contains`/`until`) — so the produced binOp/cond
-// nodes flow through every downstream pass exactly as kotc's retired call-site lowering did.
+// before MemberCallSubstitution (which would bind the unresolved `contains`/`until`), so the canonical binOp/cond CIR
+// nodes enter the ordinary downstream pipeline.
 static class RangeMembershipLowering
 {
     static int _counter;

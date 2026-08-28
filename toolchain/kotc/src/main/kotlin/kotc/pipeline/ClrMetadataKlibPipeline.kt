@@ -139,8 +139,8 @@ object ClrMetadataKlibSerializerPhase : PipelinePhase<ClrMetadataKlibFir2IrArtif
 		KlibWriter {
 			// The frontend stdlib ships inside DotKt.Toolchain. Keep it as one standard packed KLIB
 			// instead of making NuGet materialize every metadata fragment as a separate small file.
-			// Upstream's writer sorts entries and clears their timestamps, so identical metadata also
-			// produces byte-identical archives.
+			// Upstream's writer sorts entries and clears their timestamps, so identical metadata produces
+			// deterministic archives.
 			format(KlibFormat.ZipArchive)
 			manifest {
 				moduleName(configuration[CommonConfigurationKeys.MODULE_NAME]!!)

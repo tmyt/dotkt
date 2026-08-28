@@ -15,7 +15,7 @@ sealed partial class Emitter
         // #84 Phase 4: run the in-process CIR SANITY gate at the CIR boundary, BEFORE any emit — malformed CIR
         // (undeclared local, dangling goto, missing owner) fails LOUD with a precise `sanity: <invariant>` message
         // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
-        // See Emitter.Sanity.cs. Pure fail-fast validation — no IL effect (a valid CIR is byte-identical after it).
+        // See Emitter.Sanity.cs. Pure fail-fast validation: a valid CIR reaches emission unchanged.
         CheckCir(files);
         LoadWellKnown(files);
         // #370: how many references these documents carry, so the parity check below can be held to all of them.
@@ -704,7 +704,7 @@ sealed partial class Emitter
 
         // Pass 4: emit all bodies (every ctor/method signature already exists). Each body emit is GUARDED (#84 Phase 1):
         // a throw is re-tagged with the declaration being emitted (via CurrentDecl) so one bad method names itself in a
-        // clean `ilemit: <Type>.<method>: <message>` line, and the rest are unaffected. Byte-identical on success.
+        // clean `ilemit: <Type>.<method>: <message>` line; successful body emission is unaffected by the guard.
         foreach (var ti in _types.Values)
             if (!ti.IsDelegate)
                 for (int ci = 0; ci < ti.Ctors.Count; ci++) { T($"pass4 ctor body: {ti.TB?.Name}#{ci}"); var cb = ti.Ctors[ci]; var cd = ti.CtorDefs[ci]; GuardBody(() => EmitCtorBody(ti, cb, cd)); }
