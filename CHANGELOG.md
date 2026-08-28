@@ -11,7 +11,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   carries their source visibility through BIR alongside enums and now emits nested annotation declarations, so private
   and internal top-level declarations and private, internal, and protected nested declarations are no longer widened
   to public TypeDefs. Compiler-owned collection carrier interfaces that must cross assembly boundaries now state their
-  CLR-public contract explicitly with `@PublishedApi` instead of relying on the former visibility loss.
+  published contract explicitly with `@PublishedApi`; BIR retains `internal` plus the annotation, and `bir2cir`
+  consumes those facts into CLR-public TypeDefs instead of relying on the former visibility loss.
 
 - **Non-public Kotlin enums now retain their declaration visibility in CLR metadata (#602).** `kotc` carries the
   source visibility of basic and explicit `@ClrEnum` declarations through BIR, so top-level and nested enum TypeDefs

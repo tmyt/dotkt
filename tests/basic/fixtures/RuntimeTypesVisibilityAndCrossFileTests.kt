@@ -31,10 +31,19 @@ import kotlin.clr.byref
 private interface RuntimeTypesPrivateInterface
 internal interface RuntimeTypesInternalInterface
 interface RuntimeTypesPublicInterface
+@PublishedApi internal interface RuntimeTypesPublishedInterface
 
 private annotation class RuntimeTypesPrivateAnnotation
 internal annotation class RuntimeTypesInternalAnnotation
 annotation class RuntimeTypesPublicAnnotation
+@PublishedApi internal annotation class RuntimeTypesPublishedAnnotation
+@PublishedApi internal class RuntimeTypesPublishedClass
+@PublishedApi internal object RuntimeTypesPublishedObject
+@PublishedApi internal enum class RuntimeTypesPublishedEnum { Value }
+@PublishedApi internal enum class RuntimeTypesPublishedRichEnum(val code: Int) {
+    Value(1);
+    fun value(): Int = code
+}
 
 class RuntimeTypesVisibilityOwner {
     private interface PrivateNestedInterface
@@ -47,6 +56,26 @@ class RuntimeTypesVisibilityOwner {
     protected annotation class ProtectedNestedAnnotation
     annotation class PublicNestedAnnotation
 }
+
+object RuntimeTypesAnnotationObjectOwner {
+    internal annotation class InternalNestedAnnotation
+
+    class DepthOne {
+        private annotation class PrivateDeepAnnotation
+
+        @PrivateDeepAnnotation
+        class AnnotatedDeepTarget
+    }
+}
+
+interface RuntimeTypesAnnotationInterfaceOwner {
+    annotation class PublicNestedAnnotation
+}
+
+@RuntimeTypesVisibilityOwner.PublicNestedAnnotation
+@RuntimeTypesAnnotationObjectOwner.InternalNestedAnnotation
+@RuntimeTypesAnnotationInterfaceOwner.PublicNestedAnnotation
+class RuntimeTypesNestedAnnotationTarget
 
 // ---- il-setlocalbox : `Any` field reassigned from String to a boxed Int -------------------------------------------
 class RuntimeTypesHolder {
@@ -203,9 +232,15 @@ class StarProjectionAndVisibilityTests {
         assertTrue(Type.GetType("RuntimeTypesPrivateInterface")!!.IsNotPublic)
         assertTrue(Type.GetType("RuntimeTypesInternalInterface")!!.IsNotPublic)
         assertTrue(Type.GetType("RuntimeTypesPublicInterface")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublishedInterface")!!.IsPublic)
         assertTrue(Type.GetType("RuntimeTypesPrivateAnnotation")!!.IsNotPublic)
         assertTrue(Type.GetType("RuntimeTypesInternalAnnotation")!!.IsNotPublic)
         assertTrue(Type.GetType("RuntimeTypesPublicAnnotation")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublishedAnnotation")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublishedClass")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublishedObject")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublishedEnum")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublishedRichEnum")!!.IsPublic)
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+PrivateNestedInterface")!!.IsNestedPrivate)
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+InternalNestedInterface")!!.IsNestedAssembly)
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+ProtectedNestedInterface")!!.IsNestedFamily)
@@ -214,6 +249,15 @@ class StarProjectionAndVisibilityTests {
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+InternalNestedAnnotation")!!.IsNestedAssembly)
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+ProtectedNestedAnnotation")!!.IsNestedFamily)
         assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+PublicNestedAnnotation")!!.IsNestedPublic)
+        assertTrue(Type.GetType("RuntimeTypesAnnotationObjectOwner+InternalNestedAnnotation")!!.IsNestedAssembly)
+        assertTrue(Type.GetType("RuntimeTypesAnnotationInterfaceOwner+PublicNestedAnnotation")!!.IsNestedPublic)
+        assertTrue(Type.GetType("RuntimeTypesAnnotationObjectOwner+DepthOne+PrivateDeepAnnotation")!!.IsNestedPrivate)
+        val annotationTarget = Type.GetType("RuntimeTypesNestedAnnotationTarget")!!
+        assertTrue(annotationTarget.IsDefined(Type.GetType("RuntimeTypesVisibilityOwner+PublicNestedAnnotation")!!, false))
+        assertTrue(annotationTarget.IsDefined(Type.GetType("RuntimeTypesAnnotationObjectOwner+InternalNestedAnnotation")!!, false))
+        assertTrue(annotationTarget.IsDefined(Type.GetType("RuntimeTypesAnnotationInterfaceOwner+PublicNestedAnnotation")!!, false))
+        val deepTarget = Type.GetType("RuntimeTypesAnnotationObjectOwner+DepthOne+AnnotatedDeepTarget")!!
+        assertTrue(deepTarget.IsDefined(Type.GetType("RuntimeTypesAnnotationObjectOwner+DepthOne+PrivateDeepAnnotation")!!, false))
         val a = RuntimeTypesAccount(100)
         assertEquals(98, a.net())        // 98
         assertEquals("acct", a.tag())    // acct
