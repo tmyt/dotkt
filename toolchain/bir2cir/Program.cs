@@ -930,6 +930,10 @@ sealed class Pipeline
         // sweep has run. The pass is idempotent; cover exactly those new bodies before type lowering erases the fact.
         foreach (var stagedFile in staged) NothingValueTermination.Apply(stagedFile.Root);
 
+        // @PublishedApi is a Kotlin semantic annotation carried alongside the source `internal` visibility in BIR.
+        // Resolve its effective CLR accessibility here, before ownership selects top-level versus Nested* metadata.
+        PublishedApiTypeVisibilityLowering.ApplyAll(staged.Select(s => s.Root));
+
         // Materialize every remaining Kotlin lexical owner as explicit CLR TypeDef nesting only after all source,
         // inline, event-adapter, closure, and coroutine synthesis has finished adding declarations. This is the sole
         // BIR semanticOwner -> CIR nestedIn boundary.

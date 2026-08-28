@@ -466,6 +466,14 @@ internal fun BirEmitter.visOf(d: IrDeclarationWithVisibility): String = when (d.
 	else -> "public"
 }
 
+/** Kotlin source visibility without applying a CLR accessibility representation. */
+internal fun BirEmitter.sourceVisOf(d: IrDeclarationWithVisibility): String = when (d.visibility.delegate) {
+	Visibilities.Private, Visibilities.PrivateToThis -> "private"
+	Visibilities.Internal -> "internal"
+	Visibilities.Protected -> "protected"
+	else -> "public"
+}
+
 /**
  * Owner-type spec for a member access / `new`: `Box[int]` when the receiver is a CONCRETE construction of a
  * user generic, else the bare `Box`. Inside the generic type's own methods the receiver is `Box<T>` (args are
