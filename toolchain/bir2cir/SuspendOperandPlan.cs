@@ -175,7 +175,7 @@ static partial class SuspendColdLowering
     {
         var hasReceiver = o["recv"] != null;
         var slots = new List<EvalOrderSlot>();
-        if (hasReceiver) slots.Add(new EvalOrderSlot("recv", PreserveLocation: ReceiverNeedsAddress(o)));
+        if (hasReceiver) slots.Add(new EvalOrderSlot("recv", PreserveLocation: CallEvalLowering.ReceiverNeedsAddress(o, _isValueFqn)));
         slots.AddRange(keys.Select(k => new EvalOrderSlot(k)));
         return FromSlots(o, hasReceiver, slots);
     }
@@ -208,40 +208,10 @@ static partial class SuspendColdLowering
     static EvalOrder Call(JsonObject o, bool hasReceiver)
     {
         var slots = new List<EvalOrderSlot>();
-        if (hasReceiver) slots.Add(new EvalOrderSlot("recv", PreserveLocation: ReceiverNeedsAddress(o)));
+        if (hasReceiver) slots.Add(new EvalOrderSlot("recv", PreserveLocation: CallEvalLowering.ReceiverNeedsAddress(o, _isValueFqn)));
         if (o["args"] is JsonArray args)
             for (var i = 0; i < args.Count; i++) slots.Add(new EvalOrderSlot("args", i));
         return FromSlots(o, hasReceiver, slots);
-    }
-
-    // The receiver form the CIR emitter consumes is part of the physical representation this layer owns. A
-    // value-type member write/call and a constrained generic dispatch consume the receiver's ADDRESS, so moving
-    // the receiver VALUE into a temporary would change the target storage. Reference receivers remain values: their
-    // object identity must be frozen before a later suspension, not the variable that happened to hold the object.
-    static bool ReceiverNeedsAddress(JsonObject o)
-    {
-        var k = Str(o["k"]);
-        if (k == "constrainedCall") return true;
-        // ConstrainedTypeParameterReceiverBinding runs after suspend synthesis, because only then are inherited
-        // member owners and synthesized state-machine frames final. Preserve the receiver's LOCATION here while its
-        // frontend static type still states the decisive fact. Spilling a `T` value into a second field would make a
-        // later value-type instantiation dispatch on a copy; it would also hide the original state slot from the
-        // constrained-call rewrite. Platform/nullable wrappers do not change that the stack value is still `!!T`.
-        static bool IsTypeVariable(TypeNode type) => type switch
-        {
-            TypeNode.Tv => true,
-            TypeNode.Oblivious p => IsTypeVariable(p.Of),
-            TypeNode.Nullable n => IsTypeVariable(n.Of),
-            _ => false,
-        };
-        if (o["recv"] is JsonObject recv && IsTypeVariable(NodeType.Stamp(recv))) return true;
-        var owner = k switch
-        {
-            "setField" or "setFieldExpr" => TypeJson.Read(o["ownerType"]),
-            "clrPropSet" or "clrInstance" or "clrGenericInstance" => TypeJson.Read(o["type"]),
-            _ => null,
-        };
-        return owner is TypeNode.Fqn f && _refs.IsValueType(f);
     }
 
     // The position of the LAST operand that carries a suspension; -1 when none does. Everything to its left is

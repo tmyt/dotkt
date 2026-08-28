@@ -20,6 +20,12 @@ import TX.Widget
 import CompilerGeneratedApi.Surface
 import VolatileInterop.Fields
 
+inline fun inlineTryVtProp437(block: () -> Int): Int = try { block() } catch (e: Exception) { -1 }
+fun loggedVtPropInt437(log: MutableList<String>, label: String, value: Int): Int {
+    log.add(label)
+    return value
+}
+
 class MemberShapeTests {
     @TestAttribute
     fun ixname() {
@@ -46,6 +52,17 @@ class MemberShapeTests {
         assertEquals(41, volatile.Value)
         Fields.StaticValue = 42
         assertEquals(42, Fields.StaticValue)
+    }
+
+    @TestAttribute
+    fun inlineTryValuePreservesStructReceiverLocation() {
+        val log = mutableListOf<String>()
+        val boxes = arrayOf(Box(3))
+        boxes[loggedVtPropInt437(log, "index", 0)].V = inlineTryVtProp437 {
+            loggedVtPropInt437(log, "value", 17)
+        }
+        assertEquals(17, boxes[0].V)
+        assertEquals(listOf("index", "value"), log)
     }
 
     // Keep each volatile shape isolated so the IL gate proves all four lowering paths independently.

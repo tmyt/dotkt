@@ -772,7 +772,7 @@ sealed class Pipeline
             // the CLR protected region is entered with an empty eval stack (a `leave` clears the stack -> a pushed
             // left operand would be lost -> InvalidProgram). kotc emits the correct value-form (a try-bearing
             // valueBlock + result local); this is pure CLR eval-order normalization, so it lives in bir2cir.
-            if (!_options.RefBuild) TryValueOperandHoist.Apply(substituted);
+            if (!_options.RefBuild) TryValueOperandHoist.Apply(substituted, isValueFqn);
             staged.Add((substituted, outputName));
         }
 

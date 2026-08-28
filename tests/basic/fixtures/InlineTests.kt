@@ -28,6 +28,7 @@
 //
 // Regression coverage added after the migration:
 //   #285                    -> inlineTryBodyInOperand     inline try-expression body spliced into concat operand 0
+//   #437                    -> inlineTryBodyIn*           ordered array/equality/member-write operand slots
 //
 // Top-level names are unique within this single battery assembly (one project = one namespace). Collisions with
 // GenericsTests (`Box`) and within the family (`twice`, `runIt`, `pick`, `Box`) are renamed with a case suffix.
@@ -35,6 +36,7 @@ import kotlin.time.Duration.Companion.seconds
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsNull as assertNull
+import System.Text.Json.JsonSerializerOptions
 
 // ---- il-inline : non-reified value inline (no reified T / non-local return / mutable capture) ----------------
 inline fun twice(x: Int, f: (Int) -> Int): Int = f(f(x))
@@ -54,6 +56,33 @@ fun sum3(): Int { var total = 0; repeat3 { total = total + it }; return total }
 // #285: InlineSplice leaves the try body and lambda binding in one ordered value block; TryValueOperandHoist must
 // move its protected region ahead of the String.Concat operand accumulator.
 inline fun inlineTry285(block: () -> Int): Int = try { block() } catch (e: Exception) { -1 }
+
+// #437: the protected region spliced from this helper must begin with an empty CLR evaluation stack even when the
+// source expression is an array, equality, object-method, or member-write operand.
+inline fun inlineTry437(block: () -> Int): Int = try { block() } catch (e: Exception) { -1 }
+inline fun inlineTryString437(block: () -> String): String = try { block() } catch (e: Exception) { "caught" }
+inline fun inlineTryBoolean437(block: () -> Boolean): Boolean = try { block() } catch (e: Exception) { false }
+fun loggedInt437(log: MutableList<String>, label: String, value: Int): Int {
+    log.add(label)
+    return value
+}
+fun loggedArray437(log: MutableList<String>, label: String, values: Array<Int>): Array<Int> {
+    log.add(label)
+    return values
+}
+fun loggedString437(log: MutableList<String>, label: String, value: String): String {
+    log.add(label)
+    return value
+}
+class InlineTryFieldHolder437 { lateinit var text: String }
+fun loggedFieldHolder437(log: MutableList<String>, value: InlineTryFieldHolder437): InlineTryFieldHolder437 {
+    log.add("field-receiver")
+    return value
+}
+fun loggedSerializerOptions437(log: MutableList<String>, value: JsonSerializerOptions): JsonSerializerOptions {
+    log.add("property-receiver")
+    return value
+}
 
 // ---- il-xinline : crossinline lambda invoked from inside a nested (deferred) lambda --------------------------
 inline fun xTwice(crossinline block: () -> Unit) { val r = { block() }; r(); r() }
@@ -308,6 +337,71 @@ class InlineTests {
         val failure = inlineTry285 { throw RuntimeException("boom") }.toString() + "/"
         assertEquals("1/", success)
         assertEquals("-1/", failure)
+    }
+
+    @TestAttribute
+    fun inlineTryBodyInArrayIndex() {
+        val log = mutableListOf<String>()
+        val selected = loggedArray437(log, "get-array", arrayOf(10, 20))[inlineTry437 {
+            loggedInt437(log, "get-index", 1)
+        }]
+        assertEquals(20, selected)
+        assertEquals(listOf("get-array", "get-index"), log)
+    }
+
+    @TestAttribute
+    fun inlineTryBodyInArrayValue() {
+        val log = mutableListOf<String>()
+        val assigned = arrayOf(10, 20)
+        loggedArray437(log, "set-array", assigned)[loggedInt437(log, "set-index", 0)] = inlineTry437 {
+            loggedInt437(log, "set-value", 30)
+        }
+        assertEquals(30, assigned[0])
+        assertEquals(listOf("set-array", "set-index", "set-value"), log)
+    }
+
+    @TestAttribute
+    fun inlineTryBodyInObjectEqualsArgument() {
+        val log = mutableListOf<String>()
+        val equal = loggedInt437(log, "equals-receiver", 10).equals(inlineTry437 {
+            log.add("equals-argument")
+            throw RuntimeException("expected")
+        })
+        assertEquals(false, equal)
+        assertEquals(listOf("equals-receiver", "equals-argument"), log)
+    }
+
+    @TestAttribute
+    fun inlineTryBodyInStructuralEquality() {
+        val log = mutableListOf<String>()
+        val equal = loggedString437(log, "equality-left", "same") == inlineTryString437 {
+            loggedString437(log, "equality-right", "same")
+        }
+        assertEquals(true, equal)
+        assertEquals(listOf("equality-left", "equality-right"), log)
+    }
+
+    @TestAttribute
+    fun inlineTryBodyInFieldValue() {
+        val log = mutableListOf<String>()
+        val holder = InlineTryFieldHolder437()
+        loggedFieldHolder437(log, holder).text = inlineTryString437 {
+            loggedString437(log, "field-value", "assigned")
+        }
+        assertEquals("assigned", holder.text)
+        assertEquals(listOf("field-receiver", "field-value"), log)
+    }
+
+    @TestAttribute
+    fun inlineTryBodyInClrPropertyValue() {
+        val log = mutableListOf<String>()
+        val options = JsonSerializerOptions()
+        loggedSerializerOptions437(log, options).WriteIndented = inlineTryBoolean437 {
+            log.add("property-value")
+            true
+        }
+        assertEquals(true, options.WriteIndented)
+        assertEquals(listOf("property-receiver", "property-value"), log)
     }
 
     @TestAttribute

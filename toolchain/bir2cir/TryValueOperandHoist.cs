@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
+using DotKt.Bir;
 
 // TRY-VALUE OPERAND HOIST (bundle-6 `tryexprop`): CLR eval-order normalization for a value-producing
 // try/catch(/finally) used in an OPERAND slot (`1 + try{..}`, `"x" + try{..}`, `f(try{..})`).
@@ -35,8 +36,13 @@ using System.Text.Json.Nodes;
 static class TryValueOperandHoist
 {
     static int _tmp;
+    static ValueTypeOracle _isValue = _ => false;
 
-    public static void Apply(JsonNode root) => Walk(root, BirScope.Empty);
+    public static void Apply(JsonNode root, ValueTypeOracle isValue)
+    {
+        _isValue = isValue ?? (_ => false);
+        Walk(root, BirScope.Empty);
+    }
 
     // Statement-list-valued keys (their elements are statements, not operand expressions).
     static readonly HashSet<string> StmtListKeys = new(StringComparer.Ordinal) { "body", "stmts", "finally" };
@@ -63,6 +69,20 @@ static class TryValueOperandHoist
         ["newArray"] = "elems",
         ["newList"] = "elems",
         ["newSet"] = "elems",
+    };
+
+    // Node kinds whose value operands are named fields rather than `recv` + `args`. Keep the physical evaluation
+    // order explicit: a protected region in any slot after the first begins while its predecessors are live on the
+    // CLR stack. `objMethod` is here even though it has a receiver because Equals spells its sole argument as `arg`,
+    // not as an `args` array; treating every receiver-bearing node as an ordinary call silently skipped that slot.
+    static readonly Dictionary<string, string[]> OrderedNamedValueSlots = new(StringComparer.Ordinal)
+    {
+        ["arrayGet"] = new[] { "array", "index" },
+        ["arraySet"] = new[] { "array", "index", "value" },
+        ["objEq"] = new[] { "lhs", "rhs" },
+        ["objMethod"] = new[] { "recv", "arg" },
+        ["setFieldExpr"] = new[] { "recv", "value" },
+        ["clrPropSet"] = new[] { "recv", "value" },
     };
 
     static string K(JsonNode n) => (n as JsonObject)?["k"] is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
@@ -187,6 +207,11 @@ static class TryValueOperandHoist
             HoistOrdered(2, i => i == 0 ? o["lhs"] : o["rhs"], (i, v) => { if (i == 0) o["lhs"] = v; else o["rhs"] = v; }, atEmpty, pre, scope);
             return o;
         }
+        if (k != null && OrderedNamedValueSlots.TryGetValue(k, out var namedValueSlots))
+        {
+            HoistNamedSlots(o, namedValueSlots, atEmpty, pre, scope);
+            return o;
+        }
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
             // ilemit has already pushed the object[] accumulator and an element index before every part, including
@@ -241,7 +266,10 @@ static class TryValueOperandHoist
     static void HoistNamedSlots(JsonObject o, string[] keys, bool atEmpty, List<JsonNode> pre, BirScope scope)
     {
         var present = keys.Where(kk => o[kk] != null).ToArray();
-        HoistOrdered(present.Length, i => o[present[i]], (i, v) => o[present[i]] = v, atEmpty, pre, scope);
+        var preserveFirstLocation = present.Length > 0 && present[0] == "recv"
+            && CallEvalLowering.ReceiverNeedsAddress(o, _isValue);
+        HoistOrdered(present.Length, i => o[present[i]], (i, v) => o[present[i]] = v,
+            atEmpty, pre, scope, preserveFirstLocation: preserveFirstLocation);
     }
 
     // Dictionary construction evaluates entry 0 key, entry 0 value, entry 1 key, entry 1 value, ... while the
@@ -280,7 +308,8 @@ static class TryValueOperandHoist
     // enclosing empty-stack flag; every later slot begins with a non-empty stack. Any operand that
     // precedes a slot which hoists must itself be spilled (if side-effecting) so relative order holds.
     static void HoistOrdered(int n, Func<int, JsonNode> get, Action<int, JsonNode> set, bool atEmpty,
-                             List<JsonNode> pre, BirScope scope, bool spillAllAfterHoist = false)
+                             List<JsonNode> pre, BirScope scope, bool spillAllAfterHoist = false,
+                             bool preserveFirstLocation = false)
     {
         var lastHoist = -1;
         for (var i = 0; i < n; i++) if (WillHoist(get(i), i == 0 && atEmpty)) lastHoist = i;
@@ -295,9 +324,19 @@ static class TryValueOperandHoist
             // Once any protected region moves, materialize the whole non-neutral stream before construction so a
             // suffix expression cannot slide behind an earlier element's user-observable hash/equality operation.
             if (lastHoist >= 0 && (spillAllAfterHoist || i < lastHoist))
-                resolved = SpillIfNeeded(resolved, pre, scope);
+                resolved = preserveFirstLocation && i == 0
+                    ? PinAddressIfNeeded(resolved, pre)
+                    : SpillIfNeeded(resolved, pre, scope);
             set(i, resolved);
         }
+    }
+
+    static JsonNode PinAddressIfNeeded(JsonNode location, List<JsonNode> pre)
+    {
+        var pinned = new JsonArray();
+        var resolved = CallEvalLowering.PinAddressForOrdering(location, pinned, _isValue);
+        foreach (var stmt in pinned) if (stmt != null) pre.Add(stmt.DeepClone());
+        return resolved;
     }
 
     // A slot evaluated before a hoisted try: a leftover leading try-valueBlock (safe-at-empty but now
@@ -340,6 +379,17 @@ static class TryValueOperandHoist
         if (k == "valueBlock" && IsTryValueBlock(o)) return !atEmpty;
         if (k == "binOp" && o["lhs"] != null && o["rhs"] != null)
             return WillHoist(o["lhs"], atEmpty) || WillHoist(o["rhs"], false);
+        if (k != null && OrderedNamedValueSlots.TryGetValue(k, out var namedValueSlots))
+        {
+            var first = true;
+            foreach (var key in namedValueSlots)
+                if (o[key] is JsonNode operand)
+                {
+                    if (WillHoist(operand, first && atEmpty)) return true;
+                    first = false;
+                }
+            return false;
+        }
         if (k == "concat" && o["parts"] is JsonArray parts)
         {
             foreach (var part in parts) if (WillHoist(part, atEmpty: false)) return true;
