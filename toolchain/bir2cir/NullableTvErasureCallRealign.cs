@@ -674,10 +674,54 @@ static partial class NullableTvErasureCallRealign
             return derived;
         }
         if (derived.Equals(stampedRet) || !IsObjectErasureOf(derived, stampedRet)) return stampedRet;
+
+        // An open `Array<T?>` return has the one declaration shape that can serve both CLR instantiations:
+        // `object[]`.  At a concrete REFERENCE instantiation, however, the Kotlin value it denotes is still the
+        // reified reference array (`Array<String?>` is `string[]`).  Compiler-produced values uphold that contract:
+        // a generic body cannot manufacture an arbitrary `Array<T?>`, and every supported producer either forwards
+        // the caller's typed array or allocates from a reified/runtime element type.  The physical declaration slot
+        // accepts that value through CLR reference-array covariance, but a following use needs the inverse checked
+        // projection stated explicitly in CIR.
+        //
+        // Keep this at the RESULT boundary, where both facts are authoritative: `derived` is
+        // `Subst(Erase(declaration))`, while `stampedRet` is the frontend's concrete Kotlin result.  It is neither an
+        // array-member/name special case nor a general nested-generic conversion.  A VALUE element and an open type
+        // variable deliberately stay on the object-erased path — `object[]` cannot be cast to either
+        // `Nullable<V>[]` or `T[]` generally.
+        if (CanNarrowReferenceArrayResult(derived, stampedRet))
+        {
+            WrapResultCast(obj, derived, stampedRet);
+            return stampedRet;
+        }
         obj["ret"] = TypeJson.Write(derived);
         if (obj["dynRet"] != null) obj["dynRet"] = TypeJson.Write(derived);
         RestampSty(obj, derived);
         return derived;
+    }
+
+    static bool CanNarrowReferenceArrayResult(TypeNode physical, TypeNode semantic)
+        => physical is TypeNode.Array { Elem: TypeNode.Fqn { Name: "object", Args: null } } pa
+           && semantic is TypeNode.Array sa
+           && pa.Rank == sa.Rank && pa.SzArray == sa.SzArray
+           && !IsBareObject(sa.Elem)
+           && !NeedsObjectSeam(sa.Elem);
+
+    // Replace the call in place because Eval walks a mutable JsonObject rather than returning rewritten nodes.  The
+    // inner call states the exact MethodDef result; the outer cast states the concrete Kotlin value seen by every
+    // later consumer.  A second referenced-use pass sees the already-physical inner call and is therefore idempotent.
+    static void WrapResultCast(JsonObject call, TypeNode physical, TypeNode semantic)
+    {
+        var hadSty = call["sty"] != null;
+        var inner = call.DeepClone().AsObject();
+        inner["ret"] = TypeJson.Write(physical);
+        if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physical);
+        RestampSty(inner, physical);
+
+        foreach (var key in call.Select(kv => kv.Key).ToList()) call.Remove(key);
+        call["k"] = "cast";
+        call["type"] = TypeJson.Write(semantic);
+        call["e"] = inner;
+        if (hadSty) call["sty"] = TypeJson.Write(semantic);
     }
 
     // The owner of a static call. kotc names a cross-module callee's file class in `ownerType`; MemberCallSubstitution

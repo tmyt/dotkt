@@ -1,0 +1,51 @@
+{
+  "fileClass": "NullableTvReferenceArrayReturnProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "refTypes": [],
+  "types": [],
+  "methods": [
+    {
+      "name": "probe",
+      "params": [
+        {
+          "name": "xs",
+          "type": { "t": "array", "elem": { "t": "fqn", "name": "kotlin.String" } }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "var",
+          "name": "result",
+          "type": {
+            "t": "array",
+            "elem": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.String" } }
+          },
+          "init": {
+            "sty": {
+              "t": "array",
+              "elem": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.String" } }
+            },
+            "k": "callStatic",
+            "owner": null,
+            "method": "copyOf",
+            "sig": [
+              { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
+              { "t": "fqn", "name": "kotlin.Int" }
+            ],
+            "typeArgs": [{ "t": "fqn", "name": "kotlin.String" }],
+            "ret": {
+              "t": "array",
+              "elem": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.String" } }
+            },
+            "args": [
+              { "k": "local", "name": "xs" },
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 3 }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

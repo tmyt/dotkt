@@ -25,19 +25,6 @@ set -euo pipefail
 # Known runtime-safe compiler defects (substring -> reason). Keys are narrow fixture/method or
 # emitted-type identifiers so they only mask the documented shape.
 declare -A ILVERIFY_XFAIL=(
-	# The LAST remaining position split of #86, and a REFERENCE one: `Array<T?>` erases to `object[]`
-	# T-INDEPENDENTLY, while a concrete `Array<String?>` keeps its `string[]` because a reference `?` is not a physical
-	# difference on the CLR (carrier-argument erasure moves possibly-VALUE arguments only). So
-	# `arrayOf("x","y").copyOf(3)` hands back the `object[]` the open declaration promises, and its `toList()` yields an
-	# `IReadOnlyList<object>` where the consumer's own slot is an `IReadOnlyCollection<string>`. Runtime-safe twice
-	# over: `object` and `string` are reference-compatible, and the array `copyOf` built really IS a `string[]` (it
-	# reflects on the receiver's element type), so the values are the declared ones; the RUN lane is green.
-	#
-	# Closing it means deciding the REFERENCE half of the same question the value half settled: whether `X?` in a
-	# reified argument is `object` for a reference `X` too — which would make `List<String?>` an `IReadOnlyList<object>`
-	# and cost every C# consumer the element type — or whether an open `Array<T?>`/`List<T?>` should instead keep the
-	# type variable and box only at the value instantiations. Both are ABI decisions, neither is this fix's.
-	["ArrayTests::copyOfGrowsWithNullTail()"]='an open Array<T?> is object[] T-independently while a concrete Array<String?> keeps string[], so copyOf().toList() yields an IReadOnlyList<object> where the slot is an IReadOnlyCollection<string> — runtime-safe (the array really is a string[]; RUN green); closing it needs the REFERENCE half of the carrier-argument decision'
 )
 
 # Intentionally unverifiable ECMA-335 IL (substring -> reason). These are not failed tests and not compiler defects:

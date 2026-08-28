@@ -1,0 +1,7 @@
+# An open `Array<T?>` declaration physically returns object[], but at a concrete reference instantiation its Kotlin
+# result is the reified reference array. bir2cir must state both facts: the inner call's exact MethodDef return and a
+# checked outer projection to String[]. This prevents a following generic consumer from being instantiated at object.
++"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"System.String"}},"init":{"k":"cast","type":{"t":"array","elem":{"t":"fqn","name":"System.String"}},"e":{"k":"callStatic"
++"method":"copyOf","sig":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}},{"t":"fqn","name":"int"}],"typeArgs":[{"t":"fqn","name":"System.String"}],"ret":{"t":"array","elem":{"t":"fqn","name":"object"}}
+# The erased physical return must not leak out as the local's static type.
+-"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"object"}}
