@@ -119,13 +119,19 @@ done
 # DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set. xfail_diff's wording,
 # but red rather than its advisory green — see the header note on why this lane is deliberately stricter.
 if (( audit )); then
-	mapfile -t audit_keys < <(printf '%s\n' "${!ILVERIFY_XFAIL[@]}" | LC_ALL=C sort)
+	audit_keys=("${!ILVERIFY_XFAIL[@]}")
+	if (( ${#audit_keys[@]} )); then
+		mapfile -t audit_keys < <(printf '%s\n' "${audit_keys[@]}" | LC_ALL=C sort)
+	fi
 	for key in ${audit_keys[@]+"${audit_keys[@]}"}; do
 		[[ -v MATCHED_XFAIL["$key"] ]] && continue
 		echo "FIXED     ilverify:$key — fixed; remove it from the xfail list"
 		rc=1
 	done
-	mapfile -t audit_keys < <(printf '%s\n' "${!ILVERIFY_UNVERIFIABLE[@]}" | LC_ALL=C sort)
+	audit_keys=("${!ILVERIFY_UNVERIFIABLE[@]}")
+	if (( ${#audit_keys[@]} )); then
+		mapfile -t audit_keys < <(printf '%s\n' "${audit_keys[@]}" | LC_ALL=C sort)
+	fi
 	for key in ${audit_keys[@]+"${audit_keys[@]}"}; do
 		[[ -v MATCHED_UNVERIFIABLE["$key"] ]] && continue
 		echo "FIXED     ilverify-unverifiable:$key — no matching [Unverifiable] finding; remove it from the unverifiable list"

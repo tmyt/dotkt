@@ -7,9 +7,9 @@
 // `// <expected>` comments); an array-print golden (`[a, b, c]`) becomes an assertEquals on the exact toString(), and a
 // thrown-exception scenario becomes a try/catch sentinel (the catch clause pins the EXACT exception type).
 //
-// EXCLUDED (array-shaped but kept in the bash lane): il-copyofnull / il-boxgen carry a live XFAIL_ILVERIFY finding
-// (#127/#86 nullable value-type object-erasure, #62/#46 comparator covariance-erasure) — a formal-only ilverify gap,
-// not migratable into the ilverify-clean NUnit lane; and il-arraydeque/il-arrslice-adjacent interop cases stay bash.
+// EXCLUDED (array-shaped but kept in the bash lane): il-arraydeque/il-arrslice-adjacent interop cases stay bash.
+// The former il-copyofnull / il-boxgen nullable-generic findings are covered in this NUnit battery now that the
+// compiler-defect ILVerify baseline is empty (#322).
 //
 // Coverage preserved (old case -> method):
 //   il-arr            -> arr_basic                     intArrayOf factory, get/set, .size, indexed + for-in iteration
@@ -63,6 +63,13 @@ class ArrBox<T>(size: Int) {
     val a: Array<ArrRef<T?>> = Array(size) { arrMk<T?>(null) }
     fun count(): Int = a.size
     fun elem(i: Int): ArrRef<T?> = a[i]
+}
+
+// The open declaration is physically object[] while a String instantiation remains a real string[] at runtime. The
+// constructor argument and result projection are the two halves of one invariant: preserve a concrete reference
+// construction through the covariant open slot, then check-project it at the concrete read boundary.
+class ArrNullableRefHolder<T>(val values: Array<T?>) {
+    fun all(): Array<T?> = values
 }
 
 enum class ArraySeason { SPRING, SUMMER, AUTUMN }
@@ -134,14 +141,19 @@ class ArrayTests {
         assertEquals("[x, y, null]", arrayOf("x", "y").copyOf(3).toList().toString())   // reference element
     }
 
-    // SPLIT OUT of copyOfGrowsWithNullTail so one ILVERIFY_XFAIL entry describes one cause. The baseline is keyed by
-    // METHOD NAME, so leaving these here let the sibling entry — whose reason is about the REFERENCE element — silently
-    // absorb a different shape at the VALUE element, and the baseline stopped saying which was which.
-    //
-    // These chains carry the value-element remainder of #86 D2: `copyOf` hands back the `object[]` its `Array<T?>`
-    // return erases to, `toList()` over it is instantiated at `object`, and the resulting `IReadOnlyList<object>` meets
-    // an `IReadOnlyCollection<Nullable<int32>>` slot. Runtime-safe — only object-level members are dispatched on the
-    // list — and closed by the same base-view projection as `boxedGenericValues` / `arrayOfNulls`.
+    @TestAttribute
+    fun openNullableReferenceArrayReturnKeepsRuntimeElementType() {
+        val holder = ArrNullableRefHolder<String>(arrayOf<String?>("a", null))
+        val values: Array<String?> = holder.all()
+        assertEquals(2, values.size)
+        assertEquals("a", values[0])
+        assertNull(values[1])
+        assertEquals("[a, null]", holder.all().toList().toString())
+    }
+
+    // Kept separate from the reference-element method because the value half takes the canonical object[] route:
+    // `copyOf` returns object[], `toList()` instantiates at object, and List<Int?> has the same List<object> physical
+    // representation. The split keeps each representation rule independently visible even though neither is XFAIL.
     @TestAttribute
     fun copyOfGrowsWithNullTailAtValueElements() {
         val ints = arrayOf(1, 2, 3)

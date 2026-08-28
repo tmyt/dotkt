@@ -11,6 +11,13 @@
         {
           "name": "xs",
           "type": { "t": "array", "elem": { "t": "fqn", "name": "kotlin.String" } }
+        },
+        {
+          "name": "anys",
+          "type": {
+            "t": "array",
+            "elem": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } }
+          }
         }
       ],
       "ret": { "t": "fqn", "name": "kotlin.Unit" },
@@ -41,6 +48,36 @@
             },
             "args": [
               { "k": "local", "name": "xs" },
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 3 }
+            ]
+          }
+        },
+        {
+          "k": "var",
+          "name": "anyResult",
+          "type": {
+            "t": "array",
+            "elem": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } }
+          },
+          "init": {
+            "sty": {
+              "t": "array",
+              "elem": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } }
+            },
+            "k": "callStatic",
+            "owner": null,
+            "method": "copyOf",
+            "sig": [
+              { "t": "array", "elem": { "t": "tv", "scope": "method", "i": 0 } },
+              { "t": "fqn", "name": "kotlin.Int" }
+            ],
+            "typeArgs": [{ "t": "fqn", "name": "kotlin.Any" }],
+            "ret": {
+              "t": "array",
+              "elem": { "t": "nullable", "of": { "t": "fqn", "name": "kotlin.Any" } }
+            },
+            "args": [
+              { "k": "local", "name": "anys" },
               { "k": "const", "type": { "t": "fqn", "name": "kotlin.Int" }, "value": 3 }
             ]
           }

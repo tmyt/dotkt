@@ -678,10 +678,12 @@ static partial class NullableTvErasureCallRealign
         // An open `Array<T?>` return has the one declaration shape that can serve both CLR instantiations:
         // `object[]`.  At a concrete REFERENCE instantiation, however, the Kotlin value it denotes is still the
         // reified reference array (`Array<String?>` is `string[]`).  Compiler-produced values uphold that contract:
-        // a generic body cannot manufacture an arbitrary `Array<T?>`, and every supported producer either forwards
-        // the caller's typed array or allocates from a reified/runtime element type.  The physical declaration slot
+        // a generic body cannot manufacture an arbitrary `Array<T?>`; a concrete reference construction keeps its
+        // typed runtime array while filling an open slot (the write axis below), and every other supported producer
+        // forwards such an array or allocates from a reified/runtime element type.  The physical declaration slot
         // accepts that value through CLR reference-array covariance, but a following use needs the inverse checked
-        // projection stated explicitly in CIR.
+        // projection stated explicitly in CIR. An explicit unchecked cast can still violate the runtime element type;
+        // as on other reified CLR casts, the checked projection then fails at the semantic use boundary.
         //
         // Keep this at the RESULT boundary, where both facts are authoritative: `derived` is
         // `Subst(Erase(declaration))`, while `stampedRet` is the frontend's concrete Kotlin result.  It is neither an
@@ -703,8 +705,16 @@ static partial class NullableTvErasureCallRealign
         => physical is TypeNode.Array { Elem: TypeNode.Fqn { Name: "object", Args: null } } pa
            && semantic is TypeNode.Array sa
            && pa.Rank == sa.Rank && pa.SzArray == sa.SzArray
-           && !IsBareObject(sa.Elem)
+           && !IsSemanticObjectElement(sa.Elem)
            && !NeedsObjectSeam(sa.Elem);
+
+    static bool IsSemanticObjectElement(TypeNode type) => type switch
+    {
+        TypeNode.Nullable n => IsSemanticObjectElement(n.Of),
+        TypeNode.Oblivious o => IsSemanticObjectElement(o.Of),
+        TypeNode.Fqn { Args: null, Name: "object" or "System.Object" or "kotlin.Any" } => true,
+        _ => false,
+    };
 
     // Replace the call in place because Eval walks a mutable JsonObject rather than returning rewritten nodes.  The
     // inner call states the exact MethodDef result; the outer cast states the concrete Kotlin value seen by every

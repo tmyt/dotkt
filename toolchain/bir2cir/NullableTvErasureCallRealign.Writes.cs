@@ -115,16 +115,23 @@ static partial class NullableTvErasureCallRealign
             // element type the slot names. `EvalNewArray` then reconciles the elements against it, so the `newarr`
             // and every `stelem` filling it agree by construction.
             //
-            // ONLY when that element is the bare `object` seam — `vararg xs: T?`, whose pack is an `object[]` the
-            // elements box into. An element erased INSIDE a constructed generic (`vararg slots: Slot<T?>`, packed as
-            // `Slot<object>[]`) is not reconcilable: a `Slot<String?>` the caller holds is a `Slot<string>`, unrelated
-            // to `Slot<object>`, so retyping the pack would emit a `stelem Slot<object>` over it and turn a formal
-            // stack-type difference into an ArrayTypeMismatchException. The pack keeps the element it was built with
-            // there; only the DESCRIPTOR follows the callee, because that is what resolves the member.
+            // ONLY when that element is the bare `object` seam AND the construction's own element may be a value —
+            // `vararg xs: T?` at a value/open instantiation, whose pack must be an `object[]` the elements box into.
+            // A concrete REFERENCE construction stays typed (`string[]`): CLR covariance already lets it fill the
+            // open `object[]` slot, and preserving its runtime element type is what makes a later concrete
+            // `Array<String?>` read projection valid. Retyping every construction here used to manufacture a genuine
+            // `object[]` for `Holder<String>(arrayOf<String?>(...))`; the holder's open `Array<T?>` result could then
+            // never honestly project back to `string[]`.
+            //
+            // An element erased INSIDE a constructed generic (`vararg slots: Slot<T?>`, packed as
+            // `Slot<object>[]`) is still not reconcilable: a `Slot<String?>` the caller holds is a `Slot<string>`,
+            // unrelated to `Slot<object>`, so retyping the pack would emit a `stelem Slot<object>` over it and turn a
+            // formal stack-type difference into an ArrayTypeMismatchException. The pack keeps the element it was
+            // built with there; only the DESCRIPTOR follows the callee, because that resolves the member.
             if (target is TypeNode.Array ta && IsBareObject(ta.Elem) && args[i] is JsonObject ar
                 && Str(ar["k"]) is "newArray" or "newArrayInit" or "newArraySized"
                 && TypeJson.Read(ar["elem"]) is TypeNode se
-                && !se.Equals(ta.Elem) && IsObjectErasureOf(ta.Elem, se))
+                && !se.Equals(ta.Elem) && IsObjectErasureOf(ta.Elem, se) && NeedsObjectSeam(se))
                 ar["elem"] = TypeJson.Write(ta.Elem);
             // And the same rule for a DELEGATE construction. `fun <T> invokeNullable(block: (T?) -> String)` declares
             // a physical `Func<object, string>` whatever `T` is, while kotc states the construction's `funcType` from

@@ -5,3 +5,6 @@
 +"method":"copyOf","sig":[{"t":"array","elem":{"t":"tv","scope":"method","i":0}},{"t":"fqn","name":"int"}],"typeArgs":[{"t":"fqn","name":"System.String"}],"ret":{"t":"array","elem":{"t":"fqn","name":"object"}}
 # The erased physical return must not leak out as the local's static type.
 -"name":"result","type":{"t":"array","elem":{"t":"fqn","name":"object"}}
+# Array<Any?> is already object[] on both sides and must not acquire a meaningless identity cast.
++"name":"anyResult","type":{"t":"array","elem":{"t":"fqn","name":"object"}},"init":{"k":"callStatic"
+-"name":"anyResult","type":{"t":"array","elem":{"t":"fqn","name":"object"}},"init":{"k":"cast"
