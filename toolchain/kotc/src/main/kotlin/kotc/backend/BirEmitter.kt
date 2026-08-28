@@ -994,7 +994,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		// Preserve every companion as a separate semantic declaration. Must run BEFORE body emission so every value/type
 		// use resolves to the same representation-neutral identity.
 		val semanticCompanions = (classes + objects + interfaces + enums + annClasses)
-			.flatMap { listOf(it) + nestedClasses(it) + nestedObjects(it) + nestedInterfaces(it) + nestedEnums(it) }
+			.flatMap { listOf(it) + nestedClasses(it) + nestedObjects(it) + nestedInterfaces(it) + nestedEnums(it) + nestedAnnotationClasses(it) }
 			.mapNotNull { semanticCompanion(it) }.distinct()
 		// Emit functions and types first (this lifts lambdas into liftedMethods/liftedTypes), then append them.
 		val fnMethods = functions.map { method(it, static = true) }
@@ -1028,6 +1028,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		val nested = nestedParents.flatMap { nestedClasses(it) }
 		val nestedObjects = nestedParents.flatMap { nestedObjects(it) }
 		val nestedEnums = nestedParents.flatMap { nestedEnums(it) }
+		val nestedAnnotations = nestedParents.flatMap { nestedAnnotationClasses(it) }
 		val (nestedRichEnums, nestedBasicEnums) = nestedEnums.partition { isRichEnum(it) }
 		// `inner class`es flatten to top-level types that capture the enclosing instance (`__outer`).
 		val inners = classes.flatMap { innerClasses(it) }
@@ -1036,7 +1037,7 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		val typeDefs = (basicEnums + nestedBasicEnums).map { enumDef(it) } + (interfaces + nestedIfaces).map { interfaceDef(it) } +
 			classes.map { typeDef(it) } + (objects + nestedObjects).map { typeDef(it, isObject = true) } + nested.map { typeDef(it) } + inners.map { innerClassDef(it) } +
 			semanticCompanions.map { typeDef(it, isObject = true) } +
-			(richEnums + nestedRichEnums).map { richEnumDef(it) } + annClasses.map { annotationDef(it) }
+			(richEnums + nestedRichEnums).map { richEnumDef(it) } + (annClasses + nestedAnnotations).map { annotationDef(it) }
 		val methods = (fnMethods + topPropAccessors + liftedMethods).joinToString(",")
 		// #52 (kotc-purity): the CLR-representation synthetic TYPE definitions are no longer synthesized here — kotc emits
 		// only the FACTS. bir2cir owns the type synthesis: SharedSyntheticSynthesis builds the fixed-shape

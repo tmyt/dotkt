@@ -9,8 +9,11 @@ package DotKt.Runtime.CompilerServices
 // compiler vocabulary: bir2cir attaches the most-specific identity while Kotlin's supertype graph is available.
 // The BCL-backed implementations cannot carry these interfaces and are recognized from their real CLR collection
 // faces by StarProjectionRuntime instead.
+@PublishedApi
 internal interface KotlinCollectionClassifier
+@PublishedApi
 internal interface KotlinSetClassifier : KotlinCollectionClassifier
+@PublishedApi
 internal interface KotlinMutableSetClassifier : KotlinSetClassifier
 
 // SUPPLEMENTAL KOTLIN SLOTS FOR @ClrTypeAlias'd COLLECTION INTERFACES.
@@ -50,20 +53,21 @@ internal interface KotlinMutableSetClassifier : KotlinSetClassifier
 // of the invariance argument above. This is a robustness choice, not a reproduced bug fix.
 //
 // These are compiler vocabulary, not a user-facing API. They are `internal`, which makes them UNNAMEABLE from a
-// user module's Kotlin source, while still being emitted as CLR-PUBLIC TypeDefs — kotc emits no `vis` field for an
-// interface declaration, so ilemit gives every interface `TypeAttributes.Public` — which is what bir2cir needs to
-// author `InterfaceImpl` rows referencing them from OTHER assemblies. dll2klib additionally drops the compiler's
-// reserved `DotKt.Runtime.CompilerServices` namespace from a projected type's Kotlin supertype list, so a consumer
-// never sees one either. `kotlin.collections.ClrCollectionDefaults` is in this same module and resolves them
-// normally.
+// user module's Kotlin source. They are `@PublishedApi` because bir2cir authors `InterfaceImpl` rows referencing them
+// from OTHER assemblies, which requires CLR-public TypeDefs; this is an explicit physical-public contract rather than
+// an accidental consequence of interface emission. dll2klib additionally drops the compiler's reserved
+// `DotKt.Runtime.CompilerServices` namespace from a projected type's Kotlin supertype list, so a consumer never sees
+// one either. `kotlin.collections.ClrCollectionDefaults` is in this same module and resolves them normally.
 
 /** The Kotlin mutable-iterator slot that `System.Collections.Generic.IEnumerable<E>` cannot represent. */
+@PublishedApi
 internal interface KotlinMutableIteratorSlots {
     /** Returns the implementer's exact `MutableIterator<E>` erased only at this compiler-owned carrier boundary. */
     fun dotktIterator(): Any
 }
 
 /** The Kotlin-only `MutableCollection` slots that `System.Collections.Generic.ICollection<E>` does not carry. */
+@PublishedApi
 internal interface KotlinMutableCollectionSlots {
     /** Physical carrier of `MutableCollection.removeAll`; [elements] is the receiver's own `Collection<E>`. */
     fun dotktRemoveAll(elements: Any): Boolean
@@ -83,6 +87,7 @@ internal interface KotlinMutableCollectionSlots {
  * `dotktAddAll` as second declaration slots and an implementer that satisfied only the derived ones would fail to
  * load. A `MutableList` implementer carries BOTH interfaces, each with its own exact MethodImpl rows.
  */
+@PublishedApi
 internal interface KotlinMutableListSlots {
     /** Physical carrier of `MutableList.addAll(index, elements)`; [elements] is the receiver's own `Collection<E>`. */
     fun dotktAddAllAt(index: Int, elements: Any): Boolean

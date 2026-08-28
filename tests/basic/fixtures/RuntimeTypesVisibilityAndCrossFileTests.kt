@@ -19,6 +19,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
+import System.Type
 import crossFileLanguage.CrossFileLanguageImplementation
 import crossFileLanguage.crossFileLanguageCurrent
 import crossFileLanguage.crossFileLanguageCall
@@ -26,6 +27,26 @@ import crossFileLanguage.crossFileLanguageCounter
 import crossFileLanguage.crossFileLanguageBump
 import kotlin.clr.ClrRef
 import kotlin.clr.byref
+
+private interface RuntimeTypesPrivateInterface
+internal interface RuntimeTypesInternalInterface
+interface RuntimeTypesPublicInterface
+
+private annotation class RuntimeTypesPrivateAnnotation
+internal annotation class RuntimeTypesInternalAnnotation
+annotation class RuntimeTypesPublicAnnotation
+
+class RuntimeTypesVisibilityOwner {
+    private interface PrivateNestedInterface
+    internal interface InternalNestedInterface
+    protected interface ProtectedNestedInterface
+    interface PublicNestedInterface
+
+    private annotation class PrivateNestedAnnotation
+    internal annotation class InternalNestedAnnotation
+    protected annotation class ProtectedNestedAnnotation
+    annotation class PublicNestedAnnotation
+}
 
 // ---- il-setlocalbox : `Any` field reassigned from String to a boxed Int -------------------------------------------
 class RuntimeTypesHolder {
@@ -179,6 +200,20 @@ class StarProjectionAndVisibilityTests {
 
     @TestAttribute
     fun visibilityModifiers() {
+        assertTrue(Type.GetType("RuntimeTypesPrivateInterface")!!.IsNotPublic)
+        assertTrue(Type.GetType("RuntimeTypesInternalInterface")!!.IsNotPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublicInterface")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesPrivateAnnotation")!!.IsNotPublic)
+        assertTrue(Type.GetType("RuntimeTypesInternalAnnotation")!!.IsNotPublic)
+        assertTrue(Type.GetType("RuntimeTypesPublicAnnotation")!!.IsPublic)
+        assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+PrivateNestedInterface")!!.IsNestedPrivate)
+        assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+InternalNestedInterface")!!.IsNestedAssembly)
+        assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+ProtectedNestedInterface")!!.IsNestedFamily)
+        assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+PublicNestedInterface")!!.IsNestedPublic)
+        assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+PrivateNestedAnnotation")!!.IsNestedPrivate)
+        assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+InternalNestedAnnotation")!!.IsNestedAssembly)
+        assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+ProtectedNestedAnnotation")!!.IsNestedFamily)
+        assertTrue(Type.GetType("RuntimeTypesVisibilityOwner+PublicNestedAnnotation")!!.IsNestedPublic)
         val a = RuntimeTypesAccount(100)
         assertEquals(98, a.net())        // 98
         assertEquals("acct", a.tag())    // acct

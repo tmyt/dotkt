@@ -347,6 +347,9 @@ private fun BirEmitter.interfaceSuperTypes(klass: IrClass): String = klass.super
 	}
 	.joinToString(",")
 
+private fun BirEmitter.typeVisibilityField(declaration: IrDeclarationWithVisibility): String =
+	visOf(declaration).let { if (it == "public") "" else ""","vis":${str(it)}""" }
+
 internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 	rejectClrEnumOnNonEnum(iface)
 	fun ifaceMethod(fn: IrSimpleFunction, prop: IrProperty? = fn.correspondingPropertySymbol?.owner): String {
@@ -456,13 +459,14 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		}
 	val allIfaceProps = listOf(ifaceProps, staticProps).filter { it.isNotEmpty() }.joinToString(",")
 	val semanticOwner = semanticOwnerJson(iface)
+	val visibility = typeVisibilityField(iface)
 	val ifaces = interfaceSuperTypes(iface)
 	// Round-trip class-nature facts (Kotlin, not CLR) as structured `mods` (spec §2.1): `fun interface` (SAM) and
 	// `sealed` — carried so a re-consuming Kotlin module can restore them (ilemit stamps [KotlinFunInterface]/
 	// [KotlinSealed]; a plain CLR interface loses both).
 	val funSealed = classModsJson(fnIface = iface.isFun, sealed = iface.modality == Modality.SEALED)
 	val kotlinCompanion = ""
-	return """{"name":${str(typeName(iface))},"kind":"interface"$semanticOwner$funSealed${typeParamsJson(iface.typeParameters)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[$staticFields],"ctors":[],"methods":[$methods],"properties":[$allIfaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
+	return """{"name":${str(typeName(iface))},"kind":"interface"$semanticOwner$visibility$funSealed${typeParamsJson(iface.typeParameters)}$kotlinCompanion,"base":null,"interfaces":[$ifaces],"fields":[$staticFields],"ctors":[],"methods":[$methods],"properties":[$allIfaceProps],"attrs":[${attrsJson(iface.annotations)}]}"""
 }
 
 private const val CLR_ENUM_ANNOTATION = "kotlin.clr.ClrEnum"
@@ -606,7 +610,7 @@ internal fun BirEmitter.enumDef(e: IrClass): String {
 		rendered
 	}
 	val semanticOwner = semanticOwnerJson(e)
-	val visibility = visOf(e).let { if (it == "public") "" else ""","vis":${str(it)}""" }
+	val visibility = typeVisibilityField(e)
 	// The companion is emitted as its own semantic declaration; enumDef must not manufacture a duplicate association.
 	val kotlinCompanion = ""
 	val explicitMetadata = if (explicit) ""","attrs":[${attrsJson(e.annotations)}]${posJson(e)}""" else ""
@@ -1076,6 +1080,18 @@ internal fun BirEmitter.nestedInterfaces(c: IrClass): List<IrClass> {
 	return out
 }
 
+/** Nested annotation classes (recursively) inside a class/object/interface. */
+internal fun BirEmitter.nestedAnnotationClasses(c: IrClass): List<IrClass> {
+	val out = ArrayList<IrClass>()
+	c.declarations.filterIsInstance<IrClass>()
+		.filter { !isExternalNetType(it) && it.name.asString() != "<no name provided>" }
+		.forEach {
+			if (it.kind == ClassKind.ANNOTATION_CLASS) out.add(it)
+			out.addAll(nestedAnnotationClasses(it))
+		}
+	return out
+}
+
 /** `inner class`es nested (recursively) inside a class -> flattened to top-level synthetic types. */
 internal fun BirEmitter.innerClasses(c: IrClass): List<IrClass> {
 	val out = ArrayList<IrClass>()
@@ -1458,7 +1474,8 @@ internal fun BirEmitter.annotationDef(klass: IrClass): String {
 	val fields = ctorParams.joinToString(",") { """{"name":${str(it.name.asString())},"type":${birType(it.type).toJson()}}""" }
 	val assigns = ctorParams.joinToString(",") { """{"k":"setField","ownerType":${fqnJson(typeName(klass))},"recv":{"k":"this"},"name":${str(it.name.asString())},"value":{"k":"local","name":${str(it.name.asString())}}}""" }
 	val ctor = """{"params":[$fields],"baseArgs":[],"thisArgs":null,"vis":"public","body":[$assigns]}"""
-	return """{"name":${str(typeName(klass))},"kind":"class"${semanticOwnerJson(klass)}${classModsJson(annotation = true)},"abstract":false,"vis":"public","base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
+	val visibility = typeVisibilityField(klass)
+	return """{"name":${str(typeName(klass))},"kind":"class"${semanticOwnerJson(klass)}${classModsJson(annotation = true)}$visibility,"abstract":false,"base":null,"interfaces":[],"fields":[$fields],"ctors":[$ctor],"methods":[]}"""
 }
 
 /** The `attrs` JSON for a declaration: each annotation -> a .NET custom attribute application. The `attr` type is a
