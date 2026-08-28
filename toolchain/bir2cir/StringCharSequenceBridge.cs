@@ -628,7 +628,7 @@ static class StringCharSequenceBridge
     // genuine-null value the strict `CharSequence?`-slot path keeps unwrapped; it gets the runtime-conditional adapter wrap.
     static bool IsStaticNullableString(JsonNode n, Env env)
         => n is JsonObject
-           && StaticType.Surface(n, BirScope.FromVars(env.Vars)) is TypeNode.Nullable nn && IsStringTokT(nn.Of);
+           && StringLocalAwareSurface(n, env) is TypeNode.Nullable nn && IsStringTokT(nn.Of);
 
     // #156 — the runtime-conditional adapter wrap for a nullable String into a `CharSequence?` slot:
     //   v == null ? (dotkt$CharSequence)null : new dotkt$StringCharSequence(v)
@@ -643,7 +643,7 @@ static class StringCharSequenceBridge
         else
         {
             var name = "__cswrap$" + System.Threading.Interlocked.Increment(ref _counter);
-            var vType = StaticType.Surface(v, BirScope.FromVars(env.Vars)) is TypeNode vt
+            var vType = StringLocalAwareSurface(v, env) is TypeNode vt
                 ? TypeNode.Write(vt) : TypeJson.Fqn("kotlin.String");
             tempStmt = new JsonObject { ["k"] = "var", ["name"] = name, ["type"] = vType, ["init"] = v.DeepClone() };
             read = new JsonObject { ["k"] = "local", ["name"] = name };
@@ -679,9 +679,23 @@ static class StringCharSequenceBridge
     static bool IsStaticString(JsonNode n, Env env, bool allowNullable = false)
     {
         if (n is not JsonObject) return false;
-        var t = StaticType.Surface(n, BirScope.FromVars(env.Vars));
+        var t = StringLocalAwareSurface(n, env);
         if (allowNullable && t is TypeNode.Nullable nn) t = nn.Of;
         return IsStringTokT(t);
+    }
+
+    // A referenced Kotlin helper call is allocated after CharSeqStringLowering. Its copied local read can therefore
+    // retain the semantic `CharSequence?` sty even though that local's declaration has already collapsed to the pure-
+    // app `String?` representation. At this physical call boundary the declaration is authoritative. Override the
+    // sty-first shared resolver only for a positively String-shaped local declaration; non-String declarations keep
+    // their smart-cast sty, so an `Any`/interface local narrowed to a genuine CharSequence is not misclassified.
+    static TypeNode StringLocalAwareSurface(JsonNode n, Env env)
+    {
+        if (n is JsonObject o && Str(o["k"]) == "local" && Str(o["name"]) is string name
+            && env.Vars.TryGetValue(name, out var declared)
+            && (IsStringTokT(declared) || declared is TypeNode.Nullable nullable && IsStringTokT(nullable.Of)))
+            return declared;
+        return StaticType.Surface(n, BirScope.FromVars(env.Vars));
     }
 
 }
