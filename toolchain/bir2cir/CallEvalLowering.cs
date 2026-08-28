@@ -432,6 +432,47 @@ static class CallEvalLowering
         };
     }
 
+    // Does this node's emitter consume `recv` as an ADDRESS rather than as a value? Shared by the suspend operand
+    // planner and the try-value stack normalizer: both must preserve the original storage location when they move
+    // work that precedes a later control-flow boundary. A copied value-type receiver would make a member write or a
+    // constrained dispatch mutate the copy instead of its source location.
+    internal static bool ReceiverNeedsAddress(JsonObject o, ValueTypeOracle isValue)
+    {
+        var k = Str(o["k"]);
+        if (k == "constrainedCall") return true;
+        static bool IsTypeVariable(TypeNode type) => type switch
+        {
+            TypeNode.Tv => true,
+            TypeNode.Oblivious p => IsTypeVariable(p.Of),
+            TypeNode.Nullable n => IsTypeVariable(n.Of),
+            _ => false,
+        };
+        if (o["recv"] is JsonObject recv && IsTypeVariable(NodeType.Stamp(recv))) return true;
+        var owner = k switch
+        {
+            "setField" or "setFieldExpr" => TypeJson.Read(o["ownerType"]),
+            "clrPropSet" or "clrInstance" or "clrGenericInstance" => TypeJson.Read(o["type"]),
+            _ => null,
+        };
+        return owner is TypeNode.Fqn f && isValue(f);
+    }
+
+    // Evaluate the values used to compute an addressable receiver now, while leaving the actual location in its
+    // operand slot. For an lvalue former (`a[i]`, `x.field`, a local), pin only its value operands; for an rvalue
+    // receiver, materialize the whole value and let the emitter take the temporary's address. This is the same
+    // location-preserving operation used by call-evaluation plans, exposed as one shared physical rule.
+    internal static JsonNode PinAddressForOrdering(JsonNode location, JsonArray into, ValueTypeOracle isValue)
+    {
+        if (IsLvalueFormer(location))
+        {
+            PinLocationOperands(location, into, isValue);
+            return location;
+        }
+        return location is JsonObject value
+            ? PinValue(value, into)
+            : throw new InvalidOperationException("bir2cir: an address receiver is not an expression node");
+    }
+
     /// May this OPERAND of an addressable location stay where it is, or must its value be pinned into a local?
     ///
     /// NOT Q2, though it once shared Q2's implementation and reads like it. Q2 asks whether an evaluation may be
