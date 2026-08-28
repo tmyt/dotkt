@@ -964,7 +964,7 @@ one-parameter property it finds.
   matches the existing treatment of receivers, which are also unchecked.
 - **The extension receiver precedes the contexts**, where Kotlin's own function-type layout puts contexts first
   (`context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A, B, D, E>`). The two orders coexist without ambiguity because they are
-	different surfaces: a *declaration* is `[extension receiver] + contexts + regulars`, a *function type / lambda* keeps
+  different surfaces: a *declaration* is `[extension receiver] + contexts + regulars`, a *function type / lambda* keeps
   Kotlin's `contexts + receiver + params` (it must — that layout IS the `FunctionN` type argument order, and the
   delegate has to match it).
 
