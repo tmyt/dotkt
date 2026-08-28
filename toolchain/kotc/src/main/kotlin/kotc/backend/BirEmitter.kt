@@ -842,9 +842,9 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 		walk(t)
 		return parts.sorted().joinToString(";")
 	}
-		// #52 (kotc-purity): the scoped generated heap cell `{ var v }` is a CLR-representation synthetic.
+	// #52 (kotc-purity): the scoped generated heap cell `{ var v }` is a CLR-representation synthetic.
 	// kotc emits ONLY the FACT — a file-level `refTypes` registry (each cell's name + element TYPE identity) plus the
-		// use-site `new`/`field`/`setField` on the cell. bir2cir's SharedSyntheticSynthesis assembles the actual trivial class
+	// use-site `new`/`field`/`setField` on the cell. bir2cir's SharedSyntheticSynthesis assembles the actual trivial class
 	// (single `v` field + its init ctor) into the file `types` from this registry. The element type is unrecoverable
 	// from the use-site nodes alone (a bare `field .v` read carries no type), so the registry is the required fact.
 	internal fun refTypesJson(): String = refTypes.values.joinToString(",") { fact ->

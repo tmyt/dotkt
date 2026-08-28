@@ -334,9 +334,9 @@ sealed class Pipeline
             // OBJECT-SLOT RENAME (#73 M5): restore the System.Object BCL slot names (ToString/GetHashCode/Equals) that
             // kotc stopped emitting — it now emits the Kotlin names (toString/hashCode/equals) + the pure-Kotlin facts
             // `objectOverride:true` (decl) / `anySlot:true` (call). Runs before semantic recognition passes and
-            // unconditionally (ref + rt + app): the
-            // physical object slots are one cross-build contract, so ref.dll declarations and the emitted-name-keyed
-            // member index must be canonicalized together; placing it first gives every downstream pass BCL spellings.
+            // unconditionally (ref + rt + app): physical object slots are one cross-build contract, so ref.dll
+            // declarations and the emitted-name-keyed member index must be canonicalized together; placing it first
+            // gives every downstream pass BCL spellings.
             ObjectSlotRename.Apply(bir.Root);
             // PRECONDITION / ERROR FAMILY (#73 M6): kotc emits the FAITHFUL top-level call (require/check/error/TODO/
             // requireNotNull/checkNotNull as `callStatic owner:null`, noWhenBranchMatchedException as the faithful
