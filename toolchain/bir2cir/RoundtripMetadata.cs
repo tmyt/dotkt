@@ -85,8 +85,9 @@ static class RoundtripMetadata
         Prepend(o, ByteMarker(ANullableCtx, 1));   // [NullableContext(1)] — the per-type non-null NRT default.
         Append(o, Marker(AKFileClass));            // [KotlinFileClass]
         StampMethods(o["methods"]);
-        // Top-level file-class `val`/`var` static fields carry NO [KotlinReadOnly]: source mutability belongs to the
-        // projected CLR property declaration, not its physical backing field.
+        // An ordinary top-level file-class `val`/`var` field carries no [KotlinReadOnly]: source mutability belongs to
+        // its projected CLR property. The staged companion-extension carrier is the exception because dll2klib restores
+        // that declaration directly from the field; StampFields documents and marks that branch.
         StampFields(o["fields"], topLevel: true);
         // Accessor-routed top-level declarations use the same CLR Property metadata as member properties. Preserve
         // their nullable/suspend/context-function type carriers on the file facade as well; dll2klib reads those
@@ -471,7 +472,8 @@ static class RoundtripMetadata
         foreach (var f in a) if (f is JsonObject fo)
         {
             // Prepend [Nullable, KotlinReadOnly, KotlinType?, KotlinSuspendFunctionType?, KotlinNullableGeneric?].
-            // [KotlinReadOnly] is INSTANCE-field only — a top-level file-class static field never carries it.
+            // [KotlinReadOnly] is normally instance-field metadata. A staged top-level companion-extension carrier is
+            // the exception because its Kotlin declaration is restored directly from this field rather than a Property row.
             if ((fo["nullableGeneric"] as JsonValue)?.GetValue<string>() is string ng)
             {
                 Prepend(fo, NullableGenAttr(ng));
@@ -483,8 +485,8 @@ static class RoundtripMetadata
                 Prepend(fo, KotlinTypeAttr(kt));
                 fo.Remove("kotlinType");
             }
-            // An ordinary file-facade val is restored from its CLR Property row, so its backing field historically
-            // needs no marker. A staged context-parameter companion-extension field is still restored from its
+            // An ordinary file-facade val is restored from its CLR Property row, so its backing field needs no marker.
+            // A staged context-parameter companion-extension field is restored from its
             // carrier field and therefore needs the declaration's val/var fact.
             if ((!topLevel || fo["companionReceiver"] is not null) &&
                 (fo["readOnly"] as JsonValue)?.GetValue<bool>() == true)

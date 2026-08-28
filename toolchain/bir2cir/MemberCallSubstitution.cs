@@ -1318,8 +1318,7 @@ static class MemberCallSubstitution
 
         // Rule Conv (numeric primitive CONVERSION): the member carries @ClrConv on the ref.dll (`kotlin.Int.toLong`,
         // `kotlin.Double.toInt`, `kotlin.Char.toInt`, ...) -> emit
-        // `{k:conv, to:<callee return type>, e:<receiver>}`, the
-        // SAME node kotc used to synthesize from the retired NUMBER_CONV name-heuristic. `to` is the callee's
+        // `{k:conv, to:<callee return type>, e:<receiver>}`. `to` is the callee's
         // own declared return type (a pre-lowering Kotlin FQN, e.g. `kotlin.Long`); BirTypeLowering later lowers it to the
         // CLR primitive and ilemit selects conv.i4/conv.i8/conv.r8/char. A conversion is nullary (no args). Handled first
         // so it never falls through to Rule 2/3 (the conversion members are intrinsic-less, so IsRule3Member excludes them).
@@ -1434,8 +1433,8 @@ static class MemberCallSubstitution
         // Rule 1c (PRIMITIVE compareTo): `x.compareTo(y)` on a boxed kotlin.<Prim> -> `System.<Prim>.CompareTo`
         // (IComparable<T>). The boxed kotlin.* primitive is NOT emitted in the runtime (it is substituted to the BCL
         // value type), so a member call on the omitted class must route to the BCL value type's CompareTo. This is the
-        // bir2cir home of the former kotc primitive-compareTo lowering (layer purity): kotc emits the plain
-        // `callInstance kotlin.Int.compareTo`; the primitive->BCL knowledge lives here. Placed BEFORE Rule 3 because a
+        // bir2cir home of primitive compareTo realization: kotc emits the plain `callInstance kotlin.Int.compareTo`,
+        // while the primitive->BCL knowledge lives here. Placed BEFORE Rule 3 because a
         // primitive that carries a rule-3 body (Char) would otherwise route to its `dotkt$ClrH_kotlin_Char` helper —
         // WRONG (and self-recursive inside that helper's own body). The 8 signed/bool/char primitives only.
         // The receiver arm ALSO covers a spliced generic `T : Comparable<T>` body whose R concretized to a primitive

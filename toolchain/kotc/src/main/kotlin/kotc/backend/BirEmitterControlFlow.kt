@@ -180,7 +180,7 @@ internal fun BirEmitter.birForLoop(block: IrBlock): String? {
 	// .NET-type / `@Clr` resolution against the reference assemblies — a Kotlin<->CLR relation that belongs in
 	// bir2cir. kotc emits ONE faithful `forIn` for EVERY non-array source: the FAITHFUL source + its runtime type
 	// token (`srcType`) + the element type (`elem`, a pure Kotlin loop-var fact) + the loop body, plus the
-	// `fallback` = the FIR-desugared iterator-protocol block (what kotc used to emit by returning null here).
+	// `fallback` = the frontend-provided FIR-desugared iterator-protocol block.
 	// bir2cir's ForInLowering dispatches it: a counted range (IntRange, or IntProgression in a stdlib self-build)
 	// -> `forRange`; an `a downTo b` in a consumer build -> a counted `for`; a `kotlin.sequences.Sequence` or a
 	// .NET enumerable (any build), or a stdlib collection in a stdlib self-build -> `forEachInline` (GetEnumerator);

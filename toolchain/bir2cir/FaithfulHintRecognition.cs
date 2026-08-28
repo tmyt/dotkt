@@ -104,13 +104,13 @@ static class FaithfulHints
 
     public static bool IsNullable(TypeNode t) => t is TypeNode.Nullable;
 
-    // True iff the hint is the bare (non-null) primitive Fqn `name` — a nullable/reference operand fails, matching
-    // kotc's former floatTotalEqRoute gate (a boxed Double `==` is only total-order when BOTH sides are non-null Double).
+    // True iff the hint is the bare (non-null) primitive Fqn `name`. A nullable/reference operand fails because boxed
+    // Double structural equality uses total order only when BOTH sides are statically non-null Double.
     public static bool IsNonNullFqn(TypeNode t, string name) => t is TypeNode.Fqn f && f.Name == name;
 
     // "Cast-stripped operand": drop a leading `{k:cast, type:<kotlin.Any/System.Object/object>, e:X}` (an IMPLICIT_CAST
-    // to Any renders as such a node) so the operand matches kotc's former `expr(unwrapped)`. Returns the inner `e` (a
-    // still-parented child — callers DeepClone it into the helper), else the node itself.
+    // to Any renders as such a node) so recognition sees the semantic operand below the representation-only box.
+    // Returns the inner `e` (a still-parented child — callers DeepClone it into the helper), else the node itself.
     public static JsonNode StripAnyCast(JsonNode n)
     {
         if (n is JsonObject o && (o["k"] as JsonValue)?.GetValue<string>() == "cast"
@@ -122,7 +122,7 @@ static class FaithfulHints
     }
 
     // The Kotlin `[a, b]` / `{a=1, b=2}` renderer: clrCollToString (1 type-arg) for List/Set/Collection, clrMapToString
-    // (2 type-args) for Map. `op` is DeepCloned and the helper node uses the canonical field order.
+    // (2 type-args) for Map. `op` is DeepCloned because the helper node takes ownership of its argument tree.
     public static JsonObject CollToString(JsonNode op, CollKind kind, TypeNode[] args) =>
         kind == CollKind.Map
             ? Helper(MapDefaults, "clrMapToString", new JsonArray { op.DeepClone() },
@@ -169,7 +169,7 @@ static class FaithfulHints
 
     static JsonObject Helper(string owner, string method, JsonArray args, JsonArray sig, JsonArray typeArgs)
     {
-        // Fixed key insertion order: k, owner, method, args, typeArgs (typeArgs omitted when null).
+        // `typeArgs` is omitted when the helper is non-generic; consumers bind every field by key.
         var o = new JsonObject
         {
             ["k"] = "callStatic",

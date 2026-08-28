@@ -4,9 +4,9 @@ using System.Text.Json.Nodes;
 using DotKt.Bir;
 
 // #52 (kotc-purity): SYNTHESIZE the capturing-lambda closure CLASS here, in the Kotlin<->CLR layer, instead of in the
-// kotc frontend. A capturing lambda `{ … }` lowers to a closure class (fields = captured vars, instance `invoke`
-// method = the body). kotc used to BUILD that class JSON directly into its `liftedTypes`; it is a CLR-REPRESENTATION
-// type (there is no such class in the Kotlin source), so its synthesis belongs below the frontend boundary.
+// kotc frontend. A capturing lambda `{ … }` requires a closure class (fields = captured vars, instance `invoke`
+// method = the body). This is a CLR-representation type with no Kotlin source declaration, so its synthesis belongs
+// below the frontend boundary.
 //
 // kotc now emits the raw build-INGREDIENTS as a transient `synthClass` fact on the `newClosure` node:
 //   { "k":"newClosure", "closureType":<fqn cname>, "captures":[<value exprs>], "method":"invoke",
@@ -18,13 +18,12 @@ using DotKt.Bir;
 // (closureType + capture VALUE exprs + funcType + typeArgs) that CIR defines for closure construction and ilemit
 // consumes one-to-one.
 //
-// Runs FIRST in the Phase-1 per-file loop — before EVERY other transform — so the synthesized class is present in
-// `types` exactly as kotc's `liftedTypes` closure class used to be (downstream passes see it verbatim). Critically it
-// runs before Phase 1.5 SuspendColdLowering, which builds its `closures` lookup from `types` to inline a
+// Runs after payload splicing and reified-witness capture, immediately before SharedSyntheticSynthesis. Critically it
+// runs before SuspendColdLowering, which builds its `closures` lookup from `types` to inline a
 // `suspendCoroutineUninterceptedOrReturn { c -> … }` intrinsic's closure body; that class must exist by then.
 // Nested closures are handled bottom-up (a closure body's inner `newClosure` is synthesized before the outer wrapper).
-// Unconditional (ref + rt + app): kotc emits `synthClass` in every build (RefBodySquash later squashes the ref build's
-// invoke/ctor bodies exactly as it did the old liftedTypes closure).
+// Unconditional (ref + rt + app): kotc emits `synthClass` in every build, and RefBodySquash later applies the reference-
+// body contract to the synthesized invoke/ctor bodies.
 static class ClosureSynthesis
 {
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();

@@ -20,8 +20,8 @@ using System.Text.Json.Nodes;
 //       types don't need declaration-site variance (a compile-time concern; the ref.dll keeps it).
 //
 // Runs BEFORE BirTypeLowering so the constraint is still the pure `kotlin.Comparable` token (after lowering it would
-// already be `System.IComparable`). After the drops, a name-only type param collapses to the canonical bare-string
-// form required by the runtime stdlib's CLR generic signature.
+// already be `System.IComparable`). After the drops, a name-only type param collapses to the BIR schema's bare-string
+// shorthand; the object and shorthand forms have the same constraint-free CLR meaning.
 static class StdlibSubstituteTypeParams
 {
     public static void Apply(JsonNode node)
@@ -55,7 +55,7 @@ static class StdlibSubstituteTypeParams
             // (3) drop `in` declaration-site variance (keep `out`).
             if (Str(tp["variance"]) == "in") tp.Remove("variance");
 
-            // Collapse a now name-only param back to the bare-string form kotc's rt build emitted.
+            // Normalize a now name-only declaration to the BIR schema's bare-string shorthand.
             bool hasConstraints = tp["constraints"] is JsonArray rem && rem.Count > 0;
             bool hasVariance = tp["variance"] != null;
             if (!hasConstraints && !hasVariance && Str(tp["name"]) is string name)

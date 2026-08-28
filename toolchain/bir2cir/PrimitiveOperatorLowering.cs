@@ -13,17 +13,16 @@ using DotKt.Bir;
 // kotc (recvExpr/argExpr — nullable-unwrap + boxed-Any cast). The primitive-op GATE and the IL-op selection are
 // the Kotlin<->CLR relation, so they live HERE now, keyed off the pure-Kotlin owner FQN.
 //
-// Runs UNCONDITIONALLY (reference AND app builds) at the VERY START of the per-file pipeline, before ANY other
-// pass. Two reasons: (1) the OLD kotc produced binOp/unaryOp in EVERY build, so restoring the shape first keeps
-// every downstream pass (ref body-squash, type lowering, suspend) seeing the exact tree it saw before. (2) a
-// primitive's operator is a bodyless builtin member with NO ref.dll symbol — in the reference build a ctor
+// Runs UNCONDITIONALLY (reference AND app builds) after the range realizations and before every consumer that requires
+// physical primitive operations (ref body-squash, type lowering, suspend). A primitive operator is a bodyless builtin
+// member with NO ref.dll symbol — in the reference build a ctor
 // field-initializer / base-arg is NOT body-squashed, so a surviving `callInstance kotlin.Int.inv` would reach
-// ilemit as an unresolvable method call; lowering it to `unaryOp` here (a raw IL op, no method lookup) is what
-// the OLD kotc-emitted shape did.
+// ilemit as an unresolvable method call. Lowering it to the CIR `unaryOp`/`binOp` vocabulary here states the raw CIL
+// operation before the one-to-one emitter boundary.
 static class PrimitiveOperatorLowering
 {
-    // Kotlin value-type primitives whose operators lower to raw CIL bin/un ops (the former kotc PRIMITIVE_OP_FQ
-    // gate). A non-primitive kotlin.* owner (a VALUE CLASS like kotlin.time.Duration) keeps its operator as a
+    // Kotlin value-type primitives whose operators have raw CIL bin/un representations. A non-primitive kotlin.*
+    // owner (a VALUE CLASS like kotlin.time.Duration) keeps its operator as a
     // real method call.
     static readonly HashSet<string> PrimitiveOpFq = new(StringComparer.Ordinal)
     {
@@ -125,8 +124,8 @@ static class PrimitiveOperatorLowering
             }
     }
 
-    // A primitive-operator `callInstance` / a comparison-intrinsic `callStatic` -> the binOp/unaryOp node kotc
-    // used to synthesize, else null (leave as-is).
+    // A primitive-operator `callInstance` / comparison-intrinsic `callStatic` becomes the corresponding CIR
+    // binOp/unaryOp; an unrecognized call remains a method call.
     static JsonNode Lower(JsonObject o, BirScope scope)
     {
         var k = (o["k"] as JsonValue)?.GetValue<string>();
@@ -136,11 +135,10 @@ static class PrimitiveOperatorLowering
         if ((o["method"] as JsonValue)?.GetValue<string>() is not string member) return null;
         var args = o["args"] as JsonArray ?? new JsonArray();
 
-        // String concatenation (`a + b`, receiver `kotlin.String`) — the MEMBER recognition kotc used to do (#52
-        // Phase 5). kotc now emits the FAITHFUL `callInstance kotlin.String.plus(a, b)` (no type hint); re-emit the
-        // identical 2-part `concat` node kotc used to synthesize. FaithfulHintRecognition (runs NEXT) recovers each
-        // part's static type via StaticType (the former `partTypes` hint) and applies the Phase-4b part routing
-        // (collection -> clrCollToString, nullable -> LibraryKt.toString) — the SAME as for a string template.
+        // String concatenation (`a + b`, receiver `kotlin.String`). kotc emits the faithful
+        // `callInstance kotlin.String.plus(a, b)` with no CLR hint; realize it as a two-part CIR `concat`.
+        // FaithfulHintRecognition (runs next) recovers each part's static type via StaticType and applies the shared
+        // string-template routing (collection -> clrCollToString, nullable -> LibraryKt.toString).
         if (ownerFqn == "kotlin.String" && member == "plus" && args.Count == 1)
             return new JsonObject
             {

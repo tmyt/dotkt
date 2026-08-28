@@ -161,7 +161,7 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		}
 		// A Unit-typed return VALUE can still be a side-effecting expression — e.g. an expression-body
 		// `fun main() = winUiApp { … }` or `return doCleanup()`. It must be EVALUATED, then a bare return; emitting
-		// a bare `{"k":"return"}` (the old behavior) silently dropped the call. A plain Unit reference
+		// a bodyless `{"k":"return"}` would silently drop the call. A plain Unit reference
 		// (`return` / `return Unit`, an IrGetObjectValue) has nothing to evaluate.
 		// A value-type-nullable return value (`return n` where `n: Int?` is smart-cast, in a `: Int` function) must
 		// UNWRAP `Nullable<T>.Value` to match the return slot — the JVM `Integer.intValue()` coercion has no IR node (C1).

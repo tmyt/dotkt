@@ -484,7 +484,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		}
 		// A genuine NON-LOCAL return stays a raw returnExpr (bir2cir routes it at splice time). A Unit-typed return
 		// VALUE can still be a SIDE-EFFECTING call (`x ?: return unitFn()`): evaluate it, then transfer — a bare
-		// `{"k":"returnExpr"}` (the old behavior) silently DROPPED the call. A plain Unit ref (IrGetObjectValue) has
+		// a bodyless `{"k":"returnExpr"}` would silently drop the call. A plain Unit ref (IrGetObjectValue) has
 		// nothing to evaluate. Mirrors the statement-position arm's Unit-return handling.
 		else if (!node.value.type.isUnit()) {
 			val retType = (node.returnTargetSymbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.returnType

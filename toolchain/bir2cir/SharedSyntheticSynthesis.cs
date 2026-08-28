@@ -11,8 +11,8 @@ using DotKt.Bir;
 //     CharSequence-typed slot needs (kotlin.CharSequence has no faithful .NET supertype). Emitted into any file that
 //     REFERENCES the identity because local uses need a declaration; ilemit dedups that generated identity per assembly
 //     and resolves external uses to the runtime stdlib's canonical definition.
-//   • dotkt_<scope>_Ref_<elem> — the heap cell `class …{ var v }` promoting a captured-and-mutated local. Assembled
-//     from the file's `refTypes` registry ({name, element-type}); the element type is unrecoverable from the use-site
+//   • the scoped generated ref-cell identity — the heap cell `class …{ var v }` promoting a captured-and-mutated local.
+//     Assembled from the file's `refTypes` registry ({name, element-type}); the element type is unrecoverable from the use-site
 //     `field .v` nodes alone, so kotc carries it as the registry fact. A closed element stays monomorphic. An element
 //     mentioning an enclosing type/method variable becomes a generic cell whose parameters preserve the complete
 //     bound closure, and every bare use-site identity becomes the corresponding constructed cell.

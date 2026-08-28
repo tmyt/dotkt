@@ -49,8 +49,8 @@ static partial class ClrMemberResolution
         var defs = rootList.OfType<JsonObject>()
             .SelectMany(file => file["types"] is JsonArray types ? types.OfType<JsonObject>() : Enumerable.Empty<JsonObject>())
             .Where(t => (t["name"] as JsonValue)?.TryGetValue<string>(out _) == true)
-            // Shared generated declarations (CharSequence/KProperty/etc.) may be repeated structurally in the BIR
-            // files that use them; their generated identity is unique, so the assembly index keeps one declaration.
+            // A shared generated declaration may occur in every BIR file that uses it. Every copy has the same generated
+            // definition, including constructor list and order, so any one copy defines the assembly-level type index.
             .GroupBy(t => t["name"].GetValue<string>(), StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
 

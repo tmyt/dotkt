@@ -68,9 +68,8 @@ static class NetInteropBinding
         // #61 used for calls.
         // A `field`/`setField` whose owner resolves to a .NET type declaring a property OR field of that name (both, via
         // MemberIsPropertyOrField) -> clrPropGet/clrPropSet, whose EmitClrPropGet/Set is struct-receiver-safe + inlines a
-        // const field (unlike the plain-field external Ldfld/Callvirt route). A member the refs can't see (a non-.NET
-        // owner, or a name absent from the .NET
-        // type) never resolves here -> the plain `field`/`setField` is left for ilemit's own handler.
+        // const field (unlike the plain-field external Ldfld/Callvirt route). A member the refs cannot see (a non-.NET
+        // owner, or a name absent from the .NET type) never resolves here; the plain field node remains local.
         if (k is "field" or "setField" or "setFieldExpr"
             or "staticField" or "staticFieldSet" or "setStaticField" or "setStaticFieldExpr")
         {
@@ -86,7 +85,7 @@ static class NetInteropBinding
         // for a Kotlin-owner bound ref) carrying the owner FQN identity + argTypes; bir2cir decides the SHAPE. When the
         // owner resolves to a .NET type off the refs -> the CLR bound-delegate dialect node `newBoundClrDelegate` (ilemit
         // binds the target by reflection). A Kotlin/local owner never resolves here -> the plain `newBoundDelegate` is
-        // left for ilemit's own FindMethod-based handler. Byte-identical to kotc's former newBoundClrDelegate emit.
+        // left for the local-method path. This boundary selects the CIR delegate dialect from the resolved owner kind.
         if (k == "newBoundDelegate") { ReshapeBoundDelegate(node); return; }
         if (k == "newSuspendLambda") { NormalizeSuspendCompanionCapture(node); return; }
         if (k == "new") return;

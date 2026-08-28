@@ -34,9 +34,9 @@ using DotKt.Bir;
 //
 // Gate: the `contains` owner is `kotlin.ranges.{IntRange,LongRange,CharRange}` AND the recv is the primitive range
 // construction (`callInstance kotlin.<Prim>.rangeTo/rangeUntil` or the `callStatic until` extension over a primitive).
-// A variable-held range (`val r = a..b; x in r`) has a `local` recv, so the real IntRange.contains binding handles it;
-// only an immediate primitive range construction exposes the bound expressions this rewrite must evaluate once. `downTo`/`step`
-// build an `IntProgression`, not a `*Range`, so they never reach here either.
+// A variable-held range (`val r = a..b; x in r`) has a `local` recv, so the real IntRange.contains binding handles it.
+// Only an immediate primitive range construction exposes the bound expressions this rewrite must evaluate once.
+// `downTo`/`step` build an `IntProgression`, not a `*Range`, so they never reach here either.
 //
 // Runs BEFORE RangeConstructionLowering (which would otherwise materialize the recv rangeTo into `new IntRange`) and
 // before MemberCallSubstitution (which would bind the unresolved `contains`/`until`), so the canonical binOp/cond CIR

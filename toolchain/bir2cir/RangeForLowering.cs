@@ -19,9 +19,10 @@ using DotKt.Bir;
 //     An IntRange is always step-1 ascending, so `<=`/step 1 is exact (an empty range has first > last -> the body
 //     never runs). Spilling the range into `__rng` reads first/last off the SAME (possibly side-effecting) value.
 //
-// Runs FIRST in the per-file loop, BEFORE every other pass, so the app-build callInstance and the forRange body enter
-// MemberCallSubstitution, BirTypeLowering, and the remaining CIR pipeline as ordinary realized nodes. `rangeType` is a
-// transient BIR hint: consumed by the app form (the `__rng` local's type) and dropped by the stdlib form.
+// Runs immediately after ForInLowering has classified faithful `forIn` nodes, and before range membership/construction,
+// MemberCallSubstitution, and BirTypeLowering. The app-build callInstance and forRange body therefore enter the
+// remaining CIR pipeline as ordinary realized nodes. `rangeType` is a transient BIR hint: consumed by the app form
+// (the `__rng` local's type) and dropped by the stdlib form.
 static class RangeForLowering
 {
     static int _tmp;

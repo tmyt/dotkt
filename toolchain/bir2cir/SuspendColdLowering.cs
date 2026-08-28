@@ -3905,7 +3905,7 @@ static partial class SuspendColdLowering
         //
         // BUG 4 (main-drain): drive the cold body under a REAL root continuation (a RootContinuation<Unit> over a
         // TaskCompletionSource<Unit>) — NOT a null completion. A fully-synchronous suspend main returns a non-SUSPENDED
-        // value and needs no wait (the root is unused, byte-for-byte the old behaviour, and a raw synchronous throw
+        // value and needs no wait (the root is unused, and a raw synchronous throw
         // still propagates because there is no try/catch on the sync path). A GENUINELY-suspending main (e.g. it awaits
         // an incomplete Task) returns COROUTINE_SUSPENDED; the eventual resume lands in RootContinuation.resumeWith on a
         // threadpool thread and completes the TCS, so main must BLOCK on `tcs.Task` until then. Drain it through

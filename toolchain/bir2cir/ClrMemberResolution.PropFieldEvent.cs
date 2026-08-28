@@ -159,10 +159,9 @@ static partial class ClrMemberResolution
 
     // When the resolved accessor lives on a GENERIC base INTERFACE of the owner (`IReadOnlyCollection<T>.get_Count`
     // accessed on `IReadOnlyList<T>`), retarget the node's owner slot to that constructed base interface. The receiver
-    // is assignable to the base interface
-    // (it is a base, no cast needed), and ilemit then links `get_Count` DIRECTLY on the substituted `IReadOnlyCollection
-    // <X>` owner — sidestepping LinkClrMethod's base-interface fallback, which returns the OPEN base method (an unbound
-    // `!0` token -> BadImageFormat in a generic method body). Only fires for an INTERFACE owner whose accessor is declared
+    // is assignable to that base without a cast, and ilemit then links `get_Count` DIRECTLY on the substituted
+    // `IReadOnlyCollection<X>` owner — sidestepping LinkClrMethod's base-interface fallback, which returns the OPEN base
+    // method (an unbound `!0` token -> BadImageFormat in a generic method body). Only fires for an INTERFACE owner whose accessor is declared
     // on a DIFFERENT (base) interface; a base-CLASS accessor already re-anchors correctly through reflection.
     static void RetargetToBaseInterface(JsonObject node, string ownerSlot, Type open, MethodInfo acc, TypeNode.Fqn ownerFqn)
     {
