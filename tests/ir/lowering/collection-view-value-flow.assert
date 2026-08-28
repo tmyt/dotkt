@@ -1,0 +1,31 @@
+# Kotlin relates mutable/read-only collection views, but their CLR IList/IReadOnlyList faces are siblings. This
+# fixture pins the final value-flow pass rather than an emitter accommodation: every checked transition is an
+# explicit CIR cast, in both directions, and the expression-result cases retain the exact physical return on the
+# inner call so ilemit cannot mistake the enclosing cast for an identity conversion.
+
+# Return edges.
++"name":"returnReadonly","static":true,"params":[{"name":"value","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}}],"ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"value"}}}]}
++"name":"returnMutable","static":true,"params":[{"name":"value","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}}],"ret":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"body":[{"k":"return","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"value"}}}]}
+
+# Initializer and later local-store edges.
++"k":"var","name":"readonlyLocal","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"init":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"mutable"}}
++"k":"var","name":"mutableLocal","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"init":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"readonly"}}
++"k":"setLocal","name":"readonlyLocal","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"mutable"}}
++"k":"setLocal","name":"mutableLocal","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"readonly"}}
+
+# Field-store edges use the final declaration table rather than a transient emitter local/field type.
++"k":"staticFieldSet","ownerType":{"t":"fqn","name":"CollectionViewValueFlowProbeKt"},"name":"readonlyField","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"mutable"}}
++"k":"staticFieldSet","ownerType":{"t":"fqn","name":"CollectionViewValueFlowProbeKt"},"name":"mutableField","value":{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"readonly"}}
+
+# Argument edges.
++"method":"takeReadonly","sig":[{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}],"args":[{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"mutable"}}]
++"method":"takeMutable","sig":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}],"args":[{"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"local","name":"readonly"}}]
+
+# Result edges: the outer cast is caller-facing; the inner `ret` is the exact declaration result.
++"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"callStatic","owner":{"t":"fqn","name":"CollectionViewValueFlowProbeKt"},"method":"mutableSource","sig":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}],"ret":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]}
++"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"callStatic","owner":{"t":"fqn","name":"CollectionViewValueFlowProbeKt"},"method":"readonlySource","sig":[{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}],"ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]}
+
+# Reflected property-result edges exercise the former Emitter.Expressions fallback. The Tuple property's open !0
+# result is closed from its exact memberRef declaring type before choosing the sibling cast.
++"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"clrPropGet","type":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},{"t":"fqn","name":"System.Int32"}]},"name":"Item1","ret":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"static":false,"recv":{"k":"local","name":"mutableProperty"}
++"k":"cast","type":{"t":"fqn","name":"System.Collections.Generic.IList","args":[{"t":"fqn","name":"System.Int32"}]},"e":{"k":"clrPropGet","type":{"t":"fqn","name":"System.Tuple","args":[{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},{"t":"fqn","name":"System.Int32"}]},"name":"Item1","ret":{"t":"fqn","name":"System.Collections.Generic.IReadOnlyList","args":[{"t":"fqn","name":"System.Int32"}]},"static":false,"recv":{"k":"local","name":"readonlyProperty"}

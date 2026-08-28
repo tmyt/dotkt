@@ -1,0 +1,369 @@
+{
+  "fileClass": "CollectionViewValueFlowProbeKt",
+  "hasMain": false,
+  "fields": [
+    {
+      "name": "readonlyField",
+      "static": true,
+      "type": {
+        "t": "fqn",
+        "name": "kotlin.collections.List",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      }
+    },
+    {
+      "name": "mutableField",
+      "static": true,
+      "type": {
+        "t": "fqn",
+        "name": "kotlin.collections.MutableList",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      }
+    }
+  ],
+  "types": [],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "takeReadonly",
+      "static": true,
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": []
+    },
+    {
+      "name": "takeMutable",
+      "static": true,
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": []
+    },
+    {
+      "name": "mutableSource",
+      "static": true,
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.collections.MutableList",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
+    },
+    {
+      "name": "readonlySource",
+      "static": true,
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.collections.List",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
+    },
+    {
+      "name": "returnReadonly",
+      "static": true,
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.collections.List",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
+    },
+    {
+      "name": "returnMutable",
+      "static": true,
+      "params": [
+        {
+          "name": "value",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        }
+      ],
+      "ret": {
+        "t": "fqn",
+        "name": "kotlin.collections.MutableList",
+        "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+      },
+      "body": [{ "k": "return", "value": { "k": "local", "name": "value" } }]
+    },
+    {
+      "name": "probe",
+      "static": true,
+      "params": [
+        {
+          "name": "mutable",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        },
+        {
+          "name": "readonly",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          }
+        },
+        {
+          "name": "mutableProperty",
+          "type": {
+            "t": "fqn",
+            "name": "System.Tuple",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IList",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              },
+              { "t": "fqn", "name": "kotlin.Int" }
+            ]
+          }
+        },
+        {
+          "name": "readonlyProperty",
+          "type": {
+            "t": "fqn",
+            "name": "System.Tuple",
+            "args": [
+              {
+                "t": "fqn",
+                "name": "System.Collections.Generic.IReadOnlyList",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              },
+              { "t": "fqn", "name": "kotlin.Int" }
+            ]
+          }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "var",
+          "name": "readonlyLocal",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.List",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": { "k": "local", "name": "mutable" }
+        },
+        {
+          "k": "var",
+          "name": "mutableLocal",
+          "type": {
+            "t": "fqn",
+            "name": "kotlin.collections.MutableList",
+            "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+          },
+          "init": { "k": "local", "name": "readonly" }
+        },
+        { "k": "setLocal", "name": "readonlyLocal", "value": { "k": "local", "name": "mutable" } },
+        { "k": "setLocal", "name": "mutableLocal", "value": { "k": "local", "name": "readonly" } },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "staticFieldSet",
+            "ownerType": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+            "name": "readonlyField",
+            "value": { "k": "local", "name": "mutable" }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "staticFieldSet",
+            "ownerType": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+            "name": "mutableField",
+            "value": { "k": "local", "name": "readonly" }
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callStatic",
+            "owner": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+            "method": "takeReadonly",
+            "sig": [
+              {
+                "t": "fqn",
+                "name": "kotlin.collections.List",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            ],
+            "args": [{ "k": "local", "name": "mutable" }]
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callStatic",
+            "owner": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+            "method": "takeMutable",
+            "sig": [
+              {
+                "t": "fqn",
+                "name": "kotlin.collections.MutableList",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            ],
+            "args": [{ "k": "local", "name": "readonly" }]
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callStatic",
+            "owner": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+            "method": "mutableSource",
+            "sig": [
+              {
+                "t": "fqn",
+                "name": "kotlin.collections.MutableList",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            ],
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "args": [{ "k": "local", "name": "mutable" }]
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callStatic",
+            "owner": { "t": "fqn", "name": "CollectionViewValueFlowProbeKt" },
+            "method": "readonlySource",
+            "sig": [
+              {
+                "t": "fqn",
+                "name": "kotlin.collections.List",
+                "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+              }
+            ],
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "args": [{ "k": "local", "name": "readonly" }]
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Tuple",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "System.Collections.Generic.IList",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                },
+                { "t": "fqn", "name": "kotlin.Int" }
+              ]
+            },
+            "virtual": true,
+            "recv": { "k": "local", "name": "mutableProperty" },
+            "method": "Item1",
+            "prop": "get",
+            "sig": [],
+            "argTypes": [],
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.List",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "args": []
+          }
+        },
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": {
+              "t": "fqn",
+              "name": "System.Tuple",
+              "args": [
+                {
+                  "t": "fqn",
+                  "name": "System.Collections.Generic.IReadOnlyList",
+                  "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+                },
+                { "t": "fqn", "name": "kotlin.Int" }
+              ]
+            },
+            "virtual": true,
+            "recv": { "k": "local", "name": "readonlyProperty" },
+            "method": "Item1",
+            "prop": "get",
+            "sig": [],
+            "argTypes": [],
+            "ret": {
+              "t": "fqn",
+              "name": "kotlin.collections.MutableList",
+              "args": [{ "t": "fqn", "name": "kotlin.Int" }]
+            },
+            "args": []
+          }
+        }
+      ]
+    }
+  ]
+}

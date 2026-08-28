@@ -33,4 +33,34 @@ public static class CollectionViewFaces
             ICollection or ISet => new TypeNode.Fqn(IReadOnlyCollection, new[] { args[0] }),
             _ => null,
         };
+
+    /// <summary>
+    /// Whether two resolved CLR interface shapes are the sanctioned mutable/read-only collection-view seam.
+    /// This relation is directional: a list face can flow to either read-only list/collection face, while a bare
+    /// collection face cannot acquire an indexer. The reverse rows are the checked casts required by the invariant
+    /// generic-storage collapse. No Kotlin declaration or member identity participates.
+    /// </summary>
+    public static bool IsViewSeam(TypeNode got, TypeNode want)
+    {
+        if (got is not TypeNode.Fqn { Args.Length: 1 } g
+            || want is not TypeNode.Fqn { Args.Length: 1 } w
+            || !g.Args[0].Equals(w.Args[0]))
+            return false;
+        return (OpenName(g.Name), OpenName(w.Name)) switch
+        {
+            (IList, IReadOnlyList) => true,
+            (IList, IReadOnlyCollection) => true,
+            (ICollection, IReadOnlyCollection) => true,
+            (IReadOnlyList, IList) => true,
+            (IReadOnlyList, ICollection) => true,
+            (IReadOnlyCollection, ICollection) => true,
+            _ => false,
+        };
+    }
+
+    // Reflection-authored memberRef signatures carry CLR metadata names (`IList`1`), while lowered CIR type slots
+    // carry the same constructed classifier without the arity suffix (`IList`). The type argument array above is the
+    // authoritative arity in both forms; normalize only this metadata spelling before comparing classifier identity.
+    static string OpenName(string name)
+        => name.EndsWith("`1", StringComparison.Ordinal) ? name[..^2] : name;
 }

@@ -1235,10 +1235,6 @@ sealed class Pipeline
         // would otherwise make their contents depend on source-file order.
         foreach (var (lowered, _) in loweredRoots)
         {
-            // A mutable/spilled collection value can lower to IList<T> while a Kotlin read-only call slot lowers to
-            // IReadOnlyList<T>. These are sibling CLR interfaces, so make the conversion an explicit CIR cast after
-            // substituting method type args. ilemit then emits the stated cast instead of inferring a stack seam.
-            if (!_options.RefBuild) CollectionViewCallCoercion.Apply(lowered);
             // `.size` (Count) on a STAR-PROJECTED / `Any`-erased collection receiver: StarProjectionLowering already
             // re-pointed the receiver `cast` at a non-generic BCL collection interface, but MemberCallSubstitution bound
             // Count to the GENERIC `IReadOnly*<object>.Count`, absent on a value-type-arg collection (`List<int>`)
@@ -1369,6 +1365,12 @@ sealed class Pipeline
         // at the first Kotlin interface declared next door. Nothing has been written yet, so a refusal here is as
         // clean as one inside the loop.
         ForeignNullableGenericCrossing.CheckImplementedSlots(loweredRoots, refs);
+
+        // BirTypeLowering's mutable/read-only collection faces are sibling CLR interfaces. Materialize every cast
+        // required by the final value-flow graph only now, after every synthetic declaration and exact memberRef is
+        // stable. ilemit then emits those ordinary CIR casts without recognizing the collection ABI.
+        if (!_options.RefBuild)
+            CollectionViewCoercion.ApplyAll(loweredRoots.Select(file => file.Root).ToList());
 
         // Every representation synthesis is now complete. Validate the exact MethodDef table that CIR will describe;
         // do not defer a generated/user collision to ilemit and do not invent a late name after calls are bound.

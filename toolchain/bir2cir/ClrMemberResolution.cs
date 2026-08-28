@@ -147,7 +147,7 @@ static partial class ClrMemberResolution
                     for (var i = 0; i < args.Count; i++)
                     {
                         var flowed = TypeJson.Read(useSiteSig[i]);
-                        if (flowed != null && CollectionViewCallCoercion.IsCollectionViewSeam(flowed, targets[i])
+                        if (flowed != null && CollectionViewFaces.IsViewSeam(flowed, targets[i])
                             && args[i] is JsonNode argument)
                             args[i] = new JsonObject
                             {
@@ -693,7 +693,7 @@ static partial class ClrMemberResolution
             var closed = ownerArgs is { Length: > 0 }
                 ? SupertypeGraph.SubstOwnerTvs(declared, ownerArgs)
                 : declared;
-            if (!CollectionViewCallCoercion.IsCollectionViewSeam(argNodes[i], closed)
+            if (!CollectionViewFaces.IsViewSeam(argNodes[i], closed)
                 || args[i] is not JsonNode arg)
                 continue;
             args[i] = new JsonObject
@@ -1166,7 +1166,7 @@ static partial class ClrMemberResolution
     static MatchKind NodeEq(TypeNode a, TypeNode ownerArg)
     {
         if (a == ownerArg) return MatchKind.Exact;
-        if (CollectionViewCallCoercion.IsCollectionViewSeam(a, ownerArg)) return MatchKind.Assignable;
+        if (CollectionViewFaces.IsViewSeam(a, ownerArg)) return MatchKind.Assignable;
         // A constructed owner slot closed over Object accepts every source value through the CLR's ordinary
         // reference conversion / boxing path. `Pair<Any, …>(nullableInt, …)` is the constructor form of the same
         // generic object-erasure seam already accepted for method parameters below.

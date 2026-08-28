@@ -57,6 +57,12 @@
 #   same whether bir2cir stated the face or an emitter inferred it, which is exactly the confusion the rule ends.
 #   `readonly-collection-view-sibling` asserts the stated array, including the two faces that owe nothing.
 #
+#   Layer ownership (collection-view value flow) — after Kotlin read-only/mutable collection faces become unrelated
+#   CLR siblings, bir2cir materializes the checked view conversion on every resolved CIR value-flow edge. The
+#   `collection-view-value-flow` fixture pins both directions across argument, local/field storage, return, local-call
+#   result, and reflected generic-property result edges, including the exact physical result stamp inside the caller-
+#   facing cast; ilemit emits those nodes one-to-one and owns no collection ABI inference.
+#
 #   Layer ownership (the reified sequence element face) — a marked stdlib declaration owns the Kotlin predicate,
 #   while bir2cir replaces only its final erased-platform cast with the concrete CLR element-view adapter.
 #   `sequence-element-adapter` pins that physical boundary and its malformed sibling pins the marker contract.
