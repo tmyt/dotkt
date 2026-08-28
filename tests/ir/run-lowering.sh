@@ -36,6 +36,10 @@
 #   rejects the former nested re-substitution, including for a bir2cir-synthesized inherited-interface bridge, while
 #   the await fixtures keep witnessing callee-relative substitution.
 #
+#   Nullable-generic reference-array results have a covariant object[] declaration slot but a reified concrete Kotlin
+#   value. `nullable-tv-reference-array-return` pins the explicit object[] -> String[] result projection so a following
+#   generic use keeps its reference element instead of settling its method type argument to object.
+#
 #   A generic owner's companion statics live on one non-generic physical carrier, including while reference bodies are
 #   retained long enough to emit field initializers. `reference-generic-static-self-init` pins the self-call owner.
 #

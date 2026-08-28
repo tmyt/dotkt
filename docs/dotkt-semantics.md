@@ -2052,6 +2052,11 @@ What this is observable as, beyond the boxing already listed above:
 - **`copyOf(newSize)` decides at runtime.** Its generic body has no `T : struct` constraint and no reified `T`, so it
   reads the receiver's own element type: a value element allocates `object[]`, a reference element allocates
   `elem[]`. Both inhabit the erased `object[]` the declaration states — the reference one by array covariance.
+- **A concrete reference array keeps its runtime element type through an open `Array<T?>` slot.** A `string[]` can
+  enter the declaration's `object[]` slot by CLR array covariance, so compiler-created argument arrays are not rebuilt
+  as `object[]`. When the open result is consumed again as `Array<String?>`, bir2cir states the inverse checked
+  `object[]`-to-`string[]` projection explicitly. This preserves the typed CLR surface without changing the open ABI;
+  an unchecked cast that launders a genuine `object[]` into the Kotlin type fails at that checked use boundary.
 - **The `arrayOfNulls<T>(n) … as Array<T>` idiom no longer works.** `arrayOfNulls` honestly returns `Array<T?>`, which
   is `object[]`, and `object[]` is not castable to `int32[]`. Allocate the real thing instead: the array constructor
   `Array(n) { … }` for a concrete or reified element when an initializer is available, or

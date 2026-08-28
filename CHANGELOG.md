@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Concrete reference arrays now retain their reified view across open nullable-generic returns (#322).** An open
+  `Array<T?>` declaration keeps its uniform `object[]` CLR ABI, while a call instantiated with a reference type now
+  states the checked projection back to the concrete Kotlin array (`Array<String?>` is `string[]`) before a following
+  generic consumer is resolved. This removes the last compiler-defect ILVerify baseline entry without erasing
+  reference element types from the public CLR surface; only the two by-design `localloc` entries remain.
+
 - **Foreign nullable-value array refusals now report their exact uninhabitable crossing (#354).** A .NET member
   declaring `Nullable<V>[]` is rejected at call or implementation use with an actionable diagnostic that names both
   the declared array and Kotlin's canonical `object[]` physical image, rather than describing the crossing only
