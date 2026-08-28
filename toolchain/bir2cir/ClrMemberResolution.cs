@@ -1474,7 +1474,7 @@ static partial class ClrMemberResolution
     {
         t = AliasResolve(t);   // a ref.dll @ClrTypeAlias param -> its BCL twin, so ilemit's MapType links the rt-stdlib slot
         if (t.IsByRef) return new TypeNode.ByRef(MemberSigOf(t.GetElementType()));
-        if (t.IsArray) return new TypeNode.Array(MemberSigOf(t.GetElementType()));
+        if (t.IsArray) return ArrayOf(t, MemberSigOf(t.GetElementType()));
         if (t.IsGenericParameter)
             return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);
         // Kotlin function delegate families stay `fn`, carrying their exact nominal family. Unknown/custom CLR delegates

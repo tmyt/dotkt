@@ -578,7 +578,7 @@ static class NullableGenericErasure
             TypeNode.Oblivious o => new TypeNode.Oblivious(Erase(o.Of, pos, isValue)),
             TypeNode.Fqn { Args: null } f => f,
             TypeNode.Fqn f => new TypeNode.Fqn(f.Name, f.Args.Select(a => Erase(a, inner, isValue)).ToArray()),
-            TypeNode.Array a => new TypeNode.Array(Erase(a.Elem, inner, isValue)),
+            TypeNode.Array a => new TypeNode.Array(Erase(a.Elem, inner, isValue), a.Rank, a.SzArray),
             TypeNode.ByRef b => new TypeNode.ByRef(Erase(b.Of, slot, isValue)),
             // A delegate's RETURN follows the argument rule; its PARAMETERS keep the declared form. See the header:
             // the two differ only because a callable reference to a DECLARED member has no forwarder yet. The

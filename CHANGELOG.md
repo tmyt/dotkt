@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Foreign nullable-value array refusals now report their exact uninhabitable crossing (#354).** A .NET member
+  declaring `Nullable<V>[]` is rejected at call or implementation use with an actionable diagnostic that names both
+  the declared array and Kotlin's canonical `object[]` physical image, rather than describing the crossing only
+  through a generic collection example. General-array rank is retained in both names.
+
 - **Inline `try` values now produce valid IL in ordered operand slots (#437).** `bir2cir` models array access,
   structural equality, object-method calls, and field/property writes in their physical evaluation order, hoisting
   protected regions to an empty CLR evaluation stack while preserving Kotlin's left-to-right side effects and the

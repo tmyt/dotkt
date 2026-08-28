@@ -1,0 +1,6 @@
+'MatrixSink' derives from 'fgn.IArrayMatrixSink'
+member 'CountMatrix' declares 'System.Nullable<System.Int32>[,]' at its parameter 0
+a slot NO Kotlin expression inhabits
+the Kotlin physical image is 'object[,]'
+unrelated CLR types
+implement this interface on the .NET side

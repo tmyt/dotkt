@@ -4,4 +4,6 @@
 the .NET member 'fgn.Api.CountPresent' declares
 parameter 0
 which NO Kotlin expression inhabits
+the Kotlin physical image is 'System.Collections.Generic.List<object>'
+unrelated CLR types
 Change the .NET surface

@@ -168,7 +168,7 @@ static class SupertypeGraph
         TypeNode.Fqn f when f.Args is not null => new TypeNode.Fqn(f.Name, f.Args.Select(a => SubstOwnerTvs(a, args)).ToArray()),
         TypeNode.Nullable n => new TypeNode.Nullable(SubstOwnerTvs(n.Of, args)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(SubstOwnerTvs(o.Of, args)),
-        TypeNode.Array a => new TypeNode.Array(SubstOwnerTvs(a.Elem, args)),
+        TypeNode.Array a => new TypeNode.Array(SubstOwnerTvs(a.Elem, args), a.Rank, a.SzArray),
         TypeNode.ByRef r => new TypeNode.ByRef(SubstOwnerTvs(r.Of, args)),
         TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, SubstOwnerTvs(fn.Ret, args),
             fn.Params.Select(p => SubstOwnerTvs(p, args)).ToArray(),
