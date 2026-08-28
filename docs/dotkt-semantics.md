@@ -934,14 +934,14 @@ Kotlin has four `IrParameterKind`s; DotKt gives each exactly one physical form:
 | kind | physical form |
 |---|---|
 | `DispatchReceiver` | the CLR call receiver (`this` in the body) — never a parameter slot |
-| `ExtensionReceiver` | the leading `__self` parameter |
+| `ExtensionReceiver` | a leading parameter explicitly marked as the extension receiver |
 | `Context` | an ordinary positional parameter |
 | `Regular` | an ordinary positional parameter |
 
-So the emitted parameter sequence of ANY declaration is **`[__self?] + contexts + regulars`**, in
-`IrFunction.parameters` order (fir2ir already orders contexts before the extension receiver; DotKt keeps `__self`
-first so the receiver stays where every other extension puts it). `context(s: Scale) fun String.deco(a: Int)` emits
-`deco(string __self, Scale s, int a)`.
+So the emitted parameter sequence of ANY declaration is **`[extension receiver?] + contexts + regulars`**. The
+receiver's physical name is an implementation detail; its explicit role marker is authoritative and the name is
+freshened if a value parameter is itself named `__self`. `context(s: Scale) fun String.deco(a: Int)` conventionally
+emits `deco(string __self, Scale s, int a)`.
 
 That ONE sequence is what the declaration's parameter list, the call's argument list, the `sig`/`paramSig` overload
 key, the inline payload's `pc`, and the `@KotlinDefault` / `defaultArgParam` index space all count. A layer that
@@ -954,7 +954,7 @@ emits `prop_get<gauge>(Scale)`, and `context(s: Scale) val Int.bumped` emits
 file class and no CLR property at all; a MEMBER one additionally gets a
 CLR property whose accessors take those arguments — a *parameterized* property, exactly as a member extension
 property (`class C { val T.p }`) already produced. Reflection therefore reports one index parameter for it, which is
-why dll2klib's `this[i]` indexer probe has to exclude a `__self` / context slot rather than take the first
+why dll2klib's `this[i]` indexer probe has to exclude an extension-receiver / context slot rather than take the first
 one-parameter property it finds.
 
 **Deviations, both deliberate:**
@@ -962,9 +962,9 @@ one-parameter property it finds.
 - **No non-null precondition is emitted for a context parameter** (§6's `#6` precondition family). A context
   argument is resolved by the frontend from a value already in scope, so a Kotlin caller cannot pass null; this
   matches the existing treatment of receivers, which are also unchecked.
-- **`__self` precedes the contexts**, where Kotlin's own function-type layout puts contexts first
+- **The extension receiver precedes the contexts**, where Kotlin's own function-type layout puts contexts first
   (`context(A) B.(D) -> E` is `@ExtensionFunctionType Function3<A, B, D, E>`). The two orders coexist without ambiguity because they are
-  different surfaces: a *declaration* is `[__self] + contexts + regulars`, a *function type / lambda* keeps
+  different surfaces: a *declaration* is `[extension receiver] + contexts + regulars`, a *function type / lambda* keeps
   Kotlin's `contexts + receiver + params` (it must — that layout IS the `FunctionN` type argument order, and the
   delegate has to match it).
 
@@ -1038,6 +1038,7 @@ runtime.
 | a Kotlin `companion object` | `kotc` preserves only its semantic owner/name; `bir2cir` creates a compiler-reserved nested singleton carrier and stamps `[KotlinCompanion(version, bytes)]` with the source name plus its exact physical owner. `dll2klib` writes the standard KLIB `companion_object_name` and nested-class link from this validated fact; no CLR suffix/name heuristic is used. |
 | `inline` (with a lambda) | `[KotlinInline("bir-json/1", bytes)]` (only for cross-module non-local return; see §3) |
 | a **context parameter** (`context(s: S) fun f()`) | `[KotlinContextParameter]` on the emitted positional parameter — a bare marker. The parameter is physically ordinary (§5i), so without it the consumer would restore a plain leading value parameter and `with(s) { f() }` would stop resolving. Covers functions and property accessors, top-level and member. |
+| an **extension receiver** (`fun T.f()`) | `[KotlinExtensionReceiver]` on the emitted leading positional parameter — a bare marker. The parameter name is only physical spelling and has no semantic role; dll2klib restores a receiver solely from this trusted marker. Covers top-level and member functions and property accessors; companion extensions use their existing association carrier because they have no physical receiver slot. |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
 | `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
 | generics, `reified` | `[KotlinDeclarationIdentity]` records reified method-type-parameter indices for the hidden nullability-witness ABI (§2) |

@@ -25,7 +25,7 @@ using DotKt.Bir;
 //   type:   [NullableContext, …user, KotlinFileClass?/KotlinFunInterface?, KotlinSealed?, KotlinValue?]
 //   method: [ …user, KotlinFunction?, KotlinInline? ]      ret: [ Nullable?, KotlinSuspendFunctionType?, KotlinExtensionFunctionType?, KotlinNothing? ]
 //   param:  [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType?,
-//             KotlinContextParameter? ]
+//             KotlinContextParameter?, KotlinExtensionReceiver? ]
 //   field:  [ Nullable?, KotlinReadOnly?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user,
 //             KotlinExtensionFunctionType? ]
 //   prop:   [ Nullable?, KotlinSuspendFunctionType?, KotlinNullableGeneric?, …user, KotlinExtensionFunctionType? ]
@@ -60,6 +60,7 @@ static class RoundtripMetadata
     const string AKSuspendFn    = Ns + "KotlinSuspendFunctionTypeAttribute";
     const string AKExtFn        = Ns + "KotlinExtensionFunctionTypeAttribute";
     const string AKCtxParam     = Ns + "KotlinContextParameterAttribute";
+    const string AKExtReceiver  = Ns + "KotlinExtensionReceiverAttribute";
     const string AKCtxFnType    = Ns + "KotlinContextFunctionTypeAttribute";
     const string AKNothing      = Ns + "KotlinNothingAttribute";
     // The pre-erasure declaration-slot carrier. `internal` because it has a second reader in this assembly:
@@ -447,6 +448,18 @@ static class RoundtripMetadata
                     if (pmods.Count == 0) po.Remove("mods");
                 }
             }
+            // [KotlinExtensionReceiver] — the exact Kotlin role of the leading physical receiver parameter. Its
+            // physical name is an implementation detail and must not be interpreted by dll2klib. Like a context
+            // parameter, the slot stays an ordinary CLR parameter and carries its source role beside its type.
+            if (ModFlag(po, "extensionReceiver"))
+            {
+                Append(po, Marker(AKExtReceiver));
+                if (po["mods"] is JsonObject pmods)
+                {
+                    pmods.Remove("extensionReceiver");
+                    if (pmods.Count == 0) po.Remove("mods");
+                }
+            }
             // [KotlinCollectionIdentity] (#29) — a param nesting a collapsed read-only collection.
             if ((po["collIdentity"] as JsonValue)?.GetValue<string>() is string ci) Append(po, CollIdentityAttr(ci));
         }
@@ -594,6 +607,13 @@ static class RoundtripMetadata
             po.Remove("declarationSourceName");
             po.Remove(DeclarationIdentityBinding.SemanticSignatureKey);
             po.Remove(NullableGenericErasure.MethodTypeParameterBoundsPre);
+            if (po["mods"] is JsonObject mods)
+            {
+                // BIR-only slot role. Metadata builds consume it into [KotlinExtensionReceiver]; runtime builds emit
+                // no round-trip carriers but must consume the same frontend fact before CIR reaches ilemit.
+                mods.Remove("extensionReceiver");
+                if (mods.Count == 0) po.Remove("mods");
+            }
             StripAttrs(po, "attrs");
             StripAttrs(po, "retAttrs");
             if (hasParams) StripDecls(po["params"]);
@@ -814,6 +834,7 @@ static class RoundtripMetadata
             AttrClass(AKSuspendFn, Ctor(Param("System.String"), Param(ByteArrayType()))),
             AttrClass(AKExtFn, Ctor()),     // #145 — bare marker: a `P.() -> R` receiver function-type position
             AttrClass(AKCtxParam, Ctor()),  // bare marker: a Kotlin `context(...)` parameter (physically positional)
+            AttrClass(AKExtReceiver, Ctor()), // bare marker: a Kotlin extension receiver (physically positional)
             AttrClass(AKCtxFnType, Ctor(Param("System.Int32"))),  // how many of a function-type slot's leading args are contexts
             AttrClass(AKNothing, Ctor()),   // #133 case3 — bare marker on a Kotlin `Nothing` return
             AttrClass(AKNullableGen, Ctor(Param("System.String"), Param(ByteArrayType()))),  // #18/#147 — pre-erasure `Holder<T?>` declaration slot

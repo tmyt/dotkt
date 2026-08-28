@@ -1473,6 +1473,10 @@ internal sealed class AssemblyScanner : IDisposable
         _attrs.ValidateCarrierTargets(
             MetadataAttributes.DotKtNs + "KotlinBasicEnumAttribute",
             HandleKind.TypeDefinition);
+        _attrs.ValidateCarrierTargets(
+            MetadataAttributes.DotKtNs + "KotlinExtensionReceiverAttribute",
+            HandleKind.Parameter);
+        ValidateKotlinExtensionReceiverCarriers();
         _arityNames = arityNames;
         _delegateCatalog = delegateCatalog;
         _companionCatalog = companionCatalog;
@@ -2283,7 +2287,7 @@ internal sealed class AssemblyScanner : IDisposable
                 // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
                 // its declaring class, while ReadCSharpExtensions separately publishes the namespace-scoped Kotlin
                 // extension view. Do not turn this class member into a second extension declaration. DotKt member
-                // extensions use the compiler-owned __self parameter and are still restored here.
+                // extensions carry a compiler-owned receiver-role marker and are still restored here.
                 PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
                 AddMethodTypeParameters(methodHandle, method, function, names, signatures, context);
                 // A member's declaring-class path already carries its physical owner. Preserve only the exact
@@ -4870,7 +4874,7 @@ internal sealed class AssemblyScanner : IDisposable
             // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
             // of this facade; the trusted carrier holds the type it is associated with. Restoring it needs no new
             // encoding — a static callable with a receiver IS the standard shape (`isStatic && receiverParameter`), so
-            // put the static flag back and take the receiver from the carrier instead of from a `__self` parameter,
+            // put the static flag back and take the receiver from the carrier instead of from a physical parameter,
             // which a companion extension does not have.
             if (companion is not null)
             {
@@ -4953,7 +4957,7 @@ internal sealed class AssemblyScanner : IDisposable
             {
                 projected.ReceiverType = propCompanion.Receiver;
             }
-            else if (sig.ParameterTypes.Length != 0)
+            else if (!_attrs.IsDotKtAssembly && sig.ParameterTypes.Length != 0)
             {
                 var receiverHandle = method.GetParameters()
                     .Select(h => (Handle: h, Row: _md.GetParameter(h)))
@@ -5255,10 +5259,9 @@ internal sealed class AssemblyScanner : IDisposable
             // A setter-only Property row represents a semantic `var` whose getter is inherited. The final semantic
             // parameter is the value slot and is not part of the Kotlin receiver/context prefix.
             var propertyPhysical = getterHandle.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
-            var hasReceiver = propertyPhysical.Count > 0 && !propertyPhysical[0].Row.Name.IsNil &&
-                _md.GetString(propertyPhysical[0].Row.Name) == "__self";
+            var hasReceiver = HasKotlinExtensionReceiver(representativeHandle);
             // A COMPANION EXTENSION property accessor carries its receiver in trusted metadata instead of a physical
-            // `__self` slot (the frontend drops the parameter), so a receiverless zero-argument getter IS an accessor
+            // receiver slot (the frontend drops the parameter), so a receiverless zero-argument getter IS an accessor
             // here when the carrier says so. Without this the associated getter would surface as a plain function.
             var hasCompanionReceiver =
                 _attrs.Has(representativeHandle, MetadataAttributes.DotKtNs + "KotlinCompanionExtensionAttribute");
@@ -5287,6 +5290,9 @@ internal sealed class AssemblyScanner : IDisposable
                 }
                 else
                 {
+                    if (HasKotlinExtensionReceiver(getterHandle) != HasKotlinExtensionReceiver(setterHandle))
+                        throw new InvalidDataException(
+                            "Kotlin property getter/setter disagree about the extension-receiver role");
                     var setterSignature = setter.DecodeSignature(
                     RawSignatureTypeProvider.Instance,
                     new GenericContext(owner, setterHandle, typeParameterIds));
@@ -5366,6 +5372,9 @@ internal sealed class AssemblyScanner : IDisposable
             {
                 var getter = _md.GetMethodDefinition(pair.Getter);
                 var setter = _md.GetMethodDefinition(pair.Setter);
+                if (HasKotlinExtensionReceiver(pair.Getter) != HasKotlinExtensionReceiver(pair.Setter))
+                    throw new InvalidDataException(
+                        "[KotlinPropertyAccessor] getter/setter disagree about the extension-receiver role");
                 var getterSignature = getter.DecodeSignature(
                     RawSignatureTypeProvider.Instance,
                     new GenericContext(owner, pair.Getter, typeParameterIds));
@@ -5388,8 +5397,7 @@ internal sealed class AssemblyScanner : IDisposable
             }
             var physical = SemanticPhysicalParameters(representativeHandle, representative);
             var propertyPhysical = pair.Getter.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
-            var hasReceiver = propertyPhysical.Count > 0 && !propertyPhysical[0].Row.Name.IsNil &&
-                _md.GetString(propertyPhysical[0].Row.Name) == "__self";
+            var hasReceiver = HasKotlinExtensionReceiver(representativeHandle);
             var contextStart = hasReceiver ? 1 : 0;
             if (!hasReceiver && propertyPhysical.Count == 0 ||
                 propertyPhysical.Skip(contextStart).Any(x =>
@@ -5535,8 +5543,7 @@ internal sealed class AssemblyScanner : IDisposable
         var semanticPropertyName = PropertyAccessorAssociation(representativeHandle)?.Name ?? propertyName;
         var physical = SemanticPhysicalParameters(representativeHandle, representative);
         var propertyPhysical = getterHandle.IsNil ? physical.Take(physical.Count - 1).ToList() : physical;
-        var hasReceiver = propertyPhysical.Count > 0 && !propertyPhysical[0].Row.Name.IsNil &&
-            _md.GetString(propertyPhysical[0].Row.Name) == "__self";
+        var hasReceiver = HasKotlinExtensionReceiver(representativeHandle);
         var context = new GenericContext(owner, representativeHandle, typeParameterIds);
         var propertySignature = propertyHandle.IsNil
             ? representative.DecodeSignature(signatures, context)
@@ -5573,7 +5580,7 @@ internal sealed class AssemblyScanner : IDisposable
                 names, getterIdentity ?? "", setterIdentity ?? ""));
         var contextStart = 0;
         // A COMPANION EXTENSION has no physical receiver slot at all — the frontend drops it — so its associated
-        // type comes from the carrier rather than from a leading `__self` parameter.
+        // type comes from the carrier rather than from a leading physical receiver parameter.
         if (companionReceiver is not null)
             property.ReceiverType = companionReceiver;
         else if (hasReceiver)
@@ -5629,6 +5636,41 @@ internal sealed class AssemblyScanner : IDisposable
     {
         var physical = PhysicalParameters(method);
         return physical.Take(SemanticParameterCount(methodHandle, physical.Count)).ToList();
+    }
+
+    private void ValidateKotlinExtensionReceiverCarriers()
+    {
+        var carrier = MetadataAttributes.DotKtNs + "KotlinExtensionReceiverAttribute";
+        foreach (var methodHandle in _md.MethodDefinitions)
+        {
+            var method = _md.GetMethodDefinition(methodHandle);
+            var allRows = method.GetParameters()
+                .Select(handle => (Handle: handle, Row: _md.GetParameter(handle)))
+                .ToList();
+            var marked = allRows
+                .Where(entry => _attrs.ExactBareMarkerCount(entry.Handle, carrier) > 0)
+                .ToList();
+            if (marked.Count == 0) continue;
+            if (marked.Count != 1 || _attrs.ExactBareMarkerCount(marked[0].Handle, carrier) != 1
+                || marked[0].Row.SequenceNumber != 1
+                || _md.GetString(method.Name) is ".ctor" or ".cctor")
+                throw new InvalidDataException(
+                    $"[KotlinExtensionReceiver] must occur once on the leading semantic parameter of a method");
+            var physicalCount = allRows.Count(entry => entry.Row.SequenceNumber > 0);
+            if (SemanticParameterCount(methodHandle, physicalCount) == 0)
+                throw new InvalidDataException(
+                    "[KotlinExtensionReceiver] cannot mark a reified witness or return parameter");
+        }
+    }
+
+    private bool HasKotlinExtensionReceiver(MethodDefinitionHandle methodHandle)
+    {
+        var method = _md.GetMethodDefinition(methodHandle);
+        var physical = PhysicalParameters(method);
+        var semanticCount = SemanticParameterCount(methodHandle, physical.Count);
+        if (semanticCount == 0) return false;
+        return _attrs.ExactBareMarkerCount(physical[0].Handle,
+            MetadataAttributes.DotKtNs + "KotlinExtensionReceiverAttribute") == 1;
     }
 
     private int SemanticParameterCount(MethodDefinitionHandle methodHandle, int physicalCount)
@@ -6072,18 +6114,10 @@ internal sealed class AssemblyScanner : IDisposable
         bool recognizeClrExtension = true)
     {
         if (function.ValueParameter.Count == 0) return;
-        var firstParameter = method.GetParameters()
-            .Select(h => (Handle: h, Parameter: _md.GetParameter(h)))
-            .Where(x => x.Parameter.SequenceNumber > 0)
-            .OrderBy(x => x.Parameter.SequenceNumber)
-            .FirstOrDefault(x => !_attrs.Has(x.Handle, MetadataAttributes.DotKtNs + "KotlinContextParameterAttribute"));
         var isReceiver =
             (recognizeClrExtension &&
                 _attrs.Has(handle, "System.Runtime.CompilerServices.ExtensionAttribute", requireTrust: false)) ||
-            (_attrs.IsDotKtAssembly &&
-                !firstParameter.Handle.IsNil &&
-                !firstParameter.Parameter.Name.IsNil &&
-                _md.GetString(firstParameter.Parameter.Name) == "__self");
+            HasKotlinExtensionReceiver(handle);
         if (!isReceiver) return;
         function.ReceiverType = function.ValueParameter[0].Type;
         function.ValueParameter.RemoveAt(0);

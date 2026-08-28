@@ -1191,6 +1191,7 @@ static partial class SuspendColdLowering
         readonly bool _resultNullable;           // the suspend fn's result had an outer `?` (#37/#48: read off the type node)
         readonly string _resultNullableGeneric;  // #86: the PRE-erasure `T?` result, for the bridge's carrier (else null)
         readonly List<JsonObject> _params;       // original params (extension: leading __self)
+        readonly string _extensionReceiverName;  // explicit role's physical slot name; null for a non-extension
         readonly List<string> _typeParams;       // generic type-param names ([] when non-generic)
         readonly JsonArray _methodTypeParamDecls; // original names + constraints for emitted bridge/cold signatures
         // Kotlin override ownership is the proof used by the late CLR slot normalizer. Suspend lowering replaces one
@@ -1285,6 +1286,10 @@ static partial class SuspendColdLowering
             _resultType = (suspendRetRaw is TypeNode.Nullable srn ? srn.Of : suspendRetRaw) ?? VoidTn;
             _taskResultType = TypeJson.Read(m[KotlinPropertyAccessors.SuspendTaskResultKey]) ?? _resultType;
             _params = (m["params"] as JsonArray)?.OfType<JsonObject>().ToList() ?? new List<JsonObject>();
+            _extensionReceiverName = _params.FirstOrDefault() is JsonObject first
+                && first["mods"] is JsonObject firstMods && Bool(firstMods["extensionReceiver"])
+                    ? Str(first["name"])
+                    : null;
             _typeParams = ReadTypeParamNames(m["typeParams"]);
             _methodTypeParamDecls = (m["typeParams"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
             _overrideMarkers = (m["overrides"] as JsonArray)?.DeepClone() as JsonArray ?? new JsonArray();
@@ -1877,8 +1882,6 @@ static partial class SuspendColdLowering
                     return Suspended();
                 if (Str(o["k"]) == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, RequiredFieldType(ln));
-                if (Str(o["k"]) == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf0)
-                    return sf0;
                 if (Str(o["k"]) == "setLocal" && Str(o["name"]) is string sln && _fields.Contains(sln))
                     return SetField(sln, RewriteNoSpill(o["value"]));
                 if (Str(o["k"]) == "var" && Str(o["name"]) is string vln)
@@ -1936,8 +1939,6 @@ static partial class SuspendColdLowering
                     return Suspended();
                 if (k == "local" && Str(o["name"]) is string ln && _fields.Contains(ln))
                     return FieldOf(ln, RequiredFieldType(ln));
-                if (k == "local" && Str(o["name"]) == "__self" && CapturedSelfField() is JsonNode sf1)
-                    return sf1;
                 // A `setLocal`/`var` that assigns a SPILLED variable but sits INSIDE an expression subtree (e.g. the
                 // `index++` post-increment lowered to `valueBlock { var <unary> = index; index = index+1; <unary> }`)
                 // is reached via Rewrite, not the statement-level EmitStmt, so its field-assignment must be redirected
@@ -2996,16 +2997,6 @@ static partial class SuspendColdLowering
         TypeNode RequiredSlotType(string name) => FieldType(name) ?? throw new NotSupportedException(
             $"bir2cir: suspend-lowering: local slot `{name}` in `{DiagOwner}` carries no static type.");
 
-        // kotc names a suspend lambda's captured ENCLOSING extension receiver `__outer` (the `<this>` capture-field
-        // convention, BirEmitter.kt:2929) yet, INSIDE the lambda body, references that receiver as `local __self`
-        // (the enclosing static extension's receiver-param name, via selfSubst — BirEmitter.kt:1308). The two names
-        // are the SAME captured value, so a body `__self` read maps to the `__outer` capture FIELD (`this.__outer`).
-        // Guarded on `!__self` field: a NAMED-fun cold entry spills its real `__self` PARAM into a `__self` field,
-        // which the generic local->field rule already redirects — this alias is only for the lambda-capture mismatch.
-        JsonNode CapturedSelfField() =>
-            (!_fields.Contains("__self") && _fields.Contains("__outer"))
-                ? FieldOf("__outer", RequiredFieldType("__outer")) : null;
-
         // #34a — a suspend LAMBDA that closes over its enclosing INSTANCE captures it as the `__outer`
         // field (SuspendLambdaLowering seeds the ctor arg from the enclosing `this`/`__self`). kotc emits references
         // to that instance's members as a bare `this.member` (recv `{k:"this"}`) inside the lambda body, but inside the
@@ -3058,7 +3049,8 @@ static partial class SuspendColdLowering
             if (name == "__outer")
             {
                 if (_isMember) return FieldOf(ThisField, _selfType);
-                if (_fields.Contains("__self")) return FieldOf("__self", RequiredFieldType("__self"));
+                if (_extensionReceiverName != null && _fields.Contains(_extensionReceiverName))
+                    return FieldOf(_extensionReceiverName, RequiredFieldType(_extensionReceiverName));
                 if (_isLambda && _fields.Contains("__outer")) return FieldOf("__outer", RequiredFieldType("__outer"));
                 return new JsonObject { ["k"] = "this" };
             }

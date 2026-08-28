@@ -374,7 +374,8 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		// slot `f(value)` while every implementation correctly emitted `f(__self,value)`, so otherwise-valid implementers
 		// failed CLR type loading. This is still pure Kotlin vocabulary/fact preservation: no CLR owner/name is inferred.
 		val extRecv = extensionReceiverParam(fn)
-		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
+		val extRecvName = extRecv?.let { extensionReceiverSlotName(fn) }
+		if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":${str(extRecvName!!)}}"""
 		// #6 non-null parameter PRECONDITIONS + return POSTCONDITION for a default interface method body (an abstract slot
 		// has no body to guard).
 		val body = if (hasDefault) {
@@ -383,7 +384,7 @@ internal fun BirEmitter.interfaceDef(iface: IrClass): String {
 		} else ""
 		activeSemanticOwner = savedSemanticOwner
 		if (extRecv != null) selfSubst.remove(extRecv)
-		val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+		val selfParam = extRecv?.let { """{"name":${str(extRecvName!!)},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 		val params = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 		// A generic interface method (`fun <E> get(...)`, `<R> fold(...)`) must carry its own type params, else
 		// `gp:E`/`gp:R` in its signature is unresolvable at emit (CoroutineContext / ContinuationInterceptor / …).
@@ -1376,7 +1377,8 @@ internal fun BirEmitter.overridesJson(fn: IrSimpleFunction): String {
  *  Used for extension properties (`val T.p`) and computed top-level properties (no backing field). */
 internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: String, isGetter: Boolean): String {
 	val extRecv = extensionReceiverParam(acc)
-	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
+	val extRecvName = extRecv?.let { extensionReceiverSlotName(acc) }
+	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":${str(extRecvName!!)}}"""
 	val savedDelegatedAccessor = activeDelegatedAccessor
 	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
 	// #6 non-null parameter PRECONDITIONS + getter return POSTCONDITION, gated on the accessor's real IR visibility.
@@ -1384,7 +1386,7 @@ internal fun BirEmitter.topLevelAccessorMethod(acc: IrSimpleFunction, propName: 
 	val body = (preconditionChecks(acc) + listOfNotNull(bodyStmts.takeIf { it.isNotEmpty() })).joinToString(",")
 	activeDelegatedAccessor = savedDelegatedAccessor
 	if (extRecv != null) selfSubst.remove(extRecv)
-	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+	val selfParam = extRecv?.let { """{"name":${str(extRecvName!!)},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(acc.parameters)).joinToString(",")
 	val kind = if (isGetter) "get" else "set"
 	val ret = if (isGetter) birType(acc.returnType) else TypeNode.Fqn("kotlin.Unit")
@@ -1401,8 +1403,9 @@ internal fun BirEmitter.accessorMethod(acc: IrSimpleFunction, propName: String, 
 	// extension receiver rides a leading `__self` param (mirrors a member extension function); body refs to it
 	// resolve via selfSubst (by identity, so it isn't confused with the dispatch `<this>`).
 	val extRecv = extensionReceiverParam(acc)
-	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
-	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+	val extRecvName = extRecv?.let { extensionReceiverSlotName(acc) }
+	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":${str(extRecvName!!)}}"""
+	val selfParam = extRecv?.let { """{"name":${str(extRecvName!!)},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val savedDelegatedAccessor = activeDelegatedAccessor
 	activeDelegatedAccessor = acc.correspondingPropertySymbol?.owner?.takeIf { it.isDelegated }
 	// [isValueParameter], not `Regular`: `context(c: Ctx) val C.p get() = c.n` carries its context parameter as an
@@ -1907,7 +1910,8 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	// An extension function `fun T.f()` -> static method whose first param `__self` is the receiver;
 	// body references to the receiver resolve to `__self` (via valSubst).
 	val extRecv = extensionReceiverParam(fn)
-	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":"__self"}"""
+	val extRecvName = extRecv?.let { extensionReceiverSlotName(fn) }
+	if (extRecv != null) selfSubst[extRecv] = """{"k":"local","name":${str(extRecvName!!)}}"""
 	// (No fun-interface SAM param-erasure here: kotc reads NEITHER @ClrTypeAlias NOR @ClrIntrinsic — foundational
 	// invariant.) A fun interface aliased to a NON-generic BCL interface would be derived in bir2cir off the ref.dll;
 	// but the stdlib no longer aliases any `fun interface` to a BCL interface — Comparator is a plain Kotlin fun
@@ -1930,7 +1934,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	// #6 non-null parameter PRECONDITIONS run at entry, BEFORE the tailrec label so a self-tail-jump does not re-check.
 	val body = (preconditionChecks(fn) + listOfNotNull(coreBody.takeIf { it.isNotEmpty() })).joinToString(",")
 	if (extRecv != null) selfSubst.remove(extRecv)
-	val selfParam = extRecv?.let { """{"name":"__self","type":${birType(it.type).toJson()}}""" }
+	val selfParam = extRecv?.let { """{"name":${str(extRecvName!!)},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
 	activeSemanticOwner = savedSemanticOwner
 	// `override fun toString()/equals()/hashCode()` emits the KOTLIN name + `objectOverride:true` (a pure-Kotlin

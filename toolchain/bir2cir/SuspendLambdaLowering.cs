@@ -96,7 +96,7 @@ static class SuspendLambdaLowering
                         if (to["ctors"] is JsonArray tcs)
                             foreach (var c in tcs)
                                 if (c is JsonObject co && co["body"] is JsonNode cb)
-                                    Walk(cb, owner + "_ctor", owner, newTypes, counter, baseIsLocal, HasSelfParam(co));
+                                    Walk(cb, owner + "_ctor", owner, newTypes, counter, baseIsLocal, ExtensionReceiverParamName(co));
                         if (to["properties"] is JsonArray tps)
                             foreach (var p in tps)
                                 if (p is JsonObject po) WalkAccessors(po, owner, newTypes, counter, baseIsLocal);
@@ -119,16 +119,18 @@ static class SuspendLambdaLowering
         }
     }
 
-    // Does the enclosing method carry a `__self` param (a static extension fun — its receiver rode a leading
-    // `__self`)? Then a captured enclosing receiver (`__outer`) reads `local __self` at the construction site;
-    // an instance method (no `__self` param) reads `this`.
-    static bool HasSelfParam(JsonObject method) =>
-        method["params"] is JsonArray ps && ps.OfType<JsonObject>().Any(p => Str(p["name"]) == "__self");
+    // Receiver meaning is explicit. Return its physical slot name; null means an instance dispatch receiver.
+    static string ExtensionReceiverParamName(JsonObject method) =>
+        method["params"] is JsonArray ps && ps.FirstOrDefault() is JsonObject p
+        && p["mods"] is JsonObject mods && mods["extensionReceiver"] is JsonValue marker
+        && marker.TryGetValue<bool>(out var value) && value
+            ? Str(p["name"])
+            : null;
 
     static void WalkMethod(JsonObject method, string prefix, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
     {
         var mn = Str(method["name"]) ?? "m";
-        var outerSelf = HasSelfParam(method);
+        var outerSelf = ExtensionReceiverParamName(method);
         if (method["body"] is JsonNode body) Walk(body, prefix + "_" + mn, prefix, newTypes, counter, baseIsLocal, outerSelf);
     }
 
@@ -139,9 +141,9 @@ static class SuspendLambdaLowering
     {
         var fn = Str(field["name"]) ?? "f";
         if (field["init"] is JsonObject init && Str(init["k"]) == "newSuspendLambda")
-            field["init"] = BuildLambda(init, prefix + "_" + fn, prefix, newTypes, counter, baseIsLocal, outerSelf: false);
+            field["init"] = BuildLambda(init, prefix + "_" + fn, prefix, newTypes, counter, baseIsLocal, outerSelf: null);
         else if (field["init"] is JsonNode body)
-            Walk(body, prefix + "_" + fn, prefix, newTypes, counter, baseIsLocal, outerSelf: false);
+            Walk(body, prefix + "_" + fn, prefix, newTypes, counter, baseIsLocal, outerSelf: null);
     }
 
     static void WalkAccessors(JsonObject prop, string prefix, List<JsonNode> newTypes, int[] counter, bool baseIsLocal)
@@ -149,10 +151,10 @@ static class SuspendLambdaLowering
         var pn = Str(prop["name"]) ?? "p";
         foreach (var acc in new[] { "getter", "setter" })
             if (prop[acc] is JsonObject a && a["body"] is JsonNode b)
-                Walk(b, prefix + "_" + pn + "_" + acc, prefix, newTypes, counter, baseIsLocal, HasSelfParam(a));
+                Walk(b, prefix + "_" + pn + "_" + acc, prefix, newTypes, counter, baseIsLocal, ExtensionReceiverParamName(a));
     }
 
-    static void Walk(JsonNode node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, bool outerSelf)
+    static void Walk(JsonNode node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, string outerSelf)
     {
         switch (node)
         {
@@ -179,7 +181,7 @@ static class SuspendLambdaLowering
         }
     }
 
-    static JsonNode BuildLambda(JsonObject node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, bool outerSelf)
+    static JsonNode BuildLambda(JsonObject node, string ctx, string owner, List<JsonNode> newTypes, int[] counter, bool baseIsLocal, string outerSelf)
     {
         // Bottom-up: lower any nested suspend lambdas inside THIS lambda's body first (their SMs + `new`
         // replacements land before this lambda's SM is built over the already-lowered body).
@@ -254,10 +256,10 @@ static class SuspendLambdaLowering
             else
                 // `__outer` is kotc's name for a captured enclosing `<this>`/extension-receiver (BirEmitter.kt:2929).
                 // Its VALUE at an ORDINARY (non-SM) construction site is the enclosing method's receiver: an instance
-                // method reads `this`; a STATIC extension fun (receiver rode a leading `__self` param) reads
-                // `local __self`. `outerSelf` carries which. Every other capture is a real local.
+                // method reads `this`; a STATIC extension fun reads the exact physical receiver slot carried by
+                // `outerSelf`. Every other capture is a real local.
                 args.Add(n == "__outer"
-                    ? (outerSelf ? new JsonObject { ["k"] = "local", ["name"] = "__self" }
+                    ? (outerSelf != null ? new JsonObject { ["k"] = "local", ["name"] = outerSelf }
                                  : new JsonObject { ["k"] = "this" })
                     : new JsonObject { ["k"] = "local", ["name"] = n });
             // BuildLambdaSm moves the enclosing method's generic parameters onto the synthesized SM type. Its ctor

@@ -46,6 +46,31 @@ internal sealed class MetadataAttributes
     public bool Has(EntityHandle owner, string name, bool requireTrust = true) =>
         All(owner, requireTrust).Any(a => a.Name == name);
 
+    // Exact trusted bare markers are structural contracts, not optional decoration. Unlike Has/All, this path keeps
+    // duplicates and malformed blobs visible so a corrupted current-format carrier cannot silently become "absent".
+    public int ExactBareMarkerCount(EntityHandle owner, string name)
+    {
+        if (owner.IsNil) return 0;
+        var count = 0;
+        foreach (var handle in _md.GetCustomAttributes(owner))
+        {
+            var attribute = _md.GetCustomAttribute(handle);
+            if (!IsExactTrustedCarrier(attribute, name)) continue;
+            count++;
+            try
+            {
+                var reader = _md.GetBlobReader(attribute.Value);
+                if (reader.ReadUInt16() != 1 || reader.ReadUInt16() != 0 || reader.RemainingBytes != 0)
+                    throw new BadImageFormatException("expected a bare marker with no named arguments");
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidDataException($"malformed [{name}] carrier: {ex.Message}", ex);
+            }
+        }
+        return count;
+    }
+
     public Attr? Find(EntityHandle owner, string name, bool requireTrust = true) =>
         All(owner, requireTrust).FirstOrDefault(a => a.Name == name);
 
@@ -214,6 +239,7 @@ internal sealed class MetadataAttributes
                 or DotKtNs + "KotlinObjectAttribute"
                 or DotKtNs + "KotlinExtensionFunctionTypeAttribute"
                 or DotKtNs + "KotlinContextParameterAttribute"
+                or DotKtNs + "KotlinExtensionReceiverAttribute"
                 or DotKtNs + "KotlinNothingAttribute"))
         {
             var version = reader.ReadSerializedString();
