@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Reflection.Metadata;
@@ -28,7 +29,9 @@ internal readonly record struct PublicTypeSurface(
 internal sealed class PublicTypeCatalog : IDisposable
 {
     private readonly Dictionary<string, PublicTypeCatalogEntry> _entries;
-    private readonly Dictionary<string, LoadedAssembly> _loaded = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<LoadedAssembly>> _loaded =
+        new(StringComparer.Ordinal);
+    private readonly Lazy<IReadOnlyDictionary<string, string[]>> _directDependencies;
 
     private PublicTypeCatalog(IEnumerable<PublicTypeCatalogEntry> entries)
     {
@@ -42,6 +45,9 @@ internal sealed class PublicTypeCatalog : IDisposable
                     $"type '{entry.MetadataName}' has conflicting shapes in assembly '{entry.AssemblyName}'");
             _entries[key] = entry;
         }
+        _directDependencies = new Lazy<IReadOnlyDictionary<string, string[]>>(
+            BuildDirectDependencies,
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public static PublicTypeCatalog Empty { get; } = new(Array.Empty<PublicTypeCatalogEntry>());
@@ -89,11 +95,21 @@ internal sealed class PublicTypeCatalog : IDisposable
         {
             changed = false;
             var additions = new List<PublicTypeCatalogEntry>();
+            // A forwarder can expose one top-level type together with all of its nested definitions. Index that
+            // narrow family once per fixed-point round instead of scanning every TypeDef in every resolved assembly
+            // for every ExportedType row (netstandard alone carries thousands of forwarders).
+            var targetsByRoot = all._entries.Values
+                .GroupBy(entry => (entry.AssemblyName, RootName(entry.MetadataName)))
+                .ToDictionary(group => group.Key, group => group.ToArray());
             foreach (var forwarder in forwarders)
-                foreach (var target in all._entries.Values.Where(entry =>
-                    StringComparer.Ordinal.Equals(entry.AssemblyName, forwarder.TargetAssembly) &&
-                    (StringComparer.Ordinal.Equals(entry.MetadataName, forwarder.MetadataName) ||
-                     entry.MetadataName.StartsWith(forwarder.MetadataName + "+", StringComparison.Ordinal))))
+            {
+                if (!targetsByRoot.TryGetValue(
+                        (forwarder.TargetAssembly, RootName(forwarder.MetadataName)),
+                        out var candidates))
+                    continue;
+                foreach (var target in candidates.Where(entry =>
+                    StringComparer.Ordinal.Equals(entry.MetadataName, forwarder.MetadataName) ||
+                    entry.MetadataName.StartsWith(forwarder.MetadataName + "+", StringComparison.Ordinal)))
                 {
                     var alias = target with { AssemblyName = forwarder.ForwardingAssembly };
                     if (!all._entries.ContainsKey(Key(alias.AssemblyName, alias.MetadataName)))
@@ -102,6 +118,7 @@ internal sealed class PublicTypeCatalog : IDisposable
                         changed = true;
                     }
                 }
+            }
             if (changed) all = new PublicTypeCatalog(all._entries.Values.Concat(additions));
         }
         return all;
@@ -119,11 +136,47 @@ internal sealed class PublicTypeCatalog : IDisposable
         _entries.Values.OrderBy(x => x.AssemblyName, StringComparer.Ordinal)
             .ThenBy(x => x.MetadataName, StringComparer.Ordinal).ToArray());
 
-    public IReadOnlyList<string> DependenciesOf(string input) => _entries.Values
-        .Select(entry => entry.AssemblyPath)
-        .Where(path => !StringComparer.Ordinal.Equals(path, input))
-        .Distinct(StringComparer.Ordinal)
-        .ToArray();
+    public IReadOnlyList<string> DependenciesOf(string input)
+    {
+        input = Path.GetFullPath(input);
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Stack<string>();
+        if (_directDependencies.Value.TryGetValue(input, out var direct))
+            foreach (var path in direct) pending.Push(path);
+        while (pending.TryPop(out var path))
+        {
+            if (!result.Add(path)) continue;
+            if (_directDependencies.Value.TryGetValue(path, out var dependencies))
+                foreach (var dependency in dependencies) pending.Push(dependency);
+        }
+        result.Remove(input);
+        return result.ToArray();
+    }
+
+    private IReadOnlyDictionary<string, string[]> BuildDirectDependencies()
+    {
+        var result = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (var path in _entries.Values.Select(entry => entry.AssemblyPath)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            using var file = File.OpenRead(path);
+            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+            if (!pe.HasMetadata)
+            {
+                result[path] = [];
+                continue;
+            }
+            var md = pe.GetMetadataReader();
+            result[path] = md.TypeReferences
+                .Select(handle => ResolveEntry(md, handle)?.AssemblyPath)
+                .Where(dependency => dependency is not null &&
+                    !StringComparer.Ordinal.Equals(dependency, path))
+                .Cast<string>()
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+        return result;
+    }
 
     public PublicTypeSurface Surface(
         MetadataReader reader,
@@ -170,7 +223,9 @@ internal sealed class PublicTypeCatalog : IDisposable
 
     public void Dispose()
     {
-        foreach (var assembly in _loaded.Values) assembly.Dispose();
+        foreach (var assembly in _loaded.Values)
+            if (assembly.IsValueCreated)
+                assembly.Value.Dispose();
         _loaded.Clear();
     }
 
@@ -197,11 +252,11 @@ internal sealed class PublicTypeCatalog : IDisposable
     {
         var entry = ResolveEntry(reader, handle);
         if (entry is null) return null;
-        if (!_loaded.TryGetValue(entry.AssemblyPath, out var assembly))
-        {
-            assembly = new LoadedAssembly(entry.AssemblyPath);
-            _loaded.Add(entry.AssemblyPath, assembly);
-        }
+        var assembly = _loaded.GetOrAdd(
+            entry.AssemblyPath,
+            static path => new Lazy<LoadedAssembly>(
+                () => new LoadedAssembly(path),
+                LazyThreadSafetyMode.ExecutionAndPublication)).Value;
         return assembly.Definitions.TryGetValue(entry.MetadataName, out var definition)
             ? new ResolvedTypeDefinition(assembly.Reader, definition, entry.AssemblyPath)
             : null;
@@ -349,6 +404,12 @@ internal sealed class PublicTypeCatalog : IDisposable
         if (!parent.IsNil) return DefinitionName(md, parent) + "+" + simple;
         var ns = md.GetString(definition.Namespace);
         return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string RootName(string metadataName)
+    {
+        var separator = metadataName.IndexOf('+');
+        return separator < 0 ? metadataName : metadataName[..separator];
     }
 
     private static string ReferenceName(MetadataReader md, TypeReferenceHandle handle)

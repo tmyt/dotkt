@@ -89,33 +89,35 @@ grep -q '0 KLIB(s) up to date' <<<"$stdlib_batch" \
 [[ -z "$(find "$OUT/stdlib-klib" -maxdepth 1 -name '*.klib' -print -quit)" ]] \
 	|| die "response-file dll2klib projected a marked stdlib assembly"
 
-printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib-second" --jobs 0 @"$OUT/references.rsp"
 cmp -s "$PROBE_KLIB" "$OUT/klib-second/Probe.klib" \
 	|| die "same Probe MVID did not produce a deterministic KLIB"
 cmp -s "$CONTRACTS_KLIB" "$OUT/klib-second/Probe.Contracts.klib" \
 	|| die "same contracts MVID did not produce a deterministic KLIB"
+cmp -s "$OUT/klib/TransitiveSlotProbe.klib" "$OUT/klib-second/TransitiveSlotProbe.klib" \
+	|| die "same unrelated MVID did not produce a deterministic KLIB"
 cache_hit="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q '2 KLIB(s) up to date' <<<"$cache_hit" \
+grep -q '3 KLIB(s) up to date' <<<"$cache_hit" \
 	|| die "unchanged reference set did not hit the per-assembly KLIB cache"
 sleep 1
 touch "$CONTRACTS_REF"
 dependency_rebuild="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q 'converting 2/2 reference(s)' <<<"$dependency_rebuild" \
-	|| die "external delegate change did not invalidate the consuming Probe KLIB"
+grep -q 'converting 2/3 reference(s)' <<<"$dependency_rebuild" \
+	|| die "external delegate change did not rebuild exactly the dependency and its consuming Probe KLIB"
 # Removing or adding an input can change the shared arity/delegate/companion catalog without changing any surviving DLL's
 # timestamp. Every surviving KLIB must be regenerated so cached and newly projected declarations keep one naming
 # universe.
-printf '%s\n' "$PROBE_REF" > "$OUT/references.rsp"
+printf '%s\n%s\n' "$PROBE_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
 if catalog_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp" 2>&1)"; then
 	die "dll2klib accepted Probe without its referenced Probe.Contracts assembly"
 fi
 grep -q "public-type catalog cannot resolve 'Probe.Contracts.IExternalDefaultSlot'" <<<"$catalog_remove" \
 	|| die "incomplete reference-catalog rejection did not identify the unresolved public supertype"
-printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
 catalog_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q '2 KLIB(s) up to date' <<<"$catalog_restore" \
+grep -q '3 KLIB(s) up to date' <<<"$catalog_restore" \
 	|| die "rejected incomplete reference catalog corrupted the complete KLIB cache"
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"

@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using System.IO.Compression;
-using System.Diagnostics;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.Metadata.Ecma335;
@@ -114,7 +113,7 @@ internal static class Program
         var companionCatalogJson = companionCatalog.Serialize();
         var innerCatalog = InnerReferenceCatalog.Discover(resolvedInputs);
         var innerCatalogJson = innerCatalog.Serialize();
-        var publicTypeCatalog = PublicTypeCatalog.Discover(resolvedInputs);
+        using var publicTypeCatalog = PublicTypeCatalog.Discover(resolvedInputs);
         var publicTypeCatalogJson = publicTypeCatalog.Serialize();
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
@@ -162,77 +161,38 @@ internal static class Program
             return 0;
         }
 
-        var catalogPath = Path.Combine(
-            outputDirectory,
-            $".dll2klib-delegates-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
-        var companionCatalogPath = Path.Combine(
-            outputDirectory,
-            $".dll2klib-companions-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
-        var innerCatalogPath = Path.Combine(
-            outputDirectory,
-            $".dll2klib-inners-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
-        var publicTypeCatalogPath = Path.Combine(
-            outputDirectory,
-            $".dll2klib-public-types-{Environment.ProcessId}-{Guid.NewGuid():N}.json");
-        File.WriteAllText(catalogPath, delegateCatalogJson);
-        File.WriteAllText(companionCatalogPath, companionCatalogJson);
-        File.WriteAllText(innerCatalogPath, innerCatalogJson);
-        File.WriteAllText(publicTypeCatalogPath, publicTypeCatalogJson);
-        try
-        {
-            var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
-            Console.WriteLine($"dll2klib: converting {stale.Length}/{work.Length} reference(s), jobs={parallelism}");
-            using var gate = new SemaphoreSlim(parallelism);
-            var failures = new List<string>();
-            var failureLock = new object();
-            await Task.WhenAll(stale.Select(async item =>
+        var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
+        Console.WriteLine($"dll2klib: converting {stale.Length}/{work.Length} reference(s), jobs={parallelism}");
+        var failures = new List<string>();
+        var failureLock = new object();
+        var inheritedArityClashes = string.Join(';', arityClashes);
+        await Parallel.ForEachAsync(
+            stale,
+            new ParallelOptions { MaxDegreeOfParallelism = parallelism },
+            (item, _) =>
             {
-                await gate.WaitAsync();
                 try
                 {
-                    var start = new ProcessStartInfo("dotnet")
-                    {
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                    };
-                    start.ArgumentList.Add(tool);
-                    start.ArgumentList.Add(item.Input);
-                    start.ArgumentList.Add(item.Output);
-                    start.Environment[ArityClashesEnvironment] = string.Join(';', arityClashes);
-                    start.Environment[DelegateCatalogEnvironment] = catalogPath;
-                    start.Environment[CompanionCatalogEnvironment] = companionCatalogPath;
-                    start.Environment[InnerCatalogEnvironment] = innerCatalogPath;
-                    start.Environment[PublicTypeCatalogEnvironment] = publicTypeCatalogPath;
-                    using var child = Process.Start(start)
-                        ?? throw new InvalidOperationException($"failed to start worker for {item.Input}");
-                    var stdout = child.StandardOutput.ReadToEndAsync();
-                    var stderr = child.StandardError.ReadToEndAsync();
-                    await child.WaitForExitAsync();
-                    var output = await stdout;
-                    var error = await stderr;
-                    if (output.Length != 0) Console.Out.Write(output);
-                    if (error.Length != 0) Console.Error.Write(error);
-                    if (child.ExitCode != 0)
-                        lock (failureLock) failures.Add($"{item.Input} (exit {child.ExitCode})");
+                    Convert(
+                        item.Input,
+                        item.Output,
+                        inheritedArityClashes,
+                        delegateCatalog,
+                        companionCatalog,
+                        innerCatalog,
+                        publicTypeCatalog);
                 }
-                finally
+                catch (Exception ex)
                 {
-                    gate.Release();
+                    lock (failureLock)
+                        failures.Add($"{item.Input}: {ex.Message}");
                 }
-            }));
-            if (failures.Count != 0)
-                throw new InvalidOperationException("worker conversion failed: " + string.Join(", ", failures));
-            WriteAllTextAtomically(projectionCatalogPath, projectionCatalog);
-            return 0;
-        }
-        finally
-        {
-            if (File.Exists(catalogPath)) File.Delete(catalogPath);
-            if (File.Exists(companionCatalogPath)) File.Delete(companionCatalogPath);
-            if (File.Exists(innerCatalogPath)) File.Delete(innerCatalogPath);
-            if (File.Exists(publicTypeCatalogPath)) File.Delete(publicTypeCatalogPath);
-        }
+                return ValueTask.CompletedTask;
+            });
+        if (failures.Count != 0)
+            throw new InvalidOperationException("worker conversion failed: " + string.Join(", ", failures));
+        WriteAllTextAtomically(projectionCatalogPath, projectionCatalog);
+        return 0;
     }
 
     private static void WriteAllTextAtomically(string path, string contents)
@@ -269,6 +229,33 @@ internal static class Program
 
     private static void Convert(string input, string output)
     {
+        var delegateCatalog = DelegateReferenceCatalog.Load(
+            Environment.GetEnvironmentVariable(DelegateCatalogEnvironment));
+        var companionCatalog = CompanionReferenceCatalog.Load(
+            Environment.GetEnvironmentVariable(CompanionCatalogEnvironment));
+        var innerCatalog = InnerReferenceCatalog.Load(
+            Environment.GetEnvironmentVariable(InnerCatalogEnvironment));
+        using var publicTypeCatalog = PublicTypeCatalog.Load(
+            Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment));
+        Convert(
+            input,
+            output,
+            Environment.GetEnvironmentVariable(ArityClashesEnvironment),
+            delegateCatalog,
+            companionCatalog,
+            innerCatalog,
+            publicTypeCatalog);
+    }
+
+    private static void Convert(
+        string input,
+        string output,
+        string? inheritedArityClashes,
+        DelegateReferenceCatalog delegateCatalog,
+        CompanionReferenceCatalog companionCatalog,
+        InnerReferenceCatalog innerCatalog,
+        PublicTypeCatalog publicTypeCatalog)
+    {
         using var file = File.OpenRead(input);
         // C# 14 extension grouping declarations are signature-only stubs whose non-callable ldnull/throw body is
         // part of the standard graph contract, so the scanner needs method bodies as well as metadata.
@@ -279,15 +266,7 @@ internal static class Program
         var md = pe.GetMetadataReader();
         var assemblyName = md.IsAssembly ? md.GetString(md.GetAssemblyDefinition().Name) : Path.GetFileNameWithoutExtension(input);
         var uniqueName = $"clr.{assemblyName}.{md.GetGuid(md.GetModuleDefinition().Mvid):N}";
-        var arityNames = ArityNames.Create(md, Environment.GetEnvironmentVariable(ArityClashesEnvironment));
-        var delegateCatalog = DelegateReferenceCatalog.Load(
-            Environment.GetEnvironmentVariable(DelegateCatalogEnvironment));
-        var companionCatalog = CompanionReferenceCatalog.Load(
-            Environment.GetEnvironmentVariable(CompanionCatalogEnvironment));
-        var innerCatalog = InnerReferenceCatalog.Load(
-            Environment.GetEnvironmentVariable(InnerCatalogEnvironment));
-        using var publicTypeCatalog = PublicTypeCatalog.Load(
-            Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment));
+        var arityNames = ArityNames.Create(md, inheritedArityClashes);
         using var scanner = new AssemblyScanner(
             input, pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog);
         var fragments = scanner.Scan();
@@ -987,6 +966,9 @@ internal sealed class CompanionReferenceCatalog
             if (!pe.HasMetadata) continue;
             var md = pe.GetMetadataReader();
             var attrs = new MetadataAttributes(md);
+            // A trusted companion carrier can occur only in a DotKt-produced assembly. Avoid indexing and probing
+            // every TypeDef in ordinary framework and third-party assemblies merely to prove the carrier is absent.
+            if (!attrs.IsDotKtAssembly) continue;
             var physicalTypes = md.TypeDefinitions
                 .Select(handle => (
                     Handle: handle,
