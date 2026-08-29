@@ -39,6 +39,10 @@ measure() {
 	printf '%s\n' "$(( (end_ns - start_ns) / 1000000 ))"
 }
 
+# Warm the managed host, tool assembly, input metadata, and generator outputs symmetrically before comparing fresh
+# KLIB output directories. This keeps cold-cache order from making the single-assembly denominator artificially large.
+measure "$OUT/warm-single-klib" "$OUT/single.rsp" >/dev/null
+measure "$OUT/warm-batch-klib" "$OUT/batch.rsp" >/dev/null
 single_ms="$(measure "$OUT/single-klib" "$OUT/single.rsp")"
 batch_ms="$(measure "$OUT/batch-klib" "$OUT/batch.rsp")"
 batch_outputs="$(find "$OUT/batch-klib" -maxdepth 1 -type f -name '*.klib' | wc -l)"

@@ -642,6 +642,10 @@ public class Widget : WidgetBase, IAdder
         ExternalGenericTransformer<int, int> transform,
         int value) => transform(value);
 
+    public CrossAssemblyArity<int> ApplyExternalArity(
+        ExternalArityFactory factory,
+        int value) => factory(value);
+
     public void Increment(ref int value) => value += _seed;
 
     public void Raise(int value) => Changed?.Invoke(value);

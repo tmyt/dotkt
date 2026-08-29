@@ -62,11 +62,11 @@ dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/tr
 # CLR carriers as ordinary nominal classes.
 direct_out="$OUT/direct-Probe.klib"
 if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
-	die "standalone direct worker invocation unexpectedly succeeded without resolved reference catalogs"
+	die "standalone direct projection unexpectedly succeeded without the resolved reference set"
 fi
-grep -q "direct worker mode requires the batch-provided resolved delegate, companion, inner, and public-type catalogs" <<<"$direct_error" \
-	|| die "standalone direct worker rejection did not explain the required batch reference set"
-[[ ! -e "$direct_out" ]] || die "rejected standalone direct worker invocation still wrote a KLIB"
+grep -q "direct projection requires the complete resolved reference set" <<<"$direct_error" \
+	|| die "standalone direct projection rejection did not explain the required batch reference set"
+[[ ! -e "$direct_out" ]] || die "rejected standalone direct projection still wrote a KLIB"
 
 # Both stdlib CLR twins carry a semantic library-kind marker. A human asking for a direct projection gets an
 # actionable warning and no duplicate KLIB; the response-file/MSBuild reference-set path ignores the same inputs
@@ -344,7 +344,7 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "508" ]] || die "generated program returned '$actual', expected '508'"
+[[ "$actual" == "518" ]] || die "generated program returned '$actual', expected '518'"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/il/Consumer.dll"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
@@ -354,4 +354,4 @@ if grep -q '"_resolvedMethodTypeParams"' "$OUT/cir/consumer.cir.json"; then
 	die "bir2cir leaked its resolved-method constraint carrier into CIR"
 fi
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (508)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (518)"

@@ -15,6 +15,7 @@ import Probe.ExplicitDefaultCarrier
 import Probe.IPublicGenericDefaultSlot
 import Probe.Contracts.IVisibleGeneric
 import Probe.Contracts.IExternalDefaultSlot
+import Probe.Contracts.CrossAssemblyArity1
 import GlobalWidgetExtensions
 import GlobalBump
 import Probe.ConstraintBox
@@ -77,6 +78,7 @@ fun consume(): Int {
     val transformed = widget.Apply({ it + 2 }, 4)
     val externalTransformed = widget.ApplyExternal({ it * 3 }, 4)
     val externalGenericTransformed = widget.ApplyExternalGeneric({ it + 5 }, 4)
+    val externalArity = widget.ApplyExternalArity({ CrossAssemblyArity1(it + 6) }, 4).Value
     val nullable: String? = widget.MaybeNull(true)
     val required: String = widget.Required()
     var changed = 0
@@ -124,7 +126,7 @@ fun consume(): Int {
     return widget.Add(4) + Widget.Twice(5) + definitely.length +
         widget.Value + widget.Inherited + widget.Field + Widget.Global + adder.Add(1) + widget.Identity(2) +
         widget[2] + nested.Triple(2) + transformed + widget.Bump(1) +
-        externalTransformed + externalGenericTransformed + staticBump + globalExtensionBump + globalStaticBump +
+        externalTransformed + externalGenericTransformed + externalArity + staticBump + globalExtensionBump + globalStaticBump +
         (nullable?.length ?: 0) + required.length + changed + incremented + shifted.Add(0) +
         visibility.Read() + visibleControl.Read() + (if (visibleGeneric === visibility) 1 else 0) +
         genericConstraints

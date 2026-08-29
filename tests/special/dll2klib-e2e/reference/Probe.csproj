@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="GlobalProbe.cs" />
+    <Compile Include="CrossAssemblyArityCollision.cs" />
     <Compile Include="Widget.cs" />
     <ProjectReference Include="Contracts.csproj" />
   </ItemGroup>

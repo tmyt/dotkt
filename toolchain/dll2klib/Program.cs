@@ -13,12 +13,6 @@ using KType = DotKt.Klib.Metadata.Type;
 
 internal static class Program
 {
-    internal const string ArityClashesEnvironment = "DOTKT_DLL2KLIB_ARITY_CLASHES";
-    private const string DelegateCatalogEnvironment = "DOTKT_DLL2KLIB_DELEGATE_CATALOG";
-    private const string CompanionCatalogEnvironment = "DOTKT_DLL2KLIB_COMPANION_CATALOG";
-    private const string InnerCatalogEnvironment = "DOTKT_DLL2KLIB_INNER_CATALOG";
-    private const string PublicTypeCatalogEnvironment = "DOTKT_DLL2KLIB_PUBLIC_TYPE_CATALOG";
-
     public static async Task<int> Main(string[] args)
     {
         try
@@ -33,20 +27,12 @@ internal static class Program
                         "use the frontend standard-library KLIB instead");
                     return 0;
                 }
-                // This two-path form is the batch launcher's worker protocol. A correct projection of an external
-                // delegate TypeRef needs the complete resolved assembly universe; one input DLL cannot establish the
-                // referenced TypeDef's identity or Invoke shape on its own. Refuse a human standalone invocation
-                // instead of silently projecting such a delegate as an ordinary nominal class. The batch parent sets
-                // both catalogs on every worker below.
-                if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable(DelegateCatalogEnvironment)) ||
-                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable(CompanionCatalogEnvironment)) ||
-                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable(InnerCatalogEnvironment)) ||
-                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment)))
-                    throw new InvalidOperationException(
-                        "direct worker mode requires the batch-provided resolved delegate, companion, inner, and public-type catalogs; " +
-                        "use 'dll2klib --out <directory> @<references.rsp>' with the complete reference set");
-                Convert(input, Path.GetFullPath(args[1]));
-                return 0;
+                // A correct projection needs the complete resolved assembly universe. The old two-path form existed
+                // only as the batch coordinator's child-process protocol; the in-process coordinator has no worker
+                // mode and must not reconstruct that universe from one DLL.
+                throw new InvalidOperationException(
+                    "direct projection requires the complete resolved reference set; " +
+                    "use 'dll2klib --out <directory> @<references.rsp>'");
             }
             return await ConvertBatch(args);
         }
@@ -213,9 +199,8 @@ internal static class Program
     {
         Console.Error.WriteLine(
             "usage:\n" +
-            "  dll2klib <reference.dll> <output.klib>  (internal batch worker)\n" +
             "  dll2klib --out <directory> [--jobs <N>] @<references.rsp>\n" +
-            "  --jobs 0 starts one worker per stale reference");
+            "  --jobs 0 converts all stale references concurrently");
         return 2;
     }
 
@@ -225,26 +210,6 @@ internal static class Program
         using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
         if (!pe.HasMetadata || pe.PEHeaders.CorHeader is null) return false;
         return new MetadataAttributes(pe.GetMetadataReader()).IsStandardLibrary;
-    }
-
-    private static void Convert(string input, string output)
-    {
-        var delegateCatalog = DelegateReferenceCatalog.Load(
-            Environment.GetEnvironmentVariable(DelegateCatalogEnvironment));
-        var companionCatalog = CompanionReferenceCatalog.Load(
-            Environment.GetEnvironmentVariable(CompanionCatalogEnvironment));
-        var innerCatalog = InnerReferenceCatalog.Load(
-            Environment.GetEnvironmentVariable(InnerCatalogEnvironment));
-        using var publicTypeCatalog = PublicTypeCatalog.Load(
-            Environment.GetEnvironmentVariable(PublicTypeCatalogEnvironment));
-        Convert(
-            input,
-            output,
-            Environment.GetEnvironmentVariable(ArityClashesEnvironment),
-            delegateCatalog,
-            companionCatalog,
-            innerCatalog,
-            publicTypeCatalog);
     }
 
     private static void Convert(
@@ -268,7 +233,8 @@ internal static class Program
         var uniqueName = $"clr.{assemblyName}.{md.GetGuid(md.GetModuleDefinition().Mvid):N}";
         var arityNames = ArityNames.Create(md, inheritedArityClashes);
         using var scanner = new AssemblyScanner(
-            input, pe, md, arityNames, delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog);
+            input, pe, md, arityNames, inheritedArityClashes,
+            delegateCatalog, companionCatalog, innerCatalog, publicTypeCatalog);
         var fragments = scanner.Scan();
 
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -1403,13 +1369,14 @@ internal sealed class AssemblyScanner : IDisposable
     private readonly Dictionary<string, TypeDefinitionHandle> _localDefinitions;
     private readonly CSharp14ExtensionCatalog _csharp14Extensions;
     private readonly SignatureDecoderSeeds _signatureSeeds;
-    private readonly ExternalSignatureDecoderCache _externalSignatureDecoders = new();
+    private readonly ExternalSignatureDecoderCache _externalSignatureDecoders;
 
     public AssemblyScanner(
         string definitionPath,
         PEReader pe,
         MetadataReader md,
         ArityNames arityNames,
+        string? inheritedArityClashes,
         DelegateReferenceCatalog delegateCatalog,
         CompanionReferenceCatalog companionCatalog,
         InnerReferenceCatalog innerCatalog,
@@ -1460,6 +1427,7 @@ internal sealed class AssemblyScanner : IDisposable
             HandleKind.Parameter);
         ValidateKotlinExtensionReceiverCarriers();
         _arityNames = arityNames;
+        _externalSignatureDecoders = new ExternalSignatureDecoderCache(inheritedArityClashes);
         _delegateCatalog = delegateCatalog;
         _companionCatalog = companionCatalog;
         _innerCatalog = innerCatalog;
@@ -6812,13 +6780,17 @@ internal sealed record SignatureDecoderSeeds(
 internal sealed class ExternalSignatureDecoderCache : IDisposable
 {
     private readonly Dictionary<string, Source> _sources = new(StringComparer.Ordinal);
+    private readonly string? _inheritedArityClashes;
+
+    internal ExternalSignatureDecoderCache(string? inheritedArityClashes) =>
+        _inheritedArityClashes = inheritedArityClashes;
 
     internal Source Get(string path)
     {
         var fullPath = Path.GetFullPath(path);
         if (!_sources.TryGetValue(fullPath, out var source))
         {
-            source = new Source(fullPath);
+            source = new Source(fullPath, _inheritedArityClashes);
             _sources.Add(fullPath, source);
         }
         return source;
@@ -6831,7 +6803,7 @@ internal sealed class ExternalSignatureDecoderCache : IDisposable
         {
             // PublicTypeCatalog owns this reader until after AssemblyScanner is disposed. Borrow it rather than
             // opening the same PE a second time; a direct delegate lookup may instead have populated an owned source.
-            source = new Source(reader);
+            source = new Source(reader, _inheritedArityClashes);
             _sources.Add(fullPath, source);
         }
         return source;
@@ -6848,16 +6820,15 @@ internal sealed class ExternalSignatureDecoderCache : IDisposable
         private readonly FileStream? _file;
         private readonly PEReader? _pe;
 
-        internal Source(MetadataReader reader)
+        internal Source(MetadataReader reader, string? inheritedArityClashes)
         {
             Reader = reader;
-            ArityNames = ArityNames.Create(
-                Reader, Environment.GetEnvironmentVariable(Program.ArityClashesEnvironment));
+            ArityNames = ArityNames.Create(Reader, inheritedArityClashes);
             Attributes = new MetadataAttributes(Reader);
             Seeds = SignatureDecoderSeeds.Discover(Reader, ArityNames);
         }
 
-        internal Source(string path)
+        internal Source(string path, string? inheritedArityClashes)
         {
             _file = File.OpenRead(path);
             PEReader? pe = null;
@@ -6869,8 +6840,7 @@ internal sealed class ExternalSignatureDecoderCache : IDisposable
                     throw new InvalidDataException(
                         $"delegate catalog target is not a managed PE: {path}");
                 Reader = pe.GetMetadataReader();
-                ArityNames = ArityNames.Create(
-                    Reader, Environment.GetEnvironmentVariable(Program.ArityClashesEnvironment));
+                ArityNames = ArityNames.Create(Reader, inheritedArityClashes);
                 Attributes = new MetadataAttributes(Reader);
                 Seeds = SignatureDecoderSeeds.Discover(Reader, ArityNames);
             }
