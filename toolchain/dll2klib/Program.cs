@@ -11,8 +11,21 @@ using DotKt.Klib.Metadata;
 using Google.Protobuf;
 using KType = DotKt.Klib.Metadata.Type;
 
+internal sealed record Dll2KlibProjectionState(
+    int Version,
+    string[] ArityClashes,
+    Dll2KlibProjectionInput[] Inputs);
+
+internal sealed record Dll2KlibProjectionInput(
+    string Path,
+    string Mvid,
+    string[] ArityKeys,
+    string[] Dependencies);
+
 internal static class Program
 {
+    private const int ProjectionStateVersion = 3;
+
     public static async Task<int> Main(string[] args)
     {
         try
@@ -92,15 +105,20 @@ internal static class Program
         // reference set, then give every otherwise-independent worker the
         // same tiny naming catalog (Task + Task`1 -> Task / Task1; a singleton
         // List`1 remains List).
-        var arityClashes = DiscoverArityClashes(inputs);
+        var projectedPaths = inputs.ToHashSet(StringComparer.Ordinal);
+        var inputMetadata = DiscoverInputMetadata(resolvedInputs, projectedPaths);
+        var arityClashes = inputMetadata
+            .Where(input => projectedPaths.Contains(input.Path))
+            .SelectMany(input => input.PublicArities)
+            .GroupBy(member => member.Key, StringComparer.Ordinal)
+            .Where(group => group.Select(member => member.Arity).Distinct().Skip(1).Any())
+            .Select(group => group.Key)
+            .OrderBy(key => key, StringComparer.Ordinal)
+            .ToArray();
         var delegateCatalog = DelegateReferenceCatalog.Discover(resolvedInputs);
-        var delegateCatalogJson = delegateCatalog.Serialize();
         var companionCatalog = CompanionReferenceCatalog.Discover(resolvedInputs);
-        var companionCatalogJson = companionCatalog.Serialize();
         var innerCatalog = InnerReferenceCatalog.Discover(resolvedInputs);
-        var innerCatalogJson = innerCatalog.Serialize();
         using var publicTypeCatalog = PublicTypeCatalog.Discover(resolvedInputs);
-        var publicTypeCatalogJson = publicTypeCatalog.Serialize();
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
             .ToArray();
@@ -111,38 +129,61 @@ internal static class Program
 
         Directory.CreateDirectory(outputDirectory);
         var projectionCatalogPath = Path.Combine(outputDirectory, ".dll2klib-projection-catalog.json");
-        var projectionCatalog = JsonSerializer.Serialize(new
-        {
-            Version = 2,
-            ArityClashes = arityClashes,
-            Delegates = JsonSerializer.Deserialize<JsonElement>(delegateCatalogJson),
-            Companions = JsonSerializer.Deserialize<JsonElement>(companionCatalogJson),
-            Inners = JsonSerializer.Deserialize<JsonElement>(innerCatalogJson),
-            PublicTypes = JsonSerializer.Deserialize<JsonElement>(publicTypeCatalogJson),
-        });
-        var projectionCatalogChanged =
-            !File.Exists(projectionCatalogPath) ||
-            !StringComparer.Ordinal.Equals(File.ReadAllText(projectionCatalogPath), projectionCatalog);
+        // Every cross-assembly catalog fact originates in one resolved DLL. Persist only each DLL's identity and
+        // direct TypeRef edges, then compare the old and new graphs so a changed/removed root invalidates exactly its
+        // reverse dependents. Arity naming is the one whole-universe rule: when its collision set changes, the DLLs
+        // that define the affected source name become additional roots.
+        var projectionInputs = inputMetadata
+            .Select(input => new Dll2KlibProjectionInput(
+                input.Path,
+                input.Mvid,
+                input.PublicArities.Select(member => member.Key)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(key => key, StringComparer.Ordinal)
+                    .ToArray(),
+                publicTypeCatalog.DirectDependenciesOf(input.Path)
+                    .OrderBy(path => path, StringComparer.Ordinal)
+                    .ToArray()))
+            .OrderBy(input => input.Path, StringComparer.Ordinal)
+            .ToArray();
+        var projectionState = new Dll2KlibProjectionState(
+            ProjectionStateVersion,
+            arityClashes,
+            projectionInputs);
+        var projectionCatalog = JsonSerializer.Serialize(projectionState);
+        var previousState = LoadProjectionState(projectionCatalogPath);
+        var currentByPath = projectionInputs.ToDictionary(input => input.Path, StringComparer.Ordinal);
+        var previousByPath = previousState?.Inputs.ToDictionary(input => input.Path, StringComparer.Ordinal)
+            ?? new Dictionary<string, Dll2KlibProjectionInput>(StringComparer.Ordinal);
+        var changedRoots = ChangedProjectionRoots(
+            previousState,
+            projectionState,
+            previousByPath,
+            currentByPath);
+        var currentClosures = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+        var previousClosures = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
         var tool = Path.GetFullPath(typeof(Program).Assembly.Location);
         var toolTime = File.GetLastWriteTimeUtc(tool);
         var stale = work.Where(x =>
         {
-            if (projectionCatalogChanged) return true;
+            if (previousState is null) return true;
             if (!File.Exists(x.Output)) return true;
             var outputTime = File.GetLastWriteTimeUtc(x.Output);
+            var currentDependencies = ClosureOf(x.Input, currentByPath, currentClosures);
+            var previousDependencies = ClosureOf(x.Input, previousByPath, previousClosures);
             return outputTime < File.GetLastWriteTimeUtc(x.Input) ||
                 outputTime < toolTime ||
-                delegateCatalog.DependenciesOf(x.Input).Any(path =>
-                    outputTime < File.GetLastWriteTimeUtc(path)) ||
-                companionCatalog.DependenciesOf(x.Input).Any(path =>
-                    outputTime < File.GetLastWriteTimeUtc(path)) ||
-                innerCatalog.DependenciesOf(x.Input).Any(path =>
-                    outputTime < File.GetLastWriteTimeUtc(path)) ||
-                publicTypeCatalog.DependenciesOf(x.Input).Any(path =>
-                    outputTime < File.GetLastWriteTimeUtc(path));
+                changedRoots.Contains(x.Input) ||
+                currentDependencies.Any(changedRoots.Contains) ||
+                previousDependencies.Any(changedRoots.Contains) ||
+                currentDependencies.Any(path =>
+                    File.Exists(path) && outputTime < File.GetLastWriteTimeUtc(path));
         }).ToArray();
         if (stale.Length == 0)
         {
+            if (!File.Exists(projectionCatalogPath) ||
+                !StringComparer.Ordinal.Equals(File.ReadAllText(projectionCatalogPath), projectionCatalog))
+                WriteAllTextAtomically(projectionCatalogPath, projectionCatalog);
             Console.WriteLine($"dll2klib: {work.Length} KLIB(s) up to date");
             return 0;
         }
@@ -275,15 +316,24 @@ internal static class Program
         "metadata_version=2.4.0\n" +
         $"unique_name={uniqueName}\n");
 
-    private static IReadOnlyList<string> DiscoverArityClashes(IEnumerable<string> inputs)
+    private sealed record InputMetadata(
+        string Path,
+        string Mvid,
+        (string Key, int Arity)[] PublicArities);
+
+    private static InputMetadata[] DiscoverInputMetadata(
+        IEnumerable<string> inputs,
+        IReadOnlySet<string> projectedPaths)
     {
-        var members = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+        var result = new List<InputMetadata>();
         foreach (var input in inputs)
         {
             using var file = File.OpenRead(input);
             using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata) continue;
+            if (!pe.HasMetadata || pe.PEHeaders.CorHeader is null)
+                throw new InvalidDataException($"not a managed PE: {input}");
             var md = pe.GetMetadataReader();
+            var members = new List<(string Key, int Arity)>();
             string ScopeOf(TypeDefinitionHandle handle)
             {
                 var def = md.GetTypeDefinition(handle);
@@ -293,34 +343,109 @@ internal static class Program
                 var ns = md.GetString(def.Namespace);
                 return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
             }
-            foreach (var handle in md.TypeDefinitions)
+            if (projectedPaths.Contains(input))
             {
-                var def = md.GetTypeDefinition(handle);
-                var attrs = def.Attributes & TypeAttributes.VisibilityMask;
-                if (def.GetDeclaringType().IsNil)
+                foreach (var handle in md.TypeDefinitions)
                 {
-                    if (attrs != TypeAttributes.Public) continue;
+                    var def = md.GetTypeDefinition(handle);
+                    var attrs = def.Attributes & TypeAttributes.VisibilityMask;
+                    if (def.GetDeclaringType().IsNil)
+                    {
+                        if (attrs != TypeAttributes.Public) continue;
+                    }
+                    else if (attrs is not (TypeAttributes.NestedPublic
+                        or TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem)) continue;
+                    var metadataName = md.GetString(def.Name);
+                    var tick = metadataName.IndexOf('`');
+                    var simple = tick < 0 ? metadataName : metadataName[..tick];
+                    var arity = tick < 0 || !int.TryParse(metadataName[(tick + 1)..], out var parsed)
+                        ? 0 : parsed;
+                    var scope = def.GetDeclaringType().IsNil
+                        ? md.GetString(def.Namespace)
+                        : ScopeOf(def.GetDeclaringType());
+                    var key = string.IsNullOrEmpty(scope) ? simple : scope + "." + simple;
+                    members.Add((key, arity));
                 }
-                else if (attrs is not (TypeAttributes.NestedPublic
-                    or TypeAttributes.NestedFamily or TypeAttributes.NestedFamORAssem)) continue;
-                var metadataName = md.GetString(def.Name);
-                var tick = metadataName.IndexOf('`');
-                var simple = tick < 0 ? metadataName : metadataName[..tick];
-                var arity = tick < 0 || !int.TryParse(metadataName[(tick + 1)..], out var parsed)
-                    ? 0 : parsed;
-                var scope = def.GetDeclaringType().IsNil
-                    ? md.GetString(def.Namespace)
-                    : ScopeOf(def.GetDeclaringType());
-                var key = string.IsNullOrEmpty(scope) ? simple : scope + "." + simple;
-                if (!members.TryGetValue(key, out var arities))
-                    members[key] = arities = new HashSet<int>();
-                arities.Add(arity);
             }
+            result.Add(new InputMetadata(
+                Path.GetFullPath(input),
+                md.GetGuid(md.GetModuleDefinition().Mvid).ToString("N"),
+                members.Distinct().OrderBy(member => member.Key, StringComparer.Ordinal)
+                    .ThenBy(member => member.Arity).ToArray()));
         }
-        return members.Where(x => x.Value.Count > 1)
-            .Select(x => x.Key)
-            .OrderBy(x => x, StringComparer.Ordinal)
-            .ToArray();
+        return result.OrderBy(input => input.Path, StringComparer.Ordinal).ToArray();
+    }
+
+    private static Dll2KlibProjectionState? LoadProjectionState(string path)
+    {
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var state = JsonSerializer.Deserialize<Dll2KlibProjectionState>(File.ReadAllText(path));
+            return state is { Version: ProjectionStateVersion, ArityClashes: not null, Inputs: not null } &&
+                state.Inputs.All(input => input is
+                    { Path: not null, Mvid: not null, ArityKeys: not null, Dependencies: not null })
+                ? state
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static HashSet<string> ChangedProjectionRoots(
+        Dll2KlibProjectionState? previousState,
+        Dll2KlibProjectionState currentState,
+        IReadOnlyDictionary<string, Dll2KlibProjectionInput> previousByPath,
+        IReadOnlyDictionary<string, Dll2KlibProjectionInput> currentByPath)
+    {
+        var changed = new HashSet<string>(StringComparer.Ordinal);
+        if (previousState is null)
+        {
+            changed.UnionWith(currentByPath.Keys);
+            return changed;
+        }
+        foreach (var input in currentByPath.Values)
+            if (!previousByPath.TryGetValue(input.Path, out var previous) ||
+                !StringComparer.Ordinal.Equals(previous.Mvid, input.Mvid) ||
+                !previous.Dependencies.SequenceEqual(input.Dependencies, StringComparer.Ordinal))
+                changed.Add(input.Path);
+        foreach (var input in previousByPath.Values)
+            if (!currentByPath.ContainsKey(input.Path))
+                changed.Add(input.Path);
+
+        var changedArityKeys = previousState.ArityClashes
+            .Except(currentState.ArityClashes, StringComparer.Ordinal)
+            .Concat(currentState.ArityClashes.Except(previousState.ArityClashes, StringComparer.Ordinal))
+            .ToHashSet(StringComparer.Ordinal);
+        if (changedArityKeys.Count != 0)
+            foreach (var input in previousByPath.Values.Concat(currentByPath.Values))
+                if (input.ArityKeys.Any(changedArityKeys.Contains))
+                    changed.Add(input.Path);
+        return changed;
+    }
+
+    private static IReadOnlySet<string> ClosureOf(
+        string input,
+        IReadOnlyDictionary<string, Dll2KlibProjectionInput> graph,
+        IDictionary<string, IReadOnlySet<string>> cache)
+    {
+        input = Path.GetFullPath(input);
+        if (cache.TryGetValue(input, out var cached)) return cached;
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Stack<string>();
+        if (graph.TryGetValue(input, out var root))
+            foreach (var dependency in root.Dependencies) pending.Push(dependency);
+        while (pending.TryPop(out var path))
+        {
+            if (!result.Add(path)) continue;
+            if (graph.TryGetValue(path, out var entry))
+                foreach (var dependency in entry.Dependencies) pending.Push(dependency);
+        }
+        result.Remove(input);
+        cache[input] = result;
+        return result;
     }
 
     private static void Write(ZipArchive zip, string name, byte[] bytes)
@@ -356,8 +481,6 @@ internal sealed class DelegateReferenceCatalog
             _entries[key] = entry;
         }
     }
-
-    public static DelegateReferenceCatalog Empty { get; } = new(Array.Empty<DelegateCatalogEntry>());
 
     public static DelegateReferenceCatalog Discover(IEnumerable<string> inputs)
     {
@@ -417,20 +540,6 @@ internal sealed class DelegateReferenceCatalog
             : new DelegateReferenceCatalog(definitions.Concat(aliases));
     }
 
-    public static DelegateReferenceCatalog Load(string? path)
-    {
-        if (string.IsNullOrEmpty(path)) return Empty;
-        var entries = JsonSerializer.Deserialize<List<DelegateCatalogEntry>>(File.ReadAllText(path))
-            ?? throw new InvalidDataException($"invalid delegate catalog: {path}");
-        return new DelegateReferenceCatalog(entries);
-    }
-
-    public string Serialize() => JsonSerializer.Serialize(
-        _entries.Values
-            .OrderBy(x => x.AssemblyName, StringComparer.Ordinal)
-            .ThenBy(x => x.MetadataName, StringComparer.Ordinal)
-            .ToArray());
-
     public bool TryResolve(
         MetadataReader reader,
         TypeReferenceHandle handle,
@@ -442,20 +551,6 @@ internal sealed class DelegateReferenceCatalog
             return true;
         entry = null!;
         return false;
-    }
-
-    public IReadOnlyList<string> DependenciesOf(string input)
-    {
-        using var file = File.OpenRead(input);
-        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-        if (!pe.HasMetadata) return Array.Empty<string>();
-        var md = pe.GetMetadataReader();
-        return md.TypeReferences
-            .Select(handle => TryResolve(md, handle, out var entry) ? entry.DefinitionPath : null)
-            .Where(path => path is not null && !StringComparer.Ordinal.Equals(path, input))
-            .Cast<string>()
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
     }
 
     private bool TryGet(string assemblyName, string metadataName, out DelegateCatalogEntry entry) =>
@@ -573,8 +668,6 @@ internal sealed class InnerReferenceCatalog
         }
     }
 
-    public static InnerReferenceCatalog Empty { get; } = new(Array.Empty<InnerCatalogEntry>());
-
     public static InnerReferenceCatalog Discover(IEnumerable<string> inputs)
     {
         var inputPaths = inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal).ToArray();
@@ -649,18 +742,6 @@ internal sealed class InnerReferenceCatalog
         return all;
     }
 
-    public static InnerReferenceCatalog Load(string? path)
-    {
-        if (string.IsNullOrEmpty(path)) return Empty;
-        var entries = JsonSerializer.Deserialize<List<InnerCatalogEntry>>(File.ReadAllText(path))
-            ?? throw new InvalidDataException($"invalid inner catalog: {path}");
-        return new InnerReferenceCatalog(entries);
-    }
-
-    public string Serialize() => JsonSerializer.Serialize(
-        _entries.Values.OrderBy(x => x.AssemblyIdentity, StringComparer.Ordinal)
-            .ThenBy(x => x.MetadataName, StringComparer.Ordinal).ToArray());
-
     public bool TryResolve(MetadataReader reader, TypeReferenceHandle handle, out InnerCatalogEntry entry)
     {
         var assemblyIdentity = ReferenceAssemblyIdentity(reader, handle);
@@ -668,18 +749,6 @@ internal sealed class InnerReferenceCatalog
             return true;
         entry = null!;
         return false;
-    }
-
-    public IReadOnlyList<string> DependenciesOf(string input)
-    {
-        using var file = File.OpenRead(input);
-        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-        if (!pe.HasMetadata) return Array.Empty<string>();
-        var md = pe.GetMetadataReader();
-        return md.TypeReferences
-            .Select(handle => TryResolve(md, handle, out var entry) ? entry.DefinitionPath : null)
-            .Where(path => path is not null && !StringComparer.Ordinal.Equals(path, input))
-            .Cast<string>().Distinct(StringComparer.Ordinal).ToArray();
     }
 
     private bool TryGet(string assemblyIdentity, string metadataName, out InnerCatalogEntry entry) =>
@@ -919,8 +988,6 @@ internal sealed class CompanionReferenceCatalog
         }
     }
 
-    public static CompanionReferenceCatalog Empty { get; } = new(Array.Empty<CompanionCatalogEntry>());
-
     public static CompanionReferenceCatalog Discover(IEnumerable<string> inputs)
     {
         var paths = inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal).ToArray();
@@ -1010,20 +1077,6 @@ internal sealed class CompanionReferenceCatalog
             : new CompanionReferenceCatalog(definitions.Concat(aliases));
     }
 
-    public static CompanionReferenceCatalog Load(string? path)
-    {
-        if (string.IsNullOrEmpty(path)) return Empty;
-        var entries = JsonSerializer.Deserialize<List<CompanionCatalogEntry>>(File.ReadAllText(path))
-            ?? throw new InvalidDataException($"invalid companion catalog: {path}");
-        return new CompanionReferenceCatalog(entries);
-    }
-
-    public string Serialize() => JsonSerializer.Serialize(
-        _entries.Values
-            .OrderBy(x => x.AssemblyIdentity, StringComparer.Ordinal)
-            .ThenBy(x => x.MetadataName, StringComparer.Ordinal)
-            .ToArray());
-
     public bool TryResolve(
         MetadataReader reader,
         TypeReferenceHandle handle,
@@ -1035,20 +1088,6 @@ internal sealed class CompanionReferenceCatalog
             return true;
         entry = null!;
         return false;
-    }
-
-    public IReadOnlyList<string> DependenciesOf(string input)
-    {
-        using var file = File.OpenRead(input);
-        using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-        if (!pe.HasMetadata) return Array.Empty<string>();
-        var md = pe.GetMetadataReader();
-        return md.TypeReferences
-            .Select(handle => TryResolve(md, handle, out var entry) ? entry.DefinitionPath : null)
-            .Where(path => path is not null && !StringComparer.Ordinal.Equals(path, input))
-            .Cast<string>()
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
     }
 
     private bool TryGet(string assemblyIdentity, string metadataName, out CompanionCatalogEntry entry) =>

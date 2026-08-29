@@ -3,7 +3,6 @@ using System.Collections.Immutable;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
 
 internal sealed record PublicTypeCatalogEntry(
     string AssemblyName,
@@ -49,8 +48,6 @@ internal sealed class PublicTypeCatalog : IDisposable
             BuildDirectDependencies,
             LazyThreadSafetyMode.ExecutionAndPublication);
     }
-
-    public static PublicTypeCatalog Empty { get; } = new(Array.Empty<PublicTypeCatalogEntry>());
 
     public static PublicTypeCatalog Discover(IEnumerable<string> inputs)
     {
@@ -124,33 +121,12 @@ internal sealed class PublicTypeCatalog : IDisposable
         return all;
     }
 
-    public static PublicTypeCatalog Load(string? path)
-    {
-        if (string.IsNullOrEmpty(path)) return Empty;
-        var entries = JsonSerializer.Deserialize<List<PublicTypeCatalogEntry>>(File.ReadAllText(path))
-            ?? throw new InvalidDataException($"invalid public-type catalog: {path}");
-        return new PublicTypeCatalog(entries);
-    }
-
-    public string Serialize() => JsonSerializer.Serialize(
-        _entries.Values.OrderBy(x => x.AssemblyName, StringComparer.Ordinal)
-            .ThenBy(x => x.MetadataName, StringComparer.Ordinal).ToArray());
-
-    public IReadOnlyList<string> DependenciesOf(string input)
+    public IReadOnlyList<string> DirectDependenciesOf(string input)
     {
         input = Path.GetFullPath(input);
-        var result = new HashSet<string>(StringComparer.Ordinal);
-        var pending = new Stack<string>();
-        if (_directDependencies.Value.TryGetValue(input, out var direct))
-            foreach (var path in direct) pending.Push(path);
-        while (pending.TryPop(out var path))
-        {
-            if (!result.Add(path)) continue;
-            if (_directDependencies.Value.TryGetValue(path, out var dependencies))
-                foreach (var dependency in dependencies) pending.Push(dependency);
-        }
-        result.Remove(input);
-        return result.ToArray();
+        return _directDependencies.Value.TryGetValue(input, out var dependencies)
+            ? dependencies
+            : Array.Empty<string>();
     }
 
     private IReadOnlyDictionary<string, string[]> BuildDirectDependencies()
@@ -173,6 +149,7 @@ internal sealed class PublicTypeCatalog : IDisposable
                     !StringComparer.Ordinal.Equals(dependency, path))
                 .Cast<string>()
                 .Distinct(StringComparer.Ordinal)
+                .OrderBy(dependency => dependency, StringComparer.Ordinal)
                 .ToArray();
         }
         return result;

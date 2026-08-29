@@ -57,9 +57,9 @@ dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/tr
 	-classpath "$FE_KLIB$KLIB_CP_SEP$OUT/transitive-klib/TransitiveSlotProbe.klib" \
 	-d "$OUT/transitive-bir"
 
-# The two-path form is an internal worker protocol. Without the batch parent's complete resolved catalog it cannot
-# identify external delegate or Kotlin companion TypeRefs and must fail rather than silently project their physical
-# CLR carriers as ordinary nominal classes.
+# A standalone two-path projection lacks the complete resolved catalog. It cannot identify external delegate or
+# Kotlin companion TypeRefs and must fail rather than silently project their physical CLR carriers as ordinary nominal
+# classes.
 direct_out="$OUT/direct-Probe.klib"
 if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
 	die "standalone direct projection unexpectedly succeeded without the resolved reference set"
@@ -101,14 +101,36 @@ cmp -s "$OUT/klib/TransitiveSlotProbe.klib" "$OUT/klib-second/TransitiveSlotProb
 cache_hit="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
 grep -q '3 KLIB(s) up to date' <<<"$cache_hit" \
 	|| die "unchanged reference set did not hit the per-assembly KLIB cache"
+
+# Removing an unrelated input changes the persisted projection state but must not invalidate the surviving KLIBs.
+printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
+unrelated_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q '2 KLIB(s) up to date' <<<"$unrelated_remove" \
+	|| die "removing an unrelated reference rebuilt surviving KLIBs"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
+unrelated_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 1/3 reference(s)' <<<"$unrelated_restore" \
+	|| die "restoring an unrelated reference rebuilt more than that reference"
+
+# Removing Probe removes the non-generic half of the CrossAssemblyArity/CrossAssemblyArity<T> naming collision.
+# Only Contracts owns the surviving affected classifier; restoring Probe must rebuild those two naming roots, not the
+# independent transitive-slot fixture.
+printf '%s\n%s\n' "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
+arity_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 1/2 reference(s)' <<<"$arity_remove" \
+	|| die "arity-universe contraction did not rebuild exactly the affected surviving KLIB"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
+arity_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 2/3 reference(s)' <<<"$arity_restore" \
+	|| die "arity-universe expansion did not rebuild exactly the affected KLIBs"
+
 sleep 1
 touch "$CONTRACTS_REF"
 dependency_rebuild="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
 grep -q 'converting 2/3 reference(s)' <<<"$dependency_rebuild" \
 	|| die "external delegate change did not rebuild exactly the dependency and its consuming Probe KLIB"
-# Removing or adding an input can change the shared arity/delegate/companion catalog without changing any surviving DLL's
-# timestamp. Every surviving KLIB must be regenerated so cached and newly projected declarations keep one naming
-# universe.
+# Removing a required input must fail before publishing the new projection state. Restoring the complete universe then
+# reuses the last successful cache rather than treating the rejected graph as authoritative.
 printf '%s\n%s\n' "$PROBE_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
 if catalog_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp" 2>&1)"; then
 	die "dll2klib accepted Probe without its referenced Probe.Contracts assembly"
