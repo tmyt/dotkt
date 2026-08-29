@@ -20,7 +20,8 @@ done
 
 OUT="$ROOT/build/dll2klib-e2e"
 rm -rf "$OUT"
-mkdir -p "$OUT/tools" "$OUT/klib" "$OUT/klib-second" "$OUT/bir" "$OUT/cir" "$OUT/il"
+mkdir -p "$OUT/tools" "$OUT/klib" "$OUT/klib-second" "$OUT/bir" "$OUT/cir" "$OUT/il" \
+	"$OUT/forwarder-inputs" "$OUT/forwarder-klib"
 case "${OS:-}" in
 	Windows_NT) KLIB_CP_SEP=';' ;;
 	*) KLIB_CP_SEP=':' ;;
@@ -42,6 +43,10 @@ dotnet build "$ROOT/tests/special/dll2klib-e2e/transitive-reference/TransitiveRe
 	-c Release -o "$OUT/tools/transitive-reference" -v:q --nologo
 dotnet build "$ROOT/tests/special/csharp14-static-extensions/malformed/StaticExtensionMalformedGenerator.csproj" \
 	-c Release -o "$OUT/tools/malformed-generator" -v:q --nologo
+dotnet build "$ROOT/tests/special/dll2klib-e2e/forwarder/consumer/ForwarderConsumer.csproj" \
+	-c Release -v:q --nologo
+dotnet build "$ROOT/tests/special/dll2klib-e2e/forwarder/facade-v2/ForwarderFacadeV2.csproj" \
+	-c Release -v:q --nologo
 
 PROBE_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/ref/Probe.dll"
 PROBE_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.dll"
@@ -51,6 +56,9 @@ PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
 TRANSITIVE_REF="$OUT/TransitiveSlotProbe.dll"
 MALFORMED_REF="$OUT/CSharp14Malformed.dll"
+FORWARDER_CONSUMER="$OUT/forwarder-inputs/ForwarderConsumer.dll"
+FORWARDER_FACADE="$OUT/forwarder-inputs/ForwarderProbe.dll"
+FORWARDER_TARGET="$OUT/forwarder-inputs/ForwarderTarget.dll"
 
 dotnet "$OUT/tools/transitive-reference/TransitiveReferenceGenerator.dll" "$TRANSITIVE_REF"
 dotnet "$OUT/tools/malformed-generator/StaticExtensionMalformedGenerator.dll" "$MALFORMED_REF" missing-marker
@@ -105,6 +113,29 @@ cmp -s "$OUT/klib/TransitiveSlotProbe.klib" "$OUT/klib-second/TransitiveSlotProb
 cache_hit="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
 grep -q '3 KLIB(s) up to date' <<<"$cache_hit" \
 	|| die "unchanged reference set did not hit the per-assembly KLIB cache"
+
+# The consumer was compiled against v1, where Carrier lived in ForwarderProbe. The active v2 facade forwards that
+# TypeRef to ForwarderTarget. Its projection therefore depends on both the forwarding assembly (which owns the TypeRef
+# identity) and the final definition assembly (which owns the resolved shape).
+cp "$ROOT/tests/special/dll2klib-e2e/forwarder/consumer/bin/Release/net10.0/ForwarderConsumer.dll" \
+	"$FORWARDER_CONSUMER"
+cp "$ROOT/tests/special/dll2klib-e2e/forwarder/facade-v2/bin/Release/net10.0/ForwarderProbe.dll" \
+	"$FORWARDER_FACADE"
+cp "$ROOT/tests/special/dll2klib-e2e/forwarder/target/bin/Release/net10.0/ForwarderTarget.dll" \
+	"$FORWARDER_TARGET"
+printf '%s\n%s\n%s\n' "$FORWARDER_CONSUMER" "$FORWARDER_FACADE" "$FORWARDER_TARGET" \
+	> "$OUT/forwarder-references.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/forwarder-klib" --jobs 0 @"$OUT/forwarder-references.rsp"
+forwarder_cache_hit="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/forwarder-klib" --jobs 0 \
+	@"$OUT/forwarder-references.rsp")"
+grep -q '3 KLIB(s) up to date' <<<"$forwarder_cache_hit" \
+	|| die "unchanged type-forwarder universe did not hit the cache"
+sleep 1
+touch "$FORWARDER_FACADE"
+forwarder_rebuild="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/forwarder-klib" --jobs 0 \
+	@"$OUT/forwarder-references.rsp")"
+grep -q 'converting 2/3 reference(s)' <<<"$forwarder_rebuild" \
+	|| die "forwarder change did not rebuild exactly the facade and its consumer"
 
 # A failed batch must not publish successful siblings from its temporary projection universe. Removing Probe contracts
 # the arity universe and makes Contracts stale, while the independent malformed assembly fails during scanning. Both the

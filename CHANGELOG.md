@@ -123,9 +123,10 @@ This final release includes all changes from `0.9.10-beta1` and `0.9.10-beta2`, 
 
 - **DLL-to-KLIB batch projection is faster and dependency-incremental (#615, #617).** dll2klib now converts stale
   references in one bounded process, shares immutable catalogs, indexes type-forwarder targets, and persists a compact
-  per-input MVID/direct-TypeRef graph. A changed DLL regenerates only itself and its current or former reverse
-  dependents; whole-universe arity changes additionally invalidate definitions and users of the affected name. Batch
-  staging prevents a failed conversion from mixing a new projection universe with the last successful cache.
+  per-input MVID/direct-TypeRef graph. Forwarded references retain both facade and definition edges. A changed DLL
+  regenerates only itself and its current or former reverse dependents; whole-universe arity changes additionally
+  invalidate definitions and users of the affected name. Batch staging prevents a failed conversion from mixing a new
+  projection universe with the last successful cache.
 
 - **Recursive CLR delegate graphs now fail with a bounded diagnostic (#584).** dll2klib tracks the exact active
   TypeDef path while expanding delegate `Invoke` signatures and rejects local, generic, and cross-assembly cycles

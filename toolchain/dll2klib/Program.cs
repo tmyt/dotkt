@@ -234,7 +234,7 @@ internal static class Program
                 });
             if (failures.Count != 0)
                 throw new InvalidOperationException(
-                    "worker conversion failed: " + string.Join(", ", failures.Order(StringComparer.Ordinal)));
+                    "assembly conversion failed: " + string.Join(", ", failures.Order(StringComparer.Ordinal)));
 
             // From this marker onward a crash may leave only part of the staged generation published. The next run
             // treats that state as a cold cache and repairs every output before trusting the graph again.

@@ -395,8 +395,9 @@ Batch mode:
 1. reads and normalizes the response-file inputs;
 2. computes the naming, delegate, inner, companion, and public-type catalogs from the complete set;
 3. rejects output-name collisions;
-4. compares the current and last successful per-input MVID/direct-TypeRef graphs, adding definitions and users of any
-   changed whole-universe arity key as invalidation roots;
+4. compares the current and last successful per-input MVID/direct-TypeRef graphs; a forwarded TypeRef retains edges to
+   both its routing facade and resolved definition, and definitions and users of any changed whole-universe arity key
+   become additional invalidation roots;
 5. selects only changed roots and their current or former reverse dependents;
 6. converts those assemblies concurrently in process, bounded by `--jobs`; and
 7. stages every KLIB and publishes the batch state only after every conversion succeeds.
