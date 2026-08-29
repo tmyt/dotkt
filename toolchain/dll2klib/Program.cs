@@ -20,11 +20,12 @@ internal sealed record Dll2KlibProjectionInput(
     string Path,
     string Mvid,
     string[] ArityKeys,
+    string[] ReferencedArityKeys,
     string[] Dependencies);
 
 internal static class Program
 {
-    private const int ProjectionStateVersion = 3;
+    private const int ProjectionStateVersion = 4;
 
     public static async Task<int> Main(string[] args)
     {
@@ -141,6 +142,7 @@ internal static class Program
                     .Distinct(StringComparer.Ordinal)
                     .OrderBy(key => key, StringComparer.Ordinal)
                     .ToArray(),
+                input.ReferencedArityKeys,
                 publicTypeCatalog.DirectDependenciesOf(input.Path)
                     .OrderBy(path => path, StringComparer.Ordinal)
                     .ToArray()))
@@ -151,7 +153,10 @@ internal static class Program
             arityClashes,
             projectionInputs);
         var projectionCatalog = JsonSerializer.Serialize(projectionState);
-        var previousState = LoadProjectionState(projectionCatalogPath);
+        var incompleteMarkerPath = Path.Combine(outputDirectory, ".dll2klib-incomplete");
+        var previousState = File.Exists(incompleteMarkerPath)
+            ? null
+            : LoadProjectionState(projectionCatalogPath);
         var currentByPath = projectionInputs.ToDictionary(input => input.Path, StringComparer.Ordinal);
         var previousByPath = previousState?.Inputs.ToDictionary(input => input.Path, StringComparer.Ordinal)
             ?? new Dictionary<string, Dll2KlibProjectionInput>(StringComparer.Ordinal);
@@ -162,6 +167,10 @@ internal static class Program
             currentByPath);
         var currentClosures = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
         var previousClosures = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+        var inputTimes = inputMetadata.ToDictionary(
+            input => input.Path,
+            input => input.LastWriteTimeUtc,
+            StringComparer.Ordinal);
         var tool = Path.GetFullPath(typeof(Program).Assembly.Location);
         var toolTime = File.GetLastWriteTimeUtc(tool);
         var stale = work.Where(x =>
@@ -171,55 +180,78 @@ internal static class Program
             var outputTime = File.GetLastWriteTimeUtc(x.Output);
             var currentDependencies = ClosureOf(x.Input, currentByPath, currentClosures);
             var previousDependencies = ClosureOf(x.Input, previousByPath, previousClosures);
-            return outputTime < File.GetLastWriteTimeUtc(x.Input) ||
+            return outputTime < inputTimes[x.Input] ||
                 outputTime < toolTime ||
                 changedRoots.Contains(x.Input) ||
                 currentDependencies.Any(changedRoots.Contains) ||
                 previousDependencies.Any(changedRoots.Contains) ||
                 currentDependencies.Any(path =>
-                    File.Exists(path) && outputTime < File.GetLastWriteTimeUtc(path));
+                    inputTimes.TryGetValue(path, out var dependencyTime) && outputTime < dependencyTime);
         }).ToArray();
         if (stale.Length == 0)
         {
             if (!File.Exists(projectionCatalogPath) ||
                 !StringComparer.Ordinal.Equals(File.ReadAllText(projectionCatalogPath), projectionCatalog))
                 WriteAllTextAtomically(projectionCatalogPath, projectionCatalog);
+            if (File.Exists(incompleteMarkerPath)) File.Delete(incompleteMarkerPath);
             Console.WriteLine($"dll2klib: {work.Length} KLIB(s) up to date");
             return 0;
         }
 
-        var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
-        Console.WriteLine($"dll2klib: converting {stale.Length}/{work.Length} reference(s), jobs={parallelism}");
-        var failures = new List<string>();
-        var failureLock = new object();
-        var inheritedArityClashes = string.Join(';', arityClashes);
-        await Parallel.ForEachAsync(
-            stale,
-            new ParallelOptions { MaxDegreeOfParallelism = parallelism },
-            (item, _) =>
-            {
-                try
+        var stageDirectory = Path.Combine(
+            outputDirectory,
+            $".dll2klib-stage-{Environment.ProcessId}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stageDirectory);
+        try
+        {
+            var parallelism = jobs == 0 ? stale.Length : Math.Max(1, Math.Min(jobs, stale.Length));
+            Console.WriteLine($"dll2klib: converting {stale.Length}/{work.Length} reference(s), jobs={parallelism}");
+            var failures = new List<string>();
+            var failureLock = new object();
+            var inheritedArityClashes = string.Join(';', arityClashes);
+            await Parallel.ForEachAsync(
+                stale,
+                new ParallelOptions { MaxDegreeOfParallelism = parallelism },
+                (item, _) =>
                 {
-                    Convert(
-                        item.Input,
-                        item.Output,
-                        inheritedArityClashes,
-                        delegateCatalog,
-                        companionCatalog,
-                        innerCatalog,
-                        publicTypeCatalog);
-                }
-                catch (Exception ex)
-                {
-                    lock (failureLock)
-                        failures.Add($"{item.Input}: {ex.Message}");
-                }
-                return ValueTask.CompletedTask;
-            });
-        if (failures.Count != 0)
-            throw new InvalidOperationException("worker conversion failed: " + string.Join(", ", failures));
-        WriteAllTextAtomically(projectionCatalogPath, projectionCatalog);
-        return 0;
+                    try
+                    {
+                        Convert(
+                            item.Input,
+                            Path.Combine(stageDirectory, Path.GetFileName(item.Output)),
+                            inheritedArityClashes,
+                            delegateCatalog,
+                            companionCatalog,
+                            innerCatalog,
+                            publicTypeCatalog);
+                    }
+                    catch (Exception ex)
+                    {
+                        lock (failureLock)
+                            failures.Add($"{item.Input}: {ex.Message}");
+                    }
+                    return ValueTask.CompletedTask;
+                });
+            if (failures.Count != 0)
+                throw new InvalidOperationException(
+                    "worker conversion failed: " + string.Join(", ", failures.Order(StringComparer.Ordinal)));
+
+            // From this marker onward a crash may leave only part of the staged generation published. The next run
+            // treats that state as a cold cache and repairs every output before trusting the graph again.
+            WriteAllTextAtomically(incompleteMarkerPath, projectionCatalog);
+            foreach (var item in stale)
+                File.Move(
+                    Path.Combine(stageDirectory, Path.GetFileName(item.Output)),
+                    item.Output,
+                    overwrite: true);
+            WriteAllTextAtomically(projectionCatalogPath, projectionCatalog);
+            File.Delete(incompleteMarkerPath);
+            return 0;
+        }
+        finally
+        {
+            if (Directory.Exists(stageDirectory)) Directory.Delete(stageDirectory, recursive: true);
+        }
     }
 
     private static void WriteAllTextAtomically(string path, string contents)
@@ -319,7 +351,9 @@ internal static class Program
     private sealed record InputMetadata(
         string Path,
         string Mvid,
-        (string Key, int Arity)[] PublicArities);
+        (string Key, int Arity)[] PublicArities,
+        string[] ReferencedArityKeys,
+        DateTime LastWriteTimeUtc);
 
     private static InputMetadata[] DiscoverInputMetadata(
         IEnumerable<string> inputs,
@@ -341,6 +375,15 @@ internal static class Program
                 var name = md.GetString(def.Name);
                 if (!parent.IsNil) return ScopeOf(parent) + "." + name;
                 var ns = md.GetString(def.Namespace);
+                return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
+            }
+            string ReferenceFullName(TypeReferenceHandle handle)
+            {
+                var reference = md.GetTypeReference(handle);
+                var name = md.GetString(reference.Name);
+                if (reference.ResolutionScope.Kind == HandleKind.TypeReference)
+                    return ReferenceFullName((TypeReferenceHandle)reference.ResolutionScope) + "." + name;
+                var ns = md.GetString(reference.Namespace);
                 return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
             }
             if (projectedPaths.Contains(input))
@@ -371,7 +414,22 @@ internal static class Program
                 Path.GetFullPath(input),
                 md.GetGuid(md.GetModuleDefinition().Mvid).ToString("N"),
                 members.Distinct().OrderBy(member => member.Key, StringComparer.Ordinal)
-                    .ThenBy(member => member.Arity).ToArray()));
+                    .ThenBy(member => member.Arity).ToArray(),
+                md.TypeReferences.Select(handle =>
+                    {
+                        var reference = md.GetTypeReference(handle);
+                        var name = md.GetString(reference.Name);
+                        var tick = name.IndexOf('`');
+                        var simple = tick < 0 ? name : name[..tick];
+                        var scope = reference.ResolutionScope.Kind == HandleKind.TypeReference
+                            ? ReferenceFullName((TypeReferenceHandle)reference.ResolutionScope)
+                            : md.GetString(reference.Namespace);
+                        return string.IsNullOrEmpty(scope) ? simple : scope + "." + simple;
+                    })
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(key => key, StringComparer.Ordinal)
+                    .ToArray(),
+                File.GetLastWriteTimeUtc(input)));
         }
         return result.OrderBy(input => input.Path, StringComparer.Ordinal).ToArray();
     }
@@ -382,11 +440,13 @@ internal static class Program
         try
         {
             var state = JsonSerializer.Deserialize<Dll2KlibProjectionState>(File.ReadAllText(path));
-            return state is { Version: ProjectionStateVersion, ArityClashes: not null, Inputs: not null } &&
-                state.Inputs.All(input => input is
-                    { Path: not null, Mvid: not null, ArityKeys: not null, Dependencies: not null })
-                ? state
-                : null;
+            if (state is not { Version: ProjectionStateVersion, ArityClashes: not null, Inputs: not null } ||
+                state.Inputs.Any(input => input is not
+                    { Path: not null, Mvid: not null, ArityKeys: not null,
+                      ReferencedArityKeys: not null, Dependencies: not null }) ||
+                state.Inputs.Select(input => input.Path).Distinct(StringComparer.Ordinal).Count() != state.Inputs.Length)
+                return null;
+            return state;
         }
         catch (JsonException)
         {
@@ -421,7 +481,8 @@ internal static class Program
             .ToHashSet(StringComparer.Ordinal);
         if (changedArityKeys.Count != 0)
             foreach (var input in previousByPath.Values.Concat(currentByPath.Values))
-                if (input.ArityKeys.Any(changedArityKeys.Contains))
+                if (input.ArityKeys.Any(changedArityKeys.Contains) ||
+                    input.ReferencedArityKeys.Any(changedArityKeys.Contains))
                     changed.Add(input.Path);
         return changed;
     }

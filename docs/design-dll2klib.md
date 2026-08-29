@@ -25,9 +25,7 @@ The design has four primary goals:
                                   |
                                   v
                     dll2klib batch coordinator
-                       |       |       |
-                       v       v       v
-                    worker  worker  worker       one DLL per worker
+                    bounded in-process conversion
                        |       |       |
                        v       v       v
                     one metadata-only KLIB per reference assembly
@@ -149,7 +147,7 @@ standard KLIB loader resolves that classifier from the complete classpath.
 - CLR operators and C# extension methods; and
 - enum entries and literal constants.
 
-Projection failure for a public top-level or nested type is fatal. A worker
+Projection failure for a public top-level or nested type is fatal. A conversion
 must not publish a partially projected KLIB.
 
 ### Names and packages
@@ -159,7 +157,7 @@ class declarations.
 
 CLR permits classifiers such as `Task` and `Task<T>` to share a source name;
 Kotlin metadata does not. The batch coordinator computes generic-arity name
-collisions from the complete reference set and gives every worker the same
+collisions from the complete reference set and gives every conversion the same
 stable naming catalog. A classifier is renamed only where the collision
 requires it.
 
@@ -343,7 +341,7 @@ reopening a defining assembly through the resolved catalog cannot evade the
 cycle check and producer-chosen MVID values cannot alias distinct inputs.
 
 The batch coordinator builds a compact delegate catalog from the complete
-reference set. A worker consults the defining assembly metadata only when a
+reference set. A conversion consults the defining assembly metadata only when a
 referenced delegate requires it. Cross-assembly delegate definitions therefore
 influence incremental staleness without becoming KLIB manifest dependencies.
 
@@ -383,33 +381,32 @@ library or function implementation.
 
 ## CLI and process model
 
-`dll2klib` supports direct worker mode and batch mode:
+`dll2klib` accepts the complete resolved reference universe in batch mode:
 
 ```text
-dll2klib <reference.dll> <output.klib>
 dll2klib --out <directory> [--jobs <N>] @<references.rsp>
 ```
 
-The two-path direct form is the internal worker protocol used by the batch launcher. The launcher supplies its
-resolved naming, delegate, and Kotlin companion catalogs through the worker environment; invoking that form
-standalone is rejected, because one DLL cannot resolve either the `Invoke` shape of delegates or the trusted
-semantic identity of companion carriers defined in referenced assemblies.
+A two-path standalone invocation is rejected because one DLL cannot resolve either the `Invoke` shape of delegates
+or the trusted semantic identity of companion carriers defined in referenced assemblies.
 
 Batch mode:
 
 1. reads and normalizes the response-file inputs;
-2. computes the naming, delegate, and trusted companion projection catalogs from the complete set;
+2. computes the naming, delegate, inner, companion, and public-type catalogs from the complete set;
 3. rejects output-name collisions;
-4. selects stale outputs;
-5. starts one child process per stale DLL, bounded by `--jobs`; and
-6. publishes the projection catalog only after every worker succeeds.
+4. compares the current and last successful per-input MVID/direct-TypeRef graphs, adding definitions and users of any
+   changed whole-universe arity key as invalidation roots;
+5. selects only changed roots and their current or former reverse dependents;
+6. converts those assemblies concurrently in process, bounded by `--jobs`; and
+7. stages every KLIB and publishes the batch state only after every conversion succeeds.
 
-`--jobs 0` means one concurrent worker per stale input. The normal MSBuild
+`--jobs 0` means one concurrent conversion per stale input. The normal MSBuild
 default is the processor count.
 
-Each KLIB is first written to a uniquely named temporary file in the output
-directory and then atomically moved over its final path. A failed conversion
-therefore leaves no newly published partial KLIB.
+Each KLIB is first written beneath a unique batch staging directory. No final KLIB is replaced until every conversion
+succeeds. Publication writes an incomplete marker before moving staged files; if publication is interrupted, the next
+run treats the cache as cold and repairs every output before trusting the new graph state.
 
 ## Standard-library handling
 
@@ -494,7 +491,7 @@ Dll2klib fails the build when:
 - an input is not a valid managed metadata image;
 - a public top-level or nested declaration cannot be projected;
 - two assemblies map to the same output filename;
-- a worker exits unsuccessfully; or
+- an assembly conversion fails; or
 - the output KLIB cannot be written atomically.
 
 The tool must not catch a declaration-level error, print a warning, and

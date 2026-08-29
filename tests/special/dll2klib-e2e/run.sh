@@ -40,6 +40,8 @@ dotnet build "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspecto
 dotnet build "$ROOT/tests/special/dll2klib-e2e/reference/Probe.csproj" -c Release -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-e2e/transitive-reference/TransitiveReferenceGenerator.csproj" \
 	-c Release -o "$OUT/tools/transitive-reference" -v:q --nologo
+dotnet build "$ROOT/tests/special/csharp14-static-extensions/malformed/StaticExtensionMalformedGenerator.csproj" \
+	-c Release -o "$OUT/tools/malformed-generator" -v:q --nologo
 
 PROBE_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/ref/Probe.dll"
 PROBE_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.dll"
@@ -48,8 +50,10 @@ CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/P
 PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
 TRANSITIVE_REF="$OUT/TransitiveSlotProbe.dll"
+MALFORMED_REF="$OUT/CSharp14Malformed.dll"
 
 dotnet "$OUT/tools/transitive-reference/TransitiveReferenceGenerator.dll" "$TRANSITIVE_REF"
+dotnet "$OUT/tools/malformed-generator/StaticExtensionMalformedGenerator.dll" "$MALFORMED_REF" missing-marker
 printf '%s\n' "$TRANSITIVE_REF" > "$OUT/transitive-references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/transitive-references.rsp"
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/transitive-interface-consumer.kt" \
@@ -101,6 +105,37 @@ cmp -s "$OUT/klib/TransitiveSlotProbe.klib" "$OUT/klib-second/TransitiveSlotProb
 cache_hit="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
 grep -q '3 KLIB(s) up to date' <<<"$cache_hit" \
 	|| die "unchanged reference set did not hit the per-assembly KLIB cache"
+
+# A failed batch must not publish successful siblings from its temporary projection universe. Removing Probe contracts
+# the arity universe and makes Contracts stale, while the independent malformed assembly fails during scanning. Both the
+# last successful Contracts KLIB and graph state must remain byte-identical, and retrying the original universe must hit
+# the cache rather than accepting a partially published generation.
+cp "$CONTRACTS_KLIB" "$OUT/contracts-before-failed-batch.klib"
+cp "$OUT/klib/.dll2klib-projection-catalog.json" "$OUT/state-before-failed-batch.json"
+printf '%s\n%s\n%s\n' "$CONTRACTS_REF" "$TRANSITIVE_REF" "$MALFORMED_REF" > "$OUT/references.rsp"
+if failed_batch="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp" 2>&1)"; then
+	die "mixed successful/malformed batch unexpectedly succeeded"
+fi
+grep -Eqi 'receiver marker.*resolve' <<<"$failed_batch" \
+	|| die "mixed batch rejected the malformed input for an unexpected reason"
+cmp -s "$CONTRACTS_KLIB" "$OUT/contracts-before-failed-batch.klib" \
+	|| die "failed batch published a successful sibling KLIB from its rejected projection universe"
+cmp -s "$OUT/klib/.dll2klib-projection-catalog.json" "$OUT/state-before-failed-batch.json" \
+	|| die "failed batch published its rejected projection state"
+[[ ! -e "$OUT/klib/.dll2klib-incomplete" ]] \
+	|| die "ordinary conversion failure left an incomplete-publication marker"
+[[ -z "$(find "$OUT/klib" -maxdepth 1 -type d -name '.dll2klib-stage-*' -print -quit)" ]] \
+	|| die "failed batch left its staging directory"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
+failed_batch_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q '3 KLIB(s) up to date' <<<"$failed_batch_restore" \
+	|| die "restoring the last successful universe after a failed batch did not hit its intact cache"
+printf '%s\n' interrupted-publication > "$OUT/klib/.dll2klib-incomplete"
+marker_recovery="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 3/3 reference(s)' <<<"$marker_recovery" \
+	|| die "incomplete publication marker did not force repair of every projected KLIB"
+[[ ! -e "$OUT/klib/.dll2klib-incomplete" ]] \
+	|| die "successful full repair did not clear the incomplete-publication marker"
 
 # Removing an unrelated input changes the persisted projection state but must not invalidate the surviving KLIBs.
 printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
