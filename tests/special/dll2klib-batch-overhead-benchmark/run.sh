@@ -6,8 +6,8 @@ ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=dll2klib-batch-overhead-benchmark
 source "$ROOT/scripts/lib.sh"
 
-BATCH_COUNT="${BATCH_COUNT:-32}"
-TYPES_PER_ASSEMBLY="${TYPES_PER_ASSEMBLY:-16}"
+BATCH_COUNT="${BATCH_COUNT:-512}"
+TYPES_PER_ASSEMBLY="${TYPES_PER_ASSEMBLY:-1}"
 [[ "$BATCH_COUNT" =~ ^[1-9][0-9]*$ ]] || die "BATCH_COUNT must be a positive integer"
 [[ "$TYPES_PER_ASSEMBLY" =~ ^[1-9][0-9]*$ ]] || die "TYPES_PER_ASSEMBLY must be a positive integer"
 
@@ -25,16 +25,17 @@ dotnet "$OUT/generator/Generator.dll" "$single" "$total_types" "$total_types"
 printf '%s\n' "$single" > "$OUT/single.rsp"
 
 : > "$OUT/batch.rsp"
+dotnet "$OUT/generator/Generator.dll" --batch "$OUT/input" \
+	"$BATCH_COUNT" "$TYPES_PER_ASSEMBLY" "$TYPES_PER_ASSEMBLY"
 for ((i = 0; i < BATCH_COUNT; i++)); do
 	input="$OUT/input/Batch$(printf '%03d' "$i").dll"
-	dotnet "$OUT/generator/Generator.dll" "$input" "$TYPES_PER_ASSEMBLY" "$TYPES_PER_ASSEMBLY"
 	printf '%s\n' "$input" >> "$OUT/batch.rsp"
 done
 
 measure() {
-	local output="$1" rsp="$2" start_ns end_ns
+	local output="$1" rsp="$2" log="${3:-/dev/null}" start_ns end_ns
 	start_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
-	dotnet "$OUT/tools/dll2klib.dll" --out "$output" --jobs 1 @"$rsp" >/dev/null
+	dotnet "$OUT/tools/dll2klib.dll" --out "$output" --jobs 1 @"$rsp" >"$log"
 	end_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
 	printf '%s\n' "$(( (end_ns - start_ns) / 1000000 ))"
 }
@@ -54,11 +55,17 @@ ratio_hundredths="$(( batch_ms * 100 / single_ms ))"
 	|| die "dll2klib per-assembly batch overhead regressed: "\
 "one/${total_types}=${single_ms} ms, ${BATCH_COUNT}/${TYPES_PER_ASSEMBLY}=${batch_ms} ms (${ratio_hundredths}%)"
 
-warm_single_ms="$(measure "$OUT/single-klib" "$OUT/single.rsp")"
-warm_batch_ms="$(measure "$OUT/batch-klib" "$OUT/batch.rsp")"
+warm_single_log="$OUT/warm-single.log"
+warm_batch_log="$OUT/warm-batch.log"
+warm_single_ms="$(measure "$OUT/single-klib" "$OUT/single.rsp" "$warm_single_log")"
+warm_batch_ms="$(measure "$OUT/batch-klib" "$OUT/batch.rsp" "$warm_batch_log")"
+grep -q '1 KLIB(s) up to date' "$warm_single_log" \
+	|| die "single warm-cache check did not hit the KLIB cache"
+grep -q "$BATCH_COUNT KLIB(s) up to date" "$warm_batch_log" \
+	|| die "batch warm-cache check did not hit every KLIB cache entry"
 (( warm_single_ms > 0 )) || die "single warm-cache check completed too quickly to measure"
 warm_ratio_hundredths="$(( warm_batch_ms * 100 / warm_single_ms ))"
-(( warm_ratio_hundredths < 400 )) \
+(( warm_ratio_hundredths < 170 )) \
 	|| die "dll2klib split-batch warm-cache discovery regressed: "\
 "one/${total_types}=${warm_single_ms} ms, ${BATCH_COUNT}/${TYPES_PER_ASSEMBLY}=${warm_batch_ms} ms "\
 "(${warm_ratio_hundredths}%)"

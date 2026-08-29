@@ -403,9 +403,11 @@ Batch mode:
 6. converts those assemblies concurrently in process, bounded by `--jobs`; and
 7. stages every KLIB and publishes the batch state only after every conversion succeeds.
 
-The metadata snapshots are disposed after the catalogs and dependency state have been materialized and before stale
-assemblies are converted in parallel. Conversion therefore does not retain the complete resolved PE universe in
-memory; public-type definitions needed by an actual stale conversion are reopened lazily and shared by path.
+Discovery temporarily retains one copied metadata block and the precomputed TypeRef facts for every input, but no PE
+image or file handle. Those snapshots are disposed after the catalogs and dependency state have been materialized and
+before stale assemblies are converted in parallel. Conversion therefore does not retain the complete resolved PE
+universe in memory; public-type definitions needed by an actual stale conversion are reopened lazily and shared by
+path.
 
 `--jobs 0` means one concurrent conversion per stale input. The normal MSBuild
 default is the processor count.
