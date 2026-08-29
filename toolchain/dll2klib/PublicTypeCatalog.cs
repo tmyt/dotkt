@@ -31,11 +31,12 @@ internal sealed class PublicTypeCatalog : IDisposable
     private readonly Dictionary<string, string> _assemblyPaths;
     private readonly ConcurrentDictionary<string, Lazy<LoadedAssembly>> _loaded =
         new(StringComparer.Ordinal);
-    private readonly Lazy<IReadOnlyDictionary<string, string[]>> _directDependencies;
+    private readonly IReadOnlyDictionary<string, string[]> _directDependencies;
 
     private PublicTypeCatalog(
         IEnumerable<PublicTypeCatalogEntry> entries,
-        IReadOnlyDictionary<string, string> assemblyPaths)
+        IReadOnlyDictionary<string, string> assemblyPaths,
+        IReadOnlyDictionary<string, string[]>? directDependencies = null)
     {
         _entries = new Dictionary<string, PublicTypeCatalogEntry>(StringComparer.Ordinal);
         foreach (var entry in entries)
@@ -48,22 +49,20 @@ internal sealed class PublicTypeCatalog : IDisposable
             _entries[key] = entry;
         }
         _assemblyPaths = new Dictionary<string, string>(assemblyPaths, StringComparer.Ordinal);
-        _directDependencies = new Lazy<IReadOnlyDictionary<string, string[]>>(
-            BuildDirectDependencies,
-            LazyThreadSafetyMode.ExecutionAndPublication);
+        _directDependencies = directDependencies
+            ?? new Dictionary<string, string[]>(StringComparer.Ordinal);
     }
 
-    public static PublicTypeCatalog Discover(IEnumerable<string> inputs)
+    public static PublicTypeCatalog Discover(IEnumerable<ReferenceMetadataSnapshot> inputs)
     {
+        var assemblies = inputs.ToArray();
         var entries = new List<PublicTypeCatalogEntry>();
         var assemblyPaths = new Dictionary<string, string>(StringComparer.Ordinal);
         var forwarders = new List<(string ForwardingAssembly, string TargetAssembly, string MetadataName)>();
-        foreach (var path in inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal))
+        foreach (var assembly in assemblies)
         {
-            using var file = File.OpenRead(path);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata) continue;
-            var md = pe.GetMetadataReader();
+            var path = assembly.Path;
+            var md = assembly.Reader;
             if (!md.IsAssembly) continue;
             var assemblyName = AssemblyName(md);
             assemblyPaths[assemblyName] = path;
@@ -93,71 +92,72 @@ internal sealed class PublicTypeCatalog : IDisposable
         }
 
         var all = new PublicTypeCatalog(entries, assemblyPaths);
-        var changed = true;
-        while (changed)
+        // Propagate definitions through the forwarder graph once per newly reachable alias. This is the same fixed
+        // point as rebuilding a complete (assembly, root) index every round, but its work is proportional to actual
+        // definitions and aliases rather than definitions multiplied by the longest facade chain.
+        var forwardersByTargetRoot = forwarders
+            .GroupBy(forwarder => (forwarder.TargetAssembly, RootName(forwarder.MetadataName)))
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var pending = new Queue<PublicTypeCatalogEntry>(all._entries.Values);
+        while (pending.TryDequeue(out var target))
         {
-            changed = false;
-            var additions = new List<PublicTypeCatalogEntry>();
-            // A forwarder can expose one top-level type together with all of its nested definitions. Index that
-            // narrow family once per fixed-point round instead of scanning every TypeDef in every resolved assembly
-            // for every ExportedType row (netstandard alone carries thousands of forwarders).
-            var targetsByRoot = all._entries.Values
-                .GroupBy(entry => (entry.AssemblyName, RootName(entry.MetadataName)))
-                .ToDictionary(group => group.Key, group => group.ToArray());
-            foreach (var forwarder in forwarders)
+            if (!forwardersByTargetRoot.TryGetValue(
+                    (target.AssemblyName, RootName(target.MetadataName)),
+                    out var matchingForwarders))
+                continue;
+            foreach (var forwarder in matchingForwarders)
             {
-                if (!targetsByRoot.TryGetValue(
-                        (forwarder.TargetAssembly, RootName(forwarder.MetadataName)),
-                        out var candidates))
+                if (!StringComparer.Ordinal.Equals(target.MetadataName, forwarder.MetadataName) &&
+                    !target.MetadataName.StartsWith(forwarder.MetadataName + "+", StringComparison.Ordinal))
                     continue;
-                foreach (var target in candidates.Where(entry =>
-                    StringComparer.Ordinal.Equals(entry.MetadataName, forwarder.MetadataName) ||
-                    entry.MetadataName.StartsWith(forwarder.MetadataName + "+", StringComparison.Ordinal)))
+                var alias = target with { AssemblyName = forwarder.ForwardingAssembly };
+                var key = Key(alias.AssemblyName, alias.MetadataName);
+                if (all._entries.TryGetValue(key, out var existing))
                 {
-                    var alias = target with { AssemblyName = forwarder.ForwardingAssembly };
-                    if (!all._entries.ContainsKey(Key(alias.AssemblyName, alias.MetadataName)))
-                    {
-                        additions.Add(alias);
-                        changed = true;
-                    }
+                    if (existing.IsPublic != alias.IsPublic || existing.IsInterface != alias.IsInterface)
+                        throw new InvalidOperationException(
+                            $"type '{alias.MetadataName}' has conflicting shapes in assembly '{alias.AssemblyName}'");
+                    continue;
                 }
+                all._entries.Add(key, alias);
+                pending.Enqueue(alias);
             }
-            if (changed)
-                all = new PublicTypeCatalog(all._entries.Values.Concat(additions), all._assemblyPaths);
         }
-        return all;
+        var dependencies = all.BuildDirectDependencies(assemblies);
+        return new PublicTypeCatalog(
+            all._entries.Values,
+            all._assemblyPaths,
+            dependencies);
     }
 
     public IReadOnlyList<string> DirectDependenciesOf(string input)
     {
         input = Path.GetFullPath(input);
-        return _directDependencies.Value.TryGetValue(input, out var dependencies)
+        return _directDependencies.TryGetValue(input, out var dependencies)
             ? dependencies
             : Array.Empty<string>();
     }
 
-    private IReadOnlyDictionary<string, string[]> BuildDirectDependencies()
+    private IReadOnlyDictionary<string, string[]> BuildDirectDependencies(
+        IEnumerable<ReferenceMetadataSnapshot> inputs)
     {
         var result = new Dictionary<string, string[]>(StringComparer.Ordinal);
-        foreach (var path in _assemblyPaths.Values.Distinct(StringComparer.Ordinal))
+        var assemblyPaths = _assemblyPaths.Values.ToHashSet(StringComparer.Ordinal);
+        foreach (var input in inputs.Where(input => assemblyPaths.Contains(input.Path)))
         {
-            using var file = File.OpenRead(path);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata)
-            {
-                result[path] = [];
-                continue;
-            }
-            var md = pe.GetMetadataReader();
+            var path = input.Path;
             var dependencies = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var handle in md.TypeReferences)
+            foreach (var reference in input.TypeReferences)
             {
-                var referencedAssembly = ReferenceAssemblyName(md, handle);
+                var referencedAssembly = reference.AssemblyName;
                 if (referencedAssembly is not null &&
                     _assemblyPaths.TryGetValue(referencedAssembly, out var referencedPath) &&
                     !StringComparer.Ordinal.Equals(referencedPath, path))
                     dependencies.Add(referencedPath);
-                var definitionPath = ResolveEntry(md, handle, referencedAssembly)?.AssemblyPath;
+                var definitionPath = referencedAssembly is not null &&
+                    _entries.TryGetValue(Key(referencedAssembly, reference.MetadataName), out var entry)
+                    ? entry.AssemblyPath
+                    : null;
                 if (definitionPath is not null && !StringComparer.Ordinal.Equals(definitionPath, path))
                     dependencies.Add(definitionPath);
             }

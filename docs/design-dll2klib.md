@@ -393,7 +393,8 @@ or the trusted semantic identity of companion carriers defined in referenced ass
 Batch mode:
 
 1. reads and normalizes the response-file inputs;
-2. computes the naming, delegate, inner, companion, and public-type catalogs from the complete set;
+2. copies each input's metadata block once, closes its PE image, and computes the naming, delegate, inner, companion,
+   public-type, forwarder, and direct-dependency facts from those shared immutable snapshots;
 3. rejects output-name collisions;
 4. compares the current and last successful per-input MVID/direct-TypeRef graphs; a forwarded TypeRef retains edges to
    both its routing facade and resolved definition, and definitions and users of any changed whole-universe arity key
@@ -401,6 +402,12 @@ Batch mode:
 5. selects only changed roots and their current or former reverse dependents;
 6. converts those assemblies concurrently in process, bounded by `--jobs`; and
 7. stages every KLIB and publishes the batch state only after every conversion succeeds.
+
+Discovery temporarily retains one copied metadata block and the precomputed TypeRef facts for every input, but no PE
+image or file handle. Those snapshots are disposed after the catalogs and dependency state have been materialized and
+before stale assemblies are converted in parallel. Conversion therefore does not retain the complete resolved PE
+universe in memory; public-type definitions needed by an actual stale conversion are reopened lazily and shared by
+path.
 
 `--jobs 0` means one concurrent conversion per stale input. The normal MSBuild
 default is the processor count.
@@ -473,13 +480,14 @@ An output KLIB is stale when any of the following is true:
 - it does not exist;
 - its input DLL is newer;
 - the `dll2klib` executable is newer;
-- a defining assembly used for a cross-assembly delegate is newer; or
-- the complete-set projection catalog changed.
+- its input MVID or direct TypeRef dependencies changed;
+- a current or former transitive dependency is a changed root or is newer; or
+- a whole-universe arity collision changed for a name that the input defines or references.
 
-The projection catalog records the generic-arity collision set, delegate, and companion
-definitions. A catalog change invalidates all KLIBs because it can change the
-meaning or name of a declaration even when a particular input DLL is
-unchanged.
+The project-local projection state records each resolved path's MVID, arity definitions and uses, and direct TypeRef
+edges. Both the current and last successful graphs participate in invalidation, so removing or retargeting an edge
+still rebuilds its former consumers. A forwarded TypeRef has an edge to its routing facade and its resolved definition.
+Unrelated changes do not invalidate the complete KLIB set.
 
 KLIB manifests intentionally contain no dependency fingerprint. Incremental
 ownership remains with the project-local coordinator and MSBuild rather than
