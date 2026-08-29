@@ -185,6 +185,7 @@ dll2klib-recursive-delegates: ## recursive CLR delegate graphs terminate with a 
 dll2klib-index-benchmark: ## repeatable synthetic benchmark for dll2klib assembly indexes
 	bash tests/special/dll2klib-local-index-benchmark/run.sh
 	bash tests/special/dll2klib-external-delegate-index-benchmark/run.sh
+	bash tests/special/dll2klib-batch-overhead-benchmark/run.sh
 
 # ==================================================================================================
 # Cleaning

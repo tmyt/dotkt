@@ -20,7 +20,8 @@ done
 
 OUT="$ROOT/build/dll2klib-e2e"
 rm -rf "$OUT"
-mkdir -p "$OUT/tools" "$OUT/klib" "$OUT/klib-second" "$OUT/bir" "$OUT/cir" "$OUT/il"
+mkdir -p "$OUT/tools" "$OUT/klib" "$OUT/klib-second" "$OUT/bir" "$OUT/cir" "$OUT/il" \
+	"$OUT/forwarder-inputs" "$OUT/forwarder-klib"
 case "${OS:-}" in
 	Windows_NT) KLIB_CP_SEP=';' ;;
 	*) KLIB_CP_SEP=':' ;;
@@ -40,6 +41,12 @@ dotnet build "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspecto
 dotnet build "$ROOT/tests/special/dll2klib-e2e/reference/Probe.csproj" -c Release -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-e2e/transitive-reference/TransitiveReferenceGenerator.csproj" \
 	-c Release -o "$OUT/tools/transitive-reference" -v:q --nologo
+dotnet build "$ROOT/tests/special/csharp14-static-extensions/malformed/StaticExtensionMalformedGenerator.csproj" \
+	-c Release -o "$OUT/tools/malformed-generator" -v:q --nologo
+dotnet build "$ROOT/tests/special/dll2klib-e2e/forwarder/consumer/ForwarderConsumer.csproj" \
+	-c Release -v:q --nologo
+dotnet build "$ROOT/tests/special/dll2klib-e2e/forwarder/facade-v2/ForwarderFacadeV2.csproj" \
+	-c Release -v:q --nologo
 
 PROBE_REF="$ROOT/tests/special/dll2klib-e2e/reference/obj/Release/net10.0/ref/Probe.dll"
 PROBE_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/Probe.dll"
@@ -48,8 +55,13 @@ CONTRACTS_IMPL="$ROOT/tests/special/dll2klib-e2e/reference/bin/Release/net10.0/P
 PROBE_KLIB="$OUT/klib/Probe.klib"
 CONTRACTS_KLIB="$OUT/klib/Probe.Contracts.klib"
 TRANSITIVE_REF="$OUT/TransitiveSlotProbe.dll"
+MALFORMED_REF="$OUT/CSharp14Malformed.dll"
+FORWARDER_CONSUMER="$OUT/forwarder-inputs/ForwarderConsumer.dll"
+FORWARDER_FACADE="$OUT/forwarder-inputs/ForwarderProbe.dll"
+FORWARDER_TARGET="$OUT/forwarder-inputs/ForwarderTarget.dll"
 
 dotnet "$OUT/tools/transitive-reference/TransitiveReferenceGenerator.dll" "$TRANSITIVE_REF"
+dotnet "$OUT/tools/malformed-generator/StaticExtensionMalformedGenerator.dll" "$MALFORMED_REF" missing-marker
 printf '%s\n' "$TRANSITIVE_REF" > "$OUT/transitive-references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/transitive-references.rsp"
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/transitive-interface-consumer.kt" \
@@ -57,16 +69,16 @@ dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/transitive-klib" --jobs 0 @"$OUT/tr
 	-classpath "$FE_KLIB$KLIB_CP_SEP$OUT/transitive-klib/TransitiveSlotProbe.klib" \
 	-d "$OUT/transitive-bir"
 
-# The two-path form is an internal worker protocol. Without the batch parent's complete resolved catalog it cannot
-# identify external delegate or Kotlin companion TypeRefs and must fail rather than silently project their physical
-# CLR carriers as ordinary nominal classes.
+# A standalone two-path projection lacks the complete resolved catalog. It cannot identify external delegate or
+# Kotlin companion TypeRefs and must fail rather than silently project their physical CLR carriers as ordinary nominal
+# classes.
 direct_out="$OUT/direct-Probe.klib"
 if direct_error="$(dotnet "$OUT/tools/dll2klib.dll" "$PROBE_REF" "$direct_out" 2>&1)"; then
-	die "standalone direct worker invocation unexpectedly succeeded without resolved reference catalogs"
+	die "standalone direct projection unexpectedly succeeded without the resolved reference set"
 fi
-grep -q "direct worker mode requires the batch-provided resolved delegate, companion, inner, and public-type catalogs" <<<"$direct_error" \
-	|| die "standalone direct worker rejection did not explain the required batch reference set"
-[[ ! -e "$direct_out" ]] || die "rejected standalone direct worker invocation still wrote a KLIB"
+grep -q "direct projection requires the complete resolved reference set" <<<"$direct_error" \
+	|| die "standalone direct projection rejection did not explain the required batch reference set"
+[[ ! -e "$direct_out" ]] || die "rejected standalone direct projection still wrote a KLIB"
 
 # Both stdlib CLR twins carry a semantic library-kind marker. A human asking for a direct projection gets an
 # actionable warning and no duplicate KLIB; the response-file/MSBuild reference-set path ignores the same inputs
@@ -89,33 +101,111 @@ grep -q '0 KLIB(s) up to date' <<<"$stdlib_batch" \
 [[ -z "$(find "$OUT/stdlib-klib" -maxdepth 1 -name '*.klib' -print -quit)" ]] \
 	|| die "response-file dll2klib projected a marked stdlib assembly"
 
-printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp"
 dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib-second" --jobs 0 @"$OUT/references.rsp"
 cmp -s "$PROBE_KLIB" "$OUT/klib-second/Probe.klib" \
 	|| die "same Probe MVID did not produce a deterministic KLIB"
 cmp -s "$CONTRACTS_KLIB" "$OUT/klib-second/Probe.Contracts.klib" \
 	|| die "same contracts MVID did not produce a deterministic KLIB"
+cmp -s "$OUT/klib/TransitiveSlotProbe.klib" "$OUT/klib-second/TransitiveSlotProbe.klib" \
+	|| die "same unrelated MVID did not produce a deterministic KLIB"
 cache_hit="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q '2 KLIB(s) up to date' <<<"$cache_hit" \
+grep -q '3 KLIB(s) up to date' <<<"$cache_hit" \
 	|| die "unchanged reference set did not hit the per-assembly KLIB cache"
+
+# The consumer was compiled against v1, where Carrier lived in ForwarderProbe. The active v2 facade forwards that
+# TypeRef to ForwarderTarget. Its projection therefore depends on both the forwarding assembly (which owns the TypeRef
+# identity) and the final definition assembly (which owns the resolved shape).
+cp "$ROOT/tests/special/dll2klib-e2e/forwarder/consumer/bin/Release/net10.0/ForwarderConsumer.dll" \
+	"$FORWARDER_CONSUMER"
+cp "$ROOT/tests/special/dll2klib-e2e/forwarder/facade-v2/bin/Release/net10.0/ForwarderProbe.dll" \
+	"$FORWARDER_FACADE"
+cp "$ROOT/tests/special/dll2klib-e2e/forwarder/target/bin/Release/net10.0/ForwarderTarget.dll" \
+	"$FORWARDER_TARGET"
+printf '%s\n%s\n%s\n' "$FORWARDER_CONSUMER" "$FORWARDER_FACADE" "$FORWARDER_TARGET" \
+	> "$OUT/forwarder-references.rsp"
+dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/forwarder-klib" --jobs 0 @"$OUT/forwarder-references.rsp"
+forwarder_cache_hit="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/forwarder-klib" --jobs 0 \
+	@"$OUT/forwarder-references.rsp")"
+grep -q '3 KLIB(s) up to date' <<<"$forwarder_cache_hit" \
+	|| die "unchanged type-forwarder universe did not hit the cache"
+sleep 1
+touch "$FORWARDER_FACADE"
+forwarder_rebuild="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/forwarder-klib" --jobs 0 \
+	@"$OUT/forwarder-references.rsp")"
+grep -q 'converting 2/3 reference(s)' <<<"$forwarder_rebuild" \
+	|| die "forwarder change did not rebuild exactly the facade and its consumer"
+
+# A failed batch must not publish successful siblings from its temporary projection universe. Removing Probe contracts
+# the arity universe and makes Contracts stale, while the independent malformed assembly fails during scanning. Both the
+# last successful Contracts KLIB and graph state must remain byte-identical, and retrying the original universe must hit
+# the cache rather than accepting a partially published generation.
+cp "$CONTRACTS_KLIB" "$OUT/contracts-before-failed-batch.klib"
+cp "$OUT/klib/.dll2klib-projection-catalog.json" "$OUT/state-before-failed-batch.json"
+printf '%s\n%s\n%s\n' "$CONTRACTS_REF" "$TRANSITIVE_REF" "$MALFORMED_REF" > "$OUT/references.rsp"
+if failed_batch="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp" 2>&1)"; then
+	die "mixed successful/malformed batch unexpectedly succeeded"
+fi
+grep -Eqi 'receiver marker.*resolve' <<<"$failed_batch" \
+	|| die "mixed batch rejected the malformed input for an unexpected reason"
+cmp -s "$CONTRACTS_KLIB" "$OUT/contracts-before-failed-batch.klib" \
+	|| die "failed batch published a successful sibling KLIB from its rejected projection universe"
+cmp -s "$OUT/klib/.dll2klib-projection-catalog.json" "$OUT/state-before-failed-batch.json" \
+	|| die "failed batch published its rejected projection state"
+[[ ! -e "$OUT/klib/.dll2klib-incomplete" ]] \
+	|| die "ordinary conversion failure left an incomplete-publication marker"
+[[ -z "$(find "$OUT/klib" -maxdepth 1 -type d -name '.dll2klib-stage-*' -print -quit)" ]] \
+	|| die "failed batch left its staging directory"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
+failed_batch_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q '3 KLIB(s) up to date' <<<"$failed_batch_restore" \
+	|| die "restoring the last successful universe after a failed batch did not hit its intact cache"
+printf '%s\n' interrupted-publication > "$OUT/klib/.dll2klib-incomplete"
+marker_recovery="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 3/3 reference(s)' <<<"$marker_recovery" \
+	|| die "incomplete publication marker did not force repair of every projected KLIB"
+[[ ! -e "$OUT/klib/.dll2klib-incomplete" ]] \
+	|| die "successful full repair did not clear the incomplete-publication marker"
+
+# Removing an unrelated input changes the persisted projection state but must not invalidate the surviving KLIBs.
+printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
+unrelated_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q '2 KLIB(s) up to date' <<<"$unrelated_remove" \
+	|| die "removing an unrelated reference rebuilt surviving KLIBs"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
+unrelated_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 1/3 reference(s)' <<<"$unrelated_restore" \
+	|| die "restoring an unrelated reference rebuilt more than that reference"
+
+# Removing Probe removes the non-generic half of the CrossAssemblyArity/CrossAssemblyArity<T> naming collision.
+# Only Contracts owns the surviving affected classifier; restoring Probe must rebuild those two naming roots, not the
+# independent transitive-slot fixture.
+printf '%s\n%s\n' "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
+arity_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 1/2 reference(s)' <<<"$arity_remove" \
+	|| die "arity-universe contraction did not rebuild exactly the affected surviving KLIB"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
+arity_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
+grep -q 'converting 2/3 reference(s)' <<<"$arity_restore" \
+	|| die "arity-universe expansion did not rebuild exactly the affected KLIBs"
+
 sleep 1
 touch "$CONTRACTS_REF"
 dependency_rebuild="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q 'converting 2/2 reference(s)' <<<"$dependency_rebuild" \
-	|| die "external delegate change did not invalidate the consuming Probe KLIB"
-# Removing or adding an input can change the shared arity/delegate/companion catalog without changing any surviving DLL's
-# timestamp. Every surviving KLIB must be regenerated so cached and newly projected declarations keep one naming
-# universe.
-printf '%s\n' "$PROBE_REF" > "$OUT/references.rsp"
+grep -q 'converting 2/3 reference(s)' <<<"$dependency_rebuild" \
+	|| die "external delegate change did not rebuild exactly the dependency and its consuming Probe KLIB"
+# Removing a required input must fail before publishing the new projection state. Restoring the complete universe then
+# reuses the last successful cache rather than treating the rejected graph as authoritative.
+printf '%s\n%s\n' "$PROBE_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
 if catalog_remove="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp" 2>&1)"; then
 	die "dll2klib accepted Probe without its referenced Probe.Contracts assembly"
 fi
 grep -q "public-type catalog cannot resolve 'Probe.Contracts.IExternalDefaultSlot'" <<<"$catalog_remove" \
 	|| die "incomplete reference-catalog rejection did not identify the unresolved public supertype"
-printf '%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" > "$OUT/references.rsp"
+printf '%s\n%s\n%s\n' "$PROBE_REF" "$CONTRACTS_REF" "$TRANSITIVE_REF" > "$OUT/references.rsp"
 catalog_restore="$(dotnet "$OUT/tools/dll2klib.dll" --out "$OUT/klib" --jobs 0 @"$OUT/references.rsp")"
-grep -q '2 KLIB(s) up to date' <<<"$catalog_restore" \
+grep -q '3 KLIB(s) up to date' <<<"$catalog_restore" \
 	|| die "rejected incomplete reference catalog corrupted the complete KLIB cache"
 for entry in default/manifest default/linkdata/module default/linkdata/root_package/0_.knm default/linkdata/package_Probe/0_Probe.knm; do
 	unzip -Z1 "$PROBE_KLIB" | grep -qx "$entry" || die "generated KLIB is missing $entry"
@@ -342,7 +432,7 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "508" ]] || die "generated program returned '$actual', expected '508'"
+[[ "$actual" == "518" ]] || die "generated program returned '$actual', expected '518'"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/il/Consumer.dll"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
@@ -352,4 +442,4 @@ if grep -q '"_resolvedMethodTypeParams"' "$OUT/cir/consumer.cir.json"; then
 	die "bir2cir leaked its resolved-method constraint carrier into CIR"
 fi
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (508)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (518)"

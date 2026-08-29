@@ -1,8 +1,8 @@
+using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
-using System.Text.Json;
 
 internal sealed record PublicTypeCatalogEntry(
     string AssemblyName,
@@ -28,9 +28,14 @@ internal readonly record struct PublicTypeSurface(
 internal sealed class PublicTypeCatalog : IDisposable
 {
     private readonly Dictionary<string, PublicTypeCatalogEntry> _entries;
-    private readonly Dictionary<string, LoadedAssembly> _loaded = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _assemblyPaths;
+    private readonly ConcurrentDictionary<string, Lazy<LoadedAssembly>> _loaded =
+        new(StringComparer.Ordinal);
+    private readonly Lazy<IReadOnlyDictionary<string, string[]>> _directDependencies;
 
-    private PublicTypeCatalog(IEnumerable<PublicTypeCatalogEntry> entries)
+    private PublicTypeCatalog(
+        IEnumerable<PublicTypeCatalogEntry> entries,
+        IReadOnlyDictionary<string, string> assemblyPaths)
     {
         _entries = new Dictionary<string, PublicTypeCatalogEntry>(StringComparer.Ordinal);
         foreach (var entry in entries)
@@ -42,13 +47,16 @@ internal sealed class PublicTypeCatalog : IDisposable
                     $"type '{entry.MetadataName}' has conflicting shapes in assembly '{entry.AssemblyName}'");
             _entries[key] = entry;
         }
+        _assemblyPaths = new Dictionary<string, string>(assemblyPaths, StringComparer.Ordinal);
+        _directDependencies = new Lazy<IReadOnlyDictionary<string, string[]>>(
+            BuildDirectDependencies,
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
-
-    public static PublicTypeCatalog Empty { get; } = new(Array.Empty<PublicTypeCatalogEntry>());
 
     public static PublicTypeCatalog Discover(IEnumerable<string> inputs)
     {
         var entries = new List<PublicTypeCatalogEntry>();
+        var assemblyPaths = new Dictionary<string, string>(StringComparer.Ordinal);
         var forwarders = new List<(string ForwardingAssembly, string TargetAssembly, string MetadataName)>();
         foreach (var path in inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal))
         {
@@ -58,6 +66,7 @@ internal sealed class PublicTypeCatalog : IDisposable
             var md = pe.GetMetadataReader();
             if (!md.IsAssembly) continue;
             var assemblyName = AssemblyName(md);
+            assemblyPaths[assemblyName] = path;
             foreach (var handle in md.TypeDefinitions)
             {
                 var definition = md.GetTypeDefinition(handle);
@@ -83,17 +92,27 @@ internal sealed class PublicTypeCatalog : IDisposable
             }
         }
 
-        var all = new PublicTypeCatalog(entries);
+        var all = new PublicTypeCatalog(entries, assemblyPaths);
         var changed = true;
         while (changed)
         {
             changed = false;
             var additions = new List<PublicTypeCatalogEntry>();
+            // A forwarder can expose one top-level type together with all of its nested definitions. Index that
+            // narrow family once per fixed-point round instead of scanning every TypeDef in every resolved assembly
+            // for every ExportedType row (netstandard alone carries thousands of forwarders).
+            var targetsByRoot = all._entries.Values
+                .GroupBy(entry => (entry.AssemblyName, RootName(entry.MetadataName)))
+                .ToDictionary(group => group.Key, group => group.ToArray());
             foreach (var forwarder in forwarders)
-                foreach (var target in all._entries.Values.Where(entry =>
-                    StringComparer.Ordinal.Equals(entry.AssemblyName, forwarder.TargetAssembly) &&
-                    (StringComparer.Ordinal.Equals(entry.MetadataName, forwarder.MetadataName) ||
-                     entry.MetadataName.StartsWith(forwarder.MetadataName + "+", StringComparison.Ordinal))))
+            {
+                if (!targetsByRoot.TryGetValue(
+                        (forwarder.TargetAssembly, RootName(forwarder.MetadataName)),
+                        out var candidates))
+                    continue;
+                foreach (var target in candidates.Where(entry =>
+                    StringComparer.Ordinal.Equals(entry.MetadataName, forwarder.MetadataName) ||
+                    entry.MetadataName.StartsWith(forwarder.MetadataName + "+", StringComparison.Ordinal)))
                 {
                     var alias = target with { AssemblyName = forwarder.ForwardingAssembly };
                     if (!all._entries.ContainsKey(Key(alias.AssemblyName, alias.MetadataName)))
@@ -102,28 +121,52 @@ internal sealed class PublicTypeCatalog : IDisposable
                         changed = true;
                     }
                 }
-            if (changed) all = new PublicTypeCatalog(all._entries.Values.Concat(additions));
+            }
+            if (changed)
+                all = new PublicTypeCatalog(all._entries.Values.Concat(additions), all._assemblyPaths);
         }
         return all;
     }
 
-    public static PublicTypeCatalog Load(string? path)
+    public IReadOnlyList<string> DirectDependenciesOf(string input)
     {
-        if (string.IsNullOrEmpty(path)) return Empty;
-        var entries = JsonSerializer.Deserialize<List<PublicTypeCatalogEntry>>(File.ReadAllText(path))
-            ?? throw new InvalidDataException($"invalid public-type catalog: {path}");
-        return new PublicTypeCatalog(entries);
+        input = Path.GetFullPath(input);
+        return _directDependencies.Value.TryGetValue(input, out var dependencies)
+            ? dependencies
+            : Array.Empty<string>();
     }
 
-    public string Serialize() => JsonSerializer.Serialize(
-        _entries.Values.OrderBy(x => x.AssemblyName, StringComparer.Ordinal)
-            .ThenBy(x => x.MetadataName, StringComparer.Ordinal).ToArray());
-
-    public IReadOnlyList<string> DependenciesOf(string input) => _entries.Values
-        .Select(entry => entry.AssemblyPath)
-        .Where(path => !StringComparer.Ordinal.Equals(path, input))
-        .Distinct(StringComparer.Ordinal)
-        .ToArray();
+    private IReadOnlyDictionary<string, string[]> BuildDirectDependencies()
+    {
+        var result = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        foreach (var path in _assemblyPaths.Values.Distinct(StringComparer.Ordinal))
+        {
+            using var file = File.OpenRead(path);
+            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
+            if (!pe.HasMetadata)
+            {
+                result[path] = [];
+                continue;
+            }
+            var md = pe.GetMetadataReader();
+            var dependencies = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var handle in md.TypeReferences)
+            {
+                var referencedAssembly = ReferenceAssemblyName(md, handle);
+                if (referencedAssembly is not null &&
+                    _assemblyPaths.TryGetValue(referencedAssembly, out var referencedPath) &&
+                    !StringComparer.Ordinal.Equals(referencedPath, path))
+                    dependencies.Add(referencedPath);
+                var definitionPath = ResolveEntry(md, handle, referencedAssembly)?.AssemblyPath;
+                if (definitionPath is not null && !StringComparer.Ordinal.Equals(definitionPath, path))
+                    dependencies.Add(definitionPath);
+            }
+            result[path] = dependencies
+                .OrderBy(dependency => dependency, StringComparer.Ordinal)
+                .ToArray();
+        }
+        return result;
+    }
 
     public PublicTypeSurface Surface(
         MetadataReader reader,
@@ -170,7 +213,9 @@ internal sealed class PublicTypeCatalog : IDisposable
 
     public void Dispose()
     {
-        foreach (var assembly in _loaded.Values) assembly.Dispose();
+        foreach (var assembly in _loaded.Values)
+            if (assembly.IsValueCreated)
+                assembly.Value.Dispose();
         _loaded.Clear();
     }
 
@@ -187,6 +232,14 @@ internal sealed class PublicTypeCatalog : IDisposable
     private PublicTypeCatalogEntry? ResolveEntry(MetadataReader reader, TypeReferenceHandle handle)
     {
         var assemblyName = ReferenceAssemblyName(reader, handle);
+        return ResolveEntry(reader, handle, assemblyName);
+    }
+
+    private PublicTypeCatalogEntry? ResolveEntry(
+        MetadataReader reader,
+        TypeReferenceHandle handle,
+        string? assemblyName)
+    {
         return assemblyName is not null &&
             _entries.TryGetValue(Key(assemblyName, ReferenceName(reader, handle)), out var entry)
             ? entry
@@ -197,11 +250,11 @@ internal sealed class PublicTypeCatalog : IDisposable
     {
         var entry = ResolveEntry(reader, handle);
         if (entry is null) return null;
-        if (!_loaded.TryGetValue(entry.AssemblyPath, out var assembly))
-        {
-            assembly = new LoadedAssembly(entry.AssemblyPath);
-            _loaded.Add(entry.AssemblyPath, assembly);
-        }
+        var assembly = _loaded.GetOrAdd(
+            entry.AssemblyPath,
+            static path => new Lazy<LoadedAssembly>(
+                () => new LoadedAssembly(path),
+                LazyThreadSafetyMode.ExecutionAndPublication)).Value;
         return assembly.Definitions.TryGetValue(entry.MetadataName, out var definition)
             ? new ResolvedTypeDefinition(assembly.Reader, definition, entry.AssemblyPath)
             : null;
@@ -349,6 +402,12 @@ internal sealed class PublicTypeCatalog : IDisposable
         if (!parent.IsNil) return DefinitionName(md, parent) + "+" + simple;
         var ns = md.GetString(definition.Namespace);
         return string.IsNullOrEmpty(ns) ? simple : ns + "." + simple;
+    }
+
+    private static string RootName(string metadataName)
+    {
+        var separator = metadataName.IndexOf('+');
+        return separator < 0 ? metadataName : metadataName[..separator];
     }
 
     private static string ReferenceName(MetadataReader md, TypeReferenceHandle handle)

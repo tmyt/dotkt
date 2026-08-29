@@ -8,6 +8,13 @@ public delegate int ExternalTransformer(int value);
 
 public delegate TResult ExternalGenericTransformer<T, TResult>(T value);
 
+public sealed class CrossAssemblyArity<T>(T value)
+{
+    public T Value { get; } = value;
+}
+
+public delegate CrossAssemblyArity<int> ExternalArityFactory(int value);
+
 public interface IVisibleGeneric<T>
 {
 }

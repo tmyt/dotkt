@@ -94,9 +94,9 @@
                       WriteOnlyWhenDifferent="true" />
   </Target>
 
-  <!-- The launcher keeps the worker contract one process / one DLL / one project-local packed KLIB, but schedules
-       independent stale references concurrently. It repeats the per-item timestamp check so a single changed reference
-       does not regenerate the whole set when this aggregate MSBuild target runs. No shared cache participates. -->
+  <!-- The in-process launcher keeps one project-local packed KLIB per DLL and schedules independent stale references
+       concurrently. Its persisted MVID/direct-TypeRef graph selects changed roots and their reverse dependents so this
+       aggregate MSBuild target does not regenerate the whole set. No shared machine-wide cache participates. -->
   <Target Name="DotKtGenerateReferenceKlibs"
           DependsOnTargets="DotKtWriteReferenceKlibRsp"
           Inputs="@(_DotKtKlibReference);@(_DotKtDelegateCatalogReference);$(DotKtDll2Klib);$(DotKtReferenceKlibResponseFile)"
