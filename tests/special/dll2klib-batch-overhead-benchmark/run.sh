@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Compare equal total TypeDef work in one assembly and many assemblies. Absolute timings vary by host, but starting a
-# fresh managed process and reparsing the complete catalog per DLL makes the split batch an order of magnitude slower.
-# The in-process bounded scheduler should keep the remaining per-KLIB ZIP/package overhead within a modest ratio.
+# Compare equal total TypeDef work in one assembly and many assemblies. Absolute timings vary by host, but both cold
+# conversion and a full warm-cache check should scale with metadata volume rather than repeatedly opening every input
+# for each batch catalog.
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT_NAME=dll2klib-batch-overhead-benchmark
 source "$ROOT/scripts/lib.sh"
@@ -54,5 +54,15 @@ ratio_hundredths="$(( batch_ms * 100 / single_ms ))"
 	|| die "dll2klib per-assembly batch overhead regressed: "\
 "one/${total_types}=${single_ms} ms, ${BATCH_COUNT}/${TYPES_PER_ASSEMBLY}=${batch_ms} ms (${ratio_hundredths}%)"
 
+warm_single_ms="$(measure "$OUT/single-klib" "$OUT/single.rsp")"
+warm_batch_ms="$(measure "$OUT/batch-klib" "$OUT/batch.rsp")"
+(( warm_single_ms > 0 )) || die "single warm-cache check completed too quickly to measure"
+warm_ratio_hundredths="$(( warm_batch_ms * 100 / warm_single_ms ))"
+(( warm_ratio_hundredths < 400 )) \
+	|| die "dll2klib split-batch warm-cache discovery regressed: "\
+"one/${total_types}=${warm_single_ms} ms, ${BATCH_COUNT}/${TYPES_PER_ASSEMBLY}=${warm_batch_ms} ms "\
+"(${warm_ratio_hundredths}%)"
+
 info "PASS  dll2klib split-batch overhead stays below 6x for equal TypeDef work: "\
-"one/${total_types}=${single_ms} ms, ${BATCH_COUNT}/${TYPES_PER_ASSEMBLY}=${batch_ms} ms (${ratio_hundredths}%)"
+"cold one/${total_types}=${single_ms} ms, ${BATCH_COUNT}/${TYPES_PER_ASSEMBLY}=${batch_ms} ms "\
+"(${ratio_hundredths}%); warm=${warm_single_ms}/${warm_batch_ms} ms (${warm_ratio_hundredths}%)"

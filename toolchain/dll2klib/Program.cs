@@ -90,13 +90,8 @@ internal static class Program
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var inputs = resolvedInputs
-            // Response-file mode is the MSBuild/reference-set contract. The authoritative stdlib declaration surface
-            // is already supplied as the frontend KLIB, so marked CLR stdlib twins produce no projected KLIB.
-            // They remain in `resolvedInputs`: referenced delegate TypeRefs are decoded from their actual TypeDefs,
-            // exactly like delegates in any other reference assembly.
-            .Where(input => !IsStandardLibrary(input))
-            .ToArray();
+        var discovery = DiscoverBatchCatalogs(resolvedInputs);
+        var inputs = discovery.Inputs;
         var work = inputs.Select(input => (
             Input: input,
             Output: Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(input) + ".klib")))
@@ -107,7 +102,7 @@ internal static class Program
         // same tiny naming catalog (Task + Task`1 -> Task / Task1; a singleton
         // List`1 remains List).
         var projectedPaths = inputs.ToHashSet(StringComparer.Ordinal);
-        var inputMetadata = DiscoverInputMetadata(resolvedInputs, projectedPaths);
+        var inputMetadata = discovery.InputMetadata;
         var arityClashes = inputMetadata
             .Where(input => projectedPaths.Contains(input.Path))
             .SelectMany(input => input.PublicArities)
@@ -116,10 +111,10 @@ internal static class Program
             .Select(group => group.Key)
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToArray();
-        var delegateCatalog = DelegateReferenceCatalog.Discover(resolvedInputs);
-        var companionCatalog = CompanionReferenceCatalog.Discover(resolvedInputs);
-        var innerCatalog = InnerReferenceCatalog.Discover(resolvedInputs);
-        using var publicTypeCatalog = PublicTypeCatalog.Discover(resolvedInputs);
+        var delegateCatalog = discovery.Delegates;
+        var companionCatalog = discovery.Companions;
+        var innerCatalog = discovery.Inners;
+        using var publicTypeCatalog = discovery.PublicTypes;
         var collisions = work.GroupBy(x => x.Output, StringComparer.OrdinalIgnoreCase)
             .Where(x => x.Select(y => y.Input).Distinct(StringComparer.Ordinal).Skip(1).Any())
             .ToArray();
@@ -355,18 +350,49 @@ internal static class Program
         string[] ReferencedArityKeys,
         DateTime LastWriteTimeUtc);
 
+    private sealed record BatchCatalogDiscovery(
+        string[] Inputs,
+        InputMetadata[] InputMetadata,
+        DelegateReferenceCatalog Delegates,
+        CompanionReferenceCatalog Companions,
+        InnerReferenceCatalog Inners,
+        PublicTypeCatalog PublicTypes);
+
+    private static BatchCatalogDiscovery DiscoverBatchCatalogs(string[] resolvedInputs)
+    {
+        using var metadata = ReferenceMetadataSet.Open(resolvedInputs);
+        // Response-file mode is the MSBuild/reference-set contract. The authoritative stdlib declaration surface is
+        // already supplied as the frontend KLIB, so marked CLR stdlib twins produce no projected KLIB. They remain in
+        // the metadata universe: referenced delegate TypeRefs are decoded from their actual TypeDefs exactly like
+        // delegates in any other resolved assembly.
+        var inputs = metadata.Assemblies
+            .Where(input => !new MetadataAttributes(input.Reader).IsStandardLibrary)
+            .Select(input => input.Path)
+            .ToArray();
+        var projectedPaths = inputs.ToHashSet(StringComparer.Ordinal);
+        var inputMetadata = DiscoverInputMetadata(metadata.Assemblies, projectedPaths);
+        var delegates = DelegateReferenceCatalog.Discover(metadata.Assemblies);
+        var companions = CompanionReferenceCatalog.Discover(metadata.Assemblies);
+        var inners = InnerReferenceCatalog.Discover(metadata.Assemblies);
+        var publicTypes = PublicTypeCatalog.Discover(metadata.Assemblies);
+        return new BatchCatalogDiscovery(
+            inputs,
+            inputMetadata,
+            delegates,
+            companions,
+            inners,
+            publicTypes);
+    }
+
     private static InputMetadata[] DiscoverInputMetadata(
-        IEnumerable<string> inputs,
+        IEnumerable<ReferenceMetadataSnapshot> inputs,
         IReadOnlySet<string> projectedPaths)
     {
         var result = new List<InputMetadata>();
         foreach (var input in inputs)
         {
-            using var file = File.OpenRead(input);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata || pe.PEHeaders.CorHeader is null)
-                throw new InvalidDataException($"not a managed PE: {input}");
-            var md = pe.GetMetadataReader();
+            var path = input.Path;
+            var md = input.Reader;
             var members = new List<(string Key, int Arity)>();
             string ScopeOf(TypeDefinitionHandle handle)
             {
@@ -377,16 +403,7 @@ internal static class Program
                 var ns = md.GetString(def.Namespace);
                 return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
             }
-            string ReferenceFullName(TypeReferenceHandle handle)
-            {
-                var reference = md.GetTypeReference(handle);
-                var name = md.GetString(reference.Name);
-                if (reference.ResolutionScope.Kind == HandleKind.TypeReference)
-                    return ReferenceFullName((TypeReferenceHandle)reference.ResolutionScope) + "." + name;
-                var ns = md.GetString(reference.Namespace);
-                return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
-            }
-            if (projectedPaths.Contains(input))
+            if (projectedPaths.Contains(path))
             {
                 foreach (var handle in md.TypeDefinitions)
                 {
@@ -411,25 +428,15 @@ internal static class Program
                 }
             }
             result.Add(new InputMetadata(
-                Path.GetFullPath(input),
+                path,
                 md.GetGuid(md.GetModuleDefinition().Mvid).ToString("N"),
                 members.Distinct().OrderBy(member => member.Key, StringComparer.Ordinal)
                     .ThenBy(member => member.Arity).ToArray(),
-                md.TypeReferences.Select(handle =>
-                    {
-                        var reference = md.GetTypeReference(handle);
-                        var name = md.GetString(reference.Name);
-                        var tick = name.IndexOf('`');
-                        var simple = tick < 0 ? name : name[..tick];
-                        var scope = reference.ResolutionScope.Kind == HandleKind.TypeReference
-                            ? ReferenceFullName((TypeReferenceHandle)reference.ResolutionScope)
-                            : md.GetString(reference.Namespace);
-                        return string.IsNullOrEmpty(scope) ? simple : scope + "." + simple;
-                    })
+                input.TypeReferences.Select(reference => reference.ArityKey)
                     .Distinct(StringComparer.Ordinal)
                     .OrderBy(key => key, StringComparer.Ordinal)
                     .ToArray(),
-                File.GetLastWriteTimeUtc(input)));
+                input.LastWriteTimeUtc));
         }
         return result.OrderBy(input => input.Path, StringComparer.Ordinal).ToArray();
     }
@@ -543,16 +550,14 @@ internal sealed class DelegateReferenceCatalog
         }
     }
 
-    public static DelegateReferenceCatalog Discover(IEnumerable<string> inputs)
+    public static DelegateReferenceCatalog Discover(IEnumerable<ReferenceMetadataSnapshot> inputs)
     {
-        var paths = inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal).ToArray();
+        var assemblies = inputs.ToArray();
         var definitions = new List<DelegateCatalogEntry>();
-        foreach (var path in paths)
+        foreach (var assembly in assemblies)
         {
-            using var file = File.OpenRead(path);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata) continue;
-            var md = pe.GetMetadataReader();
+            var path = assembly.Path;
+            var md = assembly.Reader;
             var assemblyName = AssemblyName(md, path);
             foreach (var handle in md.TypeDefinitions)
             {
@@ -573,12 +578,10 @@ internal sealed class DelegateReferenceCatalog
         // forwarding assembly in its TypeRef even though the delegate TypeDef
         // and Invoke signature live in the implementation assembly.
         var aliases = new List<DelegateCatalogEntry>();
-        foreach (var path in paths)
+        foreach (var assembly in assemblies)
         {
-            using var file = File.OpenRead(path);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata) continue;
-            var md = pe.GetMetadataReader();
+            var path = assembly.Path;
+            var md = assembly.Reader;
             var forwardingAssembly = AssemblyName(md, path);
             foreach (var handle in md.ExportedTypes)
             {
@@ -729,16 +732,14 @@ internal sealed class InnerReferenceCatalog
         }
     }
 
-    public static InnerReferenceCatalog Discover(IEnumerable<string> inputs)
+    public static InnerReferenceCatalog Discover(IEnumerable<ReferenceMetadataSnapshot> inputs)
     {
-        var inputPaths = inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal).ToArray();
+        var assemblies = inputs.ToArray();
         var entries = new List<InnerCatalogEntry>();
-        foreach (var path in inputPaths)
+        foreach (var assembly in assemblies)
         {
-            using var file = File.OpenRead(path);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata) continue;
-            var md = pe.GetMetadataReader();
+            var path = assembly.Path;
+            var md = assembly.Reader;
             var attrs = new MetadataAttributes(md);
             if (!attrs.IsDotKtAssembly) continue;
             var assemblyIdentity = AssemblyIdentity(md);
@@ -756,12 +757,9 @@ internal sealed class InnerReferenceCatalog
             }
         }
         var forwarders = new List<(string ForwardingIdentity, string TargetIdentity, string MetadataName)>();
-        foreach (var path in inputPaths)
+        foreach (var assembly in assemblies)
         {
-            using var file = File.OpenRead(path);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata) continue;
-            var md = pe.GetMetadataReader();
+            var md = assembly.Reader;
             var forwardingIdentity = AssemblyIdentity(md);
             foreach (var handle in md.ExportedTypes)
             {
@@ -1049,16 +1047,14 @@ internal sealed class CompanionReferenceCatalog
         }
     }
 
-    public static CompanionReferenceCatalog Discover(IEnumerable<string> inputs)
+    public static CompanionReferenceCatalog Discover(IEnumerable<ReferenceMetadataSnapshot> inputs)
     {
-        var paths = inputs.Select(Path.GetFullPath).Distinct(StringComparer.Ordinal).ToArray();
+        var assemblies = inputs.ToArray();
         var definitions = new List<CompanionCatalogEntry>();
-        foreach (var path in paths)
+        foreach (var assembly in assemblies)
         {
-            using var file = File.OpenRead(path);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata) continue;
-            var md = pe.GetMetadataReader();
+            var path = assembly.Path;
+            var md = assembly.Reader;
             var attrs = new MetadataAttributes(md);
             // A trusted companion carrier can occur only in a DotKt-produced assembly. Avoid indexing and probing
             // every TypeDef in ordinary framework and third-party assemblies merely to prove the carrier is absent.
@@ -1110,12 +1106,9 @@ internal sealed class CompanionReferenceCatalog
 
         var result = new CompanionReferenceCatalog(definitions);
         var aliases = new List<CompanionCatalogEntry>();
-        foreach (var path in paths)
+        foreach (var assembly in assemblies)
         {
-            using var file = File.OpenRead(path);
-            using var pe = new PEReader(file, PEStreamOptions.PrefetchMetadata);
-            if (!pe.HasMetadata) continue;
-            var md = pe.GetMetadataReader();
+            var md = assembly.Reader;
             var forwardingIdentity = AssemblyIdentity(md);
             foreach (var handle in md.ExportedTypes)
             {
