@@ -2390,6 +2390,73 @@ static partial class SuspendColdLowering
             },
         };
 
+        // A materialized intrinsic block is a constructed generic CLASS value. ClosureSynthesis keeps the invoke body
+        // in that class's complete type frame (captured owner prefix + own slots), while the newClosure node carries
+        // the exact application of that frame at this use site. Reconstructing the body inline transfers it into the
+        // enclosing suspend method, so instantiate every lexical type position before the class declaration is pruned.
+        // Referenced-member descriptor vectors stay in the referenced declaration's own frame, exactly as at the
+        // other declaration/application boundaries; substituting those would corrupt overload identity.
+        static JsonArray InstantiateClosureBody(JsonArray source, JsonObject closure, JsonObject construction)
+        {
+            var frameCount = (closure["typeParams"] as JsonArray)?.Count ?? 0;
+            if (frameCount == 0) return (JsonArray)source.DeepClone();
+            var arguments = construction["typeArgs"] as JsonArray;
+            if (arguments == null || arguments.Count != frameCount)
+                throw new InvalidOperationException(
+                    $"generic intrinsic closure '{Str(closure["name"])}' has {frameCount} type parameters but " +
+                    $"its construction supplies {arguments?.Count ?? 0} arguments");
+            var typeArguments = arguments.Select(TypeJson.Read).ToArray();
+
+            static TypeNode Substitute(TypeNode type, TypeNode[] arguments) => type switch
+            {
+                TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < arguments.Length => arguments[tv.I],
+                TypeNode.Fqn f => new TypeNode.Fqn(f.Name,
+                    f.Args?.Select(argument => Substitute(argument, arguments)).ToArray()),
+                TypeNode.Nullable nullable => new TypeNode.Nullable(Substitute(nullable.Of, arguments)),
+                TypeNode.Oblivious oblivious => new TypeNode.Oblivious(Substitute(oblivious.Of, arguments)),
+                TypeNode.Array array => new TypeNode.Array(Substitute(array.Elem, arguments), array.Rank, array.SzArray),
+                TypeNode.ByRef byRef => new TypeNode.ByRef(Substitute(byRef.Of, arguments)),
+                TypeNode.Ptr pointer => new TypeNode.Ptr(Substitute(pointer.Of, arguments)),
+                TypeNode.Mod modifier => new TypeNode.Mod(modifier.Req,
+                    Substitute(modifier.M, arguments), Substitute(modifier.Of, arguments)),
+                TypeNode.Fn function => new TypeNode.Fn(function.Suspend,
+                    Substitute(function.Ret, arguments),
+                    function.Params.Select(parameter => Substitute(parameter, arguments)).ToArray(),
+                    function.Recv == null ? null : Substitute(function.Recv, arguments), function.Clr,
+                    function.Ctx?.Select(parameter => Substitute(parameter, arguments)).ToArray()),
+                _ => type,
+            };
+
+            static JsonNode Rewrite(JsonNode node, TypeNode[] arguments, bool typeScope = true)
+            {
+                if (node is JsonObject obj)
+                {
+                    if (typeScope && TypeJson.IsType(obj))
+                        return TypeJson.Write(Substitute(TypeJson.Read(obj), arguments));
+                    var copy = new JsonObject();
+                    var kind = Str(obj["k"]);
+                    var ownBoundary = kind is "typeDef" or "newSuspendLambda";
+                    foreach (var pair in obj)
+                    {
+                        if (pair.Value == null) copy[pair.Key] = null;
+                        else if (pair.Key is "sig" or "resolvedMemberParams" or "shapeTypes" or "paramSig"
+                            or "delegationSig" or "memberOwnerTypeParams" or "memberMethodTypeParams"
+                            or "memberReturnType" or "memberSignature" or "memberType"
+                            || (pair.Key == "argTypes" && kind != "new") || pair.Key == "synthClass")
+                            copy[pair.Key] = pair.Value.DeepClone();
+                        else
+                            copy[pair.Key] = Rewrite(pair.Value, arguments, typeScope && !ownBoundary);
+                    }
+                    return copy;
+                }
+                if (node is JsonArray array)
+                    return new JsonArray(array.Select(item => item == null ? null : Rewrite(item, arguments, typeScope)).ToArray());
+                return node.DeepClone();
+            }
+
+            return (JsonArray)Rewrite(source, typeArguments);
+        }
+
         // Resolve a suspendCoroutine block arg (newClosure -> a top-level closure class in _closures; newDelegate -> a
         // top-level generated method in _lambdaMethods) to its invoke body, continuation-param name, and capture map (empty
         // for newDelegate). Returns (null, …) when unresolvable.
@@ -2419,6 +2486,8 @@ static partial class SuspendColdLowering
             else return (null, null, null, null);
             if (invoke == null) return (null, null, null, null);
             var body = invoke["body"] as JsonArray ?? new JsonArray();
+            if (closureType != null)
+                body = InstantiateClosureBody(body, _closures[closureType], arg);
             var cParam = (invoke["params"] as JsonArray)?.OfType<JsonObject>().FirstOrDefault() is JsonObject cp ? Str(cp["name"]) : null;
             return (body, cParam, capMap, closureType);
         }

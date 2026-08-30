@@ -2378,16 +2378,47 @@ static class InlineSplice
             if ((Str(o["k"]) == "newSam" || Str(o["k"]) == "newClosure") && o["synthClass"] is JsonObject sc
                 && Str(sc["name"]) is string cname
                 && sc["typeParams"] is JsonArray tps && tps.Count > 0
-                && o["typeArgs"] is JsonArray ta && ta.Count > 0 && !HasTv(ta))
+                && o["typeArgs"] is JsonArray ta && ta.Count > 0)
             {
-                SubstTypeScopeTvs(sc, ta);       // tv{scope:type,i} -> the concrete typeArgs[i]
-                StripSelfGenericArgs(sc, cname);  // Sam102<...> (self-ref) -> Sam102 (now non-generic)
-                sc.Remove("typeParams");
-                o.Remove("typeArgs");
+                if (!HasTv(ta))
+                {
+                    SubstTypeScopeTvs(sc, ta);       // tv{scope:type,i} -> the concrete typeArgs[i]
+                    StripSelfGenericArgs(sc, cname);  // Sam102<...> (self-ref) -> Sam102 (now non-generic)
+                    sc.Remove("typeParams");
+                    o.Remove("typeArgs");
+                }
+                // SubstTv has already specialized a payload method parameter to a constructed caller-owner type such
+                // as `List<Owner.T>`. The old one-slot synthetic frame is therefore just as redundant as in the closed
+                // case above: the payload body is already in the caller owner's type frame, and TypeOwnershipLowering
+                // will add that exact owner prefix. Keeping the slot makes the ownership pass reinterpret Owner.!0 as
+                // the synthetic's !0, producing an unbound !1 when the body is reconstructed inside a suspend SM.
+                // Direct TVs still express a real frame correspondence and method TVs cannot be supplied by the CLR
+                // owner prefix, so neither belongs to this owner-specialized case.
+                else if (ta.All(argument => argument is JsonObject
+                             && Str(argument["t"]) != "tv" && !HasMethodTv(argument)))
+                {
+                    StripSelfGenericArgs(sc, cname);
+                    sc.Remove("typeParams");
+                    o.Remove("typeArgs");
+                }
             }
             foreach (var kv in o) if (kv.Value != null) PruneConcreteSynthClasses(kv.Value);
         }
         else if (node is JsonArray a) foreach (var c in a) if (c != null) PruneConcreteSynthClasses(c);
+    }
+
+    static bool HasMethodTv(JsonNode node)
+    {
+        if (node is JsonObject o)
+        {
+            if (Str(o["t"]) == "tv" && Str(o["scope"]) == "method") return true;
+            foreach (var pair in o)
+                if (pair.Value != null && HasMethodTv(pair.Value)) return true;
+        }
+        else if (node is JsonArray a)
+            foreach (var child in a)
+                if (child != null && HasMethodTv(child)) return true;
+        return false;
     }
 
     // Substitute a synthClass's OWN type params (`tv{scope:type,i}`) with the concrete `typeArgs[i]` bound at construction.

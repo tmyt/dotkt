@@ -7,6 +7,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inline materialized coroutine blocks now retain constructed generic specializations (#619).** When an inline
+  helper specializes its closure payload to a constructed owner type such as `List<T>`, bir2cir removes the obsolete
+  synthetic type slot and instantiates the closure's exact construction frame before rebuilding its body in the
+  enclosing suspend state machine. The emitted CIR therefore references the owner's real generic slot instead of an
+  unbound synthetic `!N`.
+
 - **Concrete reference arrays now retain their reified view across open nullable-generic returns (#322).** An open
   `Array<T?>` declaration keeps its uniform `object[]` CLR ABI, while a call instantiated with a reference type now
   states the checked projection back to the concrete Kotlin array (`Array<String?>` is `string[]`) before a following

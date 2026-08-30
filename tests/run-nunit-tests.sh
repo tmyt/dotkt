@@ -227,6 +227,14 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  INLINE SUSPEND FRAME CIR FAIL — see build/nunit-$name.inline-suspend-frame-cir.log"
 			tail -25 "$ROOT/build/nunit-$name.inline-suspend-frame-cir.log"; rc=1
 		fi
+		materialized_frame_cir="$dir/obj/$CONFIGURATION/net10.0/cir/MaterializedLambdaCaptureTests.cir.json"
+		if python3 "$ROOT/tests/coroutines/assert-materialized-constructed-frame-cir.py" "$materialized_frame_cir" \
+			>"$ROOT/build/nunit-$name.materialized-constructed-frame-cir.log" 2>&1; then
+			echo "  materialized constructed intrinsic generic frame OK"
+		else
+			echo "  MATERIALIZED CONSTRUCTED FRAME CIR FAIL — see build/nunit-$name.materialized-constructed-frame-cir.log"
+			tail -25 "$ROOT/build/nunit-$name.materialized-constructed-frame-cir.log"; rc=1
+		fi
 	fi
 	if [[ "$proj" == "tests/interop/consumer" ]]; then
 		interop_dll="$dir/bin/$CONFIGURATION/net10.0/InteropConsumer.Tests.dll"

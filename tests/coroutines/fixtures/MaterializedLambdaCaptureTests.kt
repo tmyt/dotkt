@@ -19,9 +19,30 @@ suspend fun materializedCaptureWrite(): Int {
     return materializedCaptureSuspend { cont -> acc += 10; cont.resume(acc) }
 }
 
+private class MaterializedConstructedBox<T>(val continuation: Continuation<T>)
+
+private suspend inline fun <T> materializedConstructedSuspend(
+    crossinline block: (MaterializedConstructedBox<T>) -> Unit
+): T = suspendCoroutineUninterceptedOrReturn { uCont ->
+    val box = MaterializedConstructedBox<T>(uCont)
+    block(box)
+    COROUTINE_SUSPENDED
+}
+
+private class MaterializedConstructedOwner<T>(private val value: T) {
+    suspend fun awaitList(): List<T> = materializedConstructedSuspend<List<T>> { box ->
+        box.continuation.resume(listOf(value))
+    }
+}
+
 class MaterializedLambdaCaptureTests {
     @TestAttribute
     fun refCellWriteThroughMaterializedCarrier() {
         assertEquals(10, blockOn { materializedCaptureWrite() })   // 10 — ref-cell write-through through the materialized carrier
+    }
+
+    @TestAttribute
+    fun constructedSpecializationKeepsTheOwnersExactGenericFrame() {
+        assertEquals(listOf("OK"), blockOn { MaterializedConstructedOwner("OK").awaitList() })
     }
 }
