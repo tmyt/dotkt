@@ -27,9 +27,39 @@ using DotKt.Bir;
 static class ClosureSynthesis
 {
     static string Str(JsonNode n) => (n as JsonValue)?.GetValue<string>();
+    const string PreboundFrameKey = "_syntheticFrameBound";
 
     // The referenced-metadata `ref struct` oracle, for the capture legality check (see CheckCaptureLegality).
     static ReferenceMetadataIndex _refs;
+
+    // Inline substitution must never reinterpret a synthClass payload's lexical TVs after it has replaced the
+    // surrounding method application with a constructed caller type. Establish the synthetic class's own dense frame
+    // while the original direct outer-TV correspondence is still intact; InlineSplice then substitutes only the
+    // construction-side typeArgs. ClosureSynthesis later preserves this frame and records the post-substitution
+    // application for downstream synthetic-reference binding.
+    internal static void PrebindSplicedFrames(JsonNode node)
+    {
+        if (node is JsonObject obj)
+        {
+            if ((Str(obj["k"]) is "newClosure" or "newSam")
+                && obj["synthClass"] is JsonObject synth
+                && obj["typeArgs"] is JsonArray typeArgs)
+            {
+                // Nested synthClasses own independent frames. Bind them first, then shield them from the outer walk.
+                foreach (var pair in synth.ToList())
+                    if (pair.Value != null) PrebindSplicedFrames(pair.Value);
+                var rebound = RebindSyntheticTypeVariables(synth, typeArgs, recordOrigins: false);
+                rebound[PreboundFrameKey] = true;
+                obj["synthClass"] = rebound;
+                return;
+            }
+            foreach (var pair in obj.ToList())
+                if (pair.Value != null) PrebindSplicedFrames(pair.Value);
+        }
+        else if (node is JsonArray array)
+            foreach (var child in array)
+                if (child != null) PrebindSplicedFrames(child);
+    }
 
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
@@ -74,7 +104,7 @@ static class ClosureSynthesis
                     // class is assembled over an already-lean body (inner `newClosure`s stripped, inner classes queued).
                     if (sc["body"] is JsonNode body) Walk(body, newTypes, decl);
                     CheckCaptureLegality(sc, decl);
-                    newTypes.Add(BuildClosureClass(RebindSyntheticTypeVariables(sc, o["typeArgs"] as JsonArray)));
+                    newTypes.Add(BuildClosureClass(PrepareSyntheticTypeVariables(sc, o["typeArgs"] as JsonArray)));
                     o.Remove("synthClass");
                     return;   // the invoke `body` (above) was recursed for NESTED closures; return WITHOUT descending into
                               // this node's other children (the just-removed synthClass; the capture-value exprs are leaf reads)
@@ -90,7 +120,7 @@ static class ClosureSynthesis
                     if (scSam["methods"] is JsonArray sms)
                         foreach (var m in sms) if (m is JsonObject mo && mo["body"] is JsonNode mb) Walk(mb, newTypes, decl);
                     CheckCaptureLegality(scSam, decl);
-                    newTypes.Add(RebindSyntheticTypeVariables(scSam, o["typeArgs"] as JsonArray));
+                    newTypes.Add(PrepareSyntheticTypeVariables(scSam, o["typeArgs"] as JsonArray));
                     o.Remove("synthClass");
                     return;
                 }
@@ -162,7 +192,24 @@ static class ClosureSynthesis
     // exact outer-type -> synthesized-class-param correspondence (and already orders the synthClass.typeParams).
     // Rebind direct outer TVs before publishing the class definition; leaving method-scope tokens in a class field,
     // ctor, or non-generic invoke/emit method creates an unbound `!!i` signature.
-    static JsonObject RebindSyntheticTypeVariables(JsonObject source, JsonArray typeArgs)
+    static JsonObject PrepareSyntheticTypeVariables(JsonObject source, JsonArray typeArgs)
+    {
+        if (source[PreboundFrameKey] == null)
+            return RebindSyntheticTypeVariables(source, typeArgs);
+        var clone = (JsonObject)source.DeepClone();
+        clone.Remove(PreboundFrameKey);
+        var count = (clone["typeParams"] as JsonArray)?.Count ?? 0;
+        if (count == 0) return clone;
+        if (typeArgs == null || typeArgs.Count != count)
+            throw new InvalidOperationException(
+                $"generic synthetic class `{Str(clone["name"])}` has {count} type params but "
+                + $"{typeArgs?.Count ?? 0} construction type args");
+        clone["_syntheticTypeArgs"] = typeArgs.DeepClone();
+        return clone;
+    }
+
+    static JsonObject RebindSyntheticTypeVariables(JsonObject source, JsonArray typeArgs,
+        bool recordOrigins = true)
     {
         var clone = source.DeepClone() as JsonObject
                     ?? throw new InvalidOperationException("synthetic class must be an object");
@@ -174,7 +221,7 @@ static class ClosureSynthesis
                 + $"{typeArgs?.Count ?? 0} construction type args");
         // Transient bir2cir fact consumed by SharedSyntheticSynthesis: a bare Ref-cell identity inside this lifted
         // class must construct its generic arguments in the NEW class scope, using the same outer-TV correspondence.
-        clone["_syntheticTypeArgs"] = typeArgs.DeepClone();
+        if (recordOrigins) clone["_syntheticTypeArgs"] = typeArgs.DeepClone();
 
         var positions = new Dictionary<(string Scope, int Index), int>();
         for (var i = 0; i < typeArgs.Count; i++)
@@ -206,7 +253,7 @@ static class ClosureSynthesis
                     }
                     foreach (var kv in o)
                     {
-                        if (kv.Value == null || kv.Key == "_syntheticTypeArgs") continue;
+                        if (kv.Value == null || kv.Key is "_syntheticTypeArgs" or "synthClass") continue;
                         // These are facts in the ACCESSED DECLARATION'S generic frame. Only the call site's own
                         // applications/typeArgs belong to the closure's lexical frame and may be rebound to captured
                         // class slots. Rebinding a callee `!!0` here changes its formal method parameter into an

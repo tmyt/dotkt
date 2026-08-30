@@ -19,9 +19,51 @@ suspend fun materializedCaptureWrite(): Int {
     return materializedCaptureSuspend { cont -> acc += 10; cont.resume(acc) }
 }
 
+private class MaterializedConstructedBox<T>(val continuation: Continuation<T>)
+
+private suspend inline fun <T> materializedConstructedSuspend(
+    crossinline block: (MaterializedConstructedBox<T>) -> Unit
+): T = suspendCoroutineUninterceptedOrReturn { uCont ->
+    val box = MaterializedConstructedBox<T>(uCont)
+    block(box)
+    COROUTINE_SUSPENDED
+}
+
+private class MaterializedConstructedOwner<T>(private val value: T) {
+    suspend fun awaitList(): List<T> = materializedConstructedSuspend<List<T>> { box ->
+        box.continuation.resume(listOf(value))
+    }
+}
+
+private class MaterializedMixedBox<A, B>(val continuation: Continuation<A>, val tag: B)
+
+private suspend inline fun <A, B> materializedMixedSuspend(
+    tag: B,
+    crossinline block: (MaterializedMixedBox<A, B>) -> Unit
+): A = suspendCoroutineUninterceptedOrReturn { uCont ->
+    block(MaterializedMixedBox<A, B>(uCont, tag))
+    COROUTINE_SUSPENDED
+}
+
+private class MaterializedMixedOwner<T>(private val value: T) {
+    suspend fun awaitTaggedList(): List<T> = materializedMixedSuspend<List<T>, T>(value) { box ->
+        box.continuation.resume(listOf(box.tag))
+    }
+}
+
 class MaterializedLambdaCaptureTests {
     @TestAttribute
     fun refCellWriteThroughMaterializedCarrier() {
         assertEquals(10, blockOn { materializedCaptureWrite() })   // 10 — ref-cell write-through through the materialized carrier
+    }
+
+    @TestAttribute
+    fun constructedSpecializationKeepsTheOwnersExactGenericFrame() {
+        assertEquals(listOf("OK"), blockOn { MaterializedConstructedOwner("OK").awaitList() })
+    }
+
+    @TestAttribute
+    fun constructedAndDirectSpecializationsShareTheExactOwnerFrame() {
+        assertEquals(listOf("OK"), blockOn { MaterializedMixedOwner("OK").awaitTaggedList() })
     }
 }

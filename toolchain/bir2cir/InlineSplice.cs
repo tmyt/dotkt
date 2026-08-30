@@ -309,6 +309,7 @@ static class InlineSplice
             ?? TypeJson.OwnerName(_fileClassOwner)
             ?? throw new InvalidOperationException("inline splice has no authored semantic use-site owner");
         RenameSpliceSynthClasses(pBody, spliceCloneId, consumerSemanticOwner);
+        ClosureSynthesis.PrebindSplicedFrames(pBody);
         // F2B: the dispatch receiver's concretized owning-class type args (in the flattened `scope:type` index space), or
         // null when kotc could not supply them (no dispatch / non-generic owner / receiver-class != owner / tv-render /
         // arity mismatch). Substituted alongside `scope:method` in the SAME fused STEP-2 pass over the pristine payload.
