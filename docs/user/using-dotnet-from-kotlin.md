@@ -102,7 +102,8 @@ A `ref`-returning method received plainly gives you a value copy; bind it with
 - `int?` / `double?` ⇔ Kotlin `Int?` / `Double?` in both directions (passing a plain `Int` or
   `null` into an `int?` parameter both work).
 - A .NET **enum** imports as an object of enum-typed values: read, pass, `==`, and `when` over it
-  (a `when` needs an `else` — .NET enums are open).
+  (a `when` needs an `else` — .NET enums are open). An enum carrying the exact CLR `[Flags]` attribute also exposes
+  typed `or`, `and`, `xor`, `inv`, and `in` operations without leaving its enum type.
 - C# **operator overloads** (`op_Addition`, …) surface as Kotlin operators: `a + b`, `-a`, etc.
   (`==` deliberately routes to `Equals`, the Kotlin semantics.)
 - C#-defined **extension methods** surface as Kotlin extension functions.
