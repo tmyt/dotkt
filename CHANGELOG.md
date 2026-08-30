@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Star-projected data-class copy defaults now bind through existential getter slots (#621).** Canonical backing-field
+  reads carried by `KotlinDefault` are projected through the existing property getter on a fieldless `$star`
+  interface, while custom and genuinely overridable getter semantics remain untouched.
+
 - **Inline materialized coroutine blocks now retain constructed generic specializations (#619).** When an inline
   helper specializes its closure payload to a constructed owner type such as `List<T>`, bir2cir removes the obsolete
   synthetic type slot and instantiates the closure's exact construction frame before rebuilding its body in the

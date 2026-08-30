@@ -101,6 +101,8 @@ import starprojection.StarKey
 import starprojection.starOwner
 import starprojection.FirstUseBox
 import starprojection.firstUseBox
+import starprojection.ReferencedStarCopy
+import starprojection.referencedStarCopy
 import starprojection.MixedBox
 import starprojection.mixedBox
 import starprojection.ExplicitNameStarCollision
@@ -434,6 +436,11 @@ class GenericMetadataRoundtripTests {
         // place that asks for the projection and must still receive the original object through the raw view.
         val first: FirstUseBox<*> = firstUseBox()
         ClassicAssert.AreEqual("first-use", first.get())
+
+        val copySource: ReferencedStarCopy<*> = referencedStarCopy()
+        val copied = copySource.copy()
+        ClassicAssert.AreEqual("referenced", copied.value)
+        ClassicAssert.AreEqual("copy", copied.tag)
 
         // One physical existential serves every projection mask, while [KotlinType] preserves the concrete second
         // argument. Re-import must therefore keep second() statically String rather than degrading the whole slot.

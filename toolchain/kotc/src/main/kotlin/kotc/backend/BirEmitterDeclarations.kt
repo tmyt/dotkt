@@ -1928,7 +1928,14 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	} else null
 	// #6 the return POSTCONDITION (if any) is registered on fn's return-target symbol for the body emission, so a
 	// genuine `return v` wraps v in a non-null bind-check-throw (BirEmitterStatements.kt IrReturn).
-	val bodyStmts = withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	val savedDataClassEqualsFieldRead = activeDataClassEqualsFieldRead
+	activeDataClassEqualsFieldRead = fn.origin == IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER &&
+		(fn.parent as? IrClass)?.isData == true && fn.name.asString() == "equals"
+	val bodyStmts = try {
+		withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	} finally {
+		activeDataClassEqualsFieldRead = savedDataClassEqualsFieldRead
+	}
 	tailrecCtx = savedTailrec
 	val coreBody = if (tailrecStart != null) """{"k":"label","id":$tailrecStart}${if (bodyStmts.isNotEmpty()) ",$bodyStmts" else ""}""" else bodyStmts
 	// #6 non-null parameter PRECONDITIONS run at entry, BEFORE the tailrec label so a self-tail-jump does not re-check.
@@ -2283,11 +2290,20 @@ internal fun BirEmitter.isDataClassCopy(fn: org.jetbrains.kotlin.ir.declarations
  *  `{k:defaultArgReceiver,kind:dispatch|extension|enclosing}` leaves rather than the ambiguous ordinary BIR `{k:this}`.
  *  A nested closure/SAM/suspend-lambda's OWN `{k:this}` remains ordinary BIR and is never mistaken for the callee's
  *  receiver by the consumer-side token substitution. */
-internal fun BirEmitter.defaultCarrierBir(def: org.jetbrains.kotlin.ir.expressions.IrExpression): String {
+internal fun BirEmitter.defaultCarrierBir(
+	def: org.jetbrains.kotlin.ir.expressions.IrExpression,
+	dataClassCopyDefault: Boolean = false,
+): String {
 	val before = liftedMethods.size
 	// This is a second declaration projection, independent of a same-module call site's projection of the same IR.
 	// Give lexical local functions fresh ids here; the primary ids remain installed for the executable expression.
-	val bir = withClonedLocalFunctionIds(def) { expr(def) }
+	val savedCopyDefault = activeDataClassCopyDefault
+	activeDataClassCopyDefault = dataClassCopyDefault
+	val bir = try {
+		withClonedLocalFunctionIds(def) { expr(def) }
+	} finally {
+		activeDataClassCopyDefault = savedCopyDefault
+	}
 	val delta = if (liftedMethods.size > before) {
 		val d = ArrayList(liftedMethods.subList(before, liftedMethods.size))
 		while (liftedMethods.size > before) liftedMethods.removeAt(liftedMethods.size - 1)
@@ -2382,7 +2398,8 @@ internal fun BirEmitter.paramsJsonList(params: List<org.jetbrains.kotlin.ir.decl
 			// build (`--build-stdlib=runtime`), so param attrs ride only the ref.dll — exactly bir2cir's read surface.
 			val srcAttrs = attrsJson(it.annotations)
 			val kotlinDefault = if (emitKotlinDefault) it.defaultValue?.expression?.let { def ->
-				val bir = defaultCarrierBir(def)   // BIR of the default (real IR — the callee's own build), CLOSED for cross-module splice
+				// BIR of the default (real IR — the callee's own build), CLOSED for cross-module splice.
+				val bir = defaultCarrierBir(def, ownerFn is IrSimpleFunction && isDataClassCopy(ownerFn))
 				"""{"attr":${fqnJson("kotlin.clr.KotlinDefault")},"argTypes":[${fqnJson("kotlin.Int")},${fqnJson("kotlin.String")}],"args":[{"k":"const","type":${fqnJson("kotlin.Int")},"value":${valueIdx + extOffset}},{"k":"const","type":${fqnJson("kotlin.String")},"value":${str(bir)}}]}"""
 			} else null
 			val allAttrs = listOfNotNull(srcAttrs.takeIf { s -> s.isNotEmpty() }, kotlinDefault).joinToString(",")

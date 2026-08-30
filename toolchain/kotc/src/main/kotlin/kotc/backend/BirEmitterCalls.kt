@@ -337,7 +337,7 @@ private fun BirEmitter.fillOmitted(
 					// property read uses — the referenced, instantiated `kotlin.Pair[Int,Int]`, no `@` this-assembly
 					// prefix, no open `gp:` param; the @KotlinDefault splice cannot carry that instantiation). The `sty`
 					// stamp is instantiated the same way — see [callSiteType].
-					else """{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":$recvJson,"name":${str(p.name.asString())}}"""
+					else """{"sty":${birType(p.type).toJson()},"k":"field","ownerType":${ownerSpec(callee.parent as? IrClass, r.type).toJson()},"recv":$recvJson,"name":${str(p.name.asString())},"dataClassCopyDefault":true}"""
 				}
 				// The frontend has already selected a reference-KLIB declaration and admitted the omission. Preserve
 				// only that positional fact; bir2cir reads the authoritative KotlinDefault or ECMA-335 constant from
@@ -384,8 +384,13 @@ private fun BirEmitter.fillOmitted(
 				// it passes on — is written in the CALLEE's frame. A positional type variable there names a slot the
 				// caller's frame does not have: `class G<T>(val v: T) { fun one(a: T = v) }` spliced into a
 				// non-generic caller left `G`'s `!0` as the owner of the `v` read (InvalidProgramException at load).
+				val savedCopyDefault = activeDataClassCopyDefault
+				activeDataClassCopyDefault = callee is IrSimpleFunction && isDataClassCopy(callee)
 				try { expr(def) }
-				finally { saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) } }
+				finally {
+					activeDataClassCopyDefault = savedCopyDefault
+					saved.forEach { (d, prev) -> if (prev != null) captureSubst[d] = prev else captureSubst.remove(d) }
+				}
 			}
 			else -> { stableFill = isStableValue(def); argExpr(def, p) }   // constant / global — inline verbatim
 		}

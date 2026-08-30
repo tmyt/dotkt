@@ -50,7 +50,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=477
+	["tests/basic"]=478
 	["tests/coroutines"]=198
 	["tests/roundtrip/consumer"]=87
 	["tests/roundtrip/bidirectional/consumer"]=9
@@ -120,6 +120,16 @@ for proj in "${PROJECTS[@]}"; do
 	# Build (restore from the local feed via tests/nuget.config). A build failure is a red gate.
 	if ! dotnet build "$dir" -c "$CONFIGURATION" --no-incremental -m:1 -v q --nologo >"$ROOT/build/nunit-$name.build.log" 2>&1; then
 		echo "  BUILD FAIL — see build/nunit-$name.build.log"; tail -25 "$ROOT/build/nunit-$name.build.log"; rc=1; continue
+	fi
+	if [[ "$proj" == "tests/basic" ]]; then
+		star_copy_cir="$dir/obj/$CONFIGURATION/net10.0/cir/DefaultArgumentTests.cir.json"
+		if python3 "$ROOT/tests/basic/assert-star-copy-default-fields-cir.py" "$star_copy_cir" \
+			>"$ROOT/build/nunit-$name.star-copy-default-fields.log" 2>&1; then
+			echo "  star-projected copy defaults use existential getter slots"
+		else
+			echo "  STAR COPY DEFAULT FIELD BINDING FAIL — see build/nunit-$name.star-copy-default-fields.log"
+			tail -25 "$ROOT/build/nunit-$name.star-copy-default-fields.log"; rc=1
+		fi
 	fi
 	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer
 	# DLL must carry an explicit trusted owner/name/representation record, and dll2klib must wire that record into the

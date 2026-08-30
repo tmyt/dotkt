@@ -436,6 +436,13 @@ internal fun hasExplicitClrNameAnnotation(fn: org.jetbrains.kotlin.ir.declaratio
 	// their owner from the referenced target declaration. Declaration emitters scope this value while rendering bodies;
 	// top-level expressions fall back to the current file facade.
 	internal var activeSemanticOwner: String? = null
+	// True only while serializing the compiler-generated default of a data-class `copy` parameter, either directly at
+	// a call site or into its KotlinDefault carrier. The frontend has already proved the generated-copy declaration
+	// shape; the field renderer preserves that exact fact for a downstream existential-receiver representation change.
+	internal var activeDataClassCopyDefault: Boolean = false
+	// True only while projecting the compiler-generated `equals` body of a data class. Its peer comparison reads
+	// constructor-property fields from a successful raw-classifier cast whose CLR representation may be existential.
+	internal var activeDataClassEqualsFieldRead: Boolean = false
 	// Per-file prefix for SYNTHETIC type names (closures, ref cells, sequence SMs). Each file is compiled by its own
 	// BirEmitter with a fresh `closureCounter`, so unprefixed names like `dotkt$Closure0` COLLIDE across files when
 	// ilemit links all BIR into one assembly (the dup overwrites in `_types` -> orphaned TypeBuilder -> Save crash).

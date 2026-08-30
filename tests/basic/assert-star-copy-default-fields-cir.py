@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Assert that #621 projects star-receiver copy defaults through existential getter slots."""
+
+import json
+import sys
+
+
+def objects(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from objects(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from objects(value)
+
+
+if len(sys.argv) != 2:
+    raise SystemExit(
+        "usage: assert-star-copy-default-fields-cir.py <DefaultArgumentTests.cir.json>"
+    )
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    root = json.load(stream)
+
+for semantic_fact in ("dataClassCopyDefault", "dataClassEqualsFieldRead"):
+    if any(node.get(semantic_fact) is not None for node in objects(root)):
+        raise SystemExit(f"CIR: unconsumed {semantic_fact} semantic fact")
+
+for helper, star_owner in (
+    ("defaultArgCopyThroughStar", "DefaultArgStarCopy$star"),
+    ("defaultArgOverrideCopyThroughStar", "DefaultArgStarOverrideCopy$star"),
+):
+    methods = [
+        method
+        for method in root.get("methods", [])
+        if isinstance(method, dict) and method.get("name") == helper
+    ]
+    if len(methods) != 1:
+        raise SystemExit(f"CIR: found {len(methods)} {helper} helpers, expected 1")
+
+    body = methods[0].get("body", [])
+    star_fields = [
+        node
+        for node in objects(body)
+        if node.get("k") == "field"
+        and isinstance(node.get("ownerType"), dict)
+        and node["ownerType"].get("name") == star_owner
+    ]
+    if star_fields:
+        raise SystemExit(
+            "CIR: fieldless existential owner still receives direct field reads: "
+            f"{[node.get('name') for node in star_fields]!r}"
+        )
+
+    default_reads = [
+        node
+        for node in objects(body)
+        if node.get("k") == "callInstance"
+        and isinstance(node.get("ownerType"), dict)
+        and node["ownerType"].get("name") == star_owner
+        and isinstance(node.get("recv"), dict)
+        and node["recv"].get("k") == "local"
+        and node["recv"].get("name") == "source"
+        and node.get("sig") == []
+    ]
+    returns = sorted(
+        node.get("ret", {}).get("name")
+        for node in default_reads
+        if isinstance(node.get("ret"), dict)
+    )
+    if returns != ["System.Object", "System.String"] or not all(
+        node.get("virtual") is True for node in default_reads
+    ):
+        raise SystemExit(
+            "CIR: copy defaults must be two virtual existential getter calls returning object/string: "
+            f"{default_reads!r}"
+        )
+
+for class_name, star_owner in (
+    ("DefaultArgStarCopy", "DefaultArgStarCopy$star"),
+    ("DefaultArgStarOverrideCopy", "DefaultArgStarOverrideCopy$star"),
+):
+    declarations = [
+        declaration
+        for declaration in root.get("types", [])
+        if isinstance(declaration, dict) and declaration.get("name") == class_name
+    ]
+    methods = [
+        method
+        for declaration in declarations
+        for method in declaration.get("methods", [])
+        if isinstance(method, dict) and method.get("name") == "Equals"
+    ]
+    if len(methods) != 1:
+        raise SystemExit(f"CIR: found {len(methods)} {class_name}.Equals methods, expected 1")
+    peer_reads = [
+        node
+        for node in objects(methods[0].get("body", []))
+        if node.get("k") == "callInstance"
+        and isinstance(node.get("ownerType"), dict)
+        and node["ownerType"].get("name") == star_owner
+        and isinstance(node.get("recv"), dict)
+        and node["recv"].get("k") == "local"
+    ]
+    returns = sorted(
+        node.get("ret", {}).get("name")
+        for node in peer_reads
+        if isinstance(node.get("ret"), dict)
+    )
+    if returns != ["System.Object", "System.String"] or not all(
+        node.get("virtual") is True for node in peer_reads
+    ):
+        raise SystemExit(
+            f"CIR: {class_name}.Equals peer fields must use two physical existential getter slots: "
+            f"{peer_reads!r}"
+        )
+
+print("star-projected data-class field reads use existential getter slots")
