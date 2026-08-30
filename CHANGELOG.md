@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.11 (2026-08-31)
+
 ### Toolchain
 
 - **Star-projected data-class copy defaults now bind through existential getter slots (#621).** Canonical backing-field
