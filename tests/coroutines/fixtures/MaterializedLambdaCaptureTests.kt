@@ -35,6 +35,22 @@ private class MaterializedConstructedOwner<T>(private val value: T) {
     }
 }
 
+private class MaterializedMixedBox<A, B>(val continuation: Continuation<A>, val tag: B)
+
+private suspend inline fun <A, B> materializedMixedSuspend(
+    tag: B,
+    crossinline block: (MaterializedMixedBox<A, B>) -> Unit
+): A = suspendCoroutineUninterceptedOrReturn { uCont ->
+    block(MaterializedMixedBox<A, B>(uCont, tag))
+    COROUTINE_SUSPENDED
+}
+
+private class MaterializedMixedOwner<T>(private val value: T) {
+    suspend fun awaitTaggedList(): List<T> = materializedMixedSuspend<List<T>, T>(value) { box ->
+        box.continuation.resume(listOf(box.tag))
+    }
+}
+
 class MaterializedLambdaCaptureTests {
     @TestAttribute
     fun refCellWriteThroughMaterializedCarrier() {
@@ -44,5 +60,10 @@ class MaterializedLambdaCaptureTests {
     @TestAttribute
     fun constructedSpecializationKeepsTheOwnersExactGenericFrame() {
         assertEquals(listOf("OK"), blockOn { MaterializedConstructedOwner("OK").awaitList() })
+    }
+
+    @TestAttribute
+    fun constructedAndDirectSpecializationsShareTheExactOwnerFrame() {
+        assertEquals(listOf("OK"), blockOn { MaterializedMixedOwner("OK").awaitTaggedList() })
     }
 }

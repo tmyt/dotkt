@@ -2435,7 +2435,8 @@ static partial class SuspendColdLowering
                         return TypeJson.Write(Substitute(TypeJson.Read(obj), arguments));
                     var copy = new JsonObject();
                     var kind = Str(obj["k"]);
-                    var ownBoundary = kind is "typeDef" or "newSuspendLambda";
+                    var typeDefinitionBoundary = kind == "typeDef";
+                    var denseSuspendLambda = kind == "newSuspendLambda" && Str(obj["typeFrame"]) == "dense";
                     foreach (var pair in obj)
                     {
                         if (pair.Value == null) copy[pair.Key] = null;
@@ -2444,8 +2445,11 @@ static partial class SuspendColdLowering
                             or "memberReturnType" or "memberSignature" or "memberType"
                             || (pair.Key == "argTypes" && kind != "new") || pair.Key == "synthClass")
                             copy[pair.Key] = pair.Value.DeepClone();
+                        else if (denseSuspendLambda
+                            && pair.Key is "body" or "params" or "suspendRet" or "typeParams" or "arity" or "k")
+                            copy[pair.Key] = pair.Value.DeepClone();
                         else
-                            copy[pair.Key] = Rewrite(pair.Value, arguments, typeScope && !ownBoundary);
+                            copy[pair.Key] = Rewrite(pair.Value, arguments, typeScope && !typeDefinitionBoundary);
                     }
                     return copy;
                 }
