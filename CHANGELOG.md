@@ -5,11 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.11 (2026-08-31)
+
 ### Toolchain
 
-- **Star-projected data-class copy defaults now bind through existential getter slots (#621).** Canonical backing-field
-  reads carried by `KotlinDefault` are projected through the existing property getter on a fieldless `$star`
-  interface, while custom and genuinely overridable getter semantics remain untouched.
+- **Star-projected data-class field reads now bind through existential getter slots (#621).** Canonical backing-field
+  reads in generated `copy` defaults and `equals` bodies are projected through the existing property getter on a
+  fieldless `$star` interface, while custom and genuinely overridable getter semantics remain untouched.
 
 - **Inline materialized coroutine blocks now retain constructed generic specializations (#619).** When an inline
   helper specializes its closure payload to a constructed owner type such as `List<T>`, bir2cir removes the obsolete
@@ -51,9 +53,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   their constructed owner frames; `ilemit` emits those casts one-to-one instead of inferring Kotlin collection ABI
   from stack types, including both directions of nested `List` storage seams.
 
+- **Collection helper dispatch now requires an exact Kotlin classifier identity (#600).** Names such as `Map.Entry`
+  and `ListIterator` no longer acquire collection semantics merely because they contain `Map` or `List`; rendering,
+  structural equality, and hash codes remain on the actual value instead of entering an incompatible collection helper.
+
 - **DLL-to-KLIB round trips now preserve extension-receiver roles explicitly (#512).** Kotlin extension methods and
   property accessors carry a trusted parameter-role marker instead of relying on the physical name `__self`; ordinary
   parameters with that name remain ordinary, and receiver slots are collision-safe across inline and suspend lowering.
+
+- **DLL-to-KLIB batch projection is faster and dependency-incremental (#615, #617).** dll2klib now converts stale
+  references in one bounded process, derives every immutable catalog from one short-lived metadata snapshot per input,
+  indexes type-forwarder targets, and persists a compact per-input MVID/direct-TypeRef graph. Forwarded references
+  retain both facade and definition edges. A changed DLL regenerates only itself and its current or former reverse
+  dependents; whole-universe arity changes additionally invalidate definitions and users of the affected name. Batch
+  staging prevents a failed conversion from mixing a new projection universe with the last successful cache.
 
 - **Non-public Kotlin interfaces and annotation classes now retain their CLR metadata visibility (#604).** `kotc`
   carries their source visibility through BIR alongside enums and now emits nested annotation declarations, so private
@@ -65,6 +78,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 - **Non-public Kotlin enums now retain their declaration visibility in CLR metadata (#602).** `kotc` carries the
   source visibility of basic and explicit `@ClrEnum` declarations through BIR, so top-level and nested enum TypeDefs
   are no longer widened to public while `bir2cir` and `ilemit` continue consuming the explicit fact one-to-one.
+
+- **Referenced CLR `[Flags]` enums now expose typed bitwise operations (#496).** Kotlin can use `or`, `and`, `xor`,
+  `inv`, and `in` with the exact enum type, preserving unnamed bit patterns and every signed or unsigned underlying
+  width. Operands are evaluated once in Kotlin order, and the contract survives DLL-to-KLIB round trips.
 
 - **Regex option constructors now use an explicit stdlib binding contract (#515).** The stdlib authors the
   `RegexOption` and `Set<RegexOption>` conversion through alias-constructor delegation and explicit CLR enum values;
@@ -130,13 +147,6 @@ This final release includes all changes from `0.9.10-beta1` and `0.9.10-beta2`, 
   `Iterator<Map.Entry<K,V>>.next()` therefore retain `Map.Entry<K,V>` across both lowering sweeps instead of growing
   another nested entry at each pass; synthesized inherited-class/interface forwarding calls carry the same explicit
   caller-frame stamp.
-
-- **DLL-to-KLIB batch projection is faster and dependency-incremental (#615, #617).** dll2klib now converts stale
-  references in one bounded process, derives every immutable catalog from one short-lived metadata snapshot per input,
-  indexes type-forwarder targets, and persists a compact per-input MVID/direct-TypeRef graph. Forwarded references
-  retain both facade and definition edges. A changed DLL regenerates only itself and its current or former reverse
-  dependents; whole-universe arity changes additionally invalidate definitions and users of the affected name. Batch
-  staging prevents a failed conversion from mixing a new projection universe with the last successful cache.
 
 - **Recursive CLR delegate graphs now fail with a bounded diagnostic (#584).** dll2klib tracks the exact active
   TypeDef path while expanding delegate `Invoke` signatures and rejects local, generic, and cross-assembly cycles
