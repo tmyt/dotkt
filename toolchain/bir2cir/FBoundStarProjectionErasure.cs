@@ -1343,29 +1343,24 @@ static class FBoundStarProjectionErasure
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
         IReadOnlySet<int> existentialTypeParameters = null,
-        IReadOnlySet<int> existentialMethodParameters = null,
-        IReadOnlyDictionary<string, TypeNode.Fqn> existentialCastLocals = null)
+        IReadOnlySet<int> existentialMethodParameters = null)
     {
         switch (node)
         {
             case JsonObject obj:
                 var childTypeParameters = existentialTypeParameters;
                 var childMethodParameters = existentialMethodParameters;
-                var childExistentialCastLocals = existentialCastLocals;
                 if (Str(obj["kind"]) != null)
                 {
                     childTypeParameters = ExistentialTypeParameters(obj["typeParams"] as JsonArray, "type");
                     childMethodParameters = null;
                 }
                 else if (obj["body"] is JsonArray && obj["params"] is JsonArray)
-                {
                     childMethodParameters = ExistentialTypeParameters(obj["typeParams"] as JsonArray, "method");
-                    childExistentialCastLocals = DeclarationExistentialCastLocals(obj, owners);
-                }
 
                 BindStarInnerConstruction(obj, owners, defs, refs,
                     existentialTypeParameters, existentialMethodParameters);
-                BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs, existentialCastLocals);
+                BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
                 // A concrete `as G<X>`, however, remains the compiler's documented eager CLR cast semantics and its
@@ -1385,8 +1380,7 @@ static class FBoundStarProjectionErasure
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
-                        Rewrite(value, owners, defs, refs, childTypeParameters, childMethodParameters,
-                            childExistentialCastLocals);
+                        Rewrite(value, owners, defs, refs, childTypeParameters, childMethodParameters);
                 }
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
@@ -1409,46 +1403,10 @@ static class FBoundStarProjectionErasure
                         arr[i] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
                         Rewrite(value, owners, defs, refs,
-                            existentialTypeParameters, existentialMethodParameters, existentialCastLocals);
+                            existentialTypeParameters, existentialMethodParameters);
                 }
                 break;
         }
-    }
-
-    static IReadOnlyDictionary<string, TypeNode.Fqn> DeclarationExistentialCastLocals(JsonObject declaration,
-        IReadOnlyDictionary<string, Owner> owners)
-    {
-        var result = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
-
-        void Collect(JsonNode node)
-        {
-            switch (node)
-            {
-                case JsonObject obj:
-                    // A nested declaration establishes its own local namespace when Rewrite reaches it.
-                    if (obj["body"] is JsonArray && obj["params"] is JsonArray) return;
-                    // A successful raw-classifier cast can be materialized in a local whose logical declaration type
-                    // remains G<T>. Record the explicit cast's physical result so a later field/member use does not
-                    // mistake the local for the invariant closed type.
-                    if (Str(obj["k"]) == "var" && Str(obj["name"]) is string name
-                        && obj["init"] is JsonObject init && Str(init["k"]) == "cast"
-                        && !Bool(init["_exactBridgeCast"])
-                        && TypeJson.Read(init["type"]) is TypeNode.Fqn { Args: { } args } castType
-                        && owners.TryGetValue(castType.Name, out var castOwner) && castOwner.Needed
-                        && args.Any(ContainsStarOrTypeVariable))
-                        result[name] = new TypeNode.Fqn(castOwner.ErasedName);
-                    foreach (var value in obj.Select(pair => pair.Value))
-                        if (value != null) Collect(value);
-                    break;
-                case JsonArray array:
-                    foreach (var value in array)
-                        if (value != null) Collect(value);
-                    break;
-            }
-        }
-
-        Collect(declaration["body"]);
-        return result;
     }
 
     // A default-expression carrier authored inside a generic class may contain a direct read of that class's backing
@@ -1460,7 +1418,7 @@ static class FBoundStarProjectionErasure
     // guessed into the field access.
     static void BindStarFieldThroughCanonicalGetter(JsonObject field,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
-        ReferenceMetadataIndex refs, IReadOnlyDictionary<string, TypeNode.Fqn> existentialCastLocals)
+        ReferenceMetadataIndex refs)
     {
         var dataClassCopyDefault = Bool(field["dataClassCopyDefault"]);
         field.Remove("dataClassCopyDefault");
@@ -1501,13 +1459,13 @@ static class FBoundStarProjectionErasure
         };
         if (field["sty"] != null) call["sty"] = field["sty"].DeepClone();
         if (field["pos"] != null) call["pos"] = field["pos"].DeepClone();
-        // A local reference may still repeat its logical G<T> declaration type after its initializer was projected to
-        // G$star. Supply the explicit cast result only on this tentative call; leave the field untouched if binding
-        // cannot select the corresponding existential getter slot.
+        // The frontend fact identifies a compiler-generated equality peer read. Its local is the successful
+        // raw-classifier cast of the peer, whose physical result is this owner's already-selected existential carrier;
+        // stamp only the tentative getter receiver and leave the field untouched if slot binding still fails.
         if (call["recv"] is JsonObject { } receiver
-            && Str(receiver["k"]) == "local" && Str(receiver["name"]) is string localName
-            && existentialCastLocals?.TryGetValue(localName, out var castResult) == true)
-            receiver["sty"] = TypeJson.Write(castResult);
+            && dataClassEqualsFieldRead && Str(receiver["k"]) == "local"
+            && owners.TryGetValue(fieldOwner.Name, out var equalityOwner) && equalityOwner.Needed)
+            receiver["sty"] = TypeJson.Write(new TypeNode.Fqn(equalityOwner.ErasedName));
         KotlinPropertyAccessors.PreserveCallIdentity(call, fieldName, "get");
         BindInheritedStarMember(call, owners, defs, refs);
 
