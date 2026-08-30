@@ -36,6 +36,12 @@ private class FirstUseStringBox : FirstUseBox<String> {
 
 fun firstUseBox(): FirstUseBox<String> = FirstUseStringBox()
 
+// A downstream generated data-class `copy()` call reconstructs each omitted default from the referenced receiver.
+// On a star receiver those property values must use this assembly's published existential getter slots rather than
+// naming backing fields that the deliberately fieldless existential interface cannot own.
+data class ReferencedStarCopy<T>(val value: T, val tag: String)
+fun referencedStarCopy(): ReferencedStarCopy<String> = ReferencedStarCopy("referenced", "copy")
+
 interface MixedBox<A, B> {
     fun first(): A
     fun second(): B

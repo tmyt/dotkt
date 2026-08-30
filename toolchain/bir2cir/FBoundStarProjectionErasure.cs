@@ -1411,22 +1411,31 @@ static class FBoundStarProjectionErasure
 
     // A default-expression carrier authored inside a generic class may contain a direct read of that class's backing
     // field. Once its dispatch receiver is G<*>, the physical receiver is G$star: an interface which deliberately owns
-    // no fields. Reuse the already-projected property-getter slot only when the source getter proves that this is an
-    // exact representation change: it is non-virtual and its entire body returns this same field. A custom/virtual
-    // getter or an unrelated same-named property is not equivalent and must never be guessed into the field access.
+    // no fields. Reuse the already-projected property-getter slot only when the local source getter proves that this
+    // is an exact representation change, or kotc explicitly identifies the generated data-class copy default. The
+    // latter fact also covers a final data class getter that is virtual only because it fills an interface slot and a
+    // referenced declaration whose body is intentionally absent. Custom or genuinely overridable accessors are never
+    // guessed into the field access.
     static void BindStarFieldThroughCanonicalGetter(JsonObject field,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
         ReferenceMetadataIndex refs)
     {
+        var dataClassCopyDefault = Bool(field["dataClassCopyDefault"]);
+        field.Remove("dataClassCopyDefault");
         if (Str(field["k"]) != "field"
             || Str(field["name"]) is not string fieldName
-            || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn { Args: { } } fieldOwner
-            || !owners.TryGetValue(fieldOwner.Name, out var start) || !start.Needed
-            || FindDeclaringOwner(start, fieldName, "get", 0, 0,
-                Array.Empty<TypeNode>(), null, owners) is not { } found
-            || found.Owner.Name != fieldOwner.Name
-            || !IsCanonicalFieldGetter(found.Method, fieldOwner.Name, fieldName))
+            || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn { Args: { } } fieldOwner)
             return;
+
+        var localCanonical = owners.TryGetValue(fieldOwner.Name, out var start) && start.Needed
+            && FindDeclaringOwner(start, fieldName, "get", 0, 0,
+                Array.Empty<TypeNode>(), null, owners) is { } found
+            && found.Owner.Name == fieldOwner.Name
+            && IsCanonicalFieldGetter(found.Method, fieldOwner.Name, fieldName);
+        // A referenced data class has no declaration body in this compilation. kotc nevertheless knows the exact
+        // generated-copy contract from the restored data-class declaration and marks only that reconstructed property
+        // default. The referenced MethodDef/property carriers then remain the authority for its physical getter slot.
+        if (!localCanonical && !dataClassCopyDefault) return;
 
         var resultType = field["memberType"] ?? field["sty"];
         if (field["recv"] == null || resultType == null) return;
@@ -1447,7 +1456,8 @@ static class FBoundStarProjectionErasure
         BindInheritedStarMember(call, owners, defs, refs);
 
         if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn boundOwner
-            || !owners.Values.Any(owner => owner.ErasedName == boundOwner.Name))
+            || !owners.Values.Any(owner => owner.ErasedName == boundOwner.Name)
+                && !refs.IsExistentialPhysicalOwner(boundOwner.Name))
             return;
         foreach (var key in field.Select(pair => pair.Key).ToList()) field.Remove(key);
         foreach (var pair in call) field[pair.Key] = pair.Value?.DeepClone();

@@ -306,6 +306,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		val clr = ownerClass?.let { clrName(it) }
 		val recvJson = node.receiver?.let { expr(it) } ?: """{"k":"this"}"""
 		val fldName = node.symbol.owner.name.asString()
+		val copyDefault = if (activeDataClassCopyDefault) ",\"dataClassCopyDefault\":true" else ""
 		// #89: a STATIC backing field (top-level property -> file class; companion property -> enclosing class) ->
 		// a `staticField` load with NO receiver. Reached from the property's OWN custom accessor body reading
 		// `field`; a plain field-only property is read directly at the call site (BirEmitterCalls).
@@ -325,7 +326,7 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 		else if (node.symbol.owner.correspondingPropertySymbol?.owner?.let { isLateinitProperty(it) } == true)
 			"""{"k":"lateinitGet","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(fldName)}}"""
 		else
-			"""{"k":"field","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(fldName)}}"""
+			"""{"k":"field","ownerType":${ownerSpec(ownerClass, node.receiver?.type).toJson()},"recv":$recvJson,"name":${str(fldName)}$copyDefault}"""
 	}
 	is IrConstructorCall -> {
 		val klass = node.symbol.owner.parent as? IrClass

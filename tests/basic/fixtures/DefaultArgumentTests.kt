@@ -22,6 +22,14 @@ private fun defaultArgCopyThroughStar(source: DefaultArgStarCopy<*>): String {
     return "${copied.value}:${copied.tag}"
 }
 
+private interface DefaultArgStarValue<T> { val value: T }
+private data class DefaultArgStarOverrideCopy<T>(override val value: T, val tag: String) : DefaultArgStarValue<T>
+
+private fun defaultArgOverrideCopyThroughStar(source: DefaultArgStarOverrideCopy<*>): String {
+    val copied = source.copy()
+    return "${copied.value}:${copied.tag}"
+}
+
 fun defaultArgGreet(name: String, greeting: String = "Hello", punct: String = "!"): String = "$greeting, $name$punct"
 
 fun defaultArgF(a: Int, b: Int = a * 10): Int = a + b
@@ -510,6 +518,10 @@ class DefaultArgumentTests {
     @TestAttribute
     fun dataClassCopyDefaultsReadThroughTheStarReceiver() {
         assertEquals("value:tag", defaultArgCopyThroughStar(DefaultArgStarCopy("value", "tag")))
+        assertEquals(
+            "override:tag",
+            defaultArgOverrideCopyThroughStar(DefaultArgStarOverrideCopy("override", "tag")),
+        )
     }
 
     @TestAttribute
