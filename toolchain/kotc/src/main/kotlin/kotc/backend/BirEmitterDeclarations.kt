@@ -1928,7 +1928,14 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	} else null
 	// #6 the return POSTCONDITION (if any) is registered on fn's return-target symbol for the body emission, so a
 	// genuine `return v` wraps v in a non-null bind-check-throw (BirEmitterStatements.kt IrReturn).
-	val bodyStmts = withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	val savedDataClassEqualsFieldRead = activeDataClassEqualsFieldRead
+	activeDataClassEqualsFieldRead = fn.origin == IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER &&
+		(fn.parent as? IrClass)?.isData == true && fn.name.asString() == "equals"
+	val bodyStmts = try {
+		withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
+	} finally {
+		activeDataClassEqualsFieldRead = savedDataClassEqualsFieldRead
+	}
 	tailrecCtx = savedTailrec
 	val coreBody = if (tailrecStart != null) """{"k":"label","id":$tailrecStart}${if (bodyStmts.isNotEmpty()) ",$bodyStmts" else ""}""" else bodyStmts
 	// #6 non-null parameter PRECONDITIONS run at entry, BEFORE the tailrec label so a self-tail-jump does not re-check.
