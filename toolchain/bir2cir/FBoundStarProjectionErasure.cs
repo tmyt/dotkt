@@ -1360,6 +1360,7 @@ static class FBoundStarProjectionErasure
 
                 BindStarInnerConstruction(obj, owners, defs, refs,
                     existentialTypeParameters, existentialMethodParameters);
+                BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
                 // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
                 // A concrete `as G<X>`, however, remains the compiler's documented eager CLR cast semantics and its
@@ -1406,6 +1407,86 @@ static class FBoundStarProjectionErasure
                 }
                 break;
         }
+    }
+
+    // A default-expression carrier authored inside a generic class may contain a direct read of that class's backing
+    // field. Once its dispatch receiver is G<*>, the physical receiver is G$star: an interface which deliberately owns
+    // no fields. Reuse the already-projected property-getter slot only when the source getter proves that this is an
+    // exact representation change: it is non-virtual and its entire body returns this same field. A custom/virtual
+    // getter or an unrelated same-named property is not equivalent and must never be guessed into the field access.
+    static void BindStarFieldThroughCanonicalGetter(JsonObject field,
+        IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs)
+    {
+        if (Str(field["k"]) != "field"
+            || Str(field["name"]) is not string fieldName
+            || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn { Args: { } } fieldOwner
+            || !owners.TryGetValue(fieldOwner.Name, out var start) || !start.Needed
+            || FindDeclaringOwner(start, fieldName, "get", 0, 0,
+                Array.Empty<TypeNode>(), null, owners) is not { } found
+            || found.Owner.Name != fieldOwner.Name
+            || !IsCanonicalFieldGetter(found.Method, fieldOwner.Name, fieldName))
+            return;
+
+        var resultType = field["memberType"] ?? field["sty"];
+        if (field["recv"] == null || resultType == null) return;
+        var call = new JsonObject
+        {
+            ["k"] = "callInstance",
+            ["ownerType"] = field["ownerType"].DeepClone(),
+            ["method"] = fieldName,
+            ["recv"] = field["recv"].DeepClone(),
+            ["args"] = new JsonArray(),
+            ["sig"] = new JsonArray(),
+            ["ret"] = resultType.DeepClone(),
+            ["virtual"] = false,
+        };
+        if (field["sty"] != null) call["sty"] = field["sty"].DeepClone();
+        if (field["pos"] != null) call["pos"] = field["pos"].DeepClone();
+        KotlinPropertyAccessors.PreserveCallIdentity(call, fieldName, "get");
+        BindInheritedStarMember(call, owners, defs, refs);
+
+        if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn boundOwner
+            || !owners.Values.Any(owner => owner.ErasedName == boundOwner.Name))
+            return;
+        foreach (var key in field.Select(pair => pair.Key).ToList()) field.Remove(key);
+        foreach (var pair in call) field[pair.Key] = pair.Value?.DeepClone();
+    }
+
+    static bool IsCanonicalFieldGetter(JsonObject getter, string owner, string fieldName)
+    {
+        if (Bool(getter["virtual"]) || getter["body"] is not JsonArray { Count: 1 } body
+            || body[0] is not JsonObject statement || Str(statement["k"]) != "return"
+            || CanonicalGetterField(statement["value"]) is not JsonObject value
+            || Str(value["name"]) != fieldName
+            || TypeJson.Read(value["ownerType"]) is not TypeNode.Fqn fieldOwner
+            || fieldOwner.Name != owner
+            || value["recv"] is not JsonObject receiver || Str(receiver["k"]) != "this")
+            return false;
+        return true;
+    }
+
+    static JsonObject CanonicalGetterField(JsonNode value)
+    {
+        if (value is JsonObject direct && Str(direct["k"]) == "field") return direct;
+        // A non-null Kotlin return wraps the same field in `{ var __nn = field; __nn != null ? __nn : throw }`.
+        // Recognize that exact validation wrapper; arbitrary value blocks remain ineligible.
+        if (value is not JsonObject block || Str(block["k"]) != "valueBlock"
+            || block["stmts"] is not JsonArray { Count: 1 } statements
+            || statements[0] is not JsonObject variable || Str(variable["k"]) != "var"
+            || Str(variable["name"]) is not string name
+            || variable["init"] is not JsonObject field || Str(field["k"]) != "field"
+            || block["result"] is not JsonObject conditional || Str(conditional["k"]) != "cond"
+            || conditional["cond"] is not JsonObject not || Str(not["k"]) != "unaryOp"
+            || Str(not["op"]) != "!" || not["e"] is not JsonObject equals
+            || Str(equals["k"]) != "objEq"
+            || equals["lhs"] is not JsonObject lhs || Str(lhs["k"]) != "local" || Str(lhs["name"]) != name
+            || equals["rhs"] is not JsonObject rhs || Str(rhs["k"]) != "const" || rhs["value"] != null
+            || conditional["then"] is not JsonObject then || Str(then["k"]) != "local"
+            || Str(then["name"]) != name
+            || conditional["else"] is not JsonObject otherwise || Str(otherwise["k"]) != "throwExpr")
+            return null;
+        return field;
     }
 
     static void BindStarInnerConstruction(JsonObject construction,

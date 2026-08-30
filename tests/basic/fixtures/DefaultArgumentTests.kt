@@ -15,6 +15,13 @@ import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 
 data class DefaultArgP(val x: Int, val y: Int, val z: Int)
 
+private data class DefaultArgStarCopy<T>(val value: T, val tag: String)
+
+private fun defaultArgCopyThroughStar(source: DefaultArgStarCopy<*>): String {
+    val copied = source.copy()
+    return "${copied.value}:${copied.tag}"
+}
+
 fun defaultArgGreet(name: String, greeting: String = "Hello", punct: String = "!"): String = "$greeting, $name$punct"
 
 fun defaultArgF(a: Int, b: Int = a * 10): Int = a + b
@@ -498,6 +505,11 @@ class DefaultArgumentTests {
         assertEquals("Hello, Kotlin!", defaultArgGreet("Kotlin"))                                  // Hello, Kotlin!
         assertEquals("Hello, Kotlin?", defaultArgGreet("Kotlin", punct = "?"))                     // Hello, Kotlin?
         assertEquals(17, defaultArgLocalFunction())
+    }
+
+    @TestAttribute
+    fun dataClassCopyDefaultsReadThroughTheStarReceiver() {
+        assertEquals("value:tag", defaultArgCopyThroughStar(DefaultArgStarCopy("value", "tag")))
     }
 
     @TestAttribute
