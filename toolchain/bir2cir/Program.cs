@@ -25,6 +25,7 @@ static class Bir2Cir
                 MemberRefNodeSelfTest.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 StdlibBindingOverlay.SelfTest();
+                DriverOptions.SelfTest();
                 return 0;
             }
             var options = DriverOptions.Parse(args);
@@ -1611,8 +1612,22 @@ sealed record DriverOptions(string OutDir, IReadOnlyList<string> CompileReferenc
             throw new UsageException("bir2cir: no BIR input files");
         if (stdlibBindings != null && mode == BuildStdlibMode.App)
             throw new UsageException("bir2cir: --stdlib-bindings is valid only with --build-stdlib");
+        if (stdlibBindings == null && mode != BuildStdlibMode.App)
+            throw new UsageException("bir2cir: --build-stdlib requires --stdlib-bindings <path>");
 
         return new DriverOptions(outDir, refs, inputs, mode, reflectionRestricted, stdlibBindings);
+    }
+
+    public static void SelfTest()
+    {
+        try
+        {
+            Parse(new[] { "out", "--build-stdlib=metadata", "input.bir.json" });
+            throw new InvalidOperationException("DriverOptions self-test accepted a stdlib build without bindings");
+        }
+        catch (UsageException ex) when (ex.Message.Contains("requires --stdlib-bindings", StringComparison.Ordinal))
+        {
+        }
     }
 }
 

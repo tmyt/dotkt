@@ -67,9 +67,9 @@ static class StdlibBindingOverlay
                     + $"but the frontend supplied '{Str(method["name"])}'");
 
             var applied = false;
-            if (binding["physicalName"] is JsonValue physicalValue
-                && physicalValue.TryGetValue<string>(out var physicalName))
+            if (binding.ContainsKey("physicalName"))
             {
+                var physicalName = RequiredStringFact(binding, "physicalName", source, id);
                 if (string.IsNullOrWhiteSpace(physicalName))
                     throw new InvalidDataException(
                         $"stdlib binding overlay '{source}' gives declaration '{id}' an empty physicalName");
@@ -89,9 +89,9 @@ static class StdlibBindingOverlay
                 applied = true;
             }
 
-            if (binding["sequenceElementAdapter"] is JsonValue adapterValue
-                && adapterValue.TryGetValue<bool>(out var adapter))
+            if (binding.ContainsKey("sequenceElementAdapter"))
             {
+                var adapter = RequiredBooleanFact(binding, "sequenceElementAdapter", source, id);
                 if (!adapter)
                     throw new InvalidDataException(
                         $"stdlib binding overlay '{source}' gives declaration '{id}' a false sequenceElementAdapter");
@@ -99,9 +99,9 @@ static class StdlibBindingOverlay
                 applied = true;
             }
 
-            if (binding["implementationDeclarationId"] is JsonValue implementationValue
-                && implementationValue.TryGetValue<string>(out var implementationId))
+            if (binding.ContainsKey("implementationDeclarationId"))
             {
+                var implementationId = RequiredStringFact(binding, "implementationDeclarationId", source, id);
                 if (Str(binding["implementationSourceName"]) is not string implementationSourceName)
                     throw new InvalidDataException(
                         $"stdlib binding overlay '{source}' implementation for declaration '{id}' has no implementationSourceName");
@@ -168,6 +168,18 @@ static class StdlibBindingOverlay
 
     static int? Int(JsonNode node) =>
         (node as JsonValue)?.TryGetValue<int>(out var value) == true ? value : null;
+
+    static string RequiredStringFact(JsonObject binding, string key, string source, string declarationId) =>
+        binding[key] is JsonValue value && value.TryGetValue<string>(out var result)
+            ? result
+            : throw new InvalidDataException(
+                $"stdlib binding overlay '{source}' declaration '{declarationId}' has a non-string {key}");
+
+    static bool RequiredBooleanFact(JsonObject binding, string key, string source, string declarationId) =>
+        binding[key] is JsonValue value && value.TryGetValue<bool>(out var result)
+            ? result
+            : throw new InvalidDataException(
+                $"stdlib binding overlay '{source}' declaration '{declarationId}' has a non-boolean {key}");
 
     public static void SelfTest()
     {
@@ -236,6 +248,16 @@ static class StdlibBindingOverlay
         wrongShape["static"] = true;
         ExpectInvalid(() => ValidateImplementationSignature(method, wrongShape, "selftest-shape", id,
             id + ":implementation"), "implementation shape mismatch");
+
+        var nonBooleanAdapter = overlay.DeepClone().AsObject();
+        nonBooleanAdapter["declarations"]![0]!["sequenceElementAdapter"] = "yes";
+        ExpectInvalid(() => ApplyDocument(new[] { bir.DeepClone() }, nonBooleanAdapter, "selftest-adapter-type"),
+            "non-boolean sequence element adapter");
+
+        var nonStringImplementation = overlay.DeepClone().AsObject();
+        nonStringImplementation["declarations"]![0]!["implementationDeclarationId"] = true;
+        ExpectInvalid(() => ApplyDocument(new[] { bir.DeepClone() }, nonStringImplementation,
+            "selftest-implementation-type"), "non-string implementation declaration identity");
     }
 
     static void ExpectInvalid(Action action, string scenario)
