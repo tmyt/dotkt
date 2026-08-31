@@ -49,6 +49,12 @@ class PersonViewModel : ViewModelBase() {
     var title by stringVmProperty("")
 }
 
+private class NullableEventCarrier<T> {
+    val Changed: ClrEvent<(Int) -> Unit> by clrEvent()
+}
+
+private fun <T> nullableEventCarrier(): NullableEventCarrier<T?> = NullableEventCarrier()
+
 class ClrEventTests {
     // The full §7 conformance: raise carries the property name, unchanged value doesn't raise, unsubscribe stops raises.
     @TestAttribute
@@ -143,5 +149,12 @@ class ClrEventTests {
         assertEquals(1, source.RemoveCount)
         source.Fire(11)
         assertEquals(7, total)
+
+        // The generic helper's phantom T? is represented as object inside the invariant owner, while the event payload
+        // stays a fixed Int. Source use-axis normalization retypes this local before event binding clones its receiver
+        // into a spill; that cloned read must retain the flowed owner type rather than the frontend's closed Int? stamp.
+        val nullableCarrier = nullableEventCarrier<Int>()
+        val nullableSubscription = nullableCarrier.Changed.subscribe { _ -> }
+        nullableSubscription.close()
     }
 }

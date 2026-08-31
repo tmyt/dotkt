@@ -838,8 +838,8 @@ sealed class Pipeline
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
         // happens (`Deferred<Int>.await(): type-TV0` -> `Int`), otherwise a non-generic SM permanently captures an
-        // out-of-scope TV and ilemit can only realize it as object. The late pass below remains necessary after exact
-        // inherited declaring-owner binding; both passes are structural and idempotent.
+        // out-of-scope TV and ilemit can only realize it as object. Later exact declaring-owner transitions discharge
+        // this same obligation locally when they change a call's owner; no module-wide repair sweep follows.
         ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // PHASE 1.5 — SUSPEND COLD LOWERING (R1 classifier): rewrite EVERY declared `suspend fun` (top-level statics,

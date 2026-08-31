@@ -83,16 +83,19 @@ static class ClosureSynthesis
         JsonNode root, IEnumerable<JsonNode> materializedRoots, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return Array.Empty<JsonNode>();
-        return SynthesizeAndAppend(file, materializedRoots, refs);
+        return SynthesizeAndAppend(file, materializedRoots, refs, recoverEnclosingDeclaration: true);
     }
 
     static IReadOnlyList<JsonNode> SynthesizeAndAppend(
-        JsonObject file, IEnumerable<JsonNode> inputs, ReferenceMetadataIndex refs)
+        JsonObject file, IEnumerable<JsonNode> inputs, ReferenceMetadataIndex refs,
+        bool recoverEnclosingDeclaration = false)
     {
         _refs = refs;
         var newTypes = new List<JsonNode>();
         foreach (var input in inputs)
-            if (input != null) Walk(input, newTypes, input);
+            if (input != null)
+                Walk(input, newTypes,
+                    recoverEnclosingDeclaration ? EnclosingDeclaration(input, file) : input);
 
         var appended = new List<JsonNode>();
         if (newTypes.Count > 0)
@@ -109,6 +112,18 @@ static class ClosureSynthesis
                 else { ts.Add(nt); appended.Add(nt); }
         }
         return appended;
+    }
+
+    // Exact materialized roots are already attached to the copied file when this entry runs. Recover the nearest
+    // source declaration through JsonNode's parent relation so a rejected late capture retains the same source
+    // position/name as the main declaration walk, without expanding the normalization work item to the whole file.
+    static JsonNode EnclosingDeclaration(JsonNode input, JsonObject file)
+    {
+        for (var current = input.Parent; current != null && !ReferenceEquals(current, file); current = current.Parent)
+            if (current is JsonObject declaration && declaration["name"] != null
+                && (declaration["body"] != null || declaration["methods"] != null || declaration["ctors"] != null))
+                return declaration;
+        return file;
     }
 
     // `decl` is the nearest enclosing DECLARATION (method/field/type), carried only so a capture diagnostic can

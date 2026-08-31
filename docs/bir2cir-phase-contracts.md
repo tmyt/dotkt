@@ -23,6 +23,12 @@ binding discharge that capability locally, so there is no second module repair w
 supertype indexes remain module-wide analyses; this rule concerns normalization of newly created executable nodes,
 not facts that inherently require the complete emission unit.
 
+`FBoundStarProjectionErasure` constructs forwarding bodies immediately before that initial constructed-result
+admission point, so those calls deliberately join the one module entry. Its forwarding call and bridge declaration
+carry the same result type and introduce no differently typed value position; in particular a `Nothing` result is
+already the method's own terminating contract rather than a value that can enter a merge, local, or foreign return
+slot. It therefore has no separate `NothingValueTermination` construction obligation.
+
 ## Producer rule
 
 A phase that clones or constructs executable nodes must do one of the following before a consumer relies on them:

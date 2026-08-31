@@ -271,8 +271,9 @@ static partial class NullableTvErasureCallRealign
         ReferenceMetadataIndex refs) => ApplySourceUses(root, idx, isValue, refs);
 
     // A producer that creates a self-contained executable subtree after the file pass supplies that exact subtree.
-    // The new graph's own local reads retain frontend/synthesizer stamps, so Eval can seed its flow without walking
-    // the enclosing method again. This is the construction-boundary counterpart of ApplyRec's declaration walk.
+    // The source pass keeps every visited local-read stamp aligned with its flowed declaration type, so a cloned read
+    // can seed this exact-root flow without walking the enclosing method again. This is the construction-boundary
+    // counterpart of ApplyRec's declaration walk.
     public static void ApplyMaterialized(IEnumerable<JsonNode> roots, DeclIndex idx, ValueTypeOracle isValue,
         ReferenceMetadataIndex refs)
     {
@@ -399,11 +400,15 @@ static partial class NullableTvErasureCallRealign
                 return null;
             case "local":
                 // A materialized subtree can retain reads of enclosing locals without carrying the whole enclosing
-                // method into its normalization work item. Their explicit node stamp is the exact source-frame fact;
-                // prefer flow information when available, then use that stamp at this boundary.
-                return Str(obj["name"]) is string ln
-                    ? ctx.Env.GetValueOrDefault(ln) ?? NodeType.Stamp(obj)
-                    : NodeType.Stamp(obj);
+                // method into its normalization work item. While the enclosing source body is available, keep the
+                // explicit stamp aligned with the flowed declaration type; a later construction-boundary clone can
+                // then use that stamp as the exact source-frame fact.
+                if (Str(obj["name"]) is string ln && ctx.Env.GetValueOrDefault(ln) is TypeNode flowedLocal)
+                {
+                    RestampSty(obj, flowedLocal);
+                    return flowedLocal;
+                }
+                return NodeType.Stamp(obj);
             case "const":
                 return TypeJson.Read(obj["type"]);
             case "new":
