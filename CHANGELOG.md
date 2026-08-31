@@ -5,6 +5,13 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Toolchain
+
+- **Generic continuation overrides now retain coherent Kotlin signatures across DLL-to-KLIB projection (#624).**
+  `bir2cir` keeps an earlier source-type carrier authoritative when a declaration has already moved onto the
+  monomorphic `Continuation<object>` CLR slot, preventing a later physical intermediate from masking the original
+  `Continuation<T>` parameter while preserving the uniform runtime ABI.
+
 ## 0.9.11 (2026-08-31)
 
 ### Toolchain

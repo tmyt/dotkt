@@ -90,11 +90,22 @@ static class ContinuationErasure
 
     static void RecordSlot(JsonObject owner, string slot, string fact)
     {
+        // An earlier representation pass may already have moved this declaration onto a CLR slot and captured its
+        // source type in the nullable-generic channel. In that case `owner[slot]` is physical input to this pass, not
+        // Kotlin meaning. Recording it again as [KotlinType] would mask the earlier carrier in dll2klib (which
+        // correctly prefers the exact KotlinType carrier) and publish a hybrid signature. The existing source carrier
+        // remains authoritative; this pass only changes the physical type below.
+        if (HasCapturedSourceSurface(owner, fact)) return;
         if (TypeJson.Read(owner[slot]) is not TypeNode original) return;
         var erased = EraseType(original);
         if (TypeNode.ToJson(original) != TypeNode.ToJson(erased))
             owner[fact] = TypeNode.ToJson(original);
     }
+
+    static bool HasCapturedSourceSurface(JsonObject owner, string fact) =>
+        owner[fact] != null || (fact == "retKotlinType"
+            ? owner["nullableGenericRet"] != null
+            : owner["nullableGeneric"] != null);
 
     static void Walk(JsonNode node, bool inResumeWith)
     {

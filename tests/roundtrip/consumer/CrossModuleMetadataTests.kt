@@ -141,6 +141,7 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
+import continuationoverride.RoundtripContinuationDispatcher
 
 class CrossModuleSuspendSink : Continuation<Int> {
     override val context: CoroutineContext get() = EmptyCoroutineContext
@@ -174,6 +175,8 @@ private class CrossModuleStarContinuationProbe : Continuation<Any?> {
         outcome = result.exceptionOrNull()?.message ?: "success"
     }
 }
+
+private class CrossModuleContinuationDispatcher : RoundtripContinuationDispatcher()
 
 private interface LocalStarDerived<T> : ReferencedStarBase<T>
 private class LocalStarDerivedImpl : LocalStarDerived<String> {
@@ -585,6 +588,14 @@ class MultiplatformMetadataTests {
 }
 
 class SuspendMetadataRoundtripTests {
+    @TestAttribute
+    fun continuationOverrideSlotRoundTripsThroughDll() {
+        val dispatcher = CrossModuleContinuationDispatcher()
+        val continuation = CrossModuleSuspendSink()
+        val intercepted: Continuation<Int> = dispatcher.interceptContinuation(continuation)
+        ClassicAssert.AreSame(continuation, intercepted)
+    }
+
     // The logical suspend result is frozen before CLR representation erasure. Both assignments are invariant type
     // checks: a re-imported List<Any> cannot satisfy either declaration.
     @TestAttribute
