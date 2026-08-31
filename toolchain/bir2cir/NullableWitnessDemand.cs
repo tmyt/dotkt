@@ -228,7 +228,8 @@ sealed class NullableWitnessDemand
         JsonArray typeArguments,
         GeneratedFrameDemands generated,
         bool dense = false) => ResolveFramePositions(
-            Analyze(frame, new[] { generated }), typeArguments, "materialized frame", dense);
+            Analyze(frame, new[] { generated }), typeArguments, "materialized frame",
+            dense || ClosureSynthesis.HasPreboundFrame(frame));
 
     HashSet<TypeVariable> Analyze(JsonNode root, IReadOnlyList<GeneratedFrameDemands> generatedFrames)
     {
@@ -297,7 +298,8 @@ sealed class NullableWitnessDemand
                             ?? throw new InvalidOperationException(
                                 "bir2cir: nullable-sensitive closure has no type arguments");
                         MapFrame(nested, typeArgs,
-                            $"closure '{Str(closure["name"])}'");
+                            $"closure '{Str(closure["name"])}'",
+                            dense: ClosureSynthesis.HasPreboundFrame(closure));
                         return;
                     }
                     if (kind == "newSam" && obj["synthClass"] is JsonObject sam)
@@ -309,7 +311,8 @@ sealed class NullableWitnessDemand
                             ?? throw new InvalidOperationException(
                                 "bir2cir: nullable-sensitive SAM has no type arguments");
                         MapFrame(nested, typeArgs,
-                            $"SAM '{Str(sam["name"])}'");
+                            $"SAM '{Str(sam["name"])}'",
+                            dense: ClosureSynthesis.HasPreboundFrame(sam));
                         return;
                     }
                     if (kind == "newSuspendLambda")

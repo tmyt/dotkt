@@ -25,6 +25,11 @@ public inline fun <reified A, reified B> secondDelayed(value: Any?): Boolean = (
 
 public inline fun <reified A, reified B> secondNonCapturingDelayed(): () -> Boolean = { null is B }
 
+public inline fun <reified T> splicedCaptured(value: Any?, block: () -> Unit): Boolean {
+    block()
+    return ({ value is T })()
+}
+
 public inline fun <reified A, reified B> secondObjectDelayed(value: Any?): Boolean = object {
     public fun matches(): Boolean = value is B
 }.matches()

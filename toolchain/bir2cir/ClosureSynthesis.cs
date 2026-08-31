@@ -78,6 +78,12 @@ static class ClosureSynthesis
         return rebound;
     }
 
+    // A prebound payload owns a dense synthetic frame already.  Its construction-side typeArgs still name the
+    // enclosing frame and may contain the same outer TV more than once after inline specialization, so consumers
+    // must map payload `type#i` positions to typeArgs[i] rather than trying to recover the old outer-TV identity.
+    internal static bool HasPreboundFrame(JsonNode source) =>
+        source is JsonObject obj && obj[PreboundFrameKey] != null;
+
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return;

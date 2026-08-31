@@ -122,7 +122,7 @@ static class ReifiedNullabilityWitnessLowering
                         && obj["typeArgs"] is JsonArray suspendTypeArgs
                         && demand.MaterializedFrameIndices(
                             obj["body"] ?? new JsonArray(), suspendTypeArgs, generatedFrames,
-                            dense: Str(obj["typeFrame"]) == "dense")
+                            dense: false)
                             is { Length: > 0 } suspendIndices)
                     {
                         MaterializeReifiedSuspendLambda(obj, suspendIndices, witnesses, Walk);
@@ -347,6 +347,7 @@ static class ReifiedNullabilityWitnessLowering
 
         var closureMethodWitnesses = new Dictionary<int, JsonNode>();
         var closureTypeWitnesses = new Dictionary<int, JsonNode>();
+        var prebound = ClosureSynthesis.HasPreboundFrame(synthClass);
         var usedNames = fields.OfType<JsonObject>().Select(field => Str(field["name"]))
             .Where(name => name != null).ToHashSet(StringComparer.Ordinal);
         foreach (var index in indices)
@@ -363,7 +364,9 @@ static class ReifiedNullabilityWitnessLowering
                 ["recv"] = new JsonObject { ["k"] = "this" },
                 ["name"] = name,
             };
-            BindCorrespondingWitness(typeArgs[index], field, closureMethodWitnesses, closureTypeWitnesses);
+            if (prebound) closureTypeWitnesses[index] = field;
+            else BindCorrespondingWitness(
+                typeArgs[index], field, closureMethodWitnesses, closureTypeWitnesses);
         }
         if (synthClass["body"] is JsonNode body)
             walk(body, new WitnessFrame(closureMethodWitnesses, closureTypeWitnesses));
@@ -389,6 +392,7 @@ static class ReifiedNullabilityWitnessLowering
 
         var methodWitnesses = new Dictionary<int, JsonNode>();
         var typeWitnesses = new Dictionary<int, JsonNode>();
+        var prebound = ClosureSynthesis.HasPreboundFrame(synthClass);
         var usedNames = fields.OfType<JsonObject>().Select(field => Str(field["name"]))
             .Where(name => name != null).ToHashSet(StringComparer.Ordinal);
         foreach (var index in indices)
@@ -404,7 +408,8 @@ static class ReifiedNullabilityWitnessLowering
                 ["k"] = "field", ["ownerType"] = Fqn(className),
                 ["recv"] = new JsonObject { ["k"] = "this" }, ["name"] = name,
             };
-            BindCorrespondingWitness(typeArgs[index], field, methodWitnesses, typeWitnesses);
+            if (prebound) typeWitnesses[index] = field;
+            else BindCorrespondingWitness(typeArgs[index], field, methodWitnesses, typeWitnesses);
         }
         if (synthClass["methods"] is JsonArray methods)
             foreach (var method in methods.OfType<JsonObject>())
@@ -694,11 +699,11 @@ static class ReifiedNullabilityWitnessLowering
             TypeNode.Tv { Scope: "type" } tv when callerWitnesses?.Type != null
                 && callerWitnesses.Type.TryGetValue(tv.I, out var witness)
                 => witness.DeepClone(),
-            // DotKt has always allowed an ordinary CLR method type parameter to be passed to a reified Kotlin
-            // declaration. Such a parameter carries no Kotlin nullable-instantiation fact, so retain the historical
-            // underlying-CLR-type behavior; a reified caller parameter takes the dynamic branch above instead.
-            TypeNode.Tv { Scope: "method" } => ConstBool(false),
-            TypeNode.Tv { Scope: "type" } => ConstBool(false),
+            // Any forwarded type variable at a demanded position must have acquired a witness through the same
+            // declaration/materialized-frame edge that brought this call here.  Falling back to `false` silently
+            // miscompiles nullable instantiations; source-level non-reified forwarding is already rejected by kotc.
+            TypeNode.Tv tv => throw new InvalidOperationException(
+                $"bir2cir: nullable-witness demand reached unbound {tv.Scope} type parameter {tv.I}"),
             _ => ConstBool(false),
         };
     }

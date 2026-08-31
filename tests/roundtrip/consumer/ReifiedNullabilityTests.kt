@@ -9,6 +9,7 @@ import roundtrip.reifiednullability.checker
 import roundtrip.reifiednullability.suspended
 import roundtrip.reifiednullability.secondDelayed
 import roundtrip.reifiednullability.secondNonCapturingDelayed
+import roundtrip.reifiednullability.splicedCaptured
 import roundtrip.reifiednullability.secondObjectDelayed
 import roundtrip.reifiednullability.secondChecker
 import roundtrip.reifiednullability.secondSuspended
@@ -27,6 +28,9 @@ import kotlin.coroutines.startCoroutine
 
 private inline fun <reified T> propertyForward(value: Any?): Boolean =
     ReifiedPropertyCarrier<T>(value).propertyMatches
+
+private inline fun <reified T> splicedForward(value: Any?): Boolean =
+    splicedCaptured<T>(value) {}
 
 private fun runReifiedSuspend(block: suspend () -> Boolean): Boolean {
     var outcome: Result<Boolean>? = null
@@ -52,6 +56,10 @@ class ReifiedNullabilityTests {
         ClassicAssert.IsTrue(secondDelayed<String, Int?>(value))
         ClassicAssert.IsTrue(secondNonCapturingDelayed<String, Int?>()())
         ClassicAssert.IsFalse(secondNonCapturingDelayed<String, Int>()())
+        ClassicAssert.IsTrue(splicedCaptured<String?>(value) {})
+        ClassicAssert.IsFalse(splicedCaptured<String>(value) {})
+        ClassicAssert.IsTrue(splicedForward<String?>(value))
+        ClassicAssert.IsFalse(splicedForward<String>(value))
         ClassicAssert.IsTrue(secondObjectDelayed<String, Int?>(value))
         ClassicAssert.IsTrue(secondChecker<String, Int?>().matches(value))
         ClassicAssert.IsTrue(runReifiedSuspend(secondSuspended<String, Int?>(value)))
