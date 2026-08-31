@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Common stdlib sources now remain byte-identical to upstream Kotlin (#516).** CLR physical names, sequence
+  adapters, unsigned-array additions, and reified-array-incompatible sorting bodies live in explicit CLR-owned
+  overlays selected by exact declaration identity. An offline full-subtree snapshot gate prevents future drift.
+
 - **Generic continuation overrides now retain coherent Kotlin signatures across DLL-to-KLIB projection (#624).**
   `bir2cir` keeps an earlier source-type carrier authoritative when a declaration has already moved onto the
   monomorphic `Continuation<object>` CLR slot, preventing a later physical intermediate from masking the original

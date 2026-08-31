@@ -39,8 +39,14 @@ static class StdlibBindingOverlay
             throw new InvalidDataException(
                 $"stdlib binding overlay '{source}' must be {CodecType}/{CodecVersion} with a declarations array");
 
+        var selectedIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in declarations.OfType<JsonObject>())
+        {
+            if (Str(item["declarationId"]) is string declarationId) selectedIds.Add(declarationId);
+            if (Str(item["implementationDeclarationId"]) is string implementationId) selectedIds.Add(implementationId);
+        }
         var methods = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
-        foreach (var birRoot in roots) IndexMethods(birRoot, methods);
+        foreach (var birRoot in roots) IndexMethods(birRoot, selectedIds, methods);
 
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in declarations)
@@ -67,6 +73,18 @@ static class StdlibBindingOverlay
                 if (string.IsNullOrWhiteSpace(physicalName))
                     throw new InvalidDataException(
                         $"stdlib binding overlay '{source}' gives declaration '{id}' an empty physicalName");
+                if (!binding.ContainsKey("expectedPhysicalName"))
+                    throw new InvalidDataException(
+                        $"stdlib binding overlay '{source}' physicalName for declaration '{id}' has no expectedPhysicalName");
+                var expectedNode = binding["expectedPhysicalName"];
+                var expectedPhysicalName = expectedNode == null ? null : Str(expectedNode)
+                    ?? throw new InvalidDataException(
+                        $"stdlib binding overlay '{source}' declaration '{id}' has a non-string expectedPhysicalName");
+                var existingPhysicalName = Str(method["explicitClrName"]);
+                if (existingPhysicalName != expectedPhysicalName)
+                    throw new InvalidDataException(
+                        $"stdlib binding overlay '{source}' declaration '{id}' expected frontend physical name "
+                        + $"'{expectedPhysicalName ?? "<none>"}', but found '{existingPhysicalName ?? "<none>"}'");
                 method["explicitClrName"] = physicalName;
                 applied = true;
             }
@@ -97,9 +115,9 @@ static class StdlibBindingOverlay
                         + $"to be named '{implementationSourceName}', but the frontend supplied "
                         + $"'{Str(implementation["name"])}'");
                 ValidateImplementationSignature(method, implementation, source, id, implementationId);
-                if (implementation["body"] is not JsonNode body)
+                if (implementation["body"] is not JsonArray { Count: > 0 } body)
                     throw new InvalidDataException(
-                        $"stdlib binding overlay '{source}' implementation declaration '{implementationId}' has no body");
+                        $"stdlib binding overlay '{source}' implementation declaration '{implementationId}' has no non-empty body");
                 method["body"] = body.DeepClone();
                 applied = true;
             }
@@ -113,22 +131,23 @@ static class StdlibBindingOverlay
     static void ValidateImplementationSignature(
         JsonObject declaration, JsonObject implementation, string source, string declarationId, string implementationId)
     {
-        foreach (var slot in new[] { "typeParams", "params", "ret" })
+        foreach (var slot in new[] { "static", "mods", "suspendRet", "typeParams", "params", "ret" })
             if (!JsonNode.DeepEquals(declaration[slot], implementation[slot]))
                 throw new InvalidDataException(
                     $"stdlib binding overlay '{source}' implementation declaration '{implementationId}' does not match "
                     + $"declaration '{declarationId}' in its {slot}");
     }
 
-    static void IndexMethods(JsonNode node, Dictionary<string, JsonObject> methods)
+    static void IndexMethods(
+        JsonNode node, IReadOnlySet<string> selectedIds, Dictionary<string, JsonObject> methods)
     {
         if (node is not JsonObject owner) return;
         if (owner["methods"] is JsonArray declarations)
             foreach (var method in declarations.OfType<JsonObject>())
-                if (Str(method["declarationId"]) is string id && !methods.TryAdd(id, method))
+                if (Str(method["declarationId"]) is string id && selectedIds.Contains(id) && !methods.TryAdd(id, method))
                     throw new InvalidDataException($"duplicate frontend declaration identity '{id}'");
         if (owner["types"] is JsonArray types)
-            foreach (var type in types) IndexMethods(type, methods);
+            foreach (var type in types) IndexMethods(type, selectedIds, methods);
     }
 
     static void AddMarker(JsonObject method, string marker)
@@ -171,7 +190,12 @@ static class StdlibBindingOverlay
             ["ret"] = TypeJson.Fqn("System.Int32"),
             ["body"] = new JsonArray { new JsonObject { ["k"] = "return", ["e"] = new JsonObject { ["k"] = "const", ["type"] = "int", ["v"] = 1 } } },
         };
-        var bir = new JsonObject { ["methods"] = new JsonArray { method, implementation } };
+        var unrelatedDuplicateA = new JsonObject { ["name"] = "unrelatedA", ["declarationId"] = id + ":unrelated" };
+        var unrelatedDuplicateB = new JsonObject { ["name"] = "unrelatedB", ["declarationId"] = id + ":unrelated" };
+        var bir = new JsonObject
+        {
+            ["methods"] = new JsonArray { method, implementation, unrelatedDuplicateA, unrelatedDuplicateB },
+        };
         var overlay = new JsonObject
         {
             ["type"] = CodecType,
@@ -183,6 +207,7 @@ static class StdlibBindingOverlay
                     ["declarationId"] = id,
                     ["sourceName"] = "source",
                     ["physicalName"] = "physical",
+                    ["expectedPhysicalName"] = null,
                     ["sequenceElementAdapter"] = true,
                     ["implementationDeclarationId"] = id + ":implementation",
                     ["implementationSourceName"] = "implementation",
@@ -196,5 +221,32 @@ static class StdlibBindingOverlay
             || !attrs.OfType<JsonObject>().Any(attr => TypeJson.OwnerName(attr["attr"]) == SequenceElementAdapter)
             || ((method["body"] as JsonArray)?[0]?["e"]?["v"] as JsonValue)?.GetValue<int>() != 1)
             throw new InvalidOperationException("StdlibBindingOverlay self-test failed");
+
+        var stalePhysicalName = overlay.DeepClone().AsObject();
+        stalePhysicalName["declarations"]![0]!["expectedPhysicalName"] = "unexpected";
+        ExpectInvalid(() => ApplyDocument(new[] { bir.DeepClone() }, stalePhysicalName, "selftest-stale-name"),
+            "stale physical name");
+
+        var duplicateSelected = bir.DeepClone().AsObject();
+        duplicateSelected["methods"]!.AsArray().Add(method.DeepClone());
+        ExpectInvalid(() => ApplyDocument(new[] { duplicateSelected }, overlay, "selftest-duplicate"),
+            "duplicate selected declaration");
+
+        var wrongShape = implementation.DeepClone().AsObject();
+        wrongShape["static"] = true;
+        ExpectInvalid(() => ValidateImplementationSignature(method, wrongShape, "selftest-shape", id,
+            id + ":implementation"), "implementation shape mismatch");
+    }
+
+    static void ExpectInvalid(Action action, string scenario)
+    {
+        try
+        {
+            action();
+            throw new InvalidOperationException($"StdlibBindingOverlay self-test accepted {scenario}");
+        }
+        catch (InvalidDataException)
+        {
+        }
     }
 }

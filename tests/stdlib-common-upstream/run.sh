@@ -12,7 +12,7 @@ CONFIGURED_VERSION="$(sed -n 's:.*<DotKtKotlinVersion>\([^<]*\)</DotKtKotlinVers
 	exit 1
 }
 
-actual_paths="$(cd "$COMMON" && find . -type f -print | LC_ALL=C sort)"
+actual_paths="$(cd "$COMMON" && find . ! -type d -print | LC_ALL=C sort)"
 expected_paths="$(sed -n 's/^[0-9a-f]\{64\}  //p' "$MANIFEST" | LC_ALL=C sort)"
 [[ "$actual_paths" == "$expected_paths" ]] || {
 	echo "stdlib-common-upstream: common source membership differs from upstream Kotlin v$EXPECTED_VERSION"
