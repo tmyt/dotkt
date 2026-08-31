@@ -41,8 +41,8 @@ static class DelegateTargetSlotAlignment
 
     // Reports whether any target slot MOVED. The use axis has to see the moved declaration — a now-`object`
     // parameter is read as `object` and narrowed at its first typed consumer, a now-`object` return boxes its
-    // `return` value — and it has already run by the time this pass can act, so the caller re-runs it exactly when
-    // there is something new to type. Nothing moved is the common case and costs nothing.
+    // `return` value. This is an explicit declaration-capability transition, so the caller schedules the body-flow
+    // entry dedicated to that transition exactly when a slot moved. Nothing moved is the common case and costs nothing.
     public static bool Apply(JsonNode root, ValueTypeOracle isValue)
     {
         _isValue = isValue ?? (_ => false);

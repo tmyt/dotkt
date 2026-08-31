@@ -25,6 +25,8 @@ static class Bir2Cir
                 MemberRefNodeSelfTest.Run();
                 AliasConstructorDelegationExpansion.SelfTest();
                 StdlibBindingOverlay.SelfTest();
+                MaterializedBirPayload.SelfTest();
+                MaterializedExecutable.SelfTest();
                 DriverOptions.SelfTest();
                 return 0;
             }
@@ -430,13 +432,6 @@ sealed class Pipeline
             // `kotlin.Nothing`. BEFORE the suspend transform, whose `__cond$` machinery already stores nothing for a
             // `throwExpr` arm — so one rule covers the plain and the state-machine lowering alike.
             NothingValueTermination.Apply(bir.Root);
-            // RE-NORMALIZE the just-spliced RAW payload bodies: InlineSplice runs AFTER ObjectSlotRename (219), so a
-            // cross-module inline body carries kotc's raw `objMethod toString`/`hashCode`/`equals` (and `anySlot` calls)
-            // un-renamed — ilemit's EmitObjMethod keys on the BCL spelling (`ToString`), so an un-renamed `toString`
-            // silently drops the call (the receiver flows through -> a wrong-type cast). ObjectSlotRename is idempotent
-            // (already-BCL names + already-stripped `anySlot` are no-ops), so a second whole-tree pass only fixes the
-            // spliced-in nodes. (#75: splice-all made this live — e.g. `buildString{}` losing its `.toString()`.)
-            ObjectSlotRename.Apply(bir.Root);
             // REIFIED NULLABILITY ABI (#316): every raw inline/default payload is materialized now, while exact
             // declaration identities and Kotlin type arguments are still present. Record each call's witness and
             // capture lifted-frame witnesses before ClosureSynthesis/physical type lowering can erase those facts;
@@ -611,7 +606,7 @@ sealed class Pipeline
             // `if/else` value join. Object-erasure rewrites stay gated to the exact bare-object boundary; concrete
             // V <-> Nullable<V> fixed slots use explicit construction/extraction with complete type identity.
             // BEFORE BirTypeLowering.
-            NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn, refs);
+            NullableTvErasureCallRealign.ApplySourceUses(bir.Root, nullableTvDeclRets, isValueFqn, refs);
             // DELEGATE-TARGET slot alignment (ALL builds — the declaration half neither axis above can reach on its
             // own): a delegate's parameters and return are reified ARGUMENTS, so `(Int?) -> String` is
             // `Func<object, string>` and `(T?) -> String` is `Func<object, string>` at every instantiation; the
@@ -620,11 +615,12 @@ sealed class Pipeline
             // slot follows the delegate's `object` — every parameter (contravariant: only `object` is assignable
             // from `object`) and a value/`Nullable`/type-variable return (covariant: a reference already reaches
             // `object`, and rewriting it is what broke #189). Runs AFTER the use axis, which is what corrects a
-            // construction's own `funcType` to the slot it fills; the re-run below then types the newly-`object`
+            // construction's own `funcType` to the slot it fills; the declared transition below then types the newly-`object`
             // lambda slots' BODIES — narrowing each read and boxing each `return` — and happens only when a slot
             // actually moved.
             if (DelegateTargetSlotAlignment.Apply(bir.Root, isValueFqn))
-                NullableTvErasureCallRealign.Apply(bir.Root, nullableTvDeclRets, isValueFqn, refs);
+                NullableTvErasureCallRealign.ApplyAfterDelegateSlotAlignment(
+                    bir.Root, nullableTvDeclRets, isValueFqn, refs);
             // UNCHECKED OBJECT->Tv RETURN ERASURE: the non-null-T sibling of nullable-generic return erasure.  A JVM
             // `Any? as T` physically returns Object; spelling the CLR return as reified T would insert `unbox.any T`
             // inside the callee and throw even when a null result is stored but never consumed.  Emit object physically,
@@ -676,22 +672,24 @@ sealed class Pipeline
             // call — which has no ref.dll owner — is bound here. `subscribe` also constructs the stdlib close token with
             // a synthesized remove callback. A no-op for the ref/rt stdlib self-build (no .NET events).
             hoisted = ClrEventSubscriptionBinding.Apply(
-                hoisted, refs, clrEventForwardedOwners, localTypeFqns, out var boundClrEventSubscription);
+                hoisted, refs, clrEventForwardedOwners, localTypeFqns, out var materializedEventSubscriptions);
             // Event binding has just synthesized receiver/handler locals plus add/remove member accesses. Feed those
             // NEW fixed slots through the same nullable-value use-axis rule as the original tree. In particular, a
             // proven-present Nullable<V> event receiver must enter the synthesized bare-V spill as V; the first pass
-            // could not see a node that did not exist yet. The walk is idempotent and is paid only when a subscription
-            // was actually lowered.
-            if (boundClrEventSubscription)
-                NullableTvErasureCallRealign.Apply(hoisted, nullableTvDeclRets, isValueFqn, refs);
+            // could not see a node that did not exist yet. Submit the exact materialized work items rather than
+            // repairing the whole file after construction.
+            NullableTvErasureCallRealign.ApplyMaterialized(
+                materializedEventSubscriptions, nullableTvDeclRets, isValueFqn, refs);
             // `ClrEvent.subscribe` synthesizes the remove callback as a normal `newClosure` ingredient bag. The main
-            // ClosureSynthesis pass ran earlier, before event binding; run the idempotent collector once more so only
-            // these newly-created callback classes are assembled before the remaining whole-tree passes.
-            ClosureSynthesis.Apply(hoisted, refs);
+            // ClosureSynthesis pass ran earlier, before event binding. Give the exact materialized roots to its late
+            // entry contract so only these newly-created callback classes are assembled.
+            var materializedEventClosureTypes = ClosureSynthesis.ApplyMaterialized(
+                hoisted, materializedEventSubscriptions, refs);
             // ClosureSynthesis stamps the transient lifted-frame correspondence on a GENERIC closure class, and the pass
             // that consumes it (SharedSyntheticSynthesis) already ran. Drop it here so the invariant "it never reaches
             // CIR" holds for a class assembled by this late pass too, rather than only for the main one.
-            SharedSyntheticSynthesis.DropSyntheticTypeArgs(hoisted);
+            foreach (var materializedType in materializedEventClosureTypes)
+                SharedSyntheticSynthesis.DropSyntheticTypeArgs(materializedType);
             // .NET EVENT IMPLEMENT/RAISE (§4.2/§4.3): a Kotlin class implementing/declaring a CLR event via `by clrEvent()`.
             // kotc synthesized add_/remove_/raise_<E> + a `clrEvents` backing directive (pure-Kotlin identities); this pass —
             // the ref.dll-reading layer — resolves the concrete delegate `D` (the interface event's EventHandlerType) and
@@ -735,7 +733,8 @@ sealed class Pipeline
             // is keyed by. Same formula, same code, run once more so those calls' returns and arguments are derived from
             // the producing assembly's declaration too. Idempotent on everything the earlier run already corrected.
             if (!_options.RefBuild)
-                NullableTvErasureCallRealign.ApplyReferenced(substituted, nullableTvDeclRets, isValueFqn, refs);
+                NullableTvErasureCallRealign.ApplyAfterReferencedOwnerBinding(
+                    substituted, nullableTvDeclRets, isValueFqn, refs);
             // Gap A — the for-loop iterator protocol over a referenced collection: re-point the desugared `<iterator>`
             // var + its synthetic hasNext/next owner at the REAL referenced kotlin.collections.Iterator<E> (app build
             // only; the stdlib self-build emits Iterator itself, so it is left synthetic there).
@@ -753,18 +752,17 @@ sealed class Pipeline
             // CharSeqStringLowering already selected the pure-app System.String representation while calls still
             // carried explicit property identity. Materialize any remaining synthetic/StringBuilder adapters after
             // call substitution; a user CharSequence implementation keeps the synthetic representation verbatim.
-            var materializedDelegateAdapter = false;
+            IReadOnlyList<JsonNode> materializedDelegateAdapters = Array.Empty<JsonNode>();
             if (!_options.RefBuild)
                 substituted = StringCharSequenceBridge.Apply(
-                    substituted, refs, charSeqRetLambdas, out materializedDelegateAdapter);
+                    substituted, refs, charSeqRetLambdas, out materializedDelegateAdapters);
             // The String/CharSequence call-boundary bridge may materialize a closure that captures a non-literal
             // `(P...) -> String` delegate and exposes `(P...) -> CharSequence` (#190). Assemble those late closure
             // ingredients now; all earlier source/inline/event closures were already consumed by the main passes.
-            if (materializedDelegateAdapter)
-            {
-                ClosureSynthesis.Apply(substituted, refs);
-                SharedSyntheticSynthesis.DropSyntheticTypeArgs(substituted);
-            }
+            var materializedDelegateAdapterTypes = ClosureSynthesis.ApplyMaterialized(
+                substituted, materializedDelegateAdapters, refs);
+            foreach (var materializedType in materializedDelegateAdapterTypes)
+                SharedSyntheticSynthesis.DropSyntheticTypeArgs(materializedType);
             // CATCH-CLAUSE WIDENING (bundle-6 ④): a Kotlin `catch (IndexOutOfBoundsException)` @ClrTypeAlias-es to a
             // SINGLE .NET type, but .NET index ops throw TWO distinct ones (List.get_Item -> ArgumentOutOfRangeException,
             // array -> IndexOutOfRangeException). Expand each such clause into two clauses covering BOTH so the Kotlin
@@ -840,25 +838,9 @@ sealed class Pipeline
         // CONSTRUCTED MEMBER RESULT SUBSTITUTION (early): suspend lowering copies a call's result type into
         // state-machine fields/locals. Close every already-constructed receiver-relative return BEFORE that copy
         // happens (`Deferred<Int>.await(): type-TV0` -> `Int`), otherwise a non-generic SM permanently captures an
-        // out-of-scope TV and ilemit can only realize it as object. The late pass below remains necessary after exact
-        // inherited declaring-owner binding; both passes are structural and idempotent.
+        // out-of-scope TV and ilemit can only realize it as object. Later exact declaring-owner transitions discharge
+        // this same obligation locally when they change a call's owner; no module-wide repair sweep follows.
         ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
-
-        // NOTHING-VALUE TERMINATION, SECOND SWEEP (#197). The covariant bridge synthesizer above builds a forwarding call
-        // out of the TARGET declaration's return type, so a covariant `override fun make(): Nothing` (legal — Nothing
-        // is below every type, so it satisfies any slot) yields a FRESH `kotlin.Nothing`-stamped call inside a bridge
-        // that did not exist when the per-file sweep ran. Its erased `object` then meets the slot's exact return at
-        // the bridge's `ret` — the same defect, one synthesis later.
-        //
-        // Both sweeps are needed, and MOVING the first one here instead would be wrong: several reshapes between the
-        // two (MemberCallSubstitution and the erasure realigns) rewrite or drop a node's frontend stamp, so a position
-        // only the early sweep can still see would be lost. Re-walking is safe because the pass is IDEMPOTENT — a
-        // position it already terminated is a `throwExpr`, whose operand it does not re-enter (see `Consumes`) — so
-        // for a file with no late synthesis this changes nothing at all.
-        //
-        // HERE: the covariant bridge exists and is still input to suspend lowering. A later third sweep covers the
-        // erasure-narrowed bridges which deliberately wait for suspend declarations to reach their physical form.
-        foreach (var stagedFile in staged) NothingValueTermination.Apply(stagedFile.Root);
 
         // PHASE 1.5 — SUSPEND COLD LOWERING (R1 classifier): rewrite EVERY declared `suspend fun` (top-level statics,
         // extensions, instance members, static/companion members, abstract/interface members) into the cold
@@ -924,14 +906,10 @@ sealed class Pipeline
 
         // Non-generic `System.IComparable` bridge. Synthesize it at this final Kotlin-vocabulary boundary so its
         // forwarding call carries the target declaration's semantic return stamp. In particular, a legal
-        // `compareTo(...): Nothing` must terminate the bridge's physical Int32 slot rather than return the later CLR
-        // object erasure. The same Nothing sweep already required by the late override bridge consumes both shapes.
+        // `compareTo(...): Nothing` is normalized at that bridge's construction boundary, before the physical Int32
+        // slot could receive Nothing's later CLR object erasure.
         if (!_options.RefBuild)
             foreach (var stagedFile in staged) ComparableBridgeSynthesis.Apply(stagedFile.Root);
-
-        // The late bridges above can synthesize fresh forwarding calls returning `kotlin.Nothing`, after the second
-        // sweep has run. The pass is idempotent; cover exactly those new bodies before type lowering erases the fact.
-        foreach (var stagedFile in staged) NothingValueTermination.Apply(stagedFile.Root);
 
         // @PublishedApi is a Kotlin semantic annotation carried alongside the source `internal` visibility in BIR.
         // Resolve its effective CLR accessibility here, before ownership selects top-level versus Nested* metadata.
@@ -1018,11 +996,6 @@ sealed class Pipeline
         // a generic-parameter stack value and null directly; author the boxed object-null comparison in CIR.
         if (!_options.RefBuild)
             foreach (var stagedFile in staged) GenericParameterNullComparison.Apply(stagedFile.Root);
-
-        // CONSTRUCTED MEMBER RESULT SUBSTITUTION (late): inherited owner binding above can introduce the exact
-        // constructed declaring owner only after suspend synthesis. Close those remaining callee-relative result TVs;
-        // ilemit receives a closed CIR return type and performs no inference.
-        ConstructedMemberReturnSubstitution.ApplyAll(staged.Select(s => s.Root).ToList());
 
         // Every structural synthesizer has now run. Allocate the complete declaration/property set before any pass
         // consumes physical Property descriptors: BackingFieldRename distinguishes receiverless storage ownership by

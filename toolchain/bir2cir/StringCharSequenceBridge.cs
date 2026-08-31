@@ -106,11 +106,11 @@ static class StringCharSequenceBridge
     }
 
     public static JsonNode Apply(JsonNode root, ReferenceMetadataIndex refs,
-        CharSeqStringLowering.CharSeqRetLambdas retLambdas, out bool materializedDelegateAdapter)
+        CharSeqStringLowering.CharSeqRetLambdas retLambdas, out IReadOnlyList<JsonNode> materializedDelegateAdapters)
     {
         _refs = refs;
         _fired = false;
-        _delegateAdapterFired = false;
+        _materializedDelegateAdapters = new List<JsonNode>();
         _retLambdas = retLambdas;
         // #170 — a lifted lambda bound into a delegate whose declared RETURN is the synthetic `dotkt$CharSequence`
         // (CharSeqStringLowering recorded these before it collapsed the CharSequence-return signal to `string`). Retype
@@ -131,7 +131,7 @@ static class StringCharSequenceBridge
             types.Add(JsonNode.Parse(AdapterTypeJson));
             _adapterEmitted = true;
         }
-        materializedDelegateAdapter = _delegateAdapterFired;
+        materializedDelegateAdapters = _materializedDelegateAdapters;
         return walked;
     }
 
@@ -336,7 +336,6 @@ static class StringCharSequenceBridge
     static JsonObject BuildDelegateReturnAdapter(JsonNode value, TypeNode.Fn source, TypeNode.Fn target)
     {
         _fired = true;
-        _delegateAdapterFired = true;
         var n = System.Threading.Interlocked.Increment(ref _delegateAdapterCounter);
         var name = "dotkt$StringCharSequenceDelegateAdapter$" + n;
         var owner = TypeJson.Fqn(name);
@@ -402,6 +401,7 @@ static class StringCharSequenceBridge
         };
         if (typeArgs.Count > 0)
             closure["typeArgs"] = new JsonArray(typeArgs.Select(t => TypeNode.Write(t)).ToArray());
+        _materializedDelegateAdapters.Add(closure);
         return closure;
     }
 
@@ -427,7 +427,7 @@ static class StringCharSequenceBridge
     }
 
     static int _delegateAdapterCounter;
-    static bool _delegateAdapterFired;
+    static List<JsonNode> _materializedDelegateAdapters = new();
 
     // Coerce a value flowing into a `dotkt$CharSequence` slot into an interface-implementing value:
     //   - a statically-String value            -> `new dotkt$StringCharSequence(str)` (WrapAdapter).

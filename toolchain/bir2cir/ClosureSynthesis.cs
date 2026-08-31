@@ -64,18 +64,40 @@ static class ClosureSynthesis
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return;
-        _refs = refs;
-        var newTypes = new List<JsonNode>();
-
+        var inputs = new List<JsonNode>();
         if (file["methods"] is JsonArray methods)
-            foreach (var m in methods) Walk(m, newTypes, m);
+            inputs.AddRange(methods.Where(node => node != null));
         if (file["fields"] is JsonArray fields)
-            foreach (var f in fields) Walk(f, newTypes, f);
+            inputs.AddRange(fields.Where(node => node != null));
         if (file["types"] is JsonArray types)
             // ToList: the walk appends closure classes to `newTypes` (added below), but a closure can also live inside
             // an already-declared type's member body — walk the pre-existing types without mutating while enumerating.
-            foreach (var t in types.ToList()) Walk(t, newTypes, t);
+            inputs.AddRange(types.Where(node => node != null).ToList());
+        SynthesizeAndAppend(file, inputs, refs);
+    }
 
+    // A later phase that deliberately constructs executable subtrees supplies those exact roots here. Only the new
+    // graph is inspected; already-normalized declarations in the file are not swept again. The returned list contains
+    // the physical closure/SAM types actually appended to the file, for the producer's next declared capability.
+    public static IReadOnlyList<JsonNode> ApplyMaterialized(
+        JsonNode root, IEnumerable<JsonNode> materializedRoots, ReferenceMetadataIndex refs)
+    {
+        if (root is not JsonObject file) return Array.Empty<JsonNode>();
+        return SynthesizeAndAppend(file, materializedRoots, refs, recoverEnclosingDeclaration: true);
+    }
+
+    static IReadOnlyList<JsonNode> SynthesizeAndAppend(
+        JsonObject file, IEnumerable<JsonNode> inputs, ReferenceMetadataIndex refs,
+        bool recoverEnclosingDeclaration = false)
+    {
+        _refs = refs;
+        var newTypes = new List<JsonNode>();
+        foreach (var input in inputs)
+            if (input != null)
+                Walk(input, newTypes,
+                    recoverEnclosingDeclaration ? EnclosingDeclaration(input, file) : input);
+
+        var appended = new List<JsonNode>();
         if (newTypes.Count > 0)
         {
             var ts = file["types"] as JsonArray;
@@ -87,8 +109,21 @@ static class ClosureSynthesis
             foreach (var t in ts) if (t is JsonObject to && Str(to["name"]) is string tn) have.Add(tn);
             foreach (var nt in newTypes)
                 if (nt is JsonObject no && Str(no["name"]) is string nn && !have.Add(nn)) continue;
-                else ts.Add(nt);
+                else { ts.Add(nt); appended.Add(nt); }
         }
+        return appended;
+    }
+
+    // Exact materialized roots are already attached to the copied file when this entry runs. Recover the nearest
+    // source declaration through JsonNode's parent relation so a rejected late capture retains the same source
+    // position/name as the main declaration walk, without expanding the normalization work item to the whole file.
+    static JsonNode EnclosingDeclaration(JsonNode input, JsonObject file)
+    {
+        for (var current = input.Parent; current != null && !ReferenceEquals(current, file); current = current.Parent)
+            if (current is JsonObject declaration && declaration["name"] != null
+                && (declaration["body"] != null || declaration["methods"] != null || declaration["ctors"] != null))
+                return declaration;
+        return file;
     }
 
     // `decl` is the nearest enclosing DECLARATION (method/field/type), carried only so a capture diagnostic can

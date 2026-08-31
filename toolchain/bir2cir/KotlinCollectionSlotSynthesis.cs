@@ -280,7 +280,7 @@ static class KotlinCollectionSlotSynthesis
 
         var targetRet = Subst(TypeJson.Read(target.Method["ret"]) ?? new TypeNode.Fqn("kotlin.Boolean"), ownerArgs);
         var slotRet = slot.EraseReturn ? new TypeNode.Fqn("kotlin.Any") : targetRet;
-        return new JsonObject
+        var bridge = new JsonObject
         {
             ["name"] = slot.Bridge,
             ["static"] = false,
@@ -321,6 +321,7 @@ static class KotlinCollectionSlotSynthesis
                 ["ret"] = TypeJson.Write(slotRet),
             }),
         };
+        return MaterializedExecutable.Normalize(bridge);
     }
 
     static TypeNode.Fqn SelfOwner(Def cls)

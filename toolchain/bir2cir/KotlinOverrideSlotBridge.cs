@@ -1535,7 +1535,7 @@ static class KotlinOverrideSlotBridge
         if (retCarried && implRet != null)
             CarryKotlinType(bridge, "nullableGenericRet", "retNullableFlags", implRet, slotRet, isValue);
         if (impl["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
-        return bridge;
+        return MaterializedExecutable.Normalize(bridge);
     }
 
     // The Kotlin type of a slot the bridge states physically, on BOTH round-trip channels every erased slot uses: the

@@ -81,7 +81,10 @@ static class InheritedMemberOwnerBinding
         switch (node)
         {
             case JsonObject obj:
+                var ownerBefore = DeclaringOwner(obj)?.DeepClone();
                 Bind(obj, types, refs);
+                if (!JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
+                    ConstructedMemberReturnSubstitution.ApplyCall(obj);
                 foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, types, refs);
                 break;
             case JsonArray arr:
@@ -89,6 +92,14 @@ static class InheritedMemberOwnerBinding
                 break;
         }
     }
+
+    static JsonNode DeclaringOwner(JsonObject call) => Str(call["k"]) switch
+    {
+        "clrInstance" or "clrPropGet" or "clrPropSet" or "clrEventAdd" or "clrEventRemove" => call["type"],
+        "newBoundClrDelegate" => call["clrType"],
+        "callInstance" or "newBoundDelegate" => call["ownerType"],
+        _ => null,
+    };
 
     static void Bind(JsonObject call, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs)
     {

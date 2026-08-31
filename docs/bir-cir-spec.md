@@ -918,8 +918,8 @@ changes the result must not leave a semantic stamp that downstream trusts first.
 exact equality with `sty` is also the slot-level closed-frame marker: an equal `ret`/`dynRet` already belongs to the
 caller frame and is not substituted again; a distinct callee-relative result is closed through the constructed owner.
 Any bir2cir synthesizer that authors a caller-frame result must carry that exact `sty`, just as kotc does; the
-inherited-class/interface forwarding bridge is one such producer. This makes caller-closed calls stable across the
-early and late sweeps without adding a third `tv` scope. `DropStampIfStale` asks
+inherited-class/interface forwarding bridge is one such producer. This makes caller-closed calls stable across source
+admission and construction-boundary normalization without adding a third `tv` scope. `DropStampIfStale` asks
 `IrSanity.StampAgrees`, the same relation the check refutes with, so a pass and the chokepoint cannot answer the
 question differently; the check consequently cannot fire on a pass that discharges its obligation this way, which is
 the intended outcome and not a gap. The chokepoint is for the pass that has not been written yet.

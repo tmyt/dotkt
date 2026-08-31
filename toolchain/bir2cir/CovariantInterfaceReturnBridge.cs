@@ -372,7 +372,7 @@ static class CovariantInterfaceReturnBridge
                 ?? throw new InvalidOperationException("suspend covariant bridge has no logical slot result"));
         }
         if (implementation["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
-        return bridge;
+        return MaterializedExecutable.Normalize(bridge);
     }
 
     static JsonObject ImplDescriptor(TypeNode.Fqn ifaceSpec, string member, int methodArity,

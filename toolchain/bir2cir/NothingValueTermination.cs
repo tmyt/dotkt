@@ -46,23 +46,24 @@ using DotKt.Bir;
 // slot. A slot that DISCARDS its value (a statement, an `exprStmt`) is left alone: nothing reads it, so nothing is
 // mistyped, and terminating it would only add a dead `throw` to every statement-position `fail()`.
 //
-// WHERE IT RUNS — TWICE, and both are needed (Program.cs states the reasoning at each call site):
-//   1. per file, right after CallEvalLowering. Every splice that can introduce a `Nothing` call
-//      (PreconditionLowering synthesizing `error`/`TODO`, InlineSplice pulling in a cross-module inline body,
-//      DefaultArgSplice filling a default) has run, and the plan vocabulary is gone.
-//   2. across the staged set, after the two interface-bridge synthesizers and before the suspend transform. A bridge
-//      forwards to the declaration it bridges, so a covariant `override fun f(): Nothing` mints a fresh
-//      `Nothing`-stamped call long after (1). The first sweep cannot be dropped in favour of this one: passes in
-//      between rewrite or drop a node's stamp, so a position only (1) can see would be lost.
-// Both are before BirTypeLowering, which erases `kotlin.Nothing` to `object` and ends this pass's window. The pass is
-// IDEMPOTENT, so re-walking a file is a no-op. Unconditional (ref + rt + app): a ref build squashes its bodies later,
-// so the pass is inert there, and the rt/app views of the same source must agree.
+// WHERE IT RUNS — once over each source/materialized graph, before BirTypeLowering erases `kotlin.Nothing` to
+// `object`: the source-file entry runs after every raw-body splice, while a later synthesizer that authors a fresh
+// executable bridge calls ApplyMaterialized on that exact bridge before publishing it. Correctness therefore does
+// not depend on a later whole-file repair sweep remembering every producer. Unconditional (ref + rt + app): a ref
+// build squashes its bodies later, so the pass is inert there, and the rt/app views of the same source must agree.
 static class NothingValueTermination
 {
     public static void Apply(JsonNode root)
     {
         if (root is JsonObject o) WalkObject(o);
         else if (root is JsonArray a) WalkArray(a, consumed: false);
+    }
+
+    /// <summary>Normalize one newly synthesized executable graph at its construction boundary.</summary>
+    public static T ApplyMaterialized<T>(T root) where T : JsonNode
+    {
+        Apply(root);
+        return root;
     }
 
     // Statement-list-valued keys: their elements are statements, whose value nothing reads. `preStmts` is the
@@ -83,11 +84,10 @@ static class NothingValueTermination
     /// so a slot mis-called consuming costs one dead `throw` while one mis-called discarding costs the fix at that
     /// slot. That asymmetry is why the excluded set is the short, enumerated one and everything else is included.
     ///
-    /// The fourth — a `throw`'s own operand — is IDEMPOTENCE, and it is load-bearing. This pass runs more than once
-    /// (see its call sites), and every position it terminates becomes a `throwExpr` whose `value` is the original
-    /// still-`Nothing`-stamped expression. Without this arm a second sweep would wrap that operand again, nesting one
-    /// `throw` per sweep. It is also simply unnecessary: the `throw` opcode takes any object reference, so an erased
-    /// `object` is well-typed there, and the path already terminates.
+    /// The fourth — a `throw`'s own operand — preserves an already-terminated producer input. Every position this pass
+    /// terminates becomes a `throwExpr` whose `value` is the original still-`Nothing`-stamped expression; descending
+    /// into that operand would wrap a terminator again. It is also simply unnecessary: the `throw` opcode takes any
+    /// object reference, so an erased `object` is well-typed there, and the path already terminates.
     static bool Consumes(string kind, string key)
     {
         if (StmtListKeys.Contains(key) || RecordListKeys.Contains(key)) return false;

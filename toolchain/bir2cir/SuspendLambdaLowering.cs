@@ -114,7 +114,7 @@ static class SuspendLambdaLowering
             {
                 var ts = file["types"] as JsonArray;
                 if (ts == null) { ts = new JsonArray(); file["types"] = ts; }
-                foreach (var nt in newTypes) ts.Add(nt);
+                foreach (var nt in newTypes) ts.Add(MaterializedExecutable.Normalize(nt));
             }
         }
     }

@@ -89,7 +89,7 @@ static class ComparableBridgeSynthesis
             if (target?["ret"] is JsonNode targetReturn)
                 forwardCall["sty"] = targetReturn.DeepClone();
             ifaces.Add(TypeJson.Fqn("System.IComparable"));
-            methods.Add(new JsonObject
+            var bridge = new JsonObject
             {
                 ["name"] = "CompareTo",
                 ["static"] = false,
@@ -105,7 +105,8 @@ static class ComparableBridgeSynthesis
                     ["k"] = "return",
                     ["value"] = forwardCall,
                 }),
-            });
+            };
+            methods.Add(MaterializedExecutable.Normalize(bridge));
         }
     }
 }

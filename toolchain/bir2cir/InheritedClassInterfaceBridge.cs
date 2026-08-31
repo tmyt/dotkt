@@ -265,7 +265,7 @@ static class InheritedClassInterfaceBridge
         };
         CopyNullableGenericFact(im, bridge, "nullableGenericRet", ifaceArgs);
         if (im["typeParams"] is JsonArray tps) bridge["typeParams"] = tps.DeepClone();
-        return bridge;
+        return MaterializedExecutable.Normalize(bridge);
     }
 
     static void CopyNullableGenericFact(JsonObject source, JsonObject target, string key, TypeNode[] ownerArgs)
