@@ -241,7 +241,7 @@ sealed partial class ReferenceMetadataIndex
             failure = "has no trusted physical binding";
             return false;
         }
-        var reifiedWitnessCount = binding.ReifiedTypeParameterIndices?.Length ?? 0;
+        var reifiedWitnessCount = binding.NullableWitnessTypeParameterIndices?.Length ?? 0;
         var missingReifiedWitnesses = binding.ParamCount - callSignature.Count;
         var completesWithReifiedWitnesses = missingReifiedWitnesses == reifiedWitnessCount
             && missingReifiedWitnesses > 0;
@@ -327,9 +327,9 @@ sealed partial class ReferenceMetadataIndex
         declaringOwner = owner;
         return true;
     }
-    public int[] ReifiedTypeParameterIndices(string id) =>
+    public int[] NullableWitnessTypeParameterIndices(string id) =>
         id != null && _declarationById.TryGetValue(id, out var binding)
-            ? binding.ReifiedTypeParameterIndices
+            ? binding.NullableWitnessTypeParameterIndices
             : null;
     public bool TryDeclarationFactory(
         string id,
@@ -1000,7 +1000,8 @@ sealed partial class ReferenceMetadataIndex
         && Same(a.DeclarationSemanticReturn, b.DeclarationSemanticReturn)
         && a.CollectionFactoryKind == b.CollectionFactoryKind && a.ArrayFactoryKind == b.ArrayFactoryKind
         && a.ArrayFactoryElementHint == b.ArrayFactoryElementHint
-        && Same(a.ReifiedTypeParameterIndices, b.ReifiedTypeParameterIndices);
+        && Same(a.SemanticReifiedTypeParameterIndices, b.SemanticReifiedTypeParameterIndices)
+        && Same(a.NullableWitnessTypeParameterIndices, b.NullableWitnessTypeParameterIndices);
 
     static bool Same<T>(T[] a, T[] b) where T : IEquatable<T> =>
         ReferenceEquals(a, b) || a != null && b != null && a.SequenceEqual(b);
@@ -4604,7 +4605,8 @@ sealed partial class ReferenceMetadataIndex
                             arrayFactoryElementHint,
                             countRange?.Start ?? -1,
                             countRange?.End ?? -1,
-                            declarationIdentity?.ReifiedTypeParameterIndices,
+                            declarationIdentity?.SemanticReifiedTypeParameterIndices,
+                            declarationIdentity?.NullableWitnessTypeParameterIndices,
                             dotKtAuthored
                                 ? method.GetParameters().Select(p =>
                                     KotlinTypeOf(p.GetCustomAttributesData(), method.DeclaringType?.Assembly)
@@ -5699,19 +5701,21 @@ sealed partial class ReferenceMetadataIndex
     sealed record PropertyAccessorPayloadInfo(string Name, string Kind, string Association,
         string SourceAssociation);
     sealed record DeclarationIdentityPayloadInfo(string Id, string Name, TypeNode[] SemanticParams,
-        TypeNode SemanticReturn, int[] ReifiedTypeParameterIndices);
+        TypeNode SemanticReturn, int[] SemanticReifiedTypeParameterIndices,
+        int[] NullableWitnessTypeParameterIndices);
 
     static DeclarationIdentityPayloadInfo KotlinDeclarationIdentityPayload(
         IList<CustomAttributeData> attrs, Assembly declaringAssembly, int methodGenericArity = int.MaxValue)
     {
         var payload = CarrierJsonOf(attrs, declaringAssembly, KotlinDeclarationIdentityAttr) as JsonObject;
         if (payload == null) return null;
-        if (payload.Count is < 2 or > 4 ||
+        if (payload.Count is < 2 or > 5 ||
             payload["id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
             payload["name"] is not JsonValue nameValue || !nameValue.TryGetValue<string>(out var name)
-            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified"))
+            || payload.Any(kv => kv.Key is not ("id" or "name" or "signature" or "reified" or "nullableWitness"))
             || payload["signature"] is JsonNode signature && signature is not JsonObject
             || payload["reified"] is JsonNode reifiedNode && reifiedNode is not JsonArray
+            || payload["nullableWitness"] is JsonNode witnessNode && witnessNode is not JsonArray
             || string.IsNullOrEmpty(id) || string.IsNullOrEmpty(name))
             throw new InvalidDataException(
                 $"malformed [KotlinDeclarationIdentity] payload: {payload.ToJsonString()}");
@@ -5725,6 +5729,18 @@ sealed partial class ReferenceMetadataIndex
             throw new InvalidDataException("duplicate [KotlinDeclarationIdentity] reified index");
         if (reified.Any(index => index >= methodGenericArity))
             throw new InvalidDataException("[KotlinDeclarationIdentity] reified index exceeds method generic arity");
+        var nullableWitness = payload["nullableWitness"] is JsonArray witnessArray
+            ? witnessArray.Select(node => node is JsonValue value && value.TryGetValue<int>(out var index) && index >= 0
+                ? index
+                : throw new InvalidDataException(
+                    "malformed [KotlinDeclarationIdentity] nullable-witness index"))
+                .ToArray()
+            : Array.Empty<int>();
+        if (nullableWitness.Distinct().Count() != nullableWitness.Length)
+            throw new InvalidDataException("duplicate [KotlinDeclarationIdentity] nullable-witness index");
+        if (nullableWitness.Any(index => index >= methodGenericArity))
+            throw new InvalidDataException(
+                "[KotlinDeclarationIdentity] nullable-witness index exceeds method generic arity");
         TypeNode[] semanticParams = null;
         TypeNode semanticReturn = null;
         if (payload["signature"] is JsonObject semanticSignature)
@@ -5750,7 +5766,8 @@ sealed partial class ReferenceMetadataIndex
                     $"malformed [KotlinDeclarationIdentity] semantic signature: {semanticSignature.ToJsonString()}", ex);
             }
         }
-        return new DeclarationIdentityPayloadInfo(id, name, semanticParams, semanticReturn, reified);
+        return new DeclarationIdentityPayloadInfo(
+            id, name, semanticParams, semanticReturn, reified, nullableWitness);
     }
 
     static PropertyAccessorPayloadInfo KotlinPropertyAccessorPayload(
@@ -6952,7 +6969,7 @@ sealed record MethodSlotIdentity(string PhysicalMember, JsonArray TypeParams);
 // (DeclarationTypeNode), the same one `ParamTypeNodes` uses, which keeps generic parameters as `Tv` — a declaration
 // the caller substitutes. The two are not interchangeable: `Iterable<E>.iterator()` is `Iterator` in the first and
 // `Iterator<!0>` in the second, and only the second says what the call site's type argument completes.
-sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] ReifiedTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null);
+sealed record MemberBinding(string Owner, string Name, int ParamCount, string Intrinsic, bool IsAbstract, bool IsStatic, int PropertyAccess = 0, string PropertyName = null, int[] ByrefPositions = null, bool Suspend = false, bool Conv = false, TypeNode ConvTo = null, TypeNode ReturnType = null, int MethodArity = 0, TypeNode[] ParamTypeNodes = null, bool IsVirtual = false, TypeNode KotlinReturnType = null, TypeNode SuspendReturnType = null, TypeNode NullableGenericRet = null, TypeNode[] NullableGenericParams = null, TypeNode ReturnTypeNode = null, int MetadataToken = 0, string SourcePropertyName = null, string AccessorKind = null, string AssociatedPropertyName = null, bool IsPropertyBridge = false, bool IsPublic = false, string PropertyAssociation = null, string SourcePropertyAssociation = null, string SourceMethodName = null, JsonArray MethodTypeParams = null, string DeclarationId = null, string DeclarationSourceName = null, string DeclarationPhysicalOwner = null, TypeNode[] DeclarationSemanticParams = null, TypeNode DeclarationSemanticReturn = null, string CollectionFactoryKind = null, string ArrayFactoryKind = null, string ArrayFactoryElementHint = null, int CountStart = -1, int CountEnd = -1, int[] SemanticReifiedTypeParameterIndices = null, int[] NullableWitnessTypeParameterIndices = null, TypeNode[] KotlinParameterTypes = null, string InnerConstructorOwner = null, TypeNode[] InnerConstructorParameters = null, int[] InnerConstructorTypeArguments = null);
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);

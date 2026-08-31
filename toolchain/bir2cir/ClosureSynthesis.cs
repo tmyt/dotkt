@@ -61,6 +61,23 @@ static class ClosureSynthesis
                 if (child != null) PrebindSplicedFrames(child);
     }
 
+    // A generated non-capturing delegate target is a generic METHOD whose frame is already dense in its own
+    // typeParams. ReifiedNullabilityWitnessLowering turns that method into a synthetic CLASS; bind the target's own
+    // `!!i` frame to the class's `!i` frame before the construction-side typeArgs (which name the enclosing frame)
+    // are considered. Treating those two correspondences as the same map breaks when an enclosing `<A, B>` target
+    // retains only B and is therefore materialized as `[method#1]` at the construction site.
+    internal static JsonObject PrebindDenseMethodFrame(JsonObject source)
+    {
+        var arity = (source["typeParams"] as JsonArray)?.Count ?? 0;
+        if (arity == 0) return source;
+        var ownFrame = new JsonArray(Enumerable.Range(0, arity).Select(index => (JsonNode)new JsonObject {
+            ["t"] = "tv", ["scope"] = "method", ["i"] = index,
+        }).ToArray());
+        var rebound = RebindSyntheticTypeVariables(source, ownFrame, recordOrigins: false);
+        rebound[PreboundFrameKey] = true;
+        return rebound;
+    }
+
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return;

@@ -51,10 +51,11 @@ suspend fun fetch(): Int          // CLR signature: Task<int> fetch()
 ## Generics are real (reified) — and that mostly helps
 
 The CLR keeps type arguments at runtime, so `is T` / `T::class` use a real generic type. CLR type
-arguments do not retain Kotlin nullability, so a reified function also receives a compiler-hidden
+arguments do not retain Kotlin nullability, so nullable-sensitive generic operations receive a compiler-hidden
 nullability witness: `x is T` correctly accepts null when called as `f<String?>`, including when the test
-is inside a captured lambda, SAM, suspend lambda, or object expression. You can still pass
-a non-reified type parameter into a reified function (legal here, an error on the JVM). `inline` is
+is inside a captured lambda, SAM, suspend lambda, delegate, or object expression. The witness is independent of
+the Kotlin `reified` declaration marker, and the ordinary Kotlin rule still rejects passing a non-reified type
+parameter into a reified function. `inline` is
 otherwise a no-op unless you pass a lambda literal (then it's really inlined, including non-local
 `return`, even cross-module).
 

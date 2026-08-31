@@ -168,6 +168,14 @@ for proj in "${PROJECTS[@]}"; do
 			tail -25 "$ROOT/build/nunit-$name.reified-property-surface.log"; rc=1
 		fi
 		if dotnet "$METADATA_INSPECTOR_DLL" \
+			--reified-witness-contract "$producer_dll" "$producer_klib" "roundtrip.reifiednullability" \
+			>"$ROOT/build/nunit-$name.reified-witness-contract.log" 2>&1; then
+			echo "  semantic reified and nullable-witness ABI remain independent"
+		else
+			echo "  REIFIED/WITNESS CONTRACT FAIL — see build/nunit-$name.reified-witness-contract.log"
+			tail -25 "$ROOT/build/nunit-$name.reified-witness-contract.log"; rc=1
+		fi
+		if dotnet "$METADATA_INSPECTOR_DLL" \
 			--klib-package-nullable-method-bound "$producer_klib" "starprojection" \
 			"referencedNullableMethodBound" \
 			>"$ROOT/build/nunit-$name.nullable-method-bound.log" 2>&1; then

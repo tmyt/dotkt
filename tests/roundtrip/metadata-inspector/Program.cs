@@ -102,6 +102,13 @@ if (args.Length == 3 && args[0] == "--klib-no-flags-enum")
     return;
 }
 
+if (args.Length == 4 && args[0] == "--reified-witness-contract")
+{
+    VerifyReifiedWitnessContract(args[1], args[2], args[3]);
+    Console.WriteLine("semantic reified and nullable-witness ABI are independent: OK");
+    return;
+}
+
 if (args.Length != 7)
     throw new ArgumentException(
         "usage:\n" +
@@ -116,7 +123,8 @@ if (args.Length != 7)
         "  CompanionMetadataInspector --klib-class-fake-override-nullable-method-bound <file.klib> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-csharp-extension-shape <file.klib> <package> <class> <function>\n" +
         "  CompanionMetadataInspector --klib-flags-enum <file.klib> <class> <file.bir.json> <file.cir.json>\n" +
-        "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>");
+        "  CompanionMetadataInspector --klib-no-flags-enum <file.klib> <class>\n" +
+        "  CompanionMetadataInspector --reified-witness-contract <producer.dll> <producer.klib> <package>");
 
 VerifyLayerBoundary(args[2], args[3]);
 VerifyOwnershipLayerBoundary(args[4], args[5]);
@@ -127,6 +135,56 @@ VerifyReverseEnumeratorBridge(args[0]);
 VerifyUnsafeAccessorDll(args[6]);
 VerifyKlib(args[1]);
 Console.WriteLine("companion + nested ownership semantic BIR / physical CIR / DLL / KLIB linkage: OK");
+
+static void VerifyReifiedWitnessContract(string dllPath, string klibPath, string packageName)
+{
+    using (var stream = File.OpenRead(dllPath))
+    using (var pe = new PEReader(stream))
+    {
+        var md = pe.GetMetadataReader();
+        var facade = md.TypeDefinitions.Single(handle =>
+            DefinitionName(md, handle) == packageName + ".ReifiedNullabilityKt");
+        int ParameterCount(string name)
+        {
+            var method = md.GetTypeDefinition(facade).GetMethods().Single(handle =>
+                md.GetString(md.GetMethodDefinition(handle).Name) == name);
+            return md.GetMethodDefinition(method).GetParameters()
+                .Count(handle => md.GetParameter(handle).SequenceNumber > 0);
+        }
+        Require(ParameterCount("matches") == 2,
+            "matches<T>(value) must carry one semantic value plus one nullable witness");
+        Require(ParameterCount("forwarded") == 2,
+            "transitive nullable-witness demand did not reach forwarded<T>");
+        Require(ParameterCount("classifierName") == 0,
+            "classifierName<T>() received a nullable witness solely because T is reified");
+    }
+
+    using var archive = ZipFile.OpenRead(klibPath);
+    var fragments = archive.Entries
+        .Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry =>
+        {
+            using var stream = entry.Open();
+            return PackageFragment.Parser.ParseFrom(stream);
+        })
+        .Where(fragment => fragment.FqName == packageName)
+        .ToArray();
+    Require(fragments.Length == 1,
+        $"expected one package fragment '{packageName}', found {fragments.Length}");
+    var fragment = fragments[0];
+    foreach (var name in new[] { "matches", "forwarded", "classifierName" })
+    {
+        var function = fragment.Package.Function.Single(candidate => String(fragment, candidate.Name) == name);
+        Require(function.TypeParameter.Count == 1 && function.TypeParameter[0].Reified,
+            $"{name}<T> lost its semantic reified marker in DLL-to-KLIB projection");
+    }
+    Require(fragment.Package.Function.Single(candidate => String(fragment, candidate.Name) == "matches")
+            .ValueParameter.Count == 1,
+        "matches<T> leaked its physical nullable-witness parameter into KLIB");
+    Require(fragment.Package.Function.Single(candidate => String(fragment, candidate.Name) == "classifierName")
+            .ValueParameter.Count == 0,
+        "classifierName<T> gained a source-visible witness parameter");
+}
 
 static void VerifyKlibClassSupertypes(string path, string className, IReadOnlyList<string> expectedNames)
 {
