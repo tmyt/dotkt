@@ -592,7 +592,8 @@ class SuspendMetadataRoundtripTests {
     fun continuationOverrideSlotRoundTripsThroughDll() {
         val dispatcher = CrossModuleContinuationDispatcher()
         val continuation = CrossModuleSuspendSink()
-        ClassicAssert.AreSame(continuation, dispatcher.interceptContinuation(continuation))
+        val intercepted: Continuation<Int> = dispatcher.interceptContinuation(continuation)
+        ClassicAssert.AreSame(continuation, intercepted)
     }
 
     // The logical suspend result is frozen before CLR representation erasure. Both assignments are invariant type
