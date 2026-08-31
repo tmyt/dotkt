@@ -256,20 +256,40 @@ static partial class NullableTvErasureCallRealign
     // signature otherwise — and typed by the identical formula. Null when the build has no references.
     static ReferenceMetadataIndex _refs;
 
-    public static void Apply(JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+    public static void ApplySourceUses(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
+        ReferenceMetadataIndex refs)
     {
         _isValue = isValue ?? (_ => false);
         _refs = refs;
         ApplyRec(root, idx);
     }
 
-    // The CROSS-MODULE half (#86 D1) — the same formula and the same code, run once more at a later point in the
-    // pipeline. It exists because of WHEN a referenced callee acquires an owner: kotc emits a referenced top-level call
+    // DelegateTargetSlotAlignment changes declaration slots rather than materializing a subtree. Re-flow the method
+    // bodies only when that capability changed; this is a distinct phase transition, not a repair for a forgotten
+    // producer.
+    public static void ApplyAfterDelegateSlotAlignment(JsonNode root, DeclIndex idx, ValueTypeOracle isValue,
+        ReferenceMetadataIndex refs) => ApplySourceUses(root, idx, isValue, refs);
+
+    // A producer that creates a self-contained executable subtree after the file pass supplies that exact subtree.
+    // The new graph's own local reads retain frontend/synthesizer stamps, so Eval can seed its flow without walking
+    // the enclosing method again. This is the construction-boundary counterpart of ApplyRec's declaration walk.
+    public static void ApplyMaterialized(IEnumerable<JsonNode> roots, DeclIndex idx, ValueTypeOracle isValue,
+        ReferenceMetadataIndex refs)
+    {
+        _isValue = isValue ?? (_ => false);
+        _refs = refs;
+        foreach (var root in roots)
+            if (root != null) Eval(root, new Ctx { Idx = idx });
+    }
+
+    // The CROSS-MODULE half (#86 D1) — the same formula after a distinct capability transition. It exists because of
+    // WHEN a referenced callee acquires an owner: kotc emits a referenced top-level call
     // as `callStatic owner=null`, and only MemberCallSubstitution attributes it to the file class the reference index
     // is keyed by, so those calls have no resolvable declaration on the first run. Every rewrite here is gated on a
     // difference plus the object-erasure relation, so re-deriving a slot the first run already corrected is a no-op.
-    public static void ApplyReferenced(JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
-        => Apply(root, idx, isValue, refs);
+    public static void ApplyAfterReferencedOwnerBinding(
+        JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+        => ApplySourceUses(root, idx, isValue, refs);
 
     static void ApplyRec(JsonNode root, DeclIndex idx)
     {
@@ -378,7 +398,12 @@ static partial class NullableTvErasureCallRealign
                 EvalVar(obj, ctx);
                 return null;
             case "local":
-                return Str(obj["name"]) is string ln ? ctx.Env.GetValueOrDefault(ln) : null;
+                // A materialized subtree can retain reads of enclosing locals without carrying the whole enclosing
+                // method into its normalization work item. Their explicit node stamp is the exact source-frame fact;
+                // prefer flow information when available, then use that stamp at this boundary.
+                return Str(obj["name"]) is string ln
+                    ? ctx.Env.GetValueOrDefault(ln) ?? NodeType.Stamp(obj)
+                    : NodeType.Stamp(obj);
             case "const":
                 return TypeJson.Read(obj["type"]);
             case "new":

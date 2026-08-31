@@ -245,6 +245,11 @@ static class InlineSplice
             sameModule = sm;
         }
 
+        // The selected body is opaque frontend BIR, including for a same-module stash captured before phase 1. Enter
+        // the shared materialization contract before payload-specific inspection, substitution, or re-hoisting. This
+        // replaces the former second ObjectSlotRename walk over the entire consumer file.
+        MaterializedBirPayload.Normalize(payload);
+
         // GUARD SCAN -> FAIL LOUD (#95/§4.5 splice-all): kotc emits a callInline for EVERY inline call with a lambda arg,
         // so this engine MUST splice it — there is no plain-call fallback and every un-handled shape is a hard build-break,
         // not a silently-degradable call. o is untouched until step 7, so a mid-stream FailLoud is sound.

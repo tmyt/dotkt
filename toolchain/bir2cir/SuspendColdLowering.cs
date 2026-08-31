@@ -518,6 +518,8 @@ static partial class SuspendColdLowering
             var newMethods = new List<JsonNode>();
             var newTypes = new List<JsonNode>();
             gen.Build(newMethods, newTypes);
+            foreach (var materialized in newMethods) MaterializedExecutable.Normalize(materialized);
+            foreach (var materialized in newTypes) MaterializedExecutable.Normalize(materialized);
             if (gen.NeedsRootContinuation)
                 rootContinuationHost ??= e.Root;
 
@@ -551,7 +553,7 @@ static partial class SuspendColdLowering
         // helper into the app assembly that actually constructs it; abstract-only suspend surfaces need no helper.
         if (rootContinuationHost != null)
             ((rootContinuationHost["types"] as JsonArray) ?? EnsureArray(rootContinuationHost, "types"))
-                .Add(BuildRootContinuationType(tcsBcl));
+                .Add(MaterializedExecutable.Normalize(BuildRootContinuationType(tcsBcl)));
 
         // #22 — prune the intrinsic-block closure classes the cold lowering reconstructed inline (now dead; see
         // _consumedIntrinsicClosures). Only the SM-consumed closure NAMES are removed, so a `newClosure` used

@@ -17,8 +17,9 @@ using DotKt.Bir;
 // declaration this pass reads the default value from the referenced DLL (`KotlinDefault` carrier first, ECMA-335
 // parameter constant otherwise) and materializes a complete physical argument vector for CIR.
 //
-// PHASE 1 (#146): runs immediately AFTER InlineSplice — BEFORE ObjectSlotRename/ClosureSynthesis/MemberCallSubstitution/
-// BirTypeLowering — so the spliced RAW payload re-lowers IN THIS app's context (owner attribution for a payload's own
+// PHASE 1 (#146): runs immediately AFTER InlineSplice — before ClosureSynthesis/MemberCallSubstitution/BirTypeLowering.
+// The shared materialization chokepoint first applies representation-entry normalization, then the payload re-lowers
+// IN THIS app's context (owner attribution for a payload's own
 // `callStatic owner:null`, @ClrIntrinsic binding, generic resolution), exactly like InlineSplice's body splice.
 // Reference-KLIB cross-module calls already carry the callee's exact file-facade `ownerType`; use it. Only a truly
 // ownerless Kotlin call falls back to `method name | emitted-arity`, where conflicting owners are refused loudly.
@@ -126,6 +127,7 @@ static class DefaultArgSplice
             JsonNode parsed;
             try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); }
             catch { ThrowUnrepresentable(pos); return; }
+            MaterializedBirPayload.Normalize(parsed);
             // The metadata expression is authored in the selected declaration's method/type frame. Close it exactly
             // as the planned splice path does before admitting it into this caller; otherwise default(T) from a CLR
             // generic method can bind the caller's unrelated !!0 or remain unresolved in a non-generic caller.
@@ -528,6 +530,7 @@ static class DefaultArgSplice
     internal static JsonNode MaterializeDefault(string bir, JsonArray hoist, ReferenceMetadataIndex refs, string method, int slot, JsonNode localOwner)
     {
         JsonNode parsed; try { parsed = JsonNode.Parse(bir, documentOptions: BirJson.DocOptions); } catch { return null; }
+        MaterializedBirPayload.Normalize(parsed);
         var lexicalIdsFreshened = false;
         if (parsed is JsonObject env)
         {

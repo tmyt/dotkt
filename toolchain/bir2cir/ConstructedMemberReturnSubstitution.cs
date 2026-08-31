@@ -13,28 +13,29 @@ static class ConstructedMemberReturnSubstitution
         foreach (var root in roots) Walk(root);
     }
 
+    /// <summary>Close receiver-relative result slots in one newly synthesized executable graph.</summary>
+    public static T ApplyMaterialized<T>(T root) where T : JsonNode
+    {
+        Walk(root);
+        return root;
+    }
+
+    // InheritedMemberOwnerBinding already visits every call whose declaring owner it may rewrite. Discharge the
+    // constructed-result capability on that same work item instead of scheduling a later whole-module repair walk.
+    internal static void ApplyCall(JsonObject obj)
+    {
+        if (Str(obj["k"]) != "callInstance"
+            || TypeJson.Read(obj["ownerType"]) is not TypeNode.Fqn { Args: { } args }) return;
+        var changed = RewriteSlot(obj, "ret", args) | RewriteSlot(obj, "dynRet", args);
+        if (changed) NodeType.DropStampIfStale(obj);
+    }
+
     static void Walk(JsonNode node)
     {
         switch (node)
         {
             case JsonObject obj:
-                if (Str(obj["k"]) == "callInstance"
-                    && TypeJson.Read(obj["ownerType"]) is TypeNode.Fqn { Args: { } args })
-                {
-                    var changed = RewriteSlot(obj, "ret", args) | RewriteSlot(obj, "dynRet", args);
-                    // Spec §2.7 — a pass that changes a node's RESULT TYPE rewrites or deletes its `sty`, and this is
-                    // one of the passes that paragraph names. Where the owner was ERASED first — a cross-module
-                    // `Slot<T?>` bound as `Slot<object>` — the substituted result is `object` while the frontend stamp
-                    // still names the pre-erasure instantiation `kotlin.String`; the stamp is read FIRST by every
-                    // deriver, so a spill slot or state-machine field declared from it names a type the value does not
-                    // have, and since the instantiation is not recoverable from an erased owner the stamp is DROPPED.
-                    //
-                    // Only where the substitution CONTRADICTS it, though. RewriteSlot uses exact stamp equality as the
-                    // slot-level frame boundary: a return already instantiated in the caller frame is left alone,
-                    // while a distinct callee-relative result is closed through the constructed owner here. Any
-                    // physical erasure that makes the latter disagree with the frontend result still drops the stamp.
-                    if (changed) NodeType.DropStampIfStale(obj);
-                }
+                ApplyCall(obj);
                 foreach (var value in obj.Select(kv => kv.Value).ToList()) if (value != null) Walk(value);
                 break;
             case JsonArray arr:
@@ -53,7 +54,7 @@ static class ConstructedMemberReturnSubstitution
         // distinguishable at the slot boundary without inventing another tv scope: it differs from the exact stamp
         // (`AtomicRef<Any>.value`: ret=!0, sty=String), so only that form is substituted. A bir2cir producer that
         // authors an already-closed result must carry the same exact stamp; equality then keeps that call stable
-        // across the early and late sweeps.
+        // across source admission and later construction-boundary normalization.
         if (TypeJson.Read(obj["sty"]) is TypeNode stamp && type.Equals(stamp)) return false;
         obj[key] = TypeJson.Write(Subst(type, args));
         return true;

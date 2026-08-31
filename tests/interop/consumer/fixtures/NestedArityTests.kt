@@ -175,8 +175,8 @@ class NestedArityTests {
 
     @TestAttribute
     fun nullableExternalValueEventReceiverUsesBareSpill() {
-        // Event subscription binding synthesizes its receiver spill after the first use-axis walk. The conditional
-        // second walk must unwrap the nullable struct before that bare-value local is stored and dispatched through.
+        // Event subscription binding synthesizes its receiver spill after source use-axis normalization. Its exact
+        // materialized work item must unwrap the nullable struct before that bare-value local is stored and dispatched.
         val eventValue: EventValueItem? = Oracle.EventValue()
         val subscription = eventValue!!.Changed.subscribe { _ -> }
         subscription.close()
