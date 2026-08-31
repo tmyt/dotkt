@@ -121,6 +121,7 @@ class ArrayTests {
         assertEquals(42, values.getOrPut(5) { 99 })
         assertEquals(10, mapOf(1 to 10, 2 to 20).getOrElse(1) { -1 })
         assertEquals(-1, mapOf(1 to 10).getOrElse(9) { -1 })
+        assertEquals("[1, 2, 3]", listOf(3, 1, 2).sorted().toString())
         assertEquals("[1, 2, 3]", listOf(3, 1, 2).sortedWith(compareBy { it }).toString())
         assertEquals("[3, 2, 1]", listOf(3, 1, 2).sortedByDescending { it }.toString())
         val pairs = listOf(3 to "c", 1 to "a", 2 to "b")
@@ -400,6 +401,9 @@ class ArrayTests {
         assertEquals("[1, 2]", ubyteArrayOf(1u, 2u).toList().toString())       // [1, 2]
         assertEquals("[3, 4]", uintArrayOf(3u, 4u).toList().toString())        // [3, 4]
         assertEquals("[9, 8]", ubyteArrayOf(9u, 8u).contentToString())         // [9, 8]
+        assertEquals("[7, 6]", uintArrayOf(7u, 6u).contentToString())           // [7, 6]
+        assertEquals(true, uintArrayOf(3u, 4u).contains(4u))
+        assertEquals(false, uintArrayOf(3u, 4u).isEmpty())
         assertEquals("[5, 6]", intArrayOf(5, 6).contentToString())             // [5, 6]
     }
 

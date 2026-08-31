@@ -63,12 +63,18 @@ distinct root causes behind the ~22 reds (an identity-cast `unbox.any`, a double
 tightening) — bisect, don't lump.
 
 ### 7. Stdlib-source refresh + doc/pin sweep (the second half)
-A *full* bump = compiler + the matching stdlib SOURCE. Refresh `libraries/stdlib/{common/src,src,unsigned/src}` from
-upstream vX by **per-file 3-way merge** (base = the OLD tag's blob), preserving our local CLR-semantic edits (guided by
-their `// NOTE (CLR)` / `// #76` markers) + the `clr/` actuals; write CLR actuals only for the **genuinely-new
-`expect`s** (2.4.0: just 3 trivial one-liners — the "new actuals" fear is usually overblown; enumerate by signature).
-Then the P6 sweep: `CLAUDE.md` / `README.md` / the docs' "pinned to X" lines. Do the doc sweep only AFTER green (writing
-"2.X" while the gate is red is premature).
+A *full* bump = compiler + the matching stdlib SOURCE. Replace `libraries/stdlib/common` verbatim from upstream vX;
+do not 3-way-merge CLR adaptations into that subtree. Regenerate
+`tests/stdlib-common-upstream/upstream-vX.sha256`, update its recorded upstream tag/commit and the gate's
+`EXPECTED_VERSION`, then run `make verify-stdlib-upstream`. Refresh `libraries/stdlib/{src,unsigned/src}` by per-file
+3-way merge (base = the old tag's blob), preserving genuine Kotlin-semantic changes. CLR physical names, markers, and
+platform bodies live in `libraries/stdlib/clr/common` and `libraries/stdlib/clr/stdlib-bindings.json` instead.
+
+After the frontend BIR build, re-resolve every sidecar entry from the target declaration's `declarationId`, source
+name, complete parameter/return signature, and implementation identity. The overlay fails closed on stale IDs, but
+the opaque hashes still need deliberate regeneration from `build/clr-stdlib/bir/*.bir.json`; never guess an ID or
+match only by name. Enumerate genuinely new `expect`s by signature and add only their required CLR actuals. Then do
+the P6 pin/doc sweep. Do the doc sweep only after green (writing "2.X" while the gate is red is premature).
 
 ## Reasoning-vs-grind split (plan the budget this way)
 - **Reasoning-heavy (front-load; high-leverage):** step 1 (the verified delta + watch-list), step 4 (the

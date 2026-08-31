@@ -27,6 +27,7 @@ FE_KLIB    := build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib
 STDLIB_REF := build/clr-stdlib/dll/DotKt.Private.Stdlib.dll
 STDLIB_RT  := build/clr-stdlib-rt/dll/DotKt.Stdlib.dll
 FEED       := build/nuget-feed
+STDLIB_BINDINGS := libraries/stdlib/clr/stdlib-bindings.json
 
 # ---- source sets (prerequisites for incrementality) ----------------------------------------------
 KOTC_SRC   := $(shell find toolchain/kotc/src -type f 2>/dev/null) toolchain/kotc/build.gradle.kts settings.gradle.kts
@@ -41,7 +42,7 @@ tool_src    = $(shell find toolchain/$(1) toolchain/bir-common -name '*.cs' -o -
 .PHONY: all toolchain kotc $(TOOLS) stdlib stdlib-klib stdlib-ref stdlib-rt pack \
         verify verify-core verify-tests verify-nunit verify-compile-fail verify-test-corpus verify-integration \
         verify-schema verify-sanity verify-lowering verify-msbuild verify-gate-selection verify-packaged-sdk \
-        verify-target-universe verify-csharp14-extension-abi verify-xfail-policy \
+        verify-target-universe verify-csharp14-extension-abi verify-xfail-policy verify-stdlib-upstream \
         dev dll2klib-e2e dll2klib-recursive-delegates dll2klib-index-benchmark \
         clean clean-tools clean-stdlib clean-pack help
 
@@ -77,7 +78,7 @@ $(FE_KLIB): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-klib.sh scripts/lib.sh
 # deps on the dlls (existence). Depending on the dll mtimes directly would spuriously retrigger these
 # slow builds: the verify scripts' internal `dotnet build` refreshes the dlls even when nothing changed.
 stdlib-ref: $(STDLIB_REF) ## DotKt.Private.Stdlib.dll (compile-time @Clr metadata; bir2cir's --ref)
-$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh scripts/lib.sh \
+$(STDLIB_REF): $(KOTC) $(STDLIB_SRC) $(STDLIB_BINDINGS) scripts/build-stdlib-ref.sh scripts/lib.sh \
                $(call tool_src,bir2cir) $(call tool_src,ilemit) \
                | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_stdlib_ref'
@@ -87,7 +88,7 @@ $(STDLIB_REF): $(KOTC) $(STDLIB_SRC) scripts/build-stdlib-ref.sh scripts/lib.sh 
 stdlib-rt: $(STDLIB_RT) ## DotKt.Stdlib.dll (the shipping runtime assembly)
 # The script exits 0 on success / nonzero on real failure (the old final-error-grep footgun — exit 1
 # exactly when the build was CLEAN — is fixed, so no compensating `|| true` here any more).
-$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) scripts/build-stdlib-rt.sh scripts/lib.sh \
+$(STDLIB_RT): $(STDLIB_REF) $(STDLIB_SRC) $(STDLIB_BINDINGS) scripts/build-stdlib-rt.sh scripts/lib.sh \
               $(call tool_src,bir2cir) $(call tool_src,ilemit) \
               | build/bir2cir-bin/bir2cir.dll build/ilemit-bin/ilemit.dll
 	SCRIPT_NAME=make bash -c 'source scripts/lib.sh; need_stdlib_rt'
@@ -131,6 +132,7 @@ verify-test-corpus: verify-nunit ## NUnit/ILVerify followed by schema + sanity o
 	$(MAKE) verify-schema verify-sanity
 
 verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy gates
+	+$(MAKE) verify-stdlib-upstream
 	+$(MAKE) verify-msbuild
 	+$(MAKE) verify-target-universe
 	+$(MAKE) verify-csharp14-extension-abi
@@ -165,6 +167,9 @@ verify-csharp14-extension-abi: ## released C# 14 static extension-member metadat
 
 verify-xfail-policy: ## self-test the shared NEW/FIXED baseline verdict without building the toolchain
 	bash tests/xfail/run.sh
+
+verify-stdlib-upstream: ## offline byte-for-byte common stdlib check against the selected Kotlin snapshot
+	bash tests/stdlib-common-upstream/run.sh
 
 # ==================================================================================================
 # Dev conveniences

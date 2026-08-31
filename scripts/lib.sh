@@ -25,6 +25,7 @@ DLL2KLIB_DLL="$ROOT/build/dll2klib-bin/dll2klib.dll"
 FE_KLIB="$ROOT/build/clr-stdlib-frontend-klib/kotlin-stdlib-clr-frontend.klib"
 STDLIB_REF_DLL="$ROOT/build/clr-stdlib/dll/DotKt.Private.Stdlib.dll"
 STDLIB_RT_DLL="$ROOT/build/clr-stdlib-rt/dll/DotKt.Stdlib.dll"
+STDLIB_BINDINGS="$ROOT/libraries/stdlib/clr/stdlib-bindings.json"
 DOTKT_TFM="${DOTKT_TFM:-net10.0}"
 DOTKT_TARGET_FRAMEWORK_MONIKER="${DOTKT_TARGET_FRAMEWORK_MONIKER:-.NETCoreApp,Version=v10.0}"
 DOTKT_RUNTIME_FRAMEWORK_NAME="${DOTKT_RUNTIME_FRAMEWORK_NAME:-Microsoft.NETCore.App}"
@@ -180,9 +181,11 @@ need_stdlib_rt() { # the stdlib RUNTIME dll; rebuild if missing OR toolchain cha
 # Common = the multiplatform expect/impl source; Platform(CLR) = the clr/ actuals (NOT common sources).
 collect_stdlib_sources() {
 	mapfile -t STDLIB_COMMON   < <(find "$ROOT/libraries/stdlib/common/src" -name '*.kt')
+	mapfile -t STDLIB_CLR_COMMON < <(find "$ROOT/libraries/stdlib/clr/common" -name '*.kt')
+	STDLIB_COMMON+=("${STDLIB_CLR_COMMON[@]}")
 	mapfile -t STDLIB_SRC      < <(find "$ROOT/libraries/stdlib/src" -name '*.kt')
 	mapfile -t STDLIB_UNSIGNED < <(find "$ROOT/libraries/stdlib/unsigned/src" -name '*.kt')
-	mapfile -t STDLIB_CLR      < <(find "$ROOT/libraries/stdlib/clr" -name '*.kt')
+	mapfile -t STDLIB_CLR      < <(find "$ROOT/libraries/stdlib/clr" -name '*.kt' ! -path "$ROOT/libraries/stdlib/clr/common/*")
 	local all=("${STDLIB_COMMON[@]}" "${STDLIB_SRC[@]}" "${STDLIB_UNSIGNED[@]}")
 	STDLIB_COMMON_CSV="$(IFS=,; echo "${all[*]}")"
 }

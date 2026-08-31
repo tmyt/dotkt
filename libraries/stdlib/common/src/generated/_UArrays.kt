@@ -3956,14 +3956,7 @@ public fun UShortArray?.contentHashCode(): Int {
 @SinceKotlin("1.4")
 @ExperimentalUnsignedTypes
 public fun UIntArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in 0 until size) {
-        if (i != 0) sb.append(", ")
-        sb.append(this[i].toString())
-    }
-    sb.append("]")
-    return sb.toString()
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 /**
@@ -3974,14 +3967,7 @@ public fun UIntArray?.contentToString(): String {
 @SinceKotlin("1.4")
 @ExperimentalUnsignedTypes
 public fun ULongArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in 0 until size) {
-        if (i != 0) sb.append(", ")
-        sb.append(this[i].toString())
-    }
-    sb.append("]")
-    return sb.toString()
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 /**
@@ -3992,14 +3978,7 @@ public fun ULongArray?.contentToString(): String {
 @SinceKotlin("1.4")
 @ExperimentalUnsignedTypes
 public fun UByteArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in 0 until size) {
-        if (i != 0) sb.append(", ")
-        sb.append(this[i].toString())
-    }
-    sb.append("]")
-    return sb.toString()
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 /**
@@ -4010,14 +3989,7 @@ public fun UByteArray?.contentToString(): String {
 @SinceKotlin("1.4")
 @ExperimentalUnsignedTypes
 public fun UShortArray?.contentToString(): String {
-    if (this == null) return "null"
-    val sb = StringBuilder("[")
-    for (i in 0 until size) {
-        if (i != 0) sb.append(", ")
-        sb.append(this[i].toString())
-    }
-    sb.append("]")
-    return sb.toString()
+    return this?.joinToString(", ", "[", "]") ?: "null"
 }
 
 /**
@@ -11776,76 +11748,3 @@ public inline fun UShortArray.sum(): UInt {
     return sumOf { it.toUInt() }
 }
 
-
-// #76: dedicated array-receiver toList/toMutableList. Unsigned arrays are native CLR arrays with no Collection
-// supertype (matching signed IntArray), so — exactly like signed _Arrays.kt — they carry their own list
-// conversions instead of inheriting Collection<T>.toList()/toMutableList(). These live in common (visible to the
-// internal take/drop/reversed callers above); mirrors the signed IntArray implementations.
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UIntArray.toMutableList(): MutableList<UInt> { val list = ArrayList<UInt>(size); for (item in this) list.add(item); return list }
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun ULongArray.toMutableList(): MutableList<ULong> { val list = ArrayList<ULong>(size); for (item in this) list.add(item); return list }
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UByteArray.toMutableList(): MutableList<UByte> { val list = ArrayList<UByte>(size); for (item in this) list.add(item); return list }
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UShortArray.toMutableList(): MutableList<UShort> { val list = ArrayList<UShort>(size); for (item in this) list.add(item); return list }
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UIntArray.toList(): List<UInt> = when (size) { 0 -> emptyList(); 1 -> listOf(this[0]); else -> this.toMutableList() }
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun ULongArray.toList(): List<ULong> = when (size) { 0 -> emptyList(); 1 -> listOf(this[0]); else -> this.toMutableList() }
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UByteArray.toList(): List<UByte> = when (size) { 0 -> emptyList(); 1 -> listOf(this[0]); else -> this.toMutableList() }
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UShortArray.toList(): List<UShort> = when (size) { 0 -> emptyList(); 1 -> listOf(this[0]); else -> this.toMutableList() }
-
-// #76: dedicated isEmpty/isNotEmpty/contains extensions. These were Collection<T> members on the value class;
-// with the Collection supertype gone (native-array parity with signed IntArray), they become array-receiver
-// extensions exactly as signed _Arrays.kt provides them. get/set/size/iterator stay compiler-decomposed array
-// intrinsics; only the non-intrinsic Collection API moves to extensions here.
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UIntArray.isEmpty(): Boolean = size == 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun ULongArray.isEmpty(): Boolean = size == 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UByteArray.isEmpty(): Boolean = size == 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UShortArray.isEmpty(): Boolean = size == 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UIntArray.isNotEmpty(): Boolean = size > 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun ULongArray.isNotEmpty(): Boolean = size > 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UByteArray.isNotEmpty(): Boolean = size > 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public fun UShortArray.isNotEmpty(): Boolean = size > 0
-
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public operator fun UIntArray.contains(element: UInt): Boolean = indexOf(element) >= 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public operator fun ULongArray.contains(element: ULong): Boolean = indexOf(element) >= 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public operator fun UByteArray.contains(element: UByte): Boolean = indexOf(element) >= 0
-@SinceKotlin("1.3")
-@ExperimentalUnsignedTypes
-public operator fun UShortArray.contains(element: UShort): Boolean = indexOf(element) >= 0

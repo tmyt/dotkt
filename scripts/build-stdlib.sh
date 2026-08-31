@@ -59,7 +59,8 @@ if (( do_emit )); then
 	#     squashed to `throw`) -> ilemit. Self-contained (no runtime ref).
 	rm -rf "$REF_CIR" "$REF_DLL"; mkdir -p "$REF_CIR" "$REF_DLL"
 	info "REF: bir2cir -> CIR"
-	dotnet "$BIR2CIR_DLL" "$REF_CIR" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$REF_OUT/bir2cir.err" || true
+	dotnet "$BIR2CIR_DLL" "$REF_CIR" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata \
+		--stdlib-bindings "$STDLIB_BINDINGS" "$BIR"/*.bir.json 2>"$REF_OUT/bir2cir.err" || true
 	echo "REF CIR files: $(ls "$REF_CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "REF: ilemit -> DotKt.Private.Stdlib.dll"
 	{ dotnet "$ILEMIT_DLL" "$REF_DLL" DotKt.Private.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=metadata "$REF_CIR"/*.cir.json 2>"$REF_OUT/ilemit.err" || true; } | tail -2
@@ -73,7 +74,8 @@ if (( do_emit )); then
 	rm -rf "$RT_CIR" "$RT_DLL"; mkdir -p "$RT_CIR" "$RT_DLL"
 	rt_compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
 	info "RT: bir2cir (substitute) -> CIR"
-	{ dotnet "$BIR2CIR_DLL" "$RT_CIR" --compile-refs "$rt_compile_refs" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$RT_OUT/bir2cir.err" || true; } | tail -1
+	{ dotnet "$BIR2CIR_DLL" "$RT_CIR" --compile-refs "$rt_compile_refs" --build-stdlib=runtime \
+		--stdlib-bindings "$STDLIB_BINDINGS" "$BIR"/*.bir.json 2>"$RT_OUT/bir2cir.err" || true; } | tail -1
 	echo "RT CIR files: $(ls "$RT_CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "RT: ilemit (substitute) -> DotKt.Stdlib.dll"
 	{ dotnet "$ILEMIT_DLL" "$RT_DLL" DotKt.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=runtime "$RT_CIR"/*.cir.json 2>"$RT_OUT/ilemit.err" || true; } | tail -2

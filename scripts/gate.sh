@@ -135,6 +135,7 @@ classify() { # <path>
 		tests/msbuild/*) want msbuild; reason "$p -> stateful MSBuild tests" ;;
 		tests/packaged-sdk/*) want packagedsdk; reason "$p -> packaged SDK tests" ;;
 		tests/gate-selection/*) want gate_selection; reason "$p -> gate selector policy tests" ;;
+		tests/stdlib-common-upstream/*) want stdlib_upstream; reason "$p -> upstream stdlib snapshot gate" ;;
 		tests/basic/*|tests/coroutines/*|tests/interop/*|tests/roundtrip/*|tests/support/*|tests/run-nunit-tests.sh|tests/run-ilverify.sh)
 			want compiler_tests; reason "$p -> categorized compiler tests" ;;
 		tests/target-universe/*)
@@ -148,15 +149,16 @@ classify() { # <path>
 }
 
 # ---- suite targets --------------------------------------------------------------------------------
-declare -a RUN_ORDER=(compiler_tests schema sanity msbuild targetuniverse gate_selection packagedsdk)
+declare -a RUN_ORDER=(compiler_tests schema sanity msbuild targetuniverse stdlib_upstream gate_selection packagedsdk)
 declare -A SUITE_TARGET=(
 	[compiler_tests]=verify-tests [schema]=verify-schema [sanity]=verify-sanity
 	[msbuild]=verify-msbuild
 	[targetuniverse]=verify-target-universe [gate_selection]=verify-gate-selection
+	[stdlib_upstream]=verify-stdlib-upstream
 	[packagedsdk]=verify-packaged-sdk
 )
 
-FULL_SUITES=(compiler_tests schema sanity msbuild targetuniverse gate_selection)
+FULL_SUITES=(compiler_tests schema sanity msbuild targetuniverse stdlib_upstream gate_selection)
 
 # ---- compute the plan -----------------------------------------------------------------------------
 mapfile -t CHANGES < <(collect_changes)

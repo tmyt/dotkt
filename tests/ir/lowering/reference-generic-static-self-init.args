@@ -1,1 +1,3 @@
 --build-stdlib=metadata
+--stdlib-bindings
+tests/ir/lowering/empty-stdlib-bindings.json
