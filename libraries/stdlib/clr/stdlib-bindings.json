@@ -1,0 +1,103 @@
+{
+  "type": "dotkt-stdlib-bindings",
+  "version": 1,
+  "declarations": [
+    {
+      "declarationId": "dotkt-declaration-v1:d24ba2e2f1934fb8d2414c69166e95f4adfb8d0feb6e9dfa8d22e621c3481215",
+      "sourceName": "max",
+      "physicalName": "maxOrThrowBoxed"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:53c38f6b3825252b20c3eb3f24146e6bf9478d62b01303a5b40f4a85232e9aec",
+      "sourceName": "max",
+      "physicalName": "maxOrThrowBoxed"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:c13bc1e173f196f803bdd53755b4906e64362a5578fd725ae301245905afea98",
+      "sourceName": "maxOrNull",
+      "physicalName": "maxOrNullBoxed"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:54704e06091d425375c30ac46dbf5cd6d19aeda8c6a988dcbdb3aa07f206f44f",
+      "sourceName": "maxOrNull",
+      "physicalName": "maxOrNullBoxed"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:c354893fe38fc253432cd1e2a7db0ec6646717ccc7f1ee790560e62f9e573b57",
+      "sourceName": "min",
+      "physicalName": "minOrThrowBoxed"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:63be8fd7e2daf796d6ae7db1cf8424b75428933cf6c0b7ad1b3ed97ac0e390a6",
+      "sourceName": "min",
+      "physicalName": "minOrThrowBoxed"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:d59e78ddc8a2ad575bcce89b46bf316655c39b06ff1dc720a5120339c0e69941",
+      "sourceName": "minOrNull",
+      "physicalName": "minOrNullBoxed"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:4d1d8d5bb074e098d24ff16197cba159c70ccadec7829b31a5793fe3d428a185",
+      "sourceName": "minOrNull",
+      "physicalName": "minOrNullBoxed"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:3dc7cbd94f7f1424103b37c3c4b3958e9a20e4d2d00929fd7456519f8a15c22b",
+      "sourceName": "minus",
+      "physicalName": "minusSequence"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:034127b5207b2cd3a64b095fa128060b74b3181f898067681ac0ec3090af69fb",
+      "sourceName": "plus",
+      "physicalName": "plusSequence"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:982949c691ba2e1ec7d868e24a5e6866b250d11795633c69ad0ca0b858ad00e4",
+      "sourceName": "plus",
+      "physicalName": "plusSequence"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:92a69e6ca3bf5ee723a72db8f58e861693a3257290ebd10261092bc8bf75a1fe",
+      "sourceName": "minus",
+      "physicalName": "minusSequence"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:3bf73407a2018675ccb479ac2acfe4ac0783945f1587ae69c85c6ffa2373b004",
+      "sourceName": "plus",
+      "physicalName": "plusSequence"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:bedc0dc25ebfe0e53c2ed941358e50c8985ddf206fb8693bcfd53c98f0e6c726",
+      "sourceName": "minus",
+      "physicalName": "minusSequence"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:5c018aa21f4475251bcc49d575905e0ae86e7c5cc16f696392b433736ea92586",
+      "sourceName": "plus",
+      "physicalName": "plusSequence"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:3c97e22a6fa3bccaef29adcb325cffd0d55bd77de2c5c8f7c9a4e1a2752c93b3",
+      "sourceName": "filterIsInstance",
+      "sequenceElementAdapter": true
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:1f9d17f723111cb08e6fbd27c88ec50576fb9df98f785f04f41519bba41d5e7f",
+      "sourceName": "filterNotNull",
+      "sequenceElementAdapter": true
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:c65a0c2d65ac83a15c4d5450b219778d92515463b9b2c74b35e522a779a6ea1b",
+      "sourceName": "sorted",
+      "implementationDeclarationId": "dotkt-declaration-v1:f7c81a91c4b9c6a59e7246b8a72d30e84d4ebe39aeecc4f280e41795159d63bd",
+      "implementationSourceName": "clrSortedImplementation"
+    },
+    {
+      "declarationId": "dotkt-declaration-v1:0a4313aa5648daf30ae3de8a0584eba3b753749fb0f69eba797388a9ab058a33",
+      "sourceName": "sortedWith",
+      "implementationDeclarationId": "dotkt-declaration-v1:dfab9624a9512948980ae494522c0fd40cffd838efedcccb0974095891eef2c3",
+      "implementationSourceName": "clrSortedWithImplementation"
+    }
+  ]
+}

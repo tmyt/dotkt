@@ -56,7 +56,8 @@ if (( do_emit )); then
 	# (member calls on CLR-bound owners -> plain BCL calls). Must exist — build the ref first.
 	[[ -f "$STDLIB_REF_DLL" ]] || die "reference stdlib dll not found at $STDLIB_REF_DLL — run 'build-stdlib-ref.sh --emit' first (the runtime build reads it for the @ClrTypeAlias/@ClrIntrinsic labels)"
 	compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL")"
-	{ dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$compile_refs" --build-stdlib=runtime "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true; } | tail -1
+	{ dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$compile_refs" --build-stdlib=runtime \
+		--stdlib-bindings "$STDLIB_BINDINGS" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true; } | tail -1
 	info "ilemit (substitute) -> DotKt.Stdlib.dll"
 	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=runtime "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2
 	# Report (but do not fail on) interesting emitter noise; the REAL success signal is the dll below.

@@ -53,7 +53,8 @@ if (( do_emit )); then
 	need_dotnet_reference_sets
 	rm -rf "$CIR" "$DLL"; mkdir -p "$CIR" "$DLL"
 	info "bir2cir -> CIR (ref mode)"
-	dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true
+	dotnet "$BIR2CIR_DLL" "$CIR" --compile-refs "$FRAMEWORK_COMPILE_REFS" --build-stdlib=metadata \
+		--stdlib-bindings "$STDLIB_BINDINGS" "$BIR"/*.bir.json 2>"$OUT/bir2cir.err" || true
 	echo "CIR files: $(ls "$CIR"/*.cir.json 2>/dev/null | wc -l)"
 	info "ilemit(CIR) -> DotKt.Private.Stdlib.dll"
 	{ dotnet "$ILEMIT_DLL" "$DLL" DotKt.Private.Stdlib --compile-refs "$FRAMEWORK_COMPILE_REFS" --runtime-refs "" --target-framework-moniker "$DOTKT_TARGET_FRAMEWORK_MONIKER" --build-stdlib=metadata "$CIR"/*.cir.json 2>"$OUT/ilemit.err" || true; } | tail -2

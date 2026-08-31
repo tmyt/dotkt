@@ -474,7 +474,6 @@ public inline fun <T, C : MutableCollection<in T>> Sequence<T>.filterIndexedTo(d
  * 
  * @sample samples.collections.Collections.Filtering.filterIsInstance
  */
-@kotlin.clr.ClrSequenceElementAdapter
 public inline fun <reified R> Sequence<*>.filterIsInstance(): Sequence<@kotlin.internal.NoInfer R> {
     @Suppress("UNCHECKED_CAST")
     return filter { it is R } as Sequence<R>
@@ -511,7 +510,6 @@ public fun <T> Sequence<T>.filterNot(predicate: (T) -> Boolean): Sequence<T> {
  * 
  * @sample samples.collections.Collections.Filtering.filterNotNull
  */
-@kotlin.clr.ClrSequenceElementAdapter
 public fun <T : Any> Sequence<T?>.filterNotNull(): Sequence<T> {
     @Suppress("UNCHECKED_CAST")
     return filterNot { it == null } as Sequence<T>
@@ -2964,7 +2962,6 @@ public operator fun <T> Sequence<T>.minus(elements: Iterable<T>): Sequence<T> {
  * 
  * The operation is _intermediate_ for this sequence and _terminal_ and _stateful_ for the [elements] sequence.
  */
-@kotlin.clr.ClrName("minusSequence")
 public operator fun <T> Sequence<T>.minus(elements: Sequence<T>): Sequence<T> {
     return object: Sequence<T> {
         override fun iterator(): Iterator<T> {
@@ -3050,7 +3047,6 @@ public operator fun <T> Sequence<T>.plus(elements: Iterable<T>): Sequence<T> {
  *
  * The operation is _intermediate_ and _stateless_.
  */
-@kotlin.clr.ClrName("plusSequence")
 public operator fun <T> Sequence<T>.plus(elements: Sequence<T>): Sequence<T> {
     return sequenceOf(this, elements).flatten()
 }
@@ -3409,3 +3405,4 @@ public fun Sequence<Double>.sum(): Double {
     }
     return sum
 }
+

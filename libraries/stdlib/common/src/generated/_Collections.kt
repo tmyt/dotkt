@@ -1201,10 +1201,11 @@ public fun <T : Comparable<T>> MutableList<T>.sortDescending(): Unit {
  * The sort is _stable_. It means that equal elements preserve their order relative to each other after sorting.
  */
 public fun <T : Comparable<T>> Iterable<T>.sorted(): List<T> {
-    // CLR adaptation: the JVM Collection fast-path `(toTypedArray<Comparable<T>>() as Array<T>)` relies on array
-    // ERASURE (Comparable[] == T[]); on CLR's reified arrays IComparable<Int>[] != Int[] -> InvalidCast. Always use
-    // toMutableList().sort() (the original non-Collection branch) -- the stable O(n log n) merge sort, correct for all
-    // element types and value/reference alike.
+    if (this is Collection) {
+        if (size <= 1) return this.toList()
+        @Suppress("UNCHECKED_CAST")
+        return (toTypedArray<Comparable<T>>() as Array<T>).apply { sort() }.asList()
+    }
     return toMutableList().apply { sort() }
 }
 
@@ -1247,9 +1248,11 @@ public fun <T : Comparable<T>> Iterable<T>.sortedDescending(): List<T> {
  * The sort is _stable_. It means that equal elements preserve their order relative to each other after sorting.
  */
 public fun <T> Iterable<T>.sortedWith(comparator: Comparator<in T>): List<T> {
-    // CLR adaptation: the JVM Collection fast-path `(toTypedArray<Any?>() as Array<T>)` relies on array ERASURE
-    // (Object[] == T[]); on CLR's reified arrays Object[] != Int32[] -> InvalidCast. Always use
-    // toMutableList().sortWith(comparator) (the original non-Collection branch), correct for all element types.
+    if (this is Collection) {
+       if (size <= 1) return this.toList()
+       @Suppress("UNCHECKED_CAST")
+       return (toTypedArray<Any?>() as Array<T>).apply { sortWith(comparator) }.asList()
+    }
     return toMutableList().apply { sortWith(comparator) }
 }
 
@@ -3471,7 +3474,6 @@ public operator fun <T> Iterable<T>.minus(elements: Iterable<T>): List<T> {
 /**
  * Returns a list containing all elements of the original collection except the elements contained in the given [elements] sequence.
  */
-@kotlin.clr.ClrName("minusSequence")
 public operator fun <T> Iterable<T>.minus(elements: Sequence<T>): List<T> {
     val other = elements.toList()
     if (other.isEmpty())
@@ -3579,7 +3581,6 @@ public operator fun <T> Collection<T>.plus(elements: Iterable<T>): List<T> {
 /**
  * Returns a list containing all elements of the original collection and then all elements of the given [elements] sequence.
  */
-@kotlin.clr.ClrName("plusSequence")
 public operator fun <T> Iterable<T>.plus(elements: Sequence<T>): List<T> {
     val result = ArrayList<T>()
     result.addAll(this)
@@ -3590,7 +3591,6 @@ public operator fun <T> Iterable<T>.plus(elements: Sequence<T>): List<T> {
 /**
  * Returns a list containing all elements of the original collection and then all elements of the given [elements] sequence.
  */
-@kotlin.clr.ClrName("plusSequence")
 public operator fun <T> Collection<T>.plus(elements: Sequence<T>): List<T> {
     val result = ArrayList<T>(this.size + 10)
     result.addAll(this)
@@ -3996,3 +3996,4 @@ public fun Iterable<Double>.sum(): Double {
     }
     return sum
 }
+
