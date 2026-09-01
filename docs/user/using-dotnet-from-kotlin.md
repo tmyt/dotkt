@@ -97,6 +97,21 @@ c.Swap(byref(x), byref(y))              // ref int, ref int → swapped in place
 A `ref`-returning method received plainly gives you a value copy; bind it with
 `var x by byref(m())` to keep a **live** reference whose writes flow back into the .NET storage.
 
+You can also expose a real CLR `ref` parameter from a non-suspend Kotlin function. Read and write its live storage
+through `ClrRef<T>.value`:
+
+```kotlin
+import kotlin.clr.ClrRef
+
+fun increment(slot: ClrRef<Int>) {
+    slot.value = slot.value + 1
+}
+```
+
+C# sees the parameter as `ref int`. A managed reference cannot be kept in a heap field; capturing or storing a
+`ClrRef<T>` parameter, using one in a `suspend` declaration, and declaring `ClrRef<T>` return types or properties are
+unsupported forms with undefined behavior.
+
 ## 5. Nullable value types, .NET enums, operators, extension methods
 
 - `int?` / `double?` ⇔ Kotlin `Int?` / `Double?` in both directions (passing a plain `Int` or

@@ -5,6 +5,7 @@ import BidirectionalInterop.RepeatedGenericOuter.RepeatedGenericInner
 import BidirectionalInterop.StructConstrainedTarget
 import System.FlagsAttribute
 import kotlin.clr.ClrEnum
+import kotlin.clr.ClrRef
 
 @FlagsAttribute
 @ClrEnum
@@ -31,6 +32,19 @@ class BidirectionalGreeter(val name: String) {
 }
 
 fun bidirectionalAdd(a: Int, b: Int): Int = a + b
+
+// #276 — a user-declared ClrRef<T> parameter is a real CLR managed-reference parameter. The callee consumes the
+// managed pointer through the same delegated-access vocabulary used for a live ref-returning local.
+fun bidirectionalRefIncrement(slot: ClrRef<Int>, delta: Int): Int {
+    slot.value = slot.value + delta
+    return slot.value
+}
+
+fun <T> bidirectionalRefSwap(first: ClrRef<T>, second: ClrRef<T>) {
+    val saved = first.value
+    first.value = second.value
+    second.value = saved
+}
 
 open class BidirectionalPropertyBase(open var value: Int) {
     open fun get_value(): Int = value + 100

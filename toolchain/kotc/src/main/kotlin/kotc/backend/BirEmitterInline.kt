@@ -151,9 +151,12 @@ internal fun BirEmitter.inlineSpliceCallSameModule(call: IrCall): String = emitO
  *  §4.4(i) forwarding re-binds through `lambdaMap`. Binding either would replace the name bir2cir matches on with a
  *  `bindRef` and break the splice.
  *
- *  Everything else the call SUPPLIES — a `noinline` lambda (a real delegate value), an ordinary argument — is
- *  evaluated exactly once at the call site, whatever number of times the spliced body reads it (N times, zero times,
- *  or inside a loop), so it is a plan binding. An OMITTED default is `null`: it is not supplied by this call, and
+ *  Everything else the call SUPPLIES — a `noinline` lambda (a real delegate value), an ordinary argument, or the
+ *  addressable location passed to a managed-reference parameter — is evaluated exactly once at the call site,
+ *  whatever number of times the spliced body reads it (N times, zero times, or inside a loop), so it is a plan binding.
+ *  A managed-reference argument uses an `address` binding, exactly like the ordinary-call path: storing its address as
+ *  a value would materialize the compile-time-only `byref` marker and lose the caller's live location. An OMITTED
+ *  default is `null`: it is not supplied by this call, and
  *  bir2cir fills it from the callee's own carrier INSIDE the splice — which is where Kotlin evaluates it, after every
  *  supplied value.
  *
@@ -170,7 +173,17 @@ private fun BirEmitter.inlineArgJson(
 		arg == null -> omittedVararg(call, callee, param, callPlan(call)) ?: "null"
 		arg is IrFunctionExpression && !param.isNoinline -> emitInlineLambdaCarrier(arg)
 		isForwardedInlineParam(arg) -> expr(arg)
-		else -> callPlan(call).bindValue(arg, "arg", "argument '${param.name.asString()}' of '$label'")
+		else -> {
+			val role = "argument '${param.name.asString()}' of '$label'"
+			val address = addressSlotExpr(arg, param)
+			if (address != null)
+				callPlan(call).bind(
+					"arg", "address", isStableLocation(arg),
+					withDefaultTypeScope(call, callee) { birType(param.type).toJson() },
+					role, address,
+				)
+			else callPlan(call).bindValue(arg, "arg", role)
+		}
 	}
 
 /** The shared OWNER-FUL `callInline` node builder for an inline call whose hosting .NET type kotc CAN name — used by

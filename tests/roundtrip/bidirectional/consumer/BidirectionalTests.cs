@@ -56,6 +56,28 @@ public class BidirectionalTests
     }
 
     [Test]
+    public void CSharpCallsKotlinManagedReferenceParameters()
+    {
+        var value = 7;
+        Assert.That(LibraryKt.bidirectionalRefIncrement(ref value, 5), Is.EqualTo(12));
+        Assert.That(value, Is.EqualTo(12), "the Kotlin callee must write through the caller's slot");
+
+        var first = "left";
+        var second = "right";
+        LibraryKt.bidirectionalRefSwap<string>(ref first, ref second);
+        Assert.That((first, second), Is.EqualTo(("right", "left")));
+
+        var firstNumber = 1;
+        var secondNumber = 2;
+        LibraryKt.bidirectionalRefSwap<int>(ref firstNumber, ref secondNumber);
+        Assert.That((firstNumber, secondNumber), Is.EqualTo((2, 1)));
+
+        var method = typeof(LibraryKt).GetMethod(nameof(LibraryKt.bidirectionalRefIncrement))!;
+        Assert.That(method.GetParameters()[0].ParameterType, Is.EqualTo(typeof(int).MakeByRefType()),
+            "ClrRef<Int> must be exported as int&, not as a materialized wrapper class");
+    }
+
+    [Test]
     public void CSharpConsumesKotlinExplicitClrEnumContract()
     {
         static string Describe(BidirectionalAccess value) => value switch

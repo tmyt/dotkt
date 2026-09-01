@@ -36,6 +36,7 @@ import org.jetbrains.kotlin.ir.util.parentClassOrNull
  *    value type, so a null-check would force a box and be semantically meaningless: `clr-all-type-args-reified`),
  *  - a primitive/unsigned (`kotlin.Int`/`kotlin.UInt`/… -> a CLR value type, never null),
  *  - a Kotlin `value`/inline class (-> a CLR value type),
+ *  - the compiler's `ClrRef<T>` vocabulary (-> a CLR managed pointer, not a nullable object reference),
  *  - `Unit`/`Nothing`.
  * These exclusions are Kotlin-language facts (the value-type-ness is read from the IR, not a CLR/BCL FQN table).
  */
@@ -44,6 +45,7 @@ internal fun BirEmitter.needsNonNullCheck(t: IrType): Boolean {
 	if (t.classifierOrNull !is IrClassSymbol) return false          // type parameter / other -> skip
 	if (t.isPrimitiveOrUnsigned()) return false
 	if (t.isUnit() || t.isNothing()) return false
+	if (t.classFqName?.asString() == "kotlin.clr.ClrRef") return false
 	val klass = t.classOrNull?.owner
 	if (klass != null && klass.isValue) return false                // value/inline class -> CLR value type
 	return true

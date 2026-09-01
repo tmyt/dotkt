@@ -41,7 +41,7 @@ Status legend: ✅ works today (exercised by the test gates) · 🚧 in progress
 | Constructors, methods, properties, indexers, all overloads, generics (`List<T>`, `Dictionary<K,V>`) | ✅ |
 | Statics — direct `Type.member` (no synthetic `.Companion`) | ✅ |
 | Events (`add_X`/`remove_X`), lambdas → any delegate (incl. custom generic delegates) | ✅ |
-| `out`/`ref` via `byref()`, nullable value types (`int?`), .NET enums (including typed `[Flags]` operations) | ✅ |
+| `out`/`ref` via `byref()`; user Kotlin `ClrRef<T>` parameters as CLR `ref T`; nullable value types (`int?`); .NET enums (including typed `[Flags]` operations) | ✅ |
 | C# operator overloads and extension methods | ✅ |
 | Inherit .NET base classes / implement .NET interfaces | ✅ |
 | Consume the output from C# (`ProjectReference`, NRT, `Task<T>`) | ✅ |

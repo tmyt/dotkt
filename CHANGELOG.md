@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **User-defined Kotlin functions can now expose real CLR `ref` parameters (#276).** Non-suspend functions may accept
+  `ClrRef<T>` and read or update the caller's live storage through `.value`; ordinary, generic, inline-spliced,
+  C#-consumer, and DLL-to-KLIB round-trip paths preserve the managed-reference ABI and aliasing.
+
 - **Common stdlib sources now remain byte-identical to upstream Kotlin (#516).** CLR physical names, sequence
   adapters, unsigned-array additions, and reified-array-incompatible sorting bodies live in explicit CLR-owned
   overlays selected by exact declaration identity. An offline full-subtree snapshot gate prevents future drift.

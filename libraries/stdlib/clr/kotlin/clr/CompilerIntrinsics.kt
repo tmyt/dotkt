@@ -3,11 +3,17 @@ package kotlin.clr
 import kotlin.reflect.KProperty
 
 /**
- * A live managed reference used for CLR `ref`/`out` interop and delegated access to ref-returning storage.
+ * A live managed reference used for CLR `ref`/`out` interop, user-defined non-suspend function parameters, and
+ * delegated access to ref-returning storage. A parameter's referenced value is read or written through [value].
  *
  * This is a compile-time type. kotc projects it to BIR's managed-reference type; no `ClrRef` class is emitted.
  */
 public class ClrRef<T> private constructor() {
+    /** Reads or writes the value in the referenced CLR storage slot. */
+    public var value: T
+        get() = TODO("compiler intrinsic")
+        set(value) { TODO("compiler intrinsic") }
+
     public operator fun getValue(thisRef: Any?, property: KProperty<*>): T =
         TODO("compiler intrinsic")
 
