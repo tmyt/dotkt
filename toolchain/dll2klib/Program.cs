@@ -5729,7 +5729,7 @@ internal sealed class AssemblyScanner : IDisposable
             var physicalCount = allRows.Count(entry => entry.Row.SequenceNumber > 0);
             if (SemanticParameterCount(methodHandle, physicalCount) == 0)
                 throw new InvalidDataException(
-                    "[KotlinExtensionReceiver] cannot mark a reified witness or return parameter");
+                    "[KotlinExtensionReceiver] cannot mark a nullable witness or return parameter");
         }
     }
 

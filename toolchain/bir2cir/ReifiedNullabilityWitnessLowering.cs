@@ -14,9 +14,9 @@ static class ReifiedNullabilityWitnessLowering
 {
     internal const string SemanticIndicesKey = "semanticReifiedIndices";
     internal const string WitnessIndicesKey = "nullableWitnessIndices";
-    const string CallWitnessCountKey = "reifiedWitnessCount";
-    const string PendingWitnessesKey = "reifiedPendingWitnesses";
-    const string Prefix = "dotkt$reifiedNullability$";
+    const string CallWitnessCountKey = "nullableWitnessCount";
+    const string PendingWitnessesKey = "nullablePendingWitnesses";
+    const string Prefix = "dotkt$nullableWitness$";
     sealed record GeneratedTarget(JsonObject Method, string ClosureName, string Owner, int[] Indices);
     sealed record GeneratedType(JsonObject Type, int[] Indices);
     sealed record WitnessFrame(
@@ -114,7 +114,7 @@ static class ReifiedNullabilityWitnessLowering
                         && demand.MaterializedFrameIndices(samClass, samTypeArgs, generatedFrames)
                             is { Length: > 0 } samIndices)
                     {
-                        MaterializeReifiedSam(obj, samClass, samIndices, witnesses, Walk);
+                        MaterializeWitnessSam(obj, samClass, samIndices, witnesses, Walk);
                         return;
                     }
                     if (Str(obj["k"]) == "newSuspendLambda"
@@ -125,7 +125,7 @@ static class ReifiedNullabilityWitnessLowering
                             dense: false)
                             is { Length: > 0 } suspendIndices)
                     {
-                        MaterializeReifiedSuspendLambda(obj, suspendIndices, witnesses, Walk);
+                        MaterializeWitnessSuspendLambda(obj, suspendIndices, witnesses, Walk);
                         return;
                     }
                     if (Str(obj["k"]) == "newSuspendLambda" && Str(obj["typeFrame"]) == "dense")
@@ -140,7 +140,7 @@ static class ReifiedNullabilityWitnessLowering
                         && Str(obj["method"]) is string targetName
                         && generatedTargets.TryGetValue(targetName, out var target))
                     {
-                        MaterializeReifiedDelegate(obj, target, witnesses, Walk);
+                        MaterializeWitnessDelegate(obj, target, witnesses, Walk);
                         return;
                     }
                     foreach (var child in obj.Select(kv => kv.Value).ToList())
@@ -185,7 +185,7 @@ static class ReifiedNullabilityWitnessLowering
                 case JsonObject obj:
                     if (Str(obj["method"]) is string method && targets.Contains(method))
                         throw new InvalidOperationException(
-                            $"bir2cir: generated reified method '{method}' survives outside its delegate construction");
+                            $"bir2cir: nullable-sensitive generated method '{method}' survives outside its delegate construction");
                     foreach (var child in obj.Select(property => property.Value))
                         if (child != null) Walk(child);
                     break;
@@ -238,7 +238,7 @@ static class ReifiedNullabilityWitnessLowering
                     var closureName = $"dotkt${Sanitize(ownerName)}$ReifiedClosure{ordinal++}";
                     if (!result.TryAdd(methodName, new GeneratedTarget(method, closureName, ownerName, indices)))
                         throw new InvalidOperationException(
-                            $"bir2cir: ambiguous generated reified delegate target '{methodName}'");
+                            $"bir2cir: ambiguous nullable-sensitive generated delegate target '{methodName}'");
                 }
             if (owner["types"] is JsonArray types)
                 foreach (var type in types.OfType<JsonObject>())
@@ -266,7 +266,7 @@ static class ReifiedNullabilityWitnessLowering
                 {
                     var name = demandedName;
                     if (!result.TryAdd(name, new GeneratedType(type, indices)))
-                        throw new InvalidOperationException($"bir2cir: ambiguous generated reified type '{name}'");
+                        throw new InvalidOperationException($"bir2cir: ambiguous nullable-sensitive generated type '{name}'");
                 }
                 Owner(type);
             }
@@ -275,7 +275,7 @@ static class ReifiedNullabilityWitnessLowering
         return result;
     }
 
-    static void MaterializeReifiedDelegate(
+    static void MaterializeWitnessDelegate(
         JsonObject node,
         GeneratedTarget target,
         WitnessFrame callerWitnesses,
@@ -283,7 +283,7 @@ static class ReifiedNullabilityWitnessLowering
     {
         var typeArgs = node["typeArgs"] as JsonArray
             ?? throw new InvalidOperationException(
-                $"bir2cir: generated reified delegate '{Str(node["method"])}' has no type arguments");
+                $"bir2cir: nullable-sensitive generated delegate '{Str(node["method"])}' has no type arguments");
         var fields = new JsonArray();
         var captures = new JsonArray();
         var closureWitnesses = new Dictionary<int, JsonNode>();
@@ -291,7 +291,7 @@ static class ReifiedNullabilityWitnessLowering
         {
             if (index < 0 || index >= typeArgs.Count)
                 throw new InvalidOperationException(
-                    $"bir2cir: generated reified delegate '{Str(node["method"])}' has no type argument at index {index}");
+                    $"bir2cir: nullable-sensitive generated delegate '{Str(node["method"])}' has no type argument at index {index}");
             var name = Prefix + index;
             fields.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Boolean") });
             captures.Add(WitnessFor(typeArgs[index], callerWitnesses));
@@ -335,9 +335,9 @@ static class ReifiedNullabilityWitnessLowering
         Action<JsonNode, WitnessFrame> walk)
     {
         var typeArgs = node["typeArgs"] as JsonArray
-            ?? throw new InvalidOperationException("bir2cir: reified closure has no type arguments");
+            ?? throw new InvalidOperationException("bir2cir: nullable-sensitive closure has no type arguments");
         var closureName = TypeJson.OwnerName(node["closureType"])
-            ?? throw new InvalidOperationException("bir2cir: reified closure has no closure type");
+            ?? throw new InvalidOperationException("bir2cir: nullable-sensitive closure has no closure type");
         var fields = synthClass["fields"] as JsonArray ?? new JsonArray();
         synthClass["fields"] = fields;
         var captures = node["captures"] as JsonArray ?? new JsonArray();
@@ -353,7 +353,7 @@ static class ReifiedNullabilityWitnessLowering
         foreach (var index in indices)
         {
             if (index < 0 || index >= typeArgs.Count)
-                throw new InvalidOperationException($"bir2cir: reified closure has no type argument at index {index}");
+                throw new InvalidOperationException($"bir2cir: nullable-sensitive closure has no type argument at index {index}");
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
             fields.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Boolean") });
@@ -372,7 +372,7 @@ static class ReifiedNullabilityWitnessLowering
             walk(body, new WitnessFrame(closureMethodWitnesses, closureTypeWitnesses));
     }
 
-    static void MaterializeReifiedSam(
+    static void MaterializeWitnessSam(
         JsonObject node,
         JsonObject synthClass,
         int[] indices,
@@ -380,9 +380,9 @@ static class ReifiedNullabilityWitnessLowering
         Action<JsonNode, WitnessFrame> walk)
     {
         var typeArgs = node["typeArgs"] as JsonArray
-            ?? throw new InvalidOperationException("bir2cir: reified SAM has no type arguments");
+            ?? throw new InvalidOperationException("bir2cir: nullable-sensitive SAM has no type arguments");
         var className = Str(synthClass["name"])
-            ?? throw new InvalidOperationException("bir2cir: reified SAM has no synthesized class name");
+            ?? throw new InvalidOperationException("bir2cir: nullable-sensitive SAM has no synthesized class name");
         var fields = synthClass["fields"] as JsonArray ?? new JsonArray();
         synthClass["fields"] = fields;
         var captures = node["captures"] as JsonArray ?? new JsonArray();
@@ -398,7 +398,7 @@ static class ReifiedNullabilityWitnessLowering
         foreach (var index in indices)
         {
             if (index < 0 || index >= typeArgs.Count)
-                throw new InvalidOperationException($"bir2cir: reified SAM has no type argument at index {index}");
+                throw new InvalidOperationException($"bir2cir: nullable-sensitive SAM has no type argument at index {index}");
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
             fields.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Boolean") });
@@ -417,14 +417,14 @@ static class ReifiedNullabilityWitnessLowering
                     walk(body, new WitnessFrame(methodWitnesses, typeWitnesses));
     }
 
-    static void MaterializeReifiedSuspendLambda(
+    static void MaterializeWitnessSuspendLambda(
         JsonObject node,
         int[] indices,
         WitnessFrame callerWitnesses,
         Action<JsonNode, WitnessFrame> walk)
     {
         var typeArgs = node["typeArgs"] as JsonArray
-            ?? throw new InvalidOperationException("bir2cir: reified suspend lambda has no type arguments");
+            ?? throw new InvalidOperationException("bir2cir: nullable-sensitive suspend lambda has no type arguments");
         var captures = node["captures"] as JsonArray ?? new JsonArray();
         node["captures"] = captures;
         var capValues = node["capValues"] as JsonArray ?? new JsonArray();
@@ -441,7 +441,7 @@ static class ReifiedNullabilityWitnessLowering
         {
             if (index < 0 || index >= typeArgs.Count)
                 throw new InvalidOperationException(
-                    $"bir2cir: reified suspend lambda has no type argument at index {index}");
+                    $"bir2cir: nullable-sensitive suspend lambda has no type argument at index {index}");
             var name = Prefix + index;
             while (!usedNames.Add(name)) name += "$";
             captures.Add(new JsonObject { ["name"] = name, ["type"] = Fqn("kotlin.Boolean") });
@@ -514,7 +514,7 @@ static class ReifiedNullabilityWitnessLowering
     static IReadOnlyDictionary<int, JsonNode> MaterializeGeneratedType(JsonObject type, int[] indices)
     {
         var className = Str(type["name"])
-            ?? throw new InvalidOperationException("bir2cir: generated reified type has no name");
+            ?? throw new InvalidOperationException("bir2cir: nullable-sensitive generated type has no name");
         var fields = type["fields"] as JsonArray ?? new JsonArray();
         type["fields"] = fields;
         var witnesses = new Dictionary<int, JsonNode>();
@@ -537,7 +537,7 @@ static class ReifiedNullabilityWitnessLowering
     static void AppendCapturedFieldToConstructors(JsonObject type, string className, string name)
     {
         if (type["ctors"] is not JsonArray ctors || ctors.Count == 0)
-            throw new InvalidOperationException($"bir2cir: reified generated type '{className}' has no constructor");
+            throw new InvalidOperationException($"bir2cir: nullable-sensitive generated type '{className}' has no constructor");
         foreach (var ctor in ctors.OfType<JsonObject>())
         {
             var parameters = ctor["params"] as JsonArray ?? new JsonArray();
@@ -574,7 +574,7 @@ static class ReifiedNullabilityWitnessLowering
         if (destination.TryGetValue(tv.I, out var existing)
             && existing.ToJsonString() != witness.ToJsonString())
             throw new InvalidOperationException(
-                $"bir2cir: conflicting reified witness captures for {tv.Scope} type parameter {tv.I}");
+                $"bir2cir: conflicting nullable-witness captures for {tv.Scope} type parameter {tv.I}");
         destination[tv.I] = witness.DeepClone();
     }
 
@@ -593,9 +593,9 @@ static class ReifiedNullabilityWitnessLowering
         if (indices == null || indices.Length == 0) return;
         if (call["typeArgs"] is not JsonArray typeArgs)
             throw new InvalidOperationException(
-                $"bir2cir: reified call '{declarationId}' has no type arguments");
+                $"bir2cir: nullable-sensitive call '{declarationId}' has no type arguments");
         PrepareWitnesses(call, typeArgs.Select(argument => argument).ToArray(), indices, callerWitnesses,
-            $"reified call '{declarationId}'");
+            $"nullable-sensitive call '{declarationId}'");
     }
 
     static void PrepareWitnesses(
@@ -606,7 +606,7 @@ static class ReifiedNullabilityWitnessLowering
         string context)
     {
         if (call[PendingWitnessesKey] != null)
-            throw new InvalidOperationException($"bir2cir: {context} was assigned reified witnesses twice");
+            throw new InvalidOperationException($"bir2cir: {context} was assigned nullable witnesses twice");
         var pending = new JsonArray();
         foreach (var index in indices)
         {
@@ -630,9 +630,9 @@ static class ReifiedNullabilityWitnessLowering
                     if (obj[PendingWitnessesKey] is not JsonArray pending) return;
                     if (Str(obj["k"]) is not ("callStatic" or "callInstance" or "constrainedCall" or "new"))
                         throw new InvalidOperationException(
-                            $"bir2cir: reified witness survived on non-call node '{Str(obj["k"])}'");
+                            $"bir2cir: nullable witness survived on non-call node '{Str(obj["k"])}'");
                     var args = obj["args"] as JsonArray
-                        ?? throw new InvalidOperationException("bir2cir: reified call lost its argument vector");
+                        ?? throw new InvalidOperationException("bir2cir: nullable-sensitive call lost its argument vector");
                     foreach (var witness in pending)
                         args.Add(witness?.DeepClone());
                     obj.Remove(PendingWitnessesKey);
@@ -663,7 +663,7 @@ static class ReifiedNullabilityWitnessLowering
                         || !countValue.TryGetValue<int>(out var count) || count <= 0)
                         return;
                     var argumentCount = (obj["args"] as JsonArray)?.Count
-                        ?? throw new InvalidOperationException("bir2cir: reified call lost its argument vector");
+                        ?? throw new InvalidOperationException("bir2cir: nullable-sensitive call lost its argument vector");
                     FinalizeVector(obj, "sig", argumentCount, count);
                     FinalizeVector(obj, "argTypes", argumentCount, count);
                     FinalizeVector(obj, "memberSignature", argumentCount, count);
@@ -682,7 +682,7 @@ static class ReifiedNullabilityWitnessLowering
         if (call[key] is not JsonArray vector) return;
         if (vector.Count > argumentCount || argumentCount - vector.Count > witnessCount)
             throw new InvalidOperationException(
-                $"bir2cir: reified call has inconsistent '{key}' ({vector.Count}) and argument ({argumentCount}) counts");
+                $"bir2cir: nullable-sensitive call has inconsistent '{key}' ({vector.Count}) and argument ({argumentCount}) counts");
         while (vector.Count < argumentCount) AppendBooleanType(call, key);
     }
 

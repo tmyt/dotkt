@@ -241,12 +241,12 @@ sealed partial class ReferenceMetadataIndex
             failure = "has no trusted physical binding";
             return false;
         }
-        var reifiedWitnessCount = binding.NullableWitnessTypeParameterIndices?.Length ?? 0;
-        var missingReifiedWitnesses = binding.ParamCount - callSignature.Count;
-        var completesWithReifiedWitnesses = missingReifiedWitnesses == reifiedWitnessCount
-            && missingReifiedWitnesses > 0;
+        var nullableWitnessCount = binding.NullableWitnessTypeParameterIndices?.Length ?? 0;
+        var missingNullableWitnesses = binding.ParamCount - callSignature.Count;
+        var completesWithNullableWitnesses = missingNullableWitnesses == nullableWitnessCount
+            && missingNullableWitnesses > 0;
         if (binding.MethodArity != methodArity || binding.IsStatic != isStatic
-            || (binding.ParamCount != callSignature.Count && !completesWithReifiedWitnesses))
+            || (binding.ParamCount != callSignature.Count && !completesWithNullableWitnesses))
         {
             failure = $"selects {binding.Owner}.{binding.Name}`{binding.MethodArity} "
                 + $"({(binding.IsStatic ? "static" : "instance")}, {binding.ParamCount} parameter(s)), but the call "
@@ -254,9 +254,9 @@ sealed partial class ReferenceMetadataIndex
                 + $"{callSignature.Count} parameter(s)";
             return false;
         }
-        var completedCallSignature = completesWithReifiedWitnesses
+        var completedCallSignature = completesWithNullableWitnesses
             ? callSignature.Concat(Enumerable.Repeat<TypeNode>(new TypeNode.Fqn("kotlin.Boolean"),
-                missingReifiedWitnesses)).ToArray()
+                missingNullableWitnesses)).ToArray()
             : callSignature.ToArray();
         var physicalOwner = binding.DeclarationPhysicalOwner ?? binding.Owner;
         var ownerArity = _ownerArity.TryGetValue(BareOwnerFqn(binding.Owner), out var arity) ? arity : 0;

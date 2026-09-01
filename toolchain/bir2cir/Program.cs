@@ -1109,7 +1109,7 @@ sealed class Pipeline
             // App-only: stdlib metadata/runtime builds own their kotlin.* facades in this assembly.
             ClrMemberResolution.EnsurePlainCallDescriptors(substituted);
             // Signature-shaping passes above operate on Kotlin-visible parameters and may rebuild `sig` from the
-            // semantic declaration carrier. Re-append the already-materialized hidden reified witnesses now, at the
+            // semantic declaration carrier. Re-append the already-materialized hidden nullable witnesses now, at the
             // final physical-binding boundary, so exact reference resolution sees the actual MethodDef signature.
             ReifiedNullabilityWitnessLowering.FinalizeCallSignatures(substituted);
             // Fail closed if a late materialization introduced an identity-bearing external call after the early

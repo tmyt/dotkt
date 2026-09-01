@@ -342,7 +342,7 @@ static class ClosureSynthesis
     // Assemble the closure class from the raw ingredients. Mirrors the JSON kotc's BirEmitter.lambda() used to add to
     // liftedTypes: fields = capture (name,type); a single ctor whose body sets each field from its like-named param; an
     // instance `invoke` (non-virtual, non-override) carrying the lambda body; optional generic `typeParams` (the
-    // enclosing free type params the reified closure is generic over).
+    // enclosing free type params the closure is generic over).
     static JsonObject BuildClosureClass(JsonObject sc)
     {
         var name = Str(sc["name"]);
