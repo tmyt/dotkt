@@ -307,6 +307,35 @@ class Sanity:
                     self.err(f, _pos_prefix(m) + f"{owner}.{name}",
                              "a CIR 'pinvoke' descriptor requires extern:true, static:true, no type parameters, "
                              "an empty body, and no surviving mods.external source fact")
+                descriptor = m["pinvoke"]
+                complete = (isinstance(descriptor.get("module"), str) and bool(descriptor["module"]) and
+                            isinstance(descriptor.get("entryPoint"), str) and
+                            isinstance(descriptor.get("callingConvention"), str) and
+                            isinstance(descriptor.get("callingConventionType"), dict) and
+                            isinstance(descriptor.get("charSet"), str) and
+                            isinstance(descriptor.get("charSetType"), dict) and
+                            all(isinstance(descriptor.get(key), bool) for key in
+                                ("exactSpelling", "setLastError", "preserveSig", "bestFitMapping",
+                                 "throwOnUnmappableChar")) and
+                            isinstance(descriptor.get("pseudoFields"), list) and
+                            isinstance(descriptor.get("attributeCtorRef"), dict))
+                if not complete:
+                    self.err(f, _pos_prefix(m) + f"{owner}.{name}",
+                             "a CIR 'pinvoke' descriptor must state the complete normalized MethodImport instruction")
+                else:
+                    fields = {value for value in descriptor["pseudoFields"] if isinstance(value, str)}
+                    inconsistent = ("CallingConvention" not in fields or
+                                    (descriptor["entryPoint"] != name and "EntryPoint" not in fields) or
+                                    (descriptor["charSet"] != "none" and "CharSet" not in fields) or
+                                    (descriptor["exactSpelling"] and "ExactSpelling" not in fields) or
+                                    (descriptor["setLastError"] and "SetLastError" not in fields) or
+                                    (not descriptor["preserveSig"] and "PreserveSig" not in fields) or
+                                    (descriptor["bestFitMapping"] and "BestFitMapping" not in fields) or
+                                    (descriptor["throwOnUnmappableChar"] and "ThrowOnUnmappableChar" not in fields))
+                    if inconsistent:
+                        self.err(f, _pos_prefix(m) + f"{owner}.{name}",
+                                 "a CIR 'pinvoke' descriptor has normalized values not represented by its "
+                                 "pseudoFields instruction")
             if m.get("abstract") is True:
                 continue
             body = m.get("body")

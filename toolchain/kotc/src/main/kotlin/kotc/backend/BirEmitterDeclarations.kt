@@ -633,7 +633,8 @@ internal fun BirEmitter.isRichEnum(ec: IrClass): Boolean {
 	val ctorParams = ec.declarations.filterIsInstance<IrConstructor>()
 		.any { c -> c.parameters.any { it.kind == IrParameterKind.Regular } }
 	val userMethods = ec.declarations.filterIsInstance<IrSimpleFunction>()
-		.any { it.origin.toString() == "DEFINED" && it.correspondingPropertySymbol == null && it.body != null }
+		.any { it.origin.toString() == "DEFINED" && it.correspondingPropertySymbol == null &&
+			(it.body != null || it.isExternal) }
 	val entryBodies = ec.declarations.filterIsInstance<IrEnumEntry>().any { it.correspondingClass != null }
 	// Property accessors and anonymous initializers are not counted by userMethods. Either needs the plain-class shape:
 	// a source property may carry instance storage or a computed accessor, while a companion property needs a
@@ -825,7 +826,7 @@ internal fun BirEmitter.richEnumDef(ec: IrClass): String {
 		// A frontend-generated class-delegation forwarder owns a real body and interface slot just like a source method.
 		// Other synthetic enum helpers remain excluded and are emitted explicitly below.
 		.filter { (it.origin.toString() == "DEFINED" || it.origin == IrDeclarationOrigin.DELEGATED_MEMBER) &&
-			it.correspondingPropertySymbol == null && it.body != null }
+			it.correspondingPropertySymbol == null && (it.body != null || it.isExternal) }
 		.map { method(it, static = isKotlinStaticFunction(it)) } +
 		absMethods.map { m -> """{"name":${str(m.name.asString())},"static":false,"override":false,"virtual":true,"abstract":true,"vis":"public","params":[${paramsJsonList(m.parameters).joinToString(",")}],"ret":${birType(m.returnType).toJson()},"body":[]}""" }
 	val sf = { e: IrEnumEntry -> """{"k":"staticField","ownerType":${fqnJson(name)},"name":${str(e.name.asString())}}""" }
@@ -996,7 +997,7 @@ internal fun BirEmitter.enumEntrySubclass(subName: String, baseName: String, cc:
 	checkUnimplementedClrEvents(cc)
 	val (clrEventBackings, clrEventMethods) = synthClrEvents(cc)
 	val overrides = cc.declarations.filterIsInstance<IrSimpleFunction>()
-		.filter { it.body != null && it.correspondingPropertySymbol == null }
+		.filter { (it.body != null || it.isExternal) && it.correspondingPropertySymbol == null }
 		.map { method(it, static = false, semanticOwnerOverride = subName) }
 	val entryProps = cc.declarations.filterIsInstance<IrProperty>().filter { !it.isFakeOverride }
 	fun emitsGet(p: IrProperty) = p.getter?.body is IrBlockBody && !p.isConst && !p.isLateinit &&

@@ -2136,6 +2136,10 @@ internal sealed class AssemblyScanner : IDisposable
         var attributeNamedArguments = isAnnotation
             ? ProjectAttributeNamedArguments(handle, def, names, signatures, typeContext)
             : Array.Empty<AttributeNamedArgument>();
+        var publicAttributeConstructorCount = def.GetMethods()
+            .Select(methodHandle => _md.GetMethodDefinition(methodHandle))
+            .Where(method => _md.GetString(method.Name) == ".ctor" && IsPublicOrProtected(method.Attributes))
+            .Count();
         var validatedRichEnum = richEnumCarrier is null ? null : ValidateRichEnumCarrier(
             handle, def, richEnumCarrier, result.FqName, names, signatures, typeContext);
         foreach (var (gpHandle, parameter) in retainedTypeParameters)
@@ -2288,13 +2292,26 @@ internal sealed class AssemblyScanner : IDisposable
             {
                 if (isKotlinRichEnum) continue;
                 var parameters = Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context)
-                    .Skip(isKotlinInner ? 1 : 0);
+                    .Skip(isKotlinInner ? 1 : 0).ToList();
+                // Kotlin metadata has one annotation primary-constructor model, while CLR attributes may overload
+                // constructors. Extending every overload with the same optional named members can silently rebind a
+                // positional fixed argument to a field/property on another overload. Only the unambiguous one-ctor
+                // shape can carry CLR named members without changing constructor selection.
+                var namedArgumentsForConstructor = publicAttributeConstructorCount == 1
+                    ? attributeNamedArguments : Array.Empty<AttributeNamedArgument>();
+                if (namedArgumentsForConstructor.Length != 0)
+                    RenameFixedAttributeParameters(
+                        parameters,
+                        PhysicalParameters(method).Skip(isKotlinInner ? 1 : 0)
+                            .Select(parameter => _md.GetString(parameter.Row.Name)).ToArray(),
+                        namedArgumentsForConstructor,
+                        names);
                 var constructor = new Constructor
                 {
                     Flags = Flags.Visibility(method.Attributes),
                     ValueParameter = { parameters },
                 };
-                foreach (var named in attributeNamedArguments)
+                foreach (var named in namedArgumentsForConstructor)
                 {
                     var parameter = new ValueParameter
                     {
@@ -6032,6 +6049,24 @@ internal sealed class AssemblyScanner : IDisposable
             result.Add(new AttributeNamedArgument("property", name, type));
         }
         return result.ToArray();
+    }
+
+    private static void RenameFixedAttributeParameters(
+        IReadOnlyList<ValueParameter> parameters,
+        IReadOnlyList<string> parameterNames,
+        IReadOnlyList<AttributeNamedArgument> namedArguments,
+        NameTable names)
+    {
+        var reserved = namedArguments.Select(argument => argument.Name).ToHashSet(StringComparer.Ordinal);
+        var used = parameterNames.Concat(reserved).ToHashSet(StringComparer.Ordinal);
+        for (var i = 0; i < parameters.Count && i < parameterNames.Count; i++)
+        {
+            var original = parameterNames[i];
+            if (!reserved.Contains(original)) continue;
+            var candidate = "__fixed_" + original;
+            for (var suffix = 2; !used.Add(candidate); suffix++) candidate = $"__fixed_{original}_{suffix}";
+            parameters[i].Name = names.String(candidate);
+        }
     }
 
     private static Annotation KotlinDeclarationIdentityAnnotation(

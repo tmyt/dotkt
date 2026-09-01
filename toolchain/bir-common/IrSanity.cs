@@ -221,6 +221,46 @@ public static class IrSanity
             throw new IrSanityException(PosPrefix(method) + owner + "." + name,
                 "a CIR 'pinvoke' descriptor requires extern:true, static:true, no type parameters, an empty body, " +
                 "and no surviving mods.external source fact");
+
+        static bool String(JsonElement value, string key, bool nonEmpty = false) =>
+            value.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.String &&
+            (!nonEmpty || !string.IsNullOrEmpty(item.GetString()));
+        static bool Boolean(JsonElement value, string key) =>
+            value.TryGetProperty(key, out var item) && item.ValueKind is JsonValueKind.True or JsonValueKind.False;
+        var hasPseudoFields = descriptor.TryGetProperty("pseudoFields", out var pseudoFields) &&
+            pseudoFields.ValueKind == JsonValueKind.Array;
+        var complete =
+            String(descriptor, "module", nonEmpty: true) && String(descriptor, "entryPoint") &&
+            String(descriptor, "callingConvention", nonEmpty: true) &&
+            descriptor.TryGetProperty("callingConventionType", out var callingConventionType) &&
+                callingConventionType.ValueKind == JsonValueKind.Object &&
+            String(descriptor, "charSet", nonEmpty: true) &&
+            descriptor.TryGetProperty("charSetType", out var charSetType) &&
+                charSetType.ValueKind == JsonValueKind.Object &&
+            Boolean(descriptor, "exactSpelling") && Boolean(descriptor, "setLastError") &&
+            Boolean(descriptor, "preserveSig") && Boolean(descriptor, "bestFitMapping") &&
+            Boolean(descriptor, "throwOnUnmappableChar") &&
+            hasPseudoFields &&
+            descriptor.TryGetProperty("attributeCtorRef", out var attributeCtorRef) &&
+                attributeCtorRef.ValueKind == JsonValueKind.Object;
+        if (!complete)
+            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
+                "a CIR 'pinvoke' descriptor must state the complete normalized MethodImport instruction");
+
+        var fields = pseudoFields.EnumerateArray()
+            .Where(field => field.ValueKind == JsonValueKind.String)
+            .Select(field => field.GetString()).ToHashSet(StringComparer.Ordinal);
+        var entryPoint = descriptor.GetProperty("entryPoint").GetString();
+        var charSet = descriptor.GetProperty("charSet").GetString();
+        if (!fields.Contains("CallingConvention") || entryPoint != name && !fields.Contains("EntryPoint") ||
+            charSet != "none" && !fields.Contains("CharSet") ||
+            descriptor.GetProperty("exactSpelling").GetBoolean() && !fields.Contains("ExactSpelling") ||
+            descriptor.GetProperty("setLastError").GetBoolean() && !fields.Contains("SetLastError") ||
+            !descriptor.GetProperty("preserveSig").GetBoolean() && !fields.Contains("PreserveSig") ||
+            descriptor.GetProperty("bestFitMapping").GetBoolean() && !fields.Contains("BestFitMapping") ||
+            descriptor.GetProperty("throwOnUnmappableChar").GetBoolean() && !fields.Contains("ThrowOnUnmappableChar"))
+            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
+                "a CIR 'pinvoke' descriptor has normalized values not represented by its pseudoFields instruction");
     }
 
     // The #112 Phase-2 `File.kt:line: ` decl-source prefix, or "" when the decl carries no `pos`. Optional (absent =

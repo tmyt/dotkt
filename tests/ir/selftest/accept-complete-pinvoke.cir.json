@@ -20,7 +20,7 @@
         "preserveSig": true,
         "bestFitMapping": false,
         "throwOnUnmappableChar": false,
-        "pseudoFields": ["CallingConvention"],
+        "pseudoFields": ["EntryPoint", "CallingConvention"],
         "attributeCtorRef": {
           "kind": "ctor",
           "assembly": "System.Runtime.InteropServices",

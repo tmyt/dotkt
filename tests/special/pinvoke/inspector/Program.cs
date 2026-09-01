@@ -4,12 +4,16 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using DotKt.Klib.Metadata;
 
-if (args.Length is not (2 or 3))
-    throw new ArgumentException("usage: PInvokeInspector <producer.dll> <producer.klib> [csharp-producer.klib]");
+if (args.Length is < 2 or > 4)
+    throw new ArgumentException(
+        "usage: PInvokeInspector <producer.dll> <producer.klib> [csharp-producer.klib kotlin-consumer.dll]");
 
+if (args.Length >= 3)
+    VerifyCSharpKlib(args[2]);
 VerifyDll(args[0]);
 VerifyKlib(args[1]);
-if (args.Length == 3) VerifyCSharpKlib(args[2]);
+if (args.Length == 4)
+    VerifyProjectedAttributes(args[3]);
 Console.WriteLine("P/Invoke MethodImport + dll2klib metadata: OK");
 
 static void VerifyDll(string path)
@@ -23,6 +27,10 @@ static void VerifyDll(string path)
         ["auto"] = (0x0106, 0x0080),
         ["options"] = (0x2265, 0x0000),
         ["setError"] = (0x0140, 0x0080),
+        ["modeEcho"] = (0x0100, 0x0080),
+        ["echoIntPtr"] = (0x0100, 0x0080),
+        ["echoUIntPtr"] = (0x0100, 0x0080),
+        ["companionAdd"] = (0x0100, 0x0080),
     };
     using var stream = File.OpenRead(path);
     using var pe = new PEReader(stream);
@@ -61,7 +69,8 @@ static void VerifyKlib(string path)
         })
         .Single(candidate => candidate.FqName == "");
 
-    foreach (var name in new[] { "add", "increment", "none", "ansi", "auto", "options", "setError" })
+    foreach (var name in new[]
+             { "add", "increment", "none", "ansi", "auto", "options", "setError", "modeEcho", "echoIntPtr", "echoUIntPtr" })
     {
         var function = fragment.Package.Function.Single(candidate => String(fragment, candidate.Name) == name);
         Require((function.Flags & (1 << 12)) != 0, $"{name} lost Kotlin IS_EXTERNAL");
@@ -133,6 +142,50 @@ static void VerifyCSharpKlib(string path)
         Require(StringValue(fragment, arguments["dllName"]) == "dotkt_pinvoke_probe",
             $"C# {name} lost its DllImport library name");
     }
+
+    var attribute = fragment.Class.Single(candidate =>
+        QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.ProjectionProbeAttribute");
+    var constructorShapes = attribute.Constructor
+        .Select(constructor => string.Join(",", constructor.ValueParameter.Select(parameter => String(fragment, parameter.Name))))
+        .OrderBy(shape => shape, StringComparer.Ordinal)
+        .ToArray();
+    Require(constructorShapes.SequenceEqual(new[] { "__fixed_Value,Value,Values" }),
+        "CLR attribute overload/named-member projection has unexpected constructors: " +
+        string.Join(" | ", constructorShapes));
+
+    var overload = fragment.Class.Single(candidate =>
+        QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.OverloadProbeAttribute");
+    var overloadShapes = overload.Constructor
+        .Select(constructor => string.Join(",", constructor.ValueParameter.Select(parameter => String(fragment, parameter.Name))))
+        .OrderBy(shape => shape, StringComparer.Ordinal)
+        .ToArray();
+    Require(overloadShapes.SequenceEqual(new[] { "", "Value" }),
+        "overloaded CLR attribute constructors were broadened with named members: " +
+        string.Join(" | ", overloadShapes));
+}
+
+static void VerifyProjectedAttributes(string path)
+{
+    var assembly = Assembly.LoadFrom(path);
+    var carrier = assembly.GetType("AttributeCarrier", throwOnError: true)!;
+    var probe = CustomAttributeData.GetCustomAttributes(carrier).Single(attribute =>
+        attribute.AttributeType.FullName == "ClrPInvoke.ProjectionProbeAttribute");
+    Require((int)probe.ConstructorArguments.Single().Value! == 7,
+        "colliding CLR constructor parameter lost its fixed argument");
+    var named = probe.NamedArguments.ToDictionary(argument => argument.MemberName, StringComparer.Ordinal);
+    Require((int)named["Value"].TypedValue.Value! == 8,
+        "colliding CLR named field lost its value");
+    var values = ((IEnumerable<CustomAttributeTypedArgument>)named["Values"].TypedValue.Value!)
+        .Select(value => (int)value.Value!).ToArray();
+    Require(values.SequenceEqual(new[] { 1, 2, 3 }),
+        "CLR named property array argument was not preserved");
+
+    var overload = CustomAttributeData.GetCustomAttributes(
+            assembly.GetType("OverloadCarrier", throwOnError: true)!)
+        .Single(attribute => attribute.AttributeType.FullName == "ClrPInvoke.OverloadProbeAttribute");
+    Require((int)overload.ConstructorArguments.Single().Value! == 7 && overload.NamedArguments.Count == 0,
+        "overloaded CLR attribute positional argument was rebound as a named member");
+
 }
 
 static bool BooleanValue(Annotation.Types.Argument.Types.Value value) => value.IntValue != 0;

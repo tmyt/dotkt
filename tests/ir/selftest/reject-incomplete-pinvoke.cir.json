@@ -3,7 +3,7 @@
   "methods": [
     {
       "name": "badImport",
-      "static": false,
+      "static": true,
       "extern": true,
       "params": [],
       "ret": { "t": "fqn", "name": "System.Int32" },

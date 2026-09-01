@@ -9,5 +9,6 @@ fun main() {
     check(ansi(8) == 8)
     check(auto(9) == 9)
     check(observedLastError(1234) == 1234)
+    check(modeEcho(Mode.One) == Mode.One)
     println("P/Invoke direct + dll2klib round-trip: OK")
 }

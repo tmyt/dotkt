@@ -362,13 +362,17 @@ sealed partial class Emitter
         else throw new ArgumentException("custom attribute string is too long");
     }
 
-    static object ConstArgValue(JsonElement e)
+    object ConstArgValue(JsonElement e)
     {
         // A `bytes` arg-value kind (base64) -> a real byte[] fixed argument (a codec extension, NOT Kotlin knowledge):
         // bir2cir base64-encodes the carrier payloads ([KotlinInline]/[KotlinSuspendFunctionType] (version,byte[])) and
         // the nested NullableAttribute(byte[]) form through this. Mutually exclusive with `value`/`type`; its byte[]
         // runtime type drives BuildCab's exact-ctor pick above.
         if (e.TryGetProperty("bytes", out var bb)) return Convert.FromBase64String(bb.GetString());
+        if (e.TryGetProperty("k", out var constantKind) && constantKind.GetString() == "classRef")
+            return ClrRef(e.GetProperty("type"));
+        if (e.TryGetProperty("k", out constantKind) && constantKind.GetString() == "newArray")
+            return e.GetProperty("elems").EnumerateArray().Select(ConstArgValue).ToArray();
         // A CIR enum constant already carries the exact physical underlying type and value selected by bir2cir.
         // Attribute blobs and Param constants encode that primitive value; ilemit does not recover it from an enum
         // declaration, entry name, or field order.

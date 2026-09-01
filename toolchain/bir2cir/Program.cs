@@ -1322,7 +1322,7 @@ sealed class Pipeline
             ClrMemberResolution.ResolveAttributeCtors(lowered, refs);
             // DllImportAttribute is a pseudo-custom attribute. Consume the Kotlin external fact plus the now-resolved
             // exact attribute application into one physical CIR MethodDef/ImplMap descriptor before ilemit sees it.
-            PInvokeLowering.Apply(lowered, refs);
+            PInvokeLowering.Apply(lowered, refs, localBasicEnums);
             ClrMemberResolution.ResolveWellKnown(lowered, refs);
             ClrMemberResolution.ResolveInterfaceSlots(lowered, loweredRoots.Select(file => file.Root), refs);
             // Every delegate slot in this file now names its selected member, so each literal lambda filling one

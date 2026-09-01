@@ -2,6 +2,8 @@ import System.Runtime.InteropServices.CallingConvention
 import System.Runtime.InteropServices.CharSet
 import System.Runtime.InteropServices.DllImportAttribute
 import System.Runtime.InteropServices.Marshal
+import System.IntPtr
+import System.UIntPtr
 import kotlin.clr.ClrRef
 
 @DllImportAttribute(
@@ -39,6 +41,15 @@ external fun options(value: Int): Int
 
 @DllImportAttribute("dotkt_pinvoke_probe", EntryPoint = "set_error_i32", SetLastError = true)
 external fun setError(value: Int): Int
+
+@DllImportAttribute("dotkt_pinvoke_probe", EntryPoint = "mode_i32")
+external fun modeEcho(value: Mode): Mode
+
+@DllImportAttribute("dotkt_pinvoke_probe", EntryPoint = "intptr_identity")
+external fun echoIntPtr(value: IntPtr): IntPtr
+
+@DllImportAttribute("dotkt_pinvoke_probe", EntryPoint = "uintptr_identity")
+external fun echoUIntPtr(value: UIntPtr): UIntPtr
 
 fun observedLastError(value: Int): Int {
     check(setError(value) == -1)

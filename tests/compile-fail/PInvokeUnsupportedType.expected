@@ -1,1 +1,1 @@
-outside the supported primitive, enum, IntPtr, UIntPtr, and ClrRef subset
+outside the supported blittable primitive, enum, IntPtr, UIntPtr, and ClrRef subset
