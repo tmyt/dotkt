@@ -1,6 +1,7 @@
 import System.Runtime.InteropServices.CallingConvention
 import System.Runtime.InteropServices.CharSet
 import System.Runtime.InteropServices.DllImportAttribute
+import System.Runtime.InteropServices.Marshal
 import kotlin.clr.ClrRef
 
 @DllImportAttribute(
@@ -35,3 +36,11 @@ external fun auto(value: Int): Int
     ThrowOnUnmappableChar = false,
 )
 external fun options(value: Int): Int
+
+@DllImportAttribute("dotkt_pinvoke_probe", EntryPoint = "set_error_i32", SetLastError = true)
+external fun setError(value: Int): Int
+
+fun observedLastError(value: Int): Int {
+    check(setError(value) == -1)
+    return Marshal.GetLastPInvokeError()
+}

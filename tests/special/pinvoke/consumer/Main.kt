@@ -8,5 +8,6 @@ fun main() {
     check(none(7) == 7)
     check(ansi(8) == 8)
     check(auto(9) == 9)
+    check(observedLastError(1234) == 1234)
     println("P/Invoke direct + dll2klib round-trip: OK")
 }

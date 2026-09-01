@@ -2354,7 +2354,7 @@ internal sealed class AssemblyScanner : IDisposable
                 PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
                 AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
                     declarationIdentity?.SemanticReifiedTypeParameterIndices);
-                ApplyPInvokeProjection(methodHandle, method, function, names);
+                ApplyPInvokeProjection(method, function, names);
                 // A member's declaring-class path already carries its physical owner. Preserve only the exact
                 // frontend identity; ClrExternal is the top-level declaration transport.
                 if (declarationIdentity is { } identity)
@@ -4971,7 +4971,7 @@ internal sealed class AssemblyScanner : IDisposable
                 function.TypeParameter.Add(tp);
             }
             RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
-            ApplyPInvokeProjection(methodHandle, method, function, names);
+            ApplyPInvokeProjection(method, function, names);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -5799,11 +5799,7 @@ internal sealed class AssemblyScanner : IDisposable
         return annotation;
     }
 
-    private void ApplyPInvokeProjection(
-        MethodDefinitionHandle methodHandle,
-        MethodDefinition method,
-        Function function,
-        NameTable names)
+    private void ApplyPInvokeProjection(MethodDefinition method, Function function, NameTable names)
     {
         var import = method.GetImport();
         var hasImportFlag = (method.Attributes & MethodAttributes.PinvokeImpl) != 0;

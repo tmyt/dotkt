@@ -4,11 +4,12 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using DotKt.Klib.Metadata;
 
-if (args.Length != 2)
-    throw new ArgumentException("usage: PInvokeInspector <producer.dll> <producer.klib>");
+if (args.Length is not (2 or 3))
+    throw new ArgumentException("usage: PInvokeInspector <producer.dll> <producer.klib> [csharp-producer.klib]");
 
 VerifyDll(args[0]);
 VerifyKlib(args[1]);
+if (args.Length == 3) VerifyCSharpKlib(args[2]);
 Console.WriteLine("P/Invoke MethodImport + dll2klib metadata: OK");
 
 static void VerifyDll(string path)
@@ -21,6 +22,7 @@ static void VerifyDll(string path)
         ["ansi"] = (0x0102, 0x0080),
         ["auto"] = (0x0106, 0x0080),
         ["options"] = (0x2265, 0x0000),
+        ["setError"] = (0x0140, 0x0080),
     };
     using var stream = File.OpenRead(path);
     using var pe = new PEReader(stream);
@@ -59,7 +61,7 @@ static void VerifyKlib(string path)
         })
         .Single(candidate => candidate.FqName == "");
 
-    foreach (var name in new[] { "add", "increment", "none", "ansi", "auto", "options" })
+    foreach (var name in new[] { "add", "increment", "none", "ansi", "auto", "options", "setError" })
     {
         var function = fragment.Package.Function.Single(candidate => String(fragment, candidate.Name) == name);
         Require((function.Flags & (1 << 12)) != 0, $"{name} lost Kotlin IS_EXTERNAL");
@@ -104,6 +106,32 @@ static void VerifyKlib(string path)
             QualifiedName(owner, candidate.Id) == "System.Runtime.InteropServices.DllImportAttribute");
         return annotation.Argument.ToDictionary(
             argument => String(owner, argument.NameId), argument => argument.Value, StringComparer.Ordinal);
+    }
+}
+
+static void VerifyCSharpKlib(string path)
+{
+    using var archive = ZipFile.OpenRead(path);
+    var fragment = archive.Entries
+        .Where(entry => entry.FullName.EndsWith(".knm", StringComparison.Ordinal))
+        .Select(entry =>
+        {
+            using var stream = entry.Open();
+            return PackageFragment.Parser.ParseFrom(stream);
+        })
+        .Single(candidate => candidate.FqName == "ClrPInvoke");
+    var declaration = fragment.Class.Single(candidate =>
+        QualifiedName(fragment, candidate.FqName) == "ClrPInvoke.NativeMethods");
+    foreach (var name in new[] { "Add", "Increment" })
+    {
+        var function = declaration.Function.Single(candidate => String(fragment, candidate.Name) == name);
+        Require((function.Flags & (1 << 12)) != 0, $"C# {name} lost Kotlin IS_EXTERNAL");
+        var import = function.FunctionAnnotation.Single(annotation =>
+            QualifiedName(fragment, annotation.Id) == "System.Runtime.InteropServices.DllImportAttribute");
+        var arguments = import.Argument.ToDictionary(
+            argument => String(fragment, argument.NameId), argument => argument.Value, StringComparer.Ordinal);
+        Require(StringValue(fragment, arguments["dllName"]) == "dotkt_pinvoke_probe",
+            $"C# {name} lost its DllImport library name");
     }
 }
 

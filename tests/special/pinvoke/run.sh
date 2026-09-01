@@ -30,26 +30,37 @@ dotnet build "$ROOT/tests/special/pinvoke/inspector/PInvokeInspector.csproj" \
 	-c Release -o "$OUT/inspector" -v:q --nologo
 dotnet build "$ROOT/tests/special/pinvoke/consumer/PInvokeConsumer.ktproj" \
 	-c Release --no-incremental -m:1 -v:q --nologo
+dotnet build "$ROOT/tests/special/pinvoke/csharp-consumer/PInvokeCSharpConsumer.csproj" \
+	-c Release --no-incremental -m:1 -v:q --nologo
+dotnet build "$ROOT/tests/special/pinvoke/kotlin-consumes-csharp/PInvokeKotlinConsumesCSharp.ktproj" \
+	-c Release --no-incremental -m:1 -v:q --nologo
 
 PRODUCER_DLL="$ROOT/tests/special/pinvoke/producer/bin/Release/net10.0/PInvokeProducer.dll"
 PRODUCER_KLIB="$ROOT/tests/special/pinvoke/consumer/obj/Release/net10.0/klib/PInvokeProducer.klib"
 CONSUMER_DLL="$ROOT/tests/special/pinvoke/consumer/bin/Release/net10.0/PInvokeConsumer.dll"
+CSHARP_CONSUMER_DLL="$ROOT/tests/special/pinvoke/csharp-consumer/bin/Release/net10.0/PInvokeCSharpConsumer.dll"
+CSHARP_PRODUCER_KLIB="$ROOT/tests/special/pinvoke/kotlin-consumes-csharp/obj/Release/net10.0/klib/PInvokeCSharpProducer.klib"
+KOTLIN_CSHARP_CONSUMER_DLL="$ROOT/tests/special/pinvoke/kotlin-consumes-csharp/bin/Release/net10.0/PInvokeKotlinConsumesCSharp.dll"
 INSPECTOR="$OUT/inspector/PInvokeInspector.dll"
-for artifact in "$PRODUCER_DLL" "$PRODUCER_KLIB" "$CONSUMER_DLL" "$INSPECTOR"; do
+for artifact in "$PRODUCER_DLL" "$PRODUCER_KLIB" "$CONSUMER_DLL" "$CSHARP_CONSUMER_DLL" \
+	"$CSHARP_PRODUCER_KLIB" "$KOTLIN_CSHARP_CONSUMER_DLL" "$INSPECTOR"; do
 	[[ -f "$artifact" ]] || die "missing expected artifact $artifact"
 done
 
-dotnet "$INSPECTOR" "$PRODUCER_DLL" "$PRODUCER_KLIB"
+dotnet "$INSPECTOR" "$PRODUCER_DLL" "$PRODUCER_KLIB" "$CSHARP_PRODUCER_KLIB"
 LD_LIBRARY_PATH="$OUT/native${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" dotnet "$CONSUMER_DLL"
+LD_LIBRARY_PATH="$OUT/native${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" dotnet "$CSHARP_CONSUMER_DLL"
+LD_LIBRARY_PATH="$OUT/native${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" dotnet "$KOTLIN_CSHARP_CONSUMER_DLL"
+bash "$ROOT/tests/run-ilverify.sh" "$PRODUCER_DLL" "$CONSUMER_DLL" "$KOTLIN_CSHARP_CONSUMER_DLL"
 
 cir="$ROOT/tests/special/pinvoke/producer/obj/Release/net10.0/cir/NativeMethods.cir.json"
 jq -e '
   [.methods[] | select(.pinvoke != null)] as $imports |
-  ($imports | length) == 6 and
+  ($imports | length) == 7 and
   all($imports[];
     .extern == true and (.body | length) == 0 and
     ((.mods.external // false) == false) and
     all(.attrs[]?; .attr.name != "System.Runtime.InteropServices.DllImportAttribute"))
-' "$cir" >/dev/null || die "BIR external + DllImport facts did not become six bodyless CIR pinvoke descriptors"
+' "$cir" >/dev/null || die "BIR external + DllImport facts did not become seven bodyless CIR pinvoke descriptors"
 
-info "PASS  Kotlin DllImport emits exact MethodImport metadata, executes, and round-trips through dll2klib"
+info "PASS  Kotlin/C# DllImport emits exact MethodImport metadata, executes, and round-trips through dll2klib"
