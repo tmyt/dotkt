@@ -35,7 +35,7 @@ Only Kotlin facts that plain .NET metadata cannot express or cannot express with
 | imported CLR event endpoint (`CLREvent<T>`) | real CLR event metadata + add/remove accessors | yes for the event itself; Kotlin endpoint syntax must be synthesized | plain CLR event metadata, no DotKt attribute by default |
 | `final`/`open`/`abstract` (modality) | non-virtual / virtual / abstract | **yes** — rides .NET virtual-ness | (none) |
 | visibility | public/assembly/family | **yes** | (none) |
-| generics, including `reified` | real CLR generic method `<T>`; reified method parameters add hidden Boolean nullability witnesses | runtime type: yes; Kotlin nullability/reified indices: no | `[KotlinDeclarationIdentity]` carries the reified indices |
+| generics, including `reified` | real CLR generic method `<T>`; nullable-sensitive open parameters add hidden Boolean witnesses | runtime type: yes; Kotlin nullability/reified indices: no | `[KotlinDeclarationIdentity]` separately carries semantic `reified` indices and physical nullable-witness indices |
 
 The attributes are **compiler-EMBEDDED per-assembly** as internal `DotKt.Runtime.CompilerServices.*` types (like csc's
 own `NullableAttribute`/`IsReadOnlyAttribute`) — there is **no referenced `DotKt.Runtime` DLL** (that runtime is
@@ -252,15 +252,17 @@ The reader's discipline, in order:
   return is still a formal-only finding. Deriving it needs the parameter half of the func-slot erasure first: the
   same call's function-type argument would otherwise be handed a delegate the consumer cannot build erased.
 
-## `inline` bodies and `reified` nullability
+## `inline` bodies, semantic `reified`, and the nullable-witness ABI
 
 From the **consumer surface**, an imported inline body and a reified type parameter are separate facts:
 
 - **CLR generics carry the runtime type**, so a Kotlin `inline fun <reified T>` remains an ordinary CLR generic
-  method `M<T>()`. CLR does not carry Kotlin's nullable-instantiation bit, so `bir2cir` appends one hidden Boolean
-  parameter per reified method type parameter. `[KotlinDeclarationIdentity]` records their indices; `dll2klib` hides
-  the physical parameters, while consumer `bir2cir` uses the trusted indices to pass or forward each witness. The
-  KLIB declaration remains an ordinary generic as before, preserving DotKt's non-reified-parameter allowance. A body
+  method `M<T>()`. CLR does not carry Kotlin's nullable-instantiation bit, so `bir2cir` computes a module-wide
+  structural demand set from nullable-sensitive operations and exact call/lift correspondences, then appends hidden
+  Boolean parameters only for demanded positions. `[KotlinDeclarationIdentity]` records semantic `reified` indices
+  and physical nullable-witness indices separately; `dll2klib` restores the former and hides the latter, while
+  consumer `bir2cir` uses the trusted physical indices to pass or forward each witness. Consequently the ordinary
+  Kotlin `TYPE_PARAMETER_AS_REIFIED` rule remains in force across DLL→KLIB boundaries. A body
   lifted into a closure, SAM shim, suspend state machine, or generated object captures the witness using the lift's
   explicit type-argument correspondence. Physical call arguments are materialized only after Kotlin factory and
   intrinsic recognition, so those semantic passes continue to see exactly the source-visible arity.
@@ -277,7 +279,7 @@ cross-assembly inline matrix is:
 |---|---|
 | same-module inline (incl. non-local return, crossinline) | ✅ existing (`il-inline`/`il-inline2`/`il-xinline`) |
 | cross-module **non-reified** inline | ✅ emitted as a normal method; consumed as a regular (non-inlined) call |
-| cross-module **reified** inline | ✅ real generic method plus hidden nullability witness; physical witness parameters stay hidden from Kotlin source |
+| cross-module **reified** inline | ✅ real generic method; nullable-sensitive positions receive hidden witnesses that stay hidden from Kotlin source |
 | cross-module inline + lambda with **non-local return** | ✅ carried as raw BIR and spliced by bir2cir |
 
 **Where inlining happens.** DotKt does NOT run the standard JVM IR `FunctionInlining` lowering — its pipeline is the
@@ -285,8 +287,8 @@ four layers `dll2klib` / `kotc` / `bir2cir` / `ilemit` (`native-cir` is the targ
 `…Fir2Ir then ClrBackendPhase`, no JVM lowerings). **Inlining (the `[KotlinInline]` splice) is a `bir2cir` (BIR→CIR)
 responsibility.** kotc projects the call and caller-lambda body to a `callInline` BIR node; bir2cir resolves either
 the same-module raw stash or the referenced `[KotlinInline]` payload and performs the splice. Lambda-less inline funs
-are left as ordinary calls for the JIT. `inline` is decoration unless a lambda literal is passed; `reified` still
-controls the nullability-witness ABI.
+are left as ordinary calls for the JIT. `inline` is decoration unless a lambda literal is passed; `reified` remains
+a Kotlin semantic declaration fact, independent of the structurally derived nullability-witness ABI.
 Because inlining is over raw BIR, the
 cross-module fix is **lighter than JVM's `@Metadata`** (no frontend IR deserializer):
 

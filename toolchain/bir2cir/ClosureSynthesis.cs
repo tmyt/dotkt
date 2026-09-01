@@ -61,6 +61,29 @@ static class ClosureSynthesis
                 if (child != null) PrebindSplicedFrames(child);
     }
 
+    // A generated non-capturing delegate target is a generic METHOD whose frame is already dense in its own
+    // typeParams. ReifiedNullabilityWitnessLowering turns that method into a synthetic CLASS; bind the target's own
+    // `!!i` frame to the class's `!i` frame before the construction-side typeArgs (which name the enclosing frame)
+    // are considered. Treating those two correspondences as the same map breaks when an enclosing `<A, B>` target
+    // retains only B and is therefore materialized as `[method#1]` at the construction site.
+    internal static JsonObject PrebindDenseMethodFrame(JsonObject source)
+    {
+        var arity = (source["typeParams"] as JsonArray)?.Count ?? 0;
+        if (arity == 0) return source;
+        var ownFrame = new JsonArray(Enumerable.Range(0, arity).Select(index => (JsonNode)new JsonObject {
+            ["t"] = "tv", ["scope"] = "method", ["i"] = index,
+        }).ToArray());
+        var rebound = RebindSyntheticTypeVariables(source, ownFrame, recordOrigins: false);
+        rebound[PreboundFrameKey] = true;
+        return rebound;
+    }
+
+    // A prebound payload owns a dense synthetic frame already.  Its construction-side typeArgs still name the
+    // enclosing frame and may contain the same outer TV more than once after inline specialization, so consumers
+    // must map payload `type#i` positions to typeArgs[i] rather than trying to recover the old outer-TV identity.
+    internal static bool HasPreboundFrame(JsonNode source) =>
+        source is JsonObject obj && obj[PreboundFrameKey] != null;
+
     public static void Apply(JsonNode root, ReferenceMetadataIndex refs)
     {
         if (root is not JsonObject file) return;
@@ -319,7 +342,7 @@ static class ClosureSynthesis
     // Assemble the closure class from the raw ingredients. Mirrors the JSON kotc's BirEmitter.lambda() used to add to
     // liftedTypes: fields = capture (name,type); a single ctor whose body sets each field from its like-named param; an
     // instance `invoke` (non-virtual, non-override) carrying the lambda body; optional generic `typeParams` (the
-    // enclosing free type params the reified closure is generic over).
+    // enclosing free type params the closure is generic over).
     static JsonObject BuildClosureClass(JsonObject sc)
     {
         var name = Str(sc["name"]);

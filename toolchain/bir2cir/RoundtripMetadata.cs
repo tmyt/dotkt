@@ -309,13 +309,16 @@ static class RoundtripMetadata
             };
             if (mo[DeclarationIdentityBinding.SemanticSignatureKey] is JsonObject semanticSignature)
                 identity["signature"] = semanticSignature.DeepClone();
-            if (mo[ReifiedNullabilityWitnessLowering.IndicesKey] is JsonArray reified)
+            if (mo[ReifiedNullabilityWitnessLowering.SemanticIndicesKey] is JsonArray reified)
                 identity["reified"] = reified.DeepClone();
+            if (mo[ReifiedNullabilityWitnessLowering.WitnessIndicesKey] is JsonArray nullableWitness)
+                identity["nullableWitness"] = nullableWitness.DeepClone();
             Append(mo, JsonCarrierAttr(AKDeclarationIdentity, identity));
             mo.Remove(DeclarationIdentityBinding.Key);
             mo.Remove("declarationSourceName");
             mo.Remove(DeclarationIdentityBinding.SemanticSignatureKey);
-            mo.Remove(ReifiedNullabilityWitnessLowering.IndicesKey);
+            mo.Remove(ReifiedNullabilityWitnessLowering.SemanticIndicesKey);
+            mo.Remove(ReifiedNullabilityWitnessLowering.WitnessIndicesKey);
         }
         // CLR Property rows cannot describe method-generic accessors. The allocator leaves this exact semantic
         // association only on those MethodDefs; turn it into trusted metadata before the hand-off fact disappears.

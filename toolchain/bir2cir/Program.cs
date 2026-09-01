@@ -27,6 +27,7 @@ static class Bir2Cir
                 StdlibBindingOverlay.SelfTest();
                 MaterializedBirPayload.SelfTest();
                 MaterializedExecutable.SelfTest();
+                NullableWitnessDemand.SelfTest();
                 DriverOptions.SelfTest();
                 return 0;
             }
@@ -137,7 +138,10 @@ sealed class Pipeline
         // move, clone, or synthesize a declaration. These are source facts, never a physical-name reverse inference.
         var declarationSemanticSignatures = DeclarationIdentityBinding.PreserveSourceFacts(birRoots);
         var localDeclarationIds = DeclarationIdentityBinding.CollectDeclarationIds(birRoots);
-        var localReifiedDeclarations = ReifiedNullabilityWitnessLowering.Collect(birRoots);
+        // Kotlin `reified` is a declaration fact; the hidden nullable-instantiation Boolean is a distinct CLR ABI
+        // demand. Derive the latter from nullable-sensitive operations and exact call/lift correspondences as one
+        // module-wide fixed point before per-file materialization starts.
+        var nullableWitnessDemand = NullableWitnessDemand.Collect(birRoots, refs);
         // The combined value-type oracle covers referenced/foundational values plus local structs/enums across every
         // input file. The Sequence element-view boundary asks the nullable-generic rule whether its source element will
         // be object-reified, so it shares this oracle instead of restating today's two stdlib source spellings. The
@@ -432,11 +436,11 @@ sealed class Pipeline
             // `kotlin.Nothing`. BEFORE the suspend transform, whose `__cond$` machinery already stores nothing for a
             // `throwExpr` arm — so one rule covers the plain and the state-machine lowering alike.
             NothingValueTermination.Apply(bir.Root);
-            // REIFIED NULLABILITY ABI (#316): every raw inline/default payload is materialized now, while exact
-            // declaration identities and Kotlin type arguments are still present. Record each call's witness and
-            // capture lifted-frame witnesses before ClosureSynthesis/physical type lowering can erase those facts;
-            // ordinary call arguments remain source-visible until semantic intrinsic/factory recognition finishes.
-            ReifiedNullabilityWitnessLowering.Apply(bir.Root, localReifiedDeclarations, refs);
+            // NULLABLE-INSTANTIATION WITNESS ABI (#316/#466): every raw inline/default payload is materialized now,
+            // while exact declaration identities and Kotlin type arguments are still present. Record structurally
+            // demanded call witnesses and capture lifted-frame witnesses before ClosureSynthesis/physical type
+            // lowering can erase those facts; Kotlin `reified` remains a separate round-trip declaration fact.
+            ReifiedNullabilityWitnessLowering.Apply(bir.Root, nullableWitnessDemand, refs);
             ClosureSynthesis.Apply(bir.Root, refs);
             SharedSyntheticSynthesis.Apply(bir.Root);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
@@ -1105,7 +1109,7 @@ sealed class Pipeline
             // App-only: stdlib metadata/runtime builds own their kotlin.* facades in this assembly.
             ClrMemberResolution.EnsurePlainCallDescriptors(substituted);
             // Signature-shaping passes above operate on Kotlin-visible parameters and may rebuild `sig` from the
-            // semantic declaration carrier. Re-append the already-materialized hidden reified witnesses now, at the
+            // semantic declaration carrier. Re-append the already-materialized hidden nullable witnesses now, at the
             // final physical-binding boundary, so exact reference resolution sees the actual MethodDef signature.
             ReifiedNullabilityWitnessLowering.FinalizeCallSignatures(substituted);
             // Fail closed if a late materialization introduced an identity-bearing external call after the early

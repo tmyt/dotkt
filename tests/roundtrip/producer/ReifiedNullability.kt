@@ -2,6 +2,11 @@ package roundtrip.reifiednullability
 
 public inline fun <reified T> matches(value: Any?): Boolean = value is T
 
+// CLR generic reification already supplies the runtime classifier. This declaration retains Kotlin's semantic
+// `reified` marker for consumers but must not receive a nullable-instantiation Boolean: no operation asks whether a
+// null value matches T.
+public inline fun <reified T> classifierName(): String = T::class.simpleName ?: "?"
+
 public inline fun <reified T> forwarded(value: Any?): Boolean = matches<T>(value)
 
 public inline fun <reified T> delayed(value: Any?): Boolean = ({ value is T })()
@@ -17,6 +22,13 @@ public inline fun <reified T> checker(): ReifiedChecker = ReifiedChecker { it is
 public inline fun <reified T> suspended(value: Any?): suspend () -> Boolean = { value is T }
 
 public inline fun <reified A, reified B> secondDelayed(value: Any?): Boolean = ({ value is B })()
+
+public inline fun <reified A, reified B> secondNonCapturingDelayed(): () -> Boolean = { null is B }
+
+public inline fun <reified T> splicedCaptured(value: Any?, block: () -> Unit): Boolean {
+    block()
+    return ({ value is T })()
+}
 
 public inline fun <reified A, reified B> secondObjectDelayed(value: Any?): Boolean = object {
     public fun matches(): Boolean = value is B

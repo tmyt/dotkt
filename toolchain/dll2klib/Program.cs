@@ -2324,7 +2324,8 @@ internal sealed class AssemblyScanner : IDisposable
                         ? signatures.FromTypeNode(semanticReturn)
                         : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
                     ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
-                        declarationIdentity?.Parameters, declarationIdentity?.ReifiedTypeParameterIndices.Count ?? 0) },
+                        declarationIdentity?.Parameters,
+                        declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
                 };
                 PromoteContextParameters(method, function);
                 // A C# extension MethodDef has two CLR meanings: it remains an ordinary callable static member of
@@ -2332,7 +2333,8 @@ internal sealed class AssemblyScanner : IDisposable
                 // extension view. Do not turn this class member into a second extension declaration. DotKt member
                 // extensions carry a compiler-owned receiver-role marker and are still restored here.
                 PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
-                AddMethodTypeParameters(methodHandle, method, function, names, signatures, context);
+                AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
+                    declarationIdentity?.SemanticReifiedTypeParameterIndices);
                 // A member's declaring-class path already carries its physical owner. Preserve only the exact
                 // frontend identity; ClrExternal is the top-level declaration transport.
                 if (declarationIdentity is { } identity)
@@ -3622,7 +3624,8 @@ internal sealed class AssemblyScanner : IDisposable
         Function function,
         NameTable names,
         SignatureDecoder signatures,
-        GenericContext context)
+        GenericContext context,
+        IReadOnlySet<int>? semanticReified)
     {
         foreach (var gpHandle in method.GetGenericParameters())
         {
@@ -3632,6 +3635,7 @@ internal sealed class AssemblyScanner : IDisposable
                 Id = 10000 + gp.Index,
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
+                Reified = semanticReified?.Contains(gp.Index) == true,
             };
             foreach (var constraint in KotlinNominalConstraints(_md, gp))
             {
@@ -4577,7 +4581,8 @@ internal sealed class AssemblyScanner : IDisposable
                             entry.KotlinImplementation, method, signature.ReturnType, names, signatures, context),
                 ValueParameter = {
                     Parameters(entry.KotlinImplementation, method, signature.ParameterTypes, names, signatures, context,
-                        declarationIdentity?.Parameters, declarationIdentity?.ReifiedTypeParameterIndices.Count ?? 0)
+                        declarationIdentity?.Parameters,
+                        declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0)
                 },
                 ReceiverType = CSharp14ExtensionReceiver(
                     entry.ReceiverMarker, entry.BlockArity, names, signatures,
@@ -4585,7 +4590,8 @@ internal sealed class AssemblyScanner : IDisposable
             };
             PromoteContextParameters(method, function);
             AddCSharp14MethodTypeParameters(
-                entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context);
+                entry.KotlinImplementation, method, function.TypeParameter, names, signatures, context,
+                declarationIdentity?.SemanticReifiedTypeParameterIndices);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, owner));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -4734,7 +4740,8 @@ internal sealed class AssemblyScanner : IDisposable
         Google.Protobuf.Collections.RepeatedField<TypeParameter> destination,
         NameTable names,
         SignatureDecoder signatures,
-        GenericContext context)
+        GenericContext context,
+        IReadOnlySet<int>? semanticReified)
     {
         foreach (var gpHandle in method.GetGenericParameters())
         {
@@ -4744,6 +4751,7 @@ internal sealed class AssemblyScanner : IDisposable
                 Id = 10000 + gp.Index,
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
+                Reified = semanticReified?.Contains(gp.Index) == true,
             };
             foreach (var constraint in KotlinNominalConstraints(_md, gp))
             {
@@ -4911,7 +4919,8 @@ internal sealed class AssemblyScanner : IDisposable
                         ? signatures.FromTypeNode(semanticReturn)
                         : ProjectReturn(methodHandle, method, sig.ReturnType, names, signatures, context),
                 ValueParameter = { Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context,
-                    declarationIdentity?.Parameters, declarationIdentity?.ReifiedTypeParameterIndices.Count ?? 0) },
+                    declarationIdentity?.Parameters,
+                    declarationIdentity?.NullableWitnessTypeParameterIndices.Count ?? 0) },
             };
             PromoteContextParameters(method, function);
             // A Kotlin 2.4 COMPANION EXTENSION (`companion fun C.foo()`) is physically an ordinary receiverless static
@@ -4933,6 +4942,7 @@ internal sealed class AssemblyScanner : IDisposable
                     Id = 10000 + gp.Index,
                     Name = names.String(_md.GetString(gp.Name)),
                     Variance = TypeParameter.Types.Variance.Inv,
+                    Reified = declarationIdentity?.SemanticReifiedTypeParameterIndices.Contains(gp.Index) == true,
                 };
                 foreach (var constraint in KotlinNominalConstraints(_md, gp))
                 {
@@ -5516,7 +5526,8 @@ internal sealed class AssemblyScanner : IDisposable
         string Name,
         IReadOnlyList<TypeNode>? Parameters,
         TypeNode? ReturnType,
-        IReadOnlySet<int> ReifiedTypeParameterIndices);
+        IReadOnlySet<int> SemanticReifiedTypeParameterIndices,
+        IReadOnlySet<int> NullableWitnessTypeParameterIndices);
 
     private DeclarationIdentityCarrier? KotlinDeclarationIdentityCarrier(MethodDefinitionHandle methodHandle)
     {
@@ -5525,12 +5536,15 @@ internal sealed class AssemblyScanner : IDisposable
         if (document is null) return null;
         var root = document.RootElement;
         var propertyCount = root.ValueKind == JsonValueKind.Object ? root.EnumerateObject().Count() : 0;
-        if (propertyCount is < 2 or > 4 ||
+        if (propertyCount is < 2 or > 5 ||
             !root.TryGetProperty("id", out var idNode) || idNode.ValueKind != JsonValueKind.String ||
             !root.TryGetProperty("name", out var nameNode) || nameNode.ValueKind != JsonValueKind.String ||
-            root.EnumerateObject().Any(property => property.Name is not ("id" or "name" or "signature" or "reified")) ||
+            root.EnumerateObject().Any(property => property.Name is not (
+                "id" or "name" or "signature" or "reified" or "nullableWitness")) ||
             root.TryGetProperty("signature", out var signatureNode) && signatureNode.ValueKind != JsonValueKind.Object ||
-            root.TryGetProperty("reified", out var reifiedNode) && reifiedNode.ValueKind != JsonValueKind.Array)
+            root.TryGetProperty("reified", out var reifiedNode) && reifiedNode.ValueKind != JsonValueKind.Array ||
+            root.TryGetProperty("nullableWitness", out var witnessNode)
+                && witnessNode.ValueKind != JsonValueKind.Array)
             throw new InvalidDataException("malformed [KotlinDeclarationIdentity] payload");
         var id = idNode.GetString();
         var name = nameNode.GetString();
@@ -5545,12 +5559,24 @@ internal sealed class AssemblyScanner : IDisposable
             : new HashSet<int>();
         if (reified.Any(index => index >= _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count))
             throw new InvalidDataException("[KotlinDeclarationIdentity] reified index exceeds method generic arity");
+        var nullableWitness = root.TryGetProperty("nullableWitness", out witnessNode)
+            ? witnessNode.EnumerateArray().Select(index => index.ValueKind == JsonValueKind.Number
+                && index.TryGetInt32(out var value) && value >= 0
+                ? value
+                : throw new InvalidDataException(
+                    "malformed [KotlinDeclarationIdentity] nullable-witness index"))
+                .ToHashSet()
+            : new HashSet<int>();
+        if (nullableWitness.Any(index =>
+            index >= _md.GetMethodDefinition(methodHandle).GetGenericParameters().Count))
+            throw new InvalidDataException(
+                "[KotlinDeclarationIdentity] nullable-witness index exceeds method generic arity");
         if (!root.TryGetProperty("signature", out signatureNode))
         {
-            if (reified.Count != 0)
+            if (nullableWitness.Count != 0)
                 throw new InvalidDataException(
-                    "[KotlinDeclarationIdentity] reified indices require a semantic signature");
-            return new DeclarationIdentityCarrier(id, name, null, null, reified);
+                    "[KotlinDeclarationIdentity] nullable-witness indices require a semantic signature");
+            return new DeclarationIdentityCarrier(id, name, null, null, reified, nullableWitness);
         }
         if (signatureNode.EnumerateObject().Count() != 2 ||
             !signatureNode.TryGetProperty("params", out var paramsNode) || paramsNode.ValueKind != JsonValueKind.Array ||
@@ -5559,7 +5585,7 @@ internal sealed class AssemblyScanner : IDisposable
         var parameters = paramsNode.EnumerateArray().Select(parameter =>
             TypeNode.Read(parameter) ?? throw new InvalidDataException(
                 "malformed [KotlinDeclarationIdentity] semantic parameter type")).ToArray();
-        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified);
+        return new DeclarationIdentityCarrier(id, name, parameters, returnType, reified, nullableWitness);
     }
 
     /// `isStatic` is the caller's, because the two call sites read it from different places: a CLASS member accessor
@@ -5655,6 +5681,7 @@ internal sealed class AssemblyScanner : IDisposable
                 Id = 10000 + gp.Index,
                 Name = names.String(_md.GetString(gp.Name)),
                 Variance = TypeParameter.Types.Variance.Inv,
+                Reified = declarationIdentity?.SemanticReifiedTypeParameterIndices.Contains(gp.Index) == true,
             };
             foreach (var constraint in KotlinNominalConstraints(_md, gp))
             {
@@ -5702,7 +5729,7 @@ internal sealed class AssemblyScanner : IDisposable
             var physicalCount = allRows.Count(entry => entry.Row.SequenceNumber > 0);
             if (SemanticParameterCount(methodHandle, physicalCount) == 0)
                 throw new InvalidDataException(
-                    "[KotlinExtensionReceiver] cannot mark a reified witness or return parameter");
+                    "[KotlinExtensionReceiver] cannot mark a nullable witness or return parameter");
         }
     }
 
@@ -5720,7 +5747,7 @@ internal sealed class AssemblyScanner : IDisposable
     {
         var identity = KotlinDeclarationIdentityCarrier(methodHandle);
         if (identity?.Parameters is not { } semanticParameters) return physicalCount;
-        if (semanticParameters.Count + identity.ReifiedTypeParameterIndices.Count != physicalCount)
+        if (semanticParameters.Count + identity.NullableWitnessTypeParameterIndices.Count != physicalCount)
             throw new InvalidDataException(
                 $"[KotlinDeclarationIdentity] signature parameter count does not match " +
                 $"'{_md.GetString(_md.GetMethodDefinition(methodHandle).Name)}'");

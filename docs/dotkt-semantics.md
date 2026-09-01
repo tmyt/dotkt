@@ -28,7 +28,7 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 | § | Deviation |
 |---|---|
 | [1](#1-kotlin-packages--net-namespaces) | Kotlin packages → .NET namespaces |
-| [2](#2-generics-are-reified--kotlin-reified-also-carries-nullability) | Reified generics — CLR runtime type plus Kotlin nullability witness |
+| [2](#2-generics-are-reified--nullable-sensitive-uses-carry-a-separate-witness) | Reified generics — CLR runtime type plus structurally demanded Kotlin nullability witness |
 | [3](#3-inline-happens-at-emit-time-and-is-decoration-unless-a-lambda-literal-is-passed) | `inline` is emit-time, decoration unless a lambda is passed |
 | [4](#4-suspend-fun--an-async-taskt-function-hot-not-cold) | `suspend fun` = an async `Task<T>` function; **hot, not cold** |
 | [5](#5-primitive-stringification-is-clr-native-not-kotlinjvm-cosmetics) | CLR-native stringification; `String.format` = .NET composite format |
@@ -61,23 +61,24 @@ deviation is acceptable iff it passes all three conditions of the test; hand-for
 - `dll2klib` maps the .NET namespace back to the Kotlin package when producing a reference KLIB, so a
   consumer's `import geom.Vec` resolves with the same qualified identity.
 
-## 2. Generics are reified — Kotlin `reified` also carries nullability
+## 2. Generics are reified — nullable-sensitive uses carry a separate witness
 
 - **JVM:** generics are **erased**. `reified` exists only to recover the type argument at the call site, and it
   *requires* `inline` (the type is baked in during inlining). You can't call a reified function non-inlined, and you
   can't pass a non-reified type parameter to a reified one.
 - **DotKt:** the CLR has **real reified generics**. `inline fun <reified T> foo()` is emitted as an ordinary generic
   method `foo<T>()`; the body's `T::class` / `is T` / `as? T` use the real runtime type. CLR generic arguments do not,
-  however, distinguish `String` from `String?`. Each reified method type parameter therefore also receives a hidden
-  Boolean nullability witness. Calls pass a constant for a concrete type and forward the witness when the argument is
-  another reified parameter. The fact is compiler-internal ABI: `[KotlinDeclarationIdentity]` carries the witness
-  indices across a DLL boundary and `dll2klib` hides the physical parameters from the Kotlin declaration. If the
+  however, distinguish `String` from `String?`. `bir2cir` therefore derives nullable-witness demand from operations
+  such as `is T` and propagates it structurally through exact calls and lifted frames. Only demanded method type
+  parameters receive a hidden Boolean; a `reified T` used only by `T::class`, for example, receives none. Calls pass
+  a constant for a concrete type and forward the witness when the argument is another reified parameter. The facts
+  are separate compiler-internal ABI: `[KotlinDeclarationIdentity]` carries semantic `reified` indices and physical
+  witness indices across a DLL boundary; `dll2klib` restores the former and hides the latter. If the
   lexical body moves into a closure, SAM shim, suspend-lambda state machine, or lifted object, that body captures the
   same witness in its generated representation; the explicit lifted type-argument correspondence selects the source
   method/type slot, so a dense synthetic index is never mistaken for an enclosing declaration index.
-- DotKt retains its CLR-specific allowance for passing a **non-reified** method type parameter to a reified one
-  (`fun <U> bar() = foo<U>()` is accepted here but rejected on the JVM). Such a parameter has no dynamic Kotlin
-  nullable-instantiation witness and keeps the underlying CLR-type behavior.
+- Kotlin's source rule remains authoritative: passing a **non-reified** method type parameter to a reified one
+  (`fun <U> bar() = foo<U>()`) is rejected with `TYPE_PARAMETER_AS_REIFIED`, including through DLL→KLIB consumption.
 - **A Kotlin star projection is never represented as `G<object>`.** CLR generics are reified and invariant, so
   `G<String>` is not a `G<object>` and that substitution changes both runtime tests and dispatch. For a generic
   declaration emitted by DotKt, `bir2cir` adds a compiler-generated non-generic existential interface implemented by
@@ -191,7 +192,8 @@ This is the single most surprising deviation, so it gets the most detail.
 - Consequences:
   - **`inline` is decoration UNLESS the call passes a lambda LITERAL.** A lambda-less `inline fun`
     (`inline fun twice(x: Int) = x + x`) is emitted as an ordinary method and called normally — the JIT inlines it.
-    `reified` separately controls the nullability-witness ABI described in §2.
+    Kotlin `reified` remains a source declaration fact; nullable-sensitive operations separately control the witness
+    ABI described in §2.
   - Same-module inline with a lambda (incl. **non-local return** and **crossinline**) works — the IR body is present
     and spliced (`il-inline`, `il-inline2`, `il-xinline`).
   - **Cross-module:** an external KLIB declaration has `body == null`, so it's never the IR-splice case. Lambda-less / no-non-local-
@@ -1044,7 +1046,7 @@ runtime.
 | an **extension receiver** (`fun T.f()`) | `[KotlinExtensionReceiver]` on the emitted leading positional parameter — a bare marker. The parameter name is only physical spelling and has no semantic role; dll2klib restores a receiver solely from this trusted marker. Covers top-level and member functions and property accessors; companion extensions use their existing association carrier because they have no physical receiver slot. |
 | **reference-type nullability** (`String?`) | **.NET's own NRT** `[Nullable]`/`[NullableContext]` (§9) — readable by C# too |
 | `final`/`open`/`abstract`, visibility | **none** — ride .NET virtual-ness / accessibility |
-| generics, `reified` | `[KotlinDeclarationIdentity]` records reified method-type-parameter indices for the hidden nullability-witness ABI (§2) |
+| generics, `reified` | `[KotlinDeclarationIdentity]` separately records semantic reified method-type-parameter indices and physical nullable-witness indices (§2) |
 | parameter names (named-argument calls) | emitted via `DefineParameter` (were dropped before; not a FIR limitation) |
 
 Deep dive: `docs/design-kotlin-metadata-attributes.md`.
@@ -2245,8 +2247,8 @@ Current deliberate limits are:
 
 ## Quick "this surprised me" index
 
-- `inline` written but no lambda passed → ordinary call; `reified` still supplies the nullability witness. §2, §3.
-- `reified` lets you pass a non-reified type param on the CLR (JVM forbids it). §2.
+- `inline` written but no lambda passed → ordinary call; nullable-sensitive generic operations still receive their witness. §2, §3.
+- `reified` keeps Kotlin's ordinary source restrictions even though the CLR carries runtime generic types. §2.
 - `tailrec` **is** tail-call optimized — kotc rewrites a self-tail-call into a back-jump loop, so deep tail recursion runs in constant stack like the JVM. §2b.
 - Inlining is done by the backend at emit, not the frontend. §3.
 - A non-local `return` into a cross-module inline lambda → works (body is carried in `[KotlinInline]`). §3.
