@@ -1081,6 +1081,23 @@ private fun BirEmitter.callWithoutDeclarationIdentity(call: IrCall): String {
 	}
 	// A `StackBuffer<T>` member access while its block is being spliced -> a stack op (ptr + index).
 	((dispatchReceiver(call) as? IrGetValue)?.symbol?.owner)?.let { stackBufSubst[it] }?.let { return emitStackBufferOp(call, callee, it) }
+	// `ClrRef<T>.value` is the callee-side view of a user-declared managed-reference parameter. ClrRef is compiler
+	// vocabulary rather than a materialized class, so its property access becomes an explicit BIR managed-reference
+	// load/store. kotc carries only that Kotlin/interop fact; bir2cir still chooses T's physical CLR representation.
+	callee.correspondingPropertySymbol?.owner?.takeIf { property ->
+		property.name.asString() == "value" &&
+			(callee.parent as? IrClass)?.fqNameWhenAvailable?.asString() == "kotlin.clr.ClrRef"
+	}?.let { property ->
+		val receiver = dispatchReceiver(call) ?: return invariantBroken(call, "a ClrRef.value access has no receiver")
+		val refType = birType(receiver.type) as? TypeNode.ByRef
+			?: return invariantBroken(call, "a ClrRef.value receiver did not project to a managed-reference type")
+		val pointer = expr(receiver)
+		return when (callee) {
+			property.getter -> """{"k":"byrefLoad","ptr":$pointer,"elem":${refType.of.toJson()}}"""
+			property.setter -> """{"k":"byrefStore","ptr":$pointer,"elem":${refType.of.toJson()},"value":${expr(regularArgs(call).single())}}"""
+			else -> invariantBroken(call, "an unknown ClrRef.value accessor reached BIR emission")
+		}
+	}
 	// A `<get-x>`/`<set-x>` call for a LOCAL delegated property -> access on the delegate local (thisRef=null,
 	// no enclosing instance). `by lazy`: the local's `.Value`; custom delegate: getValue/setValue(null, KProperty).
 	localDelegates[callee]?.let { ldp ->

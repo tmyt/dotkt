@@ -25,11 +25,8 @@ class OutRefAcc {
 // the address's own position is the value its LOCATION is computed from (`byRefOrderMk()`), leaving `<local>.n` in the
 // slot. Kotlin's order is `m` then `d`; pinning after the fill's local would emit `d` then `m`.
 //
-// COMPILED, DELIBERATELY NOT RUN. A Kotlin function declaring a `ClrRef<T>` PARAMETER is separately broken — it
-// NullReferenceExceptions on entry with no default arguments and no plan in sight, on `origin/main` too — so calling
-// these would assert that unrelated defect rather than this order. What they do buy: kotc emits the plan, bir2cir
-// lowers it, ilemit emits it and ILVerify checks the result. Turn each into a `@TestAttribute` asserting the log
-// noted beside it once the `ClrRef`-parameter defect is fixed; they guard both from then on.
+// #276 makes a Kotlin-declared `ClrRef<T>` parameter a supported managed-reference ABI. These calls therefore run,
+// covering both the live parameter and the evaluation-order plan that supplies its address.
 private class ByRefOrderHolder(var n: Int)
 private var byRefOrderLog = ""
 private fun byRefOrderMk(): ByRefOrderHolder { byRefOrderLog += "m"; return ByRefOrderHolder(1) }
@@ -82,6 +79,41 @@ object BrHold { var a = 1; var b = 2 }
 private fun byRefOrderCallSplicedOperand(): Int = byRefOrderTake(byref(run { byRefOrderMk() }.n))
 
 class ByRefParameterTests {
+    @TestAttribute
+    fun kotlinManagedReferenceParameterPreservesCallEvaluationOrder() {
+        byRefOrderLog = ""
+        assertEquals(33, byRefOrderCall())
+        assertEquals("md", byRefOrderLog)
+
+        byRefOrderLog = ""
+        assertEquals(35, byRefOrderCallP())
+        assertEquals("pmd", byRefOrderLog)
+
+        byRefOrderLog = ""
+        assertEquals(33, byRefOrderCallIndexed(intArrayOf(1)))
+        assertEquals("id", byRefOrderLog)
+
+        byRefOrderLog = ""
+        assertEquals(5, byRefOrderCallUnshared())
+        assertEquals("pmd", byRefOrderLog)
+
+        byRefOrderLog = ""
+        assertEquals(33, byRefOrderCallElem())
+        assertEquals("cd", byRefOrderLog)
+
+        byRefOrderLog = ""
+        assertEquals(33, byRefOrderCallRvalue())
+        assertEquals("md", byRefOrderLog)
+
+        byRefOrderLog = ""
+        assertEquals(33, byRefOrderCallRefReturn(Calc()))
+        assertEquals("id", byRefOrderLog)
+
+        byRefOrderLog = ""
+        assertEquals(33, byRefOrderCallSplicedOperand())
+        assertEquals("md", byRefOrderLog)
+    }
+
     // A `var x by byref(...)` delegate read passed ON to a `ref` parameter. The read is a `byrefLoad` — the pointee —
     // and its ADDRESS is the pointer the delegate holds, not the address of a copy of it. Taking the copy's address is
     // verifiable IL that swaps two temporaries and drops both writes, which is the worst direction for a defect to

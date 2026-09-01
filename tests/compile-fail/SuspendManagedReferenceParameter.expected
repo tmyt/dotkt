@@ -1,0 +1,4 @@
+suspend-lowering: in `SuspendManagedReferenceParameterKt.suspendManagedReferenceParameter`
+the parameter `slot` has type `ref kotlin.Int`
+which is a managed pointer (`ref`)
+`suspend` declaration cannot mention it

@@ -47,10 +47,13 @@ platform deviations.
   annotations.
 - `ClrRef<T>` is compiler vocabulary for a CLR managed reference. Its supported
   user-program forms are passing `byref(x)` directly to a projected CLR
-  `ref`/`out` parameter and using `var x by byref(refReturningCall())` as the
-  documented live-reference delegate. User-authored parameters, return types,
-  properties, fields, stored values, or other ordinary uses of `ClrRef<T>` are
-  undefined behavior.
+  `ref`/`out` parameter, declaring it as a parameter of a non-suspend Kotlin
+  function and accessing that parameter through `.value`, and using
+  `var x by byref(refReturningCall())` as the documented live-reference
+  delegate. Such a Kotlin parameter is emitted as a real CLR `ref` parameter;
+  it may not be captured or stored. User-authored return types, properties,
+  fields, stored values, or other ordinary uses of `ClrRef<T>` remain undefined
+  behavior.
 - `StackBuffer<T>` is compiler vocabulary scoped to the literal block of
   `stackBuffer`. The block parameter may be used only through the supported
   stack-buffer operations in that block. It must not be returned, stored,

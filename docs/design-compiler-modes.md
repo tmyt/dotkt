@@ -67,6 +67,12 @@ separate stdlib-binding escape hatch used when an intrinsic Kotlin signature
 cannot expose `ClrRef<T>` directly. `bir2cir` consumes both forms and selects
 the CLR managed-pointer representation.
 
+A user-defined non-suspend Kotlin function may likewise declare a `ClrRef<T>`
+parameter. kotc carries it as the BIR managed-reference vocabulary and lowers
+`.value` to explicit managed-reference load/store nodes; bir2cir resolves the
+referent representation, and ilemit emits the resulting `T&` signature and
+operations one-to-one. Managed-reference storage and capture remain invalid.
+
 ## CIL emission
 
 `ilemit` has no semantic build mode. It emits the CIR it receives one-to-one,
