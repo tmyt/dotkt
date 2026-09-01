@@ -120,9 +120,9 @@ public abstract record TypeNode
     public sealed record ByRef(TypeNode Of) : TypeNode;
 
     /// <summary>
-    /// `ptr`: a CLR unmanaged pointer <c>T*</c>. CIR-only: Kotlin source cannot spell one, but an external
-    /// member can declare it, and without this variant such a parameter degrades to the FQN string
-    /// <c>"System.Int32*"</c> — an identity that names no type.
+    /// `ptr`: a CLR unmanaged pointer <c>T*</c>. CIR-only: BIR carries the semantic
+    /// <c>kotlin.clr.ClrPointer&lt;T&gt;</c> vocabulary instead. The physical node may occur in ordinary CIR slots as
+    /// well as member references; without it such a signature degrades to an FQN string that names no type.
     /// </summary>
     public sealed record Ptr(TypeNode Of) : TypeNode;
 

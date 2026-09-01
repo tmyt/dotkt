@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **CLR unmanaged-pointer signatures now survive DLL-to-KLIB consumption exactly (#274).** dll2klib projects
+  pointer fields, parameters, and returns through an opaque `ClrPointer<T>` Kotlin vocabulary; bir2cir materializes
+  exact pointer, `void*`, nested-pointer, array, and nullable-value-pointee shapes only at the CLR representation
+  boundary, and emitted MemberRefs retain that identity without widening ILVerify's permanent baseline.
+
 - **User-defined Kotlin functions can now expose real CLR `ref` parameters (#276).** Non-suspend functions may accept
   `ClrRef<T>` and read or update the caller's live storage through `.value`; ordinary, generic, inline-spliced,
   C#-consumer, and DLL-to-KLIB round-trip paths preserve the managed-reference ABI and aliasing.

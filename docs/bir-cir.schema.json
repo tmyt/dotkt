@@ -18,7 +18,7 @@
 
     "//== TYPE (§1) — the universal type representation ==//": null,
     "type": {
-      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Ten variants; `star` is BIR-only and bir2cir must eliminate it before CIR, while `ptr`, `mod` and tArray.rank are CIR-only signature carriers bir2cir authors so a #370 memberRef can spell any signature the target metadata can declare.",
+      "description": "A Type is ALWAYS an object with a `t` discriminator. There is NO bare-string type. Readers dispatch(t); they never split/scan a string. Ten variants; `star` is BIR-only and bir2cir must eliminate it before CIR. `ptr`, `mod` and tArray.rank are CIR-only physical carriers; `mod` and ranked arrays are confined to resolved signatures, while `ptr` also materializes BIR's semantic kotlin.clr.ClrPointer<T> in ordinary CIR slots.",
       "oneOf": [
         { "$ref": "#/$defs/tFqn" },
         { "$ref": "#/$defs/tTv" },

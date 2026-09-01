@@ -38,6 +38,11 @@ RequireMethod("NullVoid", "System.Void*");
 RequireMethod("IsNullVoid", "System.Boolean", "System.Void*");
 RequireMethod("NullNested", "System.Int32**");
 RequireMethod("IsNullNested", "System.Boolean", "System.Int32**");
+RequireMethod("NullNullable", "System.Nullable`1<System.Int32>*");
+RequireMethod("EchoNullable", "System.Nullable`1<System.Int32>*", "System.Nullable`1<System.Int32>*");
+RequireMethod("IsNullNullable", "System.Boolean", "System.Nullable`1<System.Int32>*");
+RequireMethod("NullStruct", "Probe.PointerValue*");
+RequireMethod("IsNullStruct", "System.Boolean", "Probe.PointerValue*");
 Console.WriteLine("emitted unmanaged-pointer MemberRef signatures: OK");
 
 void RequireMethod(string name, string returnType, params string[] parameterTypes)

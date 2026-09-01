@@ -320,6 +320,26 @@ expect_constraint_failure() {
 }
 
 compile_refs="$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_REF_DLL" "$PROBE_REF" "$CONTRACTS_REF")"
+
+expect_pointer_shape_failure() {
+	local name="$1" expected="$2"
+	local bir="$OUT/invalid-pointer-$name-bir" cir="$OUT/invalid-pointer-$name-cir"
+	local log="$OUT/invalid-pointer-$name.log"
+	mkdir -p "$bir" "$cir"
+	"$KOTC" "$ROOT/tests/special/dll2klib-e2e/invalid-pointer-$name.kt" \
+		-no-stdlib \
+		-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$bir"
+	if dotnet "$BIR2CIR_DLL" "$cir" --compile-refs "$compile_refs" "$bir"/*.bir.json >"$log" 2>&1; then
+		die "invalid pointer $name shape unexpectedly reached CIR"
+	fi
+	grep -q "$expected" "$log" \
+		|| die "invalid pointer $name shape lacked its representation diagnostic"
+}
+
+expect_pointer_shape_failure generic "cannot occupy a CLR generic argument"
+expect_pointer_shape_failure star "has no exact CLR pointee signature"
+expect_pointer_shape_failure function "cannot occupy a CLR generic argument"
+
 expect_constraint_failure class ReferenceConstraintBox "reference type"
 expect_constraint_failure struct StructConstraintBox "value type"
 expect_constraint_failure enum EnumConstraintBox "enum type"
@@ -438,13 +458,15 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "521" ]] || die "generated program returned '$actual', expected '521'"
+[[ "$actual" == "524" ]] || die "generated program returned '$actual', expected '524'"
 dotnet "$OUT/tools/pointer-inspector/PointerInspector.dll" "$OUT/il/Consumer.dll"
 # The focused pointer call intentionally places `int32*` on this method's evaluation stack. The CLR executes it,
 # while ILVerify correctly classifies that unsafe method as UnmanagedPointer rather than verifiable managed IL.
 # Keep the exception invocation-local so the canonical whole-suite unverifiable baseline is not widened.
 bash "$ROOT/tests/run-ilverify.sh" \
-	'--allow-unmanaged-pointer=consumer.ConsumerKt::consume()' "$OUT/il/Consumer.dll"
+	'--allow-unmanaged-pointer=consumer.ConsumerKt::consumePointers()' \
+	'--allow-unmanaged-pointer=consumer.PointerOverride::Echo(void*)' \
+	"$OUT/il/Consumer.dll"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
@@ -453,4 +475,4 @@ if grep -q '"_resolvedMethodTypeParams"' "$OUT/cir/consumer.cir.json"; then
 	die "bir2cir leaked its resolved-method constraint carrier into CIR"
 fi
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref, unmanaged pointers) -> kotc -> bir2cir -> ilemit -> run (521)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref, unmanaged pointers) -> kotc -> bir2cir -> ilemit -> run (524)"

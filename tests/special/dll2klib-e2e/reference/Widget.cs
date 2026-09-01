@@ -685,4 +685,26 @@ public unsafe sealed class PointerProbe
     public int** NullNested() => null;
 
     public bool IsNullNested(int** value) => value == null;
+
+    public int?* NullNullable() => null;
+
+    public int?* EchoNullable(int?* value) => value;
+
+    public bool IsNullNullable(int?* value) => value == null;
+
+    public PointerValue* NullStruct() => null;
+
+    public bool IsNullStruct(PointerValue* value) => value == null;
+
+    public bool OverrideWorks(PointerBase value) => value.Echo(null) == null;
+}
+
+public struct PointerValue
+{
+    public int Value;
+}
+
+public unsafe abstract class PointerBase
+{
+    public abstract void* Echo(void* value);
 }

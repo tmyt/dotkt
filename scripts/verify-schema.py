@@ -524,11 +524,10 @@ class V:
                 self.err(f, path, f"type {t!r} is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
             if t == "array" and "rank" in o:
                 self.err(f, path, "array.rank is a CIR-only ECMA signature carrier and must not appear in kotc BIR")
-        # …and they belong to a MEMBER REFERENCE, nowhere else. Ordinary type slots are rewritten by many
-        # lowering passes that reconstruct an array as a vector and know nothing of pointers or modifiers, so
-        # one of these outside a reference would be silently flattened — re-creating the very collisions the
-        # carriers exist to prevent. Confining them to the reference keeps those passes correct by construction.
-        if (t in ("ptr", "mod") or (t == "array" and "rank" in o)) and not in_member_ref(path):
+        # Custom modifiers and general-array ranks describe an exact foreign member identity and remain confined to
+        # member references. `ptr` is different: dll2klib exposes an opaque ClrPointer<T> value to Kotlin, so bir2cir
+        # must materialize `ptr` in ordinary declaration, local, operand, and result slots as well as memberRefs.
+        if (t == "mod" or (t == "array" and "rank" in o)) and not in_member_ref(path):
             carrier = "array.rank" if t == "array" else t
             self.err(f, path, f"type {carrier} may only appear inside a memberRef signature, not in an ordinary type slot")
         # The other direction: a member reference is a PHYSICAL identity, so the Kotlin type-system facts have

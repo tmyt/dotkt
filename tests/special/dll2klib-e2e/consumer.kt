@@ -31,7 +31,9 @@ import Probe.MemberDefaultValue
 import Probe.ReferenceConstraintBox
 import Probe.StructConstraintBox
 import Probe.PointerProbe
+import Probe.PointerBase
 import kotlin.clr.byref
+import kotlin.clr.ClrPointer
 
 class LocalDefaultConstraintValue {
     val value: Int = 16
@@ -65,6 +67,23 @@ class GenericDefaultCarrierSubclass : GenericDefaultCarrier()
 class ExternalDefaultCarrierSubclass : ExternalDefaultCarrier()
 
 class ExplicitDefaultCarrierSubclass : ExplicitDefaultCarrier()
+
+class PointerOverride : PointerBase() {
+    override fun Echo(value: ClrPointer<Unit>): ClrPointer<Unit> = value
+}
+
+fun consumePointers(): Int {
+    val pointerProbe = PointerProbe()
+    val pointer = pointerProbe.Null()
+    pointerProbe.Value = pointerProbe.Echo(pointer)
+    val nullablePointer = pointerProbe.EchoNullable(pointerProbe.NullNullable())
+    return (if (pointerProbe.IsNull(pointerProbe.Value)) 1 else 0) +
+        (if (pointerProbe.IsNullVoid(pointerProbe.NullVoid())) 1 else 0) +
+        (if (pointerProbe.IsNullNested(pointerProbe.NullNested())) 1 else 0) +
+        (if (pointerProbe.IsNullNullable(nullablePointer)) 1 else 0) +
+        (if (pointerProbe.IsNullStruct(pointerProbe.NullStruct())) 1 else 0) +
+        (if (pointerProbe.OverrideWorks(PointerOverride())) 1 else 0)
+}
 
 fun consume(): Int {
     val maybe: String? = "x"
@@ -108,12 +127,7 @@ fun consume(): Int {
     externalDefaultCarrier.Value()
     val explicitDefaultCarrier: IExternalDefaultSlot = ExplicitDefaultCarrierSubclass()
     explicitDefaultCarrier.Value()
-    val pointerProbe = PointerProbe()
-    val pointer = pointerProbe.Null()
-    pointerProbe.Value = pointerProbe.Echo(pointer)
-    val pointerResult = (if (pointerProbe.IsNull(pointerProbe.Value)) 1 else 0) +
-        (if (pointerProbe.IsNullVoid(pointerProbe.NullVoid())) 1 else 0) +
-        (if (pointerProbe.IsNullNested(pointerProbe.NullNested())) 1 else 0)
+    val pointerResult = consumePointers()
     val genericConstraints = ConstraintBox<GoodConstraintSink>().Value +
         StructConstraintBox<Int>().Value +
         EnumConstraintBox<ConstraintKind>().Value +

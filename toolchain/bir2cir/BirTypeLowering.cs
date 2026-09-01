@@ -41,6 +41,69 @@ static class BirTypeLowering
     public const string SpanClrFqn = "System.Span";
     public const string PointerIntrinsicFqn = "kotlin.clr.ClrPointer";
 
+    // Validate the semantic carrier at the last all-Kotlin boundary, before star/F-bound passes can replace a
+    // `ClrPointer<*>` pointee with object and erase the evidence needed for a precise refusal. A pointer itself is not
+    // a legal CLR generic argument, while an array OF pointers is a managed array type and may occupy one.
+    public static void ValidatePointerVocabulary(JsonNode root, string file)
+    {
+        void Refuse(string message) => throw new InvalidDataException($"bir2cir: {file}: {message}");
+
+        void ValidateType(TypeNode type, bool directGenericArgument)
+        {
+            switch (type)
+            {
+                case TypeNode.Fqn { Name: PointerIntrinsicFqn } pointer:
+                    if (pointer.Args is not { Length: 1 })
+                        Refuse($"{PointerIntrinsicFqn} requires exactly one pointee type");
+                    if (directGenericArgument)
+                        Refuse($"{PointerIntrinsicFqn} cannot occupy a CLR generic argument; ECMA unmanaged "
+                            + "pointers are signature types, not valid generic arguments");
+                    if (pointer.Args[0] is TypeNode.Star)
+                        Refuse($"{PointerIntrinsicFqn}<*> has no exact CLR pointee signature");
+                    ValidateType(pointer.Args[0], directGenericArgument: false);
+                    return;
+                case TypeNode.Fqn { Args: { } args }:
+                    foreach (var argument in args) ValidateType(argument, directGenericArgument: true);
+                    return;
+                case TypeNode.Fn fn:
+                    ValidateType(fn.Ret, directGenericArgument: true);
+                    foreach (var parameter in fn.Params) ValidateType(parameter, directGenericArgument: true);
+                    if (fn.Recv != null) ValidateType(fn.Recv, directGenericArgument: true);
+                    if (fn.Ctx != null)
+                        foreach (var context in fn.Ctx) ValidateType(context, directGenericArgument: true);
+                    return;
+                case TypeNode.Array array:
+                    ValidateType(array.Elem, directGenericArgument: false);
+                    return;
+                case TypeNode.ByRef byRef:
+                    ValidateType(byRef.Of, directGenericArgument: false);
+                    return;
+                case TypeNode.Nullable nullable:
+                    ValidateType(nullable.Of, directGenericArgument);
+                    return;
+                case TypeNode.Oblivious oblivious:
+                    ValidateType(oblivious.Of, directGenericArgument);
+                    return;
+            }
+        }
+
+        void Walk(JsonNode node)
+        {
+            if (node == null) return;
+            if (IsTypeObject(node))
+            {
+                ValidateType(TypeNode.Parse(node.ToJsonString()), directGenericArgument: false);
+                return;
+            }
+            if (node is JsonObject obj)
+                foreach (var child in obj.Select(property => property.Value)) Walk(child);
+            else if (node is JsonArray array)
+                foreach (var child in array) Walk(child);
+        }
+
+        Walk(root);
+    }
+
     // The bare kotlin.* tokens and their CLR-codegen lowering. Consulted only in the non-reference
     // (substitute/app) build; the reference build keeps every kotlin.* token verbatim.
     //
@@ -354,6 +417,13 @@ static class BirTypeLowering
                     {
                         if (f.Args is not { Length: 1 })
                             throw new InvalidDataException($"{PointerIntrinsicFqn} requires exactly one pointee type");
+                        if (typeArg)
+                            throw new InvalidDataException(
+                                $"bir2cir: {_file}: {PointerIntrinsicFqn} cannot occupy a CLR generic argument; "
+                                + "ECMA unmanaged pointers are signature types, not valid generic arguments");
+                        if (f.Args[0] is TypeNode.Star)
+                            throw new InvalidDataException(
+                                $"bir2cir: {_file}: {PointerIntrinsicFqn}<*> has no exact CLR pointee signature");
                         var pointee = f.Args[0] is TypeNode.Fqn { Name: "kotlin.Unit", Args: null }
                             ? VoidType
                             : LowerType(f.Args[0], refBuild, force, typeArg: false);

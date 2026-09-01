@@ -1087,7 +1087,12 @@ static partial class ClrMemberResolution
         // already-lowered CIR pointer must answer identically at both resolution stages.
         if (p.IsPointer)
         {
-            var pointee = a switch
+            var pointerNode = a switch
+            {
+                TypeNode.Nullable nullable => nullable.Of,
+                _ => a,
+            };
+            var pointee = pointerNode switch
             {
                 TypeNode.Ptr ptr => ptr.Of,
                 TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn, Args: { Length: 1 } } marker => marker.Args[0],
@@ -1490,6 +1495,7 @@ static partial class ClrMemberResolution
     {
         t = AliasResolve(t);   // a ref.dll @ClrTypeAlias param -> its BCL twin, so ilemit's MapType links the rt-stdlib slot
         if (t.IsByRef) return new TypeNode.ByRef(MemberSigOf(t.GetElementType()));
+        if (t.IsPointer) return new TypeNode.Ptr(MemberSigOf(t.GetElementType()));
         if (t.IsArray) return ArrayOf(t, MemberSigOf(t.GetElementType()));
         if (t.IsGenericParameter)
             return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);

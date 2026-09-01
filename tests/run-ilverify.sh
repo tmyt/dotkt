@@ -65,6 +65,7 @@ done
 # to match in exactly one of them). Read by the --audit-baseline dead-key verdict below.
 declare -A MATCHED_XFAIL=()
 declare -A MATCHED_UNVERIFIABLE=()
+declare -A MATCHED_UNMANAGED_POINTER=()
 
 FINDING_CLASS=""
 classify_finding() { # <finding line> -> 0 if classified, setting FINDING_CLASS and recording its key
@@ -73,6 +74,7 @@ classify_finding() { # <finding line> -> 0 if classified, setting FINDING_CLASS 
 	if [[ "$line" == *"Error [UnmanagedPointer]"* ]]; then
 		for key in "${!ALLOWED_UNMANAGED_POINTER[@]}"; do
 			[[ "$line" == *"$key"* ]] || continue
+			MATCHED_UNMANAGED_POINTER["$key"]=1
 			FINDING_CLASS="UNMANAGED_POINTER"
 			return 0
 		done
@@ -135,6 +137,19 @@ for dll in "${DLLS[@]}"; do
 		rc=1
 	fi
 	unset newfails xfailed unverifiable unmanaged_pointer
+done
+
+# An invocation-local pointer allowance is an assertion that the named unsafe method exists and produces exactly the
+# expected ILVerify classification. If it matched nothing, the focused exception is stale or misspelled and must not
+# silently turn the verification into an ordinary green run.
+allowed_pointer_keys=("${!ALLOWED_UNMANAGED_POINTER[@]}")
+if (( ${#allowed_pointer_keys[@]} )); then
+	mapfile -t allowed_pointer_keys < <(printf '%s\n' "${allowed_pointer_keys[@]}" | LC_ALL=C sort)
+fi
+for key in ${allowed_pointer_keys[@]+"${allowed_pointer_keys[@]}"}; do
+	[[ -v MATCHED_UNMANAGED_POINTER["$key"] ]] && continue
+	echo "VERIFY FAIL  ilverify-unmanaged-pointer:$key — no matching [UnmanagedPointer] finding"
+	rc=1
 done
 
 # DEAD-KEY VERDICT: every baseline key that masked nothing over the complete emitted set. xfail_diff's wording,
