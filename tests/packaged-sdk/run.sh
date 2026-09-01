@@ -231,6 +231,8 @@ using System; using System.Linq; using System.Reflection;
 //        <slot> is `ret` or `pN` (0-based param).
 // refcheck --tfm <dll> <frameworkName> [exactRefs]
 //     -> exit 0 iff the assembly carries exactly that TargetFrameworkAttribute.FrameworkName.
+// refcheck --assembly-attribute <dll> <attributeType> <singleStringArgument> [exactRefs]
+//     -> exit 0 iff the assembly carries exactly one matching single-string custom attribute.
 // The shape mode pins the ERASURE INVARIANT at the metadata level: a nullable-generic slot's physical type is
 // `System.Object` and its pre-erasure Kotlin shape travels in the carrier attribute. That is one assertion a
 // behavioral case cannot make — a slot can be physically wrong and still run when nothing crosses it.
@@ -245,13 +247,15 @@ class P {
     static int Main(string[] a) {
         var shape = a.Length > 0 && a[0] == "--shape";
         var tfm = a.Length > 0 && a[0] == "--tfm";
-        if (shape || tfm) a = a.Skip(1).ToArray();
+        var assemblyAttribute = a.Length > 0 && a[0] == "--assembly-attribute";
+        if (shape || tfm || assemblyAttribute) a = a.Skip(1).ToArray();
         var dll = System.IO.Path.GetFullPath(a[0]);
         // The TPA list is the runtime host's resolved platform set. Non-platform dependencies are explicit; never
         // turn the input assembly's parent directory into an implicit reference universe.
         var paths = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES"))
             .Split(System.IO.Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
-        var extraRefs = tfm ? (a.Length > 2 ? a[2] : null)
+        var extraRefs = assemblyAttribute ? (a.Length > 3 ? a[3] : null)
+            : tfm ? (a.Length > 2 ? a[2] : null)
             : shape ? (a.Length > 6 ? a[6] : null)
             : (a.Length > 3 ? a[3] : null);
         if (extraRefs != null) paths.AddRange(extraRefs.Split(';', StringSplitOptions.RemoveEmptyEntries));
@@ -264,6 +268,15 @@ class P {
             var frameworkName = attr?.ConstructorArguments.SingleOrDefault().Value as string;
             if (frameworkName != a[1]) Console.Error.WriteLine($"refcheck: TargetFrameworkAttribute is '{frameworkName ?? "<missing>"}'; expected '{a[1]}'");
             return frameworkName == a[1] ? 0 : 1;
+        }
+        if (assemblyAttribute) {
+            var matches = asm.GetCustomAttributesData().Where(x =>
+                x.AttributeType.FullName == a[1] &&
+                x.ConstructorArguments.Count == 1 &&
+                x.ConstructorArguments[0].ArgumentType.FullName == "System.String" &&
+                (x.ConstructorArguments[0].Value as string) == a[2]).ToArray();
+            if (matches.Length != 1) Console.Error.WriteLine($"refcheck: found {matches.Length} {a[1]}('{a[2]}') attribute(s); expected exactly one");
+            return matches.Length == 1 ? 0 : 1;
         }
         Type[] ts; try { ts = asm.GetTypes(); } catch (ReflectionTypeLoadException e) { ts = e.Types.Where(t => t != null).ToArray(); }
         var owner = ts.FirstOrDefault(t => t.FullName == a[1]);
@@ -453,7 +466,7 @@ EOF
   </PropertyGroup>
   <!-- Deliberately give only one inner build a custom reference. This proves the outer target aggregates each
        TFM's actual resolved universe instead of duplicating one synthetic set with different TFM metadata. -->
-  <ItemGroup Condition="'\$(TargetFramework)' == 'net10.0'">
+  <ItemGroup Condition="'\$(TargetFramework)' == 'net10.0' and '\$(IncludeOuterReference)' != 'false'">
     <Reference Include="OuterOnlyReference">
       <HintPath>$d/refs/OuterOnlyReference.dll</HintPath>
       <Private>false</Private>
@@ -525,6 +538,30 @@ EOF
 		fail multi-target-klib-references "unsupported target framework lacked the expected early compatibility diagnostic" \
 			"$(tail -30 "$unsupported/restore.log")"; return
 	fi
+	cat > "$unsupported/OptOut.ktproj" <<EOF
+<Project Sdk="DotKt.Sdk/$VER">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <KotlinClrStdlibRef>false</KotlinClrStdlibRef>
+  </PropertyGroup>
+  <!-- Restore through an installed/supported reference pack, then make only the build-time SDK capability fact
+       incompatible. This reaches DotKt's own diagnostic without depending on an online older targeting pack. -->
+  <Target Name="ForceUnsupportedIdentifier" BeforeTargets="DotKtValidateTargetFramework">
+    <PropertyGroup><TargetFrameworkIdentifier>.NETFramework</TargetFrameworkIdentifier></PropertyGroup>
+  </Target>
+</Project>
+EOF
+	if ! dotnet restore "$unsupported/OptOut.ktproj" --configfile "$d/nuget.config" -v q --nologo \
+			>"$unsupported/optout-restore.log" 2>&1; then
+		fail multi-target-klib-references "stdlib-opt-out unsupported-TFM probe did not restore" \
+			"$(tail -30 "$unsupported/optout-restore.log")"; return
+	fi
+	if dotnet build "$unsupported/OptOut.ktproj" --no-restore -v q --nologo \
+			>"$unsupported/optout-build.log" 2>&1 \
+		|| ! grep -q "DOTKTSDK001" "$unsupported/optout-build.log"; then
+		fail multi-target-klib-references "SDK-owned unsupported-TFM diagnostic was absent when stdlib was disabled" \
+			"$(tail -30 "$unsupported/optout-build.log")"; return
+	fi
 	if ! dotnet restore "$d/App.ktproj" --configfile "$d/nuget.config" -v q --nologo >"$d/restore.log" 2>&1; then
 		fail multi-target-klib-references "restore failed" "$(tail -30 "$d/restore.log")"; return
 	fi
@@ -536,7 +573,7 @@ EOF
 		|| ! grep -q "^net10\\.0-windows||$d/obj/Debug/net10\\.0-windows/klib/" "$d/resolved.txt"; then
 		fail multi-target-klib-references "outer target did not preserve TFM-specific KLIB paths" "$(cat "$d/resolved.txt" 2>/dev/null)"; return
 	fi
-	if ! dotnet build "$d/App.ktproj" --no-restore -v q --nologo >"$d/build.log" 2>&1; then
+	if ! dotnet build "$d/App.ktproj" --no-restore -m -v q --nologo >"$d/build.log" 2>&1; then
 		fail multi-target-klib-references "parallel multi-target build failed" "$(tail -60 "$d/build.log")"; return
 	fi
 	local net10_obj="$d/obj/Debug/net10.0" windows_obj="$d/obj/Debug/net10.0-windows"
@@ -557,6 +594,19 @@ EOF
 			>"$d/windows-tfm.log" 2>&1; then
 		fail multi-target-klib-references "one emitted assembly has the wrong TargetFrameworkAttribute" \
 			"$(cat "$d/net10-tfm.log" "$d/windows-tfm.log")"; return
+	fi
+	if ! dotnet "$REFCHECK/bin/refcheck.dll" --assembly-attribute "$windows_dll" \
+			"System.Runtime.Versioning.TargetPlatformAttribute" "Windows7.0" >"$d/windows-platform.log" 2>&1 \
+		|| ! dotnet "$REFCHECK/bin/refcheck.dll" --assembly-attribute "$windows_dll" \
+			"System.Runtime.Versioning.SupportedOSPlatformAttribute" "Windows7.0" >"$d/windows-supported.log" 2>&1; then
+		fail multi-target-klib-references "platform-qualified output lost its SDK platform attributes" \
+			"$(cat "$d/windows-platform.log" "$d/windows-supported.log")"; return
+	fi
+	if dotnet "$REFCHECK/bin/refcheck.dll" --assembly-attribute "$net10_dll" \
+			"System.Runtime.Versioning.TargetPlatformAttribute" "Windows7.0" >"$d/net10-platform.log" 2>&1 \
+		|| dotnet "$REFCHECK/bin/refcheck.dll" --assembly-attribute "$net10_dll" \
+			"System.Runtime.Versioning.SupportedOSPlatformAttribute" "Windows7.0" >"$d/net10-supported.log" 2>&1; then
+		fail multi-target-klib-references "Windows platform attributes leaked into the plain net10.0 output"; return
 	fi
 	if ! dotnet "$REFCHECK/bin/refcheck.dll" "$net10_dll" "Net10OnlyApi" "reference" \
 			>"$d/net10-api.log" 2>&1; then
@@ -584,6 +634,13 @@ EOF
     <Compile Remove="Net10OnlyConsumer.cs" />
     <Compile Include="Net10OnlyConsumer.cs" Condition="'$(TargetFramework)' == 'net10.0'" />
   </ItemGroup>
+  <Target Name="CaptureProducerReference" BeforeTargets="CoreCompile" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <_ProducerReference Include="@(ReferencePath)" Condition="'%(Filename)' == 'App'" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)producer-reference.txt"
+                      Lines="@(_ProducerReference->'%(FullPath)')" Overwrite="true" />
+  </Target>
 </Project>
 EOF
 	cat > "$cs/Program.cs" <<'EOF'
@@ -629,6 +686,20 @@ EOF
 		fail multi-target-klib-references "DotKt multi-target consumer failed" \
 			"$(tail -n 60 "$kt/restore.log" "$kt/build.log")"; return
 	fi
+	local cs_net10_ref="$cs/obj/Debug/net10.0/producer-reference.txt"
+	local cs_windows_ref="$cs/obj/Debug/net10.0-windows/producer-reference.txt"
+	local kt_net10_rsp="$kt/obj/Debug/net10.0/dotkt-reference-klibs.rsp"
+	local kt_windows_rsp="$kt/obj/Debug/net10.0-windows/dotkt-reference-klibs.rsp"
+	if ! grep -Fxq "$net10_dll" "$cs_net10_ref" \
+		|| ! grep -Fxq "$windows_dll" "$cs_windows_ref" \
+		|| grep -Fxq "$windows_dll" "$cs_net10_ref" \
+		|| grep -Fxq "$net10_dll" "$cs_windows_ref" \
+		|| ! grep -Fxq "$net10_dll" "$kt_net10_rsp" \
+		|| ! grep -Fxq "$windows_dll" "$kt_windows_rsp" \
+		|| grep -Fxq "$windows_dll" "$kt_net10_rsp" \
+		|| grep -Fxq "$net10_dll" "$kt_windows_rsp"; then
+		fail multi-target-klib-references "a consumer inner build selected the producer output from the wrong TFM"; return
+	fi
 
 	local cs_net10="$cs/bin/Debug/net10.0/CsConsumer.dll"
 	local cs_windows="$cs/bin/Debug/net10.0-windows/CsConsumer.dll"
@@ -661,22 +732,26 @@ EOF
 	# TFM's stamps untouched.
 	local net10_bir_stamp="$net10_obj/bir/.stamp" windows_bir_stamp="$windows_obj/bir/.stamp"
 	local net10_cir_stamp="$net10_obj/cir/.stamp" windows_cir_stamp="$windows_obj/cir/.stamp"
-	local before_net10_bir before_windows_bir before_net10_cir before_windows_cir
+	local before_net10_bir before_windows_bir before_net10_cir before_windows_cir before_net10_dll before_windows_dll
 	before_net10_bir="$(stat -c %y "$net10_bir_stamp")"
 	before_windows_bir="$(stat -c %y "$windows_bir_stamp")"
 	before_net10_cir="$(stat -c %y "$net10_cir_stamp")"
 	before_windows_cir="$(stat -c %y "$windows_cir_stamp")"
-	if ! dotnet build "$d/App.ktproj" --no-restore -v q --nologo >"$d/noop.log" 2>&1; then
+	before_net10_dll="$(stat -c %y "$net10_dll")"
+	before_windows_dll="$(stat -c %y "$windows_dll")"
+	if ! dotnet build "$d/App.ktproj" --no-restore -m -v q --nologo >"$d/noop.log" 2>&1; then
 		fail multi-target-klib-references "multi-target no-op build failed" "$(tail -40 "$d/noop.log")"; return
 	fi
 	if [[ "$(stat -c %y "$net10_bir_stamp")" != "$before_net10_bir" \
 		|| "$(stat -c %y "$windows_bir_stamp")" != "$before_windows_bir" \
 		|| "$(stat -c %y "$net10_cir_stamp")" != "$before_net10_cir" \
-		|| "$(stat -c %y "$windows_cir_stamp")" != "$before_windows_cir" ]]; then
+		|| "$(stat -c %y "$windows_cir_stamp")" != "$before_windows_cir" \
+		|| "$(stat -c %y "$net10_dll")" != "$before_net10_dll" \
+		|| "$(stat -c %y "$windows_dll")" != "$before_windows_dll" ]]; then
 		fail multi-target-klib-references "unchanged outer build recompiled an inner compiler pipeline"; return
 	fi
 	rm "$d/Net10Only.kt"
-	if ! dotnet build "$d/App.ktproj" --no-restore -v q --nologo >"$d/delete.log" 2>&1; then
+	if ! dotnet build "$d/App.ktproj" --no-restore -m -v q --nologo >"$d/delete.log" 2>&1; then
 		fail multi-target-klib-references "target-specific source deletion rebuild failed" \
 			"$(tail -50 "$d/delete.log")"; return
 	fi
@@ -686,6 +761,46 @@ EOF
 		|| "$(stat -c %y "$windows_bir_stamp")" != "$before_windows_bir" \
 		|| "$(stat -c %y "$windows_cir_stamp")" != "$before_windows_cir" ]]; then
 		fail multi-target-klib-references "source deletion was stale or invalidated the wrong TFM"; return
+	fi
+	local after_source_net10_bir after_source_windows_bir after_source_net10_cir after_source_windows_cir
+	after_source_net10_bir="$(stat -c %y "$net10_bir_stamp")"
+	after_source_windows_bir="$(stat -c %y "$windows_bir_stamp")"
+	after_source_net10_cir="$(stat -c %y "$net10_cir_stamp")"
+	after_source_windows_cir="$(stat -c %y "$windows_cir_stamp")"
+	if ! dotnet build "$d/App.ktproj" --no-restore -m -p:IncludeOuterReference=false -v q --nologo \
+			>"$d/reference-delete.log" 2>&1; then
+		fail multi-target-klib-references "target-specific reference deletion rebuild failed" \
+			"$(tail -50 "$d/reference-delete.log")"; return
+	fi
+	if grep -q "OuterOnlyReference" "$net10_obj/dotkt-reference-klibs.rsp" \
+		|| grep -q "OuterOnlyReference" "$net10_obj/dotkt-kotc.rsp"; then
+		fail multi-target-klib-references "removed reference remained in a frontend input manifest"; return
+	fi
+	if [[ "$(stat -c %y "$net10_bir_stamp")" == "$after_source_net10_bir" \
+		|| "$(stat -c %y "$net10_cir_stamp")" == "$after_source_net10_cir" \
+		|| "$(stat -c %y "$windows_bir_stamp")" != "$after_source_windows_bir" \
+		|| "$(stat -c %y "$windows_cir_stamp")" != "$after_source_windows_cir" ]]; then
+		fail multi-target-klib-references "reference deletion was stale or invalidated the wrong TFM"; return
+	fi
+	local before_empty_net10_bir before_empty_windows_bir
+	before_empty_net10_bir="$(stat -c %y "$net10_bir_stamp")"
+	before_empty_windows_bir="$(stat -c %y "$windows_bir_stamp")"
+	rm "$d/App.kt"
+	if ! dotnet build "$d/App.ktproj" --no-restore -m -p:IncludeOuterReference=false -v q --nologo \
+			>"$d/delete-final-source.log" 2>&1; then
+		fail multi-target-klib-references "final-source deletion rebuild failed" \
+			"$(tail -50 "$d/delete-final-source.log")"; return
+	fi
+	if [[ -e "$net10_obj/bir/App.bir.json" || -e "$windows_obj/bir/App.bir.json" \
+		|| -e "$net10_obj/cir/App.cir.json" || -e "$windows_obj/cir/App.cir.json" \
+		|| "$(stat -c %y "$net10_bir_stamp")" == "$before_empty_net10_bir" \
+		|| "$(stat -c %y "$windows_bir_stamp")" == "$before_empty_windows_bir" \
+		|| ! -f "$net10_dll" || ! -f "$windows_dll" ]]; then
+		fail multi-target-klib-references "final-source deletion preserved stale compiler state or lost the output"; return
+	fi
+	if dotnet "$REFCHECK/bin/refcheck.dll" "$net10_dll" "MultiTargetApi" "message" >"$d/net10-empty.log" 2>&1 \
+		|| dotnet "$REFCHECK/bin/refcheck.dll" "$windows_dll" "MultiTargetApi" "message" >"$d/windows-empty.log" 2>&1; then
+		fail multi-target-klib-references "final-source deletion preserved a stale public API"; return
 	fi
 	pass multi-target-klib-references
 }
