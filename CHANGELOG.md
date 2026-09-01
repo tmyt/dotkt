@@ -5,12 +5,20 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.12 (2026-09-02)
+
 ### Toolchain
 
 - **One DotKt project can now build isolated outputs for multiple target frameworks (#338).** MSBuild outer/inner
   builds retain independent reference KLIB, BIR, CIR, response, fingerprint, and emitted-assembly state per TFM;
   platform-qualified outputs preserve the SDK's framework/platform attributes, matching C# and DotKt consumers bind
   the correct target graph, and source or reference removal invalidates only the affected inner compiler pipeline.
+
+- **Kotlin can now declare CLR P/Invoke methods through the real `DllImportAttribute` (#339).** Top-level
+  `external fun` declarations lower to bodyless CLR imports with their module, entry point, calling convention,
+  character set, last-error, and related import flags preserved through CIR, reference assemblies, and DLL-to-KLIB
+  round trips. The initial surface supports blittable primitives and enums, `IntPtr`/`UIntPtr`, and `ClrRef<T>`;
+  unsupported declaration and marshalling shapes fail with focused diagnostics.
 
 - **CLR unmanaged-pointer signatures now survive DLL-to-KLIB consumption exactly (#274).** dll2klib projects
   pointer fields, parameters, and returns through an opaque `ClrPointer<T>` Kotlin vocabulary; bir2cir materializes
@@ -29,6 +37,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
   `bir2cir` keeps an earlier source-type carrier authoritative when a declaration has already moved onto the
   monomorphic `Continuation<object>` CLR slot, preventing a later physical intermediate from masking the original
   `Continuation<T>` parameter while preserving the uniform runtime ABI.
+
+- **Nullable-generic witness demand is now independent of Kotlin's `reified` modifier (#466).** bir2cir derives the
+  hidden CLR nullability witness structurally from nullable-sensitive operations and propagates it through exact calls
+  and lifted frames, while round-trip metadata carries semantic `reified` indices separately. This also removes the
+  previous CLR-specific accidental allowance: passing a non-reified type parameter to a reified function is now
+  rejected consistently with Kotlin, including through DLL-to-KLIB consumption.
 
 ## 0.9.11 (2026-08-31)
 

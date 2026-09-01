@@ -11,7 +11,7 @@
          GUARD (#131 durable): scripts/pack-nuget.sh dies if this default != the release version CORE
          (DotKtVersionPrefix, plus -DotKtVersionSuffix when pre-release — e.g. 0.9.6-rc7; both in
          packaging/DotKt.Versions.props), so a stale value can never silently ship — bump both together. -->
-    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.11</DotKtVersion>
+    <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.12</DotKtVersion>
     <!-- The first multi-targeting release supports the net10.0 reference/stdlib family, including platform-qualified
          TFMs such as net10.0-windows. Keep this as SDK data so adding another family is a package declaration, not a
          compiler/emitter TFM branch. -->

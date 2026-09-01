@@ -112,7 +112,29 @@ C# sees the parameter as `ref int`. A managed reference cannot be kept in a heap
 `ClrRef<T>` parameter, using one in a `suspend` declaration, and declaring `ClrRef<T>` return types or properties are
 unsupported forms with undefined behavior.
 
-## 5. Nullable value types, .NET enums, operators, extension methods
+## 5. Native calls with `DllImportAttribute`
+
+A top-level `external fun` annotated with the real CLR `DllImportAttribute` emits a bodyless P/Invoke method:
+
+```kotlin
+import System.Runtime.InteropServices.CallingConvention
+import System.Runtime.InteropServices.DllImportAttribute
+
+@DllImportAttribute(
+    "native_math",
+    EntryPoint = "add_i32",
+    CallingConvention = CallingConvention.Cdecl,
+    SetLastError = true,
+)
+external fun add(left: Int, right: Int): Int
+```
+
+The initial supported signature subset is blittable primitives and enums, `IntPtr`/`UIntPtr`, and `ClrRef<T>`
+parameters. Strings, booleans, custom marshalling, generic or instance imports, and other non-blittable shapes are not
+silently guessed: the compiler reports them as unsupported. Native library packaging and runtime lookup follow the
+ordinary .NET platform rules and remain the application's responsibility.
+
+## 6. Nullable value types, .NET enums, operators, extension methods
 
 - `int?` / `double?` ⇔ Kotlin `Int?` / `Double?` in both directions (passing a plain `Int` or
   `null` into an `int?` parameter both work).
@@ -123,7 +145,7 @@ unsupported forms with undefined behavior.
   (`==` deliberately routes to `Equals`, the Kotlin semantics.)
 - C#-defined **extension methods** surface as Kotlin extension functions.
 
-## 6. One CLR type, two views — imported type vs. stdlib alias
+## 7. One CLR type, two views — imported type vs. stdlib alias
 
 Some BCL types are *also* what a Kotlin stdlib type is bound to (`kotlin.text.StringBuilder` IS
 `System.Text.StringBuilder`; Kotlin's `List`/`Map` ARE the BCL collection interfaces). If you
@@ -135,7 +157,7 @@ Some BCL types are *also* what a Kotlin stdlib type is bound to (`kotlin.text.St
 - Escape hatch: an explicit cast crosses views (`net as kotlin.text.StringBuilder`); the runtime
   cast is free because the CLR type is literally the same.
 
-## 7. Consuming your Kotlin from C#
+## 8. Consuming your Kotlin from C#
 
 A DotKt assembly is plain public IL. A C# project can `<ProjectReference>` a `.ktproj`; Kotlin
 classes, properties, `suspend` functions (as `Task<T>`), and nullability annotations (`String?`
