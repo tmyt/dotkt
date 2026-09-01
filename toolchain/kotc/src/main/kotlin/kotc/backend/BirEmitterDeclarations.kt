@@ -1512,9 +1512,16 @@ internal fun BirEmitter.attrsJson(anns: List<IrConstructorCall>): String {
 			ann.arguments.getOrNull(index)?.let { Applied(parameter, it) }
 		}
 		fun namedRole(parameter: IrValueParameter): Pair<String, String>? {
-			val marker = parameter.annotations.singleOrNull {
+			val markers = parameter.annotations.filter {
 				it.type.classFqName?.asString() == "kotlin.clr.ClrAttributeNamedArgument"
-			} ?: return null
+			}
+			if (markers.isEmpty()) return null
+			if (markers.size != 1) {
+				invariantBroken(parameter,
+					"a projected CLR attribute named argument carries multiple role markers")
+				return null
+			}
+			val marker = markers.single()
 			val values = regularArgs(marker).map { (it as? IrConst)?.value as? String }
 			if (values.size != 2 || values.any { it == null }) {
 				invariantBroken(parameter, "a projected CLR attribute named argument has a malformed role marker")
