@@ -32,6 +32,8 @@
 //      faces, and a document still speaking Kotlin collection names cannot trip it.
 //   9. SUSPEND MODIFIER CONSUMED — no method DECLARATION (abstract or concrete) still carries `mods.suspend`: the
 //      Kotlin modifier is bir2cir's to consume, and CIR is a physical CLR graph.
+//  10. P/INVOKE COMPLETENESS — a `pinvoke` descriptor belongs only to a static, non-generic, bodyless CIR extern;
+//      Kotlin's `mods.external` source fact never survives beside it.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
@@ -142,6 +144,7 @@ public static class IrSanity
                 "declaration still carries 'mods.suspend': the Kotlin suspend modifier is consumed by bir2cir's "
                 + "cold-core lowering and must not reach CIR (every suspend declaration becomes a state machine, a "
                 + "cold entry and a Task bridge; one the stdlib self-build retains keeps only its physical stub body)");
+        if (which != IrSanityChecks.StyStampsOnly) CheckPInvokeDecl(owner, name, m);
         // Abstract / bodiless methods (interface members, abstract decls) emit no IL — nothing to check.
         if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
         if (!m.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
@@ -200,6 +203,65 @@ public static class IrSanity
         decl.ValueKind == JsonValueKind.Object
         && decl.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object
         && mods.TryGetProperty("suspend", out var s) && s.ValueKind == JsonValueKind.True;
+
+    static void CheckPInvokeDecl(string owner, string name, JsonElement method)
+    {
+        if (!method.TryGetProperty("pinvoke", out var descriptor) || descriptor.ValueKind != JsonValueKind.Object)
+            return;
+        var malformed =
+            !method.TryGetProperty("extern", out var external) || external.ValueKind != JsonValueKind.True ||
+            !method.TryGetProperty("static", out var isStatic) || isStatic.ValueKind != JsonValueKind.True ||
+            method.TryGetProperty("typeParams", out var typeParameters) &&
+                (typeParameters.ValueKind != JsonValueKind.Array || typeParameters.GetArrayLength() != 0) ||
+            !method.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array ||
+                body.GetArrayLength() != 0 ||
+            method.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object &&
+                mods.TryGetProperty("external", out var sourceExternal) && sourceExternal.ValueKind == JsonValueKind.True;
+        if (malformed)
+            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
+                "a CIR 'pinvoke' descriptor requires extern:true, static:true, no type parameters, an empty body, " +
+                "and no surviving mods.external source fact");
+
+        static bool String(JsonElement value, string key, bool nonEmpty = false) =>
+            value.TryGetProperty(key, out var item) && item.ValueKind == JsonValueKind.String &&
+            (!nonEmpty || !string.IsNullOrEmpty(item.GetString()));
+        static bool Boolean(JsonElement value, string key) =>
+            value.TryGetProperty(key, out var item) && item.ValueKind is JsonValueKind.True or JsonValueKind.False;
+        var hasPseudoFields = descriptor.TryGetProperty("pseudoFields", out var pseudoFields) &&
+            pseudoFields.ValueKind == JsonValueKind.Array;
+        var complete =
+            String(descriptor, "module", nonEmpty: true) && String(descriptor, "entryPoint") &&
+            String(descriptor, "callingConvention", nonEmpty: true) &&
+            descriptor.TryGetProperty("callingConventionType", out var callingConventionType) &&
+                callingConventionType.ValueKind == JsonValueKind.Object &&
+            String(descriptor, "charSet", nonEmpty: true) &&
+            descriptor.TryGetProperty("charSetType", out var charSetType) &&
+                charSetType.ValueKind == JsonValueKind.Object &&
+            Boolean(descriptor, "exactSpelling") && Boolean(descriptor, "setLastError") &&
+            Boolean(descriptor, "preserveSig") && Boolean(descriptor, "bestFitMapping") &&
+            Boolean(descriptor, "throwOnUnmappableChar") &&
+            hasPseudoFields &&
+            descriptor.TryGetProperty("attributeCtorRef", out var attributeCtorRef) &&
+                attributeCtorRef.ValueKind == JsonValueKind.Object;
+        if (!complete)
+            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
+                "a CIR 'pinvoke' descriptor must state the complete normalized MethodImport instruction");
+
+        var fields = pseudoFields.EnumerateArray()
+            .Where(field => field.ValueKind == JsonValueKind.String)
+            .Select(field => field.GetString()).ToHashSet(StringComparer.Ordinal);
+        var entryPoint = descriptor.GetProperty("entryPoint").GetString();
+        var charSet = descriptor.GetProperty("charSet").GetString();
+        if (!fields.Contains("CallingConvention") || entryPoint != name && !fields.Contains("EntryPoint") ||
+            charSet != "none" && !fields.Contains("CharSet") ||
+            descriptor.GetProperty("exactSpelling").GetBoolean() && !fields.Contains("ExactSpelling") ||
+            descriptor.GetProperty("setLastError").GetBoolean() && !fields.Contains("SetLastError") ||
+            !descriptor.GetProperty("preserveSig").GetBoolean() && !fields.Contains("PreserveSig") ||
+            descriptor.GetProperty("bestFitMapping").GetBoolean() && !fields.Contains("BestFitMapping") ||
+            descriptor.GetProperty("throwOnUnmappableChar").GetBoolean() && !fields.Contains("ThrowOnUnmappableChar"))
+            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
+                "a CIR 'pinvoke' descriptor has normalized values not represented by its pseudoFields instruction");
+    }
 
     // The #112 Phase-2 `File.kt:line: ` decl-source prefix, or "" when the decl carries no `pos`. Optional (absent =
     // pre-#112 behavior); a synthetic decl with no source simply omits it.

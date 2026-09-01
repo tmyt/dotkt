@@ -7,6 +7,7 @@ import org.jetbrains.kotlin.diagnostics.DiagnosticContext
 import org.jetbrains.kotlin.diagnostics.KtDiagnostic
 import org.jetbrains.kotlin.diagnostics.impl.BaseDiagnosticsCollector
 import org.jetbrains.kotlin.fir.analysis.diagnostics.jvm.FirJvmErrors
+import org.jetbrains.kotlin.fir.analysis.diagnostics.wasm.FirWasmErrors
 
 /**
  * Removes diagnostics that belong to the JVM representation rather than Kotlin semantics.
@@ -39,6 +40,10 @@ private class ClrDiagnosticsCollector(
 
 	override fun report(diagnostic: KtDiagnostic?, context: DiagnosticContext) {
 		if (diagnostic?.factory == FirJvmErrors.VALUE_CLASS_WITHOUT_JVM_INLINE_ANNOTATION) return
+		// The common metadata frontend currently installs WASI's platform checker as well. CLR external functions are
+		// governed by the DllImport contract in kotc/bir2cir, so requiring the unrelated @WasmImport marker here would
+		// reject every valid CLR declaration before our target-specific validation can run.
+		if (diagnostic?.factory == FirWasmErrors.WASI_EXTERNAL_FUNCTION_WITHOUT_IMPORT) return
 		delegate.report(diagnostic, context)
 	}
 }

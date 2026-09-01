@@ -1421,6 +1421,8 @@ internal sealed class AssemblyScanner : IDisposable
         Constructor Declaration,
         ImmutableArray<string> PhysicalParameters);
 
+    private sealed record AttributeNamedArgument(string Kind, string Name, KType Type);
+
     private sealed record LocalInterfaceInstance(
         ResolvedTypeDefinition Definition,
         KType Type,
@@ -2131,6 +2133,13 @@ internal sealed class AssemblyScanner : IDisposable
         }
 
         var typeContext = new GenericContext(handle, default, typeParameterIds);
+        var attributeNamedArguments = isAnnotation
+            ? ProjectAttributeNamedArguments(handle, def, names, signatures, typeContext)
+            : Array.Empty<AttributeNamedArgument>();
+        var publicAttributeConstructorCount = def.GetMethods()
+            .Select(methodHandle => _md.GetMethodDefinition(methodHandle))
+            .Where(method => _md.GetString(method.Name) == ".ctor" && IsPublicOrProtected(method.Attributes))
+            .Count();
         var validatedRichEnum = richEnumCarrier is null ? null : ValidateRichEnumCarrier(
             handle, def, richEnumCarrier, result.FqName, names, signatures, typeContext);
         foreach (var (gpHandle, parameter) in retainedTypeParameters)
@@ -2283,12 +2292,39 @@ internal sealed class AssemblyScanner : IDisposable
             {
                 if (isKotlinRichEnum) continue;
                 var parameters = Parameters(methodHandle, method, sig.ParameterTypes, names, signatures, context)
-                    .Skip(isKotlinInner ? 1 : 0);
+                    .Skip(isKotlinInner ? 1 : 0).ToList();
+                // Kotlin metadata has one annotation primary-constructor model, while CLR attributes may overload
+                // constructors. Extending every overload with the same optional named members can silently rebind a
+                // positional fixed argument to a field/property on another overload. Only the unambiguous one-ctor
+                // shape can carry CLR named members without changing constructor selection.
+                var namedArgumentsForConstructor = publicAttributeConstructorCount == 1
+                    ? attributeNamedArguments : Array.Empty<AttributeNamedArgument>();
+                if (namedArgumentsForConstructor.Length != 0)
+                    RenameFixedAttributeParameters(
+                        parameters,
+                        PhysicalParameters(method).Skip(isKotlinInner ? 1 : 0)
+                            .Select(parameter => _md.GetString(parameter.Row.Name)).ToArray(),
+                        namedArgumentsForConstructor,
+                        names);
                 var constructor = new Constructor
                 {
                     Flags = Flags.Visibility(method.Attributes),
                     ValueParameter = { parameters },
                 };
+                foreach (var named in namedArgumentsForConstructor)
+                {
+                    var parameter = new ValueParameter
+                    {
+                        Name = names.String(named.Name),
+                        Type = named.Type.Clone(),
+                        // HAS_ANNOTATIONS + DECLARES_DEFAULT_VALUE. Absence at an application remains absence in IR;
+                        // an explicit value is transported as a CLR named argument by the marker below.
+                        Flags = (1 << 0) | (1 << 1),
+                    };
+                    parameter.ParameterAnnotation.Add(
+                        ClrAttributeNamedArgumentAnnotation(names, named.Kind, named.Name));
+                    constructor.ValueParameter.Add(parameter);
+                }
                 result.Constructor.Add(constructor);
                 projectedConstructors.Add(new ProjectedConstructor(
                     methodHandle,
@@ -2335,6 +2371,7 @@ internal sealed class AssemblyScanner : IDisposable
                 PromoteReceiver(methodHandle, method, function, recognizeClrExtension: false);
                 AddMethodTypeParameters(methodHandle, method, function, names, signatures, context,
                     declarationIdentity?.SemanticReifiedTypeParameterIndices);
+                ApplyPInvokeProjection(method, function, names);
                 // A member's declaring-class path already carries its physical owner. Preserve only the exact
                 // frontend identity; ClrExternal is the top-level declaration transport.
                 if (declarationIdentity is { } identity)
@@ -4951,6 +4988,7 @@ internal sealed class AssemblyScanner : IDisposable
                 function.TypeParameter.Add(tp);
             }
             RestoreErasedMethodBounds(methodHandle, function.TypeParameter, signatures);
+            ApplyPInvokeProjection(method, function, names);
             function.FunctionAnnotation.Add(ClrExternalAnnotation(names, handle));
             if (declarationIdentity is { } identity)
                 function.FunctionAnnotation.Add(
@@ -5776,6 +5814,259 @@ internal sealed class AssemblyScanner : IDisposable
             },
         });
         return annotation;
+    }
+
+    private void ApplyPInvokeProjection(MethodDefinition method, Function function, NameTable names)
+    {
+        var import = method.GetImport();
+        var hasImportFlag = (method.Attributes & MethodAttributes.PinvokeImpl) != 0;
+        var hasImportRow = !import.Module.IsNil;
+        if (hasImportFlag != hasImportRow)
+            throw new InvalidDataException(
+                $"P/Invoke MethodDef '{_md.GetString(method.Name)}' has an inconsistent PinvokeImpl/ImplMap pair");
+        if (!hasImportRow) return;
+
+        function.Flags |= (1 << 0) | (1 << 12); // HAS_ANNOTATIONS + IS_EXTERNAL
+        var annotation = new Annotation
+        {
+            Id = names.Class("System.Runtime.InteropServices.DllImportAttribute"),
+        };
+        AddStringAnnotationArgument(
+            annotation,
+            names,
+            "dllName",
+            _md.GetString(_md.GetModuleReference(import.Module).Name));
+
+        var entryPoint = _md.GetString(import.Name);
+        var methodName = _md.GetString(method.Name);
+        if (entryPoint != methodName)
+            AddStringAnnotationArgument(annotation, names, "EntryPoint", entryPoint);
+
+        switch (import.Attributes & MethodImportAttributes.CallingConventionMask)
+        {
+            case MethodImportAttributes.None: break;
+            case MethodImportAttributes.CallingConventionWinApi:
+                AddEnumAnnotationArgument(annotation, names, "CallingConvention",
+                    "System.Runtime.InteropServices.CallingConvention", "Winapi");
+                break;
+            case MethodImportAttributes.CallingConventionCDecl:
+                AddEnumAnnotationArgument(annotation, names, "CallingConvention",
+                    "System.Runtime.InteropServices.CallingConvention", "Cdecl");
+                break;
+            case MethodImportAttributes.CallingConventionStdCall:
+                AddEnumAnnotationArgument(annotation, names, "CallingConvention",
+                    "System.Runtime.InteropServices.CallingConvention", "StdCall");
+                break;
+            case MethodImportAttributes.CallingConventionThisCall:
+                AddEnumAnnotationArgument(annotation, names, "CallingConvention",
+                    "System.Runtime.InteropServices.CallingConvention", "ThisCall");
+                break;
+            case MethodImportAttributes.CallingConventionFastCall:
+                AddEnumAnnotationArgument(annotation, names, "CallingConvention",
+                    "System.Runtime.InteropServices.CallingConvention", "FastCall");
+                break;
+            default:
+                throw new InvalidDataException(
+                    $"P/Invoke MethodDef '{methodName}' has an unsupported calling convention");
+        }
+
+        switch (import.Attributes & MethodImportAttributes.CharSetMask)
+        {
+            case MethodImportAttributes.None: break;
+            case MethodImportAttributes.CharSetAnsi:
+                AddEnumAnnotationArgument(annotation, names, "CharSet",
+                    "System.Runtime.InteropServices.CharSet", "Ansi");
+                break;
+            case MethodImportAttributes.CharSetUnicode:
+                AddEnumAnnotationArgument(annotation, names, "CharSet",
+                    "System.Runtime.InteropServices.CharSet", "Unicode");
+                break;
+            case MethodImportAttributes.CharSetAuto:
+                AddEnumAnnotationArgument(annotation, names, "CharSet",
+                    "System.Runtime.InteropServices.CharSet", "Auto");
+                break;
+            default:
+                throw new InvalidDataException($"P/Invoke MethodDef '{methodName}' has an unsupported character set");
+        }
+
+        if ((import.Attributes & MethodImportAttributes.ExactSpelling) != 0)
+            AddBooleanAnnotationArgument(annotation, names, "ExactSpelling", true);
+        if ((import.Attributes & MethodImportAttributes.SetLastError) != 0)
+            AddBooleanAnnotationArgument(annotation, names, "SetLastError", true);
+        if ((method.ImplAttributes & MethodImplAttributes.PreserveSig) == 0)
+            AddBooleanAnnotationArgument(annotation, names, "PreserveSig", false);
+
+        AddTriStateAnnotationArgument(
+            annotation,
+            names,
+            "BestFitMapping",
+            import.Attributes & MethodImportAttributes.BestFitMappingMask,
+            MethodImportAttributes.BestFitMappingEnable,
+            MethodImportAttributes.BestFitMappingDisable,
+            methodName);
+        AddTriStateAnnotationArgument(
+            annotation,
+            names,
+            "ThrowOnUnmappableChar",
+            import.Attributes & MethodImportAttributes.ThrowOnUnmappableCharMask,
+            MethodImportAttributes.ThrowOnUnmappableCharEnable,
+            MethodImportAttributes.ThrowOnUnmappableCharDisable,
+            methodName);
+        function.FunctionAnnotation.Add(annotation);
+    }
+
+    private static void AddTriStateAnnotationArgument(
+        Annotation annotation,
+        NameTable names,
+        string name,
+        MethodImportAttributes value,
+        MethodImportAttributes enabled,
+        MethodImportAttributes disabled,
+        string methodName)
+    {
+        if (value == MethodImportAttributes.None) return;
+        if (value == enabled) AddBooleanAnnotationArgument(annotation, names, name, true);
+        else if (value == disabled) AddBooleanAnnotationArgument(annotation, names, name, false);
+        else throw new InvalidDataException($"P/Invoke MethodDef '{methodName}' has an invalid {name} flag pair");
+    }
+
+    private static void AddStringAnnotationArgument(
+        Annotation annotation, NameTable names, string name, string value) =>
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String(name),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                StringValue = names.String(value),
+            },
+        });
+
+    private static void AddBooleanAnnotationArgument(
+        Annotation annotation, NameTable names, string name, bool value) =>
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String(name),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.Boolean,
+                IntValue = value ? 1 : 0,
+            },
+        });
+
+    private static void AddEnumAnnotationArgument(
+        Annotation annotation, NameTable names, string name, string enumClass, string entry) =>
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String(name),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.Enum,
+                ClassId = names.Class(enumClass),
+                EnumValueId = names.String(entry),
+            },
+        });
+
+    private static Annotation ClrAttributeNamedArgumentAnnotation(
+        NameTable names, string kind, string name)
+    {
+        var annotation = new Annotation { Id = names.Class("kotlin.clr.ClrAttributeNamedArgument") };
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String("kind"),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                StringValue = names.String(kind),
+            },
+        });
+        annotation.Argument.Add(new Annotation.Types.Argument
+        {
+            NameId = names.String("name"),
+            Value = new Annotation.Types.Argument.Types.Value
+            {
+                Type = Annotation.Types.Argument.Types.Value.Types.Type.String,
+                StringValue = names.String(name),
+            },
+        });
+        return annotation;
+    }
+
+    private AttributeNamedArgument[] ProjectAttributeNamedArguments(
+        TypeDefinitionHandle owner,
+        TypeDefinition definition,
+        NameTable names,
+        SignatureDecoder signatures,
+        GenericContext context)
+    {
+        var result = new List<AttributeNamedArgument>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var fieldHandle in definition.GetFields())
+        {
+            var field = _md.GetFieldDefinition(fieldHandle);
+            if ((field.Attributes & FieldAttributes.FieldAccessMask) != FieldAttributes.Public ||
+                (field.Attributes & (FieldAttributes.Static | FieldAttributes.InitOnly | FieldAttributes.Literal)) != 0)
+                continue;
+            var name = _md.GetString(field.Name);
+            if (!seen.Add(name))
+                throw new InvalidDataException(
+                    $"CLR attribute '{MetadataTypeName(owner)}' declares duplicate named argument '{name}'");
+            var type = ProjectType(
+                fieldHandle,
+                field.DecodeSignature(signatures, context),
+                owner,
+                names,
+                signatures,
+                context);
+            result.Add(new AttributeNamedArgument("field", name, type));
+        }
+
+        foreach (var propertyHandle in definition.GetProperties())
+        {
+            var property = _md.GetPropertyDefinition(propertyHandle);
+            var accessors = property.GetAccessors();
+            if (accessors.Setter.IsNil) continue;
+            var setter = _md.GetMethodDefinition(accessors.Setter);
+            if ((setter.Attributes & MethodAttributes.MemberAccessMask) != MethodAttributes.Public ||
+                (setter.Attributes & MethodAttributes.Static) != 0)
+                continue;
+            var signature = property.DecodeSignature(signatures, context);
+            if (signature.ParameterTypes.Length != 0) continue;
+            var name = _md.GetString(property.Name);
+            if (!seen.Add(name))
+                throw new InvalidDataException(
+                    $"CLR attribute '{MetadataTypeName(owner)}' declares duplicate named argument '{name}'");
+            var valueParameter = setter.GetParameters()
+                .Select(parameterHandle => (Handle: parameterHandle, Row: _md.GetParameter(parameterHandle)))
+                .Single(parameter => parameter.Row.SequenceNumber == 1).Handle;
+            var type = ProjectType(
+                valueParameter,
+                signature.ReturnType,
+                owner,
+                names,
+                signatures,
+                context);
+            result.Add(new AttributeNamedArgument("property", name, type));
+        }
+        return result.ToArray();
+    }
+
+    private static void RenameFixedAttributeParameters(
+        IReadOnlyList<ValueParameter> parameters,
+        IReadOnlyList<string> parameterNames,
+        IReadOnlyList<AttributeNamedArgument> namedArguments,
+        NameTable names)
+    {
+        var reserved = namedArguments.Select(argument => argument.Name).ToHashSet(StringComparer.Ordinal);
+        var used = parameterNames.Concat(reserved).ToHashSet(StringComparer.Ordinal);
+        for (var i = 0; i < parameters.Count && i < parameterNames.Count; i++)
+        {
+            var original = parameterNames[i];
+            if (!reserved.Contains(original)) continue;
+            var candidate = "__fixed_" + original;
+            for (var suffix = 2; !used.Add(candidate); suffix++) candidate = $"__fixed_{original}_{suffix}";
+            parameters[i].Name = names.String(candidate);
+        }
     }
 
     private static Annotation KotlinDeclarationIdentityAnnotation(

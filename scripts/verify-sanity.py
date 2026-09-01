@@ -296,6 +296,46 @@ class Sanity:
                          "bir2cir's cold-core lowering and must not reach CIR (every suspend declaration becomes a "
                          "state machine, a cold entry and a Task bridge; one the stdlib self-build retains keeps "
                          "only its physical stub body)")
+            if isinstance(m.get("pinvoke"), dict):
+                type_parameters = m.get("typeParams")
+                malformed = (m.get("extern") is not True or m.get("static") is not True or
+                             (type_parameters is not None and
+                              (not isinstance(type_parameters, list) or len(type_parameters) != 0)) or
+                             not isinstance(m.get("body"), list) or len(m["body"]) != 0 or
+                             (isinstance(mods, dict) and mods.get("external") is True))
+                if malformed:
+                    self.err(f, _pos_prefix(m) + f"{owner}.{name}",
+                             "a CIR 'pinvoke' descriptor requires extern:true, static:true, no type parameters, "
+                             "an empty body, and no surviving mods.external source fact")
+                descriptor = m["pinvoke"]
+                complete = (isinstance(descriptor.get("module"), str) and bool(descriptor["module"]) and
+                            isinstance(descriptor.get("entryPoint"), str) and
+                            isinstance(descriptor.get("callingConvention"), str) and
+                            isinstance(descriptor.get("callingConventionType"), dict) and
+                            isinstance(descriptor.get("charSet"), str) and
+                            isinstance(descriptor.get("charSetType"), dict) and
+                            all(isinstance(descriptor.get(key), bool) for key in
+                                ("exactSpelling", "setLastError", "preserveSig", "bestFitMapping",
+                                 "throwOnUnmappableChar")) and
+                            isinstance(descriptor.get("pseudoFields"), list) and
+                            isinstance(descriptor.get("attributeCtorRef"), dict))
+                if not complete:
+                    self.err(f, _pos_prefix(m) + f"{owner}.{name}",
+                             "a CIR 'pinvoke' descriptor must state the complete normalized MethodImport instruction")
+                else:
+                    fields = {value for value in descriptor["pseudoFields"] if isinstance(value, str)}
+                    inconsistent = ("CallingConvention" not in fields or
+                                    (descriptor["entryPoint"] != name and "EntryPoint" not in fields) or
+                                    (descriptor["charSet"] != "none" and "CharSet" not in fields) or
+                                    (descriptor["exactSpelling"] and "ExactSpelling" not in fields) or
+                                    (descriptor["setLastError"] and "SetLastError" not in fields) or
+                                    (not descriptor["preserveSig"] and "PreserveSig" not in fields) or
+                                    (descriptor["bestFitMapping"] and "BestFitMapping" not in fields) or
+                                    (descriptor["throwOnUnmappableChar"] and "ThrowOnUnmappableChar" not in fields))
+                    if inconsistent:
+                        self.err(f, _pos_prefix(m) + f"{owner}.{name}",
+                                 "a CIR 'pinvoke' descriptor has normalized values not represented by its "
+                                 "pseudoFields instruction")
             if m.get("abstract") is True:
                 continue
             body = m.get("body")

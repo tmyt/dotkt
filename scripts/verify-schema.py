@@ -31,7 +31,7 @@ TYPE_TAGS = {"fqn", "tv", "star", "fn", "nullable", "oblivious", "array", "byRef
 MEMBER_REF_KEYS = {"memberRef", "baseCtorRef", "clrOverrideRef", "ctorRef", "addRef", "setItemRef", "addRangeRef", "toArrayRef",
                     "enumerableGetRef", "enumerableGetErasedRef", "currentRef", "currentErasedRef", "moveNextRef",
                     "combineRef", "removeRef", "compareExchangeRef", "hasValueRef", "valueRef", "invokeRef", "delegateCtorRef",
-                    "fieldRef"}
+                    "fieldRef", "attributeCtorRef"}
 
 MEMBER_REF_KINDS = {"method", "ctor", "field", "propertyAccessor", "eventAccessor"}
 
@@ -58,6 +58,7 @@ MEMBER_REF_KIND_BY_CARRIER = {
     "invokeRef": {"method"},
     "delegateCtorRef": {"ctor"},
     "fieldRef": {"field"},
+    "attributeCtorRef": {"ctor"},
 }
 
 # A collection literal says what to BUILD; these name the members it builds THROUGH. Both are required on such
@@ -217,6 +218,8 @@ STR_OK = {
     "assembly", "callingConvention",            # #370 memberRef: the PHYSICAL defining-assembly simple name the
                                                 # emitted reference must be scoped to, and the HASTHIS bit. A metadata
                                                 # scope and an enum — validated structurally in member_ref.
+    "module", "entryPoint", "charSet",          # CIR pinvoke: native module/symbol names and normalized charset
+                                                # enum. The complete descriptor is schema-validated; these are not Types.
     "fileClass", "fileClassFQN", "pkg",         # file-class / package identifiers
     "f",                                        # #112 P2: the decl-level source-position FILE path (pos.{f,l,c});
                                                 # `l`/`c` are ints. A diagnostics-only breadcrumb, NOT a type slot.
@@ -293,6 +296,7 @@ STRARR_OK = {
     "memberOwnerTypeParams",                    # #225: declaration-form owner frame carried on a member edge.
     "memberMethodTypeParams",                   # #225: declaration-form method frame carried on a member edge.
     "kotlinAccessors",                          # #397: BIR-only Property declaration roles (get/set), not Type usages.
+    "pseudoFields",                             # CIR pinvoke: frozen DllImport pseudo-attribute field-name vector.
 }
 
 MOD_KEYS = {

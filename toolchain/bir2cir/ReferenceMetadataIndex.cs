@@ -1594,6 +1594,20 @@ sealed partial class ReferenceMetadataIndex
             Convert.ToString(raw, CultureInfo.InvariantCulture));
     }
 
+    public bool IsEnumType(TypeNode.Fqn type)
+    {
+        if (type == null) return false;
+        var identity = OwnerIdentity(type.Name, type.Args?.Length ?? 0);
+        string kind;
+        if (HasExactOwnerPunctuation(type.Name))
+            kind = _ownerKindByPhysicalOwner.GetValueOrDefault(type.Name);
+        else if (_exactPhysicalTypeByDottedName.TryGetValue(identity, out var exact))
+            kind = exact == null ? null : _ownerKindByPhysicalOwner.GetValueOrDefault(exact);
+        else
+            kind = _ownerKind.GetValueOrDefault(identity);
+        return kind == "enum";
+    }
+
     // Resolve the physical representation of the exact referenced CLR enum selected by a dll2klib
     // [ClrFlagsOperation] declaration. The semantic carrier is trusted compiler metadata, but its signature is still
     // validated against the current target reference universe: it must name a real enum carrying the target corelib's

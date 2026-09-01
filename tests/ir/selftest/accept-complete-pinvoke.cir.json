@@ -1,0 +1,37 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "nativeValue",
+      "static": true,
+      "extern": true,
+      "params": [],
+      "ret": { "t": "fqn", "name": "System.Int32" },
+      "body": [],
+      "pinvoke": {
+        "module": "native",
+        "entryPoint": "native_value",
+        "callingConvention": "cdecl",
+        "callingConventionType": { "t": "fqn", "name": "System.Runtime.InteropServices.CallingConvention" },
+        "charSet": "none",
+        "charSetType": { "t": "fqn", "name": "System.Runtime.InteropServices.CharSet" },
+        "exactSpelling": false,
+        "setLastError": false,
+        "preserveSig": true,
+        "bestFitMapping": false,
+        "throwOnUnmappableChar": false,
+        "pseudoFields": ["EntryPoint", "CallingConvention"],
+        "attributeCtorRef": {
+          "kind": "ctor",
+          "assembly": "System.Runtime.InteropServices",
+          "declaringType": { "t": "fqn", "name": "System.Runtime.InteropServices.DllImportAttribute" },
+          "name": ".ctor",
+          "genericArity": 0,
+          "returnType": { "t": "fqn", "name": "void" },
+          "callingConvention": "instance",
+          "parameterTypes": [{ "t": "fqn", "name": "System.String" }]
+        }
+      }
+    }
+  ]
+}

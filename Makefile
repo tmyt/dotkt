@@ -136,6 +136,7 @@ verify-integration: toolchain stdlib ## independent MSBuild/target/ABI/policy ga
 	+$(MAKE) verify-msbuild
 	+$(MAKE) verify-target-universe
 	+$(MAKE) verify-csharp14-extension-abi
+	+$(MAKE) verify-pinvoke
 	+$(MAKE) dll2klib-recursive-delegates
 	+$(MAKE) verify-xfail-policy
 	+$(MAKE) verify-gate-selection
@@ -164,6 +165,9 @@ verify-target-universe: ## host-vs-target metadata scope calibration
 
 verify-csharp14-extension-abi: ## released C# 14 static extension-member metadata oracle
 	bash tests/special/csharp14-static-extensions/run.sh
+
+verify-pinvoke: pack ## Kotlin DllImport -> MethodImport/runtime + dll2klib round-trip
+	bash tests/special/pinvoke/run.sh
 
 verify-xfail-policy: ## self-test the shared NEW/FIXED baseline verdict without building the toolchain
 	bash tests/xfail/run.sh
