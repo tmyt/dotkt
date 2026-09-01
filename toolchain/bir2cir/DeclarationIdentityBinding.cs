@@ -712,6 +712,7 @@ static class DeclarationIdentityBinding
         TypeNode.Oblivious o => PhysicalTypeSignature(o.Of),
         TypeNode.Array a => "array:" + PhysicalTypeSignature(a.Elem),
         TypeNode.ByRef b => "byref:" + PhysicalTypeSignature(b.Of),
+        TypeNode.Ptr pointer => "ptr:" + PhysicalTypeSignature(pointer.Of),
         TypeNode.Star => throw new InvalidOperationException(
             "bir2cir: unresolved star projection reached final CLR MethodDef signature allocation"),
         _ => throw new InvalidOperationException(

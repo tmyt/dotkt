@@ -40,12 +40,14 @@ import org.jetbrains.kotlin.ir.util.parentClassOrNull
  *  - `Unit`/`Nothing`.
  * These exclusions are Kotlin-language facts (the value-type-ness is read from the IR, not a CLR/BCL FQN table).
  */
+private val CLR_NON_REFERENCE_INTRINSIC_CLASSES = setOf("kotlin.clr.ClrRef", "kotlin.clr.ClrPointer")
+
 internal fun BirEmitter.needsNonNullCheck(t: IrType): Boolean {
 	if (t.isMarkedNullable()) return false
 	if (t.classifierOrNull !is IrClassSymbol) return false          // type parameter / other -> skip
 	if (t.isPrimitiveOrUnsigned()) return false
 	if (t.isUnit() || t.isNothing()) return false
-	if (t.classFqName?.asString() == "kotlin.clr.ClrRef") return false
+	if (t.classFqName?.asString() in CLR_NON_REFERENCE_INTRINSIC_CLASSES) return false
 	val klass = t.classOrNull?.owner
 	if (klass != null && klass.isValue) return false                // value/inline class -> CLR value type
 	return true

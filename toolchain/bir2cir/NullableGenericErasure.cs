@@ -241,6 +241,9 @@ static class NullableGenericErasure
 
     static bool HasNullableTv(TypeNode t) => t switch
     {
+        // ClrPointer's argument is an opaque ECMA pointee signature, not a reified Kotlin generic argument.
+        // Its exact tree crosses unchanged until BirTypeLowering materializes `ptr`.
+        TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn } => false,
         TypeNode.Nullable { Of: TypeNode.Tv } => true,
         TypeNode.Nullable n => HasNullableTv(n.Of),
         TypeNode.Oblivious o => HasNullableTv(o.Of),
@@ -302,6 +305,7 @@ static class NullableGenericErasure
     // distinct suspend-fn carrier owns restoration, so there is no physical delegate shape for this carrier to align with.
     static bool HasRestorableNullableTv(TypeNode t, ValueTypeOracle isValue) => t switch
     {
+        TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn } => false,
         TypeNode.Nullable { Of: TypeNode.Tv } => true,
         TypeNode.Nullable n => HasRestorableNullableTv(n.Of, isValue),
         TypeNode.Fqn { Args: { } args } => args.Any(a => ErasedArgument(a, isValue)),
@@ -428,6 +432,7 @@ static class NullableGenericErasure
     // The Tv of a Nullable(Tv) somewhere in a type (a nullable-generic collection element `…<T?>`), else null.
     static TypeNode.Tv ExtractNullableTv(TypeNode t) => t switch
     {
+        TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn } => null,
         TypeNode.Nullable { Of: TypeNode.Tv tv } => tv,
         TypeNode.Nullable n => ExtractNullableTv(n.Of),
         TypeNode.Fqn { Args: { } args } => args.Select(ExtractNullableTv).FirstOrDefault(x => x != null),
@@ -564,6 +569,10 @@ static class NullableGenericErasure
     // parameters/return/receiver are arguments; a `ref` referent and a nullable's inner are slots.
     internal static TypeNode Erase(TypeNode t, Pos pos, ValueTypeOracle isValue)
     {
+        // `ClrPointer<T>` is a signature carrier, not a CLR generic instantiation. In particular,
+        // `ClrPointer<Int?>` means `Nullable<int>*`; treating its argument like `List<Int?>` would rewrite it to
+        // `object*` before the representation boundary. Keep the complete pointee signature opaque here.
+        if (t is TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn, Args: { Length: 1 } }) return t;
         if (t is TypeNode.Nullable { Of: TypeNode.Tv }) return new TypeNode.Fqn("object");
         if (pos == Pos.Argument && IsNullableMaybeValue(t, isValue)) return new TypeNode.Fqn("object");
         // A BOUND subtree stays bound all the way down: a `List<int?>` parameter's argument is what the target
@@ -629,6 +638,8 @@ static class NullableGenericErasure
     // arguments; a byref referent, a nullable's inner and a delegate's PARAMETERS are slots.
     static bool AtSlot(TypeNode t) => t switch
     {
+        // A resolved pointer's pointee is the foreign declaration's exact signature, not Kotlin generic storage.
+        TypeNode.Ptr => false,
         TypeNode.Fqn { Args: { } args } => args.Any(AtArgument),
         TypeNode.Array a => AtArgument(a.Elem),
         TypeNode.ByRef b => AtSlot(b.Of),

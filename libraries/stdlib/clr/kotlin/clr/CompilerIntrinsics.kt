@@ -21,6 +21,14 @@ public class ClrRef<T> private constructor() {
         TODO("compiler intrinsic")
 }
 
+/**
+ * An opaque unmanaged CLR pointer projected from a `T*` metadata signature.
+ *
+ * This is a compile-time type. bir2cir replaces it with the exact unmanaged-pointer
+ * signature; no `ClrPointer` class is emitted.
+ */
+public class ClrPointer<T> private constructor()
+
 /** Marks [x] as an addressable CLR `ref`/`out` argument or a live ref-returning delegate. */
 public fun <T> byref(x: T): ClrRef<T> = TODO("compiler intrinsic")
 

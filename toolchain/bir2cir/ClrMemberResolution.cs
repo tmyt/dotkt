@@ -1081,6 +1081,30 @@ static partial class ClrMemberResolution
     {
         if (a is TypeNode.Oblivious ob) return Applies(ob.Of, p, ownerArgs);
         p = AliasResolve(p);
+        // An unmanaged pointer has its own recursive signature identity. Handle it before the concrete-type fast
+        // path: `MapMlc` can materialize ordinary `int*`, but the CIR spelling `void*` deliberately uses the
+        // primitive token `void`, which is not a resolvable nominal TypeRef. The semantic KLIB marker and the
+        // already-lowered CIR pointer must answer identically at both resolution stages.
+        if (p.IsPointer)
+        {
+            var pointerNode = a switch
+            {
+                TypeNode.Nullable nullable => nullable.Of,
+                _ => a,
+            };
+            var pointee = pointerNode switch
+            {
+                TypeNode.Ptr ptr => ptr.Of,
+                TypeNode.Fqn { Name: BirTypeLowering.PointerIntrinsicFqn, Args: { Length: 1 } } marker => marker.Args[0],
+                _ => null,
+            };
+            if (pointee == null) return MatchKind.No;
+            var physicalPointee = p.GetElementType();
+            if (physicalPointee.FullName == "System.Void"
+                && pointee is TypeNode.Fqn { Name: "kotlin.Unit" or "void" or "System.Void", Args: null })
+                return MatchKind.Exact;
+            return Applies(pointee, physicalPointee, ownerArgs);
+        }
         if (!p.IsGenericParameter && !p.ContainsGenericParameters)
         {
             var aT = MapMlc(a);
@@ -1130,9 +1154,6 @@ static partial class ClrMemberResolution
             return MatchKind.No;
         }
         if (p.IsByRef) return a is TypeNode.ByRef b ? Applies(b.Of, p.GetElementType(), ownerArgs) : MatchKind.No;
-        // A pointer is a distinct parameter shape, and without an arm here it matched nothing — which is how a
-        // `Span<T>(void*, int)` could not be told from its `(ref T, int)` sibling.
-        if (p.IsPointer) return a is TypeNode.Ptr ptr ? Applies(ptr.Of, p.GetElementType(), ownerArgs) : MatchKind.No;
         if (p.IsArray) return a is TypeNode.Array ar ? Applies(ar.Elem, p.GetElementType(), ownerArgs) : MatchKind.No;
         if (p.IsGenericType && SafeDef(p) == NullableDef())
             return a is TypeNode.Nullable nv ? Applies(nv.Of, p.GetGenericArguments()[0], ownerArgs) : MatchKind.No;
@@ -1474,6 +1495,7 @@ static partial class ClrMemberResolution
     {
         t = AliasResolve(t);   // a ref.dll @ClrTypeAlias param -> its BCL twin, so ilemit's MapType links the rt-stdlib slot
         if (t.IsByRef) return new TypeNode.ByRef(MemberSigOf(t.GetElementType()));
+        if (t.IsPointer) return new TypeNode.Ptr(MemberSigOf(t.GetElementType()));
         if (t.IsArray) return ArrayOf(t, MemberSigOf(t.GetElementType()));
         if (t.IsGenericParameter)
             return new TypeNode.Tv(t.DeclaringMethod != null ? "method" : "type", t.GenericParameterPosition);

@@ -109,6 +109,7 @@ private val CLR_COMPILE_TIME_INTRINSIC_FUNCTIONS = setOf(
 
 private val CLR_COMPILE_TIME_INTRINSIC_CLASSES = setOf(
 	"kotlin.clr.ClrRef",
+	"kotlin.clr.ClrPointer",
 	"kotlin.clr.StackBuffer",
 	"kotlin.clr.Span",
 	"kotlin.clr.ClrEvent",

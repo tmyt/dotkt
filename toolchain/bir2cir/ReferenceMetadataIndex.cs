@@ -4946,7 +4946,7 @@ sealed partial class ReferenceMetadataIndex
             new TypeNode.Tv("type", index);
         public TypeNode GetModifiedType(TypeNode modifier, TypeNode unmodifiedType, bool isRequired) => unmodifiedType;
         public TypeNode GetPinnedType(TypeNode elementType) => elementType;
-        public TypeNode GetPointerType(TypeNode elementType) => new TypeNode.Fqn("System.IntPtr");
+        public TypeNode GetPointerType(TypeNode elementType) => new TypeNode.Ptr(elementType);
         public TypeNode GetPrimitiveType(PrimitiveTypeCode typeCode) => new TypeNode.Fqn(typeCode switch
         {
             PrimitiveTypeCode.Boolean => "System.Boolean",
@@ -6606,6 +6606,7 @@ sealed partial class ReferenceMetadataIndex
     static TypeNode TypeNodeOf(Type type)
     {
         if (type.IsByRef) return TypeNodeOf(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
+        if (type.IsPointer) return TypeNodeOf(type.GetElementType()!) is TypeNode ep ? new TypeNode.Ptr(ep) : null;
         if (type.IsArray) return TypeNodeOf(type.GetElementType()!) is TypeNode e1 ? new TypeNode.Array(e1) : null;
         if (type.IsGenericParameter) return null;   // an unresolved fn type-param: no useful static identity
         if (IsDelegate(type)) return null;
@@ -6629,6 +6630,8 @@ sealed partial class ReferenceMetadataIndex
     {
         if (type == null) return null;
         if (type.IsByRef) return DeclarationTypeNode(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
+        if (type.IsPointer)
+            return DeclarationTypeNode(type.GetElementType()!) is TypeNode ep ? new TypeNode.Ptr(ep) : null;
         if (type.IsArray) return DeclarationTypeNode(type.GetElementType()!) is TypeNode e1 ? new TypeNode.Array(e1) : null;
         if (type.IsGenericParameter)
             return new TypeNode.Tv(type.DeclaringMethod != null ? "method" : "type", type.GenericParameterPosition);

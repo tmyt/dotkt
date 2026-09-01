@@ -526,7 +526,8 @@ an upgrade neither validates nor preserves their compatibility.
 
 Current deliberate limits are:
 
-- pointer and function-pointer types fall back to `Any?`;
+- function-pointer types fall back to `Any?`; unmanaged pointers project as the compiler-only
+  `kotlin.clr.ClrPointer<T>` vocabulary and bir2cir lowers them to exact `T*` signatures;
 - recursive CLR delegate graphs are refused because Kotlin metadata cannot
   represent them as finite function types;
 - Kotlin function arities 17..22 use the stdlib's canonical

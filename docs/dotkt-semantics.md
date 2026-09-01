@@ -2239,7 +2239,8 @@ function shapes, inline payloads, collection identity, and Kotlin nullability.
 
 Current deliberate limits are:
 
-- pointer and function-pointer types project as `Any?`;
+- function-pointer types project as `Any?`; unmanaged pointers project through the opaque
+  `kotlin.clr.ClrPointer<T>` compiler vocabulary and retain their exact CLR `T*` signature;
 - Kotlin function arities 0..22 round-trip exactly; 23 and above has no CLR delegate and is refused (§8e-bis);
 - arbitrary CLR custom-attribute applications are not reproduced as Kotlin annotation applications;
 - SOURCE-retained annotations and compile-time-only facts such as contracts are not present in CLR metadata; and

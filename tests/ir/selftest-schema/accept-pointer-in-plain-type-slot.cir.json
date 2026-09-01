@@ -15,8 +15,11 @@
         }
       ],
       "ret": {
-        "t": "fqn",
-        "name": "void"
+        "t": "ptr",
+        "of": {
+          "t": "fqn",
+          "name": "System.Int32"
+        }
       },
       "body": []
     }

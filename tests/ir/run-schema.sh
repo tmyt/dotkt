@@ -33,6 +33,8 @@ PY="${PYTHON:-python3}"
 globs=()
 [ -d build/clr-stdlib/bir ] && globs+=("build/clr-stdlib/bir/*.bir.json")
 [ -d build/clr-stdlib/cir ] && globs+=("build/clr-stdlib/cir/*.cir.json")
+[ -d build/dll2klib-e2e/bir ] && globs+=("build/dll2klib-e2e/bir/*.bir.json")
+[ -d build/dll2klib-e2e/cir ] && globs+=("build/dll2klib-e2e/cir/*.cir.json")
 while IFS= read -r -d '' file; do globs+=("$file"); done < <(
   find tests -type f \( -path '*/obj/*/bir/*.bir.json' -o -path '*/obj/*/cir/*.cir.json' \) -print0
 )

@@ -796,6 +796,9 @@ sealed class Pipeline
         if (attributeTopLevelOwner)
             foreach (var stagedFile in staged) CollectionIdentityRecord.RecordTypeEdges(stagedFile.Root);
 
+        foreach (var stagedFile in staged)
+            BirTypeLowering.ValidatePointerVocabulary(stagedFile.Root, stagedFile.OutputName);
+
         // All source and inline-spliced Kotlin type applications now exist. Project Kotlin inner argument order to
         // CLR flattened nested order before the first CLR-oriented generic/slot pass consumes those applications.
         TypeOwnershipLowering.ProjectInnerApplications(staged.Select(s => s.Root).ToList(), refs);

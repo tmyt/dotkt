@@ -52,14 +52,14 @@ A `Type` is ALWAYS a JSON object with a `t` discriminator. **There is no bare-st
 | `oblivious` | `of:T` | `T!` — an NRT-*oblivious* flexible type `(T..T?)` (`NullableAttribute`=0); the CLR term, not the Kotlin-consumer "platform" name | the META `!` platform suffix |
 | `array` | `elem:T`, `rank?:1..32` | `Array<T>`; an absent `rank` is the SZ vector `T[]`. A **CIR-only** stated rank names the general ECMA ARRAY: ≥2 is `T[,…]`, and 1 is the non-vector `T[*]`, a distinct type from `T[]` | `array:X` |
 | `byRef` | `of:T` | a CLR by-ref `ref T` | `byRef:X` |
-| `ptr` | `of:T` | **CIR-only**: a CLR unmanaged pointer `T*` | no Kotlin form |
+| `ptr` | `of:T` | **CIR-only**: a CLR unmanaged pointer `T*`; BIR uses the semantic `kotlin.clr.ClrPointer<T>` vocabulary | no old physical form |
 | `mod` | `req:bool`, `m:T`, `of:T` | **CIR-only**: an ECMA custom modifier (II.7.1.1) at its signature position — `req` selects modreq from modopt | no Kotlin form |
 
 Notes:
-- **The three CIR-only ECMA signature carriers** (`ptr`, `mod`, `array.rank`) exist for one reason: a §2.2.2
-  `memberRef` must be able to spell any signature the *target metadata* can declare, and these three shapes
-  are declarable there while being unspeakable in Kotlin. They are not new expressiveness for the source
-  language — kotc MUST omit all three, and the validator refuses them in BIR. Dropping them is not neutral:
+- **The three CIR-only ECMA signature carriers** (`ptr`, `mod`, `array.rank`) allow CIR to spell physical shapes
+  that kotc does not own. A §2.2.2 `memberRef` must describe any signature the *target metadata* can declare;
+  `ptr` additionally represents ordinary values whose BIR type is the semantic `kotlin.clr.ClrPointer<T>` carrier.
+  kotc MUST omit all three physical nodes, and the validator refuses them in BIR. Dropping them is not neutral:
   `T*` degrades to the FQN string `"System.Int32*"`, an identity naming no type; `T[,]` and `T[*]` collapse
   onto `T[]`;
   and `void V(in DateTime)` becomes indistinguishable from `void V(DateTime)`, since `modreq(InAttribute)` on
@@ -469,10 +469,10 @@ member would be two members to it. The rules, all validator-enforced:
 - a signature carries no `oblivious` and no `star`: those are Kotlin type-system facts, and a physical CLR
   signature has neither. `nullable` appears only as the `System.Nullable\`1` value-type collapse;
 - `.ctor` names a constructor and nothing else;
-- the CIR-only carriers `ptr`, `mod` and `array.rank` appear **only** inside a `memberRef`. Ordinary type
-  slots are rewritten by lowering passes that reconstruct an array as a vector and know nothing of pointers
-  or modifiers, so one outside a reference would be silently flattened — re-creating exactly the collisions
-  those carriers exist to prevent.
+- `mod` and `array.rank` appear **only** inside a `memberRef`, because they exist solely to distinguish an exact
+  foreign declaration signature. `ptr` is also CIR-only but may appear in ordinary declaration, local, operand,
+  and result slots: bir2cir materializes the KLIB/BIR `kotlin.clr.ClrPointer<T>` vocabulary into that physical type,
+  and ilemit emits it one-to-one.
 
 Same-emission-unit members are NOT memberRefs: they have no assembly identity yet (their MethodDefs are being
 built by this compilation) and stay on the internal linkage (`localCtorIndex`, the emitted type's own signature

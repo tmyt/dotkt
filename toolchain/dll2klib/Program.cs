@@ -7481,7 +7481,16 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     public KType GetGenericTypeParameter(GenericContext genericContext, int index) => new() { TypeParameter = index };
     public KType GetModifiedType(KType modifier, KType unmodifiedType, bool isRequired) => unmodifiedType;
     public KType GetPinnedType(KType elementType) => elementType;
-    public KType GetPointerType(KType elementType) => Any(nullable: true);
+    public KType GetPointerType(KType elementType)
+    {
+        var pointer = Named("kotlin.clr.ClrPointer");
+        pointer.Argument.Add(new KType.Types.Argument
+        {
+            Projection = KType.Types.Argument.Types.Projection.Inv,
+            Type = elementType,
+        });
+        return pointer;
+    }
     public KType GetPrimitiveType(PrimitiveTypeCode code) => code switch
     {
         PrimitiveTypeCode.Void => Named("kotlin.Unit"),
@@ -7948,14 +7957,14 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     //     into the referent's `?` and surfaced the latter as `ClrRef<T>`.
     // Getting this wrong does not merely mis-annotate the node: every later byte in the same slot shifts.
     //
-    // The positions the DECODER collapses to `kotlin.Any?` are counted as one reference node each, which measures out
-    // differently per shape (all against csc, `<Nullable>enable</Nullable>`):
+    // The signature-only positions need explicit accounting, which measures out differently per shape (all against
+    // csc, `<Nullable>enable</Nullable>`):
     //   * a native `nint`/`nuint`/`IntPtr` holds NO byte (`Dictionary<nint, string?>` is `[1, 2]`,
     //     `delegate*<nint, string?, void>` is `[0, 2]`) while one is consumed here — a SHIFT of every later byte;
     //   * a function POINTER flattens its own node plus its return and parameters (`delegate*<string?, string?>` is
     //     `[0, 2, 2]`) while one is consumed here — a SHIFT;
-    //   * an ordinary pointer holds exactly one byte (`delegate*<int*, string?, void>` is `[0, 0, 2]`), so the count
-    //     agrees and only the projected SHAPE is lost — and the node it lands on is already `kotlin.Any?`;
+    //   * an ordinary pointer holds exactly one byte (`delegate*<int*, string?, void>` is `[0, 0, 2]`); its preserved
+    //     `ClrPointer<T>` node consumes that byte and nested pointers consume one apiece;
     //   * a `where T : struct` parameter holds one byte valued 0 (`Dictionary<T, string?>` is `[1, 0, 2]`), which is
     //     the byte a type parameter consumes here anyway: no shift, and the 0 reads back as a platform type.
     // A shift is always slot-local, never cross-parameter — the byte array is per declaration slot.

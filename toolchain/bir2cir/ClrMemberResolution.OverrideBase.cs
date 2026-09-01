@@ -107,6 +107,15 @@ static partial class ClrMemberResolution
         p = AliasResolve(p);
         if (p.IsGenericParameter) return true;   // substituted at the instantiation — wildcard
         if (p.IsByRef) return a is TypeNode.ByRef b && OverrideParamMatch(b.Of, p.GetElementType());
+        if (p.IsPointer)
+        {
+            if (a is not TypeNode.Ptr pointer) return false;
+            var pointee = p.GetElementType();
+            if (pointee?.FullName == "System.Void"
+                && pointer.Of is TypeNode.Fqn { Name: "void" or "System.Void", Args: null })
+                return true;
+            return pointee != null && OverrideParamMatch(pointer.Of, pointee);
+        }
         if (p.IsArray) return a is TypeNode.Array ar && OverrideParamMatch(ar.Elem, p.GetElementType());
         if (p.IsGenericType && SafeDef(p) == NullableDef())
             return a is TypeNode.Nullable nv && OverrideParamMatch(nv.Of, p.GetGenericArguments()[0]);
