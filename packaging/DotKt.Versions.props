@@ -10,7 +10,7 @@
      build metadata. A controlled folder-feed A/B confirmed metadata installs fine, so it is restored here.) -->
 <Project>
   <PropertyGroup>
-    <DotKtVersionPrefix>0.9.11</DotKtVersionPrefix>
+    <DotKtVersionPrefix>0.9.12</DotKtVersionPrefix>
     <!-- SemVer pre-release tag (e.g. rc1 -> package version 0.9.6-rc1). EMPTY for a final release. Kept OUT of
          DotKtVersionPrefix so AssemblyVersion/FileVersion stay numeric (0.9.6.0 — a pre-release string is illegal there). -->
     <DotKtVersionSuffix></DotKtVersionSuffix>

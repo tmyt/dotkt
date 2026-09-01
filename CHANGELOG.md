@@ -5,6 +5,8 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+## 0.9.12 (2026-09-02)
+
 ### Toolchain
 
 - **One DotKt project can now build isolated outputs for multiple target frameworks (#338).** MSBuild outer/inner
