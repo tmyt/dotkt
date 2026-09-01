@@ -2264,6 +2264,23 @@ static class InlineSplice
                 if (o["result"] is JsonNode ir) RewriteLocalRefs(ir, bodySubst, pin);
                 return;
             }
+            // A managed-reference parameter is a POINTER inside the payload, but its call-site binding denotes the
+            // addressable LOCATION from which that pointer must be taken. A normal call keeps the location bare until
+            // ilemit's byref argument slot takes its address; after splicing there is no call slot left to do that. Preserve
+            // the distinction at the semantic boundary by turning only a parameter read used as a byrefLoad/byrefStore
+            // pointer into `byrefOf(binding)`. Other reads (notably forwarding the parameter to another ref parameter) stay
+            // bare locations and continue through the ordinary argument-address path.
+            var nodeKind = Str(o["k"]);
+            if (nodeKind is "byrefLoad" or "byrefStore"
+                && o["ptr"] is JsonObject pointer
+                && Str(pointer["k"]) == "local"
+                && Str(pointer["name"]) is string pointerName
+                && subst.TryGetValue(pointerName, out var pointerBinding))
+                o["ptr"] = new JsonObject
+                {
+                    ["k"] = "byrefOf",
+                    ["inner"] = pointerBinding.DeepClone(),
+                };
             foreach (var kv in o) if (kv.Value != null && kv.Key != "synthClass") RewriteLocalRefs(kv.Value, subst, pin);
             var k = Str(o["k"]);
             if (k == "local" && Str(o["name"]) is string nm && subst.TryGetValue(nm, out var b))

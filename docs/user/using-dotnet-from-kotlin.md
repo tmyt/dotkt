@@ -108,9 +108,9 @@ fun increment(slot: ClrRef<Int>) {
 }
 ```
 
-C# sees this as `void increment(ref int slot)`. A managed reference cannot be kept in a heap field, so a
-`ClrRef<T>` parameter cannot be captured, stored, or used by a `suspend` declaration. `ClrRef<T>` return types and
-properties are not supported.
+C# sees the parameter as `ref int`. A managed reference cannot be kept in a heap field; capturing or storing a
+`ClrRef<T>` parameter, using one in a `suspend` declaration, and declaring `ClrRef<T>` return types or properties are
+unsupported forms with undefined behavior.
 
 ## 5. Nullable value types, .NET enums, operators, extension methods
 

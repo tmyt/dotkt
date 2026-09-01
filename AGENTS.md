@@ -51,9 +51,9 @@ platform deviations.
   function and accessing that parameter through `.value`, and using
   `var x by byref(refReturningCall())` as the documented live-reference
   delegate. Such a Kotlin parameter is emitted as a real CLR `ref` parameter;
-  it may not be captured or stored. User-authored return types, properties,
-  fields, stored values, or other ordinary uses of `ClrRef<T>` remain undefined
-  behavior.
+  capturing or storing it is undefined behavior. User-authored return types,
+  properties, fields, stored values, or other ordinary uses of `ClrRef<T>`
+  remain undefined behavior.
 - `StackBuffer<T>` is compiler vocabulary scoped to the literal block of
   `stackBuffer`. The block parameter may be used only through the supported
   stack-buffer operations in that block. It must not be returned, stored,

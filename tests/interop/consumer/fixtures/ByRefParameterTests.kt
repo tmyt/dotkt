@@ -25,8 +25,8 @@ class OutRefAcc {
 // the address's own position is the value its LOCATION is computed from (`byRefOrderMk()`), leaving `<local>.n` in the
 // slot. Kotlin's order is `m` then `d`; pinning after the fill's local would emit `d` then `m`.
 //
-// #276 makes a Kotlin-declared `ClrRef<T>` parameter a supported managed-reference ABI. These calls therefore run,
-// covering both the live parameter and the evaluation-order plan that supplies its address.
+// A Kotlin-declared `ClrRef<T>` parameter is now a supported managed-reference ABI. Keep this formerly compile-only
+// battery as runtime coverage for the evaluation-order plan that supplies its address.
 private class ByRefOrderHolder(var n: Int)
 private var byRefOrderLog = ""
 private fun byRefOrderMk(): ByRefOrderHolder { byRefOrderLog += "m"; return ByRefOrderHolder(1) }
