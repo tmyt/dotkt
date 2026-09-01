@@ -4946,7 +4946,7 @@ sealed partial class ReferenceMetadataIndex
             new TypeNode.Tv("type", index);
         public TypeNode GetModifiedType(TypeNode modifier, TypeNode unmodifiedType, bool isRequired) => unmodifiedType;
         public TypeNode GetPinnedType(TypeNode elementType) => elementType;
-        public TypeNode GetPointerType(TypeNode elementType) => new TypeNode.Fqn("System.IntPtr");
+        public TypeNode GetPointerType(TypeNode elementType) => new TypeNode.Ptr(elementType);
         public TypeNode GetPrimitiveType(PrimitiveTypeCode typeCode) => new TypeNode.Fqn(typeCode switch
         {
             PrimitiveTypeCode.Boolean => "System.Boolean",

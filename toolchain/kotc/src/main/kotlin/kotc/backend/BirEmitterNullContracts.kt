@@ -45,7 +45,7 @@ internal fun BirEmitter.needsNonNullCheck(t: IrType): Boolean {
 	if (t.classifierOrNull !is IrClassSymbol) return false          // type parameter / other -> skip
 	if (t.isPrimitiveOrUnsigned()) return false
 	if (t.isUnit() || t.isNothing()) return false
-	if (t.classFqName?.asString() == "kotlin.clr.ClrRef") return false
+	if (t.classFqName?.asString() in setOf("kotlin.clr.ClrRef", "kotlin.clr.ClrPointer")) return false
 	val klass = t.classOrNull?.owner
 	if (klass != null && klass.isValue) return false                // value/inline class -> CLR value type
 	return true

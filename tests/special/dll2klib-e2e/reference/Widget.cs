@@ -667,3 +667,22 @@ public static class WidgetExtensions
     public static int Bump(this Widget widget, int value) => widget.Add(value) + 1;
     public static int ConstrainedValue<T>(this Widget widget, T value) where T : struct => widget.Value + 16;
 }
+
+public unsafe sealed class PointerProbe
+{
+    public int* Value;
+
+    public int* Null() => null;
+
+    public int* Echo(int* value) => value;
+
+    public bool IsNull(int* value) => value == null;
+
+    public void* NullVoid() => null;
+
+    public bool IsNullVoid(void* value) => value == null;
+
+    public int** NullNested() => null;
+
+    public bool IsNullNested(int** value) => value == null;
+}

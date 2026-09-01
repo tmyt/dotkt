@@ -30,6 +30,7 @@ import Probe.MemberConstraintHost
 import Probe.MemberDefaultValue
 import Probe.ReferenceConstraintBox
 import Probe.StructConstraintBox
+import Probe.PointerProbe
 import kotlin.clr.byref
 
 class LocalDefaultConstraintValue {
@@ -107,6 +108,12 @@ fun consume(): Int {
     externalDefaultCarrier.Value()
     val explicitDefaultCarrier: IExternalDefaultSlot = ExplicitDefaultCarrierSubclass()
     explicitDefaultCarrier.Value()
+    val pointerProbe = PointerProbe()
+    val pointer = pointerProbe.Null()
+    pointerProbe.Value = pointerProbe.Echo(pointer)
+    val pointerResult = (if (pointerProbe.IsNull(pointerProbe.Value)) 1 else 0) +
+        (if (pointerProbe.IsNullVoid(pointerProbe.NullVoid())) 1 else 0) +
+        (if (pointerProbe.IsNullNested(pointerProbe.NullNested())) 1 else 0)
     val genericConstraints = ConstraintBox<GoodConstraintSink>().Value +
         StructConstraintBox<Int>().Value +
         EnumConstraintBox<ConstraintKind>().Value +
@@ -129,7 +136,7 @@ fun consume(): Int {
         externalTransformed + externalGenericTransformed + externalArity + staticBump + globalExtensionBump + globalStaticBump +
         (nullable?.length ?: 0) + required.length + changed + incremented + shifted.Add(0) +
         visibility.Read() + visibleControl.Read() + (if (visibleGeneric === visibility) 1 else 0) +
-        genericConstraints
+        genericConstraints + pointerResult
 }
 
 fun main() {

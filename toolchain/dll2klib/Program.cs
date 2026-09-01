@@ -7481,7 +7481,16 @@ internal sealed class SignatureDecoder : ISignatureTypeProvider<KType, GenericCo
     public KType GetGenericTypeParameter(GenericContext genericContext, int index) => new() { TypeParameter = index };
     public KType GetModifiedType(KType modifier, KType unmodifiedType, bool isRequired) => unmodifiedType;
     public KType GetPinnedType(KType elementType) => elementType;
-    public KType GetPointerType(KType elementType) => Any(nullable: true);
+    public KType GetPointerType(KType elementType)
+    {
+        var pointer = Named("kotlin.clr.ClrPointer");
+        pointer.Argument.Add(new KType.Types.Argument
+        {
+            Projection = KType.Types.Argument.Types.Projection.Inv,
+            Type = elementType,
+        });
+        return pointer;
+    }
     public KType GetPrimitiveType(PrimitiveTypeCode code) => code switch
     {
         PrimitiveTypeCode.Void => Named("kotlin.Unit"),

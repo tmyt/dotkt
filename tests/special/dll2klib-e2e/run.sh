@@ -38,6 +38,8 @@ need_dotnet_reference_sets
 dotnet build "$ROOT/toolchain/dll2klib/dll2klib.csproj" -c Release -o "$OUT/tools" -v:q --nologo
 dotnet build "$ROOT/tests/roundtrip/metadata-inspector/CompanionMetadataInspector.csproj" \
 	-c Release -o "$OUT/tools/metadata-inspector" -v:q --nologo
+dotnet build "$ROOT/tests/special/dll2klib-e2e/pointer-inspector/PointerInspector.csproj" \
+	-c Release -o "$OUT/tools/pointer-inspector" -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-e2e/reference/Probe.csproj" -c Release -v:q --nologo
 dotnet build "$ROOT/tests/special/dll2klib-e2e/transitive-reference/TransitiveReferenceGenerator.csproj" \
 	-c Release -o "$OUT/tools/transitive-reference" -v:q --nologo
@@ -293,6 +295,8 @@ PY
 "$KOTC" "$ROOT/tests/special/dll2klib-e2e/consumer.kt" \
 	-no-stdlib \
 	-classpath "$FE_KLIB$KLIB_CP_SEP$PROBE_KLIB$KLIB_CP_SEP$CONTRACTS_KLIB" -d "$OUT/bir"
+grep -q '"name":"kotlin.clr.ClrPointer"' "$OUT/bir/consumer.bir.json" \
+	|| die "frontend did not preserve the projected ClrPointer<T> vocabulary in BIR"
 
 # KLIB upper bounds own Kotlin-nominal rows. CLR class/struct/new() flags and the implicit ValueType/Enum rows have
 # no faithful Kotlin nominal encoding, so kotc accepts these source shapes and bir2cir must reject the invalid physical
@@ -423,6 +427,8 @@ explicit_slot_actual="$(dotnet "$OUT/explicit-slot-il/ExplicitSlotProbe.dll")"
 	|| die "explicit interface slot program returned '$explicit_slot_actual', expected '463'"
 bash "$ROOT/tests/run-ilverify.sh" "$OUT/explicit-slot-il/ExplicitSlotProbe.dll"
 dotnet "$BIR2CIR_DLL" "$OUT/cir" --compile-refs "$compile_refs" "$OUT/bir/consumer.bir.json"
+grep -q '"t": "ptr"' "$OUT/cir/consumer.cir.json" \
+	|| die "bir2cir did not lower ClrPointer<T> to an exact unmanaged-pointer CIR type"
 dotnet "$ILEMIT_DLL" "$OUT/il" Consumer \
 	--compile-refs "$(refset_join "$FRAMEWORK_COMPILE_REFS" "$STDLIB_RT_DLL" "$PROBE_REF" "$CONTRACTS_REF")" \
 	--runtime-refs "$(refset_join "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL")" \
@@ -432,8 +438,13 @@ write_runtimeconfig "$OUT/il" Consumer
 cp "$STDLIB_RT_DLL" "$PROBE_IMPL" "$CONTRACTS_IMPL" "$OUT/il/"
 
 actual="$(dotnet "$OUT/il/Consumer.dll")"
-[[ "$actual" == "518" ]] || die "generated program returned '$actual', expected '518'"
-bash "$ROOT/tests/run-ilverify.sh" "$OUT/il/Consumer.dll"
+[[ "$actual" == "521" ]] || die "generated program returned '$actual', expected '521'"
+dotnet "$OUT/tools/pointer-inspector/PointerInspector.dll" "$OUT/il/Consumer.dll"
+# The focused pointer call intentionally places `int32*` on this method's evaluation stack. The CLR executes it,
+# while ILVerify correctly classifies that unsafe method as UnmanagedPointer rather than verifiable managed IL.
+# Keep the exception invocation-local so the canonical whole-suite unverifiable baseline is not widened.
+bash "$ROOT/tests/run-ilverify.sh" \
+	'--allow-unmanaged-pointer=consumer.ConsumerKt::consume()' "$OUT/il/Consumer.dll"
 grep -q '"k": "clrInstance"' "$OUT/cir/consumer.cir.json" \
 	|| die "bir2cir did not bind the KLIB declaration to a CLR instance member"
 grep -q '"k": "clrStatic"' "$OUT/cir/consumer.cir.json" \
@@ -442,4 +453,4 @@ if grep -q '"_resolvedMethodTypeParams"' "$OUT/cir/consumer.cir.json"; then
 	die "bir2cir leaked its resolved-method constraint carrier into CIR"
 fi
 
-info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref) -> kotc -> bir2cir -> ilemit -> run (518)"
+info "PASS  CLR ref.dll -> standard KLIB (types, nested types, members incl. inherited instance/static properties, generic constraints, public-only interface supertypes, generics, NRT, local/cross-assembly delegates, indexers, events, extensions, operators, byref, unmanaged pointers) -> kotc -> bir2cir -> ilemit -> run (521)"

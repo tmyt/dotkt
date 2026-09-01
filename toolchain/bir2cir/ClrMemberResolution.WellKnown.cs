@@ -110,6 +110,8 @@ static partial class ClrMemberResolution
 
     static TypeNode ParseWellKnownParam(string spec) =>
         spec.StartsWith("!", StringComparison.Ordinal) ? new TypeNode.Tv("type", int.Parse(spec[1..])) :
+        spec.EndsWith("*", StringComparison.Ordinal)
+            ? new TypeNode.Ptr(ParseWellKnownParam(spec[..^1])) :
         spec.EndsWith("[]", StringComparison.Ordinal)
             ? new TypeNode.Array(new TypeNode.Fqn(spec[..^2]))
             : new TypeNode.Fqn(spec);
