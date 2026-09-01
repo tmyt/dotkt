@@ -235,7 +235,7 @@ static class ReifiedNullabilityWitnessLowering
                         || indices.Length == 0)
                         continue;
                     var methodName = candidate;
-                    var closureName = $"dotkt${Sanitize(ownerName)}$ReifiedClosure{ordinal++}";
+                    var closureName = $"dotkt${Sanitize(ownerName)}$NullableWitnessClosure{ordinal++}";
                     if (!result.TryAdd(methodName, new GeneratedTarget(method, closureName, ownerName, indices)))
                         throw new InvalidOperationException(
                             $"bir2cir: ambiguous nullable-sensitive generated delegate target '{methodName}'");
@@ -454,7 +454,7 @@ static class ReifiedNullabilityWitnessLowering
     }
 
     // InlineSplice gives every materialized suspend carrier an explicit dense generic frame: body (scope, i) is bound
-    // by typeArgs[i] in the enclosing frame, preserving whether the slot belongs to method or type scope. Reified
+    // by typeArgs[i] in the enclosing frame, preserving whether the slot belongs to method or type scope. Nullable
     // witnesses are values too, so a witness belonging to such a type argument must cross each synthesized frame through
     // the ordinary positional capture/capValue contract. Passing the caller WitnessFrame straight into the body conflates
     // distinct generic index spaces and leaves the caller's local dangling once the carrier becomes a state-machine method.
