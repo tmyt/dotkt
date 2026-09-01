@@ -1,6 +1,16 @@
 <Project>
   <!-- The kt -> BIR -> CIL pipeline isn't here: it ships WITH the DotKt.Toolchain package
        (build/DotKt.Toolchain.targets) and NuGet auto-imports it because Sdk.props references that package. So this
-       file only chains the standard .NET SDK. -->
+  file only chains the standard .NET SDK. -->
   <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+  <!-- Validate each inner build from SDK-owned capability data. NuGet also rejects DotKt.Stdlib on an incompatible
+       TFM, but this diagnostic remains deterministic when a project deliberately opts out of the implicit stdlib. -->
+  <Target Name="DotKtValidateTargetFramework"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(IsCrossTargetingBuild)' != 'true'">
+    <Error Code="DOTKTSDK001"
+           Condition="'$(TargetFrameworkIdentifier)' != '$(DotKtSupportedTargetFrameworkIdentifier)' or '$(TargetFrameworkVersion)' != '$(DotKtSupportedTargetFrameworkVersion)'"
+           Text="DotKt SDK $(DotKtVersion) does not support target framework '$(TargetFramework)'. Supported targets use $(DotKtSupportedTargetFrameworkIdentifier),Version=$(DotKtSupportedTargetFrameworkVersion) (for example net10.0 or net10.0-windows)." />
+  </Target>
 </Project>

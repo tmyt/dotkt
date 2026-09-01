@@ -151,13 +151,14 @@
     <_DotKtStdlibInput Include="$(DotKtStdlib)" Condition="!Exists('$(DotKtStdlib)/default/manifest') and Exists('$(DotKtStdlib)')" />
   </ItemGroup>
 
-  <!-- Materialize the non-file compile options into $(DotKtCompileOptionsManifest) BEFORE KotlinCompile's incremental check so
-       the manifest is a valid Input there (#50). The MPP flags are computed here (not in the compile body) so both the
-       manifest and the compile Exec see the same $(DotKtMppFlags). WriteOnlyWhenDifferent keeps the file's timestamp
-       stable when the options are unchanged (no spurious recompile) and flips it the instant any option changes. -->
+  <!-- Materialize compile options plus the resolved source/reference sets into $(DotKtCompileOptionsManifest)
+       BEFORE KotlinCompile's incremental check so the manifest is a valid Input there (#50, #338). MSBuild's
+       ordinary item Inputs notice an added or changed file, but a removed item is no longer an input at all;
+       recording every per-inner-build set makes a source/reference deletion change the manifest without
+       invalidating any other TFM. This target deliberately runs for an empty source set too, so deleting the final
+       .kt clears stale BIR and emits an empty assembly. WriteOnlyWhenDifferent preserves true no-op builds. -->
   <Target Name="DotKtComputeCompileOptions"
-          DependsOnTargets="DotKtInitializeIntermediatePaths"
-          Condition="'@(KotlinCompile)' != ''">
+          DependsOnTargets="DotKtInitializeIntermediatePaths;DotKtResolveReferenceSets">
     <!-- MPP (#119): when common sources are present, mark them with -Xcommon-sources and enable the common→platform
          module split (-Xmulti-platform) + cross-module expect/actual (-Xexpect-actual-classes) — the exact
          invocation the MPP NUnit producer exercises. All sources still pass POSITIONALLY (in @(KotlinCompile));
@@ -168,14 +169,15 @@
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;$(_DotKtEscapedCommonSourcePaths)&quot;</DotKtMppFlags>
     </PropertyGroup>
     <WriteLinesToFile File="$(DotKtCompileOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)')" />
+                      Lines="kotc=$(DotKtKotcOptions);mpp=$(DotKtMppFlags);@(DotKtCommon->'common=%(FullPath)');@(KotlinCompile->'source=%(FullPath)');@(_DotKtCompileReference->'compile-ref=%(FullPath)');@(_DotKtRuntimeReference->'runtime-ref=%(FullPath)')" />
   </Target>
 
   <!-- Compile every .kt to BIR from the frontend stdlib plus the complete MSBuild-resolved reference-KLIB set.
        Incremental inputs (#50): besides the .kt sources, a recompile must also retrigger when the COMPILER changes
        ($(DotKtCompilerFingerprint) mtime = version proxy), the frontend KLIB changes ($(DotKtStdlib)), any reference KLIB or
        resolved reference DLL changes (@(_DotKtCompileReference)/
-       @(_DotKtRuntimeReference)), or a non-file compile OPTION changes ($(DotKtCompileOptionsManifest)). DotKtResolveReferenceSets
+       @(_DotKtRuntimeReference)), or the per-TFM source set / a non-file compile OPTION changes
+       ($(DotKtCompileOptionsManifest)). DotKtResolveReferenceSets
        is a direct dependency so the @(_DotKt*Reference) items exist when these Inputs are evaluated. -->
   <Target Name="KotlinCompile" BeforeTargets="CoreCompile"
           DependsOnTargets="DotKtGenerateReferenceKlibs;DotKtResolveReferenceSets;DotKtComputeCompileOptions"
@@ -221,7 +223,8 @@
     <WriteLinesToFile File="$(DotKtCompilerResponseFile)"
                       Lines="@(_DotKtKotcResponseArgument->'%(Value)')"
                       Overwrite="true" />
-    <Exec Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(DotKtKotcOptions)" />
+    <Exec Condition="'@(KotlinCompile)' != ''"
+          Command="&quot;$(DotKtCompiler)&quot; @&quot;$(DotKtCompilerResponseFile)&quot; $(DotKtKotcOptions)" />
     <Touch Files="$(DotKtIntermediateBirPath)/.stamp" AlwaysCreate="true" />
   </Target>
 
@@ -288,7 +291,8 @@
     <WriteLinesToFile File="$(DotKtBir2CirResponseFile)"
                       Lines="@(_DotKtBir2CirResponseArgument->'%(Value)')"
                       Overwrite="true" />
-    <Exec Command="dotnet &quot;$(DotKtBir2Cir)&quot; @&quot;$(DotKtBir2CirResponseFile)&quot;" />
+    <Exec Condition="'@(_DotKtBir)' != ''"
+          Command="dotnet &quot;$(DotKtBir2Cir)&quot; @&quot;$(DotKtBir2CirResponseFile)&quot;" />
     <Touch Files="$(DotKtIntermediateCirPath)/.stamp;$(_DotKtBir2CirModeStamp)" AlwaysCreate="true" />
   </Target>
 
@@ -333,6 +337,14 @@
       <_DotKtEscapedCompileReferences>$(_DotKtCompileReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedCompileReferences>
       <_DotKtEscapedRuntimeReferences>$(_DotKtRuntimeReferences.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedRuntimeReferences>
       <_DotKtEscapedTargetFrameworkMoniker>$(TargetFrameworkMoniker.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedTargetFrameworkMoniker>
+      <_DotKtTargetPlatformAttributeValue
+          Condition="'$(GenerateTargetPlatformAttribute)' == 'true' and '$(TargetPlatformIdentifier)' != '' and '$(TargetPlatformVersion)' != ''">$(TargetPlatformIdentifier)$(TargetPlatformVersion)</_DotKtTargetPlatformAttributeValue>
+      <_DotKtSupportedOSPlatformAttributeValue
+          Condition="'$(GenerateSupportedOSPlatformAttribute)' == 'true' and '$(TargetPlatformIdentifier)' != '' and '$(SupportedOSPlatformVersion)' != '' and '$(SupportedOSPlatformVersion)' != '0.0'">$(TargetPlatformIdentifier)$(SupportedOSPlatformVersion)</_DotKtSupportedOSPlatformAttributeValue>
+      <_DotKtSupportedOSPlatformAttributeValue
+          Condition="'$(GenerateSupportedOSPlatformAttribute)' == 'true' and '$(TargetPlatformIdentifier)' != '' and '$(SupportedOSPlatformVersion)' == '0.0'">$(TargetPlatformIdentifier)</_DotKtSupportedOSPlatformAttributeValue>
+      <_DotKtEscapedTargetPlatformAttributeValue>$(_DotKtTargetPlatformAttributeValue.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedTargetPlatformAttributeValue>
+      <_DotKtEscapedSupportedOSPlatformAttributeValue>$(_DotKtSupportedOSPlatformAttributeValue.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedSupportedOSPlatformAttributeValue>
       <_DotKtEscapedRuntimeIdentifier>$(RuntimeIdentifier.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedRuntimeIdentifier>
       <_DotKtEscapedRuntimeIdentifierGraphPath>$(RuntimeIdentifierGraphPath.Replace('\', '\\').Replace('&quot;', '\&quot;'))</_DotKtEscapedRuntimeIdentifierGraphPath>
     </PropertyGroup>
@@ -348,6 +360,10 @@
       <_DotKtIlEmitResponseArgument Include="_runtime_refs"><Value>&quot;$(_DotKtEscapedRuntimeReferences)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_tfm_option"><Value>--target-framework-moniker</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_tfm"><Value>&quot;$(_DotKtEscapedTargetFrameworkMoniker)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_target_platform_option" Condition="'$(_DotKtTargetPlatformAttributeValue)' != ''"><Value>--target-platform</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_target_platform" Condition="'$(_DotKtTargetPlatformAttributeValue)' != ''"><Value>&quot;$(_DotKtEscapedTargetPlatformAttributeValue)&quot;</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_supported_os_platform_option" Condition="'$(_DotKtSupportedOSPlatformAttributeValue)' != ''"><Value>--supported-os-platform</Value></_DotKtIlEmitResponseArgument>
+      <_DotKtIlEmitResponseArgument Include="_supported_os_platform" Condition="'$(_DotKtSupportedOSPlatformAttributeValue)' != ''"><Value>&quot;$(_DotKtEscapedSupportedOSPlatformAttributeValue)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid_option"><Value>--target-rid</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid"><Value>&quot;$(_DotKtEscapedRuntimeIdentifier)&quot;</Value></_DotKtIlEmitResponseArgument>
       <_DotKtIlEmitResponseArgument Include="_rid_graph_option"><Value>--rid-graph-path</Value></_DotKtIlEmitResponseArgument>

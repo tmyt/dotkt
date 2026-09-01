@@ -17,7 +17,10 @@ sealed partial class Emitter
         // (routed through Phase 1's diagnostic) instead of a cryptic Reflection.Emit crash / silent BadImageFormat.
         // See Emitter.Sanity.cs. Pure fail-fast validation: a valid CIR reaches emission unchanged.
         CheckCir(files);
-        LoadWellKnown(files);
+        // An empty source set has no body/signature operation that can consume a fixed member. Keep empty-library
+        // emission independent of the stdlib binding table so deleting the final source can replace the previous
+        // assembly with a valid metadata-only shell instead of retaining stale declarations.
+        if (files.Count != 0) LoadWellKnown(files);
         // #370: how many references these documents carry, so the parity check below can be held to all of them.
         // #336: PersistedAssemblyBuilder and every external type/member below share one target
         // MetadataLoadContext. The compiler host still supplies Reflection.Emit's implementation, never an emitted
@@ -41,6 +44,25 @@ sealed partial class Emitter
                 .GetConstructor(new[] { Bcl("System.String") });
             SetAttribute(ab.SetCustomAttribute, targetFrameworkCtor,
                 new[] { Bcl("System.String") }, _targetFrameworkMoniker);
+        }
+        // Platform-qualified TFMs carry two independent SDK-owned facts. MSBuild supplies the exact strings it would
+        // put on the placeholder; ilemit preserves them on the final assembly without parsing a TFM name or deriving
+        // target capabilities from its host.
+        if (_targetPlatform != null)
+        {
+            var targetPlatformCtor = Bcl("System.Runtime.Versioning.TargetPlatformAttribute")
+                // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the target platform, not a call any program makes
+                .GetConstructor(new[] { Bcl("System.String") });
+            SetAttribute(ab.SetCustomAttribute, targetPlatformCtor,
+                new[] { Bcl("System.String") }, _targetPlatform);
+        }
+        if (_supportedOsPlatform != null)
+        {
+            var supportedOsPlatformCtor = Bcl("System.Runtime.Versioning.SupportedOSPlatformAttribute")
+                // member-lookup-residual: metadata the output format obliges: an attribute the emitter stamps to DESCRIBE the supported platform floor, not a call any program makes
+                .GetConstructor(new[] { Bcl("System.String") });
+            SetAttribute(ab.SetCustomAttribute, supportedOsPlatformCtor,
+                new[] { Bcl("System.String") }, _supportedOsPlatform);
         }
         // The frontend stdlib KLIB is the authoritative Kotlin declaration surface. Mark both CLR stdlib twins so
         // generic CLR-reference projectors can route them away from dll2klib without guessing from assembly names.

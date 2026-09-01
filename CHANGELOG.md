@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **One DotKt project can now build isolated outputs for multiple target frameworks (#338).** MSBuild outer/inner
+  builds retain independent reference KLIB, BIR, CIR, response, fingerprint, and emitted-assembly state per TFM;
+  platform-qualified outputs preserve the SDK's framework/platform attributes, matching C# and DotKt consumers bind
+  the correct target graph, and source or reference removal invalidates only the affected inner compiler pipeline.
+
 - **CLR unmanaged-pointer signatures now survive DLL-to-KLIB consumption exactly (#274).** dll2klib projects
   pointer fields, parameters, and returns through an opaque `ClrPointer<T>` Kotlin vocabulary; bir2cir materializes
   exact pointer, `void*`, nested-pointer, array, and nullable-value-pointee shapes only at the CLR representation

@@ -12,6 +12,11 @@
          (DotKtVersionPrefix, plus -DotKtVersionSuffix when pre-release — e.g. 0.9.6-rc7; both in
          packaging/DotKt.Versions.props), so a stale value can never silently ship — bump both together. -->
     <DotKtVersion Condition="'$(DotKtVersion)' == ''">0.9.11</DotKtVersion>
+    <!-- The first multi-targeting release supports the net10.0 reference/stdlib family, including platform-qualified
+         TFMs such as net10.0-windows. Keep this as SDK data so adding another family is a package declaration, not a
+         compiler/emitter TFM branch. -->
+    <DotKtSupportedTargetFrameworkIdentifier Condition="'$(DotKtSupportedTargetFrameworkIdentifier)' == ''">.NETCoreApp</DotKtSupportedTargetFrameworkIdentifier>
+    <DotKtSupportedTargetFrameworkVersion Condition="'$(DotKtSupportedTargetFrameworkVersion)' == ''">v10.0</DotKtSupportedTargetFrameworkVersion>
     <!-- We generate the assembly ourselves (kt -> BIR -> CIL); don't let the .NET SDK glob .cs and don't infer
          a language from the project file. -->
     <EnableDefaultCompileItems Condition="'$(EnableDefaultCompileItems)' == ''">false</EnableDefaultCompileItems>
