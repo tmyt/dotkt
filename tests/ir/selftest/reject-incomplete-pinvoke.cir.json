@@ -1,0 +1,14 @@
+{
+  "fileClass": "SelftestKt",
+  "methods": [
+    {
+      "name": "badImport",
+      "static": false,
+      "extern": true,
+      "params": [],
+      "ret": { "t": "fqn", "name": "System.Int32" },
+      "body": [],
+      "pinvoke": {}
+    }
+  ]
+}

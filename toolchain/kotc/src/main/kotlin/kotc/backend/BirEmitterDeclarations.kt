@@ -1505,8 +1505,31 @@ internal fun BirEmitter.attrsJson(anns: List<IrConstructorCall>): String {
 		if (ac.kind != ClassKind.ANNOTATION_CLASS) return@mapNotNull null
 		val clr = clrName(ac)
 		val attrClr = if (clr != null) ""","attrClr":true""" else ""
-		val args = regularArgs(ann)
-		"""{"attr":${fqnJson(clr ?: typeName(ac))}$attrClr,"argTypes":[${args.joinToString(",") { birType(it.type).toJson() }}],"args":[${args.joinToString(",") { expr(it) }}]}"""
+		data class Applied(val parameter: IrValueParameter, val value: org.jetbrains.kotlin.ir.expressions.IrExpression)
+		val applied = ann.symbol.owner.parameters.mapIndexedNotNull { index, parameter ->
+			if (!isValueParameter(parameter)) return@mapIndexedNotNull null
+			ann.arguments.getOrNull(index)?.let { Applied(parameter, it) }
+		}
+		fun namedRole(parameter: IrValueParameter): Pair<String, String>? {
+			val marker = parameter.annotations.singleOrNull {
+				it.type.classFqName?.asString() == "kotlin.clr.ClrAttributeNamedArgument"
+			} ?: return null
+			val values = regularArgs(marker).map { (it as? IrConst)?.value as? String }
+			if (values.size != 2 || values.any { it == null }) {
+				invariantBroken(parameter, "a projected CLR attribute named argument has a malformed role marker")
+				return null
+			}
+			return values[0]!! to values[1]!!
+		}
+		val fixed = mutableListOf<Applied>()
+		val named = mutableListOf<String>()
+		for (argument in applied) {
+			val role = namedRole(argument.parameter)
+			if (role == null) fixed += argument
+			else named += """{"kind":${str(role.first)},"name":${str(role.second)},"type":${birType(argument.parameter.type).toJson()},"value":${expr(argument.value)}}"""
+		}
+		val namedJson = if (named.isEmpty()) "" else ""","namedArgs":[${named.joinToString(",")}]"""
+		"""{"attr":${fqnJson(clr ?: typeName(ac))}$attrClr,"argTypes":[${fixed.joinToString(",") { birType(it.parameter.type).toJson() }}],"args":[${fixed.joinToString(",") { expr(it.value) }}]$namedJson}"""
 	}.joinToString(",")
 }
 
@@ -1650,7 +1673,8 @@ internal fun BirEmitter.typeDef(klass: IrClass, captures: List<Pair<IrValueDecla
 	val instMethods = klass.declarations.filterIsInstance<IrSimpleFunction>()
 		// Include `abstract fun`s (body == null): they emit as CLR abstract methods so subclass overrides bind
 		// and a base-typed call (`shape.area()`) resolves to the slot.
-		.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride && (it.body != null || it.modality == Modality.ABSTRACT) }
+		.filter { it.correspondingPropertySymbol == null && !it.isFakeOverride &&
+			(it.body != null || it.modality == Modality.ABSTRACT || it.isExternal) }
 		// The method twin of `inheritedStatic` below: a static of a BASE type has nothing to emit here.
 		.filter { !isInheritedStaticFunction(it) }
 		.map { method(it, static = isKotlinStaticFunction(it)) }
@@ -1889,6 +1913,7 @@ internal fun BirEmitter.ctor(klass: IrClass, ctor: IrConstructor, captures: List
 }
 
 internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOwnerOverride: String? = null): String {
+	validatePInvokeDeclaration(fn, static)
 	val savedSemanticOwner = activeSemanticOwner
 	// A synthesized BIR declaration can have a different identity from the FIR class that supplied its members. Rich
 	// enum entry bodies are the concrete case: FIR calls the class `E.ENTRY`, while BIR explicitly declares the entry
@@ -1969,6 +1994,42 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	return """{"name":${str(emitName)}${declarationIdField(fn)}${explicitClrNameField(fn)},"static":$static$kotlinStatic,"override":$isOvr,"virtual":$isVirtual,"abstract":$isAbstract,"objectOverride":${isAnySlot},"vis":${str(vis)}${typeParamsJson(fn.typeParameters)}$mods${resultTypeJson(fn)}${companionReceiverField(fn, "function", fn.name.asString())},"params":[$ps],"ret":${birType(fn.returnType).toJson()}${retCtxFnTypeField(fn)},"body":[$body],"attrs":[${attrsJson(fn.annotations)}]${overridesJson(fn)}${posJson(fn)}}"""
 }
 
+private const val DLL_IMPORT_ATTRIBUTE = "System.Runtime.InteropServices.DllImportAttribute"
+
+private fun BirEmitter.isDllImportAnnotation(annotation: IrConstructorCall): Boolean {
+	val declaration = annotation.symbol.owner.parent as? IrClass ?: return false
+	return clrName(declaration) == DLL_IMPORT_ATTRIBUTE
+}
+
+private fun BirEmitter.reportPInvokeError(fn: IrSimpleFunction, detail: String) {
+	hadError = true
+	messageCollector?.report(
+		CompilerMessageSeverity.ERROR,
+		"malformed CLR P/Invoke declaration '${fn.name.asString()}': $detail",
+		locationOf(fn),
+	)
+}
+
+/** Validate only Kotlin declaration facts here. bir2cir owns interpreting DllImport arguments and the CLR ABI. */
+private fun BirEmitter.validatePInvokeDeclaration(fn: IrSimpleFunction, static: Boolean) {
+	val imports = fn.annotations.filter(::isDllImportAnnotation)
+	if (!fn.isExternal && imports.isEmpty()) return
+	if (!fn.isExternal) {
+		reportPInvokeError(fn, "@DllImportAttribute requires an external function with no Kotlin body")
+		return
+	}
+	if (imports.size != 1) {
+		reportPInvokeError(fn, "an external CLR function requires exactly one @DllImportAttribute application")
+		return
+	}
+	if (!static)
+		reportPInvokeError(fn, "only top-level or otherwise static functions are supported")
+	if (fn.isSuspend)
+		reportPInvokeError(fn, "a P/Invoke function cannot be suspend")
+	if (fn.typeParameters.isNotEmpty())
+		reportPInvokeError(fn, "a P/Invoke function cannot declare type parameters")
+}
+
 /** Structured declaration-modifier object (spec §2.1): a single `"mods":{name:true,…}` carrying ONLY the set flags
  *  (absent key = not set), replacing the order-dependent `$kmods$inlineFlag$suspendField` fragment concatenation.
  *  `inline` = the "inline body must travel" fact (isInlineWithLambda), the only inline shape ilemit splices. */
@@ -1983,6 +2044,7 @@ internal fun BirEmitter.funModsJson(fn: IrSimpleFunction, inline: Boolean = fals
 		if (fn.isInfix) add(""""infix":true""")
 		if (fn.isOperator) add(""""operator":true""")
 		if (fn.isSuspend) add(""""suspend":true""")
+		if (fn.isExternal) add(""""external":true""")
 	}
 	return if (flags.isEmpty()) "" else ""","mods":{${flags.joinToString(",")}}"""
 }

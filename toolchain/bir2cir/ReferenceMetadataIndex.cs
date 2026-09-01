@@ -1594,6 +1594,14 @@ sealed partial class ReferenceMetadataIndex
             Convert.ToString(raw, CultureInfo.InvariantCulture));
     }
 
+    public bool IsNetEnum(TypeNode.Fqn type)
+    {
+        var resolved = ResolveNetType(type.Name, type.Args?.Length ?? 0);
+        if (resolved == null) return false;
+        try { return resolved.IsEnum; }
+        catch { return false; }
+    }
+
     // Resolve the physical representation of the exact referenced CLR enum selected by a dll2klib
     // [ClrFlagsOperation] declaration. The semantic carrier is trusted compiler metadata, but its signature is still
     // validated against the current target reference universe: it must name a real enum carrying the target corelib's

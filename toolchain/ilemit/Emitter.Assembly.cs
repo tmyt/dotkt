@@ -1060,6 +1060,7 @@ sealed partial class Emitter
         ti.MethodNameCounts[name] = ti.MethodNameCounts.TryGetValue(name, out var nameCount) ? nameCount + 1 : 1;
         _mparams[mb] = ps;   // MethodBuilder.GetParameters() throws pre-bake; record param types for call-site boxing
         DefineParamNames(mb, m);
+        if (m.TryGetProperty("pinvoke", out var pinvoke)) ApplyPInvokeDescriptor(mb, pinvoke);
         if (objOverride)
         {
             var objM = name switch

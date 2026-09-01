@@ -296,6 +296,17 @@ class Sanity:
                          "bir2cir's cold-core lowering and must not reach CIR (every suspend declaration becomes a "
                          "state machine, a cold entry and a Task bridge; one the stdlib self-build retains keeps "
                          "only its physical stub body)")
+            if isinstance(m.get("pinvoke"), dict):
+                type_parameters = m.get("typeParams")
+                malformed = (m.get("extern") is not True or m.get("static") is not True or
+                             (type_parameters is not None and
+                              (not isinstance(type_parameters, list) or len(type_parameters) != 0)) or
+                             not isinstance(m.get("body"), list) or len(m["body"]) != 0 or
+                             (isinstance(mods, dict) and mods.get("external") is True))
+                if malformed:
+                    self.err(f, _pos_prefix(m) + f"{owner}.{name}",
+                             "a CIR 'pinvoke' descriptor requires extern:true, static:true, no type parameters, "
+                             "an empty body, and no surviving mods.external source fact")
             if m.get("abstract") is True:
                 continue
             body = m.get("body")

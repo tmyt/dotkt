@@ -169,6 +169,59 @@ sealed partial class Emitter
     void SetAttribute(Action<ConstructorInfo, byte[]> set, ConstructorInfo ctor, Type[] parameterTypes, params object[] args)
         => set(ctor, EncodeAttributeBlob(parameterTypes, args, Array.Empty<NamedAttributeArg>()));
 
+    // DllImportAttribute is a pseudo-custom attribute: Reflection.Emit converts this exact blob into MethodDef
+    // PinvokeImpl/PreserveSig flags plus an ImplMap row and does not retain a CustomAttribute row. bir2cir has already
+    // normalized every Kotlin/source choice into the CIR descriptor, including defaults; this method only maps each
+    // stated physical field to the equivalent metadata API input.
+    void ApplyPInvokeDescriptor(MethodBuilder method, JsonElement descriptor)
+    {
+        var ctor = RequiredRef<ConstructorInfo>(descriptor, "attributeCtorRef", "a P/Invoke descriptor");
+        var stringType = Bcl("System.String");
+        var booleanType = Bcl("System.Boolean");
+        var callingConventionType = ClrRef(descriptor.GetProperty("callingConventionType"));
+        var charSetType = ClrRef(descriptor.GetProperty("charSetType"));
+        var callingConvention = descriptor.GetProperty("callingConvention").GetString() switch
+        {
+            "winapi" => 1,
+            "cdecl" => 2,
+            "stdcall" => 3,
+            "thiscall" => 4,
+            "fastcall" => 5,
+            var value => throw new InvalidOperationException($"ilemit: malformed P/Invoke calling convention '{value}'"),
+        };
+        var charSet = descriptor.GetProperty("charSet").GetString() switch
+        {
+            "none" => 1,
+            "ansi" => 2,
+            "unicode" => 3,
+            "auto" => 4,
+            var value => throw new InvalidOperationException($"ilemit: malformed P/Invoke character set '{value}'"),
+        };
+        var preserveSig = descriptor.GetProperty("preserveSig").GetBoolean();
+        var named = new List<NamedAttributeArg>();
+        foreach (var field in descriptor.GetProperty("pseudoFields").EnumerateArray())
+            named.Add(field.GetString() switch
+            {
+                "EntryPoint" => new(true, "EntryPoint", stringType, descriptor.GetProperty("entryPoint").GetString()!),
+                "CallingConvention" => new(true, "CallingConvention", callingConventionType, callingConvention),
+                "CharSet" => new(true, "CharSet", charSetType, charSet),
+                "ExactSpelling" => new(true, "ExactSpelling", booleanType, descriptor.GetProperty("exactSpelling").GetBoolean()),
+                "SetLastError" => new(true, "SetLastError", booleanType, descriptor.GetProperty("setLastError").GetBoolean()),
+                "PreserveSig" => new(true, "PreserveSig", booleanType, preserveSig),
+                "BestFitMapping" => new(true, "BestFitMapping", booleanType, descriptor.GetProperty("bestFitMapping").GetBoolean()),
+                "ThrowOnUnmappableChar" => new(true, "ThrowOnUnmappableChar", booleanType, descriptor.GetProperty("throwOnUnmappableChar").GetBoolean()),
+                var value => throw new InvalidOperationException($"ilemit: malformed P/Invoke named field '{value}'"),
+            });
+        method.SetCustomAttribute(ctor, EncodeAttributeBlob(
+            new[] { stringType }, new object[] { descriptor.GetProperty("module").GetString()! }, named.ToArray()));
+
+        // Keep PreserveSig exact even if Reflection.Emit's pseudo-attribute implementation changes its default.
+        var implementationFlags = method.GetMethodImplementationFlags();
+        method.SetImplementationFlags(preserveSig
+            ? implementationFlags | MethodImplAttributes.PreserveSig
+            : implementationFlags & ~MethodImplAttributes.PreserveSig);
+    }
+
     // II.23.3: prolog, fixed arguments in constructor order, then zero named arguments. Parameter Types come from the
     // same target universe as the constructor; only their ECMA element kind is inspected, never their host identity.
     static byte[] EncodeAttributeBlob(Type[] parameterTypes, object[] args, NamedAttributeArg[] namedArgs)

@@ -207,6 +207,32 @@
       "required": ["owner", "assembly", "slots"],
       "additionalProperties": false
     },
+    "pinvoke": {
+      "type": "object",
+      "description": "CIR-only normalized MethodDef/ImplMap descriptor for a CLR P/Invoke declaration. bir2cir consumes Kotlin external + the DllImportAttribute pseudo-attribute into this complete physical instruction; ilemit emits it one-to-one and no CustomAttribute row survives.",
+      "properties": {
+        "module": { "type": "string", "minLength": 1 },
+        "entryPoint": { "type": "string" },
+        "callingConvention": { "enum": ["winapi", "cdecl", "stdcall", "thiscall", "fastcall"] },
+        "callingConventionType": { "$ref": "#/$defs/type", "$comment": "Exact target enum type for the CallingConvention field in Reflection.Emit's DllImport pseudo-attribute API." },
+        "charSet": { "enum": ["none", "ansi", "unicode", "auto"] },
+        "charSetType": { "$ref": "#/$defs/type", "$comment": "Exact target enum type for the CharSet field in Reflection.Emit's DllImport pseudo-attribute API." },
+        "exactSpelling": { "type": "boolean" },
+        "setLastError": { "type": "boolean" },
+        "preserveSig": { "type": "boolean" },
+        "bestFitMapping": { "type": "boolean" },
+        "throwOnUnmappableChar": { "type": "boolean" },
+        "pseudoFields": {
+          "type": "array",
+          "items": { "enum": ["EntryPoint", "CallingConvention", "CharSet", "ExactSpelling", "SetLastError", "PreserveSig", "BestFitMapping", "ThrowOnUnmappableChar"] },
+          "uniqueItems": true,
+          "$comment": "Exact DllImport named fields ilemit writes through Reflection.Emit's pseudo-attribute API after bir2cir physical normalization. This is not source presence: CallingConvention is always stated to materialize Winapi, while CharSet.None is omitted because it physically means no charset bits."
+        },
+        "attributeCtorRef": { "$ref": "#/$defs/memberRef", "$comment": "Exact already-resolved DllImportAttribute(String) constructor used only as Reflection.Emit's pseudo-attribute metadata API handle." }
+      },
+      "required": ["module", "entryPoint", "callingConvention", "callingConventionType", "charSet", "charSetType", "exactSpelling", "setLastError", "preserveSig", "bestFitMapping", "throwOnUnmappableChar", "pseudoFields", "attributeCtorRef"],
+      "additionalProperties": false
+    },
 
     "//== MODIFIERS (§2.1) + VISIBILITY ==//": null,
     "mods": {
@@ -519,6 +545,7 @@
         "declarationSourceName": { "type": "string", "$comment": "#395 bir2cir hand-off preserving the Kotlin source name when declarationId receives a different physical CLR name. Consumed into [KotlinDeclarationIdentity] before CIR." },
         "explicitClrName": { "type": "string", "$comment": "#402 BIR-only source-authored physical MethodDef name from @ClrName or its @JvmName compatibility alias. bir2cir validates and consumes it during final CLR signature allocation; it is forbidden in CIR." },
         "extern":     { "type": "boolean", "$comment": "CIR-only: bodyless CLR extern method. bir2cir uses this for caller-side UnsafeAccessor declarations; ilemit defines the signature/attributes one-to-one and emits no IL body." },
+        "pinvoke":    { "$ref": "#/$defs/pinvoke", "$comment": "CIR-only normalized CLR MethodImport descriptor; requires extern:true and a bodyless static non-generic declaration." },
         "bodyTerminates": { "type": "boolean", "$comment": "CIR-only proof that the authored body cannot fall through. ilemit therefore emits no synthetic trailing return." },
         "virtual":    { "type": "boolean" },
         "abstract":   { "type": "boolean", "$comment": "Declaration modality fact. In particular, a concrete interface Unit method may have an empty body array, so consumers must never derive abstractness from body presence." },

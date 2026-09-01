@@ -32,6 +32,8 @@
 //      faces, and a document still speaking Kotlin collection names cannot trip it.
 //   9. SUSPEND MODIFIER CONSUMED — no method DECLARATION (abstract or concrete) still carries `mods.suspend`: the
 //      Kotlin modifier is bir2cir's to consume, and CIR is a physical CLR graph.
+//  10. P/INVOKE COMPLETENESS — a `pinvoke` descriptor belongs only to a static, non-generic, bodyless CIR extern;
+//      Kotlin's `mods.external` source fact never survives beside it.
 //
 // SCOPE units mirror ilemit's `_locals`/`_cfgLabels` lifetimes exactly: a method = params ∪ body; a ctor ALSO folds
 // in preStmts/thisArgs/baseArgs (emitted in the same frame); the static-field-initializer group shares ONE .cctor `_locals`
@@ -142,6 +144,7 @@ public static class IrSanity
                 "declaration still carries 'mods.suspend': the Kotlin suspend modifier is consumed by bir2cir's "
                 + "cold-core lowering and must not reach CIR (every suspend declaration becomes a state machine, a "
                 + "cold entry and a Task bridge; one the stdlib self-build retains keeps only its physical stub body)");
+        if (which != IrSanityChecks.StyStampsOnly) CheckPInvokeDecl(owner, name, m);
         // Abstract / bodiless methods (interface members, abstract decls) emit no IL — nothing to check.
         if (m.TryGetProperty("abstract", out var ab) && ab.ValueKind == JsonValueKind.True) return;
         if (!m.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array) return;
@@ -200,6 +203,25 @@ public static class IrSanity
         decl.ValueKind == JsonValueKind.Object
         && decl.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object
         && mods.TryGetProperty("suspend", out var s) && s.ValueKind == JsonValueKind.True;
+
+    static void CheckPInvokeDecl(string owner, string name, JsonElement method)
+    {
+        if (!method.TryGetProperty("pinvoke", out var descriptor) || descriptor.ValueKind != JsonValueKind.Object)
+            return;
+        var malformed =
+            !method.TryGetProperty("extern", out var external) || external.ValueKind != JsonValueKind.True ||
+            !method.TryGetProperty("static", out var isStatic) || isStatic.ValueKind != JsonValueKind.True ||
+            method.TryGetProperty("typeParams", out var typeParameters) &&
+                (typeParameters.ValueKind != JsonValueKind.Array || typeParameters.GetArrayLength() != 0) ||
+            !method.TryGetProperty("body", out var body) || body.ValueKind != JsonValueKind.Array ||
+                body.GetArrayLength() != 0 ||
+            method.TryGetProperty("mods", out var mods) && mods.ValueKind == JsonValueKind.Object &&
+                mods.TryGetProperty("external", out var sourceExternal) && sourceExternal.ValueKind == JsonValueKind.True;
+        if (malformed)
+            throw new IrSanityException(PosPrefix(method) + owner + "." + name,
+                "a CIR 'pinvoke' descriptor requires extern:true, static:true, no type parameters, an empty body, " +
+                "and no surviving mods.external source fact");
+    }
 
     // The #112 Phase-2 `File.kt:line: ` decl-source prefix, or "" when the decl carries no `pos`. Optional (absent =
     // pre-#112 behavior); a synthetic decl with no source simply omits it.
