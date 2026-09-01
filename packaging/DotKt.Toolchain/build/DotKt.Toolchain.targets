@@ -151,10 +151,13 @@
     <_DotKtStdlibInput Include="$(DotKtStdlib)" Condition="!Exists('$(DotKtStdlib)/default/manifest') and Exists('$(DotKtStdlib)')" />
   </ItemGroup>
 
-  <!-- Materialize the non-file compile options into $(DotKtCompileOptionsManifest) BEFORE KotlinCompile's incremental check so
-       the manifest is a valid Input there (#50). The MPP flags are computed here (not in the compile body) so both the
-       manifest and the compile Exec see the same $(DotKtMppFlags). WriteOnlyWhenDifferent keeps the file's timestamp
-       stable when the options are unchanged (no spurious recompile) and flips it the instant any option changes. -->
+  <!-- Materialize the compile options AND the resolved source set into $(DotKtCompileOptionsManifest) BEFORE
+       KotlinCompile's incremental check so the manifest is a valid Input there (#50, #338). MSBuild's ordinary
+       @(KotlinCompile) Inputs notice an added or changed source, but a removed conditional source is no longer an
+       input at all; recording the full per-inner-build source set makes that deletion change the manifest without
+       invalidating any other TFM. The MPP flags are computed here (not in the compile body) so both the manifest and
+       the compile Exec see the same $(DotKtMppFlags). WriteOnlyWhenDifferent keeps the file's timestamp stable when
+       the options/source set are unchanged (no spurious recompile) and flips it when either changes. -->
   <Target Name="DotKtComputeCompileOptions"
           DependsOnTargets="DotKtInitializeIntermediatePaths"
           Condition="'@(KotlinCompile)' != ''">
@@ -168,14 +171,15 @@
       <DotKtMppFlags>-Xmulti-platform -Xexpect-actual-classes -Xcommon-sources=&quot;$(_DotKtEscapedCommonSourcePaths)&quot;</DotKtMppFlags>
     </PropertyGroup>
     <WriteLinesToFile File="$(DotKtCompileOptionsManifest)" Overwrite="true" WriteOnlyWhenDifferent="true"
-                      Lines="$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)')" />
+                      Lines="$(DotKtKotcOptions);$(DotKtMppFlags);@(DotKtCommon->'%(FullPath)');@(KotlinCompile->'%(FullPath)')" />
   </Target>
 
   <!-- Compile every .kt to BIR from the frontend stdlib plus the complete MSBuild-resolved reference-KLIB set.
        Incremental inputs (#50): besides the .kt sources, a recompile must also retrigger when the COMPILER changes
        ($(DotKtCompilerFingerprint) mtime = version proxy), the frontend KLIB changes ($(DotKtStdlib)), any reference KLIB or
        resolved reference DLL changes (@(_DotKtCompileReference)/
-       @(_DotKtRuntimeReference)), or a non-file compile OPTION changes ($(DotKtCompileOptionsManifest)). DotKtResolveReferenceSets
+       @(_DotKtRuntimeReference)), or the per-TFM source set / a non-file compile OPTION changes
+       ($(DotKtCompileOptionsManifest)). DotKtResolveReferenceSets
        is a direct dependency so the @(_DotKt*Reference) items exist when these Inputs are evaluated. -->
   <Target Name="KotlinCompile" BeforeTargets="CoreCompile"
           DependsOnTargets="DotKtGenerateReferenceKlibs;DotKtResolveReferenceSets;DotKtComputeCompileOptions"
