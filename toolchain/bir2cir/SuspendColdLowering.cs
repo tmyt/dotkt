@@ -3788,10 +3788,45 @@ static partial class SuspendColdLowering
             // SAME, else the cold entry falls through with no value on the stack (ilverify ReturnMissing / a runtime
             // InvalidProgramException — surfaced by a user-authored createCoroutineUnintercepted/startCoroutine driver
             // over a restricted-scope suspend member, e.g. cases/il-corestrict).
-            if (IsUnitTn(_resultType)
-                && !(cloned.Count > 0 && cloned[^1] is JsonObject last && Str(last["k"]) == "return"))
-                cloned.Add(Ret(NullConst(AnyTn)));
+            if (IsUnitTn(_resultType))
+            {
+                // The source declaration's Unit return is physically `object` on the cold entry. Materialize the
+                // established null Unit result on EVERY return edge, not only on fallthrough. A source-level
+                // `return` is deliberately value-less BIR because its semantic target returns Unit; cloning that
+                // node verbatim into this different physical signature used to emit a bare `ret`.
+                cloned = (JsonArray)MaterializeDirectUnitReturns(cloned);
+                if (!(cloned.Count > 0 && cloned[^1] is JsonObject last && Str(last["k"]) == "return"))
+                    cloned.Add(Ret(NullConst(AnyTn)));
+            }
             return ColdMethod(cloned);
+        }
+
+        static JsonNode MaterializeDirectUnitReturns(JsonNode node)
+        {
+            if (node is JsonObject obj)
+            {
+                var kind = Str(obj["k"]);
+                // A closure/lambda body owns its returns. Only captures and ordinary expressions belong to the
+                // enclosing cold entry, and none of those can contain an enclosing-frame return at this stage.
+                if (kind != null && OtherFrameBaseKinds.Contains(kind)) return obj.DeepClone();
+
+                var copy = new JsonObject();
+                foreach (var property in obj)
+                    copy[property.Key] = property.Value == null
+                        ? null
+                        : MaterializeDirectUnitReturns(property.Value);
+                if ((kind is "return" or "returnExpr") && copy["value"] == null)
+                    copy["value"] = NullConst(AnyTn);
+                return copy;
+            }
+            if (node is JsonArray array)
+            {
+                var copy = new JsonArray();
+                foreach (var item in array)
+                    copy.Add(item == null ? null : MaterializeDirectUnitReturns(item));
+                return copy;
+            }
+            return node?.DeepClone();
         }
 
         JsonObject ColdMethod(JsonArray body)

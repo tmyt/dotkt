@@ -9,6 +9,7 @@ import org.jetbrains.kotlin.ir.declarations.IrAnonymousInitializer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrConstructor
 import org.jetbrains.kotlin.ir.declarations.IrFile
+import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
@@ -30,6 +31,7 @@ import org.jetbrains.kotlin.ir.expressions.IrGetObjectValue
 import org.jetbrains.kotlin.ir.expressions.IrGetValue
 import org.jetbrains.kotlin.ir.expressions.IrInstanceInitializerCall
 import org.jetbrains.kotlin.ir.expressions.IrReturn
+import org.jetbrains.kotlin.ir.expressions.IrReturnableBlock
 import org.jetbrains.kotlin.ir.expressions.IrSetField
 import org.jetbrains.kotlin.ir.expressions.IrSetValue
 import org.jetbrains.kotlin.ir.expressions.IrStringConcatenation
@@ -463,6 +465,18 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 	// `return` used in expression position (`val x = if (c) a else return`; `x ?: return -1`). Like throwExpr,
 	// it transfers control so no value reaches the surrounding merge.
 	is IrReturn -> {
+		val target = node.returnTargetSymbol.owner
+		val retType = when (target) {
+			is IrConstructor -> null
+			is IrFunction -> target.returnType
+			is IrReturnableBlock -> target.type
+			else -> return invariantBroken(node,
+				"IrReturn target ${target::class.simpleName} has no declared result type")
+		}
+		// Unit is elided only for a Unit-returning TARGET. The value's own type is not enough: `return@lambda Unit`
+		// from an `Any?`-returning lambda is a real Unit value and must survive into BIR. Constructors are physically
+		// void even though Kotlin IR exposes their constructed class as `returnType`.
+		val targetOmitsValue = target is IrConstructor || retType!!.isUnit()
 		// A `return` targeting a kotc-SPLICED inline fn/lambda (target in inlineReturnSubst) is a lambda-LOCAL return,
 		// NOT a caller return: route it to the splice's result-local + end-label, wrapped as an expression-position
 		// control transfer via breakContinueExpr — the SAME routing the statement-position arm does
@@ -484,18 +498,18 @@ internal fun BirEmitter.exprInner(node: IrExpression): String = when (node) {
 				else """{"k":"exprStmt","expr":${expr(node.value)}},$goto"""
 			breakContinueExpr(xfer)
 		}
-		// A genuine NON-LOCAL return stays a raw returnExpr (bir2cir routes it at splice time). A Unit-typed return
-		// VALUE can still be a SIDE-EFFECTING call (`x ?: return unitFn()`): evaluate it, then transfer — a bare
+		// A genuine NON-LOCAL return stays a raw returnExpr (bir2cir routes it at splice time). For a Unit-returning
+		// TARGET, its value can still be a SIDE-EFFECTING call (`x ?: return unitFn()`): evaluate it, then transfer —
 		// a bodyless `{"k":"returnExpr"}` would silently drop the call. A plain Unit ref (IrGetObjectValue) has
 		// nothing to evaluate. Mirrors the statement-position arm's Unit-return handling.
-		else if (!node.value.type.isUnit()) {
-			val retType = (node.returnTargetSymbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.returnType
-			val v0 = if (retType != null) coerceValue(node.value, retType) else expr(node.value)
+		else if (!targetOmitsValue) {
+			val valueRetType = retType
+			val v0 = coerceValue(node.value, valueRetType)
 			// #6 non-null RETURN POSTCONDITION: expression-position returns need the same bind-check-throw as
 			// statement-position returns. Skip Nothing values (`return TODO()` already throws) and inline splices,
 			// which took the branch above.
 			val postMsg = postconditionReturns[node.returnTargetSymbol]
-			val v = if (postMsg != null && retType != null && !node.value.type.isNothing()) wrapReturnNonNull(v0, retType, postMsg) else v0
+			val v = if (postMsg != null && !node.value.type.isNothing()) wrapReturnNonNull(v0, valueRetType, postMsg) else v0
 			"""{"k":"returnExpr","value":$v}"""
 		}
 		else if (node.value is IrGetObjectValue) """{"k":"returnExpr"}"""

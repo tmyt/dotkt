@@ -29,10 +29,29 @@ class ConstructorLabeled {
     constructor(label: String) : this(label, 0)
 }
 
+class ConstructorEarlyReturn {
+    var value: String = "initial"
+
+    constructor(stop: Boolean) {
+        if (stop) return
+        value = "continued"
+    }
+
+    constructor(text: String?) {
+        val nonNull = text ?: return
+        value = nonNull
+    }
+}
+
 // ---- il-ctorref : `::Ctor` references + user-type-returning lambda through Func<…, UserType> ---------------------
 class ConstructorPointR(val x: Int, val y: Int) { fun show(): String = "($x,$y)" }
 fun constructorBuild(f: (Int, Int) -> ConstructorPointR): ConstructorPointR = f(3, 4)
 fun constructorMakeWith(f: (Int) -> ConstructorPointR): String = f(9).show()
+fun constructorReturnUnitAsAny(): Any = Unit
+fun constructorReturnUnitAsNullableAny(condition: Boolean): Any? {
+    if (condition) return Unit
+    return 1
+}
 
 class ConstructorTests {
     @TestAttribute
@@ -54,5 +73,20 @@ class ConstructorTests {
         assertEquals("(1,2)", mk(1, 2).show())          // (1,2)
         assertEquals("(3,4)", constructorBuild(::ConstructorPointR).show()) // (3,4)  (::Ctor as a higher-order arg)
         assertEquals("(9,9)", constructorMakeWith { n -> ConstructorPointR(n, n) }) // (9,9)  (lambda returning a user type)
+    }
+
+    @TestAttribute
+    fun secondaryConstructorReturnsAreVoid() {
+        assertEquals("initial", ConstructorEarlyReturn(true).value)
+        assertEquals("continued", ConstructorEarlyReturn(false).value)
+        assertEquals("initial", ConstructorEarlyReturn(null).value)
+        assertEquals("value", ConstructorEarlyReturn("value").value)
+    }
+
+    @TestAttribute
+    fun unitValuesSurviveNonUnitReturnTargets() {
+        assertEquals(Unit, constructorReturnUnitAsAny())
+        assertEquals(Unit, constructorReturnUnitAsNullableAny(true))
+        assertEquals(1, constructorReturnUnitAsNullableAny(false))
     }
 }

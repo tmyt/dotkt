@@ -5,6 +5,12 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ## Unreleased
 
+### Toolchain
+
+- **Kotlin `Unit` returns now preserve the CLR evaluation-stack contract (#636).** Return lowering follows the
+  declared return target instead of the returned expression's static type, retaining `Unit` as an object for
+  non-`Unit` declarations while emitting value-less returns for constructors and physical `void` coroutine frames.
+
 ## 0.9.12 (2026-09-02)
 
 ### Toolchain
