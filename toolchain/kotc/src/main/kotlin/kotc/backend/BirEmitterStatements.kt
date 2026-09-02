@@ -141,6 +141,10 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 		} else memberFieldVisibilityStamped(node.symbol.owner, rendered)
 	}
 	is IrReturn -> {
+		val retType = (node.returnTargetSymbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.returnType
+		// Unit is elided only for a Unit-returning TARGET. A Unit-typed value returned through Any? is a real
+		// kotlin.Unit instance, not a void return.
+		val targetOmitsValue = retType?.isUnit() ?: node.value.type.isUnit()
 		// A `return` inside a SPLICED inline body targeting the spliced fun/lambda must NOT emit a raw method
 		// return — the splice is a valueBlock INSIDE the caller (a void caller got an Int32 on the stack at ret:
 		// Duration.appendFractional splicing indexOfLast, ilverify ReturnVoid). Route to the splice's result
@@ -159,14 +163,13 @@ internal fun BirEmitter.stmt(node: org.jetbrains.kotlin.ir.IrElement): String = 
 			else if (node.value is IrGetObjectValue) goto
 			else """{"k":"exprStmt","expr":${expr(node.value)}},$goto"""
 		}
-		// A Unit-typed return VALUE can still be a side-effecting expression — e.g. an expression-body
+		// A return VALUE targeting Unit can still be a side-effecting expression — e.g. an expression-body
 		// `fun main() = winUiApp { … }` or `return doCleanup()`. It must be EVALUATED, then a bare return; emitting
 		// a bodyless `{"k":"return"}` would silently drop the call. A plain Unit reference
 		// (`return` / `return Unit`, an IrGetObjectValue) has nothing to evaluate.
 		// A value-type-nullable return value (`return n` where `n: Int?` is smart-cast, in a `: Int` function) must
 		// UNWRAP `Nullable<T>.Value` to match the return slot — the JVM `Integer.intValue()` coercion has no IR node (C1).
-		else if (!node.value.type.isUnit()) {
-			val retType = (node.returnTargetSymbol.owner as? org.jetbrains.kotlin.ir.declarations.IrFunction)?.returnType
+		else if (!targetOmitsValue) {
 			val v0 = if (retType != null) coerceValue(node.value, retType) else expr(node.value)
 			// #6 non-null RETURN POSTCONDITION: a genuine return targeting a registered public/protected fn wraps the
 			// value in a bind-check-throw (skip a Nothing value — `return TODO()` already throws). Inline splices took

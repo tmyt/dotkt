@@ -1177,6 +1177,7 @@ sealed class Pipeline
                 refs.PhysicalTypeNames, emittedLocalTypes));
             var lowered = BirTypeLowering.Lower(substituted, _options.RefBuild, refs.Aliases, isValueFqn, outputName,
                 refs.PhysicalTypeNames, emittedLocalTypes);
+            VoidReturnNormalization.Apply(lowered);
             // The erasure can collapse two Kotlin declarations onto ONE CLR signature, where only one of them can
             // ever be called and the other is unreachable. Checked HERE, on the lowered tree, because that is where
             // the physical signature is final: `T?` reaches `object` through this pass and `Any?` reaches it through

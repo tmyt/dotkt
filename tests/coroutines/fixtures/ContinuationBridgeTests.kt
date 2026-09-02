@@ -133,6 +133,22 @@ suspend fun unitContinuationGreet(): Unit {
     unitContinuationLog = "hello " + (x * 2)
 }
 
+// #636: every normal exit of the physical object-returning cold entry must materialize its null Unit result.
+// An explicit bare return used to reach a bare `ret`, and a Unit value returned from an Any?-returning intrinsic
+// block used to lose that value because kotc looked at the value type instead of the return target type.
+private interface UnitContinuationEmptyContract636 {
+    suspend fun collect(): Unit
+}
+private object UnitContinuationEmpty636 : UnitContinuationEmptyContract636 {
+    override suspend fun collect(): Unit { return }
+}
+suspend fun unitContinuationLabeledReturn(takeReturn: Boolean): Unit =
+    suspendCoroutineUninterceptedOrReturn done@ { _ ->
+        val marker: String? = if (takeReturn) null else "fallthrough"
+        marker ?: return@done Unit
+        COROUTINE_SUSPENDED
+    }
+
 suspend fun <T> unitContinuationList(value: T): List<T> = listOf(value)
 
 class ContinuationBridgeTests {
@@ -223,5 +239,7 @@ class ContinuationBridgeTests {
         unitContinuationLog = ""
         blockOn { unitContinuationGreet() }
         assertEquals("hello 42", unitContinuationLog)          // former golden: "hello 42" (then main printed "done")
+        blockOn { UnitContinuationEmpty636.collect() }
+        blockOn { unitContinuationLabeledReturn(true) }
     }
 }

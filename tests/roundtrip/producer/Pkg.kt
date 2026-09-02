@@ -23,3 +23,8 @@ fun ordinarySelfName(__self: Int, delta: Int): Int = __self + delta
 inline fun Int.receiverNameCollision(__self: Int, block: (Int) -> Int): Int = block(this) + __self
 inline fun <reified T> typeName(): String = T::class.simpleName ?: "?"   // reified inline -> generic method
 inline fun forEach3(a: Int, b: Int, c: Int, action: (Int) -> Unit) { action(a); action(b); action(c) }
+// #636: same public cross-module inline shape as atomicfu's Atomic*.loop.
+inline fun roundtripLoop636(action: (Int) -> Unit): Nothing {
+    var i = 0
+    while (true) action(i++)
+}

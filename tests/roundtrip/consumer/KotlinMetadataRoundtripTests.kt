@@ -82,6 +82,7 @@ import roundtrip.pkg.ordinarySelfName
 import roundtrip.pkg.receiverNameCollision
 import roundtrip.pkg.typeName
 import roundtrip.pkg.forEach3
+import roundtrip.pkg.roundtripLoop636
 import roundtrip.pkg.plus
 import roundtrip.pkg.manhattan
 import roundtrip.pkg.sumAll
@@ -625,6 +626,8 @@ class KotlinApiShapeRoundtripTests {
 }
 
 class PackageAndInlineRoundtripTests {
+    private var unitLoopTotal636 = 0
+
     @TestAttribute
     fun packagedNamespaces() {
         ClassicAssert.AreEqual(11, Vec(1, 2) dot Vec(3, 4))      // 11   geom.Vec, infix
@@ -643,10 +646,17 @@ class PackageAndInlineRoundtripTests {
         ClassicAssert.AreEqual(7, Vec(3, 4).manhattan)           // 7     extension property
         ClassicAssert.AreEqual("def", pkgTagged())               // def   default argument omitted
         ClassicAssert.AreEqual("none", orNone(null))             // none  nullable param (null passable)
+        unitLoopTotal636 = 0
+        unitExpressionLoop636(2)
+        ClassicAssert.AreEqual(1, unitLoopTotal636)
     }
     private fun firstEven(): Int {
         forEach3(1, 3, 4) { if (it % 2 == 0) return it }         // NON-LOCAL return through a CROSS-MODULE inline lambda
         return -1
+    }
+    private fun unitExpressionLoop636(stop: Int): Unit = roundtripLoop636 { i ->
+        if (i == stop) return
+        unitLoopTotal636 += i
     }
 
     // roundtrip-inline-member (#60): cross-module inline MEMBER + non-local return from the CALLER + a
