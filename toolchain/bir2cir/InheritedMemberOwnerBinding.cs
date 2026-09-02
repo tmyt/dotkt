@@ -110,12 +110,6 @@ static class InheritedMemberOwnerBinding
         // selected. Rebinding such a call from its receiver hierarchy would undo that decision (in particular, an
         // exact covariant-interface bridge would call its own interface slot and recurse).
         if (Bool(call["clrOwnerResolved"])) return;
-        // An explicit Kotlin `super` call already names the exact non-virtual declaration owner selected by the
-        // frontend.  Walking farther up the hierarchy is not inherited-member binding: it changes
-        // `C.super<B>.m()` into `A.m()` when both B and A declare the same slot, skipping B's implementation.
-        // Preserve that Kotlin semantic fact; bir2cir only needs hierarchy binding for ordinary receiver calls whose
-        // BIR owner is the receiver type rather than the member's declaring type.
-        if (Bool(call["super"])) return;
         var ownerSlot = kind switch
         {
             "clrInstance" or "clrPropGet" or "clrPropSet" or "clrEventAdd" or "clrEventRemove" => "type",
@@ -169,7 +163,7 @@ static class InheritedMemberOwnerBinding
         // visible cross-module when a Kotlin-final accessor implements an existential interface slot and is therefore
         // virtual in metadata. Consume that declaration fact here. With no BIR signature, require a unique
         // name/method-arity/parameter-count declaration; never guess among overloads.
-        if (paramCount >= 0
+        if (!Bool(call["super"]) && paramCount >= 0
             && (DeclaresVirtual(types.GetValueOrDefault(owner.Name), method, methodArity, sig, paramCount,
                     propertyName, propertyAccessor)
                 || (propertyAccessor != null
@@ -194,6 +188,37 @@ static class InheritedMemberOwnerBinding
             call["sig"] = ownDeclarationSig;
             return;
         }
+        // A Kotlin `super` call names its immediate super CLASS as the receiver owner, but that class need not
+        // redeclare the selected member. The CLR call operand must name the nearest CLASS MethodDef that actually
+        // implements it. In particular, an interface implemented by the immediate class can expose the same abstract
+        // slot; letting ilemit walk interfaces before the base class then turns a valid `super.p` into `call` on an
+        // abstract accessor. Resolve the class chain here, while Kotlin property identity and the complete local type
+        // graph are available. Never consider interfaces for this class-super lookup: they describe slot obligations,
+        // not the non-virtual implementation selected by `super`.
+        if (Bool(call["super"]) && !IsInterface(owner, types, refs))
+        {
+            foreach (var baseOwner in BaseClassChain(owner, types, refs).Skip(1))
+            {
+                var localSig = ExactDeclarationSignature(
+                    types.GetValueOrDefault(baseOwner.Name), method, methodArity, sig, baseOwner.Args,
+                    propertyName, propertyAccessor);
+                var referenced = propertyAccessor != null
+                    ? refs.DeclaresExactInstancePropertyAccessor(baseOwner.Name, propertyName, propertyAccessor,
+                        methodArity, sig, baseOwner.Args ?? Array.Empty<TypeNode>())
+                    : refs.DeclaresExactInstanceMember(baseOwner.Name, method, methodArity, sig);
+                if (localSig == null && !referenced) continue;
+                call["ownerType"] = TypeJson.Write(baseOwner);
+                if (localSig != null) call["sig"] = localSig;
+                return;
+            }
+            // A well-formed frontend call always resolves above. Leave an incomplete external graph untouched so the
+            // later exact foreign-member resolver can diagnose it from its compile references; do not fall through to
+            // the ordinary interface-inclusive lookup and silently change class-super semantics.
+            return;
+        }
+        // `super<I>.m()` names an interface default implementation directly. Its owner is already the selected
+        // interface declaration; inherited class-member binding must not reinterpret it through another branch.
+        if (Bool(call["super"])) return;
         // A local interface can expose an inherited external default implementation as a fake override. That fake
         // method is not emitted and therefore cannot be a bound-delegate target, but its inheritedImplementation
         // carrier is the frontend's exact declaration fact. Retarget the callable reference to that declaration now;
@@ -311,6 +336,32 @@ static class InheritedMemberOwnerBinding
                 queue.Enqueue(new Reachable((TypeNode.Fqn)SubstOwnerTvs(baseType, args), current.Depth + 1));
             foreach (var iface in interfaces)
                 queue.Enqueue(new Reachable((TypeNode.Fqn)SubstOwnerTvs(iface, args), current.Depth + 1));
+        }
+    }
+
+    // The constructed base-CLASS chain only, including start. Each edge is expressed in its parent's type-parameter
+    // frame, so close it through the current construction before continuing (`Middle<T> : Base<List<T>>`).
+    static IEnumerable<TypeNode.Fqn> BaseClassChain(TypeNode.Fqn start,
+        Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs)
+    {
+        var current = start;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (current != null && seen.Add(SupertypeGraph.TypeKey(current)))
+        {
+            yield return current;
+            TypeNode.Fqn baseType;
+            int typeParamCount;
+            if (types.TryGetValue(current.Name, out var def))
+            {
+                typeParamCount = def.TypeParamCount;
+                baseType = def.Base;
+            }
+            else if (refs.TryReferenceTypeShape(current, out typeParamCount, out _, out baseType, out _)) { }
+            else yield break;
+            if (baseType == null) yield break;
+            var args = EffectiveArgs(current, typeParamCount);
+            if (args == null) yield break;
+            current = (TypeNode.Fqn)SubstOwnerTvs(baseType, args);
         }
     }
 

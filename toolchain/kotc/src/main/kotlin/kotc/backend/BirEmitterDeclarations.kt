@@ -1955,7 +1955,8 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	// the entry label the jumps target. The frontend already validated the tail positions; we reuse its own
 	// collectTailRecursionCalls. Restored after the body so a nested/sibling fn is unaffected.
 	val savedTailrec = tailrecCtx
-	val tailrecStart: Int? = if (fn.isTailrec) {
+	val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
+	val tailrecStart: Int? = if (!isAbstract && fn.isTailrec) {
 		val tc = collectTailRecursionCalls(fn, { false }, { false }).ir
 		if (tc.isNotEmpty()) cfgFresh().also { tailrecCtx = BirEmitter.TailrecCtx(tc, it, fn) } else null
 	} else null
@@ -1964,7 +1965,7 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	val savedDataClassEqualsFieldRead = activeDataClassEqualsFieldRead
 	activeDataClassEqualsFieldRead = fn.origin == IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER &&
 		(fn.parent as? IrClass)?.isData == true && fn.name.asString() == "equals"
-	val bodyStmts = try {
+	val bodyStmts = if (isAbstract) "" else try {
 		withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 	} finally {
 		activeDataClassEqualsFieldRead = savedDataClassEqualsFieldRead
@@ -1972,7 +1973,10 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	tailrecCtx = savedTailrec
 	val coreBody = if (tailrecStart != null) """{"k":"label","id":$tailrecStart}${if (bodyStmts.isNotEmpty()) ",$bodyStmts" else ""}""" else bodyStmts
 	// #6 non-null parameter PRECONDITIONS run at entry, BEFORE the tailrec label so a self-tail-jump does not re-check.
-	val body = (preconditionChecks(fn) + listOfNotNull(coreBody.takeIf { it.isNotEmpty() })).joinToString(",")
+	// An abstract declaration has no entry at which they can run. Keep its BIR body empty, symmetrically with
+	// accessorMethod, rather than asking ilemit to discard executable statements from an abstract CLR slot.
+	val body = if (isAbstract) "" else
+		(preconditionChecks(fn) + listOfNotNull(coreBody.takeIf { it.isNotEmpty() })).joinToString(",")
 	if (extRecv != null) selfSubst.remove(extRecv)
 	val selfParam = extRecv?.let { """{"name":${str(extRecvName!!)},"type":${birType(it.type).toJson()},"mods":{"extensionReceiver":true}}""" }
 	val ps = (listOfNotNull(selfParam) + paramsJsonList(fn.parameters, ownerFn = fn)).joinToString(",")
@@ -1987,7 +1991,6 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	// Kotlin visibility; bir2cir authors caller-side UnsafeAccessors for valid file-private edges split across TypeDefs.
 	val declaredVis = if (isAnySlot) "public" else visOf(fn)
 	val vis = declaredVis
-	val isAbstract = fn.modality == Modality.ABSTRACT && fn.body == null
 	// Kotlin modifiers with no .NET analog -> stamped as [KotlinFunction] by ilemit so a consuming Kotlin module
 	// can restore them (infix/operator call resolution). `final/open/abstract` ride .NET virtual-ness already.
 	// Structured modifiers (spec §2.1): `mods.inline` = ilemit stamps [KotlinInlineBody] with this body (this method
