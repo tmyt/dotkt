@@ -99,14 +99,15 @@ class RuntimeTypesDerived : RuntimeTypesBase() {
 
 // An immediate super class can inherit the concrete implementation while also stating an interface carrying the
 // same abstract slot. `super` must call the concrete base-class MethodDef, never the interface obligation.
-interface RuntimeTypesSuperMethodSlot { fun inheritedMethod(): String }
+interface RuntimeTypesSuperMethodSlot { fun inheritedMethod(value: String): String }
 interface RuntimeTypesSuperMethodFace : RuntimeTypesSuperMethodSlot
 open class RuntimeTypesSuperMethodBase : RuntimeTypesSuperMethodSlot {
-    override fun inheritedMethod(): String = "method-base"
+    override fun inheritedMethod(value: String): String = "method-base:$value"
+    fun inheritedMethod(value: Int): String = "wrong-overload:$value"
 }
 open class RuntimeTypesSuperMethodMiddle : RuntimeTypesSuperMethodBase(), RuntimeTypesSuperMethodFace
 class RuntimeTypesSuperMethodDerived : RuntimeTypesSuperMethodMiddle() {
-    override fun inheritedMethod(): String = "method-derived>" + super.inheritedMethod()
+    override fun inheritedMethod(value: String): String = "method-derived>" + super.inheritedMethod(value)
 }
 
 interface RuntimeTypesSuperPropertySlot { val inheritedProperty: String }
@@ -212,7 +213,7 @@ class RuntimeTypeAndSuperDispatchTests {
         assertEquals("ABC", RuntimeTypesC().name())               // ABC
         assertEquals("dog>animal", RuntimeTypesDog().toString())  // dog>animal
         assertEquals("impl+hi-default", RuntimeTypesImpl().hi())  // impl+hi-default
-        assertEquals("method-derived>method-base", RuntimeTypesSuperMethodDerived().inheritedMethod())
+        assertEquals("method-derived>method-base:call", RuntimeTypesSuperMethodDerived().inheritedMethod("call"))
         assertEquals("property-derived>property-base", RuntimeTypesSuperPropertyDerived().inheritedProperty)
         val b: RuntimeTypesBase = RuntimeTypesDerived()
         assertEquals("derived+base", b.greet())         // derived+base (virtual dispatch non-regression)

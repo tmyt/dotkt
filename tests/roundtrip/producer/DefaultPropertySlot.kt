@@ -46,3 +46,29 @@ interface ReferencedNullableOverloadSlot<T> {
     fun choose(value: T?, marker: String): Int
     fun choose(value: T?, marker: Int): Int
 }
+
+// A downstream `super` call must name the immediate referenced class MethodDef, rather than walking past it to an
+// older override. This is deliberately cross-module: local declarations take a separate exact-owner path.
+open class ReferencedSuperAncestor {
+    open fun immediate(value: String): String = "ancestor:$value"
+}
+
+open class ReferencedSuperImmediate : ReferencedSuperAncestor() {
+    override fun immediate(value: String): String = "immediate:$value"
+}
+
+// The local middle class in the consumer inherits this concrete generic implementation while restating the same
+// abstract interface family. Resolving its `super` call requires substituting Base<String>'s owner T before matching
+// the referenced MethodDef; the Int overload makes name-only lookup observably wrong.
+interface ReferencedGenericSuperSlot<T> {
+    fun inherited(value: T): String
+    val inheritedProperty: T
+}
+
+interface ReferencedGenericSuperFace<T> : ReferencedGenericSuperSlot<T>
+
+open class ReferencedGenericSuperBase<T>(private val stored: T) : ReferencedGenericSuperSlot<T> {
+    override fun inherited(value: T): String = "generic-base:$value"
+    fun inherited(value: Int): String = "wrong-overload:$value"
+    override val inheritedProperty: T get() = stored
+}

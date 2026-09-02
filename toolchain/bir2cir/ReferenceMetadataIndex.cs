@@ -2943,8 +2943,8 @@ sealed partial class ReferenceMetadataIndex
     // shape only. Identical duplicate declarations collapse to one structural shape. No first-pick is performed.
     public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity, bool isStatic,
         IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature) =>
-        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, isStatic, callSignature, out declarationSignature,
-            out _, out _);
+        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, isStatic, callSignature, null,
+            out declarationSignature, out _, out _);
 
     /// <summary>
     /// As above, and also hands back the DECLARATION it selected (#370). The parameter vector was the only
@@ -2952,7 +2952,7 @@ sealed partial class ReferenceMetadataIndex
     /// description has to be turned back into a member by whoever reads it.
     /// </summary>
     public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity, bool isStatic,
-        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature,
+        IReadOnlyList<TypeNode> callSignature, TypeNode[] ownerTypeArguments, out TypeNode[] declarationSignature,
         out MethodInfo declaration, out Type declaringOwner)
     {
         declarationSignature = null;
@@ -3030,10 +3030,15 @@ sealed partial class ReferenceMetadataIndex
         if (candidates.Count == 0)
             return false;
 
-        var exact = candidates.Where(c => c.ps.SequenceEqual(callSignature)).ToList();
+        TypeNode[] ConstructedParameters((MethodInfo method, TypeNode[] ps) candidate) =>
+            ownerTypeArguments == null
+                ? candidate.ps
+                : candidate.ps.Select(type => SupertypeGraph.SubstOwnerTvs(type, ownerTypeArguments)).ToArray();
+        var exact = candidates.Where(c => ConstructedParameters(c).SequenceEqual(callSignature)).ToList();
         var compatible = exact.Count > 0
             ? exact
-            : candidates.Where(c => c.ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
+            : candidates.Where(c => ConstructedParameters(c)
+                .Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
                 .ToList();
         var source = compatible.Count > 0 ? compatible : candidates;
         // Type.GetMethods includes inherited declarations.  When this exact owner declares a matching member, normal
@@ -4063,13 +4068,14 @@ sealed partial class ReferenceMetadataIndex
     // structural (including type-vs-method Tv scope/index), not a name/arity guess, so overloads
     // remain distinct.  Multiple identical candidates are treated as ambiguous and refused.
     public bool DeclaresExactInstanceMember(string ownerToken, string memberName, int methodArity,
-        IReadOnlyList<TypeNode> signature)
+        IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments)
     {
         if (ownerToken == null || memberName == null || IsAliasedOwner(ownerToken)
             || !TryMembersByBirOwner(ownerToken, out var list)) return false;
         return list.Count(m => !m.IsStatic && m.Name == memberName && m.MethodArity == methodArity
             && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
-            && ps.Select((p, i) => p == signature[i]).All(x => x)) == 1;
+            && ps.Select((p, i) => p == signature[i]
+                || SupertypeGraph.SubstOwnerTvs(p, ownerTypeArguments) == signature[i]).All(x => x)) == 1;
     }
 
     // Property twin of DeclaresExactInstanceMember. Source property identity and accessor role select the

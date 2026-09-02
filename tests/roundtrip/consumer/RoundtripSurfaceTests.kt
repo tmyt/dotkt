@@ -64,6 +64,9 @@ import roundtrip.covariantdefaultpropertyslot.ReferencedCovariantDefaultProperty
 import roundtrip.defaultpropertyslot.ReferencedEmptyDefaultSlot
 import roundtrip.defaultpropertyslot.ReferencedRenamedDefaultMethodSlot
 import roundtrip.defaultpropertyslot.ReferencedNullableOverloadSlot
+import roundtrip.defaultpropertyslot.ReferencedSuperImmediate
+import roundtrip.defaultpropertyslot.ReferencedGenericSuperBase
+import roundtrip.defaultpropertyslot.ReferencedGenericSuperFace
 import roundtrip.receiverfunctions.Panel
 import roundtrip.receiverfunctions.PanelBuilder
 import roundtrip.receiverfunctions.applyPanel
@@ -138,7 +141,27 @@ private class ReferencedNullableOverloadImplementation : ReferencedNullableOverl
     override fun choose(value: Int?, marker: Int): Int = (value ?: 0) + marker
 }
 
+private class ReferencedImmediateSuperDerived : ReferencedSuperImmediate() {
+    override fun immediate(value: String): String = "derived>" + super.immediate(value)
+}
+
+private open class ReferencedGenericSuperMiddle :
+    ReferencedGenericSuperBase<String>("property-base"), ReferencedGenericSuperFace<String>
+
+private class ReferencedGenericSuperDerived : ReferencedGenericSuperMiddle() {
+    override fun inherited(value: String): String = "derived>" + super.inherited(value)
+    override val inheritedProperty: String get() = "derived>" + super.inheritedProperty
+}
+
 class RoundtripSurfaceTests {
+    @TestAttribute
+    fun referencedClassSuperCallsBindTheExactConstructedDeclaration() {
+        ClassicAssert.AreEqual("derived>immediate:call", ReferencedImmediateSuperDerived().immediate("call"))
+        val generic = ReferencedGenericSuperDerived()
+        ClassicAssert.AreEqual("derived>generic-base:call", generic.inherited("call"))
+        ClassicAssert.AreEqual("derived>property-base", generic.inheritedProperty)
+    }
+
     @TestAttribute
     fun referencedDefaultPropertyKeepsItsExternalSlotBesideOrdinaryFunctions() {
         val implementation = ReferencedDefaultPropertyWithFunctionCollision()

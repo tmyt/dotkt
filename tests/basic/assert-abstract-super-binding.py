@@ -44,30 +44,53 @@ for method in abstract_methods:
         )
 
 expected = {
-    "inheritedMethod": "RuntimeTypesSuperMethodBase",
-    "prop_get<inheritedProperty>": "RuntimeTypesSuperPropertyBase",
+    "inheritedMethod": ("RuntimeTypesSuperMethodMiddle", "RuntimeTypesSuperMethodBase"),
+    "inheritedProperty": ("RuntimeTypesSuperPropertyMiddle", None),
 }
 derived_names = {
     "RuntimeTypesSuperMethodDerived",
     "RuntimeTypesSuperPropertyDerived",
 }
-calls = []
+bir_calls = []
 for name in derived_names:
-    declaration = type_decl(cir, name)
-    calls.extend(
-        node
-        for node in objects(declaration.get("methods", []))
+    declaration = type_decl(bir, name)
+    bir_calls.extend(
+        node for node in objects(declaration.get("methods", []))
         if node.get("k") == "callInstance" and node.get("super") is True
     )
 
-for method, owner in expected.items():
-    matches = [call for call in calls if call.get("method") == method]
+for method, (owner, _) in expected.items():
+    matches = [call for call in bir_calls if call.get("method") == method]
     if len(matches) != 1:
-        raise SystemExit(f"found {len(matches)} super calls for {method}, expected 1: {calls!r}")
+        raise SystemExit(f"found {len(matches)} BIR super calls for {method}, expected 1: {bir_calls!r}")
     actual_owner = matches[0].get("ownerType", {}).get("name")
     if actual_owner != owner or matches[0].get("virtual") is not False:
         raise SystemExit(
-            f"{method} must be a non-virtual call to {owner}, got {matches[0]!r}"
+            f"BIR {method} must preserve the immediate Kotlin owner {owner}, got {matches[0]!r}"
         )
+
+method_bir = next(call for call in bir_calls if call.get("method") == "inheritedMethod")
+if method_bir.get("sig") != [{"t": "fqn", "name": "kotlin.String"}]:
+    raise SystemExit(f"BIR method overload signature is not exact: {method_bir!r}")
+
+cir_calls = []
+for name in derived_names:
+    declaration = type_decl(cir, name)
+    cir_calls.extend(
+        node for node in objects(declaration.get("methods", []))
+        if node.get("k") == "callInstance" and node.get("super") is True
+    )
+
+cir_expected = {
+    "inheritedMethod": "RuntimeTypesSuperMethodBase",
+    "prop_get<inheritedProperty>": "RuntimeTypesSuperPropertyBase",
+}
+for method, owner in cir_expected.items():
+    matches = [call for call in cir_calls if call.get("method") == method]
+    if len(matches) != 1:
+        raise SystemExit(f"found {len(matches)} CIR super calls for {method}, expected 1: {cir_calls!r}")
+    actual_owner = matches[0].get("ownerType", {}).get("name")
+    if actual_owner != owner or matches[0].get("virtual") is not False:
+        raise SystemExit(f"CIR {method} must be a non-virtual call to {owner}, got {matches[0]!r}")
 
 print("abstract slots are bodyless and class-super calls name concrete base declarations")
