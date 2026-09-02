@@ -2943,8 +2943,8 @@ sealed partial class ReferenceMetadataIndex
     // shape only. Identical duplicate declarations collapse to one structural shape. No first-pick is performed.
     public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity, bool isStatic,
         IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature) =>
-        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, isStatic, callSignature, out declarationSignature,
-            out _, out _);
+        TryResolveStaticMemberSignature(ownerFqn, name, methodArity, isStatic, callSignature, null,
+            out declarationSignature, out _, out _);
 
     /// <summary>
     /// As above, and also hands back the DECLARATION it selected (#370). The parameter vector was the only
@@ -2952,7 +2952,7 @@ sealed partial class ReferenceMetadataIndex
     /// description has to be turned back into a member by whoever reads it.
     /// </summary>
     public bool TryResolveStaticMemberSignature(string ownerFqn, string name, int methodArity, bool isStatic,
-        IReadOnlyList<TypeNode> callSignature, out TypeNode[] declarationSignature,
+        IReadOnlyList<TypeNode> callSignature, TypeNode[] ownerTypeArguments, out TypeNode[] declarationSignature,
         out MethodInfo declaration, out Type declaringOwner)
     {
         declarationSignature = null;
@@ -2961,7 +2961,9 @@ sealed partial class ReferenceMetadataIndex
         if (ownerFqn == null || name == null || callSignature == null)
             return false;
         var bareOwner = BareOwnerFqn(ownerFqn);
-        var ownerArity = _ownerArity.TryGetValue(bareOwner, out var oa) ? oa : 0;
+        var ownerArity = ownerTypeArguments is { Length: > 0 }
+            ? ownerTypeArguments.Length
+            : _ownerArity.TryGetValue(bareOwner, out var oa) ? oa : 0;
         // A hoisted alias helper exists only in the assembly that ships it — the reference twin carries the alias
         // implementation this pass replaced, never the static it was hoisted into — so the reference surface has no
         // name for it and never will. Read the declaration from the shipped twin, the assembly the call links against.
@@ -3030,11 +3032,25 @@ sealed partial class ReferenceMetadataIndex
         if (candidates.Count == 0)
             return false;
 
+        TypeNode[] ConstructedParameters((MethodInfo method, TypeNode[] ps) candidate) =>
+            ownerTypeArguments == null
+                ? candidate.ps
+                : candidate.ps.Select(type => SupertypeGraph.SubstOwnerTvs(type, ownerTypeArguments)).ToArray();
+        // Depending on which frontend/reference path produced the call, its vector can remain in the declaration
+        // frame (`type#0`) or already be closed by the constructed owner (`String`). Both exactly describe the same
+        // MethodDef. Preserve declaration-frame lookup when it already selects a candidate; only close the owner
+        // frame when that lookup answers for nothing. Combining both result sets can make different overloads look
+        // equally applicable even though the incoming vector unambiguously uses the declaration frame.
         var exact = candidates.Where(c => c.ps.SequenceEqual(callSignature)).ToList();
-        var compatible = exact.Count > 0
-            ? exact
-            : candidates.Where(c => c.ps.Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x))
-                .ToList();
+        if (exact.Count == 0)
+            exact = candidates.Where(c => ConstructedParameters(c).SequenceEqual(callSignature)).ToList();
+        var compatible = exact;
+        if (compatible.Count == 0)
+            compatible = candidates.Where(c => c.ps
+                .Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x)).ToList();
+        if (compatible.Count == 0)
+            compatible = candidates.Where(c => ConstructedParameters(c)
+                .Select((p, i) => DeclarationDescribesCall(p, callSignature[i])).All(x => x)).ToList();
         var source = compatible.Count > 0 ? compatible : candidates;
         // Type.GetMethods includes inherited declarations.  When this exact owner declares a matching member, normal
         // CLR member lookup selects that declaration (including a `new` forwarding slot) rather than treating the
@@ -4063,13 +4079,19 @@ sealed partial class ReferenceMetadataIndex
     // structural (including type-vs-method Tv scope/index), not a name/arity guess, so overloads
     // remain distinct.  Multiple identical candidates are treated as ambiguous and refused.
     public bool DeclaresExactInstanceMember(string ownerToken, string memberName, int methodArity,
-        IReadOnlyList<TypeNode> signature)
+        IReadOnlyList<TypeNode> signature, TypeNode[] ownerTypeArguments)
     {
         if (ownerToken == null || memberName == null || IsAliasedOwner(ownerToken)
             || !TryMembersByBirOwner(ownerToken, out var list)) return false;
-        return list.Count(m => !m.IsStatic && m.Name == memberName && m.MethodArity == methodArity
-            && m.ParamTypeNodes is { } ps && ps.Length == signature.Count
-            && ps.Select((p, i) => p == signature[i]).All(x => x)) == 1;
+        var candidates = list.Where(m => !m.IsStatic && m.Name == memberName && m.MethodArity == methodArity
+            && m.ParamTypeNodes is { Length: var length } && length == signature.Count).ToList();
+        var matches = candidates.Where(m => m.ParamTypeNodes
+            .Select((p, i) => p == signature[i]).All(x => x)).ToList();
+        if (matches.Count == 0)
+            matches = candidates.Where(m => m.ParamTypeNodes
+                .Select((p, i) => SupertypeGraph.SubstOwnerTvs(p, ownerTypeArguments) == signature[i]).All(x => x))
+                .ToList();
+        return matches.Count == 1;
     }
 
     // Property twin of DeclaresExactInstanceMember. Source property identity and accessor role select the

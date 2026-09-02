@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited class `super` calls now bind the concrete base MethodDef (#637).** bir2cir follows only the constructed
+  base-class chain when an immediate superclass inherits a method or property implementation alongside an abstract
+  interface slot, preventing ilemit from calling that abstract slot. Abstract Kotlin methods also remain bodyless in
+  BIR instead of carrying parameter-check statements that an abstract CLR declaration cannot execute.
+
 - **Kotlin `Unit` returns now preserve the CLR evaluation-stack contract (#636).** Return lowering follows the
   declared return target instead of the returned expression's static type, retaining `Unit` as an object for
   non-`Unit` declarations while emitting value-less returns for constructors and physical `void` coroutine frames.

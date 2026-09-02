@@ -96,6 +96,37 @@ class RuntimeTypesDerived : RuntimeTypesBase() {
     override val tag: String get() = "derived[" + super.tag + "]"
     override fun describe() = "Derived<" + super.describe() + ">"
 }
+
+// An immediate super class can inherit the concrete implementation while also stating an interface carrying the
+// same abstract slot. `super` must call the concrete base-class MethodDef, never the interface obligation.
+interface RuntimeTypesSuperMethodSlot { fun inheritedMethod(value: String): String }
+interface RuntimeTypesSuperMethodFace : RuntimeTypesSuperMethodSlot
+open class RuntimeTypesSuperMethodBase : RuntimeTypesSuperMethodSlot {
+    override fun inheritedMethod(value: String): String = "method-base:$value"
+    fun inheritedMethod(value: Int): String = "wrong-overload:$value"
+}
+open class RuntimeTypesSuperMethodMiddle : RuntimeTypesSuperMethodBase(), RuntimeTypesSuperMethodFace
+class RuntimeTypesSuperMethodDerived : RuntimeTypesSuperMethodMiddle() {
+    override fun inheritedMethod(value: String): String = "method-derived>" + super.inheritedMethod(value)
+}
+
+interface RuntimeTypesSuperPropertySlot { val inheritedProperty: String }
+interface RuntimeTypesSuperPropertyFace : RuntimeTypesSuperPropertySlot
+open class RuntimeTypesSuperPropertyBase : RuntimeTypesSuperPropertySlot {
+    override val inheritedProperty: String get() = "property-base"
+}
+open class RuntimeTypesSuperPropertyMiddle : RuntimeTypesSuperPropertyBase(), RuntimeTypesSuperPropertyFace
+class RuntimeTypesSuperPropertyDerived : RuntimeTypesSuperPropertyMiddle() {
+    override val inheritedProperty: String get() = "property-derived>" + super.inheritedProperty
+}
+
+// Non-null parameter checks belong to executable entries. Abstract methods/accessors declare slots only and must
+// stay bodyless in BIR/CIR; the artifact assertion paired with this fixture pins both declaration families.
+abstract class RuntimeTypesAbstractBodylessContract {
+    abstract fun transform(value: String): String
+    abstract var text: String
+}
+
 open class RuntimeTypesA { open fun name() = "A" }
 open class RuntimeTypesB : RuntimeTypesA() { override fun name() = super.name() + "B" }
 class RuntimeTypesC : RuntimeTypesB() { override fun name() = super.name() + "C" }
@@ -182,6 +213,8 @@ class RuntimeTypeAndSuperDispatchTests {
         assertEquals("ABC", RuntimeTypesC().name())               // ABC
         assertEquals("dog>animal", RuntimeTypesDog().toString())  // dog>animal
         assertEquals("impl+hi-default", RuntimeTypesImpl().hi())  // impl+hi-default
+        assertEquals("method-derived>method-base:call", RuntimeTypesSuperMethodDerived().inheritedMethod("call"))
+        assertEquals("property-derived>property-base", RuntimeTypesSuperPropertyDerived().inheritedProperty)
         val b: RuntimeTypesBase = RuntimeTypesDerived()
         assertEquals("derived+base", b.greet())         // derived+base (virtual dispatch non-regression)
         assertEquals(11, b.twice(5))                    // 11

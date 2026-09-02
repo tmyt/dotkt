@@ -579,7 +579,10 @@ static partial class ClrMemberResolution
             KotlinPropertyAccessors.PreserveCallIdentity(node, sourcePropertyName, accessorKind);
             node.Remove("prop");
             node["method"] = physicalAccessor;
-            if (accessorVirtual) node["virtual"] = true;
+            // A virtual declaration remains a non-virtual call operand when Kotlin selected `super`. The declaration
+            // flag describes its slot; it must not overwrite the dispatch decision already carried by the call.
+            if (accessorVirtual && (node["super"] as JsonValue)?.GetValue<bool>() != true)
+                node["virtual"] = true;
             name = physicalAccessor;
             propertyAccessorResolved = true;
         }
@@ -607,7 +610,8 @@ static partial class ClrMemberResolution
         if (propertyAccessorResolved)
             node.Remove(DeclarationIdentityBinding.Key);
         if (!_refs.TryResolveStaticMemberSignature(
-                ownerFqn.Name, name, methodArity, isStatic, callSig, out var declarationSig,
+                ownerFqn.Name, name, methodArity, isStatic, callSig,
+                ownerFqn.Args ?? Array.Empty<TypeNode>(), out var declarationSig,
                 out var declaration, out var declaringOwner))
             return;
         node["sig"] = new JsonArray(declarationSig.Select(TypeJson.Write).ToArray());

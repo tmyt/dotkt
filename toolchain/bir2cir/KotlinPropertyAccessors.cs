@@ -373,7 +373,11 @@ static class KotlinPropertyAccessors
                         physicalName = referencedName;
                         // An earlier hierarchy pass may already have proved virtual dispatch through a referenced
                         // ancestor. A direct lookup can add that fact, but must not erase it.
-                        if (referencedVirtual) obj["virtual"] = true;
+                        // Virtual is a declaration fact, but Kotlin `super` has already selected non-virtual
+                        // dispatch. Allocating the referenced accessor name must not turn that call back into a
+                        // recursive callvirt on the current override.
+                        if (referencedVirtual && (obj["super"] as JsonValue)?.GetValue<bool>() != true)
+                            obj["virtual"] = true;
                     }
                 }
                 obj["method"] = physicalName;

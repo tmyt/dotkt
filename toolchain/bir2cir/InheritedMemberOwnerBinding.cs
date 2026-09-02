@@ -44,7 +44,7 @@ static class InheritedMemberOwnerBinding
     {
         var rootList = roots.ToList();
         var types = CollectTypes(rootList);
-        foreach (var root in rootList) Walk(root, types, refs);
+        foreach (var root in rootList) Walk(root, types, refs, null);
     }
 
     static Dictionary<string, TypeDef> CollectTypes(IEnumerable<JsonNode> roots)
@@ -76,19 +76,32 @@ static class InheritedMemberOwnerBinding
         }
     }
 
-    static void Walk(JsonNode node, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs)
+    static void Walk(JsonNode node, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs,
+        TypeNode.Fqn enclosingOwner)
     {
         switch (node)
         {
             case JsonObject obj:
+                if (Str(obj["name"]) is string typeName
+                    && obj["methods"] is JsonArray methods
+                    && types.TryGetValue(typeName, out var typeDef)
+                    && ReferenceEquals(typeDef.Methods, methods))
+                {
+                    var ownerArgs = Enumerable.Range(0, typeDef.TypeParamCount)
+                        .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray();
+                    enclosingOwner = new TypeNode.Fqn(typeName,
+                        ownerArgs.Length == 0 ? null : ownerArgs);
+                }
                 var ownerBefore = DeclaringOwner(obj)?.DeepClone();
-                Bind(obj, types, refs);
+                Bind(obj, types, refs, enclosingOwner);
                 if (!JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
                     ConstructedMemberReturnSubstitution.ApplyCall(obj);
-                foreach (var kv in obj) if (kv.Value != null) Walk(kv.Value, types, refs);
+                foreach (var kv in obj)
+                    if (kv.Value != null) Walk(kv.Value, types, refs, enclosingOwner);
                 break;
             case JsonArray arr:
-                foreach (var item in arr) if (item != null) Walk(item, types, refs);
+                foreach (var item in arr)
+                    if (item != null) Walk(item, types, refs, enclosingOwner);
                 break;
         }
     }
@@ -101,7 +114,8 @@ static class InheritedMemberOwnerBinding
         _ => null,
     };
 
-    static void Bind(JsonObject call, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs)
+    static void Bind(JsonObject call, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs,
+        TypeNode.Fqn enclosingOwner)
     {
         var kind = Str(call["k"]);
         if (kind is not ("callInstance" or "newBoundDelegate" or "newBoundClrDelegate"
@@ -110,12 +124,6 @@ static class InheritedMemberOwnerBinding
         // selected. Rebinding such a call from its receiver hierarchy would undo that decision (in particular, an
         // exact covariant-interface bridge would call its own interface slot and recurse).
         if (Bool(call["clrOwnerResolved"])) return;
-        // An explicit Kotlin `super` call already names the exact non-virtual declaration owner selected by the
-        // frontend.  Walking farther up the hierarchy is not inherited-member binding: it changes
-        // `C.super<B>.m()` into `A.m()` when both B and A declare the same slot, skipping B's implementation.
-        // Preserve that Kotlin semantic fact; bir2cir only needs hierarchy binding for ordinary receiver calls whose
-        // BIR owner is the receiver type rather than the member's declaring type.
-        if (Bool(call["super"])) return;
         var ownerSlot = kind switch
         {
             "clrInstance" or "clrPropGet" or "clrPropSet" or "clrEventAdd" or "clrEventRemove" => "type",
@@ -129,11 +137,20 @@ static class InheritedMemberOwnerBinding
         // lexical frame.  Project the named declaration through the receiver's exact static hierarchy here, while
         // both `sty` and the local declarations are still available.  A receiver may reach the same generic owner
         // through more than one construction; only a unique constructed spec is authoritative, so ambiguity stays
-        // unresolved instead of being guessed from arguments or expression values.
-        if (TypeJson.Read(call["recv"]?["sty"]) is TypeNode.Fqn receiver
-            && (receiver.Name != owner.Name || owner.Args == null && receiver.Args != null))
+        // unresolved instead of being guessed from arguments or expression values. This applies to `super` too:
+        // its immediate Kotlin superclass is preserved, but its owner type variables must be constructed before the
+        // class-only lookup below can identify the exact CLR MethodDef. Interface-qualified `super<I>` retains that
+        // projected interface owner and is returned unchanged by the dedicated guard below.
+        var projectionRoot = TypeJson.Read(call["recv"]?["sty"]) as TypeNode.Fqn;
+        // `this` has no expression `sty`. For a super call, its constructed receiver is instead the enclosing class
+        // declaration frame. This is essential for a downstream `Derived : Base<String>` whose imported BIR member
+        // fact names the open declaration Base<T> (or even Base without arguments): the current hierarchy, not the
+        // argument expression, is the authoritative construction.
+        if (projectionRoot == null && Bool(call["super"])) projectionRoot = enclosingOwner;
+        if (projectionRoot != null
+            && (projectionRoot.Name != owner.Name || owner.Args == null && projectionRoot.Args != null))
         {
-            var projectedOwners = ReachableTypes(receiver, types, refs)
+            var projectedOwners = ReachableTypes(projectionRoot, types, refs)
                 .Where(candidate => candidate.Type.Name == owner.Name)
                 .Select(candidate => candidate.Type)
                 .GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
@@ -169,7 +186,7 @@ static class InheritedMemberOwnerBinding
         // visible cross-module when a Kotlin-final accessor implements an existential interface slot and is therefore
         // virtual in metadata. Consume that declaration fact here. With no BIR signature, require a unique
         // name/method-arity/parameter-count declaration; never guess among overloads.
-        if (paramCount >= 0
+        if (!Bool(call["super"]) && paramCount >= 0
             && (DeclaresVirtual(types.GetValueOrDefault(owner.Name), method, methodArity, sig, paramCount,
                     propertyName, propertyAccessor)
                 || (propertyAccessor != null
@@ -194,6 +211,42 @@ static class InheritedMemberOwnerBinding
             call["sig"] = ownDeclarationSig;
             return;
         }
+        // A Kotlin `super` call names its immediate super CLASS as the receiver owner, but that class need not
+        // redeclare the selected member. The CLR call operand must name the nearest CLASS MethodDef that actually
+        // implements it. In particular, an interface implemented by the immediate class can expose the same abstract
+        // slot; letting ilemit walk interfaces before the base class then turns a valid `super.p` into `call` on an
+        // abstract accessor. Resolve the class chain here, while Kotlin property identity and the complete local type
+        // graph are available. Never consider interfaces for this class-super lookup: they describe slot obligations,
+        // not the non-virtual implementation selected by `super`.
+        if (Bool(call["super"]) && !IsInterface(owner, types, refs))
+        {
+            // Kotlin class-super dispatch is non-virtual regardless of whether the selected MethodDef also declares
+            // a CLR virtual slot. Earlier property/member routing may have copied that declaration flag onto the call;
+            // this is the pass that owns the exact class MethodDef decision, so normalize the dispatch fact here.
+            call["virtual"] = false;
+            foreach (var baseOwner in BaseClassChain(owner, types, refs))
+            {
+                var localSig = ExactDeclarationSignature(
+                    types.GetValueOrDefault(baseOwner.Name), method, methodArity, sig, baseOwner.Args,
+                    propertyName, propertyAccessor);
+                var referenced = propertyAccessor != null
+                    ? refs.DeclaresExactInstancePropertyAccessor(baseOwner.Name, propertyName, propertyAccessor,
+                        methodArity, sig, baseOwner.Args ?? Array.Empty<TypeNode>())
+                    : refs.DeclaresExactInstanceMember(baseOwner.Name, method, methodArity, sig,
+                        baseOwner.Args ?? Array.Empty<TypeNode>());
+                if (localSig == null && !referenced) continue;
+                call["ownerType"] = TypeJson.Write(baseOwner);
+                if (localSig != null) call["sig"] = localSig;
+                return;
+            }
+            // A well-formed frontend call always resolves above. Leave an incomplete external graph untouched so the
+            // later exact foreign-member resolver can diagnose it from its compile references; do not fall through to
+            // the ordinary interface-inclusive lookup and silently change class-super semantics.
+            return;
+        }
+        // `super<I>.m()` names an interface default implementation directly. Its owner is already the selected
+        // interface declaration; inherited class-member binding must not reinterpret it through another branch.
+        if (Bool(call["super"])) return;
         // A local interface can expose an inherited external default implementation as a fake override. That fake
         // method is not emitted and therefore cannot be a bound-delegate target, but its inheritedImplementation
         // carrier is the frontend's exact declaration fact. Retarget the callable reference to that declaration now;
@@ -222,7 +275,8 @@ static class InheritedMemberOwnerBinding
         if (propertyAccessor != null
                 ? refs.DeclaresExactInstancePropertyAccessor(owner.Name, propertyName, propertyAccessor,
                     methodArity, sig, owner.Args ?? Array.Empty<TypeNode>())
-                : refs.DeclaresExactInstanceMember(owner.Name, method, methodArity, sig))
+                : refs.DeclaresExactInstanceMember(owner.Name, method, methodArity, sig,
+                    owner.Args ?? Array.Empty<TypeNode>()))
             return;
 
         var hierarchy = ReachableTypes(owner, types, refs).ToList();
@@ -247,7 +301,8 @@ static class InheritedMemberOwnerBinding
                 || (propertyAccessor != null
                     ? refs.DeclaresExactInstancePropertyAccessor(r.Type.Name, propertyName, propertyAccessor,
                         methodArity, sig, r.Type.Args ?? Array.Empty<TypeNode>())
-                    : refs.DeclaresExactInstanceMember(r.Type.Name, method, methodArity, sig)))
+                    : refs.DeclaresExactInstanceMember(r.Type.Name, method, methodArity, sig,
+                        r.Type.Args ?? Array.Empty<TypeNode>())))
             .ToList();
 
         if (overrideOwners.Count > 0)
@@ -311,6 +366,32 @@ static class InheritedMemberOwnerBinding
                 queue.Enqueue(new Reachable((TypeNode.Fqn)SubstOwnerTvs(baseType, args), current.Depth + 1));
             foreach (var iface in interfaces)
                 queue.Enqueue(new Reachable((TypeNode.Fqn)SubstOwnerTvs(iface, args), current.Depth + 1));
+        }
+    }
+
+    // The constructed base-CLASS chain only, including start. Each edge is expressed in its parent's type-parameter
+    // frame, so close it through the current construction before continuing (`Middle<T> : Base<List<T>>`).
+    static IEnumerable<TypeNode.Fqn> BaseClassChain(TypeNode.Fqn start,
+        Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs)
+    {
+        var current = start;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        while (current != null && seen.Add(SupertypeGraph.TypeKey(current)))
+        {
+            yield return current;
+            TypeNode.Fqn baseType;
+            int typeParamCount;
+            if (types.TryGetValue(current.Name, out var def))
+            {
+                typeParamCount = def.TypeParamCount;
+                baseType = def.Base;
+            }
+            else if (refs.TryReferenceTypeShape(current, out typeParamCount, out _, out baseType, out _)) { }
+            else yield break;
+            if (baseType == null) yield break;
+            var args = EffectiveArgs(current, typeParamCount);
+            if (args == null) yield break;
+            current = (TypeNode.Fqn)SubstOwnerTvs(baseType, args);
         }
     }
 

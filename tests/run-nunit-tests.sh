@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=480
 	["tests/coroutines"]=198
-	["tests/roundtrip/consumer"]=89
+	["tests/roundtrip/consumer"]=90
 	["tests/roundtrip/bidirectional/consumer"]=10
 	["tests/interop/consumer"]=173
 )
@@ -129,6 +129,16 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  STAR COPY DEFAULT FIELD BINDING FAIL — see build/nunit-$name.star-copy-default-fields.log"
 			tail -25 "$ROOT/build/nunit-$name.star-copy-default-fields.log"; rc=1
+		fi
+		abstract_super_bir="$dir/obj/$CONFIGURATION/net10.0/bir/RuntimeTypesVisibilityAndCrossFileTests.bir.json"
+		abstract_super_cir="$dir/obj/$CONFIGURATION/net10.0/cir/RuntimeTypesVisibilityAndCrossFileTests.cir.json"
+		if python3 "$ROOT/tests/basic/assert-abstract-super-binding.py" \
+			"$abstract_super_bir" "$abstract_super_cir" \
+			>"$ROOT/build/nunit-$name.abstract-super-binding.log" 2>&1; then
+			echo "  abstract slots bodyless + class-super declaration binding OK"
+		else
+			echo "  ABSTRACT/SUPER BINDING FAIL — see build/nunit-$name.abstract-super-binding.log"
+			tail -25 "$ROOT/build/nunit-$name.abstract-super-binding.log"; rc=1
 		fi
 	fi
 	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer
