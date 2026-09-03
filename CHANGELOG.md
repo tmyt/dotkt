@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited protected callable references now bind their declaring owner (#654).** bir2cir uses the frontend-selected
+  local declaration identity to project inherited calls from a derived receiver to the exact constructed base owner.
+  When a lifted protected call needs a CLR UnsafeAccessor, the same identity selects the MethodDef and copies its
+  physical parameter ABI instead of retaining or re-resolving an erased nullable-generic use-site signature.
+
 - **Lifted protected calls now retain referenced generic-owner ABI frames (#655).** bir2cir uses the frontend-selected
   declaration identity to copy a referenced MethodDef's exact owner frame and physical signature into a synthesized
   CLR UnsafeAccessor, then restores the concrete nullable-generic result projection at the Kotlin use boundary.

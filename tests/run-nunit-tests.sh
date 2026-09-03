@@ -50,7 +50,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=483
+	["tests/basic"]=486
 	["tests/coroutines"]=198
 	["tests/roundtrip/consumer"]=94
 	["tests/roundtrip/bidirectional/consumer"]=10
@@ -162,6 +162,14 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  UNCHECKED GENERIC UNSAFEACCESSOR FAIL — see build/nunit-$name.unchecked-generic-unsafe-accessor.log"
 			tail -25 "$ROOT/build/nunit-$name.unchecked-generic-unsafe-accessor.log"; rc=1
+		fi
+		inherited_callable_cir="$dir/obj/$CONFIGURATION/net10.0/cir/InheritedProtectedCallableTests.cir.json"
+		if python3 "$ROOT/tests/basic/assert-inherited-protected-callable-cir.py" "$inherited_callable_cir" \
+			>"$ROOT/build/nunit-$name.inherited-protected-callable.log" 2>&1; then
+			echo "  inherited protected callable uses its local base owner + physical ABI"
+		else
+			echo "  INHERITED PROTECTED CALLABLE FAIL — see build/nunit-$name.inherited-protected-callable.log"
+			tail -25 "$ROOT/build/nunit-$name.inherited-protected-callable.log"; rc=1
 		fi
 	fi
 	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer
