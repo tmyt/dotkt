@@ -157,6 +157,8 @@ private interface RuntimeTypesExistentialFusibleFlow<T> : RuntimeTypesExistentia
 private class RuntimeTypesExistentialFlowImpl<T> : RuntimeTypesExistentialFusibleFlow<T> {
     override fun fuse(): RuntimeTypesExistentialFlow<T> = this
 }
+@JvmInline
+private value class RuntimeTypesExistentialValue<T>(val value: Any?)
 private fun <T> runtimeTypesFuse(flow: RuntimeTypesExistentialFlow<T>): RuntimeTypesExistentialFlow<T> =
     when (flow) {
         is RuntimeTypesExistentialFusibleFlow -> flow.fuse()
@@ -338,6 +340,10 @@ class StarProjectionAndVisibilityTests {
         assertTrue(runtimeTypesFuseSam(intFlow).fuse() === intFlow)
         assertTrue(runtimeTypesRunStringFlow(runtimeTypesFuseSuspend(stringFlow)) === stringFlow)
         assertTrue(runtimeTypesRunIntFlow(runtimeTypesFuseSuspend(intFlow)) === intFlow)
+
+        val stringValue = RuntimeTypesExistentialValue<String>("same")
+        val erasedPeer: Any = RuntimeTypesExistentialValue<Int>("same")
+        assertTrue(stringValue == erasedPeer)
     }
 
     @TestAttribute

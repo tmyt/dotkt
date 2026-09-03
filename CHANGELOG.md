@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Generated generic value-class equality now reads peers through existential CLR accessors (#647).** kotc carries
+  the compiler-generated equality origin for data and value classes into BIR, allowing bir2cir to replace an invalid
+  `G$star`-receiver backing-field access with the exact getter bridge instead of applying a `G<T>` field token.
+
 - **Star-dependent generic member results now retain their existential CLR carrier (#645).** bir2cir preserves the
   exact physical result of a star-projected slot instead of casting invariant nested generics to an invalid
   `G<object>` construction, while concrete arguments in mixed star/exact projections keep their checked projection.

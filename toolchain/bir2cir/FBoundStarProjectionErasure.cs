@@ -1418,21 +1418,21 @@ static class FBoundStarProjectionErasure
         }
     }
 
-    // A default-expression carrier authored inside a generic class may contain a direct read of that class's backing
-    // field. Once its dispatch receiver is G<*>, the physical receiver is G$star: an interface which deliberately owns
-    // no fields. Reuse the already-projected property-getter slot only when the local source getter proves that this
-    // is an exact representation change, or kotc explicitly identifies the generated data-class copy default. The
-    // latter fact also covers a final data class getter that is virtual only because it fills an interface slot and a
-    // referenced declaration whose body is intentionally absent. Custom or genuinely overridable accessors are never
-    // guessed into the field access.
+    // A default-expression carrier or compiler-generated equality body authored inside a generic class may contain a
+    // direct read of that class's backing field. Once its dispatch receiver is G<*>, the physical receiver is G$star:
+    // an interface which deliberately owns no fields. Reuse the already-projected property-getter slot only when the
+    // local source getter proves that this is an exact representation change, or kotc explicitly identifies a
+    // generated data-class copy/equality or value-class equality field read. Those frontend facts also cover a final
+    // generated getter that is virtual only because it fills an interface slot and a referenced declaration whose
+    // body is intentionally absent. Custom or genuinely overridable accessors are never guessed into the field access.
     static void BindStarFieldThroughCanonicalGetter(JsonObject field,
         IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
         ReferenceMetadataIndex refs)
     {
         var dataClassCopyDefault = Bool(field["dataClassCopyDefault"]);
         field.Remove("dataClassCopyDefault");
-        var dataClassEqualsFieldRead = Bool(field["dataClassEqualsFieldRead"]);
-        field.Remove("dataClassEqualsFieldRead");
+        var generatedEqualsFieldRead = Bool(field["generatedEqualsFieldRead"]);
+        field.Remove("generatedEqualsFieldRead");
         if (Str(field["k"]) != "field"
             || Str(field["name"]) is not string fieldName
             || TypeJson.Read(field["ownerType"]) is not TypeNode.Fqn { Args: { } } fieldOwner)
@@ -1445,7 +1445,7 @@ static class FBoundStarProjectionErasure
         var localCanonical = canonicalGetter is { } found
             && found.Owner.Name == fieldOwner.Name
             && IsCanonicalFieldGetter(found.Method, fieldOwner.Name, fieldName);
-        var generatedEqualsCanonical = dataClassEqualsFieldRead && canonicalGetter is { } equalsGetter
+        var generatedEqualsCanonical = generatedEqualsFieldRead && canonicalGetter is { } equalsGetter
             && equalsGetter.Owner.Name == fieldOwner.Name
             && IsCanonicalFieldGetter(equalsGetter.Method, fieldOwner.Name, fieldName, allowVirtual: true);
         // A referenced data class has no declaration body in this compilation. kotc nevertheless knows the exact
@@ -1472,7 +1472,7 @@ static class FBoundStarProjectionErasure
         // raw-classifier cast of the peer, whose physical result is this owner's already-selected existential carrier;
         // stamp only the tentative getter receiver and leave the field untouched if slot binding still fails.
         if (call["recv"] is JsonObject { } receiver
-            && dataClassEqualsFieldRead && Str(receiver["k"]) == "local"
+            && generatedEqualsFieldRead && Str(receiver["k"]) == "local"
             && owners.TryGetValue(fieldOwner.Name, out var equalityOwner) && equalityOwner.Needed)
             receiver["sty"] = TypeJson.Write(new TypeNode.Fqn(equalityOwner.ErasedName));
         KotlinPropertyAccessors.PreserveCallIdentity(call, fieldName, "get");
