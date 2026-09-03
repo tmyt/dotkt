@@ -460,9 +460,7 @@ static class UnsafeAccessorLowering
             PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
             PhysicalMethodTypeParams(target, methodTypeParams), declaredReturnType,
             signature, includeTarget: true,
-            targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]),
-            nullableGenericReturn: target?["nullableGenericRet"],
-            targetParameters: target?["params"] as JsonArray);
+            targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]));
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
 
         var replacement = new JsonObject
