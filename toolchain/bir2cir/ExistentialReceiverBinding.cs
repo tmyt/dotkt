@@ -164,13 +164,13 @@ static class ExistentialReceiverBinding
                 .Where(m => m.ParamCount == pc && m.GenericArity == ga
                     && m.SourceName == sourceMethod && m.AccessorKind == accessorKind
                     && SignatureMatches(m.Parameters, authoredSignature))
-                // Duplicate roots may describe the same physical slot. Coalesce only an identical name+descriptor;
-                // grouping by name alone discards the frontend-resolved overload signature and selects whichever
-                // same-name accessor was enumerated first.
-                .GroupBy(m => m.Name + "\u001f" + string.Join("\u001f", m.Parameters.Select(p => p.ToString())),
-                    StringComparer.Ordinal)
-                .Select(g => g.First())
                 .ToList();
+            // Duplicate roots may describe the same physical slot. Coalesce only a structurally identical CLR
+            // descriptor. TypeNode.ToString() is not an identity for nested generic arguments, and a MethodDef's
+            // return participates in its signature, so either shortcut could hide a genuinely ambiguous slot here.
+            for (var i = candidates.Count - 1; i >= 0; i--)
+                if (candidates.Take(i).Any(existing => SamePhysicalSlot(existing, candidates[i])))
+                    candidates.RemoveAt(i);
             if (candidates.Count == 1)
             {
                 physicalMethod = candidates[0].Name;
@@ -229,6 +229,12 @@ static class ExistentialReceiverBinding
                     ReferenceMetadataIndex.AccessorDeclarationDescribesCall(parameter, call[index]))
                 .All(match => match);
     }
+
+    static bool SamePhysicalSlot(Member left, Member right) =>
+        left.Name == right.Name
+        && left.GenericArity == right.GenericArity
+        && Equals(left.Return, right.Return)
+        && left.Parameters.SequenceEqual(right.Parameters);
 
     static TypeNode ReceiverType(JsonNode receiver, IReadOnlyDictionary<string, TypeNode> vars)
     {

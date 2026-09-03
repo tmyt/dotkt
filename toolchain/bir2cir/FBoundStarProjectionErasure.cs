@@ -1880,7 +1880,8 @@ static class FBoundStarProjectionErasure
             call["ret"] = TypeJson.Write(CloseDeclarationType(declarationResult, args, methodArgs));
         }
 
-        // Binding selects a real non-generic MethodDef. Its result may therefore be an existential carrier even
+        // Binding selects a real MethodDef on a non-generic existential owner. Its result may therefore be an
+        // existential carrier even when the selected method itself owns generic parameters,
         // though the Kotlin expression retains a caller-instantiated constructed type. State both facts explicitly:
         // the inner call has the MethodDef's exact physical result and the outer checked cast restores the semantic
         // value. ilemit must never pretend the selected slot itself returns the constructed type.
