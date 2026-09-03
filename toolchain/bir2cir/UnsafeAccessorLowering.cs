@@ -228,13 +228,9 @@ static class UnsafeAccessorLowering
 
         var targetStatic = kind == "callStatic";
         var targetDeclarationId = Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]);
-        ReferencedUnsafeAccessorMethod referencedTarget = null;
-        if (target == null && targetDeclarationId != null
-            && refs?.TryUnsafeAccessorMethod(targetDeclarationId, ownerType.Name, methodArity, targetStatic,
-                out referencedTarget) != true)
-            throw new InvalidOperationException(
-                $"UnsafeAccessor target '{ownerType.Name}.{targetName}' has no exact referenced MethodDef for " +
-                $"declaration identity '{targetDeclarationId}'");
+        var referencedTarget = ResolveReferencedMethodTarget(
+            target, targetDeclarationId, ownerType, targetName, methodArity, targetStatic, signature,
+            TypeJson.Read(memberReturnType), methodTypeParams, propertyAccessor != null, refs);
         if (referencedTarget != null)
             targetName = referencedTarget.PhysicalMember;
 
@@ -531,6 +527,43 @@ static class UnsafeAccessorLowering
         if (declared != null)
             foreach (var parameter in declared) physical.Add(parameter?.DeepClone());
         return physical;
+    }
+
+    static ReferencedUnsafeAccessorMethod ResolveReferencedMethodTarget(
+        JsonObject localTarget,
+        string declarationId,
+        TypeNode.Fqn owner,
+        string method,
+        int methodArity,
+        bool isStatic,
+        JsonArray signature,
+        TypeNode resolvedReturn,
+        JsonArray methodTypeParams,
+        bool propertyAccessor,
+        ReferenceMetadataIndex refs)
+    {
+        if (localTarget != null) return null;
+        // Current-format virtual/property declarations can intentionally have no scalar declaration identity: their
+        // physical name is shared across an override family rather than allocated per declaration. Retain their
+        // frontend-carried ABI path. An identity, when present, is a complete current-format selection and must not
+        // silently fall back if its referenced MethodDef cannot be recovered.
+        if (declarationId == null)
+        {
+            if (!propertyAccessor && refs?.HasDotKtOwner(owner.Name) == true
+                && signature?.Select(TypeJson.Read).ToArray() is TypeNode[] semanticSignature
+                && semanticSignature.All(type => type != null)
+                && refs.TryUnsafeAccessorVirtualMethod(
+                    owner.Name, method, methodArity, isStatic, semanticSignature, resolvedReturn,
+                    owner.Args ?? Array.Empty<TypeNode>(), methodTypeParams, out var virtualTarget))
+                return virtualTarget;
+            return null;
+        }
+        if (refs?.TryUnsafeAccessorMethod(declarationId, owner.Name, methodArity, isStatic,
+                out var referenced) == true)
+            return referenced;
+        throw new InvalidOperationException(
+            $"UnsafeAccessor target '{owner.Name}.{method}' has no exact referenced MethodDef for " +
+            $"declaration identity '{declarationId}'");
     }
 
     // As with an owner's frame above, a local target declaration has already passed through the representation

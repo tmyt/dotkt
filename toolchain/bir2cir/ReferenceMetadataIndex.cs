@@ -246,6 +246,43 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    // Class-virtual Kotlin declarations intentionally have no scalar declaration identity: their physical name is
+    // shared by an override family rather than allocated per declaration. In that current-format case, select from
+    // the producing assembly's semantic declaration carriers using the complete frontend-selected signature. This is
+    // the same exact semantic selection used for referenced override slots, and refuses an ambiguous overload set.
+    public bool TryUnsafeAccessorVirtualMethod(
+        string ownerFqn,
+        string sourceMember,
+        int methodArity,
+        bool isStatic,
+        IReadOnlyList<TypeNode> signature,
+        TypeNode resolvedReturn,
+        TypeNode[] ownerTypeArguments,
+        JsonArray selectedTypeParams,
+        out ReferencedUnsafeAccessorMethod declaration)
+    {
+        declaration = null;
+        if (!TryMembersByBirOwner(ownerFqn, out var members)) return false;
+        var matches = members.Where(member => member.SourcePropertyName == null
+                && member.IsStatic == isStatic
+                && (member.DeclarationSourceName ?? member.SourceMethodName ?? member.Name) == sourceMember
+                && member.MethodArity == methodArity
+                && KotlinOverrideSlotBridge.SameMethodTypeParameterShape(
+                    member.MethodTypeParams, selectedTypeParams, ownerTypeArguments, ownerTypeArguments)
+                && MethodSignatureMatches(member, signature, resolvedReturn, ownerTypeArguments)
+                && member.ParamTypeNodes != null && member.ReturnTypeNode != null)
+            .ToList();
+        if (matches.Count != 1) return false;
+        var match = matches[0];
+        declaration = new ReferencedUnsafeAccessorMethod(
+            match.Name,
+            match.ParamTypeNodes,
+            match.ReturnTypeNode,
+            match.MethodTypeParams,
+            match.NullableGenericRet);
+        return true;
+    }
+
     // Resolve the exact MethodDef named by the frontend-selected Kotlin declaration identity. The identity selects;
     // the semantic call signature only validates that the selected declaration still has the physical ABI this use
     // expects after every representation pass. A failed validation is not permission to search sibling overloads.

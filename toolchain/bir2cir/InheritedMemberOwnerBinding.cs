@@ -182,6 +182,28 @@ static class InheritedMemberOwnerBinding
         var sig = ReadTypes(call["sig"] as JsonArray);
         var paramCount = (call["args"] as JsonArray)?.Count ?? -1;
 
+        // A callable-reference forwarding closure can retain the receiver's derived Kotlin owner even though its
+        // frontend-selected declaration identity names a referenced base MethodDef. Project that exact owner through
+        // the receiver hierarchy before any structural declaration lookup. The identity selects the declaration;
+        // this walk contributes only its constructed owner arguments and refuses a disagreeing diamond.
+        if (Str(call[DeclarationIdentityBinding.Key]) is string declarationId
+            && refs.TryDeclarationIdentity(
+                declarationId, out _, out var selectedPhysicalOwner, out _, out _))
+        {
+            var selectedOwners = ReachableTypes(owner, types, refs)
+                .Where(candidate => candidate.Type.Name == selectedPhysicalOwner)
+                .Select(candidate => candidate.Type)
+                .GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .ToList();
+            if (selectedOwners.Count == 1)
+            {
+                owner = selectedOwners[0];
+                call[ownerSlot] = TypeJson.Write(owner);
+                if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(owner);
+            }
+        }
+
         // A call can already name its exact declaration owner yet still lack the CLR dispatch bit. This is especially
         // visible cross-module when a Kotlin-final accessor implements an existential interface slot and is therefore
         // virtual in metadata. Consume that declaration fact here. With no BIR signature, require a unique
