@@ -201,11 +201,16 @@ static class UnsafeAccessorLowering
 
         var signature = SignatureOf(access);
         var methodArity = access["typeArgs"] is JsonArray typeArgs ? typeArgs.Count : 0;
+        var targetDeclarationId = Str(access[DeclarationIdentityBinding.Key]);
         JsonObject target = null;
         if (targetHost != null)
         {
-            var candidates = targetHost.LookupMethods
-                .Where(method => !KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
+            var candidates = (targetDeclarationId != null
+                ? targetHost.LookupMethods.Where(method =>
+                    Str(method[DeclarationIdentityBinding.Key]) == targetDeclarationId
+                    && !KotlinPropertyAccessors.IsPhysicalSlotBridge(method))
+                : targetHost.LookupMethods.Where(method =>
+                    !KotlinPropertyAccessors.IsPhysicalSlotBridge(method)
                     && (propertyAccessor != null
                         ? KotlinPropertyAccessors.TryIdentity(method, out var candidateProperty,
                             out var candidateAccessor)
@@ -214,9 +219,19 @@ static class UnsafeAccessorLowering
                             && !KotlinPropertyAccessors.TryIdentity(method, out _, out _))
                     && Bool(method["static"]) == (kind == "callStatic")
                     && (method["params"] is JsonArray parameters ? parameters.Count : 0) == signature.Count
-                    && (method["typeParams"] is JsonArray ownParams ? ownParams.Count : 0) == methodArity)
+                    && (method["typeParams"] is JsonArray ownParams ? ownParams.Count : 0) == methodArity))
                 .ToArray();
-            target = SelectMethod(candidates, signature, ownerType.Args);
+            if (targetDeclarationId != null && candidates.Length != 1)
+                throw new InvalidOperationException(
+                    $"UnsafeAccessor target '{ownerType.Name}.{targetName}' has no unique local MethodDef for " +
+                    $"declaration identity '{targetDeclarationId}'");
+            target = targetDeclarationId != null ? candidates[0] : SelectMethod(candidates, signature, ownerType.Args);
+            if (targetDeclarationId != null
+                && (Bool(target["static"]) != (kind == "callStatic")
+                    || (target["params"] is JsonArray parameters ? parameters.Count : 0) != signature.Count
+                    || (target["typeParams"] is JsonArray ownParams ? ownParams.Count : 0) != methodArity))
+                throw new InvalidOperationException(
+                    $"UnsafeAccessor target declaration identity '{targetDeclarationId}' disagrees with its call shape");
             if (target == null || Str(target["vis"]) is not ("private" or "protected")) return;
             // UnsafeAccessorAttribute names the actual target MethodDef. The call still carries its Kotlin property
             // identity at this point, while the declaration has already passed through the physical allocator.
@@ -227,7 +242,7 @@ static class UnsafeAccessorLowering
             return;
 
         var targetStatic = kind == "callStatic";
-        var targetDeclarationId = Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]);
+        targetDeclarationId = Str(target?[DeclarationIdentityBinding.Key]) ?? targetDeclarationId;
         var referencedTarget = ResolveReferencedMethodTarget(
             target, targetDeclarationId, ownerType, targetName, methodArity, targetStatic, signature,
             TypeJson.Read(memberReturnType), methodTypeParams, propertyAccessor != null, refs);

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import sys
+from collections import Counter
 
 
 def objects(node):
@@ -19,16 +20,30 @@ if len(sys.argv) != 2:
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
 
-holders = [
-    item
-    for item in root.get("types", [])
-    if item.get("generated") and item.get("name", "").startswith("dotkt$unsafe$holder$")
-]
-if len(holders) != 1:
-    raise SystemExit(f"found {len(holders)} UnsafeAccessor holders, expected 1")
+def target_name(method):
+    names = [
+        argument.get("value", {}).get("value")
+        for attribute in method.get("attrs", [])
+        for argument in attribute.get("namedArgs", [])
+        if argument.get("name") == "Name"
+    ]
+    return names[0] if len(names) == 1 else None
 
-holder = holders[0]
-if holder.get("typeParams") != ["__owner0"]:
+accessor_pairs = [
+    (owner, method)
+    for owner in root.get("types", [])
+    for method in owner.get("methods", [])
+    if method.get("extern") and target_name(method) is not None
+]
+targets = Counter(target_name(method) for _, method in accessor_pairs)
+if targets != Counter({"echo": 1, "select": 1, "selectMutable": 1}):
+    raise SystemExit(f"callable-reference UnsafeAccessors lost their selected physical targets: {targets!r}")
+
+holder, accessor = next(pair for pair in accessor_pairs if target_name(pair[1]) == "echo")
+holder_type_params = holder.get("typeParams", [])
+holder_type_param_names = [parameter if isinstance(parameter, str) else parameter.get("name")
+                           for parameter in holder_type_params]
+if holder_type_param_names != ["__owner0"]:
     raise SystemExit(f"UnsafeAccessor holder lost the base owner's generic frame: {holder!r}")
 
 base_open = {
@@ -38,10 +53,6 @@ base_open = {
 }
 physical_object = {"t": "fqn", "name": "object"}
 expected_signature = [base_open, physical_object]
-accessors = [method for method in holder.get("methods", []) if method.get("extern")]
-if len(accessors) != 1:
-    raise SystemExit(f"found {len(accessors)} UnsafeAccessor declarations, expected 1")
-accessor = accessors[0]
 if [parameter.get("type") for parameter in accessor.get("params", [])] != expected_signature:
     raise SystemExit(f"UnsafeAccessor did not copy the local MethodDef's physical signature: {accessor!r}")
 if accessor.get("ret") != physical_object:
@@ -65,4 +76,20 @@ arguments = call.get("args", [])
 if len(arguments) != 2 or arguments[1].get("k") != "cast" or arguments[1].get("type") != physical_object:
     raise SystemExit(f"nullable-generic argument was not projected to the physical object slot: {call!r}")
 
-print("inherited protected callable reference uses its local base MethodDef owner and physical ABI")
+public_calls = [
+    node
+    for node in objects(root.get("types", []))
+    if node.get("k") == "callInstance" and node.get("method") == "echoPublic"
+]
+if len(public_calls) != 1:
+    raise SystemExit(f"found {len(public_calls)} inherited public calls, expected 1")
+public_call = public_calls[0]
+expected_public_owner = {
+    "t": "fqn",
+    "name": "PublicNullableCallable",
+    "args": [{"t": "fqn", "name": "System.Int32"}],
+}
+if public_call.get("ownerType") != expected_public_owner or public_call.get("sig") != [physical_object]:
+    raise SystemExit(f"inherited public call disagrees with its local MethodDef owner/ABI: {public_call!r}")
+
+print("inherited callable references use their local base MethodDef owner and physical ABI")
