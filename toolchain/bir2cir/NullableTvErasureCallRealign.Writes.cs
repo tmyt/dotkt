@@ -590,6 +590,19 @@ static partial class NullableTvErasureCallRealign
                 ["elem"] = TypeJson.Write(sourceElem),
                 ["e"] = vo.DeepClone(),
             };
+        // The nullable-generic declaration `Array<T?>` is physically `object[]`. At a concrete REFERENCE
+        // instantiation, compiler-produced values retain their reified runtime array (`String[]`, `Slot[]`) and CLR
+        // covariance lets that value inhabit the open object[] declaration slot. Reading it into a concrete Kotlin
+        // use requires the inverse checked projection. ApplyDerivedRet handles the call boundary when its semantic
+        // result stamp is still present; this fixed-slot twin handles a value first flowed through an object[] local,
+        // Ref field, return, or other consumer before the concrete target is encountered.
+        if (CanNarrowReferenceArrayProjection(src, target))
+            return new JsonObject
+            {
+                ["k"] = "cast",
+                ["type"] = TypeJson.Write(target),
+                ["e"] = vo.DeepClone(),
+            };
         return CastForTarget(value, src, target, exactPropertyTarget, isValue);
     }
 

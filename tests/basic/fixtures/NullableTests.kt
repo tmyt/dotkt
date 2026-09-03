@@ -59,6 +59,36 @@ class NgCell<T>(private val slot: T?) {             // `T?` CTOR PARAM + backing
 }
 open class NgBase<T>(val held: T?)                  // a ctor DELEGATION target whose param is erased
 class NgDerived(y: Int?) : NgBase<Int>(y)           // `Base<Int>(y)` hands a Nullable<int32> to an `object` slot
+// The inherited protected-property use axis is resolved only after bir2cir binds the call from the derived receiver
+// to its declaring generic base. The declaration `Array<T?>` is physically `object[]` under #86, while this concrete
+// reference instantiation observes the original `String[]`; CIR must state the checked projection between them.
+open class NgProtectedArrayBase<T>(protected val values: Array<T?>?)
+class NgProtectedArrayText(values: Array<String?>) : NgProtectedArrayBase<String>(values) {
+    private fun invoke(block: () -> Unit) = block()
+
+    fun snapshot(): Array<String?> {
+        val result: Array<String?>? = values
+        return result!!
+    }
+
+    fun capturedSnapshot(): Array<String?> {
+        var result: Array<String?>? = null
+        invoke { result = values }
+        return result!!
+    }
+}
+open class NgProtectedMethodBase {
+    protected fun <R> pick(values: Array<R?>?): Array<R?>? = values
+}
+class NgProtectedMethodText : NgProtectedMethodBase() {
+    private fun invoke(block: () -> Unit) = block()
+
+    fun capturedSnapshot(values: Array<String?>): Array<String?> {
+        var result: Array<String?>? = null
+        invoke { result = pick<String>(values) }
+        return result!!
+    }
+}
 // An OVERRIDE narrowing a base `T?` slot to a concrete one — at the HEAD and NESTED in a constructed generic. The
 // derived declaration holds `Int?`/`NgBox<Int?>`, which no `Nullable(Tv)` sweep can see, yet the CLR slot it must
 // fill is the base's erased one; emitted narrowed it is a new overload and the type does not load.
@@ -393,6 +423,19 @@ class NullableTests {
         assertEquals("s", NgCell<String>(null).orElse("s"))   // s   reference control
         assertNull(NgDerived(null).held)                 // null  ctor DELEGATION into an erased base slot at T=Int
         assertEquals(4, NgDerived(4).held)               // 4
+        val strings = arrayOf<String?>("a", null)
+        val snapshot = NgProtectedArrayText(strings).snapshot()
+        assertTrue(snapshot === strings)                 // inherited protected `object[]` slot projects to String[]
+        assertEquals("a", snapshot[0])
+        assertNull(snapshot[1])
+        val capturedSnapshot = NgProtectedArrayText(strings).capturedSnapshot()
+        assertTrue(capturedSnapshot === strings)         // same boundary through a synthesized mutable-capture cell
+        assertEquals("a", capturedSnapshot[0])
+        assertNull(capturedSnapshot[1])
+        val methodSnapshot = NgProtectedMethodText().capturedSnapshot(strings)
+        assertTrue(methodSnapshot === strings)           // method-generic erasure on a non-generic protected owner
+        assertEquals("a", methodSnapshot[0])
+        assertNull(methodSnapshot[1])
         val si: NgSink<Int> = NgIntSink()
         assertEquals("none", si.accept(null))            // none  override narrowed to Int?, through the BASE slot
         assertEquals("3", si.accept(3))                  // 3

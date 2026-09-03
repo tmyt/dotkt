@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Inherited nullable-generic array access now retains its physical CLR result (#649).** bir2cir re-applies the
+  declaration-driven nullable-generic use contract after binding a call to its generic base owner, so a protected
+  `Array<T?>` accessor returns `object[]` physically and an explicit checked projection restores a concrete reference
+  array instead of leaving a verifier-invalid edge for ilemit.
+
 - **Generated generic value-class equality now reads peers through existential CLR accessors (#647).** kotc carries
   the compiler-generated equality origin for data and value classes into BIR, allowing bir2cir to replace an invalid
   `G$star`-receiver backing-field access with the exact getter bridge instead of applying a `G<T>` field token.
