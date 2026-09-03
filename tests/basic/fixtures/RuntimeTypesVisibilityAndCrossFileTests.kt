@@ -25,6 +25,10 @@ import crossFileLanguage.crossFileLanguageCurrent
 import crossFileLanguage.crossFileLanguageCall
 import crossFileLanguage.crossFileLanguageCounter
 import crossFileLanguage.crossFileLanguageBump
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 import kotlin.clr.ClrRef
 import kotlin.clr.byref
 
@@ -165,6 +169,50 @@ private fun <T> runtimeTypesFuseViaRealignedLocal(
     val fusible = flow as RuntimeTypesExistentialFusibleFlow<T>
     return fusible.fuse()
 }
+private fun <T> runtimeTypesFuseReference(
+    flow: RuntimeTypesExistentialFlow<T>
+): () -> RuntimeTypesExistentialFlow<T> =
+    when (flow) {
+        is RuntimeTypesExistentialFusibleFlow -> flow::fuse
+        else -> ({ flow })
+    }
+private fun interface RuntimeTypesExistentialFuseSam<T> {
+    fun fuse(): RuntimeTypesExistentialFlow<T>
+}
+@Suppress("UNCHECKED_CAST")
+private fun <T> runtimeTypesFuseSam(
+    flow: RuntimeTypesExistentialFlow<T>
+): RuntimeTypesExistentialFuseSam<T> {
+    val fusible = flow as RuntimeTypesExistentialFusibleFlow<T>
+    return RuntimeTypesExistentialFuseSam { fusible.fuse() }
+}
+@Suppress("UNCHECKED_CAST")
+private fun <T> runtimeTypesFuseSuspend(
+    flow: RuntimeTypesExistentialFlow<T>
+): suspend () -> RuntimeTypesExistentialFlow<T> {
+    val fusible = flow as RuntimeTypesExistentialFusibleFlow<T>
+    return { fusible.fuse() }
+}
+private fun runtimeTypesRunStringFlow(
+    block: suspend () -> RuntimeTypesExistentialFlow<String>
+): RuntimeTypesExistentialFlow<String> {
+    var outcome: Result<RuntimeTypesExistentialFlow<String>>? = null
+    block.startCoroutine(object : Continuation<RuntimeTypesExistentialFlow<String>> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+        override fun resumeWith(result: Result<RuntimeTypesExistentialFlow<String>>) { outcome = result }
+    })
+    return outcome!!.getOrThrow()
+}
+private fun runtimeTypesRunIntFlow(
+    block: suspend () -> RuntimeTypesExistentialFlow<Int>
+): RuntimeTypesExistentialFlow<Int> {
+    var outcome: Result<RuntimeTypesExistentialFlow<Int>>? = null
+    block.startCoroutine(object : Continuation<RuntimeTypesExistentialFlow<Int>> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+        override fun resumeWith(result: Result<RuntimeTypesExistentialFlow<Int>>) { outcome = result }
+    })
+    return outcome!!.getOrThrow()
+}
 open class RuntimeTypesGenericProtectedSuperBase<T> {
     context(context: RuntimeTypesSuperContext)
     protected open fun <U : RuntimeTypesGenericMarker<T>> combine(value: T, marker: U): String =
@@ -284,6 +332,12 @@ class StarProjectionAndVisibilityTests {
         assertTrue(runtimeTypesFuse(intFlow) === intFlow)
         assertTrue(runtimeTypesFuseViaRealignedLocal(stringFlow) === stringFlow)
         assertTrue(runtimeTypesFuseViaRealignedLocal(intFlow) === intFlow)
+        assertTrue(runtimeTypesFuseReference(stringFlow)() === stringFlow)
+        assertTrue(runtimeTypesFuseReference(intFlow)() === intFlow)
+        assertTrue(runtimeTypesFuseSam(stringFlow).fuse() === stringFlow)
+        assertTrue(runtimeTypesFuseSam(intFlow).fuse() === intFlow)
+        assertTrue(runtimeTypesRunStringFlow(runtimeTypesFuseSuspend(stringFlow)) === stringFlow)
+        assertTrue(runtimeTypesRunIntFlow(runtimeTypesFuseSuspend(intFlow)) === intFlow)
     }
 
     @TestAttribute
