@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Lifted protected calls now retain referenced generic-owner ABI frames (#655).** bir2cir uses the frontend-selected
+  declaration identity to copy a referenced MethodDef's exact owner frame and physical signature into a synthesized
+  CLR UnsafeAccessor, then restores the concrete nullable-generic result projection at the Kotlin use boundary.
+
 - **Referenced method-generic accessors now retain every value-parameter slot (#656).** bir2cir recognizes the
   generic-call `shapeTypes` signature carrier alongside ordinary Kotlin and CLR call signatures when a protected
   member imported from another DotKt assembly is called from a lifted closure. The synthesized CLR UnsafeAccessor and

@@ -1046,13 +1046,13 @@ sealed class Pipeline
             UnsafeAccessorLowering.DropFacts(staged.Select(s => s.Root).ToList());
         else
         {
-            UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList());
+            UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
             // UnsafeAccessor creates holder TypeDefs and replaces protected/private calls with wrapper calls. Index
             // those exact physical declarations, then flow the new edges through the nullable-generic boundary once.
-            // A local selected declaration stamps the wrapper with one-shot erasure ownership; an external target,
-            // whose source carrier is not locally available, keeps the ordinary physical-signature behavior. Thus a
-            // lifted closure can state wrapper object[] -> captured Array<R?> explicitly without treating every late
-            // object return as nullable-generic erasure.
+            // The exact selected declaration stamps the wrapper with one-shot erasure ownership. Local declarations
+            // contribute their in-memory carrier; referenced declarations contribute the compiler-authored metadata
+            // indexed by declaration identity. Thus a lifted closure can state wrapper object[] -> captured
+            // Array<R?> explicitly without treating every late object return as nullable-generic erasure.
             foreach (var stagedFile in staged)
             {
                 NullableTvErasureCallRealign.CollectNewSyntheticTypes(stagedFile.Root, nullableTvDeclRets);

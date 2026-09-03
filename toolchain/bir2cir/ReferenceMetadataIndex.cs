@@ -219,6 +219,33 @@ sealed partial class ReferenceMetadataIndex
         return true;
     }
 
+    // UnsafeAccessorAttribute is matched by the CLR against the selected MethodDef's exact physical signature.
+    // The frontend-authored declaration identity selects that MethodDef; inherited-owner binding supplies the
+    // declaring TypeDef. Expose those already-indexed facts without re-resolving an overload from the use-site
+    // signature, whose concrete Kotlin projection may deliberately differ from the physical nullable-TV-erased ABI.
+    public bool TryUnsafeAccessorMethod(
+        string id,
+        string ownerFqn,
+        int methodArity,
+        bool isStatic,
+        out ReferencedUnsafeAccessorMethod declaration)
+    {
+        declaration = null;
+        if (id == null || !_declarationById.TryGetValue(id, out var binding)) return false;
+        var physicalOwner = binding.DeclarationPhysicalOwner ?? binding.Owner;
+        if (!string.Equals(BareOwnerFqn(physicalOwner), BareOwnerFqn(ownerFqn), StringComparison.Ordinal)
+            || binding.MethodArity != methodArity || binding.IsStatic != isStatic
+            || binding.ParamTypeNodes == null || binding.ReturnTypeNode == null)
+            return false;
+        declaration = new ReferencedUnsafeAccessorMethod(
+            binding.Name,
+            binding.ParamTypeNodes,
+            binding.ReturnTypeNode,
+            binding.MethodTypeParams,
+            binding.NullableGenericRet);
+        return true;
+    }
+
     // Resolve the exact MethodDef named by the frontend-selected Kotlin declaration identity. The identity selects;
     // the semantic call signature only validates that the selected declaration still has the physical ABI this use
     // expects after every representation pass. A failed validation is not permission to search sibling overloads.
@@ -7014,6 +7041,9 @@ sealed record MemberBinding(string Owner, string Name, int ParamCount, string In
 
 sealed record ReferencedMethodDeclaration(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
     JsonArray TypeParams);
+
+sealed record ReferencedUnsafeAccessorMethod(string PhysicalMember, TypeNode[] Parameters, TypeNode Return,
+    JsonArray TypeParams, TypeNode NullableGenericReturn);
 
 sealed record MethodImplBinding(string BodyOwner, int BodyToken, TypeNode.Fqn DeclarationOwner,
     string DeclarationMember);
