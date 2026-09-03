@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **UnsafeAccessor calls now preserve object-erased generic return ownership (#652).** bir2cir carries the selected
+  member's nullable-generic provenance onto synthesized accessors, allowing nullable realignment to distinguish its
+  own erasure from other physical `object` contracts and retain the concrete use projection needed by arithmetic and
+  other value consumers.
+
 - **Inherited nullable-generic array access now retains its physical CLR result (#649).** bir2cir re-applies the
   declaration-driven nullable-generic use contract after binding a call to its generic base owner, so a protected
   `Array<T?>` accessor returns `object[]` physically and an explicit checked projection restores a concrete reference

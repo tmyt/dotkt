@@ -50,7 +50,7 @@ PROJECTS=(
 # Reviewed on the v0.9.8 main baseline at the start of #227. Updating a suite requires updating this number in
 # the same change, making otherwise-silent test proliferation or accidental deletion an explicit review event.
 declare -A EXPECTED_DISCOVERED=(
-	["tests/basic"]=480
+	["tests/basic"]=483
 	["tests/coroutines"]=198
 	["tests/roundtrip/consumer"]=90
 	["tests/roundtrip/bidirectional/consumer"]=10
@@ -154,6 +154,14 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  NULLABLE ARRAY UNSAFEACCESSOR FAIL — see build/nunit-$name.nullable-array-unsafe-accessor.log"
 			tail -25 "$ROOT/build/nunit-$name.nullable-array-unsafe-accessor.log"; rc=1
+		fi
+		unchecked_cir="$dir/obj/$CONFIGURATION/net10.0/cir/UncheckedGenericCastReturnTests.cir.json"
+		if python3 "$ROOT/tests/basic/assert-unchecked-generic-unsafe-accessor-cir.py" "$unchecked_cir" \
+			>"$ROOT/build/nunit-$name.unchecked-generic-unsafe-accessor.log" 2>&1; then
+			echo "  unchecked generic object ABI keeps concrete UnsafeAccessor use projections"
+		else
+			echo "  UNCHECKED GENERIC UNSAFEACCESSOR FAIL — see build/nunit-$name.unchecked-generic-unsafe-accessor.log"
+			tail -25 "$ROOT/build/nunit-$name.unchecked-generic-unsafe-accessor.log"; rc=1
 		fi
 	fi
 	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer

@@ -1049,12 +1049,15 @@ sealed class Pipeline
             UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList());
             // UnsafeAccessor creates holder TypeDefs and replaces protected/private calls with wrapper calls. Index
             // those exact physical declarations, then flow the new edges through the nullable-generic boundary once.
-            // In particular, a lifted closure can now state wrapper object[] -> captured Array<R?> explicitly rather
-            // than leaving its inherited source-level R[] stamp on a call whose wrapper returns object[].
+            // A local selected declaration stamps the wrapper with one-shot erasure ownership; an external target,
+            // whose source carrier is not locally available, keeps the ordinary physical-signature behavior. Thus a
+            // lifted closure can state wrapper object[] -> captured Array<R?> explicitly without treating every late
+            // object return as nullable-generic erasure.
             foreach (var stagedFile in staged)
             {
                 NullableTvErasureCallRealign.CollectNewSyntheticTypes(stagedFile.Root, nullableTvDeclRets);
                 NullableTvErasureCallRealign.CollectNewSyntheticMembers(stagedFile.Root, nullableTvDeclRets);
+                NullableTvErasureCallRealign.ConsumeNullableErasureOwnership(stagedFile.Root);
             }
             foreach (var stagedFile in staged)
                 NullableTvErasureCallRealign.ApplyAfterUnsafeAccessorSynthesis(
