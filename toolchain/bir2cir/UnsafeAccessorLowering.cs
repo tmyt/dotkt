@@ -259,6 +259,12 @@ static class UnsafeAccessorLowering
         callReturnType ??= declaredAccessorReturn.DeepClone();
         if (referencedTarget != null)
             signature = new JsonArray(referencedTarget.Parameters.Select(TypeJson.Write).ToArray());
+        else if (target?["params"] is JsonArray targetParameters)
+            signature = new JsonArray(targetParameters.OfType<JsonObject>().Select(parameter =>
+                parameter["type"]?.DeepClone()
+                    ?? throw new InvalidOperationException(
+                        $"UnsafeAccessor target '{ownerType.Name}.{targetName}' has an untyped parameter")
+            ).ToArray());
         var key = $"{caller.Name}|method|{ownerType.Name}|{targetName}|{targetStatic}|{methodArity}|" +
                   string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredAccessorReturn) +
                   "|declaration:" + targetDeclarationId;

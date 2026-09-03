@@ -44,7 +44,23 @@ static class InheritedMemberOwnerBinding
     {
         var rootList = roots.ToList();
         var types = CollectTypes(rootList);
-        foreach (var root in rootList) Walk(root, types, refs, null);
+        var localDeclarationOwners = CollectLocalDeclarationOwners(types);
+        foreach (var root in rootList) Walk(root, types, localDeclarationOwners, refs, null);
+    }
+
+    static Dictionary<string, string> CollectLocalDeclarationOwners(Dictionary<string, TypeDef> types)
+    {
+        var candidates = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var type in types.Values)
+        foreach (var method in type.Methods?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
+        {
+            if (Str(method[DeclarationIdentityBinding.Key]) is not string declarationId) continue;
+            if (!candidates.TryGetValue(declarationId, out var owners))
+                candidates[declarationId] = owners = new HashSet<string>(StringComparer.Ordinal);
+            owners.Add(type.Name);
+        }
+        return candidates.Where(candidate => candidate.Value.Count == 1)
+            .ToDictionary(candidate => candidate.Key, candidate => candidate.Value.Single(), StringComparer.Ordinal);
     }
 
     static Dictionary<string, TypeDef> CollectTypes(IEnumerable<JsonNode> roots)
@@ -76,7 +92,8 @@ static class InheritedMemberOwnerBinding
         }
     }
 
-    static void Walk(JsonNode node, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs,
+    static void Walk(JsonNode node, Dictionary<string, TypeDef> types,
+        IReadOnlyDictionary<string, string> localDeclarationOwners, ReferenceMetadataIndex refs,
         TypeNode.Fqn enclosingOwner)
     {
         switch (node)
@@ -93,15 +110,15 @@ static class InheritedMemberOwnerBinding
                         ownerArgs.Length == 0 ? null : ownerArgs);
                 }
                 var ownerBefore = DeclaringOwner(obj)?.DeepClone();
-                Bind(obj, types, refs, enclosingOwner);
+                Bind(obj, types, localDeclarationOwners, refs, enclosingOwner);
                 if (!JsonNode.DeepEquals(ownerBefore, DeclaringOwner(obj)))
                     ConstructedMemberReturnSubstitution.ApplyCall(obj);
                 foreach (var kv in obj)
-                    if (kv.Value != null) Walk(kv.Value, types, refs, enclosingOwner);
+                    if (kv.Value != null) Walk(kv.Value, types, localDeclarationOwners, refs, enclosingOwner);
                 break;
             case JsonArray arr:
                 foreach (var item in arr)
-                    if (item != null) Walk(item, types, refs, enclosingOwner);
+                    if (item != null) Walk(item, types, localDeclarationOwners, refs, enclosingOwner);
                 break;
         }
     }
@@ -114,7 +131,8 @@ static class InheritedMemberOwnerBinding
         _ => null,
     };
 
-    static void Bind(JsonObject call, Dictionary<string, TypeDef> types, ReferenceMetadataIndex refs,
+    static void Bind(JsonObject call, Dictionary<string, TypeDef> types,
+        IReadOnlyDictionary<string, string> localDeclarationOwners, ReferenceMetadataIndex refs,
         TypeNode.Fqn enclosingOwner)
     {
         var kind = Str(call["k"]);
@@ -183,24 +201,28 @@ static class InheritedMemberOwnerBinding
         var paramCount = (call["args"] as JsonArray)?.Count ?? -1;
 
         // A callable-reference forwarding closure can retain the receiver's derived Kotlin owner even though its
-        // frontend-selected declaration identity names a referenced base MethodDef. Project that exact owner through
-        // the receiver hierarchy before any structural declaration lookup. The identity selects the declaration;
-        // this walk contributes only its constructed owner arguments and refuses a disagreeing diamond.
-        if (Str(call[DeclarationIdentityBinding.Key]) is string declarationId
-            && refs.TryDeclarationIdentity(
-                declarationId, out _, out var selectedPhysicalOwner, out _, out _))
+        // frontend-selected declaration identity names a local or referenced base MethodDef. Project that exact owner
+        // through the receiver hierarchy before any structural declaration lookup. The identity selects the
+        // declaration; this walk contributes only its constructed owner arguments and refuses a disagreeing diamond.
+        if (Str(call[DeclarationIdentityBinding.Key]) is string declarationId)
         {
-            var selectedOwners = ReachableTypes(owner, types, refs)
-                .Where(candidate => candidate.Type.Name == selectedPhysicalOwner)
-                .Select(candidate => candidate.Type)
-                .GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
-                .Select(group => group.First())
-                .ToList();
-            if (selectedOwners.Count == 1)
+            var hasSelectedOwner = localDeclarationOwners.TryGetValue(declarationId, out var selectedPhysicalOwner)
+                || refs.TryDeclarationIdentity(
+                    declarationId, out _, out selectedPhysicalOwner, out _, out _);
+            if (hasSelectedOwner)
             {
-                owner = selectedOwners[0];
-                call[ownerSlot] = TypeJson.Write(owner);
-                if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(owner);
+                var selectedOwners = ReachableTypes(owner, types, refs)
+                    .Where(candidate => candidate.Type.Name == selectedPhysicalOwner)
+                    .Select(candidate => candidate.Type)
+                    .GroupBy(SupertypeGraph.TypeKey, StringComparer.Ordinal)
+                    .Select(group => group.First())
+                    .ToList();
+                if (selectedOwners.Count == 1)
+                {
+                    owner = selectedOwners[0];
+                    call[ownerSlot] = TypeJson.Write(owner);
+                    if (kind == "newBoundDelegate") call["calleeOwner"] = TypeJson.Write(owner);
+                }
             }
         }
 
