@@ -53,9 +53,18 @@ fun <T> referencedExistentialFlow(): ReferencedExistentialFlow<T> = ReferencedEx
 data class ReferencedStarCopy<T>(val value: T, val tag: String)
 fun referencedStarCopy(): ReferencedStarCopy<String> = ReferencedStarCopy("referenced", "copy")
 
+class ReferencedStarNested<T>(val value: T) {
+    fun again(): ReferencedStarNested<T> = this
+}
+data class ReferencedStarNestedCopy<T>(val nested: ReferencedStarNested<T>, val tag: String)
+fun referencedStarNestedCopy(): ReferencedStarNestedCopy<String> =
+    ReferencedStarNestedCopy(ReferencedStarNested("referenced-nested"), "copy")
+
 interface MixedBox<A, B> {
     fun first(): A
     fun second(): B
+    fun capturedNested(): ReferencedStarNested<A>
+    fun exactNested(): ReferencedStarNested<B>
     fun choose(value: A): String
     fun choose(value: String): String
 }
@@ -63,6 +72,8 @@ interface MixedBox<A, B> {
 private class MixedValueBox : MixedBox<Int, String> {
     override fun first(): Int = 23
     override fun second(): String = "mixed"
+    override fun capturedNested(): ReferencedStarNested<Int> = ReferencedStarNested(29)
+    override fun exactNested(): ReferencedStarNested<String> = ReferencedStarNested("exact-nested")
     override fun choose(value: Int): String = "int:$value"
     override fun choose(value: String): String = "string:$value"
 }

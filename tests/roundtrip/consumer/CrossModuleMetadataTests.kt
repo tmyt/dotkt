@@ -105,7 +105,10 @@ import starprojection.ReferencedExistentialFlow
 import starprojection.ReferencedExistentialFusibleFlow
 import starprojection.referencedExistentialFlow
 import starprojection.ReferencedStarCopy
+import starprojection.ReferencedStarNested
+import starprojection.ReferencedStarNestedCopy
 import starprojection.referencedStarCopy
+import starprojection.referencedStarNestedCopy
 import starprojection.MixedBox
 import starprojection.mixedBox
 import starprojection.ExplicitNameStarCollision
@@ -461,12 +464,22 @@ class GenericMetadataRoundtripTests {
         ClassicAssert.AreEqual("referenced", copied.value)
         ClassicAssert.AreEqual("copy", copied.tag)
 
+        val nestedCopySource: ReferencedStarNestedCopy<*> = referencedStarNestedCopy()
+        val nestedCopied = nestedCopySource.copy()
+        val nested = nestedCopied.nested.again()
+        ClassicAssert.AreEqual("referenced-nested", nested.value)
+        ClassicAssert.AreEqual("copy", nestedCopied.tag)
+
         // One physical existential serves every projection mask, while [KotlinType] preserves the concrete second
         // argument. Re-import must therefore keep second() statically String rather than degrading the whole slot.
         val mixed: MixedBox<*, String> = mixedBox()
         val second: String = mixed.second()
         ClassicAssert.AreEqual(23, mixed.first())
         ClassicAssert.AreEqual("mixed", second)
+        val capturedNested = mixed.capturedNested().again()
+        val exactNested: ReferencedStarNested<String> = mixed.exactNested().again()
+        ClassicAssert.AreEqual(29, capturedNested.value)
+        ClassicAssert.AreEqual("exact-nested", exactNested.value)
         // The frontend-selected concrete-B overload must select its exact existential slot; name+arity sees both
         // choose(A) and choose(String) and is insufficient after the A slot becomes star-input Nothing.
         ClassicAssert.AreEqual("string:ok", mixed.choose("ok"))

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assert that #621 projects star-receiver copy defaults through existential getter slots."""
+"""Assert star-copy defaults and owner-dependent results stay on exact existential carriers."""
 
 import json
 import sys
@@ -26,6 +26,9 @@ with open(sys.argv[1], encoding="utf-8") as stream:
 for semantic_fact in ("dataClassCopyDefault", "dataClassEqualsFieldRead"):
     if any(node.get(semantic_fact) is not None for node in objects(root)):
         raise SystemExit(f"CIR: unconsumed {semantic_fact} semantic fact")
+
+if any(node.get("_existentialResultProjection") is not None for node in objects(root)):
+    raise SystemExit("CIR: unconsumed existential-result projection fact")
 
 for helper, star_owner in (
     ("defaultArgCopyThroughStar", "DefaultArgStarCopy$star"),
@@ -116,4 +119,122 @@ for class_name, star_owner in (
             f"{peer_reads!r}"
         )
 
-print("star-projected data-class field reads use existential getter slots")
+nested_helpers = [
+    method
+    for method in root.get("methods", [])
+    if isinstance(method, dict) and method.get("name") == "defaultArgNestedCopyThroughStar"
+]
+if len(nested_helpers) != 1:
+    raise SystemExit(
+        f"CIR: found {len(nested_helpers)} defaultArgNestedCopyThroughStar helpers, expected 1"
+    )
+
+nested_body = nested_helpers[0].get("body", [])
+forbidden_concrete_casts = [
+    node
+    for node in objects(nested_body)
+    if node.get("k") == "cast"
+    and isinstance(node.get("type"), dict)
+    and node["type"].get("name") == "DefaultArgStarNested"
+    and node["type"].get("args") is not None
+]
+if forbidden_concrete_casts:
+    raise SystemExit(
+        "CIR: star-dependent nested results must not cast to an invariant concrete construction: "
+        f"{forbidden_concrete_casts!r}"
+    )
+
+nested_carrier = {"t": "fqn", "name": "DefaultArgStarNested$star"}
+nested_getters = [
+    node
+    for node in objects(nested_body)
+    if node.get("k") == "callInstance"
+    and node.get("ownerType", {}).get("name") == "DefaultArgStarNestedCopy$star"
+    and node.get("ret") == nested_carrier
+    and node.get("sig") == []
+]
+if len(nested_getters) != 2 or not all(
+    node.get("virtual") is True for node in nested_getters
+):
+    raise SystemExit(
+        "CIR: copy default and ordinary nested getter must both return the exact nested carrier: "
+        f"{nested_getters!r}"
+    )
+
+nested_locals = [
+    node
+    for node in nested_body
+    if isinstance(node, dict)
+    and node.get("k") == "var"
+    and node.get("type") == nested_carrier
+    and isinstance(node.get("init"), dict)
+    and node["init"].get("k") == "cast"
+    and node["init"].get("type") == nested_carrier
+]
+if len(nested_locals) != 2:
+    raise SystemExit(
+        f"CIR: nested and chained locals must retain the physical existential carrier: {nested_locals!r}"
+    )
+
+again_calls = [
+    node
+    for node in objects(nested_body)
+    if node.get("k") == "callInstance"
+    and node.get("ownerType", {}).get("name") == "DefaultArgStarNested$star"
+    and str(node.get("method", "")).startswith("$star$again$")
+    and node.get("ret") == nested_carrier
+]
+if len(again_calls) != 1:
+    raise SystemExit(
+        f"CIR: chained owner-dependent result must stay on the nested carrier: {again_calls!r}"
+    )
+
+value_getters = [
+    node
+    for node in objects(nested_body)
+    if node.get("k") == "callInstance"
+    and node.get("ownerType", {}).get("name") == "DefaultArgStarNested$star"
+    and node.get("ret", {}).get("name") == "System.Object"
+]
+if len(value_getters) != 1 or value_getters[0].get("virtual") is not True:
+    raise SystemExit(
+        "CIR: use after the nested local must bind through its existential value getter: "
+        f"{value_getters!r}"
+    )
+
+inherited_helpers = [
+    method
+    for method in root.get("methods", [])
+    if isinstance(method, dict)
+    and method.get("name") == "defaultArgInheritedNestedThroughReorderedFrame"
+]
+if len(inherited_helpers) != 1:
+    raise SystemExit(
+        "CIR: expected one reordered inherited-frame helper, found "
+        f"{len(inherited_helpers)}"
+    )
+exact_nested = {
+    "t": "fqn",
+    "name": "DefaultArgStarNested",
+    "args": [{"t": "fqn", "name": "System.String"}],
+}
+inherited_locals = [
+    node
+    for node in inherited_helpers[0].get("body", [])
+    if isinstance(node, dict)
+    and node.get("k") == "var"
+    and node.get("type") == exact_nested
+    and isinstance(node.get("init"), dict)
+    and node["init"].get("k") == "cast"
+    and node["init"].get("type") == exact_nested
+    and node["init"].get("e", {}).get("ownerType", {}).get("name")
+    == "DefaultArgStarBase$star"
+    and node["init"].get("e", {}).get("ret") == nested_carrier
+]
+if len(inherited_locals) != 1:
+    raise SystemExit(
+        "CIR: Base<B> must project Derived<*, String>'s inherited result to Nested<String>: "
+        f"{inherited_locals!r}"
+    )
+
+print("star-projected data-class reads and nested results use exact existential carriers")
