@@ -25,6 +25,10 @@ import crossFileLanguage.crossFileLanguageCurrent
 import crossFileLanguage.crossFileLanguageCall
 import crossFileLanguage.crossFileLanguageCounter
 import crossFileLanguage.crossFileLanguageBump
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 import kotlin.clr.ClrRef
 import kotlin.clr.byref
 
@@ -189,6 +193,26 @@ private fun <T> runtimeTypesFuseSuspend(
     val fusible = flow as RuntimeTypesExistentialFusibleFlow<T>
     return { fusible.fuse() }
 }
+private fun runtimeTypesRunStringFlow(
+    block: suspend () -> RuntimeTypesExistentialFlow<String>
+): RuntimeTypesExistentialFlow<String> {
+    var outcome: Result<RuntimeTypesExistentialFlow<String>>? = null
+    block.startCoroutine(object : Continuation<RuntimeTypesExistentialFlow<String>> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+        override fun resumeWith(result: Result<RuntimeTypesExistentialFlow<String>>) { outcome = result }
+    })
+    return outcome!!.getOrThrow()
+}
+private fun runtimeTypesRunIntFlow(
+    block: suspend () -> RuntimeTypesExistentialFlow<Int>
+): RuntimeTypesExistentialFlow<Int> {
+    var outcome: Result<RuntimeTypesExistentialFlow<Int>>? = null
+    block.startCoroutine(object : Continuation<RuntimeTypesExistentialFlow<Int>> {
+        override val context: CoroutineContext get() = EmptyCoroutineContext
+        override fun resumeWith(result: Result<RuntimeTypesExistentialFlow<Int>>) { outcome = result }
+    })
+    return outcome!!.getOrThrow()
+}
 open class RuntimeTypesGenericProtectedSuperBase<T> {
     context(context: RuntimeTypesSuperContext)
     protected open fun <U : RuntimeTypesGenericMarker<T>> combine(value: T, marker: U): String =
@@ -312,6 +336,8 @@ class StarProjectionAndVisibilityTests {
         assertTrue(runtimeTypesFuseReference(intFlow)() === intFlow)
         assertTrue(runtimeTypesFuseSam(stringFlow).fuse() === stringFlow)
         assertTrue(runtimeTypesFuseSam(intFlow).fuse() === intFlow)
+        assertTrue(runtimeTypesRunStringFlow(runtimeTypesFuseSuspend(stringFlow)) === stringFlow)
+        assertTrue(runtimeTypesRunIntFlow(runtimeTypesFuseSuspend(intFlow)) === intFlow)
     }
 
     @TestAttribute
