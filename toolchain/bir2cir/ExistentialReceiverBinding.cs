@@ -218,24 +218,7 @@ static class ExistentialReceiverBinding
         var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
             ?? Array.Empty<TypeNode>();
         physicalResult = FBoundStarProjectionErasure.SubstituteMethodTypeArguments(physicalResult, methodArgs);
-        var semanticResult = TypeJson.Read(call["dynRet"])
-            ?? TypeJson.Read(call["sty"])
-            ?? TypeJson.Read(call["ret"]);
-        if (physicalResult == null || semanticResult == null || physicalResult.Equals(semanticResult)
-            || FBoundStarProjectionErasure.IsVoidResult(physicalResult)
-                && FBoundStarProjectionErasure.IsVoidResult(semanticResult)) return;
-
-        var hadSty = call["sty"] != null;
-        var inner = call.DeepClone().AsObject();
-        inner["ret"] = TypeJson.Write(physicalResult);
-        if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physicalResult);
-        if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physicalResult);
-
-        foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
-        call["k"] = "cast";
-        call["type"] = TypeJson.Write(semanticResult);
-        call["e"] = inner;
-        if (hadSty) call["sty"] = TypeJson.Write(semanticResult);
+        FBoundStarProjectionErasure.AlignCallResult(call, physicalResult, protectExactCast: false);
     }
 
     static bool SignatureMatches(IReadOnlyList<TypeNode> declaration, IReadOnlyList<TypeNode> call)

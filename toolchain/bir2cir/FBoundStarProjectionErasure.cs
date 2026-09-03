@@ -52,6 +52,10 @@ static class FBoundStarProjectionErasure
         while (CollectNormalizedInnerFactoryReturns(rootList, owners, refs, normalizedReturns))
             foreach (var root in rootList)
                 RewriteNormalizedInnerFactoryCalls(root, normalizedReturns, owners, defs, refs);
+        // Exact bridge casts carry a pass-local guard only while this pass can still mistake them for Kotlin's erased
+        // runtime classifier operation. A post-order member binding can create one after its object was visited, so a
+        // final cleanup is the single guarantee that this implementation marker never becomes CIR.
+        foreach (var root in rootList) RemoveExactBridgeCastMarkers(root);
         // Binding above consumes the complete Kotlin constraint graph. Only after every local call and generated
         // seam has been selected may the physical inner TypeDefs drop constraints that cannot name a star outer.
         var weakenedOwnerSlots = WeakenOwnerDependentInnerConstraints(
@@ -1888,26 +1892,7 @@ static class FBoundStarProjectionErasure
             var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
                 ?? Array.Empty<TypeNode>();
             physicalResult = SubstituteMethodTypeArguments(physicalResult, methodArgs);
-            var semanticResult = TypeJson.Read(call["dynRet"])
-                ?? TypeJson.Read(call["sty"])
-                ?? TypeJson.Read(call["ret"]);
-            if (physicalResult == null || semanticResult == null || physicalResult.Equals(semanticResult)
-                || IsVoidResult(physicalResult) && IsVoidResult(semanticResult)) return;
-
-            var hadSty = call["sty"] != null;
-            var inner = call.DeepClone().AsObject();
-            inner["ret"] = TypeJson.Write(physicalResult);
-            if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physicalResult);
-            if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physicalResult);
-
-            foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
-            call["k"] = "cast";
-            call["type"] = TypeJson.Write(semanticResult);
-            call["e"] = inner;
-            if (hadSty) call["sty"] = TypeJson.Write(semanticResult);
-            // This cast is the exact semantic projection of a successfully raw-classifier-tested value, not another
-            // Kotlin erased `as G<T>` operation for this pass to collapse back to the existential carrier.
-            call["_exactBridgeCast"] = true;
+            AlignCallResult(call, physicalResult, protectExactCast: true);
         }
 
         var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
@@ -2036,6 +2021,44 @@ static class FBoundStarProjectionErasure
 
     internal static bool IsVoidResult(TypeNode type) =>
         type is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" or "void" or "System.Void" };
+
+    internal static void AlignCallResult(JsonObject call, TypeNode physicalResult, bool protectExactCast)
+    {
+        var semanticResult = NodeType.Stamp(call);
+        if (physicalResult == null || semanticResult == null || physicalResult.Equals(semanticResult)
+            || IsVoidResult(physicalResult) && IsVoidResult(semanticResult)) return;
+
+        var hadSty = call["sty"] != null;
+        var inner = call.DeepClone().AsObject();
+        inner["ret"] = TypeJson.Write(physicalResult);
+        if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physicalResult);
+        if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physicalResult);
+
+        foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
+        call["k"] = "cast";
+        call["type"] = TypeJson.Write(semanticResult);
+        call["e"] = inner;
+        if (hadSty) call["sty"] = TypeJson.Write(semanticResult);
+        // This cast is the exact semantic projection of a successfully raw-classifier-tested value, not another
+        // Kotlin erased `as G<T>` operation for this pass to collapse back to the existential carrier.
+        if (protectExactCast) call["_exactBridgeCast"] = true;
+    }
+
+    static void RemoveExactBridgeCastMarkers(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                obj.Remove("_exactBridgeCast");
+                foreach (var value in obj.Select(pair => pair.Value).ToList())
+                    if (value != null) RemoveExactBridgeCastMarkers(value);
+                break;
+            case JsonArray array:
+                foreach (var value in array)
+                    if (value != null) RemoveExactBridgeCastMarkers(value);
+                break;
+        }
+    }
 
     static void MarkPhysicalPropertyCall(JsonObject call, bool propertyCall,
         string sourcePropertyName, string accessorKind, string physicalIdentity = null)
