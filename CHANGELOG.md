@@ -7,6 +7,11 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Referenced method-generic accessors now retain every value-parameter slot (#656).** bir2cir recognizes the
+  generic-call `shapeTypes` signature carrier alongside ordinary Kotlin and CLR call signatures when a protected
+  member imported from another DotKt assembly is called from a lifted closure. The synthesized CLR UnsafeAccessor and
+  its call therefore agree on the target and source-value parameters instead of failing during emission.
+
 - **UnsafeAccessor calls now preserve object-erased generic return ownership (#652).** bir2cir carries the selected
   member's nullable-generic provenance onto synthesized accessors, allowing nullable realignment to distinguish its
   own erasure from other physical `object` contracts and retain the concrete use projection needed by arithmetic and
