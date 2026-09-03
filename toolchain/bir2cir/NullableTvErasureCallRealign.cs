@@ -1124,6 +1124,21 @@ static partial class NullableTvErasureCallRealign
             throw new InvalidOperationException(
                 "NullableTvErasureCallRealign self-test dropped a function CLR family or context frame");
 
+        var physicalFunction = new TypeNode.Fn(
+            false, new TypeNode.Fqn("object"), Array.Empty<TypeNode>(), Clr: "System.Func");
+        if (IsObjectErasureOf(
+                TypeNode.Array.General(new TypeNode.Fqn("object"), 2),
+                new TypeNode.Array(new TypeNode.Fqn("System.String")))
+            || IsObjectErasureOf(
+                physicalFunction,
+                new TypeNode.Fn(false, new TypeNode.Fqn("System.String"), Array.Empty<TypeNode>(),
+                    Clr: "kotlin.jvm.functions.Function0"))
+            || !IsObjectErasureOf(
+                physicalFunction,
+                new TypeNode.Fn(false, new TypeNode.Fqn("System.String"), Array.Empty<TypeNode>())))
+            throw new InvalidOperationException(
+                "NullableTvErasureCallRealign self-test misclassified physical facets during object erasure");
+
         Console.WriteLine("[nullable-generic substitution] self-test OK (general arrays + function facets)");
     }
 
@@ -1146,16 +1161,27 @@ static partial class NullableTvErasureCallRealign
             (TypeNode.Fqn { Args: { } ca } cf, TypeNode.Fqn { Args: { } ea } ef)
                 when SameClassifier(cf, ef) && ca.Length == ea.Length
                 => ca.Zip(ea, IsObjectErasureOf).All(x => x),
-            (TypeNode.Array c, TypeNode.Array e) => IsObjectErasureOf(c.Elem, e.Elem),
+            (TypeNode.Array c, TypeNode.Array e) when c.Rank == e.Rank && c.SzArray == e.SzArray
+                => IsObjectErasureOf(c.Elem, e.Elem),
             (TypeNode.Nullable c, TypeNode.Nullable e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.Oblivious c, TypeNode.Oblivious e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.ByRef c, TypeNode.ByRef e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.Fn c, TypeNode.Fn e)
-                when c.Params.Length == e.Params.Length && c.Suspend == e.Suspend && (c.Recv == null) == (e.Recv == null)
+                when c.Params.Length == e.Params.Length && c.Suspend == e.Suspend
+                    && (c.Recv == null) == (e.Recv == null)
+                    && (c.Clr == null || e.Clr == null || c.Clr == e.Clr)
+                    && ContextIsObjectErasureOf(c.Ctx, e.Ctx)
                 => IsObjectErasureOf(c.Ret, e.Ret) && c.Params.Zip(e.Params, IsObjectErasureOf).All(x => x)
                    && (c.Recv == null || IsObjectErasureOf(c.Recv, e.Recv)),
             _ => false,
         };
+    }
+
+    static bool ContextIsObjectErasureOf(TypeNode[] candidate, TypeNode[] expected)
+    {
+        candidate ??= Array.Empty<TypeNode>();
+        expected ??= Array.Empty<TypeNode>();
+        return candidate.Length == expected.Length && candidate.Zip(expected, IsObjectErasureOf).All(x => x);
     }
 
     // Current-format ClrExternal classifiers carry their exact CLR TypeDef identity, while nullable-generic

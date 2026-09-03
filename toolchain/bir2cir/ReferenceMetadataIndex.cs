@@ -3780,7 +3780,8 @@ sealed partial class ReferenceMetadataIndex
         TypeNode.Nullable n => ContainsTv(n.Of),
         TypeNode.Oblivious o => ContainsTv(o.Of),
         TypeNode.ByRef b => ContainsTv(b.Of),
-        TypeNode.Fn fn => ContainsTv(fn.Ret) || fn.Params.Any(ContainsTv) || (fn.Recv != null && ContainsTv(fn.Recv)),
+        TypeNode.Fn fn => ContainsTv(fn.Ret) || fn.Params.Any(ContainsTv)
+            || (fn.Recv != null && ContainsTv(fn.Recv)) || (fn.Ctx?.Any(ContainsTv) ?? false),
         _ => false,
     };
 
@@ -3794,10 +3795,12 @@ sealed partial class ReferenceMetadataIndex
         null => null,
         TypeNode.Fqn { Name: "System.Object", Args: null } => new TypeNode.Fqn("object"),
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name, args.Select(Canonical).ToArray()),
-        TypeNode.Array a => new TypeNode.Array(Canonical(a.Elem)),
+        TypeNode.Array a => new TypeNode.Array(Canonical(a.Elem), a.Rank, a.SzArray),
         TypeNode.Nullable n => new TypeNode.Nullable(Canonical(n.Of)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(Canonical(o.Of)),
         TypeNode.ByRef b => new TypeNode.ByRef(Canonical(b.Of)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend, Canonical(fn.Ret), fn.Params.Select(Canonical).ToArray(),
+            fn.Recv == null ? null : Canonical(fn.Recv), fn.Clr, fn.Ctx?.Select(Canonical).ToArray()),
         _ => t,
     };
 
@@ -6695,7 +6698,11 @@ sealed partial class ReferenceMetadataIndex
     {
         if (type.IsByRef) return TypeNodeOf(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
         if (type.IsPointer) return TypeNodeOf(type.GetElementType()!) is TypeNode ep ? new TypeNode.Ptr(ep) : null;
-        if (type.IsArray) return TypeNodeOf(type.GetElementType()!) is TypeNode e1 ? new TypeNode.Array(e1) : null;
+        if (type.IsArray)
+        {
+            if (TypeNodeOf(type.GetElementType()!) is not TypeNode e1) return null;
+            return type.IsSZArray ? new TypeNode.Array(e1) : TypeNode.Array.General(e1, type.GetArrayRank());
+        }
         if (type.IsGenericParameter) return null;   // an unresolved fn type-param: no useful static identity
         if (IsDelegate(type)) return null;
         if (type.IsConstructedGenericType)
@@ -6720,7 +6727,11 @@ sealed partial class ReferenceMetadataIndex
         if (type.IsByRef) return DeclarationTypeNode(type.GetElementType()!) is TypeNode e0 ? new TypeNode.ByRef(e0) : null;
         if (type.IsPointer)
             return DeclarationTypeNode(type.GetElementType()!) is TypeNode ep ? new TypeNode.Ptr(ep) : null;
-        if (type.IsArray) return DeclarationTypeNode(type.GetElementType()!) is TypeNode e1 ? new TypeNode.Array(e1) : null;
+        if (type.IsArray)
+        {
+            if (DeclarationTypeNode(type.GetElementType()!) is not TypeNode e1) return null;
+            return type.IsSZArray ? new TypeNode.Array(e1) : TypeNode.Array.General(e1, type.GetArrayRank());
+        }
         if (type.IsGenericParameter)
             return new TypeNode.Tv(type.DeclaringMethod != null ? "method" : "type", type.GenericParameterPosition);
         // Kotlin function types remain `{t:fn}` in CIR, with the exact physical delegate family retained.
@@ -6743,6 +6754,51 @@ sealed partial class ReferenceMetadataIndex
         }
         var prim = PrimitiveBirName(type);
         return new TypeNode.Fqn(prim ?? DottedFqn(StripGenericArity(type.FullName ?? type.Name)));
+    }
+
+    internal static void SelfTest()
+    {
+        var reflectedTypeParameter = typeof(List<>).GetGenericArguments()[0];
+        var reflectedArrays = new[]
+        {
+            reflectedTypeParameter.MakeArrayType(2),
+            reflectedTypeParameter.MakeArrayType(1),
+            reflectedTypeParameter.MakeArrayType(),
+        };
+        var expectedArrays = new TypeNode[]
+        {
+            TypeNode.Array.General(new TypeNode.Tv("type", 0), 2),
+            TypeNode.Array.General(new TypeNode.Tv("type", 0), 1),
+            new TypeNode.Array(new TypeNode.Tv("type", 0)),
+        };
+        for (var i = 0; i < reflectedArrays.Length; i++)
+            if (DeclarationTypeNode(reflectedArrays[i]) != expectedArrays[i])
+                throw new InvalidOperationException(
+                    "ReferenceMetadataIndex self-test dropped a reflected general-array rank/vector facet");
+
+        var closedGeneralArray = typeof(string).MakeArrayType(2);
+        if (TypeNodeOf(closedGeneralArray)
+            != TypeNode.Array.General(new TypeNode.Fqn("string"), 2))
+            throw new InvalidOperationException(
+                "ReferenceMetadataIndex self-test dropped a static-result general-array rank/vector facet");
+
+        var openContextFunction = new TypeNode.Fn(
+            Suspend: false,
+            Ret: new TypeNode.Fqn("System.Object"),
+            Params: Array.Empty<TypeNode>(),
+            Clr: "System.Func",
+            Ctx: new TypeNode[] { new TypeNode.Tv("type", 0) });
+        var expectedContextFunction = new TypeNode.Fn(
+            Suspend: false,
+            Ret: new TypeNode.Fqn("object"),
+            Params: Array.Empty<TypeNode>(),
+            Clr: "System.Func",
+            Ctx: new TypeNode[] { new TypeNode.Tv("type", 0) });
+        if (OpenPhysical(openContextFunction) != expectedContextFunction)
+            throw new InvalidOperationException(
+                "ReferenceMetadataIndex self-test dropped an open function context or CLR family");
+
+        Console.WriteLine("[reference declaration types] self-test OK (general arrays + function facets)");
     }
 
     static bool IsFunc(Type type) =>
