@@ -101,6 +101,9 @@ import starprojection.StarKey
 import starprojection.starOwner
 import starprojection.FirstUseBox
 import starprojection.firstUseBox
+import starprojection.ReferencedExistentialFlow
+import starprojection.ReferencedExistentialFusibleFlow
+import starprojection.referencedExistentialFlow
 import starprojection.ReferencedStarCopy
 import starprojection.referencedStarCopy
 import starprojection.MixedBox
@@ -191,6 +194,14 @@ private fun requireNullableSuspendType(
 ): (suspend () -> Int)? = probe.value
 
 private class LocalReadonlyCollectionEdge : CollectionEdge<List<String>>(listOf("bound edge"))
+
+private fun <T> fuseReferencedExistential(
+    flow: ReferencedExistentialFlow<T>
+): ReferencedExistentialFlow<T> =
+    when (flow) {
+        is ReferencedExistentialFusibleFlow -> flow.fuse()
+        else -> flow
+    }
 
 class CrossModuleCaptureTests {
     // ktproj-dotktpkg (#26 follow-up): a `dotkt.foo.bar` cross-module local captured in a lambda,
@@ -439,6 +450,11 @@ class GenericMetadataRoundtripTests {
         // place that asks for the projection and must still receive the original object through the raw view.
         val first: FirstUseBox<*> = firstUseBox()
         ClassicAssert.AreEqual("first-use", first.get())
+
+        val referencedString = referencedExistentialFlow<String>()
+        val referencedInt = referencedExistentialFlow<Int>()
+        ClassicAssert.IsTrue(fuseReferencedExistential(referencedString) === referencedString)
+        ClassicAssert.IsTrue(fuseReferencedExistential(referencedInt) === referencedInt)
 
         val copySource: ReferencedStarCopy<*> = referencedStarCopy()
         val copied = copySource.copy()

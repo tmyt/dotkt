@@ -140,6 +140,13 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  ABSTRACT/SUPER BINDING FAIL — see build/nunit-$name.abstract-super-binding.log"
 			tail -25 "$ROOT/build/nunit-$name.abstract-super-binding.log"; rc=1
 		fi
+		if python3 "$ROOT/tests/basic/assert-existential-return-cir.py" "$abstract_super_cir" \
+			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
+			echo "  existential calls state physical returns + semantic projections"
+		else
+			echo "  EXISTENTIAL RETURN BINDING FAIL — see build/nunit-$name.existential-return.log"
+			tail -25 "$ROOT/build/nunit-$name.existential-return.log"; rc=1
+		fi
 	fi
 	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer
 	# DLL must carry an explicit trusted owner/name/representation record, and dll2klib must wire that record into the
@@ -152,7 +159,15 @@ for proj in "${PROJECTS[@]}"; do
 		producer_cir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/DispatchAndCompanion.cir.json"
 		ownership_bir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/bir/NestedOwnership.bir.json"
 		ownership_cir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/NestedOwnership.cir.json"
+		consumer_cir="$dir/obj/$CONFIGURATION/net10.0/cir/CrossModuleMetadataTests.cir.json"
 		consumer_dll="$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll"
+		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" "$consumer_cir" \
+			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
+			echo "  referenced existential calls state physical returns + semantic projections"
+		else
+			echo "  REFERENCED EXISTENTIAL RETURN BINDING FAIL — see build/nunit-$name.existential-return.log"
+			tail -25 "$ROOT/build/nunit-$name.existential-return.log"; rc=1
+		fi
 		if bash "$ROOT/tests/roundtrip/run-flags-lookalike-negative.sh" \
 			>"$ROOT/build/nunit-$name.flags-lookalike.log" 2>&1; then
 			echo "  same-FQN System.Enum/FlagsAttribute lookalikes do not project flags operations"

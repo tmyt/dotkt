@@ -21,7 +21,7 @@ static class ExistentialReceiverBinding
     }
 
     internal sealed record Member(string Name, string SourceName, string AccessorKind,
-        TypeNode[] Parameters, int GenericArity)
+        TypeNode[] Parameters, TypeNode Return, int GenericArity)
     {
         public int ParamCount => Parameters.Length;
     }
@@ -56,6 +56,7 @@ static class ExistentialReceiverBinding
                             (method["params"] as JsonArray)?.OfType<JsonObject>()
                                 .Select(p => TypeJson.Read(p["type"]))
                                 .Where(t => t != null).ToArray() ?? Array.Empty<TypeNode>(),
+                            TypeJson.Read(method["ret"]),
                             (method["typeParams"] as JsonArray)?.Count ?? 0));
                     }
                 index.Members[name] = slots;
@@ -155,6 +156,7 @@ static class ExistentialReceiverBinding
         if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
         string physicalMethod = null;
         TypeNode[] physicalParameters = null;
+        TypeNode physicalResult = null;
 
         if (index.Members.TryGetValue(receiverType.Name, out var members))
         {
@@ -162,17 +164,18 @@ static class ExistentialReceiverBinding
                 .Where(m => m.ParamCount == pc && m.GenericArity == ga
                     && m.SourceName == sourceMethod && m.AccessorKind == accessorKind
                     && SignatureMatches(m.Parameters, authoredSignature))
-                // Duplicate roots may describe the same physical slot. Coalesce only an identical name+descriptor;
-                // grouping by name alone discards the frontend-resolved overload signature and selects whichever
-                // same-name accessor was enumerated first.
-                .GroupBy(m => m.Name + "\u001f" + string.Join("\u001f", m.Parameters.Select(p => p.ToString())),
-                    StringComparer.Ordinal)
-                .Select(g => g.First())
                 .ToList();
+            // Duplicate roots may describe the same physical slot. Coalesce only a structurally identical CLR
+            // descriptor. TypeNode.ToString() is not an identity for nested generic arguments, and a MethodDef's
+            // return participates in its signature, so either shortcut could hide a genuinely ambiguous slot here.
+            for (var i = candidates.Count - 1; i >= 0; i--)
+                if (candidates.Take(i).Any(existing => SamePhysicalSlot(existing, candidates[i])))
+                    candidates.RemoveAt(i);
             if (candidates.Count == 1)
             {
                 physicalMethod = candidates[0].Name;
                 physicalParameters = candidates[0].Parameters;
+                physicalResult = candidates[0].Return;
             }
         }
         else
@@ -186,11 +189,13 @@ static class ExistentialReceiverBinding
                 semanticOwner = new TypeNode.Fqn(sourceOwner, semanticOwner.Args);
             if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
                     ga, authoredSignature, pc, Str(call[DeclarationIdentityBinding.Key]),
-                    out var erasedOwner, out var erasedMethod, out var erasedSignature, out _)
+                    out var erasedOwner, out var erasedMethod, out var erasedSignature, out _,
+                    out var erasedResult)
                 && erasedOwner == receiverType.Name)
             {
                 physicalMethod = erasedMethod;
                 physicalParameters = erasedSignature;
+                physicalResult = erasedResult;
             }
         }
 
@@ -205,6 +210,15 @@ static class ExistentialReceiverBinding
         if (physicalParameters != null)
             call["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray());
         call["virtual"] = true;
+        AlignResult(call, physicalResult);
+    }
+
+    static void AlignResult(JsonObject call, TypeNode physicalResult)
+    {
+        var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+            ?? Array.Empty<TypeNode>();
+        physicalResult = FBoundStarProjectionErasure.SubstituteMethodTypeArguments(physicalResult, methodArgs);
+        FBoundStarProjectionErasure.AlignCallResult(call, physicalResult, protectExactCast: false);
     }
 
     static bool SignatureMatches(IReadOnlyList<TypeNode> declaration, IReadOnlyList<TypeNode> call)
@@ -215,6 +229,12 @@ static class ExistentialReceiverBinding
                     ReferenceMetadataIndex.AccessorDeclarationDescribesCall(parameter, call[index]))
                 .All(match => match);
     }
+
+    static bool SamePhysicalSlot(Member left, Member right) =>
+        left.Name == right.Name
+        && left.GenericArity == right.GenericArity
+        && Equals(left.Return, right.Return)
+        && left.Parameters.SequenceEqual(right.Parameters);
 
     static TypeNode ReceiverType(JsonNode receiver, IReadOnlyDictionary<string, TypeNode> vars)
     {

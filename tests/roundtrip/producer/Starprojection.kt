@@ -36,6 +36,17 @@ private class FirstUseStringBox : FirstUseBox<String> {
 
 fun firstUseBox(): FirstUseBox<String> = FirstUseStringBox()
 
+interface ReferencedExistentialFlow<T>
+interface ReferencedExistentialFusibleFlow<T> : ReferencedExistentialFlow<T> {
+    fun fuse(): ReferencedExistentialFlow<T>
+}
+
+private class ReferencedExistentialFlowImpl<T> : ReferencedExistentialFusibleFlow<T> {
+    override fun fuse(): ReferencedExistentialFlow<T> = this
+}
+
+fun <T> referencedExistentialFlow(): ReferencedExistentialFlow<T> = ReferencedExistentialFlowImpl()
+
 // A downstream generated data-class `copy()` call reconstructs each omitted default from the referenced receiver.
 // On a star receiver those property values must use this assembly's published existential getter slots rather than
 // naming backing fields that the deliberately fieldless existential interface cannot own.
