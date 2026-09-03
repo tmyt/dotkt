@@ -443,6 +443,11 @@ sealed class Pipeline
             ReifiedNullabilityWitnessLowering.Apply(bir.Root, nullableWitnessDemand, refs);
             ClosureSynthesis.Apply(bir.Root, refs);
             SharedSyntheticSynthesis.Apply(bir.Root);
+            // Heap ref-cell types only become declarations in the transition above. Preserve their pristine element
+            // slots in the nullable-generic use index before the declaration erasure below. Otherwise a late
+            // inherited protected-property read may be correctly realigned to object[] while its store into a
+            // concrete Array<R?> ref-cell remains invisible to the write axis (invalid object[] -> R[] CIL).
+            NullableTvErasureCallRealign.CollectNewSyntheticTypes(bir.Root, nullableTvDeclRets);
             // FOR-LOOP SOURCE CLASSIFICATION (#73/#73-w3): kotc emits ONE faithful `forIn` carrying the source's
             // runtime type token (`srcType`) for every non-array source — it no longer decides range-vs-collection nor
             // the .NET/Sequence-enumerable case (each needs the kotlin.ranges FQN or a `@Clr`/.NET-type resolution off
@@ -988,6 +993,16 @@ sealed class Pipeline
         if (!_options.RefBuild)
             InheritedMemberOwnerBinding.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
 
+        // A local inherited call only acquires its exact declaring owner in the transition above. Re-apply the
+        // nullable-generic use contract now: `Derived : Base<String>` reading `Base<T>.values: Array<T?>` must call
+        // the physical `object[]` slot and state the checked `string[]` projection explicitly. This is also before
+        // UnsafeAccessorLowering, so a protected/private inherited edge and its synthesized wrapper agree on the same
+        // physical result instead of leaving ilemit an impossible `object[] -> string[]` stack edge.
+        if (!_options.RefBuild)
+            foreach (var stagedFile in staged)
+                NullableTvErasureCallRealign.ApplyAfterInheritedOwnerBinding(
+                    stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
+
         // CONSTRAINED TYPE-PARAMETER RECEIVER, phase 2 of 2: a member called on a receiver whose static type is a
         // type PARAMETER (`fun <T : Tagged> f(t: T) = t.tag()`) cannot be a plain `callvirt` — the stack holds a
         // `!!T`, not an interface reference, so ECMA-335 requires an address plus `constrained. !!T ; callvirt`.
@@ -1030,7 +1045,21 @@ sealed class Pipeline
         if (_options.RefBuild)
             UnsafeAccessorLowering.DropFacts(staged.Select(s => s.Root).ToList());
         else
+        {
             UnsafeAccessorLowering.ApplyAll(staged.Select(s => s.Root).ToList());
+            // UnsafeAccessor creates holder TypeDefs and replaces protected/private calls with wrapper calls. Index
+            // those exact physical declarations, then flow the new edges through the nullable-generic boundary once.
+            // In particular, a lifted closure can now state wrapper object[] -> captured Array<R?> explicitly rather
+            // than leaving its inherited source-level R[] stamp on a call whose wrapper returns object[].
+            foreach (var stagedFile in staged)
+            {
+                NullableTvErasureCallRealign.CollectNewSyntheticTypes(stagedFile.Root, nullableTvDeclRets);
+                NullableTvErasureCallRealign.CollectNewSyntheticMembers(stagedFile.Root, nullableTvDeclRets);
+            }
+            foreach (var stagedFile in staged)
+                NullableTvErasureCallRealign.ApplyAfterUnsafeAccessorSynthesis(
+                    stagedFile.Root, nullableTvDeclRets, isValueFqn, refs);
+        }
 
         // Resolve the Kotlin `lateinitGet` failure path to an ordinary UPAE construction before constructor binding.
         // This is deliberately after UnsafeAccessorLowering, which can rebuild a private-field lateinitGet around a

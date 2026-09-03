@@ -100,6 +100,50 @@ static partial class NullableTvErasureCallRealign
         return idx;
     }
 
+    // SharedSyntheticSynthesis materializes heap ref-cell declarations after the module-wide source snapshot above.
+    // Their element type is still pristine Kotlin vocabulary at that point, so admit only the newly-created TYPE
+    // declarations into the same index before NullableGenericErasure mutates them. Calling CollectFrom with
+    // topLevel=false deliberately skips the already-indexed file facade members while retaining its recursive `types`
+    // walk; existing type names are ignored by CollectFrom, so this is an additive capability transition rather than
+    // a second, ambiguity-producing declaration scan.
+    public static void CollectNewSyntheticTypes(JsonNode root, DeclIndex idx) =>
+        CollectFrom(root, idx, topLevel: false);
+
+    // UnsafeAccessor has a second materialization shape: for a non-generic target owner it appends a generated extern
+    // method to the EXISTING caller type (or file facade) instead of creating a holder type. CollectFrom deliberately
+    // ignores an owner already in ByOwner, so admit only those generated methods here. Their allocated names are the
+    // exact identity used by the replacement call, and their post-erasure signature is the authoritative physical
+    // declaration. Ordinary existing declarations and property candidate sets remain untouched.
+    public static void CollectNewSyntheticMembers(JsonNode root, DeclIndex idx)
+    {
+        if (root is not JsonObject file) return;
+        if (file["methods"] is JsonArray topMethods)
+            CollectGeneratedMethods(topMethods, idx.TopLevel);
+        CollectTypeMethods(file["types"]);
+
+        void CollectTypeMethods(JsonNode node)
+        {
+            if (node is not JsonArray types) return;
+            foreach (var type in types.OfType<JsonObject>())
+            {
+                if (Str(type["name"]) is string name && type["methods"] is JsonArray methods)
+                {
+                    if (!idx.ByOwner.TryGetValue(name, out var declarations))
+                        idx.ByOwner[name] = declarations = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
+                    CollectGeneratedMethods(methods, declarations);
+                }
+                CollectTypeMethods(type["types"]);
+            }
+        }
+    }
+
+    static void CollectGeneratedMethods(JsonArray methods, Dictionary<string, DeclSig> declarations)
+    {
+        foreach (var method in methods.OfType<JsonObject>())
+            if (Bool(method["generated"]) && Str(method["name"]) is string name && ReadSig(method) is DeclSig sig)
+                AddUnambiguous(declarations, name + "|" + sig.Params.Length, sig);
+    }
+
     static void CollectFrom(JsonNode node, DeclIndex idx, bool topLevel)
     {
         if (node is not JsonObject o) return;
@@ -289,6 +333,26 @@ static partial class NullableTvErasureCallRealign
     // is keyed by, so those calls have no resolvable declaration on the first run. Every rewrite here is gated on a
     // difference plus the object-erasure relation, so re-deriving a slot the first run already corrected is a no-op.
     public static void ApplyAfterReferencedOwnerBinding(
+        JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+        => ApplySourceUses(root, idx, isValue, refs);
+
+    // The SAME-MODULE inherited-member half. A call emitted against its Kotlin receiver owner can only be matched to
+    // the declaration that owns its nullable-generic slot after InheritedMemberOwnerBinding closes the base-chain
+    // substitution (`Derived : Base<String>` reading `Base<T>.values: Array<T?>`). Until then the source-use pass has
+    // no declaration under `Derived` and correctly refuses to guess. Re-flow after that distinct identity transition
+    // so the physical result remains `Subst(Erase(declaration))`; for a reference array, ApplyDerivedRet authors the
+    // explicit checked projection back to the concrete Kotlin array seen by the consumer. The same gates make this
+    // idempotent for calls already handled by either earlier phase.
+    public static void ApplyAfterInheritedOwnerBinding(
+        JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
+        => ApplySourceUses(root, idx, isValue, refs);
+
+    // UnsafeAccessorLowering replaces a Kotlin member edge with a newly-declared wrapper call. The wrapper's
+    // declaration is the first authoritative statement of that new call's physical result; re-flow once after the
+    // holder types have been admitted to the index so an object-erased result is projected at its actual consumer.
+    // This is necessary for lifted closure bodies too: their protected access can only become an UnsafeAccessor after
+    // the original inherited-member pass, and retaining the pre-rewrite concrete `ret` would lie about the wrapper.
+    public static void ApplyAfterUnsafeAccessorSynthesis(
         JsonNode root, DeclIndex idx, ValueTypeOracle isValue, ReferenceMetadataIndex refs)
         => ApplySourceUses(root, idx, isValue, refs);
 
@@ -720,7 +784,7 @@ static partial class NullableTvErasureCallRealign
         // array-member/name special case nor a general nested-generic conversion.  A VALUE element and an open type
         // variable deliberately stay on the object-erased path — `object[]` cannot be cast to either
         // `Nullable<V>[]` or `T[]` generally.
-        if (CanNarrowReferenceArrayResult(derived, stampedRet))
+        if (CanNarrowReferenceArrayProjection(derived, stampedRet))
         {
             WrapResultCast(obj, derived, stampedRet);
             return stampedRet;
@@ -731,12 +795,24 @@ static partial class NullableTvErasureCallRealign
         return derived;
     }
 
-    static bool CanNarrowReferenceArrayResult(TypeNode physical, TypeNode semantic)
-        => physical is TypeNode.Array { Elem: TypeNode.Fqn { Name: "object", Args: null } } pa
-           && semantic is TypeNode.Array sa
+    static bool CanNarrowReferenceArrayProjection(TypeNode physical, TypeNode semantic)
+        => ReferenceArrayShape(physical) is TypeNode.Array { Elem: TypeNode.Fqn { Name: "object", Args: null } } pa
+           && ReferenceArrayShape(semantic) is TypeNode.Array sa
            && pa.Rank == sa.Rank && pa.SzArray == sa.SzArray
            && !IsSemanticObjectElement(sa.Elem)
            && !NeedsObjectSeam(sa.Elem);
+
+    // Nullable/oblivious wrappers on a reference array are NRT annotations, not CLR containers. Preserve the full
+    // authored type on the cast node (BirTypeLowering records its nullable flags), but compare the physical array
+    // shape beneath those wrappers. This is intentionally array-only: a structural Nullable<V> never contains an
+    // array, so no value-type nullability can be erased by this projection test.
+    static TypeNode ReferenceArrayShape(TypeNode type) => type switch
+    {
+        TypeNode.Array => type,
+        TypeNode.Nullable n => ReferenceArrayShape(n.Of),
+        TypeNode.Oblivious o => ReferenceArrayShape(o.Of),
+        _ => null,
+    };
 
     static bool IsSemanticObjectElement(TypeNode type) => type switch
     {

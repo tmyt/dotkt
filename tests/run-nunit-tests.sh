@@ -147,6 +147,14 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  EXISTENTIAL RETURN BINDING FAIL — see build/nunit-$name.existential-return.log"
 			tail -25 "$ROOT/build/nunit-$name.existential-return.log"; rc=1
 		fi
+		nullable_cir="$dir/obj/$CONFIGURATION/net10.0/cir/NullableTests.cir.json"
+		if python3 "$ROOT/tests/basic/assert-nullable-array-unsafe-accessor-cir.py" "$nullable_cir" \
+			>"$ROOT/build/nunit-$name.nullable-array-unsafe-accessor.log" 2>&1; then
+			echo "  inherited nullable-generic arrays state physical access + concrete projection"
+		else
+			echo "  NULLABLE ARRAY UNSAFEACCESSOR FAIL — see build/nunit-$name.nullable-array-unsafe-accessor.log"
+			tail -25 "$ROOT/build/nunit-$name.nullable-array-unsafe-accessor.log"; rc=1
+		fi
 	fi
 	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer
 	# DLL must carry an explicit trusted owner/name/representation record, and dll2klib must wire that record into the
