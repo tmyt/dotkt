@@ -146,6 +146,18 @@ class RuntimeTypesProtectedSuperDerived : RuntimeTypesProtectedSuperBase() {
 class RuntimeTypesSuperContext(val prefix: String)
 interface RuntimeTypesGenericMarker<T> { fun render(): String }
 class RuntimeTypesStringMarker : RuntimeTypesGenericMarker<String> { override fun render(): String = "marker" }
+private interface RuntimeTypesExistentialFlow<T>
+private interface RuntimeTypesExistentialFusibleFlow<T> : RuntimeTypesExistentialFlow<T> {
+    fun fuse(): RuntimeTypesExistentialFlow<T>
+}
+private class RuntimeTypesExistentialFlowImpl<T> : RuntimeTypesExistentialFusibleFlow<T> {
+    override fun fuse(): RuntimeTypesExistentialFlow<T> = this
+}
+private fun <T> runtimeTypesFuse(flow: RuntimeTypesExistentialFlow<T>): RuntimeTypesExistentialFlow<T> =
+    when (flow) {
+        is RuntimeTypesExistentialFusibleFlow -> flow.fuse()
+        else -> flow
+    }
 open class RuntimeTypesGenericProtectedSuperBase<T> {
     context(context: RuntimeTypesSuperContext)
     protected open fun <U : RuntimeTypesGenericMarker<T>> combine(value: T, marker: U): String =
@@ -258,6 +270,11 @@ class StarProjectionAndVisibilityTests {
         assertTrue(l is Collection<*>)                  // -> composite Kotlin Collection classifier
         assertFalse((5 as Any) is Map<*, *>)            // False (a non-collection is not a Map)
         assertFalse(("x" as Any) is List<*>)            // False
+
+        val stringFlow: RuntimeTypesExistentialFlow<String> = RuntimeTypesExistentialFlowImpl()
+        val intFlow: RuntimeTypesExistentialFlow<Int> = RuntimeTypesExistentialFlowImpl()
+        assertTrue(runtimeTypesFuse(stringFlow) === stringFlow)
+        assertTrue(runtimeTypesFuse(intFlow) === intFlow)
     }
 
     @TestAttribute

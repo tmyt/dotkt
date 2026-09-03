@@ -21,7 +21,7 @@ static class ExistentialReceiverBinding
     }
 
     internal sealed record Member(string Name, string SourceName, string AccessorKind,
-        TypeNode[] Parameters, int GenericArity)
+        TypeNode[] Parameters, TypeNode Return, int GenericArity)
     {
         public int ParamCount => Parameters.Length;
     }
@@ -56,6 +56,7 @@ static class ExistentialReceiverBinding
                             (method["params"] as JsonArray)?.OfType<JsonObject>()
                                 .Select(p => TypeJson.Read(p["type"]))
                                 .Where(t => t != null).ToArray() ?? Array.Empty<TypeNode>(),
+                            TypeJson.Read(method["ret"]),
                             (method["typeParams"] as JsonArray)?.Count ?? 0));
                     }
                 index.Members[name] = slots;
@@ -155,6 +156,7 @@ static class ExistentialReceiverBinding
         if (authoredSignature?.Any(t => t == null) == true) authoredSignature = null;
         string physicalMethod = null;
         TypeNode[] physicalParameters = null;
+        TypeNode physicalResult = null;
 
         if (index.Members.TryGetValue(receiverType.Name, out var members))
         {
@@ -173,6 +175,7 @@ static class ExistentialReceiverBinding
             {
                 physicalMethod = candidates[0].Name;
                 physicalParameters = candidates[0].Parameters;
+                physicalResult = candidates[0].Return;
             }
         }
         else
@@ -186,11 +189,13 @@ static class ExistentialReceiverBinding
                 semanticOwner = new TypeNode.Fqn(sourceOwner, semanticOwner.Args);
             if (refs.TryStarProjectionMember(semanticOwner, sourceMethod, accessorKind,
                     ga, authoredSignature, pc, Str(call[DeclarationIdentityBinding.Key]),
-                    out var erasedOwner, out var erasedMethod, out var erasedSignature, out _)
+                    out var erasedOwner, out var erasedMethod, out var erasedSignature, out _,
+                    out var erasedResult)
                 && erasedOwner == receiverType.Name)
             {
                 physicalMethod = erasedMethod;
                 physicalParameters = erasedSignature;
+                physicalResult = erasedResult;
             }
         }
 
@@ -205,6 +210,32 @@ static class ExistentialReceiverBinding
         if (physicalParameters != null)
             call["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray());
         call["virtual"] = true;
+        AlignResult(call, physicalResult);
+    }
+
+    static void AlignResult(JsonObject call, TypeNode physicalResult)
+    {
+        var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+            ?? Array.Empty<TypeNode>();
+        physicalResult = FBoundStarProjectionErasure.SubstituteMethodTypeArguments(physicalResult, methodArgs);
+        var semanticResult = TypeJson.Read(call["dynRet"])
+            ?? TypeJson.Read(call["sty"])
+            ?? TypeJson.Read(call["ret"]);
+        if (physicalResult == null || semanticResult == null || physicalResult.Equals(semanticResult)
+            || FBoundStarProjectionErasure.IsVoidResult(physicalResult)
+                && FBoundStarProjectionErasure.IsVoidResult(semanticResult)) return;
+
+        var hadSty = call["sty"] != null;
+        var inner = call.DeepClone().AsObject();
+        inner["ret"] = TypeJson.Write(physicalResult);
+        if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physicalResult);
+        if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physicalResult);
+
+        foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
+        call["k"] = "cast";
+        call["type"] = TypeJson.Write(semanticResult);
+        call["e"] = inner;
+        if (hadSty) call["sty"] = TypeJson.Write(semanticResult);
     }
 
     static bool SignatureMatches(IReadOnlyList<TypeNode> declaration, IReadOnlyList<TypeNode> call)

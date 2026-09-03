@@ -2258,11 +2258,12 @@ sealed partial class ReferenceMetadataIndex
         int methodArity,
         IReadOnlyList<TypeNode> authoredSignature, int paramCount, string declarationId,
         out string erasedOwner, out string erasedMember, out TypeNode[] erasedSignature,
-        out TypeNode declarationResult)
+        out TypeNode declarationResult, out TypeNode physicalResult)
     {
         erasedOwner = erasedMember = null;
         erasedSignature = null;
         declarationResult = null;
+        physicalResult = null;
         if (sourceOwner == null || sourceMember == null) return false;
         if (!TryExistentialPhysicalOwner(sourceOwner.Name, out var candidateOwner)
             || !TryMembersByBirOwner(candidateOwner, out var members)
@@ -2336,6 +2337,7 @@ sealed partial class ReferenceMetadataIndex
         declarationResult = declarations[0].NullableGenericRet
             ?? declarations[0].KotlinReturnType
             ?? declarations[0].ReturnTypeNode;
+        physicalResult = candidates[0].ReturnTypeNode;
         return true;
     }
 

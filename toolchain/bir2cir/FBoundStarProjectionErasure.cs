@@ -1467,7 +1467,7 @@ static class FBoundStarProjectionErasure
             && owners.TryGetValue(fieldOwner.Name, out var equalityOwner) && equalityOwner.Needed)
             receiver["sty"] = TypeJson.Write(new TypeNode.Fqn(equalityOwner.ErasedName));
         KotlinPropertyAccessors.PreserveCallIdentity(call, fieldName, "get");
-        BindInheritedStarMember(call, owners, defs, refs);
+        BindInheritedStarMember(call, owners, defs, refs, alignResult: false);
 
         if (TypeJson.Read(call["ownerType"]) is not TypeNode.Fqn boundOwner
             || !owners.Values.Any(owner => owner.ErasedName == boundOwner.Name)
@@ -1846,7 +1846,7 @@ static class FBoundStarProjectionErasure
     // member is declared by an ancestor (`ClosedRange<T>.isEmpty`).  Once the receiver becomes an erased interface,
     // CIR must name that exact declaring interface; ilemit is intentionally not allowed to search/infer it.
     static void BindInheritedStarMember(JsonObject call, IReadOnlyDictionary<string, Owner> owners,
-        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs, bool alignResult = true)
     {
         var useKind = Str(call["k"]);
         if (useKind is not ("callInstance" or "newBoundDelegate")
@@ -1874,6 +1874,40 @@ static class FBoundStarProjectionErasure
             var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
                 ?? Array.Empty<TypeNode>();
             call["ret"] = TypeJson.Write(CloseDeclarationType(declarationResult, args, methodArgs));
+        }
+
+        // Binding selects a real non-generic MethodDef. Its result may therefore be an existential carrier even
+        // though the Kotlin expression retains a caller-instantiated constructed type. State both facts explicitly:
+        // the inner call has the MethodDef's exact physical result and the outer checked cast restores the semantic
+        // value. ilemit must never pretend the selected slot itself returns the constructed type.
+        void AlignResult(TypeNode physicalResult)
+        {
+            // newBoundDelegate describes the target MethodDef in these fields, but the expression itself produces a
+            // delegate instance. Only an invocation places the target's return value on the evaluation stack.
+            if (!alignResult || useKind != "callInstance") return;
+            var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
+                ?? Array.Empty<TypeNode>();
+            physicalResult = SubstituteMethodTypeArguments(physicalResult, methodArgs);
+            var semanticResult = TypeJson.Read(call["dynRet"])
+                ?? TypeJson.Read(call["sty"])
+                ?? TypeJson.Read(call["ret"]);
+            if (physicalResult == null || semanticResult == null || physicalResult.Equals(semanticResult)
+                || IsVoidResult(physicalResult) && IsVoidResult(semanticResult)) return;
+
+            var hadSty = call["sty"] != null;
+            var inner = call.DeepClone().AsObject();
+            inner["ret"] = TypeJson.Write(physicalResult);
+            if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physicalResult);
+            if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physicalResult);
+
+            foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
+            call["k"] = "cast";
+            call["type"] = TypeJson.Write(semanticResult);
+            call["e"] = inner;
+            if (hadSty) call["sty"] = TypeJson.Write(semanticResult);
+            // This cast is the exact semantic projection of a successfully raw-classifier-tested value, not another
+            // Kotlin erased `as G<T>` operation for this pass to collapse back to the existential carrier.
+            call["_exactBridgeCast"] = true;
         }
 
         var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
@@ -1912,6 +1946,8 @@ static class FBoundStarProjectionErasure
             call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
                 ExistentialSlotIdentity(declaration, declaring.Name));
+            AlignResult(EraseOwnerTv(TypeJson.Read(declaration["ret"])
+                ?? new TypeNode.Fqn("kotlin.Unit"), owners, refs));
             return;
         }
 
@@ -1927,6 +1963,8 @@ static class FBoundStarProjectionErasure
             call["virtual"] = true;
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
                 ExistentialSlotIdentity(declaration, bridgeOwner.Name));
+            AlignResult(EraseOwnerTv(TypeJson.Read(declaration["ret"])
+                ?? new TypeNode.Fqn("kotlin.Unit"), owners, refs));
             return;
         }
 
@@ -1935,7 +1973,8 @@ static class FBoundStarProjectionErasure
         // participates in the decision.
         if (refs.TryStarProjectionMember(f, sourceMember, accessorKind, ga, authoredSignature, pc,
                 declarationId,
-                out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationResult))
+                out var erasedOwner, out var erasedMethod, out var erasedSignature, out var declarationResult,
+                out var physicalResult))
         {
             CloseDeclarationResult(declarationResult);
             BindOwner(erasedOwner);
@@ -1943,6 +1982,7 @@ static class FBoundStarProjectionErasure
             call["sig"] = new JsonArray(erasedSignature.Select(TypeJson.Write).ToArray());
             call["virtual"] = true;
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind);
+            AlignResult(physicalResult);
             return;
         }
 
@@ -1973,6 +2013,29 @@ static class FBoundStarProjectionErasure
             fn.Ctx?.Select(context => CloseDeclarationType(context, ownerArgs, methodArgs)).ToArray()),
         _ => type,
     };
+
+    internal static TypeNode SubstituteMethodTypeArguments(TypeNode type, IReadOnlyList<TypeNode> args) => type switch
+    {
+        TypeNode.Tv { Scope: "method" } tv when tv.I >= 0 && tv.I < args.Count => args[tv.I],
+        TypeNode.Fqn { Args: { } nested } f => new TypeNode.Fqn(f.Name,
+            nested.Select(argument => SubstituteMethodTypeArguments(argument, args)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstituteMethodTypeArguments(n.Of, args)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstituteMethodTypeArguments(o.Of, args)),
+        TypeNode.Array a => new TypeNode.Array(SubstituteMethodTypeArguments(a.Elem, args), a.Rank, a.SzArray),
+        TypeNode.ByRef b => new TypeNode.ByRef(SubstituteMethodTypeArguments(b.Of, args)),
+        TypeNode.Ptr p => new TypeNode.Ptr(SubstituteMethodTypeArguments(p.Of, args)),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req, SubstituteMethodTypeArguments(m.M, args),
+            SubstituteMethodTypeArguments(m.Of, args)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+            SubstituteMethodTypeArguments(fn.Ret, args),
+            fn.Params.Select(parameter => SubstituteMethodTypeArguments(parameter, args)).ToArray(),
+            fn.Recv == null ? null : SubstituteMethodTypeArguments(fn.Recv, args), fn.Clr,
+            fn.Ctx?.Select(context => SubstituteMethodTypeArguments(context, args)).ToArray()),
+        _ => type,
+    };
+
+    internal static bool IsVoidResult(TypeNode type) =>
+        type is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" or "void" or "System.Void" };
 
     static void MarkPhysicalPropertyCall(JsonObject call, bool propertyCall,
         string sourcePropertyName, string accessorKind, string physicalIdentity = null)

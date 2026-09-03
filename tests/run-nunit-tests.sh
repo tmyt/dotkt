@@ -140,6 +140,13 @@ for proj in "${PROJECTS[@]}"; do
 			echo "  ABSTRACT/SUPER BINDING FAIL — see build/nunit-$name.abstract-super-binding.log"
 			tail -25 "$ROOT/build/nunit-$name.abstract-super-binding.log"; rc=1
 		fi
+		if python3 "$ROOT/tests/basic/assert-existential-return-cir.py" "$abstract_super_cir" \
+			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
+			echo "  existential calls state physical returns + semantic projections"
+		else
+			echo "  EXISTENTIAL RETURN BINDING FAIL — see build/nunit-$name.existential-return.log"
+			tail -25 "$ROOT/build/nunit-$name.existential-return.log"; rc=1
+		fi
 	fi
 	# The companion round-trip fixture has two independent metadata contracts in addition to execution: the producer
 	# DLL must carry an explicit trusted owner/name/representation record, and dll2klib must wire that record into the
