@@ -808,6 +808,11 @@ sealed class Pipeline
         // it. Runs before interface-slot normalization and suspend lowering, in ref and runtime builds alike.
         var localExistentialOwners =
             FBoundStarProjectionErasure.ApplyAll(staged.Select(s => s.Root).ToList(), refs);
+        // ClosureSynthesis ran while captures still carried their Kotlin constructed types. An erased smart cast can
+        // now deliver an existential carrier to one of those generated storage slots; make capture/ctor/field/invoke
+        // agree on that exact physical representation before member-slot collection and final binding.
+        ExistentialCaptureAlignment.ApplyAll(
+            staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
         var existentialReceiverMembers =
             ExistentialReceiverBinding.Collect(staged.Select(s => s.Root));
 

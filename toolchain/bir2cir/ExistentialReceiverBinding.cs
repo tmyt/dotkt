@@ -81,7 +81,7 @@ static class ExistentialReceiverBinding
             foreach (var p in (obj["params"] as JsonArray).OfType<JsonObject>())
                 if (Str(p["name"]) is string pn && TypeJson.Read(p["type"]) is TypeNode pt)
                     vars[pn] = pt;
-            VisitStatements(body, vars, index, refs);
+            VisitStatements(body, vars, index, refs, TypeJson.Read(obj["ret"]));
         }
 
         if (obj["types"] is JsonArray types)
@@ -93,27 +93,49 @@ static class ExistentialReceiverBinding
     }
 
     static void VisitStatements(JsonNode node, Dictionary<string, TypeNode> vars,
-        Index index, ReferenceMetadataIndex refs)
+        Index index, ReferenceMetadataIndex refs, TypeNode expectedResult = null)
     {
         if (node is JsonArray arr)
         {
             foreach (var item in arr)
-                if (item != null) VisitStatements(item, vars, index, refs);
+                if (item != null) VisitStatements(item, vars, index, refs, expectedResult);
             return;
         }
         if (node is not JsonObject obj) return;
 
         var kind = Str(obj["k"]);
+        if (kind == "return")
+        {
+            if (obj["value"] != null) VisitStatements(obj["value"], vars, index, refs, expectedResult);
+            return;
+        }
         if (kind == "var")
         {
-            if (obj["init"] != null) VisitStatements(obj["init"], vars, index, refs);
+            var declared = TypeJson.Read(obj["type"]);
+            if (obj["init"] != null) VisitStatements(obj["init"], vars, index, refs, declared);
             if (Str(obj["name"]) is string vn && TypeJson.Read(obj["type"]) is TypeNode vt)
                 vars[vn] = vt;
             return;
         }
+        if (kind == "valueBlock")
+        {
+            if (obj["stmts"] != null) VisitStatements(obj["stmts"], vars, index, refs);
+            if (obj["body"] != null) VisitStatements(obj["body"], vars, index, refs);
+            if (obj["result"] != null)
+                VisitStatements(obj["result"], vars, index, refs, expectedResult ?? TypeJson.Read(obj["type"]));
+            return;
+        }
+        if (kind == "cond")
+        {
+            if (obj["cond"] != null) VisitStatements(obj["cond"], vars, index, refs);
+            var branchResult = expectedResult ?? TypeJson.Read(obj["type"]);
+            if (obj["then"] != null) VisitStatements(obj["then"], vars, index, refs, branchResult);
+            if (obj["else"] != null) VisitStatements(obj["else"], vars, index, refs, branchResult);
+            return;
+        }
 
         if (kind == "callInstance")
-            BindCall(obj, vars, index, refs);
+            BindCall(obj, vars, index, refs, expectedResult);
 
         // A nested carrier owns its own parameters/locals. It is visited as a declaration
         // elsewhere if materialized; do not leak the enclosing lexical environment into it.
@@ -126,11 +148,10 @@ static class ExistentialReceiverBinding
     }
 
     static void BindCall(JsonObject call, IReadOnlyDictionary<string, TypeNode> vars,
-        Index index, ReferenceMetadataIndex refs)
+        Index index, ReferenceMetadataIndex refs, TypeNode expectedResult)
     {
-        if (Str(call["method"]) is not string authoredMethod
-            || authoredMethod.StartsWith("$star$", StringComparison.Ordinal))
-            return;
+        if (Str(call["method"]) is not string authoredMethod) return;
+        if (authoredMethod.StartsWith("$star$", StringComparison.Ordinal)) return;
         var propertyCall = KotlinPropertyAccessors.TryCallIdentity(call,
             out var sourcePropertyName, out var accessorKind);
         var sourceMethod = propertyCall ? sourcePropertyName : authoredMethod;
@@ -210,14 +231,20 @@ static class ExistentialReceiverBinding
         if (physicalParameters != null)
             call["sig"] = new JsonArray(physicalParameters.Select(TypeJson.Write).ToArray());
         call["virtual"] = true;
-        AlignResult(call, physicalResult);
+        AlignResult(call, physicalResult, expectedResult);
     }
 
-    static void AlignResult(JsonObject call, TypeNode physicalResult)
+    static void AlignResult(JsonObject call, TypeNode physicalResult, TypeNode expectedResult)
     {
         var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
             ?? Array.Empty<TypeNode>();
         physicalResult = FBoundStarProjectionErasure.SubstituteMethodTypeArguments(physicalResult, methodArgs);
+        // Compiler-generated callable-reference invoke bodies can omit a node-local result stamp even though their
+        // enclosing return/local slot retains the exact Kotlin type. That expected slot is semantic source truth, not
+        // a reconstructed ABI: supply it when the call itself says nothing, then let the shared alignment author the
+        // physical inner call plus explicit projection.
+        if (NodeType.Stamp(call) == null && expectedResult != null)
+            call["sty"] = TypeJson.Write(expectedResult);
         FBoundStarProjectionErasure.AlignCallResult(call, physicalResult, protectExactCast: false);
     }
 
