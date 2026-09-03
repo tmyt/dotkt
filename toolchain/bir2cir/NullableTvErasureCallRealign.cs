@@ -1047,7 +1047,9 @@ static partial class NullableTvErasureCallRealign
             case TypeNode.Oblivious o:
                 return Subst(o.Of, typeArgs, methodArgs) is TypeNode i1 ? new TypeNode.Oblivious(i1) : null;
             case TypeNode.Array ar:
-                return Subst(ar.Elem, typeArgs, methodArgs) is TypeNode i2 ? new TypeNode.Array(i2) : null;
+                return Subst(ar.Elem, typeArgs, methodArgs) is TypeNode i2
+                    ? new TypeNode.Array(i2, ar.Rank, ar.SzArray)
+                    : null;
             case TypeNode.ByRef br:
                 return Subst(br.Of, typeArgs, methodArgs) is TypeNode i3 ? new TypeNode.ByRef(i3) : null;
             case TypeNode.Fn fn:
@@ -1062,11 +1064,67 @@ static partial class NullableTvErasureCallRealign
                     if (Subst(fn.Recv, typeArgs, methodArgs) is not TypeNode r) return null;
                     recv = r;
                 }
-                return new TypeNode.Fn(fn.Suspend, ret, ps, recv);
+                TypeNode[] ctx = null;
+                if (fn.Ctx != null)
+                {
+                    ctx = new TypeNode[fn.Ctx.Length];
+                    for (var i = 0; i < ctx.Length; i++)
+                        if (Subst(fn.Ctx[i], typeArgs, methodArgs) is TypeNode s) ctx[i] = s; else return null;
+                }
+                return new TypeNode.Fn(fn.Suspend, ret, ps, recv, fn.Clr, ctx);
             }
             default:
                 return t;
         }
+    }
+
+    internal static void SelfTest()
+    {
+        var typeArgs = new TypeNode[] { new TypeNode.Fqn("System.Int32") };
+        var methodArgs = new TypeNode[] { new TypeNode.Fqn("System.String") };
+
+        var arrays = new TypeNode[]
+        {
+            TypeNode.Array.General(new TypeNode.Tv("type", 0), 2),
+            TypeNode.Array.General(new TypeNode.Tv("method", 0), 1),
+        };
+        var expectedArrays = new TypeNode[]
+        {
+            TypeNode.Array.General(typeArgs[0], 2),
+            TypeNode.Array.General(methodArgs[0], 1),
+        };
+        for (var i = 0; i < arrays.Length; i++)
+            if (Subst(arrays[i], typeArgs, methodArgs) != expectedArrays[i])
+                throw new InvalidOperationException(
+                    "NullableTvErasureCallRealign self-test dropped a general-array rank/vector facet");
+
+        var function = new TypeNode.Fn(
+            Suspend: true,
+            Ret: new TypeNode.Tv("type", 0),
+            Params: new TypeNode[] { new TypeNode.Tv("method", 0) },
+            Recv: new TypeNode.Tv("type", 0),
+            Clr: "System.Func",
+            Ctx: new TypeNode[]
+            {
+                new TypeNode.Tv("method", 0),
+                TypeNode.Array.General(new TypeNode.Tv("type", 0), 2),
+            });
+        var expectedFunction = new TypeNode.Fn(
+            Suspend: true,
+            Ret: typeArgs[0],
+            Params: new[] { methodArgs[0] },
+            Recv: typeArgs[0],
+            Clr: "System.Func",
+            Ctx: new TypeNode[]
+            {
+                methodArgs[0],
+                TypeNode.Array.General(typeArgs[0], 2),
+            });
+        if (Subst(function, typeArgs, methodArgs) != expectedFunction)
+            throw new InvalidOperationException(
+                "NullableTvErasureCallRealign self-test dropped a function CLR family or context frame");
+
+        Console.WriteLine("[nullable-generic substitution] self-test OK (general arrays + function facets)");
     }
 
     // Late call-shape consumers use the same declaration-to-use formula as this pass without duplicating its
