@@ -17,9 +17,18 @@ data class DefaultArgP(val x: Int, val y: Int, val z: Int)
 
 private data class DefaultArgStarCopy<T>(val value: T, val tag: String)
 
+private class DefaultArgStarNested<T>(val value: T)
+private data class DefaultArgStarNestedCopy<T>(val nested: DefaultArgStarNested<T>, val tag: String)
+
 private fun defaultArgCopyThroughStar(source: DefaultArgStarCopy<*>): String {
     val copied = source.copy()
     return "${copied.value}:${copied.tag}"
+}
+
+private fun defaultArgNestedCopyThroughStar(source: DefaultArgStarNestedCopy<*>): String {
+    val copied = source.copy()
+    val nested = copied.nested
+    return "${nested.value}:${copied.tag}"
 }
 
 private interface DefaultArgStarValue<T> { val value: T }
@@ -518,6 +527,12 @@ class DefaultArgumentTests {
     @TestAttribute
     fun dataClassCopyDefaultsReadThroughTheStarReceiver() {
         assertEquals("value:tag", defaultArgCopyThroughStar(DefaultArgStarCopy("value", "tag")))
+        assertEquals(
+            "nested:tag",
+            defaultArgNestedCopyThroughStar(
+                DefaultArgStarNestedCopy(DefaultArgStarNested("nested"), "tag"),
+            ),
+        )
         assertEquals(
             "override:tag",
             defaultArgOverrideCopyThroughStar(DefaultArgStarOverrideCopy("override", "tag")),

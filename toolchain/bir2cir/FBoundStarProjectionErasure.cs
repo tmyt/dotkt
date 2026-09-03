@@ -23,6 +23,7 @@ static class FBoundStarProjectionErasure
     const string NormalizedInnerFactoryReturnKey = "_normalizedInnerFactoryReturn";
     internal const string SourceMemberKey = "existentialSourceMember";
     internal const string InnerConstructorFactoryKey = "existentialInnerConstructorFactory";
+    const string ExistentialResultProjectionKey = "_existentialResultProjection";
 
     sealed class Owner
     {
@@ -1885,7 +1886,13 @@ static class FBoundStarProjectionErasure
         // though the Kotlin expression retains a caller-instantiated constructed type. State both facts explicitly:
         // the inner call has the MethodDef's exact physical result and the outer checked cast restores the semantic
         // value. ilemit must never pretend the selected slot itself returns the constructed type.
-        void AlignResult(TypeNode physicalResult)
+        var projectedReceiver = ProjectedExistentialType(call["recv"]);
+        var ownerArguments = projectedReceiver is { Args: { } projectedArgs }
+            && projectedReceiver.Name == f.Name
+            ? projectedArgs
+            : args;
+
+        void AlignResult(TypeNode physicalResult, TypeNode declarationResult)
         {
             // newBoundDelegate describes the target MethodDef in these fields, but the expression itself produces a
             // delegate instance. Only an invocation places the target's return value on the evaluation stack.
@@ -1893,6 +1900,14 @@ static class FBoundStarProjectionErasure
             var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
                 ?? Array.Empty<TypeNode>();
             physicalResult = SubstituteMethodTypeArguments(physicalResult, methodArgs);
+            var projectedResult = SubstituteDeclarationTypeArguments(
+                declarationResult, ownerArguments, methodArgs);
+            if (ContainsExplicitStar(projectedResult)
+                && IsExistentialPhysicalCarrier(physicalResult, owners, refs))
+            {
+                AlignExistentialResult(call, physicalResult, projectedResult);
+                return;
+            }
             AlignCallResult(call, physicalResult, protectExactCast: true);
         }
 
@@ -1932,8 +1947,9 @@ static class FBoundStarProjectionErasure
             call["sig"] = ErasedPhysicalSignature(declaration, owners, refs);
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
                 ExistentialSlotIdentity(declaration, declaring.Name));
-            AlignResult(EraseOwnerTv(TypeJson.Read(declaration["ret"])
-                ?? new TypeNode.Fqn("kotlin.Unit"), owners, refs));
+            var selectedDeclarationResult = TypeJson.Read(declaration["ret"])
+                ?? new TypeNode.Fqn("kotlin.Unit");
+            AlignResult(EraseOwnerTv(selectedDeclarationResult, owners, refs), selectedDeclarationResult);
             return;
         }
 
@@ -1949,8 +1965,9 @@ static class FBoundStarProjectionErasure
             call["virtual"] = true;
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind,
                 ExistentialSlotIdentity(declaration, bridgeOwner.Name));
-            AlignResult(EraseOwnerTv(TypeJson.Read(declaration["ret"])
-                ?? new TypeNode.Fqn("kotlin.Unit"), owners, refs));
+            var selectedDeclarationResult = TypeJson.Read(declaration["ret"])
+                ?? new TypeNode.Fqn("kotlin.Unit");
+            AlignResult(EraseOwnerTv(selectedDeclarationResult, owners, refs), selectedDeclarationResult);
             return;
         }
 
@@ -1968,7 +1985,7 @@ static class FBoundStarProjectionErasure
             call["sig"] = new JsonArray(erasedSignature.Select(TypeJson.Write).ToArray());
             call["virtual"] = true;
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind);
-            AlignResult(physicalResult);
+            AlignResult(physicalResult, declarationResult);
             return;
         }
 
@@ -2020,6 +2037,75 @@ static class FBoundStarProjectionErasure
         _ => type,
     };
 
+    static TypeNode SubstituteDeclarationTypeArguments(TypeNode type,
+        IReadOnlyList<TypeNode> ownerArguments, IReadOnlyList<TypeNode> methodArguments) => type switch
+    {
+        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < ownerArguments.Count
+            => ownerArguments[tv.I],
+        TypeNode.Tv { Scope: "method" } tv when tv.I >= 0 && tv.I < methodArguments.Count
+            => methodArguments[tv.I],
+        TypeNode.Fqn { Args: { } nested } f => new TypeNode.Fqn(f.Name,
+            nested.Select(argument => SubstituteDeclarationTypeArguments(
+                argument, ownerArguments, methodArguments)).ToArray()),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstituteDeclarationTypeArguments(
+            n.Of, ownerArguments, methodArguments)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstituteDeclarationTypeArguments(
+            o.Of, ownerArguments, methodArguments)),
+        TypeNode.Array a => new TypeNode.Array(SubstituteDeclarationTypeArguments(
+            a.Elem, ownerArguments, methodArguments), a.Rank, a.SzArray),
+        TypeNode.ByRef b => new TypeNode.ByRef(SubstituteDeclarationTypeArguments(
+            b.Of, ownerArguments, methodArguments)),
+        TypeNode.Ptr p => new TypeNode.Ptr(SubstituteDeclarationTypeArguments(
+            p.Of, ownerArguments, methodArguments)),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req,
+            SubstituteDeclarationTypeArguments(m.M, ownerArguments, methodArguments),
+            SubstituteDeclarationTypeArguments(m.Of, ownerArguments, methodArguments)),
+        TypeNode.Fn fn => new TypeNode.Fn(fn.Suspend,
+            SubstituteDeclarationTypeArguments(fn.Ret, ownerArguments, methodArguments),
+            fn.Params.Select(parameter => SubstituteDeclarationTypeArguments(
+                parameter, ownerArguments, methodArguments)).ToArray(),
+            fn.Recv == null ? null : SubstituteDeclarationTypeArguments(
+                fn.Recv, ownerArguments, methodArguments), fn.Clr,
+            fn.Ctx?.Select(context => SubstituteDeclarationTypeArguments(
+                context, ownerArguments, methodArguments)).ToArray()),
+        _ => type,
+    };
+
+    static TypeNode.Fqn ProjectedExistentialType(JsonNode expression)
+    {
+        if (expression is not JsonObject obj) return null;
+        return TypeJson.Read(obj[ExistentialResultProjectionKey]) as TypeNode.Fqn;
+    }
+
+    static bool IsExistentialPhysicalCarrier(TypeNode type,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    {
+        while (type is TypeNode.Nullable nullable) type = nullable.Of;
+        while (type is TypeNode.Oblivious oblivious) type = oblivious.Of;
+        return type is TypeNode.Fqn { Args: null } f
+            && (owners.Values.Any(owner => owner.ErasedName == f.Name)
+                || refs.IsExistentialPhysicalOwner(f.Name));
+    }
+
+    static void AlignExistentialResult(JsonObject call, TypeNode physicalResult,
+        TypeNode projectedSemanticResult)
+    {
+        var inner = call.DeepClone().AsObject();
+        inner["ret"] = TypeJson.Write(physicalResult);
+        if (inner["dynRet"] != null) inner["dynRet"] = TypeJson.Write(physicalResult);
+        if (inner["sty"] != null) inner["sty"] = TypeJson.Write(physicalResult);
+
+        foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
+        // This is a physical identity projection. The selected existential slot already returns the carrier, but the
+        // explicit cast gives later local-flow normalization one exact result token while the pass-local semantic
+        // projection preserves which nested owner arguments were stars for immediately-following member binding.
+        call["k"] = "cast";
+        call["type"] = TypeJson.Write(physicalResult);
+        call["e"] = inner;
+        call[ExistentialResultProjectionKey] = TypeJson.Write(projectedSemanticResult);
+        call["_exactBridgeCast"] = true;
+    }
+
     internal static bool IsVoidResult(TypeNode type) =>
         type is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" or "void" or "System.Void" };
 
@@ -2051,6 +2137,7 @@ static class FBoundStarProjectionErasure
         {
             case JsonObject obj:
                 obj.Remove("_exactBridgeCast");
+                obj.Remove(ExistentialResultProjectionKey);
                 foreach (var value in obj.Select(pair => pair.Value).ToList())
                     if (value != null) RemoveExactBridgeCastMarkers(value);
                 break;
