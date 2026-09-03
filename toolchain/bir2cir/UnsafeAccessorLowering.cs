@@ -685,6 +685,7 @@ static class UnsafeAccessorLowering
     static JsonArray SignatureOf(JsonObject access)
     {
         if (access["sig"] is JsonArray signature) return signature;
+        if (access["shapeTypes"] is JsonArray shapeTypes) return shapeTypes;
         if (access["argTypes"] is JsonArray argTypes) return argTypes;
         return new JsonArray();
     }

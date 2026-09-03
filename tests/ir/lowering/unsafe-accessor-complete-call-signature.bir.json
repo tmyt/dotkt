@@ -1,0 +1,78 @@
+{
+  "fileClass": "UnsafeAccessorCompleteCallSignatureProbeKt",
+  "hasMain": false,
+  "fields": [],
+  "types": [
+    {
+      "name": "UnsafeAccessorCompleteCallSignatureTarget",
+      "kind": "class",
+      "base": null,
+      "interfaces": [],
+      "fields": [],
+      "ctors": [],
+      "properties": [],
+      "attrs": [],
+      "methods": [
+        {
+          "name": "hiddenGeneric",
+          "typeParams": ["T"],
+          "static": false,
+          "override": false,
+          "virtual": false,
+          "vis": "protected",
+          "params": [
+            { "name": "value", "type": { "t": "tv", "scope": "method", "i": 0 } },
+            { "name": "physicalFlag", "type": { "t": "fqn", "name": "kotlin.Boolean" } }
+          ],
+          "ret": { "t": "fqn", "name": "kotlin.Unit" },
+          "body": [],
+          "attrs": []
+        }
+      ]
+    }
+  ],
+  "refTypes": [],
+  "methods": [
+    {
+      "name": "probe",
+      "static": true,
+      "override": false,
+      "virtual": false,
+      "vis": "public",
+      "params": [
+        {
+          "name": "target",
+          "type": { "t": "fqn", "name": "UnsafeAccessorCompleteCallSignatureTarget" }
+        }
+      ],
+      "ret": { "t": "fqn", "name": "kotlin.Unit" },
+      "body": [
+        {
+          "k": "exprStmt",
+          "expr": {
+            "k": "callInstance",
+            "ownerType": { "t": "fqn", "name": "UnsafeAccessorCompleteCallSignatureTarget" },
+            "recv": { "k": "local", "name": "target" },
+            "method": "hiddenGeneric",
+            "sig": [
+              { "t": "tv", "scope": "method", "i": 0 },
+              { "t": "fqn", "name": "kotlin.Boolean" }
+            ],
+            "shapeTypes": [{ "t": "tv", "scope": "method", "i": 0 }],
+            "typeArgs": [{ "t": "fqn", "name": "kotlin.String" }],
+            "ret": { "t": "fqn", "name": "kotlin.Unit" },
+            "args": [
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.String" }, "value": "value" },
+              { "k": "const", "type": { "t": "fqn", "name": "kotlin.Boolean" }, "value": true }
+            ],
+            "memberVisibility": "protected",
+            "memberMethodTypeParams": ["T"],
+            "memberSignature": [{ "t": "tv", "scope": "method", "i": 0 }],
+            "memberReturnType": { "t": "fqn", "name": "kotlin.Unit" }
+          }
+        }
+      ],
+      "attrs": []
+    }
+  ]
+}

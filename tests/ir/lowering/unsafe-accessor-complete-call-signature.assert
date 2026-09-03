@@ -1,0 +1,6 @@
+# A physical lowering may already have appended parameters to `sig` while `shapeTypes` and `memberSignature` remain
+# the frontend declaration vector. UnsafeAccessor synthesis must respect the standard sig -> shapeTypes -> argTypes
+# precedence and retain the complete call vector, not truncate it back to the semantic declaration arity.
++"generated":true,"static":true,"extern":true,"override":false,"virtual":false
++"params":[{"name":"target","type":{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"}},{"name":"arg0","type":{"t":"tv","scope":"method","i":0}},{"name":"arg1","type":{"t":"fqn","name":"System.Boolean"}}]
++"sig":[{"t":"fqn","name":"UnsafeAccessorCompleteCallSignatureTarget"},{"t":"tv","scope":"method","i":0},{"t":"fqn","name":"System.Boolean"}],"args":[{"k":"local","name":"target"}
