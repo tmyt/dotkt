@@ -52,7 +52,7 @@ PROJECTS=(
 declare -A EXPECTED_DISCOVERED=(
 	["tests/basic"]=483
 	["tests/coroutines"]=198
-	["tests/roundtrip/consumer"]=91
+	["tests/roundtrip/consumer"]=94
 	["tests/roundtrip/bidirectional/consumer"]=10
 	["tests/interop/consumer"]=173
 )
@@ -177,6 +177,7 @@ for proj in "${PROJECTS[@]}"; do
 		ownership_cir="$ROOT/tests/roundtrip/producer/obj/$CONFIGURATION/net10.0/cir/NestedOwnership.cir.json"
 		consumer_cir="$dir/obj/$CONFIGURATION/net10.0/cir/CrossModuleMetadataTests.cir.json"
 		referenced_method_generic_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedMethodGenericTests.cir.json"
+		referenced_generic_owner_cir="$dir/obj/$CONFIGURATION/net10.0/cir/ReferencedProtectedGenericOwnerTests.cir.json"
 		consumer_dll="$dir/bin/$CONFIGURATION/net10.0/RoundtripConsumer.Tests.dll"
 		if python3 "$ROOT/tests/roundtrip/assert-existential-return-cir.py" "$consumer_cir" \
 			>"$ROOT/build/nunit-$name.existential-return.log" 2>&1; then
@@ -192,6 +193,14 @@ for proj in "${PROJECTS[@]}"; do
 		else
 			echo "  REFERENCED METHOD-GENERIC UNSAFEACCESSOR FAIL — see build/nunit-$name.referenced-method-generic-unsafe-accessor.log"
 			tail -25 "$ROOT/build/nunit-$name.referenced-method-generic-unsafe-accessor.log"; rc=1
+		fi
+		if python3 "$ROOT/tests/roundtrip/assert-referenced-generic-owner-unsafe-accessor-cir.py" \
+			"$referenced_generic_owner_cir" \
+			>"$ROOT/build/nunit-$name.referenced-generic-owner-unsafe-accessor.log" 2>&1; then
+			echo "  referenced generic-owner UnsafeAccessor physical frame + use projection OK"
+		else
+			echo "  REFERENCED GENERIC-OWNER UNSAFEACCESSOR FAIL — see build/nunit-$name.referenced-generic-owner-unsafe-accessor.log"
+			tail -25 "$ROOT/build/nunit-$name.referenced-generic-owner-unsafe-accessor.log"; rc=1
 		fi
 		if bash "$ROOT/tests/roundtrip/run-flags-lookalike-negative.sh" \
 			>"$ROOT/build/nunit-$name.flags-lookalike.log" 2>&1; then

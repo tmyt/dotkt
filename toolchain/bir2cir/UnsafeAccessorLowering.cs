@@ -43,7 +43,7 @@ static class UnsafeAccessorLowering
     static string Str(JsonNode node) => (node as JsonValue)?.GetValue<string>();
     static bool Bool(JsonNode node) => node is JsonValue value && value.TryGetValue<bool>(out var result) && result;
 
-    public static void ApplyAll(IReadOnlyList<JsonNode> roots)
+    public static void ApplyAll(IReadOnlyList<JsonNode> roots, ReferenceMetadataIndex refs)
     {
         var callers = new List<Host>();
         foreach (var root in roots.OfType<JsonObject>())
@@ -82,22 +82,22 @@ static class UnsafeAccessorLowering
             // Snapshot source/synthesized executable members: accessors appended during this walk have no body and
             // must not become input to their own synthesis.
             foreach (var method in caller.Methods.OfType<JsonObject>().ToArray())
-                if (method["body"] is JsonNode body) Rewrite(body, caller, hosts, accessors);
+                if (method["body"] is JsonNode body) Rewrite(body, caller, hosts, accessors, refs);
             if (caller.Declaration["ctors"] is JsonArray ctors)
                 foreach (var ctor in ctors.OfType<JsonObject>())
                 {
-                    if (ctor["preStmts"] is JsonNode pre) Rewrite(pre, caller, hosts, accessors);
-                    if (ctor["delegation"] is JsonNode delegation) Rewrite(delegation, caller, hosts, accessors);
+                    if (ctor["preStmts"] is JsonNode pre) Rewrite(pre, caller, hosts, accessors, refs);
+                    if (ctor["delegation"] is JsonNode delegation) Rewrite(delegation, caller, hosts, accessors, refs);
                     // Constructor delegation arguments execute in the caller TypeDef just like its body. kotc keeps
                     // them in dedicated baseArgs/thisArgs vectors, so private sibling/file-class edges there need the
                     // same UnsafeAccessor projection (SafeContinuation(delegate, UNDECIDED_BOX) is the concrete case).
-                    if (ctor["baseArgs"] is JsonNode baseArgs) Rewrite(baseArgs, caller, hosts, accessors);
-                    if (ctor["thisArgs"] is JsonNode thisArgs) Rewrite(thisArgs, caller, hosts, accessors);
-                    if (ctor["body"] is JsonNode body) Rewrite(body, caller, hosts, accessors);
+                    if (ctor["baseArgs"] is JsonNode baseArgs) Rewrite(baseArgs, caller, hosts, accessors, refs);
+                    if (ctor["thisArgs"] is JsonNode thisArgs) Rewrite(thisArgs, caller, hosts, accessors, refs);
+                    if (ctor["body"] is JsonNode body) Rewrite(body, caller, hosts, accessors, refs);
                 }
             if (caller.Declaration["fields"] is JsonArray fields)
                 foreach (var field in fields.OfType<JsonObject>())
-                    if (field["init"] is JsonNode init) Rewrite(init, caller, hosts, accessors);
+                    if (field["init"] is JsonNode init) Rewrite(init, caller, hosts, accessors, refs);
         }
     }
 
@@ -131,25 +131,25 @@ static class UnsafeAccessorLowering
     }
 
     static void Rewrite(JsonNode node, Host caller, IReadOnlyDictionary<string, Host> hosts,
-        Dictionary<string, AccessorDefinition> accessors)
+        Dictionary<string, AccessorDefinition> accessors, ReferenceMetadataIndex refs)
     {
         if (node is JsonArray array)
         {
-            foreach (var child in array.ToList()) if (child != null) Rewrite(child, caller, hosts, accessors);
+            foreach (var child in array.ToList()) if (child != null) Rewrite(child, caller, hosts, accessors, refs);
             return;
         }
         if (node is not JsonObject obj) return;
 
         foreach (var child in obj.Select(pair => pair.Value).Where(value => value != null).ToList())
-            Rewrite(child, caller, hosts, accessors);
+            Rewrite(child, caller, hosts, accessors, refs);
 
         var kind = Str(obj["k"]);
-        if (kind is "callInstance" or "callStatic") RewriteMethod(obj, kind, caller, hosts, accessors);
-        else if (kind == "newBoundDelegate") RewriteBoundDelegate(obj, caller, hosts, accessors);
-        else if (kind == "new") RewriteConstructor(obj, caller, hosts, accessors);
+        if (kind is "callInstance" or "callStatic") RewriteMethod(obj, kind, caller, hosts, accessors, refs);
+        else if (kind == "newBoundDelegate") RewriteBoundDelegate(obj, caller, hosts, accessors, refs);
+        else if (kind == "new") RewriteConstructor(obj, caller, hosts, accessors, refs);
         else if (kind is "field" or "setField" or "setFieldExpr" or "lateinitGet"
             or "staticField" or "staticFieldSet")
-            RewriteField(obj, kind, caller, hosts, accessors);
+            RewriteField(obj, kind, caller, hosts, accessors, refs);
         else
         {
             obj.Remove("memberVisibility");
@@ -162,7 +162,8 @@ static class UnsafeAccessorLowering
     }
 
     static void RewriteMethod(JsonObject access, string kind, Host caller,
-        IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors)
+        IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
+        ReferenceMetadataIndex refs)
     {
         var superCall = Bool(access["super"]);
         var frontendVisibility = Str(access["memberVisibility"]);
@@ -226,10 +227,19 @@ static class UnsafeAccessorLowering
             return;
 
         var targetStatic = kind == "callStatic";
+        var targetDeclarationId = Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]);
+        var referencedTarget = ResolveReferencedMethodTarget(
+            target, targetDeclarationId, ownerType, targetName, methodArity, targetStatic, signature,
+            TypeJson.Read(memberReturnType), methodTypeParams, propertyAccessor != null, refs);
+        if (referencedTarget != null)
+            targetName = referencedTarget.PhysicalMember;
+
         // `ret` is the declaration spelling and can be absent or stale after default-argument expansion;
         // `dynRet`/`sty` carry the instantiated expression result.  A local declaration remains authoritative.
         JsonNode declaredAccessorReturn;
-        if (target?["ret"] is JsonNode declaredReturn && TypeJson.Read(declaredReturn) is TypeNode declaredType)
+        if (referencedTarget?.Return is TypeNode referencedReturn)
+            declaredAccessorReturn = TypeJson.Write(referencedReturn);
+        else if (target?["ret"] is JsonNode declaredReturn && TypeJson.Read(declaredReturn) is TypeNode declaredType)
             declaredAccessorReturn = TypeJson.Write(declaredType);
         else if (memberReturnType != null)
             declaredAccessorReturn = memberReturnType;
@@ -247,17 +257,20 @@ static class UnsafeAccessorLowering
             callReturnType = TypeJson.Write(openReturn);
         }
         callReturnType ??= declaredAccessorReturn.DeepClone();
-        var targetDeclarationId = Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]);
+        if (referencedTarget != null)
+            signature = new JsonArray(referencedTarget.Parameters.Select(TypeJson.Write).ToArray());
         var key = $"{caller.Name}|method|{ownerType.Name}|{targetName}|{targetStatic}|{methodArity}|" +
                   string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredAccessorReturn) +
                   "|declaration:" + targetDeclarationId;
         var definition = EnsureAccessor(caller, accessors, key, targetName, targetStatic ? 2 : 1,
-            ownerNode, PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
-            PhysicalMethodTypeParams(target, methodTypeParams),
+            ownerNode, PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs),
+            referencedTarget?.TypeParams ?? PhysicalMethodTypeParams(target, methodTypeParams),
             declaredAccessorReturn, signature, includeTarget: true,
             targetDeclarationId: targetDeclarationId,
-            nullableGenericReturn: target?["nullableGenericRet"],
-            nullableErasureOwnershipKnown: target != null);
+            nullableGenericReturn: referencedTarget?.NullableGenericReturn is TypeNode nullableGenericReturn
+                ? JsonValue.Create(TypeNode.ToJson(nullableGenericReturn))
+                : target?["nullableGenericRet"],
+            nullableErasureOwnershipKnown: target != null || referencedTarget != null);
 
         var args = new JsonArray();
         if (targetStatic)
@@ -415,7 +428,8 @@ static class UnsafeAccessorLowering
     }
 
     static void RewriteBoundDelegate(JsonObject access, Host caller,
-        IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors)
+        IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
+        ReferenceMetadataIndex refs)
     {
         var frontendVisibility = Str(access["memberVisibility"]);
         var ownerTypeParams = access["memberOwnerTypeParams"] as JsonArray;
@@ -457,7 +471,7 @@ static class UnsafeAccessorLowering
         var key = $"{caller.Name}|bound|{ownerType.Name}|{targetName}|{methodArity}|" +
                   string.Join(";", signature.Select(TypeKey)) + "|" + TypeKey(declaredReturnType);
         var definition = EnsureAccessor(caller, accessors, key, targetName, 1, access["ownerType"],
-            PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
+            PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs),
             PhysicalMethodTypeParams(target, methodTypeParams), declaredReturnType,
             signature, includeTarget: true,
             targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]));
@@ -498,10 +512,13 @@ static class UnsafeAccessorLowering
 
     // The facts are semantic declaration parameters. Ownership/companion projection may give a LOCAL physical
     // TypeDef a different generic frame; UnsafeAccessor matching is a CLR concern, so the physical declaration wins.
-    // External targets have no local declaration and therefore retain the exact frame carried in BIR.
-    static JsonArray PhysicalOwnerTypeParams(Host target, JsonArray semantic)
+    // External targets have no local declaration. Their exact physical frame comes from compiler-authored reference
+    // metadata after inherited-owner binding has selected the declaring TypeDef; a BIR semantic frame remains the
+    // fallback for non-DotKt references that carry no such metadata.
+    static JsonArray PhysicalOwnerTypeParams(Host target, JsonArray semantic, TypeNode.Fqn owner,
+        ReferenceMetadataIndex refs)
     {
-        if (target == null) return semantic;
+        if (target == null) return refs?.OwnerTypeParamDeclarations(owner?.Name) ?? semantic;
         var captured = target.Declaration["capturedTypeParams"] as JsonArray;
         var declared = target.Declaration["typeParams"] as JsonArray;
         if (captured == null || captured.Count == 0) return declared ?? new JsonArray();
@@ -510,6 +527,43 @@ static class UnsafeAccessorLowering
         if (declared != null)
             foreach (var parameter in declared) physical.Add(parameter?.DeepClone());
         return physical;
+    }
+
+    static ReferencedUnsafeAccessorMethod ResolveReferencedMethodTarget(
+        JsonObject localTarget,
+        string declarationId,
+        TypeNode.Fqn owner,
+        string method,
+        int methodArity,
+        bool isStatic,
+        JsonArray signature,
+        TypeNode resolvedReturn,
+        JsonArray methodTypeParams,
+        bool propertyAccessor,
+        ReferenceMetadataIndex refs)
+    {
+        if (localTarget != null) return null;
+        // Current-format virtual/property declarations can intentionally have no scalar declaration identity: their
+        // physical name is shared across an override family rather than allocated per declaration. Retain their
+        // frontend-carried ABI path. An identity, when present, is a complete current-format selection and must not
+        // silently fall back if its referenced MethodDef cannot be recovered.
+        if (declarationId == null)
+        {
+            if (!propertyAccessor && refs?.HasDotKtOwner(owner.Name) == true
+                && signature?.Select(TypeJson.Read).ToArray() is TypeNode[] semanticSignature
+                && semanticSignature.All(type => type != null)
+                && refs.TryUnsafeAccessorVirtualMethod(
+                    owner.Name, method, methodArity, isStatic, semanticSignature, resolvedReturn,
+                    owner.Args ?? Array.Empty<TypeNode>(), methodTypeParams, out var virtualTarget))
+                return virtualTarget;
+            return null;
+        }
+        if (refs?.TryUnsafeAccessorMethod(declarationId, owner.Name, methodArity, isStatic,
+                out var referenced) == true)
+            return referenced;
+        throw new InvalidOperationException(
+            $"UnsafeAccessor target '{owner.Name}.{method}' has no exact referenced MethodDef for " +
+            $"declaration identity '{declarationId}'");
     }
 
     // As with an owner's frame above, a local target declaration has already passed through the representation
@@ -691,7 +745,7 @@ static class UnsafeAccessorLowering
     }
 
     static void RewriteConstructor(JsonObject access, Host caller, IReadOnlyDictionary<string, Host> hosts,
-        Dictionary<string, AccessorDefinition> accessors)
+        Dictionary<string, AccessorDefinition> accessors, ReferenceMetadataIndex refs)
     {
         var frontendVisibility = Str(access["memberVisibility"]);
         var ownerTypeParams = access["memberOwnerTypeParams"] as JsonArray;
@@ -716,7 +770,7 @@ static class UnsafeAccessorLowering
         else if (frontendVisibility is not ("private" or "protected"))
             return;
 
-        var physicalOwnerTypeParams = PhysicalOwnerTypeParams(targetHost, ownerTypeParams);
+        var physicalOwnerTypeParams = PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs);
         var key = $"{caller.Name}|ctor|{ownerType.Name}|" + string.Join(";", signature.Select(TypeKey));
         var definition = EnsureAccessor(caller, accessors, key, null, 0, access["type"], physicalOwnerTypeParams,
             null, OpenOwner(access["type"], physicalOwnerTypeParams?.Count ?? 0), signature, includeTarget: false);
@@ -736,7 +790,8 @@ static class UnsafeAccessorLowering
     }
 
     static void RewriteField(JsonObject access, string kind, Host caller,
-        IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors)
+        IReadOnlyDictionary<string, Host> hosts, Dictionary<string, AccessorDefinition> accessors,
+        ReferenceMetadataIndex refs)
     {
         var frontendVisibility = Str(access["memberVisibility"]);
         var frontendFieldType = access["memberType"]?.DeepClone();
@@ -790,7 +845,7 @@ static class UnsafeAccessorLowering
         if (Str(target?["nullableGeneric"]) is string nullableGenericField)
             nullableGenericByRef = TypeNode.ToJson(new TypeNode.ByRef(TypeNode.Parse(nullableGenericField)));
         var definition = EnsureAccessor(caller, accessors, key, targetName, targetStatic ? 4 : 3, ownerNode,
-            PhysicalOwnerTypeParams(targetHost, ownerTypeParams), null, declaredByRefType,
+            PhysicalOwnerTypeParams(targetHost, ownerTypeParams, ownerType, refs), null, declaredByRefType,
             new JsonArray(), includeTarget: true, nullableGenericReturn: nullableGenericByRef,
             nullableErasureOwnershipKnown: target != null);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
