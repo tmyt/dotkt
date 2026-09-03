@@ -2,6 +2,7 @@ import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
 import System.Type
+import kotlin.clr.ClrField as KotlinClrField
 
 private class DeferredGenericCast<T> {
     @Suppress("UNCHECKED_CAST")
@@ -28,6 +29,28 @@ private open class VirtualGenericCast<T> {
 private class VirtualGenericUnwrapper<T> : VirtualGenericCast<T>() {
     @Suppress("UNCHECKED_CAST")
     override fun read(raw: Any?): T = (raw as GenericPayload<T>).value
+}
+
+private open class ProtectedGenericCast<T> {
+    @Suppress("UNCHECKED_CAST")
+    protected fun read(raw: Any?): T = raw as T
+}
+
+private class ProtectedIntArithmetic : ProtectedGenericCast<Int>() {
+    fun add(raw: Any?, delta: Int): Int = read(raw) + delta
+    fun negate(raw: Any?): Int = -read(raw)
+}
+
+private open class ProtectedNullableProperty<T>(protected val stored: T?)
+
+private class ProtectedNullableInt(initial: Int?) : ProtectedNullableProperty<Int>(initial) {
+    fun add(delta: Int): Int = (stored ?: 0) + delta
+}
+
+private class InlinePrivateNullableField<T>(initial: T?) {
+    @KotlinClrField private val stored: T? = initial
+
+    inline fun <R> consume(block: (T?) -> R): R = block(stored)
 }
 
 private fun interface NestedUncheckedCastSam<T> {
@@ -59,6 +82,25 @@ class UncheckedGenericCastReturnTests {
     @TestAttribute
     fun virtualGenericCastKeepsOneHierarchyWideClrSlot() {
         assertEquals(42, VirtualGenericUnwrapper<Int>().dispatch(GenericPayload(42)))
+    }
+
+    @TestAttribute
+    fun protectedUncheckedCastKeepsConcreteOperatorProjectionThroughUnsafeAccessor() {
+        val arithmetic = ProtectedIntArithmetic()
+        assertEquals(42, arithmetic.add(40, 2))
+        assertEquals(-42, arithmetic.negate(42))
+    }
+
+    @TestAttribute
+    fun protectedNullableGenericPropertyKeepsItsObjectErasureThroughUnsafeAccessor() {
+        assertEquals(42, ProtectedNullableInt(40).add(2))
+        assertEquals(2, ProtectedNullableInt(null).add(2))
+    }
+
+    @TestAttribute
+    fun inlinePrivateNullableGenericFieldKeepsItsObjectErasureThroughUnsafeAccessor() {
+        assertEquals(42, InlinePrivateNullableField<Int>(42).consume { it })
+        assertEquals(null, InlinePrivateNullableField<Int>(null).consume { it })
     }
 
     @TestAttribute

@@ -255,7 +255,9 @@ static class UnsafeAccessorLowering
             ownerNode, PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
             PhysicalMethodTypeParams(target, methodTypeParams),
             declaredAccessorReturn, signature, includeTarget: true,
-            targetDeclarationId: targetDeclarationId);
+            targetDeclarationId: targetDeclarationId,
+            nullableGenericReturn: target?["nullableGenericRet"],
+            targetParameters: target?["params"] as JsonArray);
 
         var args = new JsonArray();
         if (targetStatic)
@@ -458,7 +460,9 @@ static class UnsafeAccessorLowering
             PhysicalOwnerTypeParams(targetHost, ownerTypeParams),
             PhysicalMethodTypeParams(target, methodTypeParams), declaredReturnType,
             signature, includeTarget: true,
-            targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]));
+            targetDeclarationId: Str(target?[DeclarationIdentityBinding.Key] ?? access[DeclarationIdentityBinding.Key]),
+            nullableGenericReturn: target?["nullableGenericRet"],
+            targetParameters: target?["params"] as JsonArray);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
 
         var replacement = new JsonObject
@@ -547,7 +551,8 @@ static class UnsafeAccessorLowering
     static AccessorDefinition EnsureAccessor(Host caller,
         Dictionary<string, AccessorDefinition> accessors, string key, string targetName, int kind,
         JsonNode ownerNode, JsonArray ownerTypeParams, JsonArray methodTypeParams, JsonNode returnType,
-        JsonArray signature, bool includeTarget, string targetDeclarationId = null)
+        JsonArray signature, bool includeTarget, string targetDeclarationId = null,
+        JsonNode nullableGenericReturn = null, JsonArray targetParameters = null)
     {
         if (accessors.TryGetValue(key, out var existing)) return existing;
         if (TypeJson.Read(ownerNode) is not TypeNode.Fqn owner)
@@ -563,12 +568,24 @@ static class UnsafeAccessorLowering
         if (includeTarget) declarationParams.Add(Param("target", OpenOwner(ownerNode, ownerCount)));
         for (var index = 0; index < signature.Count; index++)
             declarationParams.Add(Param("arg" + index, signature[index]?.DeepClone()));
+        // A synthesized accessor is a new physical declaration of the SAME already-selected Kotlin member. Keep
+        // nullable-generic pre-erasure facts on that declaration, shifted past the synthetic target parameter, so
+        // the post-synthesis use reflow can derive `Subst(Erase(source slot))` instead of mistaking an unrelated
+        // object-return ABI (for example deferred unchecked `Any? as T`) for nullable-generic erasure.
+        if (targetParameters != null)
+            for (var index = 0; index < targetParameters.Count && index < signature.Count; index++)
+                if (targetParameters[index] is JsonObject sourceParameter
+                    && sourceParameter["nullableGeneric"] is JsonNode nullableGeneric
+                    && declarationParams[index + (includeTarget ? 1 : 0)] is JsonObject accessorParameter)
+                    accessorParameter["nullableGeneric"] = nullableGeneric.DeepClone();
         var methodParams = RenamedTypeParams(methodTypeParams, "__method");
         var accessorName = AccessorName(targetName);
 
         if (ownerCount == 0)
         {
             var accessor = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
+            if (nullableGenericReturn != null)
+                accessor["nullableGenericRet"] = nullableGenericReturn.DeepClone();
             if (targetDeclarationId != null) accessor["unsafeTargetDeclarationId"] = targetDeclarationId;
             if (methodParams != null) accessor["typeParams"] = methodParams.DeepClone();
             caller.Methods.Add(accessor);
@@ -587,11 +604,15 @@ static class UnsafeAccessorLowering
         var holderName = "dotkt$unsafe$holder$" + System.Threading.Interlocked.Increment(ref _counter);
         var holderTypeParams = RenamedTypeParams(ownerTypeParams, "__owner");
         var externMethod = AccessorDeclaration(accessorName, returnType, declarationParams, kind, targetName);
+        if (nullableGenericReturn != null)
+            externMethod["nullableGenericRet"] = nullableGenericReturn.DeepClone();
         if (targetDeclarationId != null) externMethod["unsafeTargetDeclarationId"] = targetDeclarationId;
         if (methodParams != null) externMethod["typeParams"] = methodParams.DeepClone();
         var entryName = accessorName + "$invoke";
         var wrapper = WrapperDeclaration(entryName, accessorName, holderName, holderTypeParams.Count,
             methodParams?.Count ?? 0, returnType, declarationParams, methodParams);
+        if (nullableGenericReturn != null)
+            wrapper["nullableGenericRet"] = nullableGenericReturn.DeepClone();
         EnsureArray(caller.Root, "types").Add(new JsonObject
         {
             ["name"] = holderName,
@@ -701,7 +722,8 @@ static class UnsafeAccessorLowering
         var physicalOwnerTypeParams = PhysicalOwnerTypeParams(targetHost, ownerTypeParams);
         var key = $"{caller.Name}|ctor|{ownerType.Name}|" + string.Join(";", signature.Select(TypeKey));
         var definition = EnsureAccessor(caller, accessors, key, null, 0, access["type"], physicalOwnerTypeParams,
-            null, OpenOwner(access["type"], physicalOwnerTypeParams?.Count ?? 0), signature, includeTarget: false);
+            null, OpenOwner(access["type"], physicalOwnerTypeParams?.Count ?? 0), signature, includeTarget: false,
+            targetParameters: target?["params"] as JsonArray);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
         var replacement = new JsonObject
         {
@@ -768,9 +790,12 @@ static class UnsafeAccessorLowering
             || (target != null && Bool(target["static"]));
 
         var key = $"{caller.Name}|field|{ownerType.Name}|{targetName}|{targetStatic}|{TypeKey(declaredFieldTypeJson)}";
+        JsonNode nullableGenericByRef = null;
+        if (Str(target?["nullableGeneric"]) is string nullableGenericField)
+            nullableGenericByRef = TypeNode.ToJson(new TypeNode.ByRef(TypeNode.Parse(nullableGenericField)));
         var definition = EnsureAccessor(caller, accessors, key, targetName, targetStatic ? 4 : 3, ownerNode,
             PhysicalOwnerTypeParams(targetHost, ownerTypeParams), null, declaredByRefType,
-            new JsonArray(), includeTarget: true);
+            new JsonArray(), includeTarget: true, nullableGenericReturn: nullableGenericByRef);
         var callOwner = AccessorCallOwner(caller, definition, ownerType.Args ?? Array.Empty<TypeNode>());
 
         // A read and a write each need their OWN pointer call: a JsonNode has one parent, so handing the same

@@ -1053,7 +1053,8 @@ sealed class Pipeline
             // than leaving its inherited source-level R[] stamp on a call whose wrapper returns object[].
             foreach (var stagedFile in staged)
             {
-                NullableTvErasureCallRealign.CollectNewSyntheticTypes(stagedFile.Root, nullableTvDeclRets);
+                NullableTvErasureCallRealign.CollectNewPostErasureSyntheticTypes(
+                    stagedFile.Root, nullableTvDeclRets);
                 NullableTvErasureCallRealign.CollectNewSyntheticMembers(stagedFile.Root, nullableTvDeclRets);
             }
             foreach (var stagedFile in staged)
