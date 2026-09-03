@@ -4,14 +4,14 @@ using System.Linq;
 using System.Text.Json.Nodes;
 using DotKt.Bir;
 
-// A compiler-generated closure is physical CLR storage: each capture value, constructor parameter, backing field,
-// and field read must agree on one exact representation. FBoundStarProjectionErasure can turn the successful
-// smart-cast value captured by a callable reference into a non-generic existential carrier after ClosureSynthesis
-// has already copied the Kotlin constructed type into the generated class. Leaving that earlier type on the field
-// makes newobj unverifiable (`G$star` on the stack, `G<T>` in the constructor descriptor).
+// A compiler-generated capture class is physical CLR storage: each capture value, constructor parameter, backing field,
+// and field read must agree on one exact representation. FBoundStarProjectionErasure can turn a captured successful
+// smart-cast value into a non-generic existential carrier after closure/SAM synthesis copied the Kotlin constructed
+// type into a generated class, or before suspend-lambda lowering copies its capture declaration into a state machine.
+// Leaving that earlier type on the field makes newobj unverifiable (`G$star` on the stack, `G<T>` in the descriptor).
 //
 // Align only a carrier whose trusted local/reference metadata names the capture field's original generic classifier.
-// The generated closure declaration and its construction node are the complete authority; no function names, class
+// The generated declaration and its construction node are the complete authority; no function names, class
 // layout guesses, or old artifact spellings participate. The ordinary ExistentialReceiverBinding pass subsequently
 // binds calls through the retyped field to the exact carrier slot and preserves their semantic result with an explicit
 // projection.
@@ -128,13 +128,19 @@ static class ExistentialCaptureAlignment
             if (Str(obj["name"]) is string name && TypeJson.Read(obj["type"]) is TypeNode type) vars[name] = type;
             return;
         }
-        if (Str(obj["k"]) == "localFun" && obj["body"] is JsonArray)
+        if (Str(obj["k"]) == "newSuspendLambda")
         {
-            VisitDeclaration(obj, uses, semanticByPhysical, refs);
+            AlignSuspendCaptures(obj, vars, uses, semanticByPhysical, refs);
             return;
         }
-        if (Str(obj["k"]) == "newClosure"
-            && TypeJson.Read(obj["closureType"]) is TypeNode.Fqn closure
+        var generatedTypeSlot = Str(obj["k"]) switch
+        {
+            "newClosure" => "closureType",
+            "newSam" => "samType",
+            _ => null,
+        };
+        if (generatedTypeSlot != null
+            && TypeJson.Read(obj[generatedTypeSlot]) is TypeNode.Fqn closure
             && obj["captures"] is JsonArray captures)
         {
             for (var position = 0; position < captures.Count; position++)
@@ -146,10 +152,64 @@ static class ExistentialCaptureAlignment
                     if (!uses.TryGetValue(key, out var list)) uses[key] = list = new List<CaptureUse>();
                     list.Add(new CaptureUse(capture, carrier));
                 }
+            foreach (var capture in captures)
+                if (capture != null) Visit(capture, vars, uses, semanticByPhysical, refs);
+            return;
         }
+
+        // These are declaration/carrier boundaries, not children in the current lexical frame. Materialized
+        // newClosure/newSam values were handled above; the remaining carrier kinds are either consumed by earlier
+        // lowering or own independent parameters/locals.
+        if (Str(obj["k"]) is "lambda" or "inlineLambda" or "newDelegate"
+            or "forEachInline" or "repeatInline") return;
 
         foreach (var value in obj.Select(pair => pair.Value).ToList())
             if (value != null) Visit(value, vars, uses, semanticByPhysical, refs);
+    }
+
+    // A suspend lambda is materialized later, so align its capture declaration before SuspendLambdaLowering copies
+    // that declaration into the state-machine constructor and field. The construction value is either the explicit
+    // capValues entry supplied by cold lowering or the same-named local in the enclosing frame. Recurse into the
+    // lambda body with its own declared frame so nested suspend lambdas are handled without leaking locals outward.
+    static void AlignSuspendCaptures(JsonObject node, IReadOnlyDictionary<string, TypeNode> outerVars,
+        Dictionary<(string Closure, int Position), List<CaptureUse>> uses,
+        IReadOnlyDictionary<string, string> semanticByPhysical, ReferenceMetadataIndex refs)
+    {
+        var nested = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
+        var captures = node["captures"] as JsonArray;
+        var captureValues = node["capValues"] as JsonArray;
+        if (captures != null)
+            for (var position = 0; position < captures.Count; position++)
+            {
+                if (captures[position] is not JsonObject capture
+                    || Str(capture["name"]) is not string name
+                    || TypeJson.Read(capture["type"]) is not TypeNode declared)
+                    continue;
+                var value = captureValues != null && position < captureValues.Count
+                    ? captureValues[position]
+                    : null;
+                var physical = value != null
+                    ? PhysicalType(value, outerVars)
+                    : outerVars.GetValueOrDefault(name);
+                if (physical is TypeNode.Fqn carrier
+                    && TrySemanticOwner(carrier.Name, semanticByPhysical, refs, out var semanticOwner)
+                    && declared is TypeNode.Fqn { Args: { Length: > 0 } } logical
+                    && logical.Name == semanticOwner)
+                {
+                    capture["type"] = TypeJson.Write(carrier);
+                    if (value is JsonObject expression)
+                        RetypeCaptureBoundary(expression, semanticOwner, carrier);
+                    declared = carrier;
+                }
+                nested[name] = declared;
+            }
+        if (node["params"] is JsonArray parameters)
+            foreach (var parameter in parameters.OfType<JsonObject>())
+                if (Str(parameter["name"]) is string name
+                    && TypeJson.Read(parameter["type"]) is TypeNode type)
+                    nested[name] = type;
+        if (node["body"] != null)
+            Visit(node["body"], nested, uses, semanticByPhysical, refs);
     }
 
     // Ask for the value actually delivered to a physical storage slot. A valueBlock/conditional can retain its

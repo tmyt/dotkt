@@ -172,6 +172,23 @@ private fun <T> runtimeTypesFuseReference(
         is RuntimeTypesExistentialFusibleFlow -> flow::fuse
         else -> ({ flow })
     }
+private fun interface RuntimeTypesExistentialFuseSam<T> {
+    fun fuse(): RuntimeTypesExistentialFlow<T>
+}
+@Suppress("UNCHECKED_CAST")
+private fun <T> runtimeTypesFuseSam(
+    flow: RuntimeTypesExistentialFlow<T>
+): RuntimeTypesExistentialFuseSam<T> {
+    val fusible = flow as RuntimeTypesExistentialFusibleFlow<T>
+    return RuntimeTypesExistentialFuseSam { fusible.fuse() }
+}
+@Suppress("UNCHECKED_CAST")
+private fun <T> runtimeTypesFuseSuspend(
+    flow: RuntimeTypesExistentialFlow<T>
+): suspend () -> RuntimeTypesExistentialFlow<T> {
+    val fusible = flow as RuntimeTypesExistentialFusibleFlow<T>
+    return { fusible.fuse() }
+}
 open class RuntimeTypesGenericProtectedSuperBase<T> {
     context(context: RuntimeTypesSuperContext)
     protected open fun <U : RuntimeTypesGenericMarker<T>> combine(value: T, marker: U): String =
@@ -293,6 +310,8 @@ class StarProjectionAndVisibilityTests {
         assertTrue(runtimeTypesFuseViaRealignedLocal(intFlow) === intFlow)
         assertTrue(runtimeTypesFuseReference(stringFlow)() === stringFlow)
         assertTrue(runtimeTypesFuseReference(intFlow)() === intFlow)
+        assertTrue(runtimeTypesFuseSam(stringFlow).fuse() === stringFlow)
+        assertTrue(runtimeTypesFuseSam(intFlow).fuse() === intFlow)
     }
 
     @TestAttribute
