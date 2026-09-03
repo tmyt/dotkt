@@ -344,6 +344,7 @@ class StarProjectionAndVisibilityTests {
         val stringValue = RuntimeTypesExistentialValue<String>("same")
         val erasedPeer: Any = RuntimeTypesExistentialValue<Int>("same")
         assertTrue(stringValue == erasedPeer)
+        assertFalse(stringValue == RuntimeTypesExistentialValue<Int>("different") as Any)
     }
 
     @TestAttribute
