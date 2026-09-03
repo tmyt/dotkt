@@ -466,7 +466,7 @@ class GenericMetadataRoundtripTests {
 
         val nestedCopySource: ReferencedStarNestedCopy<*> = referencedStarNestedCopy()
         val nestedCopied = nestedCopySource.copy()
-        val nested = nestedCopied.nested
+        val nested = nestedCopied.nested.again()
         ClassicAssert.AreEqual("referenced-nested", nested.value)
         ClassicAssert.AreEqual("copy", nestedCopied.tag)
 
@@ -476,8 +476,8 @@ class GenericMetadataRoundtripTests {
         val second: String = mixed.second()
         ClassicAssert.AreEqual(23, mixed.first())
         ClassicAssert.AreEqual("mixed", second)
-        val capturedNested = mixed.capturedNested()
-        val exactNested: ReferencedStarNested<String> = mixed.exactNested()
+        val capturedNested = mixed.capturedNested().again()
+        val exactNested: ReferencedStarNested<String> = mixed.exactNested().again()
         ClassicAssert.AreEqual(29, capturedNested.value)
         ClassicAssert.AreEqual("exact-nested", exactNested.value)
         // The frontend-selected concrete-B overload must select its exact existential slot; name+arity sees both

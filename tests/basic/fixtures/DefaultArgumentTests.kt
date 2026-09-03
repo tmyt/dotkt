@@ -17,8 +17,13 @@ data class DefaultArgP(val x: Int, val y: Int, val z: Int)
 
 private data class DefaultArgStarCopy<T>(val value: T, val tag: String)
 
-private class DefaultArgStarNested<T>(val value: T)
+private class DefaultArgStarNested<T>(val value: T) {
+    fun again(): DefaultArgStarNested<T> = this
+}
 private data class DefaultArgStarNestedCopy<T>(val nested: DefaultArgStarNested<T>, val tag: String)
+
+private open class DefaultArgStarBase<T>(val inheritedNested: DefaultArgStarNested<T>)
+private class DefaultArgStarDerived<A, B>(nested: DefaultArgStarNested<B>) : DefaultArgStarBase<B>(nested)
 
 private fun defaultArgCopyThroughStar(source: DefaultArgStarCopy<*>): String {
     val copied = source.copy()
@@ -28,7 +33,15 @@ private fun defaultArgCopyThroughStar(source: DefaultArgStarCopy<*>): String {
 private fun defaultArgNestedCopyThroughStar(source: DefaultArgStarNestedCopy<*>): String {
     val copied = source.copy()
     val nested = copied.nested
-    return "${nested.value}:${copied.tag}"
+    val repeated = nested.again()
+    return "${repeated.value}:${copied.tag}"
+}
+
+private fun defaultArgInheritedNestedThroughReorderedFrame(
+    source: DefaultArgStarDerived<*, String>,
+): String {
+    val exact: DefaultArgStarNested<String> = source.inheritedNested
+    return exact.value
 }
 
 private interface DefaultArgStarValue<T> { val value: T }
@@ -531,6 +544,12 @@ class DefaultArgumentTests {
             "nested:tag",
             defaultArgNestedCopyThroughStar(
                 DefaultArgStarNestedCopy(DefaultArgStarNested("nested"), "tag"),
+            ),
+        )
+        assertEquals(
+            "inherited",
+            defaultArgInheritedNestedThroughReorderedFrame(
+                DefaultArgStarDerived<Any?, String>(DefaultArgStarNested("inherited")),
             ),
         )
         assertEquals(

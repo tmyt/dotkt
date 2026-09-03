@@ -53,7 +53,9 @@ fun <T> referencedExistentialFlow(): ReferencedExistentialFlow<T> = ReferencedEx
 data class ReferencedStarCopy<T>(val value: T, val tag: String)
 fun referencedStarCopy(): ReferencedStarCopy<String> = ReferencedStarCopy("referenced", "copy")
 
-class ReferencedStarNested<T>(val value: T)
+class ReferencedStarNested<T>(val value: T) {
+    fun again(): ReferencedStarNested<T> = this
+}
 data class ReferencedStarNestedCopy<T>(val nested: ReferencedStarNested<T>, val tag: String)
 fun referencedStarNestedCopy(): ReferencedStarNestedCopy<String> =
     ReferencedStarNestedCopy(ReferencedStarNested("referenced-nested"), "copy")

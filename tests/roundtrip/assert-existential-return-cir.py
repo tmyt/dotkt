@@ -97,23 +97,6 @@ if forbidden_object_casts:
     )
 
 nested_carrier = {"t": "fqn", "name": "starprojection.ReferencedStarNested$star"}
-nested_locals = [
-    node
-    for node in body
-    if isinstance(node, dict)
-    and node.get("k") == "var"
-    and node.get("type") == nested_carrier
-    and isinstance(node.get("init"), dict)
-    and node["init"].get("k") == "cast"
-    and node["init"].get("type") == nested_carrier
-    and node["init"].get("e", {}).get("ownerType", {}).get("name")
-    == "starprojection.ReferencedStarNestedCopy$star"
-]
-if len(nested_locals) != 1:
-    raise SystemExit(
-        f"referenced nested local must retain the physical carrier: {nested_locals!r}"
-    )
-
 nested_getters = [
     node
     for node in objects(body)
@@ -138,6 +121,43 @@ for nested_getter in nested_getters:
             f"referenced nested getter/memberRef disagree with the carrier slot: {nested_getter!r}"
         )
 
+nested_chained_locals = [
+    node
+    for node in body
+    if isinstance(node, dict)
+    and node.get("k") == "var"
+    and node.get("type") == nested_carrier
+    and isinstance(node.get("init"), dict)
+    and node["init"].get("k") == "cast"
+    and node["init"].get("type") == nested_carrier
+    and any(candidate is nested_getter for candidate in objects(node["init"])
+            for nested_getter in nested_getters)
+]
+if len(nested_chained_locals) != 1:
+    raise SystemExit(
+        "referenced nested getter followed by another owner-dependent result must retain the carrier: "
+        f"{nested_chained_locals!r}"
+    )
+
+again_calls = [
+    node
+    for node in objects(body)
+    if node.get("k") == "callInstance"
+    and node.get("ownerType", {}).get("name") == "starprojection.ReferencedStarNested$star"
+    and str(node.get("method", "")).startswith("$star$again$")
+    and node.get("ret") == nested_carrier
+]
+if len(again_calls) != 2:
+    raise SystemExit(f"star-dependent chained results must use the carrier twice: {again_calls!r}")
+for again_call in again_calls:
+    member_ref = again_call.get("memberRef", {})
+    if (
+        again_call.get("virtual") is not True
+        or member_ref.get("declaringType") != again_call.get("ownerType")
+        or member_ref.get("returnType") != nested_carrier
+    ):
+        raise SystemExit(f"chained result/memberRef disagree with the carrier slot: {again_call!r}")
+
 value_getters = [
     node
     for node in objects(body)
@@ -160,14 +180,19 @@ for value_getter in value_getters:
             f"referenced nested value/memberRef disagree with the physical slot: {value_getter!r}"
         )
 
-mixed_calls = {
-    node.get("method"): node
-    for node in objects(body)
-    if node.get("k") == "callInstance"
-    and node.get("ownerType", {}).get("name") == "starprojection.MixedBox$star"
-    and node.get("method") in {"$star$capturedNested$2", "$star$exactNested$3"}
-}
-if set(mixed_calls) != {"$star$capturedNested$2", "$star$exactNested$3"}:
+mixed_calls = {}
+for node in objects(body):
+    if (
+        node.get("k") != "callInstance"
+        or node.get("ownerType", {}).get("name") != "starprojection.MixedBox$star"
+    ):
+        continue
+    for source_name in ("capturedNested", "exactNested"):
+        if str(node.get("method", "")).startswith(f"$star${source_name}$"):
+            if source_name in mixed_calls:
+                raise SystemExit(f"duplicate mixed {source_name} call: {node!r}")
+            mixed_calls[source_name] = node
+if set(mixed_calls) != {"capturedNested", "exactNested"}:
     raise SystemExit(f"mixed star/exact nested calls are incomplete: {mixed_calls!r}")
 for method_name, mixed_call in mixed_calls.items():
     member_ref = mixed_call.get("memberRef", {})
@@ -186,12 +211,11 @@ exact_nested = {
     "name": "starprojection.ReferencedStarNested`1",
     "args": [{"t": "fqn", "name": "System.String"}],
 }
-expected_mixed_locals = {
-    "$star$capturedNested$2": nested_carrier,
-    "$star$exactNested$3": exact_nested,
-}
-for method_name, projected_type in expected_mixed_locals.items():
-    mixed_call = mixed_calls[method_name]
+for source_name, projected_type in {
+    "capturedNested": nested_carrier,
+    "exactNested": exact_nested,
+}.items():
+    mixed_call = mixed_calls[source_name]
     matching_locals = [
         node
         for node in body
@@ -199,13 +223,11 @@ for method_name, projected_type in expected_mixed_locals.items():
         and node.get("k") == "var"
         and node.get("type") == projected_type
         and isinstance(node.get("init"), dict)
-        and node["init"].get("k") == "cast"
-        and node["init"].get("type") == projected_type
-        and node["init"].get("e") is mixed_call
+        and any(candidate is mixed_call for candidate in objects(node["init"]))
     ]
     if len(matching_locals) != 1:
         raise SystemExit(
-            f"{method_name} must project to {projected_type!r}: {matching_locals!r}"
+            f"{source_name} must remain {projected_type!r} through the chained call: {matching_locals!r}"
         )
 
 print("referenced existential results preserve exact and star-dependent physical projections")

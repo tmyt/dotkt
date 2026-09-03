@@ -189,7 +189,8 @@ static class FBoundStarProjectionErasure
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
-                    if (value == null || key == "name" || key == InnerConstructorFactoryKey) continue;
+                    if (value == null || key == "name" || key == InnerConstructorFactoryKey
+                        || key == ExistentialResultProjectionKey) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
@@ -229,6 +230,8 @@ static class FBoundStarProjectionErasure
     // conversion H<T> -> H<object>. H's existential view is part of the same closure and must exist first-class.
     static void MarkNeededClosure(IReadOnlyDictionary<string, Owner> owners)
     {
+        // A newly-bound carrier result can initialize the next local in a chain. Discover and normalize to a fixed
+        // point so each lexical hop retains the same projected star mask before its consumer is rebound.
         while (true)
         {
             var before = owners.Values.Count(o => o.Needed);
@@ -1381,7 +1384,8 @@ static class FBoundStarProjectionErasure
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
-                    if (value == null || key == "name" || key == InnerConstructorFactoryKey) continue;
+                    if (value == null || key == "name" || key == InnerConstructorFactoryKey
+                        || key == ExistentialResultProjectionKey) continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
@@ -1709,6 +1713,7 @@ static class FBoundStarProjectionErasure
                     && referenced == carrier.Name);
 
         var locals = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
+        var projectedLocals = new Dictionary<string, TypeNode.Fqn>(StringComparer.Ordinal);
         void Collect(JsonNode node)
         {
             switch (node)
@@ -1720,7 +1725,11 @@ static class FBoundStarProjectionErasure
                         && LogicalTypeMatchesCarrier(declared, result)
                         && (owners.Values.Any(owner => owner.ErasedName == result.Name)
                             || refs.IsExistentialPhysicalOwner(result.Name)))
+                    {
                         locals[name] = result;
+                        if (ProjectedExistentialType(obj["init"]) is { } projected)
+                            projectedLocals[name] = projected;
+                    }
                     foreach (var value in obj.Select(pair => pair.Value))
                         if (value != null) Collect(value);
                     break;
@@ -1730,9 +1739,6 @@ static class FBoundStarProjectionErasure
                     break;
             }
         }
-        Collect(declaration["body"]);
-        if (locals.Count == 0) return;
-
         void Normalize(JsonNode node)
         {
             switch (node)
@@ -1741,7 +1747,12 @@ static class FBoundStarProjectionErasure
                     if (Str(obj["name"]) is string name && locals.TryGetValue(name, out var carrier))
                     {
                         if (Str(obj["k"]) == "var") obj["type"] = TypeJson.Write(carrier);
-                        else if (Str(obj["k"]) == "local") obj["sty"] = TypeJson.Write(carrier);
+                        else if (Str(obj["k"]) == "local")
+                        {
+                            obj["sty"] = TypeJson.Write(carrier);
+                            if (projectedLocals.TryGetValue(name, out var projected))
+                                obj[ExistentialResultProjectionKey] = TypeJson.Write(projected);
+                        }
                     }
                     foreach (var value in obj.Select(pair => pair.Value).ToList())
                         if (value != null) Normalize(value);
@@ -1753,7 +1764,15 @@ static class FBoundStarProjectionErasure
                     break;
             }
         }
-        Normalize(declaration["body"]);
+        while (true)
+        {
+            var priorLocals = locals.Count;
+            var priorProjections = projectedLocals.Count;
+            Collect(declaration["body"]);
+            if (locals.Count == 0) return;
+            Normalize(declaration["body"]);
+            if (locals.Count == priorLocals && projectedLocals.Count == priorProjections) break;
+        }
 
         TypeNode.Fqn ResultCarrier(JsonNode expression) => expression switch
         {
@@ -1884,15 +1903,26 @@ static class FBoundStarProjectionErasure
         // Binding selects a real MethodDef on a non-generic existential owner. Its result may therefore be an
         // existential carrier even when the selected method itself owns generic parameters,
         // though the Kotlin expression retains a caller-instantiated constructed type. State both facts explicitly:
-        // the inner call has the MethodDef's exact physical result and the outer checked cast restores the semantic
-        // value. ilemit must never pretend the selected slot itself returns the constructed type.
+        // the inner call has the MethodDef's exact physical result; the outer projection is either a checked concrete
+        // cast or a carrier identity that preserves the captured star for subsequent binding. ilemit must never pretend
+        // the selected slot itself returns the constructed type.
+        owners.TryGetValue(f.Name, out var start);
         var projectedReceiver = ProjectedExistentialType(call["recv"]);
         var ownerArguments = projectedReceiver is { Args: { } projectedArgs }
-            && projectedReceiver.Name == f.Name
+            && (projectedReceiver.Name == f.Name
+                || refs.TryExactPhysicalTypeName(projectedReceiver.Name, projectedArgs.Length, out var exactReceiver)
+                    && exactReceiver == f.Name)
             ? projectedArgs
             : args;
 
-        void AlignResult(TypeNode physicalResult, TypeNode declarationResult)
+        IReadOnlyList<TypeNode> DeclarationOwnerArguments(string declaringName)
+        {
+            if (declaringName == f.Name) return ownerArguments;
+            return start == null ? null : ProjectOwnerArguments(start, ownerArguments, declaringName, owners);
+        }
+
+        void AlignResult(TypeNode physicalResult, TypeNode declarationResult,
+            IReadOnlyList<TypeNode> declarationOwnerArguments)
         {
             // newBoundDelegate describes the target MethodDef in these fields, but the expression itself produces a
             // delegate instance. Only an invocation places the target's return value on the evaluation stack.
@@ -1900,9 +1930,10 @@ static class FBoundStarProjectionErasure
             var methodArgs = (call["typeArgs"] as JsonArray)?.Select(TypeJson.Read).ToArray()
                 ?? Array.Empty<TypeNode>();
             physicalResult = SubstituteMethodTypeArguments(physicalResult, methodArgs);
-            var projectedResult = SubstituteDeclarationTypeArguments(
-                declarationResult, ownerArguments, methodArgs);
-            if (ContainsExplicitStar(projectedResult)
+            var projectedResult = declarationOwnerArguments == null
+                ? null
+                : SubstituteDeclarationTypeArguments(declarationResult, declarationOwnerArguments, methodArgs);
+            if (projectedResult != null && ContainsExplicitStar(projectedResult)
                 && IsExistentialPhysicalCarrier(physicalResult, owners, refs))
             {
                 AlignExistentialResult(call, physicalResult, projectedResult);
@@ -1916,7 +1947,6 @@ static class FBoundStarProjectionErasure
         var sourceMember = propertyCall ? sourcePropertyName : authoredMethod;
         var declarationId = Str(call[DeclarationIdentityBinding.Key]);
 
-        owners.TryGetValue(f.Name, out var start);
         var starOwner = args.Any(a => a is TypeNode.Star);
         var erasedSmartCast = call["recv"] is JsonObject recv && Str(recv["k"]) == "cast"
             && TypeJson.Read(recv["type"]) is TypeNode.Fqn { Args: { } castArgs } castF
@@ -1949,7 +1979,8 @@ static class FBoundStarProjectionErasure
                 ExistentialSlotIdentity(declaration, declaring.Name));
             var selectedDeclarationResult = TypeJson.Read(declaration["ret"])
                 ?? new TypeNode.Fqn("kotlin.Unit");
-            AlignResult(EraseOwnerTv(selectedDeclarationResult, owners, refs), selectedDeclarationResult);
+            AlignResult(EraseOwnerTv(selectedDeclarationResult, owners, refs), selectedDeclarationResult,
+                DeclarationOwnerArguments(declaring.Name));
             return;
         }
 
@@ -1967,7 +1998,8 @@ static class FBoundStarProjectionErasure
                 ExistentialSlotIdentity(declaration, bridgeOwner.Name));
             var selectedDeclarationResult = TypeJson.Read(declaration["ret"])
                 ?? new TypeNode.Fqn("kotlin.Unit");
-            AlignResult(EraseOwnerTv(selectedDeclarationResult, owners, refs), selectedDeclarationResult);
+            AlignResult(EraseOwnerTv(selectedDeclarationResult, owners, refs), selectedDeclarationResult,
+                DeclarationOwnerArguments(declaringName));
             return;
         }
 
@@ -1985,7 +2017,7 @@ static class FBoundStarProjectionErasure
             call["sig"] = new JsonArray(erasedSignature.Select(TypeJson.Write).ToArray());
             call["virtual"] = true;
             MarkPhysicalPropertyCall(call, propertyCall, sourcePropertyName, accessorKind);
-            AlignResult(physicalResult, declarationResult);
+            AlignResult(physicalResult, declarationResult, ownerArguments);
             return;
         }
 
@@ -2016,6 +2048,53 @@ static class FBoundStarProjectionErasure
             fn.Ctx?.Select(context => CloseDeclarationType(context, ownerArgs, methodArgs)).ToArray()),
         _ => type,
     };
+
+    static IReadOnlyList<TypeNode> ProjectOwnerArguments(Owner start, IReadOnlyList<TypeNode> startArguments,
+        string targetName, IReadOnlyDictionary<string, Owner> owners)
+    {
+        var queue = new Queue<(Owner Owner, TypeNode[] Arguments, int Depth)>();
+        queue.Enqueue((start, startArguments.ToArray(), 0));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var matches = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
+        int? matchDepth = null;
+
+        while (queue.Count > 0)
+        {
+            var (current, currentArguments, depth) = queue.Dequeue();
+            if (matchDepth is int nearest && depth > nearest) break;
+            var key = current.Name + "|" + new JsonArray(
+                currentArguments.Select(TypeJson.Write).ToArray()).ToJsonString();
+            if (!seen.Add(key)) continue;
+            if (current.Name == targetName)
+            {
+                matchDepth = depth;
+                matches.TryAdd(key, currentArguments);
+                continue;
+            }
+
+            IEnumerable<JsonNode> Edges()
+            {
+                if (current.Def["base"] != null) yield return current.Def["base"];
+                if (current.Def["interfaces"] is JsonArray interfaces)
+                    foreach (var edge in interfaces)
+                        if (edge != null) yield return edge;
+            }
+
+            foreach (var edge in Edges())
+            {
+                if (TypeJson.Read(edge) is not TypeNode.Fqn application
+                    || !owners.TryGetValue(application.Name, out var ancestor)) continue;
+                var projected = SubstituteDeclarationTypeArguments(
+                    application, currentArguments, Array.Empty<TypeNode>()) as TypeNode.Fqn;
+                var arguments = projected?.Args ?? Array.Empty<TypeNode>();
+                var expected = (ancestor.Def["typeParams"] as JsonArray)?.Count ?? 0;
+                if (arguments.Length != expected) continue;
+                queue.Enqueue((ancestor, arguments, depth + 1));
+            }
+        }
+
+        return matches.Count == 1 ? matches.Values.Single() : null;
+    }
 
     internal static TypeNode SubstituteMethodTypeArguments(TypeNode type, IReadOnlyList<TypeNode> args) => type switch
     {
@@ -2098,7 +2177,7 @@ static class FBoundStarProjectionErasure
         foreach (var key in call.Select(pair => pair.Key).ToList()) call.Remove(key);
         // This is a physical identity projection. The selected existential slot already returns the carrier, but the
         // explicit cast gives later local-flow normalization one exact result token while the pass-local semantic
-        // projection preserves which nested owner arguments were stars for immediately-following member binding.
+        // projection preserves which nested owner arguments were stars across immediate and local member binding.
         call["k"] = "cast";
         call["type"] = TypeJson.Write(physicalResult);
         call["e"] = inner;

@@ -7,6 +7,10 @@ Kotlin compiler version as SemVer build metadata (e.g. `0.9.1+kotlin-2.2.0`).
 
 ### Toolchain
 
+- **Star-dependent generic member results now retain their existential CLR carrier (#645).** bir2cir preserves the
+  exact physical result of a star-projected slot instead of casting invariant nested generics to an invalid
+  `G<object>` construction, while concrete arguments in mixed star/exact projections keep their checked projection.
+
 - **Inherited class `super` calls now bind the concrete base MethodDef (#637).** bir2cir follows only the constructed
   base-class chain when an immediate superclass inherits a method or property implementation alongside an abstract
   interface slot, preventing ilemit from calling that abstract slot. Abstract Kotlin methods also remain bodyless in

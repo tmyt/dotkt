@@ -171,9 +171,22 @@ nested_locals = [
     and node["init"].get("k") == "cast"
     and node["init"].get("type") == nested_carrier
 ]
-if len(nested_locals) != 1:
+if len(nested_locals) != 2:
     raise SystemExit(
-        f"CIR: nested local must retain the physical existential carrier: {nested_locals!r}"
+        f"CIR: nested and chained locals must retain the physical existential carrier: {nested_locals!r}"
+    )
+
+again_calls = [
+    node
+    for node in objects(nested_body)
+    if node.get("k") == "callInstance"
+    and node.get("ownerType", {}).get("name") == "DefaultArgStarNested$star"
+    and str(node.get("method", "")).startswith("$star$again$")
+    and node.get("ret") == nested_carrier
+]
+if len(again_calls) != 1:
+    raise SystemExit(
+        f"CIR: chained owner-dependent result must stay on the nested carrier: {again_calls!r}"
     )
 
 value_getters = [
@@ -187,6 +200,41 @@ if len(value_getters) != 1 or value_getters[0].get("virtual") is not True:
     raise SystemExit(
         "CIR: use after the nested local must bind through its existential value getter: "
         f"{value_getters!r}"
+    )
+
+inherited_helpers = [
+    method
+    for method in root.get("methods", [])
+    if isinstance(method, dict)
+    and method.get("name") == "defaultArgInheritedNestedThroughReorderedFrame"
+]
+if len(inherited_helpers) != 1:
+    raise SystemExit(
+        "CIR: expected one reordered inherited-frame helper, found "
+        f"{len(inherited_helpers)}"
+    )
+exact_nested = {
+    "t": "fqn",
+    "name": "DefaultArgStarNested",
+    "args": [{"t": "fqn", "name": "System.String"}],
+}
+inherited_locals = [
+    node
+    for node in inherited_helpers[0].get("body", [])
+    if isinstance(node, dict)
+    and node.get("k") == "var"
+    and node.get("type") == exact_nested
+    and isinstance(node.get("init"), dict)
+    and node["init"].get("k") == "cast"
+    and node["init"].get("type") == exact_nested
+    and node["init"].get("e", {}).get("ownerType", {}).get("name")
+    == "DefaultArgStarBase$star"
+    and node["init"].get("e", {}).get("ret") == nested_carrier
+]
+if len(inherited_locals) != 1:
+    raise SystemExit(
+        "CIR: Base<B> must project Derived<*, String>'s inherited result to Nested<String>: "
+        f"{inherited_locals!r}"
     )
 
 print("star-projected data-class reads and nested results use exact existential carriers")
