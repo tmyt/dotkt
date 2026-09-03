@@ -59,16 +59,20 @@ static partial class NullableTvErasureCallRealign
     {
         public TypeNode Ret;
         public TypeNode[] Params;
-        // True only for a declaration materialized after declaration-side nullable erasure. Its physical object
-        // slot is not evidence of THIS contract unless a nullable carrier reconstructs a declaration that Erase
-        // actually changes; it may instead belong to another ABI such as unchecked-generic-cast deferral.
-        public bool PostErasureSynthetic;
+        // True only when UnsafeAccessor selected a declaration from this compilation after declaration-side
+        // nullable erasure. Its physical object slot is then not evidence of THIS contract unless the selected
+        // declaration's nullable carrier says so; it may belong to another ABI such as unchecked-cast deferral.
+        public bool NullableErasureOwnershipKnown;
         // Parameter positions whose declaration the REFERENCED reader deliberately would not state (#86 D1). Null for
         // a same-compilation declaration, which has nothing to refuse. A refused position is NOT the same as an
         // absent one: an absent declaration falls back to the call's own descriptor, a refused one must not, because
         // the descriptor is that same erasure written in the call's substituted vocabulary.
         public bool[] ParamsRefused;
     }
+
+    // Pass-local hand-off from UnsafeAccessor synthesis to the one late declaration-index refresh below. It is
+    // consumed while indexing and must not survive into CIR or round-trip metadata.
+    public const string NullableErasureOwnershipKnownKey = "nullableErasureOwnershipKnown";
 
     // Local owner/top-level declarations, captured across ALL roots BEFORE the per-file DEF-side EraseNullableTv
     // mutates declarations in place. ALL members are stored (not only erasure-affected ones): re-deriving `get_v`
@@ -104,20 +108,30 @@ static partial class NullableTvErasureCallRealign
         return idx;
     }
 
-    // SharedSyntheticSynthesis materializes heap ref-cell declarations after the module-wide source snapshot above.
-    // Their element type is still pristine Kotlin vocabulary at that point, so admit only the newly-created TYPE
-    // declarations into the same index before NullableGenericErasure mutates them. Calling CollectFrom with
-    // topLevel=false deliberately skips the already-indexed file facade members while retaining its recursive `types`
-    // walk; existing type names are ignored by CollectFrom, so this is an additive capability transition rather than
-    // a second, ambiguity-producing declaration scan.
+    // Admit TYPE declarations materialized after the module-wide snapshot. Shared ref cells call this before
+    // NullableGenericErasure; UnsafeAccessor holders call it afterwards. The latter's callable entry carries the
+    // one-shot ownership key only when synthesis selected a local declaration, so ReadSig may consult its propagated
+    // pre-erasure return carrier without mistaking every other late synthetic or external accessor for that case.
+    // topLevel=false skips already-indexed facade members while retaining the recursive `types` walk; existing type
+    // names are ignored, making each call an additive transition rather than an ambiguity-producing rescan.
     public static void CollectNewSyntheticTypes(JsonNode root, DeclIndex idx) =>
-        CollectFrom(root, idx, topLevel: false, postErasureSynthetic: false);
+        CollectFrom(root, idx, topLevel: false);
 
-    // UnsafeAccessor synthesis runs after NullableGenericErasure. Unlike the ref-cell types collected above, a new
-    // accessor declaration already states its physical signature, so remember that phase boundary while admitting
-    // it. ReadSig still restores any propagated nullable carrier to its pre-erasure declaration.
-    public static void CollectNewPostErasureSyntheticTypes(JsonNode root, DeclIndex idx) =>
-        CollectFrom(root, idx, topLevel: false, postErasureSynthetic: true);
+    // The same generated holder method can be visited once through the new-type walk and once through the
+    // generated-member walk. Keep its one-shot ownership fact stable across both index additions, then consume it
+    // only after both views have been collected so they cannot disagree and poison the declaration key.
+    public static void ConsumeNullableErasureOwnership(JsonNode root)
+    {
+        if (root is JsonObject obj)
+        {
+            obj.Remove(NullableErasureOwnershipKnownKey);
+            foreach (var child in obj.Select(pair => pair.Value).ToArray())
+                if (child != null) ConsumeNullableErasureOwnership(child);
+        }
+        else if (root is JsonArray array)
+            foreach (var child in array.ToArray())
+                if (child != null) ConsumeNullableErasureOwnership(child);
+    }
 
     // UnsafeAccessor has a second materialization shape: for a non-generic target owner it appends a generated extern
     // method to the EXISTING caller type (or file facade) instead of creating a holder type. CollectFrom deliberately
@@ -128,7 +142,7 @@ static partial class NullableTvErasureCallRealign
     {
         if (root is not JsonObject file) return;
         if (file["methods"] is JsonArray topMethods)
-            CollectGeneratedMethods(topMethods, idx.TopLevel, postErasureSynthetic: true);
+            CollectGeneratedMethods(topMethods, idx.TopLevel);
         CollectTypeMethods(file["types"]);
 
         void CollectTypeMethods(JsonNode node)
@@ -140,24 +154,22 @@ static partial class NullableTvErasureCallRealign
                 {
                     if (!idx.ByOwner.TryGetValue(name, out var declarations))
                         idx.ByOwner[name] = declarations = new Dictionary<string, DeclSig>(StringComparer.Ordinal);
-                    CollectGeneratedMethods(methods, declarations, postErasureSynthetic: true);
+                    CollectGeneratedMethods(methods, declarations);
                 }
                 CollectTypeMethods(type["types"]);
             }
         }
     }
 
-    static void CollectGeneratedMethods(JsonArray methods, Dictionary<string, DeclSig> declarations,
-        bool postErasureSynthetic)
+    static void CollectGeneratedMethods(JsonArray methods, Dictionary<string, DeclSig> declarations)
     {
         foreach (var method in methods.OfType<JsonObject>())
             if (Bool(method["generated"]) && Str(method["name"]) is string name
-                && ReadSig(method, postErasureSynthetic) is DeclSig sig)
+                && ReadSig(method) is DeclSig sig)
                 AddUnambiguous(declarations, name + "|" + sig.Params.Length, sig);
     }
 
-    static void CollectFrom(JsonNode node, DeclIndex idx, bool topLevel,
-        bool postErasureSynthetic = false)
+    static void CollectFrom(JsonNode node, DeclIndex idx, bool topLevel)
     {
         if (node is not JsonObject o) return;
         // TOP-LEVEL functions are keyed by bare name + arity across every root. EVERY one is indexed, generic or not:
@@ -179,8 +191,7 @@ static partial class NullableTvErasureCallRealign
         }
         if (topLevel && o["methods"] is JsonArray topMethods)
             foreach (var m in topMethods)
-                if (m is JsonObject mo && Str(mo["name"]) is string mn
-                    && ReadSig(mo, postErasureSynthetic) is DeclSig sig)
+                if (m is JsonObject mo && Str(mo["name"]) is string mn && ReadSig(mo) is DeclSig sig)
                 {
                     AddUnambiguous(idx.TopLevel, mn + "|" + sig.Params.Length, sig);
                     if (fileClass is { Length: > 0 }
@@ -204,7 +215,7 @@ static partial class NullableTvErasureCallRealign
                         if (to["methods"] is JsonArray ms)
                             foreach (var m in ms)
                                 if (m is JsonObject mo && Str(mo["name"]) is string mn2
-                                    && ReadSig(mo, postErasureSynthetic) is DeclSig sig)
+                                    && ReadSig(mo) is DeclSig sig)
                                 {
                                     // AMBIGUOUS overload guard: two same-name/same-arity members whose declarations
                                     // DISAGREE (`g(Int): Ref<T?>` vs `g(String): Ref<T>`) would otherwise collapse
@@ -238,7 +249,7 @@ static partial class NullableTvErasureCallRealign
                         CollectSlots(to["properties"], slots);
                         idx.Slots[nm] = slots;
                     }
-                    CollectFrom(to, idx, topLevel: false, postErasureSynthetic);   // nested types
+                    CollectFrom(to, idx, topLevel: false);   // nested types
                 }
     }
 
@@ -256,11 +267,12 @@ static partial class NullableTvErasureCallRealign
             }
     }
 
-    static DeclSig ReadSig(JsonObject mo, bool postErasureSynthetic = false)
+    static DeclSig ReadSig(JsonObject mo)
     {
-        if (ReadDeclaredSlot(mo, "ret", "nullableGenericRet") is not TypeNode rt) return null;
-        return ReadParams(mo["params"]) is TypeNode[] ps
-            ? new DeclSig { Ret = rt, Params = ps, PostErasureSynthetic = postErasureSynthetic }
+        var ownershipKnown = Bool(mo[NullableErasureOwnershipKnownKey]);
+        if (ReadDeclaredSlot(mo, "ret", "nullableGenericRet", ownershipKnown) is not TypeNode rt) return null;
+        return ReadParams(mo["params"], ownershipKnown) is TypeNode[] ps
+            ? new DeclSig { Ret = rt, Params = ps, NullableErasureOwnershipKnown = ownershipKnown }
             : null;
     }
 
@@ -268,23 +280,24 @@ static partial class NullableTvErasureCallRealign
     // exact pre-erasure Kotlin slot in the same carrier as an ordinary declaration. Prefer that explicit source
     // fact when present. A malformed compiler-produced carrier is malformed current input and fails normally; it
     // must not silently fall back to a different physical contract.
-    static TypeNode ReadDeclaredSlot(JsonObject slot, string physicalKey, string carrierKey)
+    static TypeNode ReadDeclaredSlot(JsonObject slot, string physicalKey, string carrierKey,
+        bool preferCarrier)
     {
-        if (Str(slot[carrierKey]) is string encoded)
+        if (preferCarrier && Str(slot[carrierKey]) is string encoded)
             return TypeNode.Parse(encoded);
         return TypeJson.Read(slot[physicalKey]);
     }
 
     // The declared parameter vector, or null when any slot is untyped — a partially-read vector would silently
     // realign the wrong positions.
-    static TypeNode[] ReadParams(JsonNode ps)
+    static TypeNode[] ReadParams(JsonNode ps, bool preferCarrier = false)
     {
         if (ps is not JsonArray a) return Array.Empty<TypeNode>();
         var result = new TypeNode[a.Count];
         for (var i = 0; i < a.Count; i++)
         {
             if (a[i] is not JsonObject po
-                || ReadDeclaredSlot(po, "type", "nullableGeneric") is not TypeNode t) return null;
+                || ReadDeclaredSlot(po, "type", "nullableGeneric", preferCarrier) is not TypeNode t) return null;
             result[i] = t;
         }
         return result;
@@ -712,7 +725,7 @@ static partial class NullableTvErasureCallRealign
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, owner.Args, methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
-            decl.PostErasureSynthetic);
+            decl.NullableErasureOwnershipKnown);
     }
 
     static TypeNode EvalCallStatic(JsonObject obj, Ctx ctx)
@@ -758,7 +771,7 @@ static partial class NullableTvErasureCallRealign
         var erasedRet = NullableGenericErasure.EraseNullableTv(decl.Ret, _isValue);
         var derived = Subst(erasedRet, ownerArgs, methodArgs);
         return ApplyDerivedRet(obj, derived, stampedRet, !erasedRet.Equals(decl.Ret),
-            decl.PostErasureSynthetic);
+            decl.NullableErasureOwnershipKnown);
     }
 
     // What the CALL SITE says its result is: the explicit `ret`/`dynRet` it carries.
@@ -789,7 +802,7 @@ static partial class NullableTvErasureCallRealign
     // none stood: `erasureApplied` is false wherever `Erase` left the declared return alone, so an ordinary generic
     // call keeps stating nothing and ilemit keeps inferring it from the member exactly as before.
     static TypeNode ApplyDerivedRet(JsonObject obj, TypeNode derived, TypeNode stampedRet, bool erasureApplied,
-        bool postErasureSynthetic = false)
+        bool nullableErasureOwnershipKnown = false)
     {
         if (derived == null) return stampedRet;
         if (stampedRet == null)
@@ -805,7 +818,7 @@ static partial class NullableTvErasureCallRealign
         // for another ABI (notably deferred unchecked `Any? as T`) while its call retains a concrete use-site stamp.
         // Without a pre-erasure nullable declaration that actually changes under Erase, preserving that stamp is the
         // other lowering's contract; rewriting it to object here destroys the consumer's required unbox/cast.
-        if (postErasureSynthetic && !erasureApplied) return stampedRet;
+        if (nullableErasureOwnershipKnown && !erasureApplied) return stampedRet;
 
         // An open `Array<T?>` return has the one declaration shape that can serve both CLR instantiations:
         // `object[]`.  At a concrete REFERENCE instantiation, however, the Kotlin value it denotes is still the

@@ -451,6 +451,7 @@ class NullableTests {
         assertEquals("none", ss.accept(null))            // none  reference control: dispatch must still find it
         assertEquals("none", ss.boxed(NgBox(null)))      // none
         assertEquals("x", NgTextSink().accept("x"))      // x     the reference control's own entry point
+        assertEquals("y", NgTextSink().boxed(NgBox("y"))) // y    nested reference slot through its own declaration
     }
 
     // #86 D3 — the same narrowing over a base CLASS. Its slot is wired by different CLR metadata than an interface
