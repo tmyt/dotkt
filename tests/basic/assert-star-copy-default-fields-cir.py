@@ -23,7 +23,7 @@ if len(sys.argv) != 2:
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
 
-for semantic_fact in ("dataClassCopyDefault", "dataClassEqualsFieldRead"):
+for semantic_fact in ("dataClassCopyDefault", "generatedEqualsFieldRead"):
     if any(node.get(semantic_fact) is not None for node in objects(root)):
         raise SystemExit(f"CIR: unconsumed {semantic_fact} semantic fact")
 

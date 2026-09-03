@@ -1963,13 +1963,21 @@ internal fun BirEmitter.method(fn: IrSimpleFunction, static: Boolean, semanticOw
 	// #6 the return POSTCONDITION (if any) is registered on fn's return-target symbol for the body emission, so a
 	// genuine `return v` wraps v in a non-null bind-check-throw (BirEmitterStatements.kt IrReturn).
 	val bodyStmts = if (isAbstract) "" else {
-		val savedDataClassEqualsFieldRead = activeDataClassEqualsFieldRead
-		activeDataClassEqualsFieldRead = fn.origin == IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER &&
-			(fn.parent as? IrClass)?.isData == true && fn.name.asString() == "equals"
+		// Kotlin synthesizes the peer classifier check and backing-field comparison for data-class and value-class
+		// equality. Preserve that frontend-owned origin fact: if the classifier is generic, bir2cir must route the
+		// successful erased peer through its existential getter rather than applying a field token owned by G<T>.
+		val savedGeneratedEqualsFieldRead = activeGeneratedEqualsFieldRead
+		val generatedOwner = fn.parent as? IrClass
+		activeGeneratedEqualsFieldRead = fn.name.asString() == "equals" && when (fn.origin) {
+			IrDeclarationOrigin.GENERATED_DATA_CLASS_MEMBER -> generatedOwner?.isData == true
+			IrDeclarationOrigin.GENERATED_SINGLE_FIELD_VALUE_CLASS_MEMBER,
+			IrDeclarationOrigin.GENERATED_MULTI_FIELD_VALUE_CLASS_MEMBER -> generatedOwner?.isValue == true
+			else -> false
+		}
 		try {
 			withReturnPostcondition(fn) { (fn.body as? IrBlockBody)?.statements.orEmpty().joinToString(",") { stmt(it) } }
 		} finally {
-			activeDataClassEqualsFieldRead = savedDataClassEqualsFieldRead
+			activeGeneratedEqualsFieldRead = savedGeneratedEqualsFieldRead
 		}
 	}
 	tailrecCtx = savedTailrec

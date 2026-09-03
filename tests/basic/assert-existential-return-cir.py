@@ -23,6 +23,9 @@ if len(sys.argv) != 2:
 with open(sys.argv[1], encoding="utf-8") as stream:
     root = json.load(stream)
 
+if any(node.get("generatedEqualsFieldRead") is not None for node in objects(root)):
+    raise SystemExit("CIR: unconsumed generated-equality field-read fact")
+
 physical = {"t": "fqn", "name": "RuntimeTypesExistentialFlow$star"}
 semantic = {
     "t": "fqn",
@@ -241,6 +244,49 @@ sm_projections = [
 if len(sm_projections) != 1 or sm_projections[0].get("type") != closure_semantic:
     raise SystemExit(
         f"{sm_name}.invokeSuspend does not explicitly project its carrier result: {invoke_suspends[0]!r}"
+    )
+
+value_classes = [
+    candidate
+    for candidate in root.get("types", [])
+    if candidate.get("name") == "RuntimeTypesExistentialValue"
+]
+if len(value_classes) != 1:
+    raise SystemExit(
+        f"found {len(value_classes)} RuntimeTypesExistentialValue declarations, expected 1"
+    )
+value_equals = [
+    method for method in value_classes[0].get("methods", []) if method.get("name") == "Equals"
+]
+if len(value_equals) != 1:
+    raise SystemExit(
+        f"found {len(value_equals)} RuntimeTypesExistentialValue.Equals methods, expected 1"
+    )
+value_body = value_equals[0].get("body", [])
+value_peer_fields = [
+    node
+    for node in objects(value_body)
+    if node.get("k") == "field"
+    and node.get("ownerType", {}).get("name") == "RuntimeTypesExistentialValue"
+    and node.get("recv", {}).get("k") == "local"
+]
+if value_peer_fields:
+    raise SystemExit(
+        "generated value-class equality still reads a field through the exact generic owner: "
+        f"{value_peer_fields!r}"
+    )
+value_peer_getters = [
+    node
+    for node in objects(value_body)
+    if node.get("k") == "callInstance"
+    and node.get("ownerType", {}).get("name") == "RuntimeTypesExistentialValue$star"
+    and node.get("recv", {}).get("k") == "local"
+    and node.get("ret", {}).get("name") == "System.Object"
+]
+if len(value_peer_getters) != 1 or value_peer_getters[0].get("virtual") is not True:
+    raise SystemExit(
+        "generated value-class equality must read its peer through one existential getter: "
+        f"{value_peer_getters!r}"
     )
 
 print(
