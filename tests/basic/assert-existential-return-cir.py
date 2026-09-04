@@ -33,6 +33,70 @@ semantic = {
     "args": [{"t": "tv", "scope": "method", "i": 0}],
 }
 
+exact_target = semantic
+for method_name in (
+    "runtimeTypesExactGenericUpcast",
+    "runtimeTypesNullableExactGenericUpcast",
+    "runtimeTypesGeneratedExactGenericUpcast",
+):
+    exact_upcasts = [
+        method
+        for method in root.get("methods", [])
+        if isinstance(method, dict) and method.get("name") == method_name
+    ]
+    if len(exact_upcasts) != 1:
+        raise SystemExit(f"found {len(exact_upcasts)} {method_name} methods, expected 1")
+    exact_casts = [
+        node
+        for node in objects(exact_upcasts[0].get("body", []))
+        if node.get("k") == "cast" and node.get("type") == exact_target
+    ]
+    if len(exact_casts) != 1:
+        raise SystemExit(
+            f"{method_name} did not retain its exact constructed target: {exact_casts!r}"
+        )
+
+this_upcasts = [
+    method
+    for method in objects(root)
+    if method.get("name") == "asFlow" and isinstance(method.get("body"), list)
+]
+this_target = {
+    "t": "fqn",
+    "name": "RuntimeTypesExistentialFlow",
+    "args": [{"t": "tv", "scope": "type", "i": 0}],
+}
+if len(this_upcasts) != 1 or not any(
+    node.get("k") == "cast" and node.get("type") == this_target
+    for node in objects(this_upcasts[0].get("body", []))
+):
+    raise SystemExit(
+        f"a this-based exact generic upcast did not retain its construction: {this_upcasts!r}"
+    )
+
+composed = [
+    method
+    for method in root.get("methods", [])
+    if isinstance(method, dict) and method.get("name") == "runtimeTypesComposedUncheckedUpcast"
+]
+if len(composed) != 1:
+    raise SystemExit(
+        f"found {len(composed)} runtimeTypesComposedUncheckedUpcast methods, expected 1"
+    )
+composed_casts = [
+    node.get("type", {}).get("name")
+    for node in objects(composed[0].get("body", []))
+    if node.get("k") == "cast"
+]
+if sorted(composed_casts) != sorted([
+    "RuntimeTypesExistentialFusibleFlow$star",
+    "RuntimeTypesExistentialFlow$star",
+]):
+    raise SystemExit(
+        "a composed unchecked cast reclassified its erased operand as exact: "
+        f"{composed_casts!r}"
+    )
+
 for method_name in ("runtimeTypesFuse", "runtimeTypesFuseViaRealignedLocal"):
     methods = [
         method

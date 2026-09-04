@@ -104,6 +104,7 @@ import starprojection.firstUseBox
 import starprojection.ReferencedExistentialFlow
 import starprojection.ReferencedExistentialFusibleFlow
 import starprojection.referencedExistentialFlow
+import starprojection.referencedExistentialFusibleFlow
 import starprojection.ReferencedStarCopy
 import starprojection.ReferencedStarNested
 import starprojection.ReferencedStarNestedCopy
@@ -205,6 +206,15 @@ private fun <T> fuseReferencedExistential(
         is ReferencedExistentialFusibleFlow -> flow.fuse()
         else -> flow
     }
+
+@Suppress("USELESS_CAST")
+private fun <T> exactReferencedExistentialUpcast(
+    flow: ReferencedExistentialFusibleFlow<T>
+): ReferencedExistentialFlow<T> = flow as ReferencedExistentialFlow<T>
+
+@Suppress("UNCHECKED_CAST", "USELESS_CAST")
+private fun <T> composedReferencedExistentialUpcast(value: Any): Any =
+    (value as ReferencedExistentialFusibleFlow<T>) as ReferencedExistentialFlow<T>
 
 class CrossModuleCaptureTests {
     // ktproj-dotktpkg (#26 follow-up): a `dotkt.foo.bar` cross-module local captured in a lambda,
@@ -458,6 +468,9 @@ class GenericMetadataRoundtripTests {
         val referencedInt = referencedExistentialFlow<Int>()
         ClassicAssert.IsTrue(fuseReferencedExistential(referencedString) === referencedString)
         ClassicAssert.IsTrue(fuseReferencedExistential(referencedInt) === referencedInt)
+        val referencedFusible = referencedExistentialFusibleFlow<String>()
+        ClassicAssert.IsTrue(exactReferencedExistentialUpcast(referencedFusible) === referencedFusible)
+        ClassicAssert.IsTrue(composedReferencedExistentialUpcast<Int>(referencedFusible) === referencedFusible)
 
         val copySource: ReferencedStarCopy<*> = referencedStarCopy()
         val copied = copySource.copy()

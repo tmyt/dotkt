@@ -70,6 +70,48 @@ semantic = {
 if casts[0].get("type") != semantic:
     raise SystemExit(f"referenced result is not projected to the consumer's semantic type: {casts[0]!r}")
 
+referenced_exact = [
+    method
+    for method in root.get("methods", [])
+    if isinstance(method, dict) and method.get("name") == "exactReferencedExistentialUpcast"
+]
+if len(referenced_exact) != 1:
+    raise SystemExit(
+        f"found {len(referenced_exact)} exactReferencedExistentialUpcast methods, expected 1"
+    )
+exact_casts = [
+    node
+    for node in objects(referenced_exact[0].get("body", []))
+    if node.get("k") == "cast" and node.get("type") == semantic
+]
+if len(exact_casts) != 1:
+    raise SystemExit(
+        f"referenced exact generic upcast did not retain its construction: {exact_casts!r}"
+    )
+
+referenced_composed = [
+    method
+    for method in root.get("methods", [])
+    if isinstance(method, dict) and method.get("name") == "composedReferencedExistentialUpcast"
+]
+if len(referenced_composed) != 1:
+    raise SystemExit(
+        f"found {len(referenced_composed)} composedReferencedExistentialUpcast methods, expected 1"
+    )
+composed_casts = [
+    node.get("type", {}).get("name")
+    for node in objects(referenced_composed[0].get("body", []))
+    if node.get("k") == "cast"
+]
+if sorted(composed_casts) != sorted([
+    "starprojection.ReferencedExistentialFusibleFlow$star",
+    "starprojection.ReferencedExistentialFlow$star",
+]):
+    raise SystemExit(
+        "referenced composed unchecked cast reclassified its erased operand as exact: "
+        f"{composed_casts!r}"
+    )
+
 roundtrip_tests = [
     method
     for method in objects(root)

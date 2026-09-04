@@ -1351,17 +1351,25 @@ static class FBoundStarProjectionErasure
     static void Rewrite(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
         IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
         IReadOnlySet<int> existentialTypeParameters = null,
-        IReadOnlySet<int> existentialMethodParameters = null)
+        IReadOnlySet<int> existentialMethodParameters = null,
+        TypeNode.Fqn currentThisType = null)
     {
         switch (node)
         {
             case JsonObject obj:
                 var childTypeParameters = existentialTypeParameters;
                 var childMethodParameters = existentialMethodParameters;
+                var childThisType = currentThisType;
                 if (Str(obj["kind"]) != null)
                 {
                     childTypeParameters = ExistentialTypeParameters(obj["typeParams"] as JsonArray, "type");
                     childMethodParameters = null;
+                    if (Str(obj["name"]) is string typeName)
+                    {
+                        var arity = (obj["typeParams"] as JsonArray)?.Count ?? 0;
+                        childThisType = new TypeNode.Fqn(typeName, Enumerable.Range(0, arity)
+                            .Select(index => (TypeNode)new TypeNode.Tv("type", index)).ToArray());
+                    }
                 }
                 else if (obj["body"] is JsonArray && obj["params"] is JsonArray)
                     childMethodParameters = ExistentialTypeParameters(obj["typeParams"] as JsonArray, "method");
@@ -1370,26 +1378,41 @@ static class FBoundStarProjectionErasure
                     existentialTypeParameters, existentialMethodParameters);
                 BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
                 BindInheritedStarMember(obj, owners, defs, refs);
-                // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
-                // A concrete `as G<X>`, however, remains the compiler's documented eager CLR cast semantics and its
-                // concrete result type is required by immediately-following member calls. Erasing that cast changes
-                // a valid `as G<Unit>; g.consume(Unit)` into an impossible existential call.
+                // A cast operand can itself lower onto an existential carrier. Decide whether the parent has an
+                // exact constructed source only after that physical representation is known; its stale frontend
+                // `sty` is not proof that `(x as Derived<T>) as Base<T>` still carries Derived<T> at this point.
                 var runtimeKind = Str(obj["k"]);
+                var runtimeOperand = runtimeKind == "cast" ? obj["e"] : null;
+                var rewroteRuntimeOperand = runtimeOperand != null;
+                if (runtimeOperand != null)
+                    Rewrite(runtimeOperand, owners, defs, refs,
+                        childTypeParameters, childMethodParameters, childThisType);
+                // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
+                // An `as G<T>` from an otherwise-unrelated source likewise cannot test T on the CLR and uses the
+                // existential carrier. Do not confuse that erased runtime check with a statically proven constructed
+                // upcast, though: `Derived<T> as Base<T>` already has an exact CLR edge. Erasing that target leaves a
+                // Base$star value at later Base<T> call/return slots and makes otherwise ordinary generic code
+                // unverifiable.
                 if (!Bool(obj["_exactBridgeCast"]) && runtimeKind is "isInst" or "cast"
                     && TypeJson.Read(obj["type"]) is TypeNode.Fqn { Args: { } runtimeArgs } runtimeF
-                    && owners.TryGetValue(runtimeF.Name, out var runtimeOwner) && runtimeOwner.Needed
-                    && (runtimeKind == "isInst" || runtimeArgs.Any(ContainsStarOrTypeVariable)))
-                    obj["type"] = TypeJson.Write(new TypeNode.Fqn(runtimeOwner.ErasedName));
+                    && TryExistentialCarrier(runtimeF.Name, owners, refs, out var runtimeCarrier)
+                    && (runtimeKind == "isInst"
+                        || (runtimeArgs.Any(ContainsStarOrTypeVariable)
+                            && !IsProvenConstructedUpcast(
+                                obj, runtimeF, defs, refs, currentThisType))))
+                    obj["type"] = TypeJson.Write(new TypeNode.Fqn(runtimeCarrier));
                 obj.Remove("_exactBridgeCast");
                 foreach (var key in obj.Select(kv => kv.Key).ToList())
                 {
                     var value = obj[key];
                     if (value == null || key == "name" || key == InnerConstructorFactoryKey
-                        || key == ExistentialResultProjectionKey) continue;
+                        || key == ExistentialResultProjectionKey
+                        || rewroteRuntimeOperand && key == "e") continue;
                     if (TypeJson.Read(value) is TypeNode type)
                         obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
-                        Rewrite(value, owners, defs, refs, childTypeParameters, childMethodParameters);
+                        Rewrite(value, owners, defs, refs,
+                            childTypeParameters, childMethodParameters, childThisType);
                 }
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
@@ -1412,7 +1435,7 @@ static class FBoundStarProjectionErasure
                         arr[i] = TypeJson.Write(RewriteType(type, owners, refs));
                     else
                         Rewrite(value, owners, defs, refs,
-                            existentialTypeParameters, existentialMethodParameters);
+                            existentialTypeParameters, existentialMethodParameters, currentThisType);
                 }
                 break;
         }
@@ -1864,6 +1887,111 @@ static class FBoundStarProjectionErasure
     {
         if (expression is not JsonObject obj) return null;
         return TypeJson.Read(obj["sty"]) ?? TypeJson.Read(obj["ret"]) ?? TypeJson.Read(obj["type"]);
+    }
+
+    // The frontend can retain an explicit cast for a source-level generic upcast even though the source construction
+    // already reaches that exact target construction. The relation is authoritative only when the current
+    // declaration graph proves every target argument in the source frame; names or erased physical layouts are not
+    // evidence. Explicit stars deliberately stay on the existential path.
+    static bool TryExistentialCarrier(string semanticOwner, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs, out string physicalOwner)
+    {
+        if (owners.TryGetValue(semanticOwner, out var local) && local.Needed)
+        {
+            physicalOwner = local.ErasedName;
+            return true;
+        }
+        return refs.TryExistentialPhysicalOwner(semanticOwner, out physicalOwner);
+    }
+
+    static TypeNode StripSourceNullability(TypeNode type) => type switch
+    {
+        TypeNode.Nullable nullable => StripSourceNullability(nullable.Of),
+        TypeNode.Oblivious oblivious => StripSourceNullability(oblivious.Of),
+        _ => type,
+    };
+
+    static bool IsProvenConstructedUpcast(JsonObject cast, TypeNode.Fqn target,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs,
+        TypeNode.Fqn currentThisType)
+    {
+        var operand = cast["e"] as JsonObject;
+        var sourceType = Str(operand?["k"]) switch
+        {
+            "this" => currentThisType,
+            "cast" or "isInst" => TypeJson.Read(operand?["type"]),
+            "callInstance" or "callStatic" =>
+                TypeJson.Read(operand?["dynRet"]) ?? TypeJson.Read(operand?["sty"]),
+            _ => TypeJson.Read(operand?["sty"]) ?? TypeJson.Read(operand?["type"]),
+        };
+        if (target.Args is not { } targetArguments || targetArguments.Any(ContainsExplicitStar)
+            || StripSourceNullability(sourceType)
+                is not TypeNode.Fqn { Args: { } sourceArguments } source)
+            return false;
+
+        if (source.Name == target.Name)
+            return sourceArguments.Length == targetArguments.Length
+                && sourceArguments.Select(SupertypeGraph.TypeKey)
+                    .SequenceEqual(targetArguments.Select(SupertypeGraph.TypeKey));
+
+        var projected = ProjectConstructedArguments(source, target.Name, defs, refs);
+        return projected != null && projected.Count == targetArguments.Length
+            && projected.Select(SupertypeGraph.TypeKey)
+                .SequenceEqual(targetArguments.Select(SupertypeGraph.TypeKey));
+    }
+
+    // Project through the declarations that actually own the relation. `defs` includes lifted local/object types
+    // even though they intentionally do not own a public existential ABI; referenced edges come only from trusted
+    // metadata. A unique nearest construction is required, matching local slot binding's ambiguity rule.
+    static IReadOnlyList<TypeNode> ProjectConstructedArguments(TypeNode.Fqn source, string targetName,
+        IReadOnlyDictionary<string, JsonObject> defs, ReferenceMetadataIndex refs)
+    {
+        var queue = new Queue<(TypeNode.Fqn Type, int Depth)>();
+        queue.Enqueue((source, 0));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var matches = new Dictionary<string, TypeNode[]>(StringComparer.Ordinal);
+        int? matchDepth = null;
+
+        while (queue.Count > 0)
+        {
+            var (current, depth) = queue.Dequeue();
+            if (matchDepth is int nearest && depth > nearest) break;
+            var currentArguments = current.Args ?? Array.Empty<TypeNode>();
+            var key = current.Name + "|" + new JsonArray(
+                currentArguments.Select(TypeJson.Write).ToArray()).ToJsonString();
+            if (!seen.Add(key)) continue;
+            if (current.Name == targetName)
+            {
+                matchDepth = depth;
+                matches.TryAdd(key, currentArguments);
+                continue;
+            }
+
+            IEnumerable<TypeNode.Fqn> Edges()
+            {
+                if (defs.TryGetValue(current.Name, out var definition))
+                {
+                    if (definition["base"] is JsonNode baseNode
+                        && TypeJson.Read(baseNode) is TypeNode.Fqn baseType)
+                        yield return baseType;
+                    if (definition["interfaces"] is JsonArray interfaces)
+                        foreach (var edge in interfaces)
+                            if (TypeJson.Read(edge) is TypeNode.Fqn interfaceType)
+                                yield return interfaceType;
+                    yield break;
+                }
+                foreach (var (spec, _) in refs.ReferencedSupertypes(current)) yield return spec;
+            }
+
+            foreach (var edge in Edges())
+            {
+                if (SubstituteDeclarationTypeArguments(edge, currentArguments, Array.Empty<TypeNode>())
+                    is TypeNode.Fqn projected)
+                    queue.Enqueue((projected, depth + 1));
+            }
+        }
+
+        return matches.Count == 1 ? matches.Values.Single() : null;
     }
 
     // A star smart-cast keeps the receiver's most-derived Kotlin type (`ComparableRange<*>.isEmpty`) even when the
