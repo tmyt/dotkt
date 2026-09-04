@@ -1047,7 +1047,9 @@ static partial class NullableTvErasureCallRealign
             case TypeNode.Oblivious o:
                 return Subst(o.Of, typeArgs, methodArgs) is TypeNode i1 ? new TypeNode.Oblivious(i1) : null;
             case TypeNode.Array ar:
-                return Subst(ar.Elem, typeArgs, methodArgs) is TypeNode i2 ? new TypeNode.Array(i2) : null;
+                return Subst(ar.Elem, typeArgs, methodArgs) is TypeNode i2
+                    ? new TypeNode.Array(i2, ar.Rank, ar.SzArray)
+                    : null;
             case TypeNode.ByRef br:
                 return Subst(br.Of, typeArgs, methodArgs) is TypeNode i3 ? new TypeNode.ByRef(i3) : null;
             case TypeNode.Fn fn:
@@ -1062,11 +1064,82 @@ static partial class NullableTvErasureCallRealign
                     if (Subst(fn.Recv, typeArgs, methodArgs) is not TypeNode r) return null;
                     recv = r;
                 }
-                return new TypeNode.Fn(fn.Suspend, ret, ps, recv);
+                TypeNode[] ctx = null;
+                if (fn.Ctx != null)
+                {
+                    ctx = new TypeNode[fn.Ctx.Length];
+                    for (var i = 0; i < ctx.Length; i++)
+                        if (Subst(fn.Ctx[i], typeArgs, methodArgs) is TypeNode s) ctx[i] = s; else return null;
+                }
+                return new TypeNode.Fn(fn.Suspend, ret, ps, recv, fn.Clr, ctx);
             }
             default:
                 return t;
         }
+    }
+
+    internal static void SelfTest()
+    {
+        var typeArgs = new TypeNode[] { new TypeNode.Fqn("System.Int32") };
+        var methodArgs = new TypeNode[] { new TypeNode.Fqn("System.String") };
+
+        var arrays = new TypeNode[]
+        {
+            TypeNode.Array.General(new TypeNode.Tv("type", 0), 2),
+            TypeNode.Array.General(new TypeNode.Tv("method", 0), 1),
+        };
+        var expectedArrays = new TypeNode[]
+        {
+            TypeNode.Array.General(typeArgs[0], 2),
+            TypeNode.Array.General(methodArgs[0], 1),
+        };
+        for (var i = 0; i < arrays.Length; i++)
+            if (Subst(arrays[i], typeArgs, methodArgs) != expectedArrays[i])
+                throw new InvalidOperationException(
+                    "NullableTvErasureCallRealign self-test dropped a general-array rank/vector facet");
+
+        var function = new TypeNode.Fn(
+            Suspend: true,
+            Ret: new TypeNode.Tv("type", 0),
+            Params: new TypeNode[] { new TypeNode.Tv("method", 0) },
+            Recv: new TypeNode.Tv("type", 0),
+            Clr: "System.Func",
+            Ctx: new TypeNode[]
+            {
+                new TypeNode.Tv("method", 0),
+                TypeNode.Array.General(new TypeNode.Tv("type", 0), 2),
+            });
+        var expectedFunction = new TypeNode.Fn(
+            Suspend: true,
+            Ret: typeArgs[0],
+            Params: new[] { methodArgs[0] },
+            Recv: typeArgs[0],
+            Clr: "System.Func",
+            Ctx: new TypeNode[]
+            {
+                methodArgs[0],
+                TypeNode.Array.General(typeArgs[0], 2),
+            });
+        if (Subst(function, typeArgs, methodArgs) != expectedFunction)
+            throw new InvalidOperationException(
+                "NullableTvErasureCallRealign self-test dropped a function CLR family or context frame");
+
+        var physicalFunction = new TypeNode.Fn(
+            false, new TypeNode.Fqn("object"), Array.Empty<TypeNode>(), Clr: "System.Func");
+        if (IsObjectErasureOf(
+                TypeNode.Array.General(new TypeNode.Fqn("object"), 2),
+                new TypeNode.Array(new TypeNode.Fqn("System.String")))
+            || IsObjectErasureOf(
+                physicalFunction,
+                new TypeNode.Fn(false, new TypeNode.Fqn("System.String"), Array.Empty<TypeNode>(),
+                    Clr: "kotlin.jvm.functions.Function0"))
+            || !IsObjectErasureOf(
+                physicalFunction,
+                new TypeNode.Fn(false, new TypeNode.Fqn("System.String"), Array.Empty<TypeNode>())))
+            throw new InvalidOperationException(
+                "NullableTvErasureCallRealign self-test misclassified physical facets during object erasure");
+
+        Console.WriteLine("[nullable-generic substitution] self-test OK (general arrays + function facets)");
     }
 
     // Late call-shape consumers use the same declaration-to-use formula as this pass without duplicating its
@@ -1088,16 +1161,27 @@ static partial class NullableTvErasureCallRealign
             (TypeNode.Fqn { Args: { } ca } cf, TypeNode.Fqn { Args: { } ea } ef)
                 when SameClassifier(cf, ef) && ca.Length == ea.Length
                 => ca.Zip(ea, IsObjectErasureOf).All(x => x),
-            (TypeNode.Array c, TypeNode.Array e) => IsObjectErasureOf(c.Elem, e.Elem),
+            (TypeNode.Array c, TypeNode.Array e) when c.Rank == e.Rank && c.SzArray == e.SzArray
+                => IsObjectErasureOf(c.Elem, e.Elem),
             (TypeNode.Nullable c, TypeNode.Nullable e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.Oblivious c, TypeNode.Oblivious e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.ByRef c, TypeNode.ByRef e) => IsObjectErasureOf(c.Of, e.Of),
             (TypeNode.Fn c, TypeNode.Fn e)
-                when c.Params.Length == e.Params.Length && c.Suspend == e.Suspend && (c.Recv == null) == (e.Recv == null)
+                when c.Params.Length == e.Params.Length && c.Suspend == e.Suspend
+                    && (c.Recv == null) == (e.Recv == null)
+                    && (c.Clr == null || e.Clr == null || c.Clr == e.Clr)
+                    && ContextIsObjectErasureOf(c.Ctx, e.Ctx)
                 => IsObjectErasureOf(c.Ret, e.Ret) && c.Params.Zip(e.Params, IsObjectErasureOf).All(x => x)
                    && (c.Recv == null || IsObjectErasureOf(c.Recv, e.Recv)),
             _ => false,
         };
+    }
+
+    static bool ContextIsObjectErasureOf(TypeNode[] candidate, TypeNode[] expected)
+    {
+        candidate ??= Array.Empty<TypeNode>();
+        expected ??= Array.Empty<TypeNode>();
+        return candidate.Length == expected.Length && candidate.Zip(expected, IsObjectErasureOf).All(x => x);
     }
 
     // Current-format ClrExternal classifiers carry their exact CLR TypeDef identity, while nullable-generic
