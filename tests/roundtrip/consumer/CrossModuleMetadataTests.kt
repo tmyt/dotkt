@@ -114,6 +114,9 @@ import starprojection.referencedUseSiteOutput
 import starprojection.referencedUseSiteNested
 import starprojection.referencedUseSiteConstraint
 import starprojection.referencedUseSiteCallable
+import starprojection.referencedAliasProjectionInsert
+import starprojection.referencedAliasProjectionNested
+import starprojection.referencedAliasProjectionCallable
 import starprojection.ReferencedUseSiteBoundHolder
 import starprojection.referencedUseSiteProperties
 import starprojection.referencedUseSiteFields
@@ -519,6 +522,23 @@ class GenericMetadataRoundtripTests {
             "output",
             referencedUseSiteCallable(projectedInput) { projectedOutput },
         )
+        val aliasProjectionDestination = mutableListOf<Any>("tail")
+        ClassicAssert.IsTrue(
+            referencedAliasProjectionInsert(aliasProjectionDestination, "direct") === aliasProjectionDestination,
+        )
+        ClassicAssert.AreEqual("direct", aliasProjectionDestination[0])
+        val aliasProjectionNested = listOf(aliasProjectionDestination)
+        ClassicAssert.IsTrue(
+            referencedAliasProjectionNested(aliasProjectionNested, "nested") === aliasProjectionNested,
+        )
+        ClassicAssert.AreEqual("nested", aliasProjectionDestination[0])
+        ClassicAssert.IsTrue(
+            referencedAliasProjectionCallable(aliasProjectionDestination) { destination ->
+                destination.add(0, "callable")
+                destination
+            } === aliasProjectionDestination,
+        )
+        ClassicAssert.AreEqual("callable", aliasProjectionDestination[0])
         val boundHolder = ReferencedUseSiteBoundHolder(projectedInput)
         ClassicAssert.IsTrue(boundHolder.write("class-bound") === projectedInput)
         val properties = referencedUseSiteProperties()

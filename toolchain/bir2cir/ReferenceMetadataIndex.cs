@@ -1305,6 +1305,25 @@ sealed partial class ReferenceMetadataIndex
         return ProbeNetType(fqn, genericArity);
     }
 
+    // A projected generic whose Kotlin classifier is a trusted @ClrTypeAlias is physically just as external as a
+    // classifier authored directly in a CLR assembly: the already-emitted aliased TypeDef cannot implement a DotKt
+    // existential carrier. Resolve that physical definition here while keeping ordinary DotKt-authored generics on
+    // their metadata-backed nominal-carrier path. Callers must not bypass ResolveNetType's Kotlin-owner guard by
+    // guessing from namespace or from the lowered spelling.
+    public Type ResolveForeignProjectionType(string sourceOwner, int genericArity)
+    {
+        if (TryResolveClrOwner(sourceOwner, out var aliasOwner, out _))
+        {
+            // Some Kotlin generic surfaces already have a non-generic CLR face selected by BirTypeLowering from
+            // their argument shape (Comparable<*> -> System.IComparable). That face is the exact representation;
+            // routing the same value through the opaque reflection ABI would discard a valid nominal conversion.
+            if (BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(aliasOwner)) return null;
+            return ResolveNetType(aliasOwner, genericArity);
+        }
+        if (HasDotKtOwner(sourceOwner)) return null;
+        return ResolveNetType(ReflectedOwnerFqn(sourceOwner), genericArity);
+    }
+
     // Resolve one exact public CLR member used through a Kotlin star-projected FOREIGN generic. There is no CLR
     // nominal type for G<*>, so ForeignStarProjectionBinding dispatches through the stdlib reflection runtime. The
     // compiler still owns overload resolution: it supplies the declaring generic definition and exact declaration
@@ -1325,9 +1344,9 @@ sealed partial class ReferenceMetadataIndex
         declarationReturn = null;
         returnsVoid = false;
         if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
-            || callSignature == null || HasDotKtOwner(sourceOwner.Name)) return false;
+            || callSignature == null) return false;
 
-        var sourceType = ResolveNetType(ReflectedOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        var sourceType = ResolveForeignProjectionType(sourceOwner.Name, ownerArgs.Length);
         if (sourceType == null) return false;
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance;
         var seenTypes = new HashSet<Type>();
@@ -1509,9 +1528,8 @@ sealed partial class ReferenceMetadataIndex
         declaringView = null;
         metadataToken = 0;
         declarationType = null;
-        if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null
-            || HasDotKtOwner(sourceOwner.Name)) return false;
-        var sourceType = ResolveNetType(ReflectedOwnerFqn(sourceOwner.Name), ownerArgs.Length);
+        if (sourceOwner?.Args is not { Length: > 0 } ownerArgs || sourceName == null) return false;
+        var sourceType = ResolveForeignProjectionType(sourceOwner.Name, ownerArgs.Length);
         if (sourceType == null) return false;
 
         const BindingFlags flags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;

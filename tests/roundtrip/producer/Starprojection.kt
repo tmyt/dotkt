@@ -107,6 +107,27 @@ fun referencedUseSiteCallable(
     transform: (ReferencedUseSiteInvariant<in String>) -> ReferencedUseSiteInvariant<out String>,
 ): String = transform(value).read()
 
+// @ClrTypeAlias owners cannot acquire the nominal existential carrier used by Kotlin-emitted generic TypeDefs.
+// Their projected declaration slots use the opaque physical ABI while [KotlinType] preserves these source types.
+fun referencedAliasProjectionInsert(
+    destination: MutableList<in String>,
+    value: String,
+): MutableList<in String> {
+    destination.add(0, value)
+    return destination
+}
+fun referencedAliasProjectionNested(
+    destinations: List<MutableList<in String>>,
+    value: String,
+): List<MutableList<in String>> {
+    destinations[0].add(0, value)
+    return destinations
+}
+fun referencedAliasProjectionCallable(
+    destination: MutableList<in String>,
+    transform: (MutableList<in String>) -> MutableList<in String>,
+): MutableList<in String> = transform(destination)
+
 class ReferencedUseSiteBoundHolder<M : ReferencedUseSiteInvariant<in String>>(private val value: M) {
     fun write(text: String): M {
         value.write(text)

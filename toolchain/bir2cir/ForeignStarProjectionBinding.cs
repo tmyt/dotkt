@@ -651,9 +651,8 @@ static class ForeignStarProjectionBinding
         while (type is TypeNode.Oblivious o) type = o.Of;
         owner = type as TypeNode.Fqn;
         return owner?.Args is { Length: > 0 } args && args.Any(ContainsExistential)
-            && !refs.HasDotKtOwner(owner.Name)
             && !refs.TryExistentialPhysicalOwner(owner.Name, out _)
-            && refs.ResolveNetType(owner.Name, args.Length) != null;
+            && refs.ResolveForeignProjectionType(owner.Name, args.Length) != null;
     }
 
     public static bool IsForeignStarType(TypeNode type, ReferenceMetadataIndex refs) =>
@@ -676,7 +675,7 @@ static class ForeignStarProjectionBinding
 
     static string OpenType(TypeNode.Fqn owner, ReferenceMetadataIndex refs)
     {
-        var type = refs.ResolveNetType(owner.Name, owner.Args.Length);
+        var type = refs.ResolveForeignProjectionType(owner.Name, owner.Args.Length);
         if (type == null) return null;
         if (type.IsConstructedGenericType) type = type.GetGenericTypeDefinition();
         return type.IsGenericTypeDefinition ? type.FullName : null;

@@ -304,6 +304,25 @@ fun <T, C : MutableList<in T>?> useSiteNullableProjectedListInsert(destination: 
     destination?.add(0, value)
     return destination
 }
+fun useSiteDirectProjectedListInsert(
+    destination: MutableList<in String>,
+    value: String,
+): MutableList<in String> {
+    destination.add(0, value)
+    return destination
+}
+fun useSiteNestedProjectedListInsert(
+    destinations: List<MutableList<in String>>,
+    value: String,
+): List<MutableList<in String>> {
+    destinations[0].add(0, value)
+    return destinations
+}
+fun useSiteProjectedListCallable(
+    destination: MutableList<in String>,
+    transform: (MutableList<in String>) -> MutableList<in String>,
+): MutableList<in String> = transform(destination)
+fun <K, V> copyProjectedMap(source: Map<out K, V>): LinkedHashMap<K, V> = LinkedHashMap(source)
 class UseSiteProjectedListWriter<T, C : MutableList<in T>>(private val destination: C) {
     fun insert(value: T): C {
         destination.add(0, value)
@@ -409,6 +428,20 @@ class GenericsTests {
         val wideList = mutableListOf<Any>("tail")
         assertEquals(wideList, useSiteProjectedListInsert(wideList, "head"))
         assertEquals("head", wideList[0])
+        assertEquals(wideList, useSiteDirectProjectedListInsert(wideList, "direct-head"))
+        assertEquals("direct-head", wideList[0])
+        val nestedWideLists = listOf(wideList)
+        assertEquals(nestedWideLists, useSiteNestedProjectedListInsert(nestedWideLists, "nested-head"))
+        assertEquals("nested-head", wideList[0])
+        assertEquals(
+            wideList,
+            useSiteProjectedListCallable(wideList) { destination ->
+                destination.add(0, "callable-head")
+                destination
+            },
+        )
+        assertEquals("callable-head", wideList[0])
+        assertEquals(mapOf("key" to 1), copyProjectedMap(mapOf("key" to 1)))
         val nullableWideList: MutableList<Any>? = mutableListOf("tail")
         assertEquals(nullableWideList, useSiteNullableProjectedListInsert(nullableWideList, "nullable-head"))
         assertEquals("nullable-head", nullableWideList!![0])

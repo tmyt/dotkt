@@ -44,6 +44,7 @@ static class FBoundStarProjectionErasure
         var owners = new Dictionary<string, Owner>(StringComparer.Ordinal);
         var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         foreach (var root in rootList) Collect(root, root, owners, defs);
+        var localClrAliases = CollectLocalClrAliases(defs);
         _localMethods = IndexLocalMethods(rootList);
         AllocateCarrierNames(owners, defs.Keys);
         foreach (var root in rootList) MarkNeeded(root, owners, defs, refs);
@@ -55,7 +56,7 @@ static class FBoundStarProjectionErasure
         ForeignStarProjectionBinding.ApplyAll(rootList,
             owners.Values.Where(owner => owner.Needed).ToDictionary(
                 owner => owner.Name, owner => owner.ErasedName, StringComparer.Ordinal), refs);
-        foreach (var root in rootList) Rewrite(root, owners, defs, refs);
+        foreach (var root in rootList) Rewrite(root, owners, defs, refs, localClrAliases: localClrAliases);
         var normalizedReturns = new NormalizedReturnBindings();
         // Method-local normalization runs after the first post-order binding walk. Revisit consumers once so a
         // projected array read that flowed through a compiler-generated nullable temporary binds its member on the
@@ -196,15 +197,54 @@ static class FBoundStarProjectionErasure
     public static void RewriteLateTypes(IEnumerable<JsonNode> roots,
         IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs)
     {
+        var rootList = roots.ToList();
         var owners = localExistentialOwners.ToDictionary(
             pair => pair.Key,
             pair => new Owner { Name = pair.Key, ErasedName = pair.Value, Needed = true },
             StringComparer.Ordinal);
-        foreach (var root in roots) RewriteTypesOnly(root, owners, refs);
+        var defs = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var root in rootList.OfType<JsonObject>())
+            CollectDefinitions(root, defs);
+        var localClrAliases = CollectLocalClrAliases(defs);
+        foreach (var root in rootList) RewriteTypesOnly(root, owners, refs, localClrAliases);
+    }
+
+    static void CollectDefinitions(JsonObject container, Dictionary<string, JsonObject> defs)
+    {
+        if (container["types"] is not JsonArray types) return;
+        foreach (var definition in types.OfType<JsonObject>())
+        {
+            if (Str(definition["name"]) is string name) defs.TryAdd(name, definition);
+            CollectDefinitions(definition, defs);
+        }
+    }
+
+    static IReadOnlyDictionary<string, string> CollectLocalClrAliases(
+        IReadOnlyDictionary<string, JsonObject> defs)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, definition) in defs)
+        {
+            if (definition["attrs"] is not JsonArray attributes) continue;
+            foreach (var attribute in attributes.OfType<JsonObject>())
+            {
+                if (TypeJson.OwnerName(attribute["attr"]) != "kotlin.clr.ClrTypeAlias") continue;
+                var target = attribute["args"] is JsonArray { Count: 1 } arguments
+                    && arguments[0] is JsonObject constant
+                    && Str(constant["k"]) == "const"
+                    ? Str(constant["value"])
+                    : null;
+                if (string.IsNullOrEmpty(target))
+                    throw new InvalidOperationException($"bir2cir: malformed @ClrTypeAlias on '{name}'");
+                result[name] = target;
+            }
+        }
+        return result;
     }
 
     static void RewriteTypesOnly(JsonNode node, IReadOnlyDictionary<string, Owner> owners,
-        ReferenceMetadataIndex refs)
+        ReferenceMetadataIndex refs, IReadOnlyDictionary<string, string> localClrAliases,
+        bool boundDeclaration = false)
     {
         switch (node)
         {
@@ -215,10 +255,13 @@ static class FBoundStarProjectionErasure
                     if (value == null || key == "name" || key == InnerConstructorFactoryKey
                         || key == ExistentialResultProjectionKey
                         || key == ExistentialArrayElementProjectionKey) continue;
+                    var childBoundDeclaration = boundDeclaration
+                        || IsBoundDeclarationType(obj, key, refs, localClrAliases);
                     if (TypeJson.Read(value) is TypeNode type)
-                        obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
+                        obj[key] = TypeJson.Write(RewriteType(
+                            type, owners, refs, childBoundDeclaration, localClrAliases));
                     else
-                        RewriteTypesOnly(value, owners, refs);
+                        RewriteTypesOnly(value, owners, refs, localClrAliases, childBoundDeclaration);
                 }
                 break;
             case JsonArray arr:
@@ -227,12 +270,31 @@ static class FBoundStarProjectionErasure
                     var value = arr[i];
                     if (value == null) continue;
                     if (TypeJson.Read(value) is TypeNode type)
-                        arr[i] = TypeJson.Write(RewriteType(type, owners, refs));
+                        arr[i] = TypeJson.Write(RewriteType(
+                            type, owners, refs, boundDeclaration, localClrAliases));
                     else
-                        RewriteTypesOnly(value, owners, refs);
+                        RewriteTypesOnly(value, owners, refs, localClrAliases, boundDeclaration);
                 }
                 break;
         }
+    }
+
+    // A declaration selected in another owner is an exact linkage fact, not a Kotlin value slot this pass owns.
+    // In particular an @ClrTypeAlias constructor's memberSignature may contain a source projection
+    // (LinkedHashMap(Map<out K, V>)); its physical descriptor is IDictionary<K, V>, never object.  Keep the
+    // projection's bound while still lowering its aliases.  A Kotlin-local constructor is deliberately excluded:
+    // its declaration is rewritten by this pass too, so its memberSignature must follow the same existential ABI.
+    static bool IsBoundDeclarationType(JsonObject owner, string key, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases)
+    {
+        var kind = Str(owner["k"]);
+        if (key == "resolvedMemberParams" || key == ClrMemberResolution.ResolvedMemberReturnKey)
+            return true;
+        if (key == "argTypes" && ClrBoundNode.IsAny(kind)) return true;
+        return key == "memberSignature" && kind == "new"
+            && TypeJson.Read(owner["type"]) is TypeNode.Fqn constructed
+            && (refs.TryResolveClrOwner(constructed.Name, out _, out _)
+                || localClrAliases?.ContainsKey(constructed.Name) == true);
     }
 
     // The physical name is intentionally not an ABI oracle: trusted [KotlinType] metadata carries the relation.
@@ -446,10 +508,9 @@ static class FBoundStarProjectionErasure
     }
 
     // A CLR GenericParamConstraint cannot encode a use-site projection on an invariant physical alias. The exact
-    // Kotlin bound was recorded above, so weaken only that constraint row to Object. Ordinary parameters, results,
-    // constructor signatures, and expression types must retain their constructed physical alias; treating all
-    // projected aliases as foreign existentials would, for example, turn Map<out K, V> into Object and destroy the
-    // exact OrderedDictionary(IDictionary<K, V>) constructor descriptor.
+    // Kotlin bound was recorded above, so weaken only that constraint row to Object here. Direct declaration/value
+    // slots are handled later by the ordinary existential rewrite, while a selected constructor/member descriptor
+    // remains on its exact reifiable face (for example OrderedDictionary(IDictionary<K,V>)).
     static void EraseProjectedAliasConstraints(JsonNode node, ReferenceMetadataIndex refs)
     {
         switch (node)
@@ -2008,12 +2069,16 @@ static class FBoundStarProjectionErasure
         IReadOnlySet<int> existentialMethodParameters = null,
         JsonArray typeParameterDeclarations = null,
         JsonArray methodParameterDeclarations = null,
-        TypeNode.Fqn currentThisType = null)
+        TypeNode.Fqn currentThisType = null,
+        bool boundDeclaration = false,
+        IReadOnlyDictionary<string, string> localClrAliases = null)
     {
         switch (node)
         {
             case JsonObject obj:
                 var projectedArrayRead = Bool(obj[ProjectedArrayReadKey]);
+                var projectedConstructorArgumentTargets = ProjectedConstructorArgumentTargets(
+                    obj, owners, refs, localClrAliases);
                 var childTypeParameters = existentialTypeParameters;
                 var childMethodParameters = existentialMethodParameters;
                 var childTypeParameterDeclarations = typeParameterDeclarations;
@@ -2074,7 +2139,8 @@ static class FBoundStarProjectionErasure
                 if (runtimeOperand != null)
                     Rewrite(runtimeOperand, owners, defs, refs,
                         childTypeParameters, childMethodParameters,
-                        childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType);
+                        childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
+                        boundDeclaration, localClrAliases);
                 // Kotlin `is G<X>` is a raw-classifier check, and a true `as G<*>` also has no closed CLR target.
                 // An `as G<T>` from an otherwise-unrelated source likewise cannot test T on the CLR and uses the
                 // existential carrier. Do not confuse that erased runtime check with a statically proven constructed
@@ -2097,13 +2163,18 @@ static class FBoundStarProjectionErasure
                         || key == ExistentialResultProjectionKey
                         || key == ExistentialArrayElementProjectionKey
                         || rewroteRuntimeOperand && key == "e") continue;
+                    var childBoundDeclaration = boundDeclaration
+                        || IsBoundDeclarationType(obj, key, refs, localClrAliases);
                     if (TypeJson.Read(value) is TypeNode type)
-                        obj[key] = TypeJson.Write(RewriteType(type, owners, refs));
+                        obj[key] = TypeJson.Write(RewriteType(
+                            type, owners, refs, childBoundDeclaration, localClrAliases));
                     else
                         Rewrite(value, owners, defs, refs,
                             childTypeParameters, childMethodParameters,
-                            childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType);
+                            childTypeParameterDeclarations, childMethodParameterDeclarations, childThisType,
+                            childBoundDeclaration, localClrAliases);
                 }
+                ApplyProjectedConstructorArgumentCasts(obj, projectedConstructorArgumentTargets);
                 // A star-projected inner construction is replaced while visiting the receiver below this call.  Its
                 // result is the inner existential carrier, so bind the immediately-following member only after that
                 // receiver seam is visible.  The initial pass above is still required for ordinary star receivers.
@@ -2122,14 +2193,65 @@ static class FBoundStarProjectionErasure
                     var value = arr[i];
                     if (value == null) continue;
                     if (TypeJson.Read(value) is TypeNode type)
-                        arr[i] = TypeJson.Write(RewriteType(type, owners, refs));
+                        arr[i] = TypeJson.Write(RewriteType(
+                            type, owners, refs, boundDeclaration, localClrAliases));
                     else
                         Rewrite(value, owners, defs, refs,
                             existentialTypeParameters, existentialMethodParameters,
-                            typeParameterDeclarations, methodParameterDeclarations, currentThisType);
+                            typeParameterDeclarations, methodParameterDeclarations, currentThisType,
+                            boundDeclaration, localClrAliases);
                 }
                 break;
         }
+    }
+
+    // An opaque projected-alias value can still be passed to a constructor whose exact selected declaration names a
+    // reifiable closed face.  The value slot is object, but `newobj` consumes that declaration face; state the
+    // runtime-checked conversion explicitly from the frontend's memberSignature rather than asking ilemit or the CLR
+    // verifier to accept object implicitly.  Capture the targets before the ordinary sweep erases argTypes.
+    static TypeNode[] ProjectedConstructorArgumentTargets(JsonObject construction,
+        IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases)
+    {
+        var kind = Str(construction["k"]);
+        if (kind is not ("new" or "newClr")
+            || TypeJson.Read(construction["type"]) is not TypeNode.Fqn owner
+            || (kind == "new" && !(refs.TryResolveClrOwner(owner.Name, out _, out _)
+                || localClrAliases?.ContainsKey(owner.Name) == true))
+            || construction["argTypes"] is not JsonArray arguments
+            || (construction["memberSignature"] as JsonArray ?? construction["argTypes"] as JsonArray)
+                is not JsonArray declaration
+            || arguments.Count != declaration.Count)
+            return null;
+
+        var targets = new TypeNode[arguments.Count];
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            var source = TypeJson.Read(arguments[index]);
+            var selected = TypeJson.Read(declaration[index]);
+            if (source == null || selected == null || !ContainsExistentialProjection(source)) continue;
+            var physicalSource = RewriteType(source, owners, refs, localClrAliases: localClrAliases);
+            if (physicalSource is not TypeNode.Fqn { Name: "kotlin.Any", Args: null }) continue;
+            var physicalTarget = RewriteType(
+                selected, owners, refs, boundDeclaration: true, localClrAliases: localClrAliases);
+            if (physicalTarget is TypeNode.Fqn { Name: "kotlin.Any", Args: null }) continue;
+            targets[index] = physicalTarget;
+        }
+        return targets.Any(target => target != null) ? targets : null;
+    }
+
+    static void ApplyProjectedConstructorArgumentCasts(JsonObject construction, TypeNode[] targets)
+    {
+        if (targets == null || construction["args"] is not JsonArray arguments
+            || arguments.Count != targets.Length) return;
+        for (var index = 0; index < targets.Length; index++)
+            if (targets[index] is TypeNode target && arguments[index] is JsonNode argument)
+                arguments[index] = new JsonObject
+                {
+                    ["k"] = "cast",
+                    ["type"] = TypeJson.Write(target),
+                    ["e"] = argument.DeepClone(),
+                };
     }
 
     // A captured construction such as Wrapper(source: Source<*>) denotes Wrapper<Capture>, not Wrapper<object>.
@@ -3663,22 +3785,24 @@ static class FBoundStarProjectionErasure
         if (TypeJson.Read(slot) is TypeNode.Fqn f && owners.TryGetValue(f.Name, out var owner)) target.Add(owner);
     }
 
-    static TypeNode RewriteType(TypeNode type, IReadOnlyDictionary<string, Owner> owners, ReferenceMetadataIndex refs)
+    static TypeNode RewriteType(TypeNode type, IReadOnlyDictionary<string, Owner> owners,
+        ReferenceMetadataIndex refs, bool boundDeclaration = false,
+        IReadOnlyDictionary<string, string> localClrAliases = null)
     {
         switch (type)
         {
             case TypeNode.Fqn { Args: { } nestedArgs } nestedForeign
-                when nestedArgs.Any(ContainsExistentialProjection)
-                    && ForeignStarProjectionBinding.IsForeignStarType(nestedForeign, refs):
+                when !boundDeclaration && nestedArgs.Any(ContainsExistentialProjection)
+                    && IsOpaqueForeignProjection(nestedForeign, refs, localClrAliases):
                 // A star anywhere below a foreign invariant construction makes the whole construction
                 // non-reifiable on the CLR.  In particular Outer<Inner<*>> is not Outer<object> (nor
                 // Outer<Inner<object>>); keep the original runtime value in one opaque object slot and let
                 // ForeignStarProjectionBinding route member access through the reflection ABI.
-                if (refs.IsByRefLikeFqn(nestedForeign))
+                if (IsByRefLikeForeignProjection(nestedForeign, refs, localClrAliases))
                     throw new NotSupportedException(
                         $"bir2cir: foreign byref-like generic star projection `{nestedForeign.Name}<*>` has no boxable CLR existential representation");
                 return new TypeNode.Fqn("kotlin.Any");
-            case TypeNode.Fqn { Args: { } args } f when args.Any(IsExistentialArgument):
+            case TypeNode.Fqn { Args: { } args } f when !boundDeclaration && args.Any(IsExistentialArgument):
             {
                 var erased = owners.TryGetValue(f.Name, out var local) ? local.ErasedName : null;
                 if (local != null && local.Needed) return new TypeNode.Fqn(erased);
@@ -3687,14 +3811,15 @@ static class FBoundStarProjectionErasure
                 // A foreign CLR generic cannot be retrofitted to implement DotKt's nominal existential. Its value
                 // slot is object; classifier checks/casts/member dispatch were already authored explicitly by
                 // ForeignStarProjectionBinding above. Never manufacture the invariant fiction G<object>.
-                if (!refs.HasDotKtOwner(f.Name) && ForeignStarProjectionBinding.IsForeignStarType(f, refs))
+                if (!refs.HasDotKtOwner(f.Name) && IsOpaqueForeignProjection(f, refs, localClrAliases))
                 {
-                    if (refs.IsByRefLikeFqn(f))
+                    if (IsByRefLikeForeignProjection(f, refs, localClrAliases))
                         throw new NotSupportedException(
                             $"bir2cir: foreign byref-like generic star projection `{f.Name}<*>` has no boxable CLR existential representation");
                     return new TypeNode.Fqn("kotlin.Any");
                 }
-                return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(a, owners, refs)).ToArray());
+                return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(
+                    a, owners, refs, boundDeclaration, localClrAliases)).ToArray());
             }
             case TypeNode.Star:
                 // A residual star belongs to an unsupported shape (multi-parameter mask / external CLR generic).
@@ -3715,19 +3840,43 @@ static class FBoundStarProjectionErasure
                     if (refs.TryExistentialPhysicalOwner(f.Name, out var referenced))
                         return ReplaceProjectionCore(p.Of, f, new TypeNode.Fqn(referenced));
                 }
-                return RewriteType(p.Of, owners, refs);
+                return RewriteType(p.Of, owners, refs, boundDeclaration, localClrAliases);
             }
             case TypeNode.Fqn { Args: { } args } f:
-                return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(a, owners, refs)).ToArray());
-            case TypeNode.Nullable n: return new TypeNode.Nullable(RewriteType(n.Of, owners, refs));
-            case TypeNode.Oblivious o: return new TypeNode.Oblivious(RewriteType(o.Of, owners, refs));
-            case TypeNode.Array a: return new TypeNode.Array(RewriteType(a.Elem, owners, refs));
-            case TypeNode.ByRef b: return new TypeNode.ByRef(RewriteType(b.Of, owners, refs));
-            case TypeNode.Fn fn: return new TypeNode.Fn(fn.Suspend, RewriteType(fn.Ret, owners, refs),
-                fn.Params.Select(p => RewriteType(p, owners, refs)).ToArray(),
-                fn.Recv == null ? null : RewriteType(fn.Recv, owners, refs));
+                return new TypeNode.Fqn(f.Name, args.Select(a => RewriteType(
+                    a, owners, refs, boundDeclaration, localClrAliases)).ToArray());
+            case TypeNode.Nullable n: return new TypeNode.Nullable(RewriteType(
+                n.Of, owners, refs, boundDeclaration, localClrAliases));
+            case TypeNode.Oblivious o: return new TypeNode.Oblivious(RewriteType(
+                o.Of, owners, refs, boundDeclaration, localClrAliases));
+            case TypeNode.Array a: return new TypeNode.Array(RewriteType(
+                a.Elem, owners, refs, boundDeclaration, localClrAliases));
+            case TypeNode.ByRef b: return new TypeNode.ByRef(RewriteType(
+                b.Of, owners, refs, boundDeclaration, localClrAliases));
+            case TypeNode.Fn fn: return new TypeNode.Fn(fn.Suspend, RewriteType(
+                    fn.Ret, owners, refs, boundDeclaration, localClrAliases),
+                fn.Params.Select(p => RewriteType(
+                    p, owners, refs, boundDeclaration, localClrAliases)).ToArray(),
+                fn.Recv == null ? null : RewriteType(
+                    fn.Recv, owners, refs, boundDeclaration, localClrAliases));
             default: return type;
         }
+    }
+
+    static bool IsOpaqueForeignProjection(TypeNode.Fqn type, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases)
+    {
+        if (localClrAliases != null && localClrAliases.TryGetValue(type.Name, out var physical))
+            return !BirTypeLowering.GenericAliasHeadDependsOnLoweredArguments(physical);
+        return ForeignStarProjectionBinding.IsForeignStarType(type, refs);
+    }
+
+    static bool IsByRefLikeForeignProjection(TypeNode.Fqn type, ReferenceMetadataIndex refs,
+        IReadOnlyDictionary<string, string> localClrAliases)
+    {
+        if (refs.IsByRefLikeFqn(type)) return true;
+        return localClrAliases != null && localClrAliases.TryGetValue(type.Name, out var physical)
+            && refs.IsByRefLikeFqn(new TypeNode.Fqn(physical, type.Args));
     }
 
     static bool ContainsOwnerTv(TypeNode t) => t switch
