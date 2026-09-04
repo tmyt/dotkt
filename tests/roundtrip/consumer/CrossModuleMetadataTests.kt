@@ -114,6 +114,11 @@ import starprojection.referencedUseSiteOutput
 import starprojection.referencedUseSiteNested
 import starprojection.referencedUseSiteConstraint
 import starprojection.referencedUseSiteCallable
+import starprojection.ReferencedUseSiteBoundHolder
+import starprojection.referencedUseSiteProperties
+import starprojection.referencedUseSiteFields
+import starprojection.ReferencedUseSiteMixed
+import starprojection.referencedUseSiteMixed
 import starprojection.ReferencedUseSiteProducer
 import starprojection.ReferencedUseSiteConsumer
 import starprojection.referencedVariantUseSiteOutput
@@ -514,6 +519,18 @@ class GenericMetadataRoundtripTests {
             "output",
             referencedUseSiteCallable(projectedInput) { projectedOutput },
         )
+        val boundHolder = ReferencedUseSiteBoundHolder(projectedInput)
+        ClassicAssert.IsTrue(boundHolder.write("class-bound") === projectedInput)
+        val properties = referencedUseSiteProperties()
+        properties.input.write("property-write")
+        ClassicAssert.AreEqual("property-output", properties.output.read())
+        val fields = referencedUseSiteFields()
+        fields.input.write("field-write")
+        ClassicAssert.AreEqual("field-output", fields.output.read())
+        val mixedResult: ReferencedUseSiteMixed<ReferencedUseSiteInvariant<out String>, String> =
+            referencedUseSiteMixed("caller-frame")
+        ClassicAssert.AreEqual("mixed-result", mixedResult.first.read())
+        ClassicAssert.AreEqual("caller-frame", mixedResult.second)
 
         val copySource: ReferencedStarCopy<*> = referencedStarCopy()
         val copied = copySource.copy()

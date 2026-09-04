@@ -1445,21 +1445,6 @@ sealed partial class ReferenceMetadataIndex
             return ForeignStarDeclarationDescribesCall(declarationProjection.Of, call, ownerArgs);
         if (call is TypeNode.Projection callProjection)
             return ForeignStarDeclarationDescribesCall(declaration, callProjection.Of, ownerArgs);
-        // kotc keeps an already-selected CLR overload's owner slot in `sig` (`Duo<*, String>.Pick(B)` carries
-        // `tv(type,1)`, not the substituted String). Compare both declaration and call slots in the source owner's
-        // constructed semantic view; otherwise T0 and T1 either both look wildcard-like or neither matches.
-        if (call is TypeNode.Tv { Scope: "type" } callOwnerTv)
-        {
-            if (callOwnerTv.I < 0 || callOwnerTv.I >= ownerArgs.Count
-                || ownerArgs[callOwnerTv.I] is TypeNode.Star) return false;
-            return ForeignStarDeclarationDescribesCall(declaration, ownerArgs[callOwnerTv.I], ownerArgs);
-        }
-        if (declaration is TypeNode.Tv { Scope: "type" } ownerTv)
-        {
-            if (ownerTv.I < 0 || ownerTv.I >= ownerArgs.Count || ownerArgs[ownerTv.I] is TypeNode.Star) return false;
-            return ForeignStarDeclarationDescribesCall(ownerArgs[ownerTv.I], call, ownerArgs);
-        }
-        if (declaration is TypeNode.Tv) return true;
         if (declaration is TypeNode.Oblivious dOb)
             return ForeignStarDeclarationDescribesCall(dOb.Of, call, ownerArgs);
         if (call is TypeNode.Oblivious cOb)
@@ -1470,6 +1455,26 @@ sealed partial class ReferenceMetadataIndex
                 : ForeignStarDeclarationDescribesCall(dn.Of, call, ownerArgs);
         if (call is TypeNode.Nullable callNullable)
             return ForeignStarDeclarationDescribesCall(declaration, callNullable.Of, ownerArgs);
+        // kotc keeps an already-selected CLR overload's owner slot in `sig` (`Duo<*, String>.Pick(B)` carries
+        // `tv(type,1)`, not the substituted String). Compare both declaration and call slots in the source owner's
+        // constructed semantic view; otherwise T0 and T1 either both look wildcard-like or neither matches.
+        if (call is TypeNode.Tv { Scope: "type" } callOwnerTv)
+        {
+            if (callOwnerTv.I < 0 || callOwnerTv.I >= ownerArgs.Count
+                || ownerArgs[callOwnerTv.I] is TypeNode.Star) return false;
+            var supplied = ProjectionBound(ownerArgs[callOwnerTv.I]);
+            if (declaration is TypeNode.Tv { Scope: "type" } declarationOwnerTv
+                && declarationOwnerTv.I >= 0 && declarationOwnerTv.I < ownerArgs.Count
+                && ownerArgs[declarationOwnerTv.I] is not TypeNode.Star)
+                return DeclarationDescribesCall(ProjectionBound(ownerArgs[declarationOwnerTv.I]), supplied);
+            return ForeignStarDeclarationDescribesCall(declaration, supplied, Array.Empty<TypeNode>());
+        }
+        if (declaration is TypeNode.Tv { Scope: "type" } ownerTv)
+        {
+            if (ownerTv.I < 0 || ownerTv.I >= ownerArgs.Count || ownerArgs[ownerTv.I] is TypeNode.Star) return false;
+            return DeclarationDescribesCall(ProjectionBound(ownerArgs[ownerTv.I]), call);
+        }
+        if (declaration is TypeNode.Tv) return true;
         if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
         {
             if (ParamKey(df) != ParamKey(cf)) return false;
@@ -1486,6 +1491,13 @@ sealed partial class ReferenceMetadataIndex
                 (declared, supplied) => ForeignStarDeclarationDescribesCall(declared, supplied, ownerArgs));
         return DeclarationDescribesCall(declaration, call);
     }
+
+    static TypeNode ProjectionBound(TypeNode type) => type switch
+    {
+        TypeNode.Projection projection => ProjectionBound(projection.Of),
+        TypeNode.Oblivious oblivious => ProjectionBound(oblivious.Of),
+        _ => type,
+    };
 
     // Field-backed CLR properties projected by dll2klib use the same clrPropGet/clrPropSet node as real properties.
     // Keep field dispatch exact as well: the runtime receives a metadata token, never a source-name lookup.

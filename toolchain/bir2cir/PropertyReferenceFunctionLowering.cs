@@ -575,6 +575,7 @@ static class PropertyReferenceFunctionLowering
     {
         TypeNode.Tv => true,
         TypeNode.Fqn { Args: { } args } => args.Any(MentionsTypeVariable),
+        TypeNode.Projection p => MentionsTypeVariable(p.Of),
         TypeNode.Nullable n => MentionsTypeVariable(n.Of),
         TypeNode.Oblivious o => MentionsTypeVariable(o.Of),
         TypeNode.Array a => MentionsTypeVariable(a.Elem),

@@ -4,6 +4,7 @@
 package starprojection
 
 import kotlin.coroutines.Continuation
+import kotlin.clr.ClrField
 import kotlin.clr.ClrName
 
 interface StarElement
@@ -105,6 +106,37 @@ fun referencedUseSiteCallable(
     value: ReferencedUseSiteInvariant<in String>,
     transform: (ReferencedUseSiteInvariant<in String>) -> ReferencedUseSiteInvariant<out String>,
 ): String = transform(value).read()
+
+class ReferencedUseSiteBoundHolder<M : ReferencedUseSiteInvariant<in String>>(private val value: M) {
+    fun write(text: String): M {
+        value.write(text)
+        return value
+    }
+}
+
+class ReferencedUseSiteProperties(
+    val input: ReferencedUseSiteInvariant<in String>,
+    val output: ReferencedUseSiteInvariant<out String>,
+)
+
+fun referencedUseSiteProperties(): ReferencedUseSiteProperties = ReferencedUseSiteProperties(
+    ReferencedUseSiteAnyBox("property-input"),
+    ReferencedUseSiteStringBox("property-output"),
+)
+
+class ReferencedUseSiteFields(
+    @ClrField val input: ReferencedUseSiteInvariant<in String>,
+    @ClrField val output: ReferencedUseSiteInvariant<out String>,
+)
+
+fun referencedUseSiteFields(): ReferencedUseSiteFields = ReferencedUseSiteFields(
+    ReferencedUseSiteAnyBox("field-input"),
+    ReferencedUseSiteStringBox("field-output"),
+)
+
+class ReferencedUseSiteMixed<A, B>(val first: A, val second: B)
+fun <T> referencedUseSiteMixed(value: T): ReferencedUseSiteMixed<ReferencedUseSiteInvariant<out String>, T> =
+    ReferencedUseSiteMixed(ReferencedUseSiteStringBox("mixed-result"), value)
 
 // A downstream generated data-class `copy()` call reconstructs each omitted default from the referenced receiver.
 // On a star receiver those property values must use this assembly's published existential getter slots rather than

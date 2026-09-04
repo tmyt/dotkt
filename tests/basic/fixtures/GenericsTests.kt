@@ -250,6 +250,40 @@ private class UseSiteStringBox(private var value: String) : UseSiteInvariant<Str
     override fun write(value: String) { this.value = value }
 }
 
+private class UseSiteProjectedConstructor<T> private constructor(
+    val box: UseSiteInvariant<T>,
+    val selected: String,
+) {
+    private constructor(box: UseSiteInvariant<T>) : this(box, "single")
+    private constructor(box: UseSiteInvariant<T>, marker: Int) : this(box, "int:$marker")
+    private constructor(box: UseSiteInvariant<T>, marker: Int?) : this(box, "nullable:$marker")
+    private constructor(box: UseSiteInvariant<T>, tags: List<*>) : this(box, "star:${tags.size}")
+
+    companion object {
+        fun from(box: UseSiteInvariant<*>): UseSiteProjectedConstructor<*> = UseSiteProjectedConstructor(box)
+        fun fromNullable(box: UseSiteInvariant<*>): UseSiteProjectedConstructor<*> {
+            val marker: Int? = 7
+            return UseSiteProjectedConstructor(box, marker)
+        }
+        fun fromStar(box: UseSiteInvariant<*>): UseSiteProjectedConstructor<*> =
+            UseSiteProjectedConstructor(box, listOf("tag"))
+    }
+}
+
+private class UseSiteProjectedBoundOuter<T> {
+    inner class Writer<C : MutableList<in T>>(private val destination: C) {
+        fun insert(value: T): C {
+            destination.add(0, value)
+            return destination
+        }
+    }
+}
+
+// Constructor inference introduces a captured projection here. The allocation must use a constructible closed CLR
+// type; the projected existential view is only the value-use representation and has no constructor of its own.
+private fun constructFromUseSiteProjection(box: UseSiteInvariant<*>): UseSiteProjectedConstructor<*> =
+    UseSiteProjectedConstructor.from(box)
+
 fun useSiteInParameter(box: UseSiteInvariant<in String>) { box.write("in") }
 fun useSiteOutResult(): UseSiteInvariant<out String> = UseSiteStringBox("out")
 fun useSiteVariantParameter(producer: Producer<out String>): String = producer.produce()
@@ -259,6 +293,21 @@ fun <M : UseSiteInvariant<in String>> useSiteConstraint(box: M): M {
     box.write("bound")
     return box
 }
+fun <T, C : MutableList<in T>> useSiteProjectedListInsert(destination: C, value: T): C {
+    destination.add(0, value)
+    return destination
+}
+fun <T, C : MutableList<in T>?> useSiteNullableProjectedListInsert(destination: C, value: T): C {
+    destination?.add(0, value)
+    return destination
+}
+class UseSiteProjectedListWriter<T, C : MutableList<in T>>(private val destination: C) {
+    fun insert(value: T): C {
+        destination.add(0, value)
+        return destination
+    }
+}
+
 fun useSiteCallable(
     box: UseSiteInvariant<in String>,
     transform: (UseSiteInvariant<in String>) -> UseSiteInvariant<out String>,
@@ -354,7 +403,25 @@ class GenericsTests {
         assertEquals("consumed: variant", useSiteVariantResult().consume("variant"))
         assertEquals("nested", useSiteNested(listOf(UseSiteStringBox("nested"))))
         assertEquals("bound", useSiteConstraint(input).read())
+        val wideList = mutableListOf<Any>("tail")
+        assertEquals(wideList, useSiteProjectedListInsert(wideList, "head"))
+        assertEquals("head", wideList[0])
+        val nullableWideList: MutableList<Any>? = mutableListOf("tail")
+        assertEquals(nullableWideList, useSiteNullableProjectedListInsert(nullableWideList, "nullable-head"))
+        assertEquals("nullable-head", nullableWideList!![0])
+        assertEquals(wideList, UseSiteProjectedListWriter<String, MutableList<Any>>(wideList).insert("class-head"))
+        assertEquals("class-head", wideList[0])
         assertEquals("lambda", useSiteCallable(input) { UseSiteStringBox("lambda") })
+        val constructed = constructFromUseSiteProjection(UseSiteStringBox("captured"))
+        assertEquals("captured", constructed.box.read())
+        assertEquals("single", constructed.selected)
+        assertEquals("nullable:7", UseSiteProjectedConstructor.fromNullable(UseSiteStringBox("nullable")).selected)
+        assertEquals("star:1", UseSiteProjectedConstructor.fromStar(UseSiteStringBox("star")).selected)
+        val projectedBoundDestination = mutableListOf<Any>("tail")
+        val projectedBoundWriter =
+            UseSiteProjectedBoundOuter<String>().Writer<MutableList<Any>>(projectedBoundDestination)
+        assertEquals(projectedBoundDestination, projectedBoundWriter.insert("inner"))
+        assertEquals("inner", projectedBoundDestination[0])
     }
 
     @TestAttribute

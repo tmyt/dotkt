@@ -41,6 +41,32 @@ namespace ForeignStar
         public T Value { get; }
     }
 
+    public sealed class CallableFactory<T>
+    {
+        private readonly T _value;
+        public readonly System.Func<T> CallableField;
+        public CallableFactory(T value)
+        {
+            _value = value;
+            CallableField = () => _value;
+        }
+        public System.Func<T> Make() => () => _value;
+        public System.Func<U, T> MakeGeneric<U>() => _ => _value;
+        public System.Action<T> MakeAction() => _ => { };
+        public System.Func<T> Maybe(bool present) => present ? () => _value : null;
+    }
+
+    public struct CallableStruct<T>
+    {
+        private readonly T _value;
+        public CallableStruct(T value) => _value = value;
+        public System.Func<T> Make()
+        {
+            var value = _value;
+            return () => value;
+        }
+    }
+
     public sealed class Inner<T>
     {
         private readonly T _value;
@@ -124,5 +150,10 @@ namespace ForeignStar
         public static GenericDerived<string> GenericDerived() => new GenericDerived<string>("derived-view");
         public static ReorderedDerived<int, string> ReorderedDerived() =>
             new ReorderedDerived<int, string>("reordered-view");
+        public static CallableFactory<string> StringCallableFactory() =>
+            new CallableFactory<string>("callable-result");
+        public static CallableFactory<int> IntCallableFactory() => new CallableFactory<int>(41);
+        public static CallableFactory<object> ObjectCallableFactory() => new CallableFactory<object>("object-action");
+        public static CallableStruct<int> IntCallableStruct() => new CallableStruct<int>(43);
     }
 }

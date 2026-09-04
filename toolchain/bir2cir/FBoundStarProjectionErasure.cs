@@ -459,7 +459,7 @@ static class FBoundStarProjectionErasure
                     foreach (var parameter in parameters.OfType<JsonObject>())
                         if (parameter["constraints"] is JsonArray constraints)
                             for (var index = 0; index < constraints.Count; index++)
-                                if (TypeJson.Read(constraints[index]) is TypeNode.Fqn bound
+                                if (StripSourceNullability(TypeJson.Read(constraints[index])) is TypeNode.Fqn bound
                                     && ContainsUseSiteProjection(bound)
                                     && refs.TryResolveClrOwner(bound.Name, out _, out _))
                                     constraints[index] = TypeJson.Write(new TypeNode.Fqn("kotlin.Any"));
@@ -2041,6 +2041,7 @@ static class FBoundStarProjectionErasure
 
                 BindStarInnerConstruction(obj, owners, defs, refs,
                     existentialTypeParameters, existentialMethodParameters);
+                LowerProjectedConstruction(obj, owners, defs, refs);
                 BindStarFieldThroughCanonicalGetter(obj, owners, defs, refs);
                 BindProjectedConstraintMember(obj, typeParameterDeclarations, methodParameterDeclarations,
                     defs, refs);
@@ -2128,6 +2129,175 @@ static class FBoundStarProjectionErasure
                 }
                 break;
         }
+    }
+
+    // A captured construction such as Wrapper(source: Source<*>) denotes Wrapper<Capture>, not Wrapper<object>.
+    // The CLR cannot name that capture in a TypeSpec. Keep overload selection compile-time exact via the authored
+    // constructor descriptor, then let the runtime close only the hidden owner slots from the generic witnesses on
+    // the argument objects. The result immediately returns to the ordinary existential carrier; ilemit sees one
+    // explicit helper call and performs no generic inference.
+    static void LowerProjectedConstruction(JsonObject construction,
+        IReadOnlyDictionary<string, Owner> owners, IReadOnlyDictionary<string, JsonObject> defs,
+        ReferenceMetadataIndex refs)
+    {
+        if (Str(construction["k"]) != "new"
+            || TypeJson.Read(construction["type"]) is not TypeNode.Fqn { Args: { Length: > 0 } } owner
+            || !owner.Args.Any(ContainsExistentialProjection)
+            || construction["memberSignature"] is not JsonArray declarationSignature
+            || construction["args"] is not JsonArray arguments
+            || declarationSignature.Count != arguments.Count) return;
+        var signature = declarationSignature.Select(TypeJson.Read).ToArray();
+        if (signature.Any(type => type == null)) return;
+        if (signature.Any(ContainsManagedReference))
+            throw new NotSupportedException(
+                $"bir2cir: projected constructor `{owner.Name}` has a ref/out or pointer parameter; "
+                + "the object[] reflection ABI cannot preserve managed-reference aliasing");
+
+        var localNames = defs.Keys.ToHashSet(StringComparer.Ordinal);
+        var parameterKeys = new JsonArray(signature.Select(type => (JsonNode)new JsonObject
+        {
+            ["k"] = "const",
+            ["type"] = TypeJson.Write(new TypeNode.Fqn("kotlin.String")),
+            ["value"] = ProjectedConstructorTypeKey(
+                RewriteType(type, owners, refs), refs, localNames),
+        }).ToArray());
+        var fallbacks = new JsonArray(owner.Args.Select(argument => (JsonNode)new JsonObject
+        {
+            ["k"] = "classRef",
+            ["type"] = TypeJson.Write(ProjectedConstructionFallback(argument, refs, localNames)),
+        }).ToArray());
+        var runtimeArguments = new JsonArray(arguments.Select(argument => argument?.DeepClone()).ToArray());
+        var any = new TypeNode.Fqn("kotlin.Any");
+        var anyN = new TypeNode.Nullable(any);
+        var systemType = new TypeNode.Fqn("System.Type");
+        JsonNode invocation = new JsonObject
+        {
+            ["k"] = "callStatic",
+            ["owner"] = TypeJson.Write(new TypeNode.Fqn(
+                "DotKt.Runtime.CompilerServices.StarProjectionRuntimeKt")),
+            ["method"] = "starProjectionConstruct",
+            ["sig"] = new JsonArray(
+                TypeJson.Write(systemType),
+                TypeJson.Write(new TypeNode.Array(new TypeNode.Fqn("kotlin.String"))),
+                TypeJson.Write(new TypeNode.Array(systemType)),
+                TypeJson.Write(new TypeNode.Array(anyN))),
+            ["ret"] = TypeJson.Write(anyN),
+            ["args"] = new JsonArray(
+                new JsonObject
+                {
+                    ["k"] = "classRef",
+                    ["type"] = TypeJson.Write(new TypeNode.Fqn(owner.Name)),
+                },
+                new JsonObject
+                {
+                    ["k"] = "newArray", ["elem"] = TypeJson.Write(new TypeNode.Fqn("kotlin.String")),
+                    ["elems"] = parameterKeys,
+                },
+                new JsonObject
+                {
+                    ["k"] = "newArray", ["elem"] = TypeJson.Write(systemType), ["elems"] = fallbacks,
+                },
+                new JsonObject
+                {
+                    ["k"] = "newArray", ["elem"] = TypeJson.Write(anyN), ["elems"] = runtimeArguments,
+                }),
+        };
+        var projectedResult = RewriteType(owner, owners, refs);
+        if (!IsObjectish(projectedResult)) invocation = new JsonObject
+        {
+            ["k"] = "cast", ["type"] = TypeJson.Write(projectedResult), ["e"] = invocation,
+        };
+        foreach (var key in construction.Select(pair => pair.Key).ToList()) construction.Remove(key);
+        foreach (var pair in invocation.AsObject().ToList())
+        {
+            invocation.AsObject().Remove(pair.Key);
+            construction[pair.Key] = pair.Value;
+        }
+        ForeignStarProjectionBinding.RequireRuntimeFallback();
+    }
+
+    static bool ContainsManagedReference(TypeNode type) => type switch
+    {
+        TypeNode.ByRef or TypeNode.Ptr => true,
+        TypeNode.Mod modifier => ContainsManagedReference(modifier.Of),
+        TypeNode.Projection projection => ContainsManagedReference(projection.Of),
+        TypeNode.Nullable nullable => ContainsManagedReference(nullable.Of),
+        TypeNode.Oblivious oblivious => ContainsManagedReference(oblivious.Of),
+        TypeNode.Array array => ContainsManagedReference(array.Elem),
+        TypeNode.Fqn { Args: { } arguments } => arguments.Any(ContainsManagedReference),
+        TypeNode.Fn function => ContainsManagedReference(function.Ret)
+            || function.Params.Any(ContainsManagedReference)
+            || function.Recv != null && ContainsManagedReference(function.Recv),
+        _ => false,
+    };
+
+    static TypeNode ProjectedConstructionFallback(TypeNode argument, ReferenceMetadataIndex refs,
+        IReadOnlySet<string> localNames)
+    {
+        argument = argument switch
+        {
+            TypeNode.Projection { Variance: "out" } projection => projection.Of,
+            TypeNode.Projection => new TypeNode.Fqn("kotlin.Any"),
+            TypeNode.Star => new TypeNode.Fqn("kotlin.Any"),
+            _ => argument,
+        };
+        while (argument is TypeNode.Nullable nullable) argument = nullable.Of;
+        while (argument is TypeNode.Oblivious oblivious) argument = oblivious.Of;
+        if (ContainsExistentialProjection(argument)) argument = new TypeNode.Fqn("kotlin.Any");
+        var physical = BirTypeLowering.LowerPhysicalType(argument, refs.Aliases, refs.IsValueType,
+            refs.PhysicalTypeNames, typeArg: true, localTypeNames: localNames);
+        return physical is TypeNode.Fn function
+            ? BirTypeLowering.DelegateFqnOf(function)
+                ?? throw new InvalidOperationException("projected constructor fallback has no CLR delegate family")
+            : physical;
+    }
+
+    static string ProjectedConstructorTypeKey(TypeNode type, ReferenceMetadataIndex refs,
+        IReadOnlySet<string> localNames)
+    {
+        while (type is TypeNode.Projection projection) type = projection.Of;
+        var physical = BirTypeLowering.LowerPhysicalType(type, refs.Aliases, refs.IsValueType,
+            refs.PhysicalTypeNames, typeArg: false, localTypeNames: localNames);
+        if (physical is TypeNode.Fn function)
+            physical = BirTypeLowering.DelegateFqnOf(function)
+                ?? throw new InvalidOperationException("projected constructor parameter has no CLR delegate family");
+        return physical switch
+        {
+            TypeNode.Tv variable => (variable.Scope == "method" ? "m" : "t") + variable.I,
+            TypeNode.ByRef byRef => "r[" + ProjectedConstructorTypeKey(byRef.Of, refs, localNames) + "]",
+            TypeNode.Array array => "a" + array.Rank + "["
+                + ProjectedConstructorTypeKey(array.Elem, refs, localNames) + "]",
+            TypeNode.Fqn { Args: { } arguments } fqn => "g{" + NormalizeProjectedConstructorTypeName(fqn.Name)
+                + "}<" + string.Join(",", arguments.Select(argument =>
+                    ProjectedConstructorTypeKey(argument, refs, localNames))) + ">",
+            TypeNode.Fqn fqn => "n{" + NormalizeProjectedConstructorTypeName(fqn.Name) + "}",
+            // LowerPhysicalType retains nullable VALUE types as the semantic nullable shell. Reflection observes the
+            // corresponding System.Nullable<T> generic construction, so the structural descriptor must spell that
+            // physical shell rather than collide with the non-nullable T overload.
+            TypeNode.Nullable nullable => "g{System.Nullable}<"
+                + ProjectedConstructorTypeKey(nullable.Of, refs, localNames) + ">",
+            TypeNode.Oblivious oblivious => ProjectedConstructorTypeKey(oblivious.Of, refs, localNames),
+            TypeNode.Mod modifier => ProjectedConstructorTypeKey(modifier.Of, refs, localNames),
+            _ => throw new NotSupportedException(
+                $"bir2cir: projected constructor parameter type `{SupertypeGraph.TypeKey(physical)}` "
+                + "has no runtime structural key"),
+        };
+    }
+
+    static string NormalizeProjectedConstructorTypeName(string name)
+    {
+        var result = new StringBuilder(name.Length);
+        for (var index = 0; index < name.Length; index++)
+        {
+            var current = name[index];
+            if (current == '`')
+            {
+                while (index + 1 < name.Length && char.IsDigit(name[index + 1])) index++;
+                continue;
+            }
+            result.Append(current == '+' ? '.' : current);
+        }
+        return result.ToString();
     }
 
     // A call through `M` is emitted against the declaration selected from M's bound. kotc deliberately keeps the

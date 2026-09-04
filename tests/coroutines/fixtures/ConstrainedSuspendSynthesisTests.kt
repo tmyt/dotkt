@@ -97,6 +97,15 @@ suspend fun <T, K, M : MutableMap<in K, in T>> constrainedSuspendPutProjected(
     return destination
 }
 
+suspend fun <T, C : MutableList<in T>> constrainedSuspendInsertProjected(
+    value: T,
+    destination: C,
+): C {
+    suspendCoroutine<Unit> { continuation -> continuation.resume(Unit) }
+    destination.add(0, value)
+    return destination
+}
+
 class ConstrainedSuspendSynthesisTests {
     @TestAttribute
     fun constrainedSamInsideGenericStateMachine() {
@@ -140,5 +149,10 @@ class ConstrainedSuspendSynthesisTests {
         val destination = mutableMapOf<Any?, Any?>()
         val result = blockOn { constrainedSuspendPutProjected("projected", 23, destination) }
         assertEquals(true, result === destination)
+
+        val list = mutableListOf<Any>("tail")
+        val listResult = blockOn { constrainedSuspendInsertProjected("head", list) }
+        assertEquals(true, listResult === list)
+        assertEquals("head", list[0])
     }
 }

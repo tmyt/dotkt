@@ -1015,6 +1015,13 @@ sealed class Pipeline
             ConstrainedTypeParameterReceiverBinding.ApplyAll(
                 staged.Select(s => s.Root).ToList(), isValueFqn, refs);
 
+        // Safe-call and other receiver normalization can postpone a projected type-parameter call until constrained
+        // dispatch is selected above. Its exact source constraint is now present again; bind that remaining foreign
+        // projected owner through the same metadata-identity runtime lane as the early calls.
+        if (!_options.RefBuild)
+            ForeignStarProjectionBinding.ApplyLate(
+                staged.Select(s => s.Root).ToList(), localExistentialOwners, refs);
+
         // dll2klib restores G<*> for Kotlin source analysis while the referenced DLL physically exposes
         // its compiler-generated existential carrier. Re-apply that exact referenced ABI to call signatures and directly initialized locals before
         // CLR type lowering; ilemit must never infer the hidden physical signature.
