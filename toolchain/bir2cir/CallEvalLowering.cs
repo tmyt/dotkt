@@ -639,11 +639,15 @@ static class CallEvalLowering
     {
         TypeNode.Tv => true,
         TypeNode.ByRef b => IsOpen(b.Of),
+        TypeNode.Projection p => IsOpen(p.Of),
+        TypeNode.Ptr p => IsOpen(p.Of),
+        TypeNode.Mod m => IsOpen(m.M) || IsOpen(m.Of),
         TypeNode.Array a => IsOpen(a.Elem),
         TypeNode.Nullable nl => IsOpen(nl.Of),
         TypeNode.Oblivious ob => IsOpen(ob.Of),
         TypeNode.Fqn f => f.Args != null && f.Args.Any(IsOpen),
-        TypeNode.Fn fn => fn.Params.Any(IsOpen) || IsOpen(fn.Ret),
+        TypeNode.Fn fn => fn.DelegateParams.Any(IsOpen) || IsOpen(fn.Ret)
+            || fn.Ctx?.Any(IsOpen) == true,
         _ => false,
     };
 

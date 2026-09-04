@@ -37,6 +37,31 @@ internal interface StarProjectionMethod {
     fun getParameters(): Array<StarProjectionParameter>
 }
 
+@kotlin.clr.ClrTypeAlias("System.Reflection.ConstructorInfo")
+@PublishedApi
+internal interface StarProjectionConstructor {
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "DeclaringType")
+    val declaringType: StarProjectionType?
+
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "MetadataToken")
+    val metadataToken: Int
+
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "Module")
+    val module: StarProjectionModule
+
+    @kotlin.clr.ClrIntrinsic("GetParameters")
+    fun getParameters(): Array<StarProjectionParameter>
+
+    @kotlin.clr.ClrIntrinsic("Invoke")
+    fun invoke(arguments: Array<Any?>): Any?
+}
+
+@kotlin.clr.ClrTypeAlias("System.Reflection.BindingFlags")
+@kotlin.clr.ClrEnum
+internal enum class StarProjectionBindingFlags(value: Int) {
+    INSTANCE_PUBLIC_NON_PUBLIC(52),
+}
+
 @kotlin.clr.ClrTypeAlias("System.Reflection.ParameterInfo")
 @PublishedApi
 internal interface StarProjectionParameter {
@@ -87,6 +112,9 @@ internal interface StarProjectionType {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsArray")
     val isArray: Boolean
 
+    @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsSZArray")
+    val isSzArray: Boolean
+
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "IsByRef")
     val isByRef: Boolean
 
@@ -105,6 +133,9 @@ internal interface StarProjectionType {
     @kotlin.clr.ClrIntrinsic("GetGenericArguments")
     fun getGenericArguments(): Array<StarProjectionType>
 
+    @kotlin.clr.ClrIntrinsic("MakeGenericType")
+    fun makeGenericType(typeArguments: Array<StarProjectionType>): StarProjectionType
+
     @kotlin.clr.ClrIntrinsic("GetElementType")
     fun getElementType(): StarProjectionType?
 
@@ -113,6 +144,9 @@ internal interface StarProjectionType {
 
     @kotlin.clr.ClrIntrinsic("GetMethods")
     fun getMethods(): Array<StarProjectionMethod>
+
+    @kotlin.clr.ClrIntrinsic("GetConstructors")
+    fun getConstructors(flags: StarProjectionBindingFlags): Array<StarProjectionConstructor>
 
     @kotlin.clr.ClrIntrinsic("GetFields")
     fun getFields(): Array<StarProjectionField>
@@ -126,6 +160,13 @@ internal interface StarProjectionType {
 internal open class StarProjectionInvocationException : Throwable() {
     @property:kotlin.clr.ClrProperty(kotlin.clr.READ, "InnerException")
     val innerException: Throwable? get() = null
+}
+
+@kotlin.clr.ClrTypeAlias("System.Delegate")
+@PublishedApi
+internal interface StarProjectionDelegate {
+    @kotlin.clr.ClrIntrinsic("DynamicInvoke")
+    fun dynamicInvoke(arguments: Array<Any?>): Any?
 }
 
 @kotlin.clr.ClrIntrinsic("GetType")
@@ -299,6 +340,163 @@ internal fun starProjectionInvokeUnit(
         parameterTypeKeys, methodTypeArguments, arguments)
 }
 
+// A member result can itself be a delegate whose closed generic signature contains the hidden owner argument.
+// bir2cir wraps it in a statically typed Kotlin-facing closure; only this boundary sees the opaque CLR delegate.
+@PublishedApi
+internal fun starProjectionInvokeDelegate(receiver: Any?, arguments: Array<Any?>): Any? = try {
+    (receiver as StarProjectionDelegate).dynamicInvoke(arguments)
+} catch (failure: StarProjectionInvocationException) {
+    throw (failure.innerException ?: failure)
+}
+
+// CLR has no syntax for constructing G<Capture> when the capture arrives through a Kotlin G<*> value. The compiler
+// supplies the exact open constructor descriptor and fallback bounds; this helper recovers only the hidden closed
+// owner arguments from the runtime generic witnesses carried by the constructor arguments, closes that exact owner,
+// and invokes the already-selected constructor. It never selects an overload from argument values.
+@PublishedApi
+internal fun starProjectionConstruct(
+    openGenericType: StarProjectionType,
+    parameterTypeKeys: Array<String>,
+    fallbackTypeArguments: Array<StarProjectionType>,
+    arguments: Array<Any?>,
+): Any? {
+    val openConstructor = starProjectionOpenConstructor(openGenericType, parameterTypeKeys)
+    val parameters = openConstructor.getParameters()
+    if (parameters.size != arguments.size)
+        throw IllegalStateException("Projected constructor argument count changed")
+    val ownerParameters = openGenericType.getGenericArguments()
+    if (ownerParameters.size != fallbackTypeArguments.size)
+        throw IllegalStateException("Projected constructor owner arity changed")
+    val inferred = arrayOfNulls<StarProjectionType>(ownerParameters.size)
+    var index = 0
+    while (index < parameters.size) {
+        val argument = arguments[index]
+        if (argument != null)
+            starProjectionBindConstructionSlots(parameters[index].parameterType,
+                argument.starProjectionRuntimeType(), inferred)
+        index++
+    }
+    val closedArguments = Array<StarProjectionType>(ownerParameters.size) { slot ->
+        inferred[slot] ?: fallbackTypeArguments[slot]
+    }
+    val closedOwner = openGenericType.makeGenericType(closedArguments)
+    var closedConstructor: StarProjectionConstructor? = null
+    for (candidate in closedOwner.getConstructors(StarProjectionBindingFlags.INSTANCE_PUBLIC_NON_PUBLIC)) {
+        if (candidate.metadataToken == openConstructor.metadataToken
+            && candidate.module == openConstructor.module) {
+            if (closedConstructor != null)
+                throw IllegalStateException("Ambiguous closed projected constructor")
+            closedConstructor = candidate
+        }
+    }
+    val target = closedConstructor ?: throw IllegalStateException("Missing closed projected constructor")
+    try {
+        return target.invoke(arguments)
+    } catch (failure: StarProjectionInvocationException) {
+        throw (failure.innerException ?: failure)
+    }
+}
+
+private fun starProjectionOpenConstructor(
+    openGenericType: StarProjectionType,
+    parameterTypeKeys: Array<String>,
+): StarProjectionConstructor {
+    var match: StarProjectionConstructor? = null
+    for (candidate in openGenericType.getConstructors(StarProjectionBindingFlags.INSTANCE_PUBLIC_NON_PUBLIC)) {
+        if (!starProjectionDeclaresOn(candidate.declaringType, openGenericType)) continue
+        val parameters = candidate.getParameters()
+        if (parameters.size != parameterTypeKeys.size) continue
+        var matches = true
+        var index = 0
+        while (index < parameters.size) {
+            if (starProjectionProjectedConstructorTypeKey(parameters[index].parameterType)
+                != parameterTypeKeys[index]) {
+                matches = false
+                break
+            }
+            index++
+        }
+        if (!matches) continue
+        if (match != null) throw IllegalStateException(
+            "Ambiguous projected constructor " + openGenericType.fullName
+        )
+        match = candidate
+    }
+    return match ?: throw IllegalStateException("Missing projected constructor " + openGenericType.fullName)
+}
+
+private fun starProjectionBindConstructionSlots(
+    declaration: StarProjectionType,
+    actual: StarProjectionType,
+    bindings: Array<StarProjectionType?>,
+) {
+    if (declaration.isGenericParameter && declaration.declaringMethod == null) {
+        val slot = declaration.genericParameterPosition
+        val previous = bindings[slot]
+        if (previous != null && previous != actual)
+            throw IllegalStateException("Conflicting projected constructor type argument")
+        bindings[slot] = actual
+        return
+    }
+    if (declaration.isArray) {
+        if (actual.isArray && declaration.isSzArray == actual.isSzArray
+            && declaration.getArrayRank() == actual.getArrayRank())
+            starProjectionBindConstructionSlots(declaration.getElementType()!!, actual.getElementType()!!, bindings)
+        return
+    }
+    if (!declaration.isGenericType) return
+    val openDeclaration = if (declaration.isGenericTypeDefinition) declaration
+        else declaration.getGenericTypeDefinition()
+    val actualView = starProjectionClosedView(actual, openDeclaration) ?: return
+    val declarationArguments = declaration.getGenericArguments()
+    val actualArguments = actualView.getGenericArguments()
+    if (declarationArguments.size != actualArguments.size) return
+    var index = 0
+    while (index < declarationArguments.size) {
+        starProjectionBindConstructionSlots(declarationArguments[index], actualArguments[index], bindings)
+        index++
+    }
+}
+
+private fun starProjectionProjectedConstructorTypeKey(type: StarProjectionType): String {
+    if (type.isGenericParameter)
+        return (if (type.declaringMethod == null) "t" else "m") + type.genericParameterPosition
+    if (type.isByRef) return "r[" + starProjectionProjectedConstructorTypeKey(type.getElementType()!!) + "]"
+    if (type.isArray)
+        return "a" + (if (type.isSzArray) "s" else "m") + type.getArrayRank() + "[" +
+            starProjectionProjectedConstructorTypeKey(type.getElementType()!!) + "]"
+    if (type.isGenericType) {
+        val definition = if (type.isGenericTypeDefinition) type else type.getGenericTypeDefinition()
+        var result = "g{" + starProjectionNormalizedTypeName(definition.fullName) + "}<"
+        val arguments = type.getGenericArguments()
+        var index = 0
+        while (index < arguments.size) {
+            if (index != 0) result += ","
+            result += starProjectionProjectedConstructorTypeKey(arguments[index])
+            index++
+        }
+        return result + ">"
+    }
+    return "n{" + starProjectionNormalizedTypeName(type.fullName) + "}"
+}
+
+private fun starProjectionNormalizedTypeName(name: String?): String {
+    if (name == null) return ""
+    var result = ""
+    var index = 0
+    while (index < name.length) {
+        val c = name[index]
+        if (c == '`') {
+            index++
+            while (index < name.length && name[index] >= '0' && name[index] <= '9') index++
+        } else {
+            result += if (c == '+') '.' else c
+            index++
+        }
+    }
+    return result
+}
+
 @PublishedApi
 internal fun starProjectionGetField(
     receiver: Any,
@@ -406,7 +604,8 @@ private fun starProjectionTypeKey(type: StarProjectionType): String {
         return (if (type.declaringMethod == null) "t" else "m") + type.genericParameterPosition
     if (type.isByRef) return "r[" + starProjectionTypeKey(type.getElementType()!!) + "]"
     if (type.isArray)
-        return "a" + type.getArrayRank() + "[" + starProjectionTypeKey(type.getElementType()!!) + "]"
+        return "a" + (if (type.isSzArray) "s" else "m") + type.getArrayRank() + "[" +
+            starProjectionTypeKey(type.getElementType()!!) + "]"
     if (type.isGenericType) {
         val definition = if (type.isGenericTypeDefinition) type else type.getGenericTypeDefinition()
         var result = "g{" + definition.fullName + "}<"

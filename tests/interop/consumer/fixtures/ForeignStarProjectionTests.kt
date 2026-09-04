@@ -10,10 +10,19 @@ import ForeignStar.GenericDerived
 import ForeignStar.Inner
 import ForeignStar.Outer
 import ForeignStar.ReorderedDerived
+import ForeignStar.CallableFactory
+import ForeignStar.CallableStruct
 import NUnit.Framework.TestAttribute
 import NUnit.Framework.Legacy.ClassicAssert.AreEqual as assertEquals
 import NUnit.Framework.Legacy.ClassicAssert.IsFalse as assertFalse
 import NUnit.Framework.Legacy.ClassicAssert.IsTrue as assertTrue
+
+private class ForeignProjectedCallableHolder<T> {
+    fun read(box: Box<out T>): T = box.Read()
+    fun call(factory: CallableFactory<out T>): T = factory.Make().invoke()
+    fun callGeneric(factory: CallableFactory<out T>): T = factory.MakeGeneric<Int>().invoke(7)
+    fun callStruct(factory: CallableStruct<out T>): T = factory.Make().invoke()
+}
 
 class ForeignStarProjectionTests {
     @TestAttribute
@@ -99,5 +108,22 @@ class ForeignStarProjectionTests {
         val reordered: ReorderedDerived<*, String> = Factory.ReorderedDerived()
         assertEquals("base:value", reordered.PutInherited("value"))
         assertEquals("reordered-view", reordered.ReadInherited())
+
+        val callableFactory: CallableFactory<out String> = Factory.StringCallableFactory()
+        assertEquals("callable-result", callableFactory.Make().invoke())
+        val holder = ForeignProjectedCallableHolder<String>()
+        val exactBox = Factory.StringBoxAsObject() as Box<String>
+        assertEquals("foreign", holder.read(exactBox))
+        assertEquals("callable-result", holder.call(callableFactory))
+        assertEquals("callable-result", holder.callGeneric(callableFactory))
+        assertEquals("callable-result", callableFactory.CallableField.invoke())
+        assertEquals(null, callableFactory.Maybe(false))
+        val actionFactory: CallableFactory<in String> = Factory.ObjectCallableFactory()
+        actionFactory.MakeAction().invoke("action")
+        val boxedValueFactory: CallableFactory<out Any?> = Factory.IntCallableFactory()
+        assertEquals(41, ForeignProjectedCallableHolder<Any?>().call(boxedValueFactory))
+        assertEquals(41, boxedValueFactory.CallableField.invoke())
+        val boxedValueStruct: CallableStruct<out Any?> = Factory.IntCallableStruct()
+        assertEquals(43, ForeignProjectedCallableHolder<Any?>().callStruct(boxedValueStruct))
     }
 }

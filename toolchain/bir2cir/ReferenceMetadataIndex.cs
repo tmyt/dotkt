@@ -1421,7 +1421,8 @@ sealed partial class ReferenceMetadataIndex
             return (type.DeclaringMethod == null ? "t" : "m") + type.GenericParameterPosition;
         if (type.IsByRef) return "r[" + ForeignStarRuntimeTypeKey(type.GetElementType()) + "]";
         if (type.IsArray)
-            return "a" + type.GetArrayRank() + "[" + ForeignStarRuntimeTypeKey(type.GetElementType()) + "]";
+            return "a" + (type.IsSZArray ? "s" : "m") + type.GetArrayRank() + "["
+                + ForeignStarRuntimeTypeKey(type.GetElementType()) + "]";
         if (type.IsGenericType)
         {
             var definition = type.IsGenericTypeDefinition ? type : type.GetGenericTypeDefinition();
@@ -1438,21 +1439,13 @@ sealed partial class ReferenceMetadataIndex
     static bool ForeignStarDeclarationDescribesCall(TypeNode declaration, TypeNode call,
         IReadOnlyList<TypeNode> ownerArgs)
     {
-        // kotc keeps an already-selected CLR overload's owner slot in `sig` (`Duo<*, String>.Pick(B)` carries
-        // `tv(type,1)`, not the substituted String). Compare both declaration and call slots in the source owner's
-        // constructed semantic view; otherwise T0 and T1 either both look wildcard-like or neither matches.
-        if (call is TypeNode.Tv { Scope: "type" } callOwnerTv)
-        {
-            if (callOwnerTv.I < 0 || callOwnerTv.I >= ownerArgs.Count
-                || ownerArgs[callOwnerTv.I] is TypeNode.Star) return false;
-            return ForeignStarDeclarationDescribesCall(declaration, ownerArgs[callOwnerTv.I], ownerArgs);
-        }
-        if (declaration is TypeNode.Tv { Scope: "type" } ownerTv)
-        {
-            if (ownerTv.I < 0 || ownerTv.I >= ownerArgs.Count || ownerArgs[ownerTv.I] is TypeNode.Star) return false;
-            return ForeignStarDeclarationDescribesCall(ownerArgs[ownerTv.I], call, ownerArgs);
-        }
-        if (declaration is TypeNode.Tv) return true;
+        // A use-site projection changes the set of operations Kotlin permits, not the identity of the selected CLR
+        // MethodDef. Compare the projected argument's bound while retaining the projection on sourceOwner for the
+        // reflection/existential representation decision.
+        if (declaration is TypeNode.Projection declarationProjection)
+            return ForeignStarDeclarationDescribesCall(declarationProjection.Of, call, ownerArgs);
+        if (call is TypeNode.Projection callProjection)
+            return ForeignStarDeclarationDescribesCall(declaration, callProjection.Of, ownerArgs);
         if (declaration is TypeNode.Oblivious dOb)
             return ForeignStarDeclarationDescribesCall(dOb.Of, call, ownerArgs);
         if (call is TypeNode.Oblivious cOb)
@@ -1463,6 +1456,26 @@ sealed partial class ReferenceMetadataIndex
                 : ForeignStarDeclarationDescribesCall(dn.Of, call, ownerArgs);
         if (call is TypeNode.Nullable callNullable)
             return ForeignStarDeclarationDescribesCall(declaration, callNullable.Of, ownerArgs);
+        // kotc keeps an already-selected CLR overload's owner slot in `sig` (`Duo<*, String>.Pick(B)` carries
+        // `tv(type,1)`, not the substituted String). Compare both declaration and call slots in the source owner's
+        // constructed semantic view; otherwise T0 and T1 either both look wildcard-like or neither matches.
+        if (call is TypeNode.Tv { Scope: "type" } callOwnerTv)
+        {
+            if (callOwnerTv.I < 0 || callOwnerTv.I >= ownerArgs.Count
+                || ownerArgs[callOwnerTv.I] is TypeNode.Star) return false;
+            var supplied = ProjectionBound(ownerArgs[callOwnerTv.I]);
+            if (declaration is TypeNode.Tv { Scope: "type" } declarationOwnerTv
+                && declarationOwnerTv.I >= 0 && declarationOwnerTv.I < ownerArgs.Count
+                && ownerArgs[declarationOwnerTv.I] is not TypeNode.Star)
+                return DeclarationDescribesCall(ProjectionBound(ownerArgs[declarationOwnerTv.I]), supplied);
+            return ForeignStarDeclarationDescribesCall(declaration, supplied, Array.Empty<TypeNode>());
+        }
+        if (declaration is TypeNode.Tv { Scope: "type" } ownerTv)
+        {
+            if (ownerTv.I < 0 || ownerTv.I >= ownerArgs.Count || ownerArgs[ownerTv.I] is TypeNode.Star) return false;
+            return DeclarationDescribesCall(ProjectionBound(ownerArgs[ownerTv.I]), call);
+        }
+        if (declaration is TypeNode.Tv) return true;
         if (declaration is TypeNode.Fqn df && call is TypeNode.Fqn cf)
         {
             if (ParamKey(df) != ParamKey(cf)) return false;
@@ -1479,6 +1492,13 @@ sealed partial class ReferenceMetadataIndex
                 (declared, supplied) => ForeignStarDeclarationDescribesCall(declared, supplied, ownerArgs));
         return DeclarationDescribesCall(declaration, call);
     }
+
+    static TypeNode ProjectionBound(TypeNode type) => type switch
+    {
+        TypeNode.Projection projection => ProjectionBound(projection.Of),
+        TypeNode.Oblivious oblivious => ProjectionBound(oblivious.Of),
+        _ => type,
+    };
 
     // Field-backed CLR properties projected by dll2klib use the same clrPropGet/clrPropSet node as real properties.
     // Keep field dispatch exact as well: the runtime receives a metadata token, never a source-name lookup.
@@ -2494,26 +2514,32 @@ sealed partial class ReferenceMetadataIndex
             || !TryMembersByBirOwner(ownerToken, out var members)) return false;
         var candidates = members.Where(m => m.IsStatic == isStatic && m.Name == memberName
             && m.MethodArity == methodArity && m.ParamCount == paramCount
-            && m.ParamTypeNodes != null && m.ReturnType != null).ToList();
+            && m.ParamTypeNodes != null && m.ReturnTypeNode != null).ToList();
         if (candidates.Count != 1) return false;
         var match = candidates[0];
-        if (!ContainsExistential(match.ReturnType)
+        if (!ContainsExistential(match.ReturnTypeNode)
             && !match.ParamTypeNodes.Any(ContainsExistential)) return false;
         parameters = match.ParamTypeNodes;
-        result = match.ReturnType;
+        // This is a declaration ABI, so retain its owner/method generic frame. ReturnType is the best-effort static
+        // projection and deliberately drops generic arguments; using it here turns e.g. List<T> into a raw List.
+        result = match.ReturnTypeNode;
         return true;
     }
 
     bool ContainsExistential(TypeNode type) => type switch
     {
+        TypeNode.Star or TypeNode.Projection => true,
         TypeNode.Fqn f => IsExistentialPhysicalOwner(f.Name)
             || (f.Args?.Any(ContainsExistential) ?? false),
         TypeNode.Nullable n => ContainsExistential(n.Of),
         TypeNode.Oblivious o => ContainsExistential(o.Of),
         TypeNode.Array a => ContainsExistential(a.Elem),
         TypeNode.ByRef b => ContainsExistential(b.Of),
+        TypeNode.Ptr p => ContainsExistential(p.Of),
+        TypeNode.Mod m => ContainsExistential(m.M) || ContainsExistential(m.Of),
         TypeNode.Fn fn => ContainsExistential(fn.Ret) || fn.Params.Any(ContainsExistential)
-            || (fn.Recv != null && ContainsExistential(fn.Recv)),
+            || (fn.Recv != null && ContainsExistential(fn.Recv))
+            || (fn.Ctx?.Any(ContainsExistential) ?? false),
         _ => false,
     };
 

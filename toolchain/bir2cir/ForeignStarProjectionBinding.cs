@@ -25,19 +25,57 @@ static class ForeignStarProjectionBinding
     static HashSet<string> _reservedNames = new(StringComparer.Ordinal);
     static Dictionary<string, TypeNode.Fqn> _closedViewHints = new(StringComparer.Ordinal);
     static Dictionary<string, TypeNode> _dependentLocalTypes = new(StringComparer.Ordinal);
+    static List<JsonNode> _materializedDelegateAdapters = new();
+    static IReadOnlyDictionary<string, string> _localExistentialOwners =
+        new Dictionary<string, string>(StringComparer.Ordinal);
     static int _nextTemp;
+    static int _nextDelegateAdapter;
     public static bool UsedRuntimeFallback { get; private set; }
 
-    public static void ApplyAll(IEnumerable<JsonNode> roots, ReferenceMetadataIndex refs)
+    internal static void RequireRuntimeFallback() => UsedRuntimeFallback = true;
+
+    public static void ApplyAll(IEnumerable<JsonNode> roots,
+        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs)
+    {
+        ApplyAll(roots, localExistentialOwners, refs, resetUsage: true);
+    }
+
+    // Some type-parameter calls acquire their final constrained/member owner after the main existential pass. Re-run
+    // only the same exact binding once that owner exists, preserving whether the earlier pass already required the
+    // runtime support assembly.
+    public static void ApplyLate(IEnumerable<JsonNode> roots,
+        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs)
+    {
+        ApplyAll(roots, localExistentialOwners, refs, resetUsage: false);
+    }
+
+    static void ApplyAll(IEnumerable<JsonNode> roots,
+        IReadOnlyDictionary<string, string> localExistentialOwners, ReferenceMetadataIndex refs, bool resetUsage)
     {
         var rootList = roots.ToList();
-        UsedRuntimeFallback = false;
+        if (resetUsage)
+        {
+            UsedRuntimeFallback = false;
+            _nextDelegateAdapter = 0;
+        }
+        _localExistentialOwners = localExistentialOwners
+            ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _reservedNames = new HashSet<string>(StringComparer.Ordinal);
         _closedViewHints = CollectClosedViewHints(rootList, refs);
         _dependentLocalTypes = new Dictionary<string, TypeNode>(StringComparer.Ordinal);
         _nextTemp = 0;
         foreach (var root in rootList) CollectNames(root);
-        foreach (var root in rootList) Rewrite(root, refs);
+        foreach (var root in rootList)
+        {
+            _materializedDelegateAdapters = new List<JsonNode>();
+            Rewrite(root, refs);
+            var materializedTypes = ClosureSynthesis.ApplyMaterialized(root, _materializedDelegateAdapters, refs);
+            // Only these declarations were born after the main existential/type-projection pass. Rewriting the whole
+            // file here would revisit deliberately opaque results such as Holder<*> and manufacture Holder<object>.
+            FBoundStarProjectionErasure.RewriteLateTypes(materializedTypes, _localExistentialOwners, refs);
+            foreach (var materializedType in materializedTypes)
+                SharedSyntheticSynthesis.DropSyntheticTypeArgs(materializedType);
+        }
     }
 
     static void Rewrite(JsonNode node, ReferenceMetadataIndex refs)
@@ -70,6 +108,8 @@ static class ForeignStarProjectionBinding
                 {
                     UsedRuntimeFallback = true;
                     Replace(obj, call);
+                    if (ContainsSyntheticClass(obj))
+                        _materializedDelegateAdapters.Add(obj);
                 }
                 break;
             case JsonArray array:
@@ -77,6 +117,14 @@ static class ForeignStarProjectionBinding
                 break;
         }
     }
+
+    static bool ContainsSyntheticClass(JsonNode node) => node switch
+    {
+        JsonObject obj => obj["synthClass"] != null
+            || obj.Any(pair => pair.Value != null && ContainsSyntheticClass(pair.Value)),
+        JsonArray array => array.Any(value => value != null && ContainsSyntheticClass(value)),
+        _ => false,
+    };
 
     static bool TryRewriteClassifier(JsonObject obj, ReferenceMetadataIndex refs, out JsonObject rewritten)
     {
@@ -144,9 +192,11 @@ static class ForeignStarProjectionBinding
         var kind = Str(obj["k"]);
         var propertyAccess = kind switch { "clrPropGet" => "get", "clrPropSet" => "set", _ => Str(obj["prop"]) };
         var sourceName = kind is "clrPropGet" or "clrPropSet" ? Str(obj["name"]) : Str(obj["method"]);
-        if (kind is not ("callInstance" or "clrInstance" or "clrGenericInstance" or "clrPropGet" or "clrPropSet")
+        if (kind is not ("callInstance" or "clrInstance" or "clrGenericInstance" or "clrPropGet" or "clrPropSet"
+                or "constrainedCall")
             || Flag(obj["static"]) || obj["recv"] is not JsonNode receiver
-            || TypeJson.Read(obj["ownerType"] ?? obj["type"]) is not TypeNode.Fqn authoredOwner)
+            || TypeJson.Read(kind == "constrainedCall" ? obj["iface"] : obj["ownerType"] ?? obj["type"])
+                is not TypeNode.Fqn authoredOwner)
         {
             return false;
         }
@@ -172,7 +222,8 @@ static class ForeignStarProjectionBinding
             out var openType, out var declaringView, out var token, out var runtimeName, out var runtimeParameterKeys,
             out var declarationReturn, out var returnsVoid);
         if (!methodFound && kind is "clrPropGet" or "clrPropSet"
-            && refs.TryForeignStarField(owner, sourceName, out openType, out declaringView, out token, out _))
+            && refs.TryForeignStarField(owner, sourceName, out openType, out declaringView, out token,
+                out var fieldDeclarationType))
         {
             var fieldClosedViewHint = ClosedViewHint(receiver, owner, declaringView);
             var fieldCall = kind == "clrPropGet"
@@ -192,7 +243,16 @@ static class ForeignStarProjectionBinding
                     : fieldCall;
                 return true;
             }
-            var fieldResult = ProjectResult(TypeJson.Read(obj["ret"]), owner.Args, refs);
+            var fieldSemanticResult = TypeJson.Read(obj["ret"]) ?? NodeType.Of(obj);
+            var fieldAdapterResult = SubstituteProjectedOwnerSlots(fieldSemanticResult, owner.Args);
+            if (UnwrapFunction(fieldDeclarationType) is TypeNode.Fn
+                && DependsOnProjectedOwnerSlot(fieldDeclarationType, owner.Args)
+                && UnwrapFunction(fieldAdapterResult) is TypeNode.Fn fieldFunction)
+            {
+                rewritten = WrapDependentDelegateResult(fieldCall, fieldAdapterResult, fieldFunction);
+                return true;
+            }
+            var fieldResult = ProjectResult(fieldSemanticResult, owner.Args, refs);
             rewritten = IsObjectish(fieldResult) ? fieldCall : new JsonObject
             {
                 ["k"] = "cast", ["type"] = TypeJson.Write(fieldResult), ["e"] = fieldCall,
@@ -244,11 +304,26 @@ static class ForeignStarProjectionBinding
             new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(Type), ["elems"] = methodTypes },
             runtimeArguments);
 
+        // `sty` is the sole result carrier on some generic calls. Preserve the raw result for ordinary projection:
+        // a nested Holder<T> must remain one opaque object, never the fictitious Holder<object>. A delegate is the
+        // exceptional readable surface we implement with an adapter, so close only that adapter's owner slots exactly
+        // once. An argument such as `out Tcaller` then remains in the caller frame instead of becoming foreign !0.
+        var semanticResult = TypeJson.Read(obj["ret"]) ?? NodeType.Of(obj);
+        var adapterResult = SubstituteProjectedOwnerSlots(semanticResult, owner.Args);
+        var semanticFunction = UnwrapFunction(adapterResult);
+        var adaptDelegate = UnwrapFunction(declarationReturn) is TypeNode.Fn declarationFunction
+            && !declarationFunction.Suspend
+            && DependsOnProjectedOwnerSlot(declarationReturn, owner.Args)
+            && semanticFunction != null;
+
         if (valueReceiver)
         {
-            rewritten = BuildValueReceiverInvocation(receiver, arguments, signature, returnsVoid,
-                projectedResult: ProjectResult(TypeJson.Read(obj["ret"]), owner.Args, refs),
+            var valueInvocation = BuildValueReceiverInvocation(receiver, arguments, signature, returnsVoid,
+                projectedResult: adaptDelegate ? AnyN : ProjectResult(semanticResult, owner.Args, refs),
                 RuntimeInvoke);
+            rewritten = adaptDelegate
+                ? WrapDependentDelegateResult(valueInvocation, adapterResult, semanticFunction)
+                : valueInvocation;
             return true;
         }
 
@@ -262,12 +337,163 @@ static class ForeignStarProjectionBinding
             return true;
         }
 
-        var projectedResult = ProjectResult(TypeJson.Read(obj["ret"]), owner.Args, refs);
+        var projectedResult = ProjectResult(semanticResult, owner.Args, refs);
+        if (adaptDelegate)
+        {
+            rewritten = WrapDependentDelegateResult(invoke, adapterResult, semanticFunction);
+            return true;
+        }
         rewritten = IsObjectish(projectedResult) ? invoke : new JsonObject
         {
             ["k"] = "cast", ["type"] = TypeJson.Write(projectedResult), ["e"] = invoke,
         };
         return true;
+    }
+
+    static TypeNode.Fn UnwrapFunction(TypeNode type) => type switch
+    {
+        TypeNode.Fn function => function,
+        TypeNode.Nullable n => UnwrapFunction(n.Of),
+        TypeNode.Oblivious o => UnwrapFunction(o.Of),
+        _ => null,
+    };
+
+    static JsonObject WrapDependentDelegateResult(JsonNode value, TypeNode semanticResult, TypeNode.Fn target)
+    {
+        if (semanticResult is not (TypeNode.Nullable or TypeNode.Oblivious))
+            return BuildDelegateResultAdapter(value, target);
+
+        var temp = FreshTemp();
+        JsonObject Temp() => new() { ["k"] = "local", ["name"] = temp };
+        return new JsonObject
+        {
+            ["k"] = "valueBlock",
+            ["stmts"] = new JsonArray(new JsonObject
+            {
+                ["k"] = "var", ["name"] = temp, ["type"] = TypeJson.Write(AnyN),
+                ["init"] = value.DeepClone(),
+            }),
+            ["result"] = new JsonObject
+            {
+                ["k"] = "cond",
+                ["cond"] = new JsonObject
+                {
+                    ["k"] = "objEq", ["lhs"] = Temp(),
+                    ["rhs"] = new JsonObject
+                    {
+                        ["k"] = "const", ["type"] = TypeJson.Write(AnyN), ["value"] = null,
+                    },
+                },
+                ["then"] = new JsonObject
+                {
+                    ["k"] = "const", ["type"] = TypeJson.Write(semanticResult), ["value"] = null,
+                },
+                ["else"] = BuildDelegateResultAdapter(Temp(), target),
+            },
+        };
+    }
+
+    // The actual delegate closes over an existential owner argument and therefore has no statically nameable CLR
+    // type in this compilation. Capture it as object and expose the frontend-authored safe function surface through
+    // a generated closure. DynamicInvoke is confined to the runtime boundary; every caller and emitted Invoke body
+    // retains an exact, verifiable signature.
+    static JsonObject BuildDelegateResultAdapter(JsonNode value, TypeNode.Fn target)
+    {
+        var name = FreshDelegateAdapterName();
+        var owner = TypeJson.Write(new TypeNode.Fqn(name));
+        var targetType = TypeJson.Write(target);
+        var fields = new JsonArray
+        {
+            new JsonObject { ["name"] = "source", ["type"] = TypeJson.Write(AnyN) },
+        };
+        var parameters = new JsonArray();
+        var invokeArguments = new JsonArray();
+        for (var index = 0; index < target.DelegateParams.Length; index++)
+        {
+            var parameterName = "p" + index;
+            parameters.Add(new JsonObject
+            {
+                ["name"] = parameterName,
+                ["type"] = TypeJson.Write(target.DelegateParams[index]),
+            });
+            invokeArguments.Add(new JsonObject { ["k"] = "local", ["name"] = parameterName });
+        }
+        var sourceRead = new JsonObject
+        {
+            ["k"] = "field", ["sty"] = TypeJson.Write(AnyN), ["ownerType"] = owner.DeepClone(),
+            ["recv"] = new JsonObject { ["k"] = "this" }, ["name"] = "source",
+        };
+        var dynamicInvoke = Call("starProjectionInvokeDelegate",
+            new TypeNode[] { AnyN, new TypeNode.Array(AnyN) }, AnyN,
+            sourceRead,
+            new JsonObject { ["k"] = "newArray", ["elem"] = TypeJson.Write(AnyN), ["elems"] = invokeArguments });
+        var body = new JsonArray();
+        if (target.Ret is TypeNode.Fqn { Args: null, Name: "kotlin.Unit" or "void" })
+        {
+            body.Add(new JsonObject { ["k"] = "exprStmt", ["expr"] = dynamicInvoke });
+            body.Add(new JsonObject { ["k"] = "return" });
+        }
+        else
+        {
+            JsonNode result = IsObjectish(target.Ret) ? dynamicInvoke : new JsonObject
+            {
+                ["k"] = "cast", ["type"] = TypeJson.Write(target.Ret), ["e"] = dynamicInvoke,
+            };
+            body.Add(new JsonObject { ["k"] = "return", ["value"] = result });
+        }
+
+        var typeArguments = new List<TypeNode.Tv>();
+        CollectTypeVariables(target, typeArguments);
+        var synthClass = new JsonObject
+        {
+            ["name"] = name, ["fields"] = fields, ["params"] = parameters,
+            ["ret"] = TypeJson.Write(target.Ret), ["body"] = body,
+        };
+        if (typeArguments.Count > 0)
+            synthClass["typeParams"] = new JsonArray(typeArguments.Select((_, index) =>
+                (JsonNode)JsonValue.Create("T" + index)).ToArray());
+        var closure = new JsonObject
+        {
+            ["k"] = "newClosure", ["closureType"] = owner, ["captures"] = new JsonArray { value.DeepClone() },
+            ["method"] = "invoke", ["funcType"] = targetType, ["synthClass"] = synthClass,
+        };
+        if (typeArguments.Count > 0)
+            closure["typeArgs"] = new JsonArray(typeArguments.Select(TypeJson.Write).ToArray());
+        return closure;
+    }
+
+    static void CollectTypeVariables(TypeNode type, List<TypeNode.Tv> result)
+    {
+        switch (type)
+        {
+            case TypeNode.Tv tv:
+                if (!result.Contains(tv)) result.Add(tv);
+                break;
+            case TypeNode.Fqn { Args: { } args }:
+                foreach (var argument in args) CollectTypeVariables(argument, result);
+                break;
+            case TypeNode.Projection p: CollectTypeVariables(p.Of, result); break;
+            case TypeNode.Nullable n: CollectTypeVariables(n.Of, result); break;
+            case TypeNode.Oblivious o: CollectTypeVariables(o.Of, result); break;
+            case TypeNode.Array a: CollectTypeVariables(a.Elem, result); break;
+            case TypeNode.ByRef b: CollectTypeVariables(b.Of, result); break;
+            case TypeNode.Ptr p: CollectTypeVariables(p.Of, result); break;
+            case TypeNode.Mod m: CollectTypeVariables(m.M, result); CollectTypeVariables(m.Of, result); break;
+            case TypeNode.Fn function:
+                CollectTypeVariables(function.Ret, result);
+                foreach (var parameter in function.DelegateParams) CollectTypeVariables(parameter, result);
+                if (function.Ctx != null)
+                    foreach (var context in function.Ctx) CollectTypeVariables(context, result);
+                break;
+        }
+    }
+
+    static string FreshDelegateAdapterName()
+    {
+        string name;
+        do name = "dotkt$ForeignProjectionDelegateAdapter$" + _nextDelegateAdapter++;
+        while (!_reservedNames.Add(name));
+        return name;
     }
 
     static JsonObject BuildValueReceiverFieldSet(JsonNode receiver, string openType, JsonNode closedViewHint,
@@ -424,7 +650,7 @@ static class ForeignStarProjectionBinding
         while (type is TypeNode.Nullable n) { nullable = true; type = n.Of; }
         while (type is TypeNode.Oblivious o) type = o.Of;
         owner = type as TypeNode.Fqn;
-        return owner?.Args is { Length: > 0 } args && args.Any(ContainsStar)
+        return owner?.Args is { Length: > 0 } args && args.Any(ContainsExistential)
             && !refs.HasDotKtOwner(owner.Name)
             && !refs.TryExistentialPhysicalOwner(owner.Name, out _)
             && refs.ResolveNetType(owner.Name, args.Length) != null;
@@ -437,6 +663,7 @@ static class ForeignStarProjectionBinding
     {
         TypeNode.Fqn f => refs.IsByRefLikeFqn(f)
             || (f.Args?.Any(a => ContainsByRefLike(a, refs)) ?? false),
+        TypeNode.Projection p => ContainsByRefLike(p.Of, refs),
         TypeNode.Nullable n => ContainsByRefLike(n.Of, refs),
         TypeNode.Oblivious o => ContainsByRefLike(o.Of, refs),
         TypeNode.Array a => ContainsByRefLike(a.Elem, refs),
@@ -479,7 +706,7 @@ static class ForeignStarProjectionBinding
                 && direct.Name == owner.Name)
                 return ClassRef(hint);
             var translated = SubstituteOwnerSlots(declaringView, hint.Args);
-            if (translated is TypeNode.Fqn translatedFqn && !ContainsStar(translatedFqn))
+            if (translated is TypeNode.Fqn translatedFqn && !ContainsExistential(translatedFqn))
                 return ClassRef(translatedFqn);
         }
         return new JsonObject { ["k"] = "const", ["type"] = TypeJson.Write(TypeN), ["value"] = null };
@@ -490,10 +717,50 @@ static class ForeignStarProjectionBinding
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < arguments.Count => arguments[tv.I],
         TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
             args.Select(arg => SubstituteOwnerSlots(arg, arguments)).ToArray()),
+        TypeNode.Projection p => new TypeNode.Projection(p.Variance, SubstituteOwnerSlots(p.Of, arguments)),
         TypeNode.Nullable n => new TypeNode.Nullable(SubstituteOwnerSlots(n.Of, arguments)),
         TypeNode.Oblivious o => new TypeNode.Oblivious(SubstituteOwnerSlots(o.Of, arguments)),
         TypeNode.Array a => new TypeNode.Array(SubstituteOwnerSlots(a.Elem, arguments)),
         TypeNode.ByRef b => new TypeNode.ByRef(SubstituteOwnerSlots(b.Of, arguments)),
+        _ => type,
+    };
+
+    static TypeNode SubstituteProjectedOwnerSlots(TypeNode type, IReadOnlyList<TypeNode> arguments) => type switch
+    {
+        null => null,
+        TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < arguments.Count => arguments[tv.I] switch
+        {
+            TypeNode.Star => AnyN,
+            TypeNode.Projection projection => ProjectionBound(projection.Of),
+            var argument => argument,
+        },
+        TypeNode.Fqn { Args: { } args } f => new TypeNode.Fqn(f.Name,
+            args.Select(arg => SubstituteProjectedOwnerSlots(arg, arguments)).ToArray()),
+        TypeNode.Projection p => new TypeNode.Projection(p.Variance,
+            SubstituteProjectedOwnerSlots(p.Of, arguments)),
+        TypeNode.Nullable n => new TypeNode.Nullable(SubstituteProjectedOwnerSlots(n.Of, arguments)),
+        TypeNode.Oblivious o => new TypeNode.Oblivious(SubstituteProjectedOwnerSlots(o.Of, arguments)),
+        TypeNode.Array a => new TypeNode.Array(
+            SubstituteProjectedOwnerSlots(a.Elem, arguments), a.Rank, a.SzArray),
+        TypeNode.ByRef b => new TypeNode.ByRef(SubstituteProjectedOwnerSlots(b.Of, arguments)),
+        TypeNode.Ptr p => new TypeNode.Ptr(SubstituteProjectedOwnerSlots(p.Of, arguments)),
+        TypeNode.Mod m => new TypeNode.Mod(m.Req,
+            SubstituteProjectedOwnerSlots(m.M, arguments),
+            SubstituteProjectedOwnerSlots(m.Of, arguments)),
+        TypeNode.Fn function => new TypeNode.Fn(
+            function.Suspend,
+            SubstituteProjectedOwnerSlots(function.Ret, arguments),
+            function.Params?.Select(parameter => SubstituteProjectedOwnerSlots(parameter, arguments)).ToArray(),
+            function.Recv == null ? null : SubstituteProjectedOwnerSlots(function.Recv, arguments),
+            function.Clr,
+            function.Ctx?.Select(context => SubstituteProjectedOwnerSlots(context, arguments)).ToArray()),
+        _ => type,
+    };
+
+    static TypeNode ProjectionBound(TypeNode type) => type switch
+    {
+        TypeNode.Projection projection => ProjectionBound(projection.Of),
+        TypeNode.Oblivious oblivious => ProjectionBound(oblivious.Of),
         _ => type,
     };
 
@@ -545,12 +812,12 @@ static class ForeignStarProjectionBinding
                 while (candidate is TypeNode.Nullable nullable) candidate = nullable.Of;
                 while (candidate is TypeNode.Oblivious oblivious) candidate = oblivious.Of;
                 TypeNode.Fqn exact = candidate as TypeNode.Fqn;
-                if ((exact == null || exact.Args?.Any(ContainsStar) == true)
+                if ((exact == null || exact.Args?.Any(ContainsExistential) == true)
                     && init is JsonObject local && Str(local["k"]) == "local"
                     && Str(local["name"]) is string source && result.TryGetValue(source, out var inherited))
                     exact = inherited;
                 if (exact?.Args is not { Length: > 0 } args || exact.Name != starOwner.Name
-                    || args.Length != starOwner.Args.Length || args.Any(ContainsStar)
+                    || args.Length != starOwner.Args.Length || args.Any(ContainsExistential)
                     || refs.ResolveNetType(exact.Name, args.Length) == null) continue;
                 result[name] = exact;
                 changed = true;
@@ -577,13 +844,29 @@ static class ForeignStarProjectionBinding
     {
         if (type == null) return AnyN;
         if (type is TypeNode.Tv { Scope: "type" } tv && tv.I >= 0 && tv.I < ownerArgs.Length)
-            return ownerArgs[tv.I] is TypeNode.Star ? AnyN : ProjectResult(ownerArgs[tv.I], ownerArgs, refs);
+            return ownerArgs[tv.I] switch
+            {
+                TypeNode.Star => AnyN,
+                TypeNode.Projection { Variance: "in" } => AnyN,
+                // The selected argument is written in the CALLER's generic frame. A caller `type:0` is not the
+                // foreign declaration's `type:0`; substituting it again recursively either changes its meaning or,
+                // for `Foreign<out T>` returning T, recurses forever. Continue projection with no owner frame.
+                TypeNode.Projection projectedArgument => ProjectResult(projectedArgument.Of, Array.Empty<TypeNode>(), refs),
+                var argument => ProjectResult(argument, Array.Empty<TypeNode>(), refs),
+            };
         if (type is TypeNode.Star) return AnyN;
+        if (type is TypeNode.Projection projection)
+            return projection.Variance == "in" ? AnyN : ProjectResult(projection.Of, ownerArgs, refs);
 
         if (DependsOnProjectedOwnerSlot(type, ownerArgs))
         {
-            if (type is TypeNode.Fqn f && refs.TryExistentialPhysicalOwner(f.Name, out var existential))
-                return new TypeNode.Fqn(existential);
+            if (type is TypeNode.Fqn f)
+            {
+                if (_localExistentialOwners.TryGetValue(f.Name, out var localExistential))
+                    return new TypeNode.Fqn(localExistential);
+                if (refs.TryExistentialPhysicalOwner(f.Name, out var referencedExistential))
+                    return new TypeNode.Fqn(referencedExistential);
+            }
             if (type is TypeNode.Fqn dependentFqn && dependentFqn.Args is { Length: > 0 } dependentArgs
                 && refs.ResolveNetType(dependentFqn.Name, dependentArgs.Length) != null)
                 return new TypeNode.Fqn(dependentFqn.Name, dependentArgs.Select(a =>
@@ -616,13 +899,17 @@ static class ForeignStarProjectionBinding
     static bool DependsOnProjectedOwnerSlot(TypeNode type, TypeNode[] ownerArgs) => type switch
     {
         TypeNode.Tv { Scope: "type" } tv when tv.I >= 0 && tv.I < ownerArgs.Length
-            => ownerArgs[tv.I] is TypeNode.Star || DependsOnProjectedOwnerSlot(ownerArgs[tv.I], ownerArgs),
-        TypeNode.Star => true,
+            => ownerArgs[tv.I] is TypeNode.Star or TypeNode.Projection
+                || DependsOnProjectedOwnerSlot(ownerArgs[tv.I], ownerArgs),
+        TypeNode.Star or TypeNode.Projection => true,
         TypeNode.Fqn { Args: { } args } => args.Any(a => DependsOnProjectedOwnerSlot(a, ownerArgs)),
         TypeNode.Nullable n => DependsOnProjectedOwnerSlot(n.Of, ownerArgs),
         TypeNode.Oblivious o => DependsOnProjectedOwnerSlot(o.Of, ownerArgs),
         TypeNode.Array a => DependsOnProjectedOwnerSlot(a.Elem, ownerArgs),
         TypeNode.ByRef b => DependsOnProjectedOwnerSlot(b.Of, ownerArgs),
+        TypeNode.Ptr p => DependsOnProjectedOwnerSlot(p.Of, ownerArgs),
+        TypeNode.Mod m => DependsOnProjectedOwnerSlot(m.M, ownerArgs)
+            || DependsOnProjectedOwnerSlot(m.Of, ownerArgs),
         TypeNode.Fn fn => DependsOnProjectedOwnerSlot(fn.Ret, ownerArgs)
             || fn.Params.Any(p => DependsOnProjectedOwnerSlot(p, ownerArgs))
             || (fn.Recv != null && DependsOnProjectedOwnerSlot(fn.Recv, ownerArgs))
@@ -630,16 +917,19 @@ static class ForeignStarProjectionBinding
         _ => false,
     };
 
-    static bool ContainsStar(TypeNode type) => type switch
+    static bool ContainsExistential(TypeNode type) => type switch
     {
-        TypeNode.Star => true,
-        TypeNode.Fqn { Args: { } args } => args.Any(ContainsStar),
-        TypeNode.Nullable n => ContainsStar(n.Of),
-        TypeNode.Oblivious o => ContainsStar(o.Of),
-        TypeNode.Array a => ContainsStar(a.Elem),
-        TypeNode.ByRef b => ContainsStar(b.Of),
-        TypeNode.Fn fn => ContainsStar(fn.Ret) || fn.Params.Any(ContainsStar)
-            || (fn.Recv != null && ContainsStar(fn.Recv)),
+        TypeNode.Star or TypeNode.Projection => true,
+        TypeNode.Fqn { Args: { } args } => args.Any(ContainsExistential),
+        TypeNode.Nullable n => ContainsExistential(n.Of),
+        TypeNode.Oblivious o => ContainsExistential(o.Of),
+        TypeNode.Array a => ContainsExistential(a.Elem),
+        TypeNode.ByRef b => ContainsExistential(b.Of),
+        TypeNode.Ptr p => ContainsExistential(p.Of),
+        TypeNode.Mod m => ContainsExistential(m.M) || ContainsExistential(m.Of),
+        TypeNode.Fn fn => ContainsExistential(fn.Ret) || fn.Params.Any(ContainsExistential)
+            || (fn.Recv != null && ContainsExistential(fn.Recv))
+            || (fn.Ctx?.Any(ContainsExistential) ?? false),
         _ => false,
     };
 
